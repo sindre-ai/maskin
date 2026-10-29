@@ -120,7 +120,8 @@ describe('MessageBubble', () => {
 			}),
 		)
 		const before = screen.getByText('Before the link.')
-		const card = screen.getByText('LinkedIn message · P1')
+		// A draft starts open, so its title (not the contracted subtitle) marks the card.
+		const card = screen.getByText('Retry window')
 		const after = screen.getByText('After the link.')
 		expect(before.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(card.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -150,6 +151,24 @@ describe('MessageBubble', () => {
 		const plate = container.querySelector('.bg-primary')
 		expect(plate).toContainElement(chip)
 		expect(plate?.textContent).toContain('is this done?')
+	})
+
+	it('draws a GitHub pull request and issue in your own message as chips that open GitHub', () => {
+		const pull = 'https://github.com/sindre-ai/maskin/pull/2637'
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `can you check ${pull} and https://github.com/sindre-ai/maskin/issues/12?`,
+			}),
+		)
+		expect(screen.queryByText(pull, { exact: false })).not.toBeInTheDocument()
+		const pullChip = screen.getByRole('link', { name: 'Pull request maskin #2637, opens GitHub' })
+		expect(pullChip).toHaveAttribute('href', pull)
+		expect(pullChip).toHaveAttribute('target', '_blank')
+		expect(screen.getByRole('link', { name: 'Issue maskin #12, opens GitHub' })).toBeInTheDocument()
+		expect(container.querySelector('.bg-primary')).toContainElement(pullChip)
 	})
 
 	it('cuts the title in a chip at 30 characters', () => {
@@ -330,5 +349,52 @@ describe('MessageBubble — agent data-viz', () => {
 		// The caption belongs to the rendered figure, not to a code block.
 		expect(screen.getByText('Drop-off concentrates on step two.')).toBeInTheDocument()
 		expect(screen.queryByText(/"type": "bar"/)).not.toBeInTheDocument()
+	})
+})
+
+describe('MessageBubble — Reply in thread', () => {
+	function renderWithReply(message: MessageResponse, onReplyInThread = vi.fn()) {
+		render(
+			<MessageBubble workspaceId="ws-1" message={message} onReplyInThread={onReplyInThread} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
+		return onReplyInThread
+	}
+
+	it('has no Reply action without an onReplyInThread handler', () => {
+		renderBubble(buildMessage())
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('calls the handler when Reply is clicked on an agent message', () => {
+		const onReply = renderWithReply(buildMessage())
+		fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }))
+		expect(onReply).toHaveBeenCalledTimes(1)
+	})
+
+	it('offers Reply on your own message too', () => {
+		const onReply = renderWithReply(
+			buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }),
+		)
+		fireEvent.click(screen.getByRole('button', { name: 'Reply in thread' }))
+		expect(onReply).toHaveBeenCalledTimes(1)
+	})
+
+	it('has no Reply on an optimistic (unsent) message', () => {
+		renderWithReply(buildMessage({ id: -1, actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('has no Reply on a system row', () => {
+		renderWithReply(buildMessage({ kind: 'system' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+
+	it('hides Reply on your own message while it is being edited', () => {
+		renderWithReply(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
+		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
 	})
 })

@@ -141,6 +141,21 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		}
 	}
 
+	/// Tell the agent something the person did mid-call (a tap in the dock) and have it carry on.
+	/// While the agent is speaking only the note is added: a second response then would be refused
+	/// as "already active", and the agent sees the note on its next turn. Waits for the data channel
+	/// like a typed line does.
+	func tell(_ text: String) {
+		guard isActive else { return }
+		var events = [RealtimeCallMachine.userNoteItem(text)]
+		if machine.phase != .speaking { events.append(RealtimeCallMachine.responseRequest) }
+		if channelOpen {
+			for event in events { transport?.send(event) }
+		} else {
+			queuedChatItems += events
+		}
+	}
+
 	// MARK: Connecting
 
 	private func connect() async {

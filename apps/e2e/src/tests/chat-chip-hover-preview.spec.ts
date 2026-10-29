@@ -61,6 +61,12 @@ test.describe('Chat — a chip opens the object card as a preview', () => {
 		await page.mouse.move(5, 5)
 		await chip.focus()
 		await expect(preview).toBeVisible()
+		// Tab goes from the chip into Copy link and then Open, and the preview stays open.
+		await page.keyboard.press('Tab')
+		await expect(preview.getByRole('button', { name: 'Copy link' })).toBeFocused()
+		await page.keyboard.press('Tab')
+		await expect(preview.getByRole('link', { name: 'Open' })).toBeFocused()
+		await expect(preview).toBeVisible()
 		await page.keyboard.press('Tab')
 		await expect(preview).toHaveCount(0)
 	})
@@ -99,15 +105,51 @@ test.describe('Chat — a chip opens the object card as a preview', () => {
 		}
 	})
 
-	test('mobile 375: nothing opens and a tap goes to the object', async ({ page, account }) => {
+	for (const width of [640, 1024, 1440]) {
+		test(`${width} wide: a chip at the right edge of the thread opens a preview that stays inside the thread pane`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width, height: 900 })
+			const { thread, chip } = await openChatWithChip(account, page)
+			const preview = page.locator('[data-linked-preview]')
+
+			// Push the chip to the end of a line, as it would sit in a long sentence.
+			await chip.evaluate((el) => {
+				const holder = el.parentElement as HTMLElement
+				const pane = holder.closest('[data-testid="thread-messages"]') as HTMLElement
+				const room = pane.getBoundingClientRect().right - holder.getBoundingClientRect().right
+				holder.style.marginLeft = `${Math.max(0, room - 48)}px`
+			})
+
+			await chip.hover()
+			await expect(preview).toBeVisible()
+			const paneBox = await thread.boundingBox()
+			const previewBox = await preview.boundingBox()
+			const left = previewBox?.x ?? 0
+			const right = left + (previewBox?.width ?? 0)
+			expect(left).toBeGreaterThanOrEqual((paneBox?.x ?? 0) + 8 - 1)
+			expect(right).toBeLessThanOrEqual((paneBox?.x ?? 0) + (paneBox?.width ?? 0) - 8 + 1)
+			await page.screenshot({ path: `test-results/chip-preview-pane-${width}.png` })
+		})
+	}
+
+	test('mobile 375: no hover preview, and a tap opens the sheet instead of the object', async ({
+		page,
+		account,
+	}) => {
 		await page.setViewportSize({ width: VIEWPORTS.mobile.width, height: VIEWPORTS.mobile.height })
 		const { chip, ws, task } = await openChatWithChip(account, page)
 		const preview = page.locator('[data-linked-preview]')
+		const chatUrl = page.url()
 
 		await chip.hover()
 		await chip.focus()
 		await expect(preview).toHaveCount(0)
 		await chip.click()
+		await expect(page.getByRole('dialog', { name: 'Object preview' })).toBeVisible()
+		await expect(page).toHaveURL(chatUrl)
+		await page.getByRole('link', { name: 'Open' }).click()
 		await expect(page).toHaveURL(new RegExp(`/${ws}/objects/${task.id}`))
 	})
 })

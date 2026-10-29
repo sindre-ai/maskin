@@ -57,6 +57,8 @@ const KEPT: Record<string, string> = {
 	extensions:
 		'created_by on a workspace-owned custom integration; kept, attributed to the deleted user',
 	blocked_tool_calls: 'audit row of a refused tool call by an agent actor, in a kept workspace',
+	comment_responder_claims:
+		'dedupe ledger of which agent answers a kept comment (agent actor, not a person); cascades with the comment event',
 	// Known gaps, not fixed here (follow-up): these can still carry the person's identity.
 	integrations:
 		'FOLLOW-UP: actor_id = who connected it; may hold a personal credential. Workspace-owned, so not erased here',

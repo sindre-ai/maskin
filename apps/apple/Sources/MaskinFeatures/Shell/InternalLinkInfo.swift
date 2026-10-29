@@ -13,7 +13,7 @@ extension InternalLinkDirectory {
 			return MarkdownLinkInfo(
 				symbol: found.flatMap { MaskinObjectType.symbol(for: $0.type) } ?? "doc.text",
 				kindLabel: found.map { Self.label(forType: $0.type) } ?? "Object", title: found?.title)
-		case .chat:
+		case .chat, .thread:
 			return MarkdownLinkInfo(symbol: "bubble.left", kindLabel: "Chat")
 		case .file:
 			return MarkdownLinkInfo(symbol: "doc", kindLabel: "File")

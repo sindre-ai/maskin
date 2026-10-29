@@ -63,6 +63,7 @@ import {
 	VoiceSessionTimeoutSweeper,
 	endAllLiveVoiceSessions,
 } from './services/voice-session-timeout-sweeper'
+import { VoiceToolCallLogCleaner } from './services/voice-tool-call-log-cleaner'
 import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
@@ -261,6 +262,10 @@ const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
 
+const voiceToolCallLogCleaner = new VoiceToolCallLogCleaner(db)
+voiceToolCallLogCleaner.start()
+logger.info('Voice tool call log cleaner started')
+
 // §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
 // for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,
 // callerKind:'internal'}). Killswitch env FEATURE_RETRY_SCHEDULER=0 disables
@@ -348,9 +353,7 @@ const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
-// Daily capability scan, shadow mode. A server job with no model call. Does
-// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
-// capability-scan.
+// Daily capability scan. A server job with no model call.
 const capabilityScanner = new CapabilityScanner(db)
 capabilityScanner.start()
 logger.info('Capability scanner started')
@@ -377,8 +380,8 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// In production the dispatch queue — not the createSession promise — is
 	// where a workspace's missing LLM credentials surface, so this is the only
 	// way the trigger runner learns to stop firing against it.
-	onPermanentFailure: ({ workspaceId, reasonCode }) =>
-		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode),
+	onPermanentFailure: ({ workspaceId, reasonCode, noCredentialsConfigured }) =>
+		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode, noCredentialsConfigured),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({

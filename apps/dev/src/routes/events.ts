@@ -7,6 +7,10 @@ import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import {
+	claimCommentResponder,
+	releaseCommentResponderClaim,
+} from '../lib/comment-responder-claims'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
@@ -793,6 +797,23 @@ async function spawnThreadReplySessions(ctx: {
 	const initiatedFromObjectId = obj ? ctx.objectId : null
 
 	for (const agentId of threadReplyAgentIds) {
+		// Claim (comment, agent) before starting: the CommentDispatcher fallback ladder (case 3
+		// Chief of Staff in particular) can pick the same agent for the same comment from the PG
+		// NOTIFY subscriber ~50ms away. The claim row's primary key lets exactly one path start a
+		// session; see lib/comment-responder-claims.ts.
+		const claimed = await claimCommentResponder(ctx.db, {
+			sourceCommentEventId: ctx.newCommentEventId,
+			actorId: agentId,
+			claimedBy: 'thread_reply',
+		})
+		if (!claimed) {
+			logger.info('Thread-reply auto-spawn stood down: another responder holds the claim', {
+				source_comment_event_id: ctx.newCommentEventId,
+				actor_id: agentId,
+				object_id: ctx.objectId,
+			})
+			continue
+		}
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: agentId,
@@ -817,14 +838,18 @@ async function spawnThreadReplySessions(ctx: {
 			createdBy: ctx.actorId,
 			initiatedFromObjectId,
 			await: 'none',
-		}).catch((err) =>
+		}).catch((err) => {
 			logger.error('Failed to create thread-reply session', {
 				agentId,
 				objectId: ctx.objectId,
 				threadRootEventId: ctx.threadRootEventId,
 				error: String(err),
-			}),
-		)
+			})
+			return releaseCommentResponderClaim(ctx.db, {
+				sourceCommentEventId: ctx.newCommentEventId,
+				actorId: agentId,
+			})
+		})
 	}
 }
 

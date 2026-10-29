@@ -11,7 +11,7 @@ const now = () => FIXED_NOW
 
 describe('parseSubscriptionLimitReset', () => {
 	describe('anthropic-ratelimit-unified-reset header (source 1/2)', () => {
-		it('parses an ISO-8601 timestamp inside the [now+60s, now+24h] clamp', () => {
+		it('parses an ISO-8601 timestamp inside the [now+60s, now+8d] clamp', () => {
 			const at = new Date(FIXED_NOW + 30 * 60_000).toISOString()
 			const result = parseSubscriptionLimitReset({
 				anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
@@ -41,8 +41,18 @@ describe('parseSubscriptionLimitReset', () => {
 			).toBeNull()
 		})
 
-		it('rejects a value above the +24h ceiling', () => {
-			const at = new Date(FIXED_NOW + 25 * 60 * 60_000).toISOString()
+		it('accepts a weekly-limit reset several days out', () => {
+			const at = new Date(FIXED_NOW + 3 * 24 * 60 * 60_000).toISOString()
+			expect(
+				parseSubscriptionLimitReset({
+					anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
+					now,
+				})?.resetAt.toISOString(),
+			).toBe(at)
+		})
+
+		it('rejects a value above the +8d ceiling', () => {
+			const at = new Date(FIXED_NOW + 9 * 24 * 60 * 60_000).toISOString()
 			expect(
 				parseSubscriptionLimitReset({
 					anthropicHeaders: { 'anthropic-ratelimit-unified-reset': at },
@@ -257,7 +267,22 @@ describe('parseRateLimitEventReset', () => {
 		)
 	})
 
-	it('returns null when the reset is beyond the 24h clamp', () => {
-		expect(parseRateLimitEventReset(event('rejected', 1793044800), incidentNow)).toBeNull()
+	it('keeps a reset several days out (weekly limit)', () => {
+		const reset = parseRateLimitEventReset(event('rejected', 1793044800), incidentNow)
+		expect(reset?.toISOString()).toBe('2026-10-26T20:00:00.000Z')
+	})
+
+	it('returns null when the reset is beyond the 8d clamp', () => {
+		expect(parseRateLimitEventReset(event('rejected', 1793750400), incidentNow)).toBeNull()
+	})
+})
+
+describe('weekly-limit banner as the CLI prints it', () => {
+	const weeklyNow = new Date('2026-10-28T06:00:00Z').getTime()
+
+	it('reads a month-and-day reset with a comma and an IANA zone, inside a JSON line', () => {
+		const tail =
+			'{"type":"result","result":"You\'ve hit your weekly limit · resets Oct 31, 2pm (Europe/Copenhagen)"}'
+		expect(parseCliResetBanner(tail, weeklyNow)?.toISOString()).toBe('2026-10-31T13:00:00.000Z')
 	})
 })

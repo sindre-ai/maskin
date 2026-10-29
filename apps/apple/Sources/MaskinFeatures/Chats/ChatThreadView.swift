@@ -94,6 +94,8 @@ struct ChatThreadView: View {
 	private static let revealDelay = 120
 	/// Pauses before each re-anchor of a thread opened on its NEW divider; it stays hidden until the last.
 	private static let reanchorDelays = [200, 300]
+	/// The longest (ms) a thread stays hidden for the finished turns' traces to arrive.
+	private static let traceWait = 800
 	/// How long the thread waits for its read cursor before opening at the bottom (offline).
 	private static let openTimeout: Duration = .milliseconds(1500)
 
@@ -128,6 +130,11 @@ struct ChatThreadView: View {
 
 	/// The live state if any; otherwise the person's name under a topic title.
 	private var navStatus: ThreadNavStatus? {
+		if let call, let startedAt = call.startedAt {
+			return .quiet(
+				LiveMeetingChrome.subline(
+					origin: call.origin, threadTitle: topic ?? store.title, leadName: call.lead.name, startedAt: startedAt))
+		}
 		if let live = ThreadNav.status(presences: presences, flow: flow) { return live }
 		guard topic != nil, let name = counterpart?.name else { return nil }
 		return .quiet(name)
@@ -204,6 +211,7 @@ struct ChatThreadView: View {
 				} message: {
 					Text(store.notice ?? "")
 				}
+				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
 				.navigationDestination(item: $threadRoute) { route in
 					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
 						ThreadScreen(store: store, root: root)
@@ -252,6 +260,7 @@ struct ChatThreadView: View {
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
+			if let call { LiveCallHeaderControls(session: call) { liveCalls?.end() } }
 			if !linkedEntries.isEmpty {
 				Button { showingLinked = true } label: {
 					HStack(spacing: MaskinSpace.s1) {
@@ -339,6 +348,19 @@ struct ChatThreadView: View {
 				.buttonStyle(.maskinPressed)
 			}
 		}
+	}
+
+	/// A thread push or link names a root inside this chat: open it once the root is held, fetching
+	/// the thread first when it is older than the loaded page. Nothing happens for another chat's
+	/// request, and an unreachable root leaves the chat open on its own.
+	private func openRequestedThread() async {
+		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
+			return
+		}
+		func held() -> Bool { store.allMessages.contains { $0.serverID == request.rootId } }
+		if !held() { await store.loadThread(request.rootId) }
+		if held() { threadRoute = ThreadRoute(rootID: request.rootId) }
+		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
 	}
 
 	// MARK: Linked
@@ -698,6 +720,8 @@ struct ChatThreadView: View {
 			onInvite: onInvite,
 			onOpenObject: { runtime?.openObject($0.id) },
 			onEnd: { liveCalls?.end() })
+		.onAppear { liveCalls?.panelAppeared(for: call.chat.conversationID) }
+		.onDisappear { liveCalls?.panelDisappeared(for: call.chat.conversationID) }
 	}
 
 	/// The shared composer (spec 7 §1): Stop in the last slot while an agent is typing, streaming
@@ -840,6 +864,9 @@ struct ChatThreadView: View {
 					if userScrolled { break }
 					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
 				}
+				if await waitForTraces(), !userScrolled {
+					proxy.scrollTo(Self.unreadDividerID, anchor: topAnchor(Self.unreadOpenOffset))
+				}
 				revealed = true
 				// A thread short enough to be fully on screen never scrolls, so the bottom-reached
 				// callback never fires and it would stay unread however far it is read. Checked at
@@ -858,8 +885,21 @@ struct ChatThreadView: View {
 		Task {
 			try? await Task.sleep(for: .milliseconds(Self.revealDelay))
 			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+			if await waitForTraces(), followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 			revealed = true
 		}
+	}
+
+	/// Holds the opening for the finished turns' one-line traces, which are read after the messages
+	/// and would otherwise appear under the reader one by one. Gives up after `traceWait`, so a slow
+	/// network never keeps the thread hidden. True when it had to wait, so the caller re-pins.
+	private func waitForTraces() async -> Bool {
+		var waited = 0
+		while store.isLoadingTrace, waited < Self.traceWait, !userScrolled {
+			try? await Task.sleep(for: .milliseconds(50))
+			waited += 50
+		}
+		return waited > 0
 	}
 
 	/// Pin to the newest message without animating, then once more after the rows have measured.
@@ -957,12 +997,16 @@ struct ThreadTranscript: View {
 		// A voice call keeps its lines in the call log, which is not observable: reading the running
 		// call's lines here is what redraws the card as each one is transcribed.
 		let _ = call?.lines.count
+		// The same for answers tapped in the dock: their DECIDED rows come from that log too.
+		let _ = call?.decisions.count
 		let items = ThreadLayout.items(
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
-			calls: LiveCallLog.shared.records(for: store.conversationID))
+			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
+			inlineTranscript: false)
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
+		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
-			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn)
+			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
@@ -1064,7 +1108,8 @@ struct ThreadTranscript: View {
 
 	@ViewBuilder
 	private func row(
-		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?
+		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
+		statusIDs: Set<String>
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -1073,8 +1118,14 @@ struct ThreadTranscript: View {
 			SystemLine(message: message)
 		case .unreadDivider(let count):
 			ThreadDivider.unread(count: count)
+		case .callDivider(let divider):
+			ThreadDivider(label: divider.label)
 		case .liveCall(let card):
 			LiveCallCardView(card: card, partial: call.map(Self.partialWords) ?? "")
+		case .receipt(let event):
+			LiveReceiptRow(event: event)
+		case .callSummary(let summary, let transcript):
+			LiveCallSummaryCard(summary: summary, transcript: transcript)
 		case .handoff(let session, let behind):
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
@@ -1091,7 +1142,7 @@ struct ThreadTranscript: View {
 					store.displayName(for: id).map { (id: id, name: $0) }
 				},
 				questionAnswers: message.serverID.flatMap { answers[$0] },
-				sendStatus: isLatestOwn ? MessageSendStatus.of(message, readBy: store.readBy(message)) : nil,
+				sendStatus: statusIDs.contains(message.id) ? MessageSendStatus.of(message, readBy: store.readBy(message)) : nil,
 				messageOverride: store.override(for: message.id), isPinned: store.isPinned(message),
 				versionsLocked: store.replyInFlight,
 				working: message.author == .agent && store.presence(of: message.actorID) != nil,

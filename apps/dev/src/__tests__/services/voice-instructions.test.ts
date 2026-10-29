@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	VOICE_CALL_CONDUCT,
+	VOICE_DECISION_RULE,
 	VOICE_DRAFT_RULE,
 	VOICE_FOR_YOU_RULE,
 	VOICE_LANGUAGE_RULE,
@@ -129,6 +130,13 @@ describe('buildVoiceInstructions', () => {
 		expect(VOICE_WRITE_CONFIRMATION).toContain('confirmation_id')
 	})
 
+	it('tells the agent a filler sound is never a decision and to read the decision back', () => {
+		expect(buildVoiceInstructions(base)).toContain(VOICE_DECISION_RULE)
+		expect(VOICE_DECISION_RULE).toContain('"Mm", "mhm"')
+		expect(VOICE_DECISION_RULE).toContain('"go on" meaning keep talking')
+		expect(VOICE_DECISION_RULE).toContain('read the decision back in one short sentence')
+	})
+
 	it('tells the agent to save changed wording and read it back before asking for approval', () => {
 		expect(buildVoiceInstructions(base)).toContain(VOICE_DRAFT_RULE)
 		expect(VOICE_DRAFT_RULE).toContain(
@@ -162,6 +170,11 @@ describe('buildVoiceInstructions', () => {
 		expect(VOICE_CALL_CONDUCT).toContain('show_in_chat')
 		expect(VOICE_CALL_CONDUCT).toContain('short summary')
 		expect(VOICE_CALL_CONDUCT).toContain('never read an address out loud')
+	})
+
+	it('forbids a spoken heads-up before a tool call', () => {
+		expect(VOICE_CALL_CONDUCT).toContain('Never speak before a tool call')
+		expect(VOICE_CALL_CONDUCT).toContain('let me pull that up')
 	})
 
 	it('keeps the agent prompt first, then skills, then the earlier chat', () => {

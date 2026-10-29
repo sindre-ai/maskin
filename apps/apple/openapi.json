@@ -184,6 +184,101 @@
 					"reason"
 				]
 			},
+			"VoiceToolCall": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"voice_session_id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"call_id": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"started_at": {
+						"type": "string"
+					},
+					"tool_name": {
+						"type": "string"
+					},
+					"args_summary": {
+						"description": "The arguments the model sent, redacted and size-capped."
+					},
+					"success": {
+						"type": "boolean"
+					},
+					"error_code": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"error_message": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"output_chars": {
+						"type": "integer",
+						"description": "Length of the tool's output before voice's 20,000-character cap."
+					},
+					"output_truncated": {
+						"type": "boolean"
+					},
+					"latency_ms": {
+						"type": "integer"
+					},
+					"output_preview": {
+						"type": [
+							"string",
+							"null"
+						],
+						"description": "The first ~500 characters of what the model was told, redacted."
+					}
+				},
+				"required": [
+					"id",
+					"voice_session_id",
+					"call_id",
+					"started_at",
+					"tool_name",
+					"success",
+					"error_code",
+					"error_message",
+					"output_chars",
+					"output_truncated",
+					"latency_ms",
+					"output_preview"
+				]
+			},
+			"VoiceToolCallList": {
+				"type": "object",
+				"properties": {
+					"tool_calls": {
+						"type": "array",
+						"items": {
+							"$ref": "#/components/schemas/VoiceToolCall"
+						}
+					},
+					"next_cursor": {
+						"type": [
+							"string",
+							"null"
+						]
+					}
+				},
+				"required": [
+					"tool_calls",
+					"next_cursor"
+				]
+			},
 			"TranscribeResponse": {
 				"type": "object",
 				"properties": {
@@ -38351,7 +38446,7 @@
 											"ask",
 											"options"
 										],
-										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 									},
 									"attention": {
 										"type": "integer",
@@ -39008,6 +39103,89 @@
 													"provider",
 													"display_name",
 													"level"
+												]
+											},
+											"mcp_server_request": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 60
+													},
+													"hint": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300
+													},
+													"type": {
+														"type": "string",
+														"enum": [
+															"stdio",
+															"http"
+														]
+													},
+													"command": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 512
+													},
+													"args": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"maxLength": 2048
+														},
+														"maxItems": 100
+													},
+													"url": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 2048
+													},
+													"env": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"headers": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"secret_env": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													},
+													"secret_headers": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"session_id",
+													"name"
 												]
 											},
 											"computer_request": {
@@ -41958,6 +42136,89 @@
 													"provider",
 													"display_name",
 													"level"
+												]
+											},
+											"mcp_server_request": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 60
+													},
+													"hint": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300
+													},
+													"type": {
+														"type": "string",
+														"enum": [
+															"stdio",
+															"http"
+														]
+													},
+													"command": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 512
+													},
+													"args": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"maxLength": 2048
+														},
+														"maxItems": 100
+													},
+													"url": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 2048
+													},
+													"env": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"headers": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"secret_env": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													},
+													"secret_headers": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"session_id",
+													"name"
 												]
 											},
 											"computer_request": {
@@ -49318,6 +49579,428 @@
 				}
 			}
 		},
+		"/api/sessions/{id}/mcp-server-card": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Post a card in the session chat asking the person to add a tool server",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"hint": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 300
+									},
+									"type": {
+										"type": "string",
+										"enum": [
+											"stdio",
+											"http"
+										]
+									},
+									"command": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 512
+									},
+									"args": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"maxLength": 2048
+										},
+										"maxItems": 100
+									},
+									"url": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									},
+									"env": {
+										"type": "object",
+										"additionalProperties": {
+											"type": "string",
+											"maxLength": 4096
+										}
+									},
+									"headers": {
+										"type": "object",
+										"additionalProperties": {
+											"type": "string",
+											"maxLength": 4096
+										}
+									},
+									"secret_env": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"maxItems": 20
+									},
+									"secret_headers": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"maxItems": 20
+									}
+								},
+								"required": [
+									"name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Card posted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"posted": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										},
+										"message_id": {
+											"type": "number"
+										}
+									},
+									"required": [
+										"posted",
+										"message_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The server definition is not valid, or carries a secret the agent must not hold",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller does not own this session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Session is not an interactive chat session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Card could not be persisted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/sessions/{id}/logs": {
 			"get": {
 				"tags": [
@@ -52724,7 +53407,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -55674,7 +56357,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -72635,6 +73318,182 @@
 					},
 					"404": {
 						"description": "Flag off, or no such voice session for the caller",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/voice-sessions/{id}/tool-calls": {
+			"get": {
+				"tags": [
+					"Voice"
+				],
+				"summary": "List a voice call's tool calls",
+				"description": "What the voice model asked each tool to do and what came back: tool, redacted arguments, success, error, output length, whether the 20,000-character cap cut it, latency, and the first ~500 characters of the output. Oldest first, paged with `cursor`. Visible to the person on the call and to workspace owners and admins. Rows are kept 30 days. A call's tool calls that could not be logged are missing, not failed.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 200,
+							"default": 50
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "cursor",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "A page of tool calls",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceToolCallList"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Bad limit or cursor",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such voice session in this workspace, or not visible to the caller",
 						"content": {
 							"application/json": {
 								"schema": {

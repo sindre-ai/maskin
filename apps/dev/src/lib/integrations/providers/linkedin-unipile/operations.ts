@@ -25,7 +25,7 @@ import {
 import { findIntegrationRow, getCredential } from '../../lookup'
 import { readContextFor } from '../../read-context'
 import { type ActionRecorder, LinkedInActionRefusal } from './action-log'
-import type { LinkedInFileAttachment } from './attachment'
+import { type LinkedInFileAttachment, loadPostImage } from './attachment'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
@@ -1667,6 +1667,8 @@ export type PublishPostInput = {
 	text?: unknown
 	post_as?: unknown
 	attachments?: unknown
+	/** Workspace file ids (PNG or JPEG). The server reads the bytes; the caller never sends them. */
+	attachment_file_ids?: unknown
 	can_read?: unknown
 	can_comment?: unknown
 	quoted_post_id?: unknown
@@ -1677,7 +1679,12 @@ export type PublishPostResult = {
 	post_id: string
 	post_url?: string
 	published_at: string
+	/** The LinkedIn identity the post went out as. Absent for callers without a fan-out identity. */
+	posted_as?: { name: string; public_identifier: string }
 }
+
+/** A carousel holds up to 9 images, the same cap the tool schema had for raw attachments. */
+const MAX_POST_IMAGES = 9
 
 function normalizePublishResponse(body: unknown): PublishPostResult {
 	const rec = (body ?? {}) as Record<string, unknown>
@@ -1707,7 +1714,15 @@ function validatePublishPostInput(
 	input: PublishPostInput,
 	opts: { requirePostAs: boolean },
 ):
-	| { ok: true; payload: { text: string; post_as?: string; extras: Record<string, unknown> } }
+	| {
+			ok: true
+			payload: {
+				text: string
+				post_as?: string
+				extras: Record<string, unknown>
+				attachment_file_ids?: string[]
+			}
+	  }
 	| {
 			ok: false
 			error: string
@@ -1730,6 +1745,24 @@ function validatePublishPostInput(
 	} else if (typeof input.post_as === 'string' && input.post_as.length > 0) {
 		postAs = input.post_as
 	}
+	let fileIds: string[] | undefined
+	if (input.attachment_file_ids !== undefined) {
+		const ids = input.attachment_file_ids
+		if (
+			!Array.isArray(ids) ||
+			ids.length > MAX_POST_IMAGES ||
+			!ids.every((id) => typeof id === 'string' && id.length > 0)
+		) {
+			return {
+				ok: false,
+				error: `attachment_file_ids must be a list of at most ${MAX_POST_IMAGES} workspace file ids`,
+			}
+		}
+		if (ids.length > 0) fileIds = ids
+	}
+	if (fileIds && Array.isArray(input.attachments) && input.attachments.length > 0) {
+		return { ok: false, error: 'pass attachment_file_ids or attachments, not both' }
+	}
 	const extras: Record<string, unknown> = {}
 	if (Array.isArray(input.attachments)) extras.attachments = input.attachments
 	if (typeof input.can_read === 'string') extras.can_read = input.can_read
@@ -1740,7 +1773,12 @@ function validatePublishPostInput(
 	}
 	return {
 		ok: true,
-		payload: postAs ? { text: input.text, post_as: postAs, extras } : { text: input.text, extras },
+		payload: {
+			text: input.text,
+			...(postAs ? { post_as: postAs } : {}),
+			extras,
+			...(fileIds ? { attachment_file_ids: fileIds } : {}),
+		},
 	}
 }
 
@@ -1757,6 +1795,8 @@ export async function publishLinkedInPost(
 	if (!validation.ok) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
 	}
+	// Read the files before anything is claimed or posted, so a bad file fails with nothing sent.
+	const images = await loadPostImages(ctx, validation.payload.attachment_file_ids)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
@@ -1773,8 +1813,10 @@ export async function publishLinkedInPost(
 	// request should collide even if LinkedIn renames a field later. `account_id`
 	// is deliberately excluded because it identifies the caller's LinkedIn
 	// credential, not the request semantics.
+	// The file ids are in the hash (validation.payload carries them), so the same text with a
+	// different image is a different post and a retry of the same call replays.
 	const requestBody = { tool: 'linkedin_publish_post', ...validation.payload }
-	return withContentHashIdempotency({
+	const published = await withContentHashIdempotency({
 		db: ctx.db,
 		actorId: ctx.actorId,
 		tool: 'linkedin_publish_post',
@@ -1787,12 +1829,47 @@ export async function publishLinkedInPost(
 						text: validation.payload.text,
 						...(postAs ? { post_as: postAs } : {}),
 						...validation.payload.extras,
+						...(images ? { attachments: images } : {}),
 					}),
 				{ mutating: true },
 			)
 			return normalizePublishResponse(upstream.body)
 		},
 	})
+	return ctx.identity
+		? {
+				...published,
+				posted_as: { name: ctx.identity.displayName, public_identifier: ctx.identity.identitySlug },
+			}
+		: published
+}
+
+async function loadPostImages(
+	ctx: LinkedInOperationContext,
+	fileIds: string[] | undefined,
+): Promise<LinkedInFileAttachment[] | undefined> {
+	if (!fileIds) return undefined
+	const images: LinkedInFileAttachment[] = []
+	for (const fileId of fileIds) {
+		try {
+			images.push(
+				await loadPostImage(
+					{ db: ctx.db, storage: ctx.storage },
+					{ workspaceId: ctx.workspaceId, fileId },
+				),
+			)
+		} catch (err) {
+			if (err instanceof LinkedInIntegrationError) {
+				throw new LinkedInIntegrationError(err.code, `File ${fileId}: ${err.message}`, {
+					httpStatus: err.httpStatus,
+					retryable: err.retryable,
+					cause: err,
+				})
+			}
+			throw err
+		}
+	}
+	return images
 }
 
 export type CommentInput = { post_id?: unknown; text?: unknown }

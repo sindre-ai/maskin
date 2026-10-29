@@ -1,9 +1,9 @@
 import { triggerEventQueue } from '@maskin/db/schema'
 import { and, eq, isNull } from 'drizzle-orm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
-import { emitObjectCreated, newQueueRunner, pollUntil, setV2Flag } from './queue-helpers'
+import { emitObjectCreated, newQueueRunner, pollUntil } from './queue-helpers'
 
 // Per-trigger FIFO proof for S3 (tech spec §4.3): a cooling trigger's held
 // events replay in event_id order while a healthy sibling keeps firing.
@@ -13,8 +13,6 @@ vi.mock('../../lib/analytics/posthog', () => ({
 }))
 
 describe('S3 — per-trigger FIFO through the event queue', () => {
-	afterEach(() => setV2Flag(null))
-
 	it('cool one trigger, fire 5 events, unfreeze: its events replay in order; the healthy trigger fired all 5 meanwhile', async () => {
 		const actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId)
@@ -31,7 +29,6 @@ describe('S3 — per-trigger FIFO through the event queue', () => {
 			type: 'event',
 			config,
 		})
-		setV2Flag(ws.id)
 
 		const { bridge, dispatches, runner, internals } = newQueueRunner()
 		await runner.start()

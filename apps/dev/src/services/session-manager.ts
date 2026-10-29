@@ -66,6 +66,7 @@ import {
 	sql,
 } from 'drizzle-orm'
 import { resolveChatIdleCloseMs } from '../config/session-idle'
+import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
@@ -113,7 +114,6 @@ import {
 	effectiveAccess,
 	listAgentAccess,
 } from '../lib/integrations/agent-access'
-import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CUSTOM_MCP_PROVIDER,
 	customGatewayServerSpec,
@@ -131,11 +131,7 @@ import {
 	buildExtensionMcpServers,
 	createExtensionMcpKeyReader,
 } from '../lib/integrations/extensions-db'
-import {
-	byoApiKeyEnvName,
-	byoLoginEnvNames,
-	redactLaunchEnv,
-} from '../lib/integrations/keychain-env'
+import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
 import {
 	findUnresolvedKeychainReferences,
 	stripSessionLevelMcps,
@@ -230,12 +226,11 @@ import {
 import {
 	SESSION_RESUMED_LOG,
 	type SessionUsage,
-	extractSessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
-	sumSegmentResultUsage,
+	sumUncountedResultUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
@@ -1857,7 +1852,7 @@ export class SessionManager extends EventEmitter {
 			// session that never technically "completes". Must run before
 			// cleanupSession() clears the in-memory stdout tail this reads.
 			const llmRoute = (session.config as Record<string, unknown>)?.llm_route
-			await this.accumulateSessionUsage(sessionId, { allTurns: true })
+			await this.accumulateSessionUsage(sessionId)
 			if (llmRoute === LLM_ROUTE_MASKIN_PLAN) {
 				await this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId)
 			}
@@ -2591,7 +2586,10 @@ ${cont.continues_prompt}
 				},
 			})
 			if (credentialGap) {
-				throw new LlmCredentialsUnavailableError(credentialGap.detail)
+				throw new LlmCredentialsUnavailableError(credentialGap.detail, false, {
+					workspaceName: ws.name,
+					noCredentialsConfigured: true,
+				})
 			}
 		}
 
@@ -3005,9 +3003,11 @@ ${cont.continues_prompt}
 				const gated = isGatedRow(integration.config)
 				const missing = gated ? [] : referencedVars(server).filter((v) => !(v in keychainEnv))
 				if (missing.length > 0) {
+					// A login is never put in the container, so asking for access cannot fix it.
+					const usesLogin = missing.some((v) => index.get(v)?.kind === 'login')
 					const names = [...new Set(missing.map((v) => index.get(v)?.displayName ?? v))]
 					unattached.push(
-						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}`,
+						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}${usesLogin ? ' (a saved login can only be typed on your computer, not given to a tool server that runs here)' : ''}`,
 					)
 					continue
 				}
@@ -3406,8 +3406,10 @@ ${cont.continues_prompt}
 
 	/**
 	 * Env vars for the Keychain credentials this session may read: bring-your-own API
-	 * keys and logins, active or still inside their undo window, that an agent grant names
-	 * for the session's actor. The grant filter runs in SQL so a key
+	 * keys, active or still inside their undo window, that an agent grant names for the
+	 * session's actor. A saved LOGIN is never injected, so its password never reaches the
+	 * session: the agent types it with desktop_type and a {{keychain:Name.password}}
+	 * reference that Maskin fills in (lib/integrations/keychain-typing.ts). The grant filter runs in SQL so a key
 	 * scoped to another actor is never decrypted and never writes a denied-read event
 	 * on every launch of an unrelated agent. Each match then goes through getCredential,
 	 * which re-checks status and scope, decrypts, and writes the audit row.
@@ -3415,8 +3417,7 @@ ${cont.continues_prompt}
 	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
 	 * other integration.
 	 *
-	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name} for a key, and
-	 * KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME / _PASSWORD for a login. A name with no usable
+	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name}. A name with no usable
 	 * characters is skipped, and so is a later credential whose name an earlier one
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
@@ -3449,7 +3450,7 @@ ${cont.continues_prompt}
 			.where(
 				and(
 					eq(integrations.workspaceId, session.workspaceId),
-					inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
+					eq(integrations.providerMode, 'byo_apikey'),
 					inArray(integrations.status, ['active', 'pending_undo']),
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
@@ -3465,13 +3466,7 @@ ${cont.continues_prompt}
 			.orderBy(asc(integrations.createdAt))
 
 		for (const row of rows) {
-			const isLogin = row.providerMode === 'byo_login'
-			const loginNames = isLogin && row.displayName ? byoLoginEnvNames(row.displayName) : null
-			const name = isLogin
-				? (loginNames?.username ?? null)
-				: row.displayName
-					? byoApiKeyEnvName(row.displayName)
-					: null
+			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
 			if (!name) {
 				logger.warn('Keychain credential has no usable name for an env var; not injected', {
 					sessionId: session.id,
@@ -3494,20 +3489,7 @@ ${cont.continues_prompt}
 					sessionId: session.id,
 					requestId: `launch:${session.id}:${row.id}`,
 				})
-				if (isLogin && loginNames) {
-					const login = decodeLogin(credential.value)
-					if (!login) {
-						logger.error('Keychain login is not a well-formed login; not injected', {
-							sessionId: session.id,
-							integrationId: row.id,
-						})
-						continue
-					}
-					env[loginNames.username] = login.username
-					env[loginNames.password] = login.password
-				} else {
-					env[name] = credential.value
-				}
+				env[name] = credential.value
 			} catch (err) {
 				// Undone, or its grants changed, between the query and the read. Either way
 				// this session does not get it.
@@ -3810,6 +3792,7 @@ ${cont.continues_prompt}
 							} satisfies SessionLogEvent)
 							if (chunk.stream === 'stdout') {
 								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
+								await this.recordTurnUsage(sessionId, chunk.data)
 							}
 						}
 
@@ -4186,7 +4169,7 @@ ${cont.continues_prompt}
 		// the helper returns null and the columns are left untouched. Parser
 		// failures must never block the status update below, which is why
 		// this is a separate try/catch'd write.
-		const usage = await this.accumulateSessionUsage(sessionId, { allTurns: true })
+		const usage = await this.accumulateSessionUsage(sessionId)
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const classifiedFailureReason =
@@ -4534,35 +4517,51 @@ ${cont.continues_prompt}
 	 */
 	private async accumulateSessionUsage(
 		sessionId: string,
-		opts: { allTurns?: boolean } = {},
+		opts: { live?: boolean } = {},
 	): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
 		let tokensOnly = false
+		let watermark: { logId: number; cliCost: number } | null = null
+		let previousWatermarkLogId: number | null = null
 		try {
-			const drained = this.activeSessions.get(sessionId)?.logsDrained
+			// A live (per-turn) write runs inside the log-ingest loop that `logsDrained`
+			// represents, so waiting on it would only burn the timeout.
+			const drained = opts.live ? undefined : this.activeSessions.get(sessionId)?.logsDrained
 			if (drained) {
 				await Promise.race([
 					drained,
 					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
 				])
 			}
-			// Every close-out (pause, exit, timeout, idle close, helper finished) must add up
-			// every turn of this process. The tail below holds only the newest one.
-			if (opts.allTurns) {
-				usage = await sumSegmentResultUsage(this.db, sessionId)
-			}
-			const tail = usage ? undefined : this.activeSessions.get(sessionId)?.stdoutTail
-			if (tail) {
-				usage = parseUsageFromLogChunks([tail])
-			}
-			if (!usage) {
-				usage = await extractSessionUsage(this.db, sessionId)
-			}
-			// No `result` envelope (e.g. killed at the wall-time ceiling): fall back
-			// to the tokens the assistant messages reported. Cost stays null.
-			if (!usage) {
-				usage = await sumAssistantUsage(this.db, sessionId)
-				tokensOnly = usage !== null
+			// Add only the `result` envelopes the row does not hold yet. A per-turn write
+			// (recordTurnUsage) may already have saved the earlier turns, and a pause saved
+			// an earlier segment; the watermark on the row says where counting resumes.
+			const [counted] = await this.db
+				.select({
+					logId: sessions.usageCountedLogId,
+					cliCost: sessions.usageCountedCliCost,
+				})
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			previousWatermarkLogId = counted?.logId ?? null
+			const uncounted = await sumUncountedResultUsage(this.db, sessionId, {
+				logId: previousWatermarkLogId,
+				cliCost: counted?.cliCost != null ? Number(counted.cliCost) : null,
+			})
+			if (uncounted) {
+				usage = uncounted.usage
+				watermark = uncounted.watermark
+			} else if (previousWatermarkLogId === null && !opts.live) {
+				// Nothing was ever counted and no envelope is in the logs yet: the in-memory
+				// tail may hold one that is not flushed, and a run killed at the wall-time
+				// ceiling has none, so fall back to the tokens the assistant messages reported.
+				const tail = this.activeSessions.get(sessionId)?.stdoutTail
+				if (tail) usage = parseUsageFromLogChunks([tail])
+				if (!usage) {
+					usage = await sumAssistantUsage(this.db, sessionId)
+					tokensOnly = usage !== null
+				}
 			}
 		} catch (err) {
 			logger.warn('Failed to parse usage from session logs', { sessionId, error: String(err) })
@@ -4590,7 +4589,7 @@ ${cont.continues_prompt}
 		}
 
 		try {
-			await this.db
+			const updated = await this.db
 				.update(sessions)
 				.set({
 					totalCostUsd:
@@ -4617,17 +4616,67 @@ ${cont.continues_prompt}
 						usage.durationMs != null
 							? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
 							: undefined,
+					usageCountedLogId: watermark?.logId,
+					usageCountedCliCost: watermark ? String(watermark.cliCost) : undefined,
 					updatedAt: new Date(),
 				})
 				// Terminal rows are final: every caller writes before it settles the
 				// row (or, for pause, on a non-terminal 'paused' row), so a write that
 				// finds a terminal status is a late straggler and must not add cost.
-				.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TERMINAL_STATUSES])))
+				// The watermark compare-and-set is what stops two writers adding the same
+				// envelopes: the loser finds the watermark moved and adds nothing.
+				.where(
+					and(
+						eq(sessions.id, sessionId),
+						notInArray(sessions.status, [...TERMINAL_STATUSES]),
+						watermark
+							? sql`${sessions.usageCountedLogId} IS NOT DISTINCT FROM ${previousWatermarkLogId}`
+							: undefined,
+					),
+				)
+				.returning({ id: sessions.id })
+			if (watermark && updated.length === 0) return null
 		} catch (err) {
 			logger.error('Failed to persist accumulated session usage', { sessionId, error: String(err) })
 		}
 
 		return usage
+	}
+
+	/**
+	 * Saves one turn's tokens and cost onto the session row as soon as its `result`
+	 * envelope lands, so a chat that is still running shows its usage live instead of
+	 * zero until it settles. Every settle path adds only what the row's usage watermark
+	 * says is not counted yet (accumulateSessionUsage), so this never double-counts.
+	 *
+	 * Credits are still debited at settle; this only moves the displayed usage. Never
+	 * throws: a usage hiccup must not break log ingest.
+	 */
+	private async recordTurnUsage(sessionId: string, chunk: string): Promise<void> {
+		if (!chunk.includes('"type":"result"')) return
+		try {
+			const usage = await this.accumulateSessionUsage(sessionId, { live: true })
+			if (!usage) return
+			const [row] = await this.db
+				.select({ workspaceId: sessions.workspaceId, actorId: sessions.actorId })
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			if (!row) return
+			// A step event, not a lifecycle one: the web app refetches the session lists and
+			// the usage block on any session event, while the live-activity fan-out treats
+			// `session_updated` as a throttled step change.
+			await recordEvent(this.db, {
+				workspaceId: row.workspaceId,
+				actorId: row.actorId,
+				action: 'session_updated',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+		} catch (err) {
+			logger.warn('Failed to record per-turn session usage', { sessionId, error: String(err) })
+		}
 	}
 
 	/**
@@ -4644,13 +4693,12 @@ ${cont.continues_prompt}
 	 *
 	 * Combines the workspace's already-persisted usage from other sessions
 	 * (`getWorkspacePlanUsdCentsUsage`, which reads this session's own
-	 * totalCostUsd/inputTokens/outputTokens columns too — still NULL/0 while
-	 * it's running, since those are only written on pause/completion) with a
-	 * fresh live scan of *this* session's own logs
-	 * (`sumSegmentResultUsage`), so no separate persistence step is needed
-	 * here — nothing is written until the session actually stops, at which
-	 * point `handleCompletion` → `accumulateSessionUsage` +
-	 * `debitCreditIfApplicable` record and bill it exactly as normal.
+	 * totalCostUsd/inputTokens/outputTokens columns too, which `recordTurnUsage`
+	 * fills turn by turn) with a scan of the results of *this* session that are
+	 * not saved on its row yet (`sumUncountedResultUsage`). Nothing is written
+	 * here — when the session stops, `handleCompletion` →
+	 * `accumulateSessionUsage` + `debitCreditIfApplicable` record and bill it
+	 * exactly as normal.
 	 *
 	 * Stops the session once its own overage would cost *more than* the
 	 * remaining credit balance — not just once the balance hits exactly
@@ -4678,7 +4726,12 @@ ${cont.continues_prompt}
 			typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
 		const [persistedUsedCents, liveUsage] = await Promise.all([
 			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
-			sumSegmentResultUsage(this.db, session.id),
+			// Only this session's results not yet saved on its row: the saved ones are already in
+			// the persisted figure above, so a full scan would count every earlier turn twice.
+			sumUncountedResultUsage(this.db, session.id, {
+				logId: session.usageCountedLogId ?? null,
+				cliCost: session.usageCountedCliCost != null ? Number(session.usageCountedCliCost) : null,
+			}).then((r) => r?.usage ?? null),
 		])
 		// Route-aware cost, not the live scan's own reported figure: only
 		// maskin_plan sessions reach this check (the watchdog query filters on
@@ -4786,7 +4839,7 @@ ${cont.continues_prompt}
 		// Save the usage first, as the timeout close does: the terminal row is final
 		// for usage writes, and the settle below reads these totals for its
 		// $ai_generation event. Must run before cleanupSession() clears the tail.
-		await this.accumulateSessionUsage(session.id, { allTurns: true })
+		await this.accumulateSessionUsage(session.id)
 		// settleSession is the only writer of terminal sessions.status. Route
 		// the flip through it AND fold the previously-inline pushAgentFiles /
 		// stopSandbox into its post-commit callbacks per §3.1 (folded from
@@ -4887,7 +4940,7 @@ ${cont.continues_prompt}
 		if (!session || session.status !== 'running') return
 
 		// Same reason as the idle close: save the usage before the row goes final.
-		await this.accumulateSessionUsage(session.id, { allTurns: true })
+		await this.accumulateSessionUsage(session.id)
 
 		// A helper that stopped on a Claude limit banner carries the reset time in
 		// its result text. Read it the way the two exit paths do, so the retry
@@ -5140,7 +5193,7 @@ ${cont.continues_prompt}
 				// reads the in-memory stdout tail that settleSession's own scope
 				// can't see; settleSession's additive-overlay handles the delta
 				// once accumulateSessionUsage has written it.)
-				await this.accumulateSessionUsage(session.id, { allTurns: true })
+				await this.accumulateSessionUsage(session.id)
 
 				// settleSession is the only writer of terminal sessions.status. Its
 				// stopSandbox / pushAgentFiles callbacks fold what used to be the
@@ -5342,8 +5395,15 @@ ${cont.continues_prompt}
 						if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
 						await this.db
 							.update(actors)
-							.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
-							.where(eq(actors.id, session.actorId))
+							.set({
+								agentState: 'paused',
+								agentStateUpdatedAt: new Date(),
+								// An idle auto-pause is not a person's pause: it must keep waking on chat.
+								metadata: withoutHumanPauseMarker,
+								updatedAt: new Date(),
+							})
+							// Not if a person paused it meanwhile: this write would drop their marker.
+							.where(and(eq(actors.id, session.actorId), notHumanPaused))
 							.catch((err) =>
 								logger.warn('Failed to sync agentState after auto-pause', {
 									sessionId: session.id,
@@ -5953,6 +6013,7 @@ ${cont.continues_prompt}
 				} satisfies SessionLogEvent)
 				if (line.stream === 'stdout') {
 					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
+					await this.recordTurnUsage(sessionId, line.content)
 				}
 			}
 		}
@@ -6151,11 +6212,31 @@ ${cont.continues_prompt}
 		// back, doubling the bytes pulled from Postgres on every completion.
 		let usage: SessionUsage | null = null
 		let stdoutChunks: string[] = []
+		let newWatermark: { logId: number; cliCost: number } | null = null
+		let previousWatermarkLogId: number | null = null
 		try {
 			stdoutChunks = await readSessionStdoutChunks(this.db, sessionId)
-			// Every turn of this process, not the last result line only (see sumSegmentResultUsage).
-			usage =
-				(await sumSegmentResultUsage(this.db, sessionId)) ?? parseUsageFromLogChunks(stdoutChunks)
+			// Only the envelopes no earlier write counted: per-turn writes already saved the
+			// earlier turns of a chat, and the tail read above holds just the newest turn.
+			const [counted] = await this.db
+				.select({
+					logId: sessions.usageCountedLogId,
+					cliCost: sessions.usageCountedCliCost,
+				})
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			previousWatermarkLogId = counted?.logId ?? null
+			const uncounted = await sumUncountedResultUsage(this.db, sessionId, {
+				logId: previousWatermarkLogId,
+				cliCost: counted?.cliCost != null ? Number(counted.cliCost) : null,
+			})
+			if (uncounted) {
+				usage = uncounted.usage
+				newWatermark = uncounted.watermark
+			} else if (previousWatermarkLogId === null) {
+				usage = parseUsageFromLogChunks(stdoutChunks)
+			}
 		} catch (err) {
 			logger.warn('Failed to read or parse usage from remote session logs', {
 				sessionId,
@@ -6241,6 +6322,8 @@ ${cont.continues_prompt}
 							usage.durationMs != null
 								? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
 								: undefined,
+						usageCountedLogId: newWatermark ? sql`${newWatermark.logId}` : undefined,
+						usageCountedCliCost: newWatermark ? sql`${String(newWatermark.cliCost)}` : undefined,
 					}
 				: null
 
@@ -6287,7 +6370,16 @@ ${cont.continues_prompt}
 					await this.db
 						.update(sessions)
 						.set(usageColumns)
-						.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, resolvedStatuses)))
+						.where(
+							and(
+								eq(sessions.id, sessionId),
+								notInArray(sessions.status, resolvedStatuses),
+								// A per-turn write may have moved the watermark since it was read.
+								newWatermark
+									? sql`${sessions.usageCountedLogId} IS NOT DISTINCT FROM ${previousWatermarkLogId}`
+									: undefined,
+							),
+						)
 					usageApplied = true
 				}
 				// The agent-server owns the sandbox and the workspace is already in

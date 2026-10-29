@@ -237,6 +237,18 @@ actor FakeListAPI: ConversationsAPI {
 		return chatConvo("new", title: title, participants: [chatMe])
 	}
 
+	var createdMetadata: [ChatSendMetadata?] = []
+
+	func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		createdMetadata.append(initialMetadata)
+		return try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			idempotencyKey: idempotencyKey)
+	}
+
 	func updateState(
 		conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?, markUnread: Bool
 	) async throws {

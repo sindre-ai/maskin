@@ -15,8 +15,7 @@
 // parking it in a list that only ever grows.
 //
 // Workspace-scoped entries exist alongside the per-actor pair for backend
-// surfaces whose off-state is workspace-wide (trigger-engine v2's persistent
-// cooldown store and hold-and-replay queue read this shape). `isFlagEnabled`
+// surfaces whose off-state is workspace-wide. `isFlagEnabled`
 // stays actor-scoped; `isFlagEnabledForWorkspace` OR-combines workspace-scoped
 // enables with an optional actor-scoped fallback.
 //
@@ -26,11 +25,6 @@
 // Every known flag id. Ids absent from this registry always resolve to false,
 // so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
 // first step of introducing a new flag.
-//
-// The `loops-v4-polish.*` sub-flags let a single Loops & Loop detail v4 delta be
-// reverted without dropping the rest: `.targets` for D5 (Loop targets) and
-// `.unread` for D8 (unread boundary + Mark read). See
-// `.claude/rules/feature-flags.md` for the boundary rule.
 export const FLAGS = {
 	/**
 	 * Google Drive integration visibility on the Settings > Integrations page.
@@ -47,106 +41,28 @@ export const FLAGS = {
 	 * google-drive ships to every workspace.
 	 */
 	GOOGLE_DRIVE_INTEGRATION_UI: 'google-drive-integration-ui',
-	loopsV4PolishTargets: 'loops-v4-polish.targets',
-	loopsV4PolishUnread: 'loops-v4-polish.unread',
 	/**
-	 * Gates the trigger-engine v2 rollout (bet
-	 * [Fix the trigger engine](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f46b18f7-1cce-487b-9113-8657a6e30b16)).
-	 * Off preserves today's behaviour on every axis — matcher, cooldown,
-	 * event queue, and comment action. On (per tester actor for frontend
-	 * reads, per workspace via `FF_WORKSPACE_FEATURES` for the backend read
-	 * sites S1 shipped) unlocks:
-	 *
-	 *  - matcher v2 list-value semantics (bet #8)
-	 *  - persistent cooldown store (bet #7)
-	 *  - hold-and-replay event queue (bet #6)
-	 *  - the `action = commented` trigger surface (bet #12) — the trigger
-	 *    builder in `apps/web/src/components/triggers/trigger-form.tsx`
-	 *    reads this flag via `useFeatureFlag('trigger_engine_v2')` and hides
-	 *    the "On comment posted" action + its filter block when off, and the
-	 *    matcher in `apps/dev/src/services/trigger-runner.ts` rejects
-	 *    `action = commented` when off so a trigger saved under an old flag
-	 *    state never silently misses events.
-	 *
-	 * Task S7 formalises the workspace-scoped resolver
-	 * (`isFlagEnabledForWorkspace`) that the matcher's cooldown/suppression
-	 * gate points at; the entry lives here from S6 so the frontend gate
-	 * resolves against the registry today. Retire once the four v2 surfaces
-	 * are on for every workspace.
-	 */
-	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
-	/**
-	 * Bring-your-own integrations UI: the custom extensions list on Settings >
-	 * Extensions, the add-extension modal and the extension detail page
-	 * (/settings/extensions/$extId). Gates the visible surfaces only. The
-	 * extensions table, the /api/extensions API and POST /api/webhooks/x/:token
-	 * are not flagged: without an extension row every request to the route is
-	 * a 404, so it is safe for everyone. Default off; on for the two tester
-	 * humans through FF_TESTER_FEATURES. Retire once the surface is on for
-	 * everyone (delete the boundary, then this entry).
-	 */
-	BYO_EXTENSIONS_UI: 'byo-extensions-ui',
-	/**
-	 * Rich Tiptap-based markdown editor (bet `666e3c4a`). Off means the
-	 * existing `<Textarea>` blur-emit surface. On means `<MarkdownEditor>` from
-	 * `@maskin/markdown/react/editor` mounts at the same call site. Retire it
-	 * once the editor has been through tester validation across
-	 * `ObjectDocumentView` / `ObjectCreateForm` / `NotificationInput`.
-	 */
-	RICH_MARKDOWN_EDITOR: 'rich-markdown-editor',
-	/**
-	 * Gates the daily capability scan (bet
+	 * Gates the weekly capability note that Chief of Staff sends in a person's
+	 * 1-1 (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
-	 * Workspace-scoped, read with `isFlagEnabledForWorkspace` in
-	 * `services/capability-scanner.ts`. Off means no scanner work and no
-	 * `capability_*` event is written. On ({workspaceId}:capability-scan in
-	 * `FF_WORKSPACE_FEATURES`, then restart) the scan runs in shadow mode: it
-	 * writes snapshots and findings as events and messages nobody. Backend only,
-	 * no UI reads it. Retire once the scan is on for every workspace.
-	 */
-	CAPABILITY_SCAN: 'capability-scan',
-	/**
-	 * Gates agent-started messages in a person's 1-1 chat (bet
-	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
-	 * Actor-scoped on the RECIPIENT, read with `isFlagEnabled(recipientId, ...)`
-	 * in `services/proactive-message.ts`. Off means `sendProactiveMessage` refuses
-	 * with flag_off and nobody is messaged; the capability scan keeps running in
-	 * shadow mode. Rollout: the tester's actor id in `FF_TESTER_ACTOR_IDS` and
-	 * this id in `FF_TESTER_FEATURES`, then restart. Backend only, no UI reads it.
-	 * Retire once agent-started notes are on for everyone.
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace at the
+	 * top of runCapabilityDigest. Off means no note is sent in that workspace and
+	 * findings stay pending, so they merge into the first note once it is on.
+	 * The scan itself is not flagged (it only writes events); its off-switch is
+	 * the env var FEATURE_CAPABILITY_SCAN=0. Retire once the notes are on for
+	 * everyone.
 	 */
 	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
 	/**
-	 * Unipile webhook deliveries become `events` rows (message.new first). Read
-	 * per integration row on the dedicated linkedin-unipile webhook route, on the
-	 * integration's owner actor (actor_id, falling back to created_by), after
-	 * account resolution and before the dedupe claim. Off means a signed
-	 * delivery is acknowledged with `skipped: flag_off` and nothing is written,
-	 * so switching it on later needs no replay. A rollout gate, not a kill
-	 * switch (env + restart); the fast stop is disabling the trigger. Retire
-	 * once the Unipile webhook events bet is won. See parent bet [Unipile webhook
-	 * events as triggers](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/756e1cbe-9933-4fe2-a3fd-d95ce6497044).
+	 * Gates iOS dictation through the backend transcription route (task
+	 * [iOS dictation: send speech to the backend transcription route](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0a322ceb-338c-4b2d-b796-fcb228d0a7a4)).
+	 * Read by the iPhone app once per launch from GET /api/feature-flags, for the
+	 * signed-in actor. Off means the app dictates with Apple's on-device recogniser
+	 * as before and no audio leaves the phone. On means each phrase is sent to
+	 * POST /transcriptions, and Apple's recogniser takes over if a request fails.
+	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
 	 */
-	LINKEDIN_UNIPILE_EVENTS: 'linkedin-unipile-events',
-	/**
-	 * Gates the LinkedIn outreach writes: withdraw_invitation, react_to_post, send_inmail and
-	 * any send whose approved object carries a file (`attachment_file_id`). Read per call on
-	 * the workspace, with the calling actor as fallback. Off means a send with a file is
-	 * refused with INVALID_INPUT; plain text sends are unaffected. See parent bet [Sales Reps
-	 * close the LinkedIn outreach loop](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/aff468ba-2519-4401-836e-2251c9560e5b).
-	 * Retire once the outreach tools are on for everyone.
-	 */
-	LINKEDIN_OUTREACH_ACTIONS: 'linkedin-outreach-actions',
-	/**
-	 * Gates the redesigned search page (bet
-	 * [Search that narrows as you type](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/94f2368a-d097-4e0a-83e2-2be7c68585da)).
-	 * Frontend only, read once in the search route component, which swaps the
-	 * legacy page for the v2 page. Off means the page behaves as before. The
-	 * search endpoint, the shared types and the analytics events are not flagged:
-	 * they are additive and safe for everyone. Stays off until the 14-day
-	 * baseline has run. Retire once search v2 is on for everyone.
-	 */
-	SEARCH_V2: 'search-v2',
+	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

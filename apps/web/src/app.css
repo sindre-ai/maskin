@@ -651,8 +651,11 @@
    Tailwind size utility of text-lg (18px) or larger: those are already
    above the 16px iOS floor, and bumping them to 16px would shrink title
    textareas from 24px (text-2xl) down to 16px. :where() keeps the exclusion
-   at zero-specificity so the base selector's specificity is unchanged. */
-@media (max-width: 767px) {
+   at zero-specificity so the base selector's specificity is unchanged.
+   The floor also applies to touch devices at any width (pointer: coarse):
+   an iPhone in landscape (~844px+) or an iPad is wider than 767px but still
+   zooms on a sub-16px field. */
+@media (max-width: 767px), (pointer: coarse) {
 	:is(input, select, textarea, [role="combobox"]):not(
 			:where(
 					[class~="text-lg"],
@@ -802,6 +805,37 @@
 	@keyframes actor-avatar-ring-spin {
 		to {
 			transform: rotate(360deg);
+		}
+	}
+
+	/* The phone sheet of a chat chip: it rises over --duration-slide, the backdrop fades in over 180ms.
+	   The global reduced-motion rule above zeros both. */
+	.chip-sheet-rise {
+		animation: chip-sheet-rise var(--duration-slide) var(--ease-emphasized);
+	}
+	.chip-sheet-fade {
+		animation: chip-sheet-fade var(--duration-180) var(--ease-standard);
+	}
+	@keyframes chip-sheet-rise {
+		from {
+			transform: translateY(100%);
+		}
+	}
+	@keyframes chip-sheet-fade {
+		from {
+			opacity: 0;
+		}
+	}
+
+	/* The hover preview of a chat chip: it fades in and rises 2px over 180ms.
+	   The global reduced-motion rule above zeros it. */
+	.chip-preview-rise {
+		animation: chip-preview-rise var(--duration-180) var(--ease-standard);
+	}
+	@keyframes chip-preview-rise {
+		from {
+			opacity: 0;
+			transform: translateY(2px);
 		}
 	}
 

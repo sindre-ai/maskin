@@ -1,5 +1,9 @@
+import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useState } from 'react'
+import { queryKeys } from '@/lib/query-keys'
+import { useWorkspace } from '@/lib/workspace-context'
+import { QueryClientContext, useQuery } from '@tanstack/react-query'
+import { useContext, useState } from 'react'
 
 const AVATAR_PALETTE = [
 	'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
@@ -75,17 +79,16 @@ export function getActorAvatarPaletteClass(
 	return palette[idx] ?? palette[0]
 }
 
-export function ActorAvatar({
-	name,
-	type: _type,
-	size = 'sm',
-	className,
-	onClick,
-	id,
-	imageUrl,
-	tone = 'subtle',
-	working = false,
-}: {
+// The workspace the avatar sits in, or undefined outside one (isolated renders, stories).
+function useOptionalWorkspaceId(): string | undefined {
+	try {
+		return useWorkspace().workspaceId
+	} catch {
+		return undefined
+	}
+}
+
+type ActorAvatarProps = {
 	name: string
 	type: string
 	/** 20 / 28 / 38 / 52px. Overlapping avatar stacks size themselves with
@@ -104,7 +107,52 @@ export function ActorAvatar({
 	 *  the container "Agent working on this object" so screen readers announce
 	 *  the state; the avatar itself keeps its existing name. */
 	working?: boolean
-}) {
+}
+
+/**
+ * Draws the actor's picture when it has one. Callers that already hold an
+ * `avatar_url` pass it as `imageUrl`; every other call site that passes an
+ * `id` gets it from the workspace actors list, so lists, chats and the sidebar
+ * show pictures without each one threading the URL through. Outside a workspace
+ * or query provider (stories, isolated tests) it draws initials only.
+ */
+export function ActorAvatar(props: ActorAvatarProps) {
+	const queryClient = useContext(QueryClientContext)
+	const workspaceId = useOptionalWorkspaceId()
+	if (props.imageUrl === undefined && props.id && queryClient && workspaceId) {
+		return <ActorAvatarWithLookup {...props} id={props.id} workspaceId={workspaceId} />
+	}
+	return <ActorAvatarView {...props} />
+}
+
+// Same key and fetcher as useActors, so this shares the list every other surface loads.
+function useActorAvatarUrl(id: string, workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.actors.all(workspaceId),
+		queryFn: () => api.actors.list(workspaceId),
+		select: (actors) => actors.find((actor) => actor.id === id)?.avatar_url ?? undefined,
+	})
+}
+
+function ActorAvatarWithLookup({
+	workspaceId,
+	...props
+}: ActorAvatarProps & { id: string; workspaceId: string }) {
+	const { data: imageUrl } = useActorAvatarUrl(props.id, workspaceId)
+	return <ActorAvatarView {...props} imageUrl={imageUrl} />
+}
+
+function ActorAvatarView({
+	name,
+	type: _type,
+	size = 'sm',
+	className,
+	onClick,
+	id,
+	imageUrl,
+	tone = 'subtle',
+	working = false,
+}: ActorAvatarProps) {
 	// Track the specific url that failed so a caller swapping imageUrl resets the fallback
 	// automatically — without a useEffect that biome flags for missing dep semantics.
 	const [failedUrl, setFailedUrl] = useState<string | null>(null)
@@ -200,5 +248,33 @@ function WorkingRing({
 		>
 			{children}
 		</span>
+	)
+}
+
+/**
+ * Lays an actor's picture over a plate the caller already draws (the sidebar
+ * account row keeps its own tile). Draws nothing until the picture is known, so
+ * the plate's letter shows through while it loads and when there is none.
+ * The plate needs `relative overflow-hidden`.
+ */
+export function ActorPictureOverlay({ id }: { id: string }) {
+	const queryClient = useContext(QueryClientContext)
+	const workspaceId = useOptionalWorkspaceId()
+	if (!queryClient || !workspaceId) return null
+	return <ActorPictureOverlayWithLookup id={id} workspaceId={workspaceId} />
+}
+
+function ActorPictureOverlayWithLookup({ id, workspaceId }: { id: string; workspaceId: string }) {
+	const { data: imageUrl } = useActorAvatarUrl(id, workspaceId)
+	const [failedUrl, setFailedUrl] = useState<string | null>(null)
+	if (!imageUrl || failedUrl === imageUrl) return null
+	return (
+		<img
+			src={imageUrl}
+			alt=""
+			className="absolute inset-0 h-full w-full object-cover"
+			onError={() => setFailedUrl(imageUrl)}
+			draggable={false}
+		/>
 	)
 }

@@ -1588,6 +1588,20 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		// Threads the caller started or replied in, across their conversations.
+		replyThreads: (workspaceId: string, params?: { limit?: number }) => {
+			const qs = params?.limit ? `?limit=${params.limit}` : ''
+			return request<ReplyThreadListResponse>(`/conversations/threads${qs}`, { workspaceId })
+		},
+		markThreadRead: (id: string, workspaceId: string, rootId: number, lastReadMessageId: number) =>
+			request<{ last_read_message_id: number }>(
+				`/conversations/${id}/messages/${rootId}/thread/read`,
+				{
+					method: 'PUT',
+					body: { last_read_message_id: lastReadMessageId },
+					workspaceId,
+				},
+			),
 	},
 
 	files: {
@@ -2793,6 +2807,25 @@ export interface MessageIntegrationAccessRequest {
 	reason?: string
 }
 
+/** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
+export interface MessageMcpServerRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	name: string
+	hint?: string
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	url?: string
+	/** Values the agent may know (not secret): a region, or a Keychain reference. */
+	env?: Record<string, string>
+	headers?: Record<string, string>
+	/** Names the person types the value for in the card. */
+	secret_env?: string[]
+	secret_headers?: string[]
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
@@ -2846,6 +2879,8 @@ export interface MessageMetadata {
 	keychain_access_request?: MessageKeychainAccessRequest
 	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
 	integration_access_request?: MessageIntegrationAccessRequest
+	/** Backend-owned: an agent's request to add a tool (MCP) server, rendered as a card. */
+	mcp_server_request?: MessageMcpServerRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
@@ -2881,6 +2916,39 @@ export interface MessageResponse {
 	 * and for callers that are not participants of the conversation.
 	 */
 	spawned_sessions?: SpawnedSession[]
+	/** The root this message replies under; null or absent on a top-level message. */
+	threadRootId?: number | null
+	/** A reply that was also sent to the main timeline. */
+	threadAlsoInChannel?: boolean
+	/** Reply summary on a top-level message that has replies; null when it has none. */
+	thread?: ReplyThreadSummary | null
+}
+
+export interface ReplyThreadParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
+}
+
+export interface ReplyThreadSummary {
+	replyCount: number
+	lastReplyId: number
+	lastReplyAt: string | null
+	/** Replies by others newer than the caller's thread read cursor. */
+	unreadCount: number
+	participants: ReplyThreadParticipant[]
+}
+
+export interface ReplyThreadListItem {
+	conversationId: string
+	conversationTitle: string
+	root: MessageResponse
+	thread: ReplyThreadSummary
+	lastReply: MessageResponse | null
+}
+
+export interface ReplyThreadListResponse {
+	threads: ReplyThreadListItem[]
 }
 
 /**
@@ -2955,6 +3023,10 @@ export interface PostMessageInput {
 	content: string
 	metadata?: MessageMetadata
 	session_id?: string
+	/** Post as a reply under this top-level message. */
+	thread_root_id?: number
+	/** With thread_root_id: also show the reply in the main timeline. */
+	also_in_channel?: boolean
 }
 
 export interface SessionConfigInput {

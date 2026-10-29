@@ -130,4 +130,23 @@ describe('useStar', () => {
 		const list = qc.getQueryData<ObjectResponse[]>(queryKeys.objects.list(WORKSPACE_ID, undefined))
 		expect(list?.[0]?.is_starred_by_me).toBe(true)
 	})
+
+	it('flips a star on the grouped Objects page, whose rows live in group page caches', async () => {
+		const qc = new QueryClient()
+		const key = queryKeys.objects.groupPage(WORKSPACE_ID, {
+			group_by: 'status',
+			group_value: 'todo',
+		})
+		qc.setQueryData(key, [makeObject({ is_starred_by_me: false })])
+		vi.mocked(api.objects.star).mockResolvedValue({
+			is_starred_by_me: true,
+			starred_at: '2026-09-14T00:00:00Z',
+		})
+
+		const { result } = renderHook(() => useStar(OBJECT_ID), { wrapper: wrapper(qc) })
+		expect(result.current.isStarred).toBe(false)
+		act(() => result.current.toggle())
+		await waitFor(() => expect(result.current.isStarred).toBe(true))
+		expect(qc.getQueryData<ObjectResponse[]>(key)?.[0]?.is_starred_by_me).toBe(true)
+	})
 })

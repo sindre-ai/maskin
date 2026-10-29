@@ -31,7 +31,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
-import { TOOL_ANNOTATIONS } from './annotations.js'
+import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -44,6 +44,7 @@ import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
 	parseApiErrorStatus,
+	reasonFromError,
 	toolErrorResponse,
 } from './read-error.js'
 import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
@@ -232,6 +233,7 @@ const CARD_METADATA_KEYS: Record<string, string | null> = {
 	integration_connect: 'connect_integration',
 	keychain_request: 'request_keychain_credential',
 	keychain_access_request: 'request_keychain_access',
+	mcp_server_request: 'add_mcp_server',
 	computer_request: 'show_computer',
 	question: 'ask_user_question',
 	needed_tools: null,
@@ -1924,6 +1926,40 @@ function extractWorkspaceId(args: unknown): string | undefined {
 }
 
 /**
+ * Refuses a write that names a workspace other than the one the agent session
+ * is running in. The model's own workspace_id wins over the session's default
+ * in every handler, so without this an agent whose key reaches several
+ * workspaces can write to any of them by passing the id.
+ *
+ * Applies only when the call belongs to a session (over HTTP the
+ * X-Maskin-Session-Id header, on stdio the container's SESSION_ID) and a
+ * default workspace is known, so human-driven use outside a session is
+ * untouched. A write is anything not in READ_ONLY_TOOLS, so a new tool is
+ * covered until someone marks it read-only; reads keep taking any workspace
+ * the key reaches. create_workspace is exempt: it has no session workspace to
+ * stay inside. Throws rather than rewriting the id so the model sees its error.
+ */
+function assertWriteStaysInSessionWorkspace(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+): void {
+	if (READ_ONLY_TOOLS.has(toolName) || toolName === 'create_workspace') return
+	const sessionWorkspaceId = config.defaultWorkspaceId
+	if (!sessionWorkspaceId) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	const requested = extractWorkspaceId(args)
+	if (requested === undefined || requested === sessionWorkspaceId) return
+	throw new Error(
+		`${toolName} was called with workspace_id ${requested}, but this session runs in workspace ${sessionWorkspaceId}. Agents can only write to the workspace they run in. Omit workspace_id or pass ${sessionWorkspaceId}.`,
+	)
+}
+
+/**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
  * count one mutation event per call when at least one inner item explicitly
@@ -2055,6 +2091,36 @@ export interface HeroCardPayload {
 }
 
 const HERO_CARD_UI_PAGE_SIZE = 25
+
+/**
+ * Max `relationships` and `connected_objects` rows get_objects returns per
+ * object. The graph endpoint returns every edge, so a hub object with hundreds
+ * of edges produced a 600k+ character result no client could read. Callers
+ * page the rest with list_relationships({ object_id }).
+ */
+export const GET_OBJECTS_EDGE_CAP = 100
+
+/**
+ * Cap one graph block at GET_OBJECTS_EDGE_CAP rows. When rows are dropped the
+ * second element tells the caller the real total and where to page the rest;
+ * it is null when everything fit, so small objects keep their exact shape.
+ */
+function capGraphBlock(
+	rows: unknown,
+	block: 'relationships' | 'connected_objects',
+	objectId: string,
+): [unknown, Record<string, unknown> | null] {
+	if (!Array.isArray(rows) || rows.length <= GET_OBJECTS_EDGE_CAP) return [rows, null]
+	return [
+		rows.slice(0, GET_OBJECTS_EDGE_CAP),
+		{
+			returned: GET_OBJECTS_EDGE_CAP,
+			total: rows.length,
+			truncated: true,
+			hint: `Showing the first ${GET_OBJECTS_EDGE_CAP} of ${rows.length}. Call list_relationships with object_id ${objectId} to page the rest${block === 'connected_objects' ? ', then get_objects on the endpoint ids you need' : ''}.`,
+		},
+	]
+}
 
 interface RawObject {
 	id: string
@@ -2892,6 +2958,7 @@ export function createMcpServer(config: McpConfig) {
 			const start = Date.now()
 			let response: unknown
 			try {
+				assertWriteStaysInSessionWorkspace(config, name, args)
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
@@ -3283,10 +3350,22 @@ export function createMcpServer(config: McpConfig) {
 					}
 					const extras: Record<string, unknown> = {}
 					if (includeSet.has('relationships') && graph && 'relationships' in graph) {
-						extras.relationships = graph.relationships
+						const [rows, page] = capGraphBlock(
+							graph.relationships,
+							'relationships',
+							withUrl.id as string,
+						)
+						extras.relationships = rows
+						if (page) extras.relationships_page = page
 					}
 					if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
-						extras.connected_objects = graph.connected_objects
+						const [rows, page] = capGraphBlock(
+							graph.connected_objects,
+							'connected_objects',
+							withUrl.id as string,
+						)
+						extras.connected_objects = rows
+						if (page) extras.connected_objects_page = page
 					}
 					if (includeSet.has('events') && graph && 'events' in graph) {
 						extras.events = graph.events
@@ -5716,6 +5795,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.before_id) params.set('before_id', String(args.before_id))
 			if (args.after_id) params.set('after_id', String(args.after_id))
+			if (args.thread_root_id) params.set('thread_root_id', String(args.thread_root_id))
 			params.set('limit', String(args.limit))
 			const result = await apiCall(
 				config,
@@ -7918,7 +7998,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it in your environment.`,
+						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it. ${args.kind === 'login' ? 'A login is never in your environment: type it on your computer with desktop_type, using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.' : 'It is in your environment as KEYCHAIN_BYO_APIKEY_<NAME>.'}`,
 					},
 				],
 			}
@@ -8009,7 +8089,7 @@ export function createMcpServer(config: McpConfig) {
 						content: [
 							{
 								type: 'text' as const,
-								text: `You already have access to ${args.credential_name}. It is in your environment; if it is missing, you were started before it was shared, so ask the user to send you a new message.`,
+								text: `You already have access to ${args.credential_name}. An API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}. If it does not work, you were started before it was shared, so ask the user to send you a new message.`,
 							},
 						],
 					}
@@ -8033,7 +8113,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it: an API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.`,
 					},
 				],
 			}
@@ -8115,6 +8195,62 @@ export function createMcpServer(config: McpConfig) {
 					{
 						type: 'text' as const,
 						text: 'A card asking for that access is now in the chat. The user decides there. End your turn now without a closing message. If they allow it you are restarted with the new access.',
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_mcp_server',
+		{
+			description: tools.add_mcp_server.description,
+			inputSchema: tools.add_mcp_server.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat with the server's details; the person adds it there (secrets typed
+			// into the card, never through the model), which saves it, gives it to the agent that
+			// asked and restarts that session. The agent can never add a server or widen its own
+			// access from here.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'add_mcp_server',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
+				)
+			}
+			const { workspace_id: workspaceId, ...card } = args
+			try {
+				await apiCall(config, 'POST', `/api/sessions/${sessionId}/mcp-server-card`, card, {
+					workspaceId,
+				})
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
+					)
+				}
+				if (status === 400) return fail(reasonFromError(err, 'invalid_param'))
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card to add that server is now in the chat, with its details filled in. The user checks it, types any key it needs and presses Add. End your turn now without a closing message. If they add it you are restarted with the server attached.',
 					},
 				],
 			}
