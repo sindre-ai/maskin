@@ -1,5 +1,7 @@
+import { AddToAgentButton, useCanGiveAgentAccess } from '@/components/chat/add-to-agent-button'
 import { ProviderConnectRow } from '@/components/integrations/provider-connect-row'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
+import type { IntegrationResponse } from '@/lib/api'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 
 interface IntegrationConnectCardProps {
@@ -10,6 +12,8 @@ interface IntegrationConnectCardProps {
 	provider: string
 	/** Draws the quiet row of an agent intro instead of the full card. */
 	introState?: IntegrationToolState
+	/** The agent the intro is for: a connected tool it has no access to gets an Add to agent button. */
+	agent?: { id: string; name: string }
 }
 
 /**
@@ -32,9 +36,11 @@ export function IntegrationConnectCard({
 	conversationId,
 	provider,
 	introState,
+	agent,
 }: IntegrationConnectCardProps) {
 	const { data: providers } = useProviders()
 	const { data: integrations } = useIntegrations(workspaceId)
+	const canGiveAccess = useCanGiveAgentAccess()
 
 	const info = providers?.find((p) => p.name === provider)
 	// Unknown or still loading → render nothing; the message's markdown already
@@ -53,6 +59,17 @@ export function IntegrationConnectCard({
 			(i) => i.provider === provider && i.status !== 'active' && i.status !== 'pending',
 		)
 
+	const addToAgent =
+		introState === 'connected_not_on_agent' && agent && canGiveAccess(installations[0]) ? (
+			<AddToAgentButton
+				workspaceId={workspaceId}
+				integration={installations[0] as IntegrationResponse}
+				toolName={info.displayName}
+				agentId={agent.id}
+				agentName={agent.name}
+			/>
+		) : undefined
+
 	return (
 		<div className="mt-2">
 			<ProviderConnectRow
@@ -63,6 +80,7 @@ export function IntegrationConnectCard({
 				variant="chat"
 				reconnect={reconnect}
 				introState={introState}
+				introAction={addToAgent}
 			/>
 		</div>
 	)

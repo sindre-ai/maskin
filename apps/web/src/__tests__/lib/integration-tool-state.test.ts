@@ -131,6 +131,88 @@ describe('integrationToolState', () => {
 		).toBe('connected_not_on_agent')
 	})
 
+	describe('with the agent given, its access to the integration decides', () => {
+		const agentId = 'agent-1'
+
+		it('is connected but not on the agent when its own grant is none', () => {
+			expect(
+				integrationToolState({
+					provider: provider(),
+					integrations: [
+						row({
+							defaultAgentAccess: 'read',
+							agentGrants: [{ actorId: agentId, access: 'none' }],
+						}),
+					],
+					agentMcpServers: {},
+					agentId,
+				}),
+			).toBe('connected_not_on_agent')
+		})
+
+		it('is connected but not on the agent when there is no grant and the default is none', () => {
+			expect(
+				integrationToolState({
+					provider: provider(),
+					integrations: [row({ defaultAgentAccess: 'none', agentGrants: [] })],
+					agentMcpServers: {},
+					agentId,
+				}),
+			).toBe('connected_not_on_agent')
+		})
+
+		it('is ready on the default access, with no entry on the agent itself', () => {
+			expect(
+				integrationToolState({
+					provider: provider(),
+					integrations: [row({ defaultAgentAccess: 'read', agentGrants: [] })],
+					agentMcpServers: {},
+					agentId,
+				}),
+			).toBe('ready')
+		})
+
+		it('is ready on its own grant even when the default is none', () => {
+			expect(
+				integrationToolState({
+					provider: provider(),
+					integrations: [
+						row({
+							defaultAgentAccess: 'none',
+							agentGrants: [{ actorId: agentId, access: 'read_write' }],
+						}),
+					],
+					agentMcpServers: {},
+					agentId,
+				}),
+			).toBe('ready')
+		})
+
+		it('has sharing off when access is there but the workspace stopped sharing', () => {
+			expect(
+				integrationToolState({
+					provider: provider(),
+					integrations: [
+						row({ defaultAgentAccess: 'read', config: { expose_to_agent_sessions: false } }),
+					],
+					agentMcpServers: {},
+					agentId,
+				}),
+			).toBe('sharing_off')
+		})
+
+		it('keeps the old answer when the server sent no access fields', () => {
+			expect(
+				integrationToolState({
+					provider: provider(),
+					integrations: [row()],
+					agentMcpServers: {},
+					agentId,
+				}),
+			).toBe('connected_not_on_agent')
+		})
+	})
+
 	describe('a provider injected into every agent session', () => {
 		const slack = provider({
 			name: 'slack',
