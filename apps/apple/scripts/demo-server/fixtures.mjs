@@ -1,3 +1,5 @@
+import { addPerfRoom, perfOverrides } from './perf-fixtures.mjs'
+
 // Demo data for the design review: the Northwind workspace from the Watch, iPad and TV prototypes.
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 export const WORKSPACE_ID = uuid(1)
@@ -262,6 +264,9 @@ const rooms = [
 		at: DAY,
 	},
 ]
+
+const PERF = process.env.DEMO_PERF === '1'
+if (PERF) addPerfRoom(rooms, { PRIYA, CHIEF })
 // Participants as the API sends them on the list, create and detail responses alike.
 const participantRow = (id) => {
 	const a = actors.find((x) => x.id === id)
@@ -279,6 +284,17 @@ const postedComments = new Map()
 let nextEventId = 9000
 
 export function overrides({ method, path, params, query, body, base, item }) {
+	if (PERF) {
+		const hit = perfOverrides({
+			method,
+			path,
+			query,
+			item,
+			base,
+			ctx: { uuid, ago, ME, actors, WORKSPACE_ID, CHIEF, PRIYA },
+		})
+		if (hit) return hit
+	}
 	if (method !== 'get' && method !== 'post') return null
 	if (method === 'post' && path === '/api/events' && typeof body?.entity_id === 'string') {
 		const event = {
