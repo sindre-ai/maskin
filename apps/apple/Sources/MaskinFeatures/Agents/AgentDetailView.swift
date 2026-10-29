@@ -102,9 +102,8 @@ struct AgentDetailView: View {
 			if let runtime, let workspaceID = runtime.environment.workspaceId {
 				NavigationStack {
 					SessionLogsView(
-						store: SessionLogsStore(
-							sessionID: session.id,
-							api: APISessionLogsSource(client: runtime.environment.client, workspaceID: workspaceID)),
+						sessionID: session.id,
+						api: APISessionLogsSource(client: runtime.environment.client, workspaceID: workspaceID),
 						session: store.sessions.first { $0.id == session.id } ?? session)
 				}
 				.presentationDetents([.large])

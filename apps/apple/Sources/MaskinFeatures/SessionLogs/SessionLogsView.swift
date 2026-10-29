@@ -6,8 +6,15 @@ import SwiftUI
 /// A session's log: what the agent said and did (Readable), the untouched rows (Raw), or only
 /// what went wrong (Problems). Follows the tail while the session is alive.
 struct SessionLogsView: View {
-	let store: SessionLogsStore
+	/// Owned here, not passed in: a store built in the sheet's closure would be rebuilt (and sit
+	/// on the loading skeleton, never started) whenever the agent page above refreshes.
+	@State private var store: SessionLogsStore
 	let session: AgentSession
+
+	init(sessionID: String, api: any SessionLogsAPI, session: AgentSession) {
+		_store = State(initialValue: SessionLogsStore(sessionID: sessionID, api: api))
+		self.session = session
+	}
 
 	var body: some View {
 		VStack(spacing: 0) {
