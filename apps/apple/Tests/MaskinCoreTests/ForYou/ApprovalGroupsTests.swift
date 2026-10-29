@@ -166,7 +166,6 @@ struct ApprovalGroupStoreTests {
 		let store = ForYouStore(
 			source: source, decisions: decisions, workspaceId: { "ws-1" },
 			defaults: UserDefaults(suiteName: "groups-\(UUID().uuidString)")!, eventDebounce: .milliseconds(10))
-		store.v8Enabled = true
 		return (store, source, backend)
 	}
 
@@ -281,9 +280,6 @@ struct ApprovalGroupStoreTests {
 		reviews.setBody("Changed again", for: draft)
 		reviews.approve(draft)
 		#expect(store.unsentEditNote(for: card) == ForYouStore.sendingEditNote)
-
-		store.v8Enabled = false
-		#expect(store.unsentEditNote(for: card) == nil)
 	}
 
 	@Test func onlyTheOptionsThatSendTheMessageAreHeldBack() {
@@ -295,25 +291,6 @@ struct ApprovalGroupStoreTests {
 		#expect(!ReviewDraft.sendsMessage(DecisionOption(label: "Hold", recommended: true)))
 		#expect(!ReviewDraft.sendsMessage(DecisionOption(label: "Don\u{2019}t send")))
 		#expect(!ReviewDraft.sendsMessage(DecisionOption(label: "Skip")))
-	}
-
-	@Test func theFlagAnswerIsRememberedPerPersonForTheFirstDraw() {
-		let defaults = UserDefaults(suiteName: "flag-\(UUID().uuidString)")!
-		#expect(!APIForYouV8Flag.remembered(actorId: "me", defaults: defaults))
-		defaults.set(true, forKey: APIForYouV8Flag.memoryKey(actorId: "me"))
-		#expect(APIForYouV8Flag.remembered(actorId: "me", defaults: defaults))
-		#expect(!APIForYouV8Flag.remembered(actorId: "someone-else", defaults: defaults))
-		#expect(!APIForYouV8Flag.remembered(actorId: nil, defaults: defaults))
-	}
-
-	@Test func withTheFlagOffTheFeedIsPlainCards() async {
-		let (store, source, _) = make()
-		store.v8Enabled = false
-		source.feed = .success(["a", "b", "c"].enumerated().map { approval($1, rank: $0) })
-		await store.load()
-		#expect(store.needsItems.count == 3)
-		for item in store.needsItems { if case .group = item { Issue.record("a group needs the flag") } }
-		#expect(store.reviewDrafts.isEmpty)
 	}
 
 	@Test func theSentenceSaysNothingIsBlockedOnAnEmptyFeed() async {
