@@ -107,7 +107,9 @@ export function AgentComposer({ agent }: { agent: ActorResponse }) {
 				onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
 				onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 			/>
-			<p className="mt-1.5 px-1 text-[11.5px] text-muted-foreground">Opens your chat with {agent.name}</p>
+			<p className="mt-1.5 px-1 text-[11.5px] text-muted-foreground">
+				Opens your chat with {agent.name}
+			</p>
 		</div>
 	)
 }
