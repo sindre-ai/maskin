@@ -17,7 +17,8 @@ extension View {
 }
 
 /// The filter chips row: All · Unread n · Threads n · Pinned · People · Agents · Groups. 34pt, `inverse` when
-/// on. Shown only when the Display menu turns chips on.
+/// on. Shown only when the Display menu turns chips on. On the bottom pill the row is cut to
+/// All · Unread n · Threads n · Pinned; People, Agents and Groups are not drawn there.
 struct TeamFilterChips: View {
 	@Binding var chip: TeamFilterChip
 	let unreadCount: Int
@@ -26,11 +27,17 @@ struct TeamFilterChips: View {
 	/// Opens the Threads screen. Threads are a place, not a filter, so the chip does not stay selected.
 	var onThreads: (() -> Void)?
 	/// On the bottom glass pill: unselected chips draw no fill of their own, the row fades at both
-	/// ends, and the selected chip is scrolled into view when the row appears.
+	/// ends, the selected chip is scrolled into view when the row appears, and only the pill's
+	/// chips are drawn.
 	var onGlass = false
 
+	/// The chips the bottom pill draws, in order; Threads sits after Unread.
+	static let pillChips: [TeamFilterChip] = [.all, .unread, .pinned]
+
 	/// The filter chips in order; Threads sits after Unread.
-	private static let chips = TeamFilterChip.allCases.filter { $0 != .flows }
+	private static let allChips = TeamFilterChip.allCases.filter { $0 != .flows }
+
+	private var chips: [TeamFilterChip] { onGlass ? Self.pillChips : Self.allChips }
 
 	@ViewBuilder
 	private func chipButton(_ item: TeamFilterChip) -> some View {
@@ -63,14 +70,20 @@ struct TeamFilterChips: View {
 
 	var body: some View {
 		ScrollViewReader { proxy in
-			row.onAppear { if onGlass { proxy.scrollTo(chip, anchor: .center) } }
+			row.onAppear {
+				guard onGlass else { return }
+				// A People, Agents or Groups pick made on the top row (landscape, iPad) has no chip
+				// on the pill: fall back to All so the list is not left filtered with nothing selected.
+				if !Self.pillChips.contains(chip) { chip = .all }
+				proxy.scrollTo(chip, anchor: .center)
+			}
 		}
 	}
 
 	private var row: some View {
 		ScrollView(.horizontal, showsIndicators: false) {
 			HStack(spacing: MaskinSpace.s4 - 1) {
-				ForEach(Self.chips.prefix(2), id: \.self) { chipButton($0) }
+				ForEach(chips.prefix(2), id: \.self) { chipButton($0) }
 				if let onThreads {
 					Button {
 						MaskinHaptics.play(.selection)
@@ -95,7 +108,7 @@ struct TeamFilterChips: View {
 					.buttonStyle(.maskinPressed)
 					.accessibilityLabel(threadsUnread > 0 ? "Threads, \(threadsUnread) unread" : "Threads")
 				}
-				ForEach(Self.chips.dropFirst(2), id: \.self) { chipButton($0) }
+				ForEach(chips.dropFirst(2), id: \.self) { chipButton($0) }
 			}
 			.padding(.horizontal, MaskinSpace.s9)
 		}
