@@ -596,7 +596,9 @@ describe('MarkdownContent linkedCards: links into another workspace', () => {
 					workspaceId: WS,
 					renderCard: (target, _fallback, context) => {
 						if (!isOther(target)) lookedUp.push(target.id)
-						return context.after ? null : card(target)
+						// Like the real card renderer: a link in a list is a chip, not a card.
+						if (context.after) return null
+						return context.inList ? chip(target) : card(target)
 					},
 					renderChip: (target) => chip(target),
 				}}
