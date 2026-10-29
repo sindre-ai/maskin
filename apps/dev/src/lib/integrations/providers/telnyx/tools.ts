@@ -61,15 +61,16 @@ function ownerSlugOf(contact: Pick<Contact, 'metadata'>): string {
  * Resolves the calendar for a contact's owner. The workspace has one Google Calendar connection
  * (Sebastian's), so every owner resolves to it, and an owner other than sebk comes back with a
  * fallbackReason for the caller to log once. The owner never fails a booking. Null when there is no
- * usable connection.
+ * usable connection. The token read is audited as requestingActorId.
  */
 export async function calendarForOwner(
 	db: Database,
 	workspaceId: string,
 	ownerSlug: string,
+	requestingActorId: string,
 	getToken: typeof getCalendarAccessToken = getCalendarAccessToken,
 ): Promise<ResolvedCalendar | null> {
-	const accessToken = await getToken(db, workspaceId)
+	const accessToken = await getToken(db, workspaceId, requestingActorId)
 	if (!accessToken) return null
 	const resolved: ResolvedCalendar = {
 		client: createCalendarClient({ accessToken }),
@@ -92,6 +93,7 @@ export interface ToolRouterDeps {
 		db: Database,
 		workspaceId: string,
 		ownerSlug: string,
+		requestingActorId: string,
 	) => Promise<ResolvedCalendar | null>
 	telnyx: () => TelnyxClient | null
 	/** Owner slug to human actor id: the same VOICE_FOUNDER_ACTORS map the dialer uses. */
@@ -110,7 +112,8 @@ export interface ToolRouterDeps {
 export function defaultToolRouterDeps(): ToolRouterDeps {
 	return {
 		now: () => new Date(),
-		calendarFor: (db, workspaceId, ownerSlug) => calendarForOwner(db, workspaceId, ownerSlug),
+		calendarFor: (db, workspaceId, ownerSlug, requestingActorId) =>
+			calendarForOwner(db, workspaceId, ownerSlug, requestingActorId),
 		telnyx() {
 			const { apiKey, apiBaseUrl } = readTelnyxRuntimeConfig()
 			return apiKey ? createTelnyxClient({ apiKey, baseUrl: apiBaseUrl }) : null
@@ -207,7 +210,12 @@ async function bookMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 
 	let slots: ReturnType<typeof proposeSlots>
 	try {
-		const calendar = await deps.calendarFor(db, ctx.clientState.workspace_id, ownerSlugOf(contact))
+		const calendar = await deps.calendarFor(
+			db,
+			ctx.clientState.workspace_id,
+			ownerSlugOf(contact),
+			contact.actorId,
+		)
 		if (!calendar) return await calendarFailed('no_calendar_connection')
 		// Once per booking: confirm_meeting_slot always follows this call and resolves the same way.
 		if (calendar.fallbackReason) {
@@ -265,7 +273,7 @@ async function confirmMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 	let event: Awaited<ReturnType<CalendarClient['insertEvent']>>
 	let ownerName: string
 	try {
-		const calendar = await deps.calendarFor(db, workspaceId, ownerSlugOf(contact))
+		const calendar = await deps.calendarFor(db, workspaceId, ownerSlugOf(contact), contact.actorId)
 		if (!calendar) throw new Error('no_calendar_connection')
 		ownerName = calendar.ownerName
 		event = await calendar.client.insertEvent({

@@ -377,15 +377,18 @@ describe('Telnyx tool router: booking follows the contact owner', () => {
 	// A calendarFor that records the owner slug it was asked for and hands back one calendar.
 	function recordingCalendar() {
 		const slugs: string[] = []
+		const actors: string[] = []
 		const { client, insertEvent } = calendarStub()
 		const freeBusy = vi.fn(client.freeBusy)
 		const resolved = { client: { ...client, freeBusy }, ownerName: 'Sebastian' }
 		return {
 			slugs,
+			actors,
 			insertEvent,
 			freeBusy,
-			calendarFor: async (_db: unknown, _ws: string, ownerSlug: string) => {
+			calendarFor: async (_db: unknown, _ws: string, ownerSlug: string, actorId: string) => {
 				slugs.push(ownerSlug)
+				actors.push(actorId)
 				return resolved
 			},
 		}
@@ -450,6 +453,15 @@ describe('Telnyx tool router: booking follows the contact owner', () => {
 		info.mockRestore()
 	})
 
+	it('reads the calendar credential as the contact actor, for slots and event alike', async () => {
+		const t = await setup({ owner: 'sebk' })
+		const rec = recordingCalendar()
+		const r = router({ calendarFor: rec.calendarFor })
+		await t.call(r, 'book_meeting_slot', who)
+		await t.call(r, 'confirm_meeting_slot', { slot_index: 1, ...who })
+		expect(rec.actors).toEqual([getTestActorId(), getTestActorId()])
+	})
+
 	it('a contact with no owner at all asks for an empty slug and still books', async () => {
 		const t = await setup()
 		const rec = recordingCalendar()
@@ -462,12 +474,13 @@ describe('Telnyx tool router: booking follows the contact owner', () => {
 })
 
 describe('calendarForOwner', () => {
-	const token = async () => 'tok'
+	const token = vi.fn(async (_db: unknown, _ws: string, _actor: string) => 'tok')
 
 	it('resolves sebk to Sebastian with no fallback reason', async () => {
-		const res = await calendarForOwner(db, 'ws-1', 'sebk', token)
+		const res = await calendarForOwner(db, 'ws-1', 'sebk', 'actor-1', token)
 		expect(res?.ownerName).toBe('Sebastian')
 		expect(res?.fallbackReason).toBeUndefined()
+		expect(token).toHaveBeenCalledWith(db, 'ws-1', 'actor-1')
 	})
 
 	it.each([
@@ -475,13 +488,13 @@ describe('calendarForOwner', () => {
 		['unassigned', 'owner_unassigned'],
 		['', 'owner_missing'],
 	])('resolves owner %j to Sebastian with fallback reason %s', async (owner, reason) => {
-		const res = await calendarForOwner(db, 'ws-1', owner, token)
+		const res = await calendarForOwner(db, 'ws-1', owner, 'actor-1', token)
 		expect(res?.ownerName).toBe('Sebastian')
 		expect(res?.fallbackReason).toBe(reason)
 	})
 
 	it('returns null, not an error, when the workspace has no calendar connection', async () => {
-		expect(await calendarForOwner(db, 'ws-1', 'magnus', async () => null)).toBeNull()
+		expect(await calendarForOwner(db, 'ws-1', 'magnus', 'actor-1', async () => null)).toBeNull()
 	})
 })
 
