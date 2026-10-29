@@ -14,6 +14,7 @@ import { maskLlmConfigSecrets } from '../lib/actor-llm-config-redaction'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, formatZodError, validationFailureHook } from '../lib/errors'
+import { createWindowLimiter } from '../lib/fixed-window-limiter'
 import { takeInvitePreviewToken } from '../lib/invite-preview-throttle'
 import { generateInviteToken, hashInviteToken } from '../lib/invites-token'
 import { logger } from '../lib/logger'
@@ -772,6 +773,22 @@ const INVITE_RATE_WINDOW_MS = 24 * 60 * 60 * 1000
 // The 21st invite inside the window is rejected.
 const INVITE_RATE_LIMIT = 20
 
+// Per-caller brake on every create attempt. The workspace cap above only counts
+// invites that were stored, so it never sees the "email already has an account"
+// branch, which answers differently from the pending branch and so tells a
+// caller which addresses are registered.
+const INVITE_ATTEMPT_LIMIT = 30
+const INVITE_ATTEMPT_WINDOW_MS = 60 * 60 * 1000
+const inviteAttemptLimiter = createWindowLimiter({
+	limit: INVITE_ATTEMPT_LIMIT,
+	windowMs: INVITE_ATTEMPT_WINDOW_MS,
+})
+
+// Test-only reset so integration tests can isolate cases per describe/it.
+export function _resetInviteAttemptLimiter(): void {
+	inviteAttemptLimiter.reset()
+}
+
 export const createInviteBodySchema = z.object({
 	workspaceId: z.string().uuid(),
 	email: z.string().trim().email().max(320),
@@ -905,7 +922,8 @@ const createInviteRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		429: {
-			description: 'This workspace already sent 20 invites in the last 24 hours',
+			description:
+				'This workspace already sent 20 invites in the last 24 hours, or the caller made too many attempts in the last hour',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		502: {
@@ -924,6 +942,18 @@ app.openapi(createInviteRoute, (async (c) => {
 		return c.json(
 			createApiError('FORBIDDEN', 'Only workspace owners and admins can invite members'),
 			403,
+		)
+	}
+
+	const attempt = inviteAttemptLimiter.hit(callerId)
+	if (!attempt.allowed) {
+		c.header('Retry-After', String(Math.ceil(attempt.retryAfterMs / 1000)))
+		return c.json(
+			createApiError(
+				'RATE_LIMITED',
+				`Too many invite attempts: at most ${INVITE_ATTEMPT_LIMIT} per hour`,
+			),
+			429,
 		)
 	}
 
