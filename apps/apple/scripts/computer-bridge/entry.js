@@ -2,7 +2,7 @@
 // setControlling(...); this page reports back through the "computer" message handler.
 import RFBModule from '@novnc/novnc/lib/rfb'
 
-const RFB = RFBModule && RFBModule.default ? RFBModule.default : RFBModule
+const RFB = RFBModule?.default ? RFBModule.default : RFBModule
 const screen = document.getElementById('screen')
 let rfb = null
 
@@ -16,7 +16,9 @@ function teardown() {
 	if (!rfb) return
 	const old = rfb
 	rfb = null
-	try { old.disconnect() } catch (_) {}
+	try {
+		old.disconnect()
+	} catch (_) {}
 }
 
 const BACKSPACE = 0xff08
@@ -35,7 +37,9 @@ window.maskinComputer = {
 		mine.scaleViewport = true
 		mine.resizeSession = false
 		mine.viewOnly = true
-		mine.addEventListener('connect', () => { if (rfb === mine) post('connect') })
+		mine.addEventListener('connect', () => {
+			if (rfb === mine) post('connect')
+		})
 		// An old connection closing after a newer one started must not touch the new one.
 		mine.addEventListener('disconnect', () => {
 			if (rfb !== mine) return
