@@ -38650,6 +38650,9 @@
 										},
 										"maxItems": 50
 									},
+									"direct": {
+										"type": "boolean"
+									},
 									"initial_message": {
 										"type": "string",
 										"minLength": 1,
@@ -39362,7 +39365,7 @@
 				},
 				"responses": {
 					"200": {
-						"description": "The existing chat: the chat for this subject (new participants were added to it), or the 1-1 with this agent",
+						"description": "The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set",
 						"content": {
 							"application/json": {
 								"schema": {

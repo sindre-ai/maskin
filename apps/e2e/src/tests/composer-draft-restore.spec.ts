@@ -30,13 +30,9 @@ async function setUpConversation(api: TestAPI, workspaceId: string) {
 		title: 'E2E composer draft',
 		participant_actor_ids: [agent.id],
 	})
-	// A second agent keeps this a group chat; with only [agent.id] the API would
-	// return the first chat again.
-	const otherAgent = await api.createAgentActor(`E2E Draft Agent 2 ${Date.now()}`)
-	await api.addWorkspaceMember(workspaceId, otherAgent.id)
 	const other = await api.createConversation(workspaceId, {
 		title: 'E2E composer draft (other)',
-		participant_actor_ids: [agent.id, otherAgent.id],
+		participant_actor_ids: [agent.id],
 	})
 
 	return { conversation, other }

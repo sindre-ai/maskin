@@ -195,6 +195,19 @@ async function addParticipantsToConversation(
 	actorIds: string[],
 	addedBy: string,
 ): Promise<void> {
+	// A DM that gains a third person is a group chat from then on. Dropping the
+	// marker frees the pair to get a fresh DM instead of messages landing in the group.
+	const [marked] = await db
+		.select({ key: conversations.directPairKey })
+		.from(conversations)
+		.where(eq(conversations.id, conversationId))
+		.limit(1)
+	if (marked?.key && actorIds.some((id) => !marked.key?.includes(id))) {
+		await db
+			.update(conversations)
+			.set({ directPairKey: null, updatedAt: new Date() })
+			.where(eq(conversations.id, conversationId))
+	}
 	for (const actorId of actorIds) {
 		await db
 			.insert(conversationParticipants)
@@ -322,25 +335,6 @@ async function conversationDetailForCaller(
 	} as z.infer<typeof conversationDetailResponseSchema>
 }
 
-// A request is a 1-1 when a person asks for exactly one agent and nobody else,
-// with no subject. Returns that agent's id, or null for any other shape (group
-// chats, a person asking for another person, subject chats).
-async function soleAgentOfDirectRequest(
-	db: Database,
-	args: { callerType: string; participantIds: string[]; callerId: string; hasSubject: boolean },
-) {
-	if (args.callerType !== 'human' || args.hasSubject || args.participantIds.length !== 2)
-		return null
-	const otherId = args.participantIds.find((id) => id !== args.callerId)
-	if (!otherId) return null
-	const [other] = await db
-		.select({ type: actors.type })
-		.from(actors)
-		.where(eq(actors.id, otherId))
-		.limit(1)
-	return other?.type === 'agent' ? otherId : null
-}
-
 // POST / - Create conversation
 const createConversationRoute = createRoute({
 	method: 'post',
@@ -356,7 +350,7 @@ const createConversationRoute = createRoute({
 		200: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
 			description:
-				'The existing chat: the chat for this subject (new participants were added to it), or the 1-1 with this agent',
+				'The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set',
 		},
 		201: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
@@ -407,12 +401,23 @@ app.openapi(createConversationRoute, (async (c) => {
 		)
 	}
 
-	const directAgentId = await soleAgentOfDirectRequest(db, {
-		callerType: c.get('actorType'),
-		participantIds,
-		callerId,
-		hasSubject: Boolean(body.subject),
-	})
+	// The other side of a direct message: exactly one person or agent besides the caller.
+	const directOtherId = body.direct ? participantIds.find((id) => id !== callerId) : undefined
+	if (body.direct && (body.subject || participantIds.length !== 2 || !directOtherId)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'A direct message is with exactly one other participant and has no subject',
+				[
+					{
+						field: 'direct',
+						message: 'Name one participant besides yourself and leave out subject',
+					},
+				],
+			),
+			400,
+		)
+	}
 
 	if (body.subject) {
 		const { type, id } = body.subject
@@ -466,16 +471,16 @@ app.openapi(createConversationRoute, (async (c) => {
 
 	async function createInTransaction() {
 		return db.transaction(async (tx) => {
-			let reused = false
 			let created: typeof conversations.$inferSelect | undefined
-			if (directAgentId) {
-				// The 1-1 with this agent: reuse it, or create it under the pair's lock.
-				// The lock is held to the end of this transaction, so the first message
-				// below lands before a concurrent caller looks for the chat.
+			let reused = false
+			if (directOtherId) {
+				// The pair's DM: found, or created once under the pair's lock. The lock is
+				// held to the end of this transaction, so the first message below lands
+				// before a concurrent caller looks for the chat.
 				const direct = await findOrCreateDirectChat(tx, {
 					workspaceId,
 					humanId: callerId,
-					agentId: directAgentId,
+					agentId: directOtherId,
 					title: body.title,
 					createdBy: callerId,
 				})
@@ -499,7 +504,8 @@ app.openapi(createConversationRoute, (async (c) => {
 			}
 			if (!created) throw new Error('Failed to create conversation')
 
-			if (!directAgentId) {
+			// findOrCreateDirectChat added the participants and recorded the event itself.
+			if (!directOtherId) {
 				await tx.insert(conversationParticipants).values(
 					participantIds.map((actorId) => ({
 						conversationId: created.id,
@@ -527,8 +533,7 @@ app.openapi(createConversationRoute, (async (c) => {
 					.where(eq(conversations.id, created.id))
 			}
 
-			// findOrCreateDirectChat records the event itself when it creates the chat.
-			if (!directAgentId) {
+			if (!directOtherId) {
 				await recordEvent(tx, {
 					workspaceId,
 					actorId: callerId,

@@ -9,6 +9,7 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { findDirectChat } from '../../services/direct-chat'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { insertActor, insertWorkspace } from '../factories'
@@ -56,7 +57,7 @@ function appFor(actorId: string, actorType: 'human' | 'agent' = 'human') {
 	return app
 }
 
-describe('POST /api/conversations: the 1-1 with one agent', () => {
+describe('POST /api/conversations: the direct message', () => {
 	let personId: string
 	let agentId: string
 	let workspaceId: string
@@ -64,16 +65,18 @@ describe('POST /api/conversations: the 1-1 with one agent', () => {
 	const open = (actor: string, body: Record<string, unknown>, type: 'human' | 'agent' = 'human') =>
 		appFor(actor, type).request(jsonRequest('POST', '/api/conversations', body, ws()))
 	const idOf = async (res: Response) => ((await res.json()) as { id: string }).id
+	const dmOf = (humanId: string, agent: string) =>
+		findDirectChat(db, { workspaceId, humanId, agentId: agent })
 
-	async function addMember(role = 'member') {
-		const actor = await insertActor(db, { type: role === 'agent' ? 'agent' : 'human' })
+	async function addMember(type: 'human' | 'agent' = 'human') {
+		const actor = await insertActor(db, { type })
 		await db.insert(workspaceMembers).values({ workspaceId, actorId: actor.id, role: 'member' })
 		return actor.id
 	}
 
 	async function chatsWith(actorId: string) {
 		const rows = await db
-			.select({ id: conversations.id })
+			.select({ id: conversations.id, key: conversations.directPairKey })
 			.from(conversations)
 			.innerJoin(
 				conversationParticipants,
@@ -85,7 +88,7 @@ describe('POST /api/conversations: the 1-1 with one agent', () => {
 					eq(conversationParticipants.actorId, actorId),
 				),
 			)
-		return rows.map((r) => r.id)
+		return rows
 	}
 
 	beforeEach(async () => {
@@ -94,42 +97,52 @@ describe('POST /api/conversations: the 1-1 with one agent', () => {
 		agentId = await addMember('agent')
 	})
 
-	it('returns the existing 1-1 the second time and creates it only the first time', async () => {
-		const first = await open(personId, { title: 'Scout', participant_actor_ids: [agentId] })
+	it('creates the DM the first time and returns it every time after', async () => {
+		const first = await open(personId, {
+			title: 'Scout',
+			participant_actor_ids: [agentId],
+			direct: true,
+		})
 		expect(first.status).toBe(201)
 		const firstId = await idOf(first)
 
-		const second = await open(personId, { title: 'Another try', participant_actor_ids: [agentId] })
+		const second = await open(personId, {
+			title: 'Anything else',
+			participant_actor_ids: [agentId],
+			direct: true,
+		})
 		expect(second.status).toBe(200)
 		expect(await idOf(second)).toBe(firstId)
 
-		expect(await chatsWith(agentId)).toEqual([firstId])
+		expect(await chatsWith(agentId)).toHaveLength(1)
+		expect(await dmOf(personId, agentId)).toEqual({ id: firstId })
 	})
 
-	it('puts the first message of a repeat request into the existing 1-1', async () => {
-		const firstId = await idOf(
-			await open(personId, { title: 'Scout', participant_actor_ids: [agentId] }),
+	it('puts a first message into the existing DM', async () => {
+		const dmId = await idOf(
+			await open(personId, { title: 'Scout', participant_actor_ids: [agentId], direct: true }),
 		)
 
 		const res = await open(personId, {
-			title: 'Draft the launch note',
+			title: 'Scout',
 			participant_actor_ids: [agentId],
+			direct: true,
 			initial_message: 'Draft the launch note',
 		})
 		expect(res.status).toBe(200)
-		expect(await idOf(res)).toBe(firstId)
+		expect(await idOf(res)).toBe(dmId)
 
 		const posted = await db
 			.select({ actorId: messages.actorId, content: messages.content })
 			.from(messages)
-			.where(eq(messages.conversationId, firstId))
+			.where(eq(messages.conversationId, dmId))
 		expect(posted).toEqual([{ actorId: personId, content: 'Draft the launch note' }])
 	})
 
-	it('creates one chat when two requests arrive at the same time', async () => {
+	it('creates one DM when two requests arrive at the same time', async () => {
 		const results = await Promise.all([
-			open(personId, { title: 'Race', participant_actor_ids: [agentId] }),
-			open(personId, { title: 'Race', participant_actor_ids: [agentId] }),
+			open(personId, { title: 'Race', participant_actor_ids: [agentId], direct: true }),
+			open(personId, { title: 'Race', participant_actor_ids: [agentId], direct: true }),
 		])
 		expect(results.map((r) => r.status).sort()).toEqual([200, 201])
 		const ids = await Promise.all(results.map(idOf))
@@ -137,67 +150,136 @@ describe('POST /api/conversations: the 1-1 with one agent', () => {
 		expect(await chatsWith(agentId)).toHaveLength(1)
 	})
 
-	it('keeps a separate 1-1 per person', async () => {
+	it('keeps a plain create topical next to an existing DM', async () => {
+		const dmId = await idOf(
+			await open(personId, { title: 'Scout', participant_actor_ids: [agentId], direct: true }),
+		)
+
+		const plain = await open(personId, { title: 'Launch plan', participant_actor_ids: [agentId] })
+		expect(plain.status).toBe(201)
+		const plainId = await idOf(plain)
+		expect(plainId).not.toBe(dmId)
+		const again = await open(personId, { title: 'Launch plan', participant_actor_ids: [agentId] })
+		expect(again.status).toBe(201)
+
+		const chats = await chatsWith(agentId)
+		expect(chats).toHaveLength(3)
+		expect(chats.filter((c) => c.key !== null).map((c) => c.id)).toEqual([dmId])
+		// The DM lookup still returns the DM, not the newest chat.
+		expect(await dmOf(personId, agentId)).toEqual({ id: dmId })
+		const reopened = await open(personId, {
+			title: 'Scout',
+			participant_actor_ids: [agentId],
+			direct: true,
+		})
+		expect(await idOf(reopened)).toBe(dmId)
+	})
+
+	it('creates a topical chat first and a DM later without taking over the topical one', async () => {
+		const topicalId = await idOf(
+			await open(personId, { title: 'Launch plan', participant_actor_ids: [agentId] }),
+		)
+		expect(await dmOf(personId, agentId)).toBeNull()
+
+		const dm = await open(personId, {
+			title: 'Scout',
+			participant_actor_ids: [agentId],
+			direct: true,
+		})
+		expect(dm.status).toBe(201)
+		expect(await idOf(dm)).not.toBe(topicalId)
+	})
+
+	it('gives each person their own DM with the agent', async () => {
 		const otherPerson = await addMember()
 		const mine = await idOf(
-			await open(personId, { title: 'Mine', participant_actor_ids: [agentId] }),
+			await open(personId, { title: 'Mine', participant_actor_ids: [agentId], direct: true }),
 		)
 		const theirs = await idOf(
-			await open(otherPerson, { title: 'Theirs', participant_actor_ids: [agentId] }),
+			await open(otherPerson, { title: 'Theirs', participant_actor_ids: [agentId], direct: true }),
 		)
 		expect(theirs).not.toBe(mine)
 	})
 
-	it('creates a new chat when a third participant is named, and leaves the 1-1 alone', async () => {
-		const oneToOne = await idOf(
-			await open(personId, { title: 'Scout', participant_actor_ids: [agentId] }),
-		)
-		const colleague = await addMember()
-
-		const group = await open(personId, {
-			title: 'Team chat',
-			participant_actor_ids: [agentId, colleague],
-		})
-		expect(group.status).toBe(201)
-		const groupId = await idOf(group)
-		expect(groupId).not.toBe(oneToOne)
-
-		// Asking for the group again makes another one: only a 1-1 is reused.
-		const again = await open(personId, {
-			title: 'Team chat',
-			participant_actor_ids: [agentId, colleague],
-		})
-		expect(again.status).toBe(201)
-		expect(await idOf(again)).not.toBe(groupId)
-
-		// The 1-1 is still the one a plain request finds, not the group.
-		const repeat = await open(personId, { title: 'Scout', participant_actor_ids: [agentId] })
-		expect(await idOf(repeat)).toBe(oneToOne)
-	})
-
-	it('does not reuse a chat with two agents, and a person asking for a person gets a new chat', async () => {
-		const secondAgent = await addMember('agent')
-		const person = await addMember()
-		const pair = await open(personId, {
-			title: 'Pair',
-			participant_actor_ids: [agentId, secondAgent],
-		})
-		expect(pair.status).toBe(201)
-
-		const first = await open(personId, { title: 'Hi', participant_actor_ids: [person] })
-		const second = await open(personId, { title: 'Hi', participant_actor_ids: [person] })
-		expect([first.status, second.status]).toEqual([201, 201])
-		expect(await idOf(first)).not.toBe(await idOf(second))
-	})
-
-	it('does not reuse the 1-1 when an agent starts the chat', async () => {
-		await open(personId, { title: 'Scout', participant_actor_ids: [agentId] })
+	it('lands an agent reaching out to a person in the same DM the person opens', async () => {
 		const fromAgent = await open(
 			agentId,
-			{ title: 'Hello', participant_actor_ids: [personId] },
+			{ title: 'Hello', participant_actor_ids: [personId], direct: true },
 			'agent',
 		)
 		expect(fromAgent.status).toBe(201)
-		expect(await chatsWith(agentId)).toHaveLength(2)
+		const dmId = await idOf(fromAgent)
+
+		const fromPerson = await open(personId, {
+			title: 'Scout',
+			participant_actor_ids: [agentId],
+			direct: true,
+		})
+		expect(fromPerson.status).toBe(200)
+		expect(await idOf(fromPerson)).toBe(dmId)
+	})
+
+	it('has a DM between two agents too', async () => {
+		const secondAgent = await addMember('agent')
+		const first = await open(
+			agentId,
+			{ title: 'Peer', participant_actor_ids: [secondAgent], direct: true },
+			'agent',
+		)
+		const second = await open(
+			secondAgent,
+			{ title: 'Peer', participant_actor_ids: [agentId], direct: true },
+			'agent',
+		)
+		expect([first.status, second.status]).toEqual([201, 200])
+		expect(await idOf(second)).toBe(await idOf(first))
+	})
+
+	it('refuses a DM with more than one other person, with nobody else, or about a subject', async () => {
+		const colleague = await addMember()
+		const group = await open(personId, {
+			title: 'Team',
+			participant_actor_ids: [agentId, colleague],
+			direct: true,
+		})
+		const alone = await open(personId, {
+			title: 'Me',
+			participant_actor_ids: [personId],
+			direct: true,
+		})
+		const about = await open(personId, {
+			title: 'Bet',
+			participant_actor_ids: [agentId],
+			direct: true,
+			subject: { type: 'object', id: crypto.randomUUID() },
+		})
+		expect([group.status, alone.status, about.status]).toEqual([400, 400, 400])
+		expect(await chatsWith(agentId)).toHaveLength(0)
+	})
+
+	it('stops being the DM when a third person is added, and the pair gets a new one', async () => {
+		const dmId = await idOf(
+			await open(personId, { title: 'Scout', participant_actor_ids: [agentId], direct: true }),
+		)
+		const colleague = await addMember()
+
+		const added = await appFor(personId).request(
+			jsonRequest(
+				'POST',
+				`/api/conversations/${dmId}/participants`,
+				{ actor_ids: [colleague] },
+				ws(),
+			),
+		)
+		expect(added.status).toBe(200)
+		expect(await dmOf(personId, agentId)).toBeNull()
+
+		const fresh = await open(personId, {
+			title: 'Scout',
+			participant_actor_ids: [agentId],
+			direct: true,
+		})
+		expect(fresh.status).toBe(201)
+		expect(await idOf(fresh)).not.toBe(dmId)
 	})
 })
