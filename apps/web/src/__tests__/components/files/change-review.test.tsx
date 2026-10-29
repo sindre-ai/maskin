@@ -153,6 +153,22 @@ describe('ChangeReviewLayer', () => {
 		)
 	})
 
+	it('keeps the card in place until the fade ends, then refetches and ends the review', async () => {
+		mount([proposal()])
+		fireEvent.click(await screen.findByRole('button', { name: 'Review changes' }))
+		vi.mocked(api.fileProposals.listOpen).mockResolvedValue({ proposals: [] })
+		fireEvent.click(screen.getByRole('button', { name: 'Accept' }))
+
+		await waitFor(() => expect(api.fileProposals.accept).toHaveBeenCalled())
+		// Mid-fade: no refetch yet, so the card is still there.
+		expect(api.fileProposals.listOpen).toHaveBeenCalledTimes(1)
+		expect(screen.getByRole('region', { name: 'Change 1' })).toBeInTheDocument()
+
+		await waitFor(() => expect(api.fileProposals.listOpen).toHaveBeenCalledTimes(2))
+		await waitFor(() => expect(screen.getByText('editor')).toBeInTheDocument())
+		expect(screen.queryByRole('region', { name: 'Change 1' })).toBeNull()
+	})
+
 	it('sends the edited text as applied_text and shows the edit note', async () => {
 		mount([proposal()])
 		fireEvent.click(await screen.findByRole('button', { name: 'Review changes' }))

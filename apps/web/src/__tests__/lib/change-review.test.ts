@@ -46,7 +46,7 @@ describe('buildReviewItems', () => {
 	it('puts the card where the old text sits, with the neighbouring blocks as context', () => {
 		const items = buildReviewItems(DOC, [{ id: 'c1', oldText: 'Third paragraph.', ordinal: 0 }])
 		expect(items).toEqual([
-			{ kind: 'gap', key: 'gap-0', count: 2 },
+			{ kind: 'gap', key: 'gap-2', count: 2 },
 			{ kind: 'context', key: 'ctx-2', text: 'Second paragraph with bold text.' },
 			{ kind: 'change', key: 'c1', changeId: 'c1', number: 1 },
 			{ kind: 'context', key: 'ctx-4', text: 'Fourth paragraph.' },

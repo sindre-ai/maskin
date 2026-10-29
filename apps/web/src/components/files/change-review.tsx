@@ -2,7 +2,12 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { useAcceptChange, useFileProposals, useRejectChange } from '@/hooks/use-file-proposals'
+import {
+	useAcceptChange,
+	useFileProposals,
+	useRefreshFileReview,
+	useRejectChange,
+} from '@/hooks/use-file-proposals'
 import { trackChangeReviewOpened } from '@/lib/analytics'
 import type { FileDetail, FileProposalDto } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -167,6 +172,7 @@ interface ChangeReviewViewProps {
 export function ChangeReviewView({ file, fileText, proposal, onClose }: ChangeReviewViewProps) {
 	const accept = useAcceptChange(file.workspaceId, file.id)
 	const reject = useRejectChange(file.workspaceId, file.id)
+	const refresh = useRefreshFileReview(file.workspaceId, file.id)
 	const [decided, setDecided] = useState<ReadonlySet<string>>(new Set())
 	const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set())
 	const [applying, setApplying] = useState<ReadonlySet<string>>(new Set())
@@ -194,18 +200,22 @@ export function ChangeReviewView({ file, fileText, proposal, onClose }: ChangeRe
 		(changeId: string) => {
 			const next = order[order.indexOf(changeId) + 1] ?? null
 			setLeaving((s) => new Set(s).add(changeId))
+			// The refetch waits for the fade to end: an accepted change drops out of the open
+			// proposals and out of the new file text, and the card must not vanish mid-fade.
 			window.setTimeout(() => {
-				setDecided((s) => new Set(s).add(changeId))
-				setLeaving((s) => {
-					const n = new Set(s)
-					n.delete(changeId)
-					return n
+				refresh().finally(() => {
+					setDecided((s) => new Set(s).add(changeId))
+					setLeaving((s) => {
+						const n = new Set(s)
+						n.delete(changeId)
+						return n
+					})
+					const target = next ? acceptButtons.current.get(next) : undefined
+					if (target) target.focus()
 				})
-				const target = next ? acceptButtons.current.get(next) : undefined
-				if (target) target.focus()
 			}, FADE_MS)
 		},
-		[order],
+		[order, refresh],
 	)
 
 	const decide = useCallback(
@@ -330,6 +340,12 @@ export function ChangeReviewLayer({ file, fileText, children }: ChangeReviewLaye
 		setReviewingId(null)
 		documentRef.current?.focus()
 	}, [])
+
+	// The last open change was decided and the refetch took the proposal away: the
+	// review ends and focus returns to the document.
+	useEffect(() => {
+		if (reviewingId && !reviewing && !isLoading) leave()
+	}, [reviewingId, reviewing, isLoading, leave])
 
 	const toggle = (proposal: FileProposalDto) => {
 		if (reviewingId === proposal.id) return leave()
