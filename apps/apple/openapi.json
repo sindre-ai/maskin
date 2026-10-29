@@ -42397,6 +42397,9 @@
 									},
 									"also_in_channel": {
 										"type": "boolean"
+									},
+									"top_level": {
+										"type": "boolean"
 									}
 								},
 								"required": [
