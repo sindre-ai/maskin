@@ -67,7 +67,47 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Cheap ubuntu gate in front of every macOS job. The token and OpenAPI snapshot checks
+  # need only node, so they do not need a Mac, and a PR that fails them used to still
+  # queue five Mac jobs (the macOS queue starts about one job at a time). Now it fails here
+  # in about a minute and the Mac jobs are skipped.
+  apple-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Design tokens are up to date
+        run: |
+          if ! node apps/apple/scripts/gen-tokens.mjs --check; then
+            echo "::error::Tokens.swift is stale. Run 'node apps/apple/scripts/gen-tokens.mjs' and commit the result."
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build workspace deps of @maskin/dev
+        run: pnpm --filter "@maskin/dev^..." build
+
+      - name: OpenAPI snapshot is up to date
+        run: |
+          pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts
+          if ! git diff --exit-code -- apps/apple/openapi.json; then
+            echo "::error::apps/apple/openapi.json is stale. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result (then run apps/apple/scripts/gen-api.sh and commit Sources/MaskinAPI/Generated)."
+            exit 1
+          fi
+
   apple:
+    needs: apple-drift
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -177,6 +217,7 @@ jobs:
   # --- 4. Platform builds, one runner per platform ---
   apple-build:
     name: apple-build (${{ matrix.platform }})
+    needs: apple-drift
     runs-on: macos-26
     timeout-minutes: 50
     strategy:
