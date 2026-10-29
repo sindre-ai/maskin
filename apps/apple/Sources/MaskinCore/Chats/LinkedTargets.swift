@@ -264,14 +264,36 @@ public enum LinkedMessagePart: Equatable, Sendable {
 }
 
 public enum LinkedMessageLayout {
-	public static let maxAppendedPerKind = 3
+	/// Cards in one message, across every kind (objects, files, drafts). The links past it stay links.
+	public static let maxCardsPerMessage = 3
+	/// Object links in one message that are looked up. The links past it stay plain.
+	public static let maxObjectLookupsPerMessage = 10
+	/// File links in one message that are looked up.
+	public static let maxFileLookupsPerMessage = 12
+
+	/// The targets of a message that are looked up: the first ten objects and the first twelve files.
+	public static func lookupTargets(_ targets: [LinkedTarget]) -> [LinkedTarget] {
+		var objects = 0
+		var files = 0
+		return targets.filter { target in
+			switch target.kind {
+			case .object:
+				objects += 1
+				return objects <= maxObjectLookupsPerMessage
+			case .file:
+				files += 1
+				return files <= maxFileLookupsPerMessage
+			}
+		}
+	}
 
 	/// The message's body as markdown and in-place cards. A stand-alone link whose target is not (yet)
 	/// a card stays in the text, so a link never vanishes; neighbouring text is merged back into one
 	/// block so a message with no card reads exactly as it did before. A target is drawn once in
-	/// place; its later stand-alone mentions stay links.
+	/// place; its later stand-alone mentions stay links. No more than `limit` cards are drawn, and
+	/// none for a target in `skipping` (it is a card in an earlier message).
 	public static func parts(
-		segments: [LinkedSegment], isCard: (LinkedTarget) -> Bool
+		segments: [LinkedSegment], isCard: (LinkedTarget) -> Bool, limit: Int = .max, skipping: Set<String> = []
 	) -> [LinkedMessagePart] {
 		var parts: [LinkedMessagePart] = []
 		var pending: [String] = []
@@ -293,7 +315,7 @@ public enum LinkedMessageLayout {
 			case .text(let text):
 				pending.append(text)
 			case .item(let target, let label, let source):
-				if isCard(target), placed.insert(target.key).inserted {
+				if placed.count < limit, !skipping.contains(target.key), isCard(target), placed.insert(target.key).inserted {
 					// Only the link becomes the card; what led into it stays words.
 					if let label { pending.append(label) }
 					flush()
@@ -314,19 +336,22 @@ public enum LinkedMessageLayout {
 	}
 
 	/// The cards that go under the message: the targets linked inside a sentence (or beyond the ones
-	/// drawn in place), up to three objects and three files, none of them drawn in place.
+	/// drawn in place), as many as still fit under `limit` once the cards drawn in place are counted,
+	/// in the order the message links them. None of them is drawn in place, and none is in `skipping`.
 	public static func appended(
-		message markdown: String, parts: [LinkedMessagePart], isCard: (LinkedTarget) -> Bool
+		message markdown: String, parts: [LinkedMessagePart], isCard: (LinkedTarget) -> Bool,
+		limit: Int = maxCardsPerMessage, skipping: Set<String> = []
 	) -> [LinkedTarget] {
 		let drawn = Set(
 			parts.compactMap { part -> String? in
 				if case .card(let target) = part { return target.key }
 				return nil
 			})
-		let remaining = LinkedTarget.extract(from: markdown).filter { !drawn.contains($0.key) && isCard($0) }
-		let objects = remaining.filter { $0.kind == .object }.prefix(maxAppendedPerKind)
-		let files = remaining.filter { $0.kind == .file }.prefix(maxAppendedPerKind)
-		return Array(objects) + Array(files)
+		let room = max(0, limit - drawn.count)
+		let remaining = LinkedTarget.extract(from: markdown).filter {
+			!drawn.contains($0.key) && !skipping.contains($0.key) && isCard($0)
+		}
+		return Array(remaining.prefix(room))
 	}
 }
 
@@ -345,6 +370,22 @@ public struct LinkedEntry: Equatable, Sendable, Identifiable {
 
 public enum LinkedConversationItems {
 	public static let defaultLimit = 100
+
+	/// For each target the conversation links to, the message (`ChatMessage.id`) that links it first.
+	/// A target is a card in that message only; later messages show it as a link. `messages` run
+	/// oldest first.
+	public static func firstMentions(in messages: [ChatMessage]) -> [String: String] {
+		var owners: [String: String] = [:]
+		for message in messages {
+			guard message.kind == "message", !message.isFailed,
+				message.content.contains("/objects/") || message.content.contains("/files/")
+			else { continue }
+			for target in LinkedTarget.extract(from: message.content) where owners[target.key] == nil {
+				owners[target.key] = message.id
+			}
+		}
+		return owners
+	}
 
 	/// Every object and file the conversation's messages link to, newest linking message first, one
 	/// entry per target (the newest message wins). `messages` run oldest first. A message of your own

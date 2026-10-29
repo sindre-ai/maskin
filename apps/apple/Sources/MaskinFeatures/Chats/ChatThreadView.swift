@@ -1004,9 +1004,12 @@ struct ThreadTranscript: View {
 			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
 			inlineTranscript: false)
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
+		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
 		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
-			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs)
+			row(
+				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
+				cardOwners: cardOwners)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
@@ -1109,7 +1112,7 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
-		statusIDs: Set<String>
+		statusIDs: Set<String>, cardOwners: [String: String]
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -1167,7 +1170,8 @@ struct ThreadTranscript: View {
 				onSelectVersion: { store.selectVersion($0, of: message.id) },
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
-				}
+				},
+				cardOwners: cardOwners
 			)
 			.overlay {
 				if matchIDs.contains(message.id) {

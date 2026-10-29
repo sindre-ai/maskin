@@ -25,6 +25,23 @@ extension EnvironmentValues {
 	@Entry public var markdownInternalLinkInfo: (@MainActor (URL) -> MarkdownLinkInfo?)? = nil
 }
 
+/// How a link that stands alone on its line is drawn.
+public enum MarkdownStandaloneLinkStyle {
+	/// The card the app supplies for it (an object's card face).
+	case card(AnyView)
+	/// An inline link, as inside a sentence: a link the message has no room to draw as a card.
+	case inline
+	/// The thin icon-and-name card.
+	case simple
+}
+
+extension EnvironmentValues {
+	/// Chooses how a link that stands alone on its line is drawn. Nil, as in previews and tests,
+	/// draws every internal link as the thin card. Supplied by the app root, which knows what a link
+	/// points at; a chat message overrides it, since it places its own cards.
+	@Entry public var markdownStandaloneLink: (@MainActor (URL, String?) -> MarkdownStandaloneLinkStyle)? = nil
+}
+
 /// A link that is the whole of a message or paragraph: `[Title](url)` or a bare address.
 public enum MarkdownStandaloneLink {
 	public struct Match: Equatable, Sendable {
@@ -56,8 +73,10 @@ public enum MarkdownStandaloneLink {
 	}
 }
 
-/// An internal link shown as a card: a tinted symbol, the thing's name, and what kind of thing it
-/// is. Tapping opens it in the app through the same handler as any other internal link.
+/// An internal link shown as a thin card: a tinted symbol, the thing's name, and what kind of thing
+/// it is. Objects and files have the fuller card face instead (see `markdownStandaloneLink`); this
+/// stays for chats, agents and the other links. Tapping opens it in the app through the same
+/// handler as any other internal link.
 public struct MarkdownLinkCard: View {
 	private let url: URL
 	private let title: String?
