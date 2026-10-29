@@ -19,7 +19,7 @@ const searchRoute = createRoute({
 	method: 'get',
 	path: '/',
 	tags: ['Search'],
-	summary: 'Search chats, loops, agents, objects and automations together',
+	summary: 'Search chats, loops, agents, people, objects and automations together',
 	description:
 		'Every typed word must match (AND). Counts and facets cover the full result set; ' +
 		'`results` is capped at `limit`. A source that fails is listed in `partial` and the rest still answer. ' +

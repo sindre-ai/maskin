@@ -1,4 +1,4 @@
-// GET /api/search: five sources, true counts and AND matching. The SQL here is
+// GET /api/search: six sources, true counts and AND matching. The SQL here is
 // new and uses correlated subqueries, so it is pinned against real Postgres
 // (a mocked DB cannot catch unqualified-column bugs, see known-pitfalls.md).
 
@@ -182,9 +182,10 @@ describe('GET /api/search against real Postgres', () => {
 		await say(chat.id, otherUserId, 'the quarterly numbers look odd')
 		await say(chat.id, otherUserId, 'please review the budget')
 
-		expect((await search({ q: 'other person' })).results.map((r) => r.title)).toEqual([
-			'Weekly sync',
-		])
+		// Chats only: the other user is also a member, so the people source finds them too.
+		expect(
+			(await search({ q: 'other person', types: ['chat'] })).results.map((r) => r.title),
+		).toEqual(['Weekly sync'])
 		expect((await search({ q: 'budget' })).total).toBe(1)
 		// Only the latest message is searched.
 		expect((await search({ q: 'quarterly' })).total).toBe(0)
@@ -427,6 +428,93 @@ describe('GET /api/search against real Postgres', () => {
 			'psi off': 'archived',
 		})
 		expect(res.facets.statuses.archived).toBe(1)
+	})
+
+	describe('people', () => {
+		let magnusId: string
+
+		beforeEach(async () => {
+			const magnus = await insertActor(db, { name: 'Magnus Nodegard', email: 'magnus@omega.test' })
+			magnusId = magnus.id
+			await ensureWorkspaceMember(db, workspaceId, magnusId)
+		})
+
+		it('finds a member by name in the people group, with the email as the sub line', async () => {
+			const res = await search({ q: 'magnus' })
+			expect(res.results).toHaveLength(1)
+			expect(res.results[0]).toMatchObject({
+				id: magnusId,
+				group: 'people',
+				type: 'person',
+				title: 'Magnus Nodegard',
+				sub: 'magnus@omega.test',
+				status: 'member',
+			})
+			expect(res.facets.types.person).toBe(1)
+		})
+
+		it('matches the name in any word order and part of the email', async () => {
+			const reversed = await search({ q: 'nodegard magnus' })
+			expect(reversed.results.map((r) => r.id)).toEqual([magnusId])
+
+			const byEmail = await search({ q: 'omega.test' })
+			expect(byEmail.results.map((r) => r.id)).toEqual([magnusId])
+
+			const nameAndEmail = await search({ q: 'nodegard omega' })
+			expect(nameAndEmail.results.map((r) => r.id)).toEqual([magnusId])
+		})
+
+		it('never returns agents, people from other workspaces or people who are not members', async () => {
+			const agent = await insertActor(db, { type: 'agent', name: 'Magnus Bot' })
+			await ensureWorkspaceMember(db, workspaceId, agent.id)
+			const elsewhere = await insertActor(db, { name: 'Magnus Elsewhere' })
+			await ensureWorkspaceMember(db, otherWorkspaceId, elsewhere.id)
+			await insertActor(db, { name: 'Magnus Outsider' })
+
+			const res = await search({ q: 'magnus', types: ['person'] })
+			expect(res.results.map((r) => r.id)).toEqual([magnusId])
+
+			const all = await search({ q: 'magnus' })
+			expect(all.results.map((r) => [r.group, r.title])).toEqual([
+				['agents', 'Magnus Bot'],
+				['people', 'Magnus Nodegard'],
+			])
+		})
+
+		it('is hidden by any status filter and stays out of the status counts', async () => {
+			const filtered = await search({ q: 'magnus', statuses: ['in_progress'] })
+			expect(filtered.results).toEqual([])
+			expect(filtered.total).toBe(0)
+
+			const open = await search({ q: 'magnus' })
+			expect(open.total).toBe(1)
+			expect(open.facets.statuses).toEqual({
+				needs_you: 0,
+				in_progress: 0,
+				new: 0,
+				done: 0,
+				archived: 0,
+			})
+			// Dropping the status filter would bring the person back.
+			expect(filtered.relaxed).toEqual({ withoutFilters: 1, withoutStatuses: 1 })
+		})
+
+		it('counts under the person type chip and filters with it', async () => {
+			await seedObjects('task', 'todo', 2, (i) => `magnus task ${i}`)
+
+			const res = await search({ q: 'magnus' })
+			expect(res.facets.types).toMatchObject({ person: 1, task: 2 })
+
+			const onlyPeople = await search({ q: 'magnus', types: ['person'] })
+			expect(onlyPeople.results.map((r) => r.group)).toEqual(['people'])
+			expect(onlyPeople.total).toBe(1)
+		})
+
+		it('lists people before objects under relevance sort', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Magnus task')
+			const res = await search({ q: 'magnus' })
+			expect(res.results.map((r) => r.group)).toEqual(['people', 'objects'])
+		})
 	})
 
 	it('lists loops under their own group and type', async () => {

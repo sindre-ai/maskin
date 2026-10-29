@@ -47,6 +47,12 @@ export interface SearchSource {
 	 * text scan: it also gives facets.types its zero-count keys.
 	 */
 	statusPairs: (ctx: SearchContext) => SQL
+	/**
+	 * The rows have no status of their own (people). Any status filter hides them,
+	 * and they stay out of the status counts, so a chip never counts rows that
+	 * disappear when it is picked.
+	 */
+	statusless?: boolean
 }
 
 export const SEARCH_SOURCES: SearchSource[] = [
@@ -113,6 +119,20 @@ export const SEARCH_SOURCES: SearchSource[] = [
 			FROM actors a
 			INNER JOIN workspace_members wm ON wm.actor_id = a.id AND wm.workspace_id = ${workspaceId}
 			WHERE a.type = 'agent'`,
+	},
+	{
+		key: 'people',
+		fixedTypes: ['person'],
+		statusless: true,
+		statusPairs: () => sql`SELECT 'person'::text AS type, 'member'::text AS status`,
+		// The member dialog shows the name and the email, so both are searchable: the
+		// email rides in the sub line, which the generic match already reads.
+		candidates: ({ workspaceId }) => sql`
+			SELECT a.id AS id, 'person'::text AS type, a.name AS title, a.email AS sub,
+				NULL::text AS body, 'member'::text AS status, a.updated_at AS updated_at
+			FROM actors a
+			INNER JOIN workspace_members wm ON wm.actor_id = a.id AND wm.workspace_id = ${workspaceId}
+			WHERE a.type = 'human'`,
 	},
 	{
 		key: 'objects',
@@ -256,7 +276,8 @@ async function runSource(
 
 	const archivedHidden = (status: string) => status === ARCHIVED && !archivedVisible
 	const typeOk = (type: string) => typeFilter.size === 0 || typeFilter.has(type)
-	const statusOk = (group: StatusGroupKey) => statusFilter.size === 0 || statusFilter.has(group)
+	const statusOk = (group: StatusGroupKey) =>
+		statusFilter.size === 0 || (!source.statusless && statusFilter.has(group))
 
 	// Settle the type and status filters first, from the (type, status) pairs the
 	// source holds. That is cheap, and it means the one text scan below can both
@@ -337,7 +358,7 @@ async function runSource(
 		const hidden = archivedHidden(row.status)
 
 		if (!hidden) result.typeCounts.set(row.type, (result.typeCounts.get(row.type) ?? 0) + row.n)
-		if (typeOk(row.type)) result.statusCounts[group] += row.n
+		if (typeOk(row.type) && !source.statusless) result.statusCounts[group] += row.n
 		if (row.status !== ARCHIVED) {
 			result.withoutFilters += row.n
 			if (typeOk(row.type)) result.withoutStatuses += row.n
@@ -393,7 +414,7 @@ function compareRows(sort: 'recent' | 'az') {
 }
 
 /**
- * Runs the five sources in parallel and folds them into one response. A source
+ * Runs the six sources in parallel and folds them into one response. A source
  * that throws or times out is left out of every count and listed in `partial`.
  * `sources` is a parameter so a test can swap in a failing one.
  */
