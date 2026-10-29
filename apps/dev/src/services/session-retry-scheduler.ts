@@ -24,10 +24,11 @@ import { events, sessions } from '@maskin/db'
 import type { SessionResult } from '@maskin/shared'
 
 import { logger } from '../lib/logger'
+import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { startSession } from './session-lifecycle'
 
 const TICK_MS = 30_000
-export const MAX_RETRY_ATTEMPTS = 5
+export { MAX_RETRY_ATTEMPTS }
 export const KILLSWITCH_ENV_VAR = 'FEATURE_RETRY_SCHEDULER'
 
 /** Row shape the scheduler cares about — every column it reads. */

@@ -1,13 +1,13 @@
 // Forced-limit proof: a chat session ends on a real Claude limit banner. The banner goes through
 // the real classifier, the real retry-time rule and settleSession; the scheduler tick (fake clock)
 // then reruns it. Covers a weekly banner with a reset, a session banner with none, and a weekly
-// banner with none (which must not be blind-retried).
+// banner with none (which must not be blind-retried), and a limit on the last allowed attempt.
 
 import { messages, sessions } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { classifySessionExit } from '../../lib/credit-classifier'
-import { pickRetryAt } from '../../lib/subscription-limit-reset'
+import { MAX_RETRY_ATTEMPTS, pickRetryAt } from '../../lib/subscription-limit-reset'
 import { settleSession } from '../../services/session-lifecycle'
 import { SessionRetryScheduler } from '../../services/session-retry-scheduler'
 import { insertConversation, insertSession, insertWorkspace } from '../factories'
@@ -66,11 +66,12 @@ describe('forced limit: banner -> classifier -> settle -> scheduler tick', () =>
 		vi.useRealTimers()
 	})
 
-	async function forceLimit(banner: string) {
+	async function forceLimit(banner: string, attemptNumber = 1) {
 		const conversation = await insertConversation(db, workspaceId, actorId)
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
 			conversationId: conversation.id,
+			attemptNumber,
 		})
 		const reason = classifySessionExit(banner, 1)
 		const retryAt = pickRetryAt(reason)
@@ -139,6 +140,17 @@ describe('forced limit: banner -> classifier -> settle -> scheduler tick', () =>
 
 		await new SessionRetryScheduler(db, {} as NodeJS.ProcessEnv).tick(
 			new Date('2026-10-28T09:00:00Z'),
+		)
+		expect(startSessionMock).not.toHaveBeenCalled()
+	})
+
+	it('session banner on the 5th attempt: retry_at is written but no notice, and the scheduler drops it', async () => {
+		const { row, notices } = await forceLimit(SESSION_NO_RESET, MAX_RETRY_ATTEMPTS)
+		expect(row.retryAt?.toISOString()).toBe('2026-10-28T06:30:00.000Z')
+		expect(notices).toHaveLength(0)
+
+		await new SessionRetryScheduler(db, {} as NodeJS.ProcessEnv).tick(
+			new Date('2026-10-28T06:31:00Z'),
 		)
 		expect(startSessionMock).not.toHaveBeenCalled()
 	})
