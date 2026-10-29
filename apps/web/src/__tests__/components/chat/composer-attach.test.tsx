@@ -239,9 +239,9 @@ describe('Composer text over the message cap', () => {
 		expect(uploadFileMock).toHaveBeenCalledWith(
 			expect.objectContaining({ mime_type: 'text/plain', content: longText, encoding: 'utf8' }),
 		)
-		const [body, extras] = props.onSend.mock.calls[0]
+		const [body, extras] = vi.mocked(props.onSend).mock.calls[0]
 		expect(body.length).toBeLessThan(8000)
-		expect(extras.files).toEqual([
+		expect(extras?.files).toEqual([
 			expect.objectContaining({ fileId: 'file-long-1', mimeType: 'text/plain' }),
 		])
 	})
