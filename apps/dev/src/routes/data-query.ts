@@ -116,7 +116,7 @@ export function buildDataQuerySql(workspaceId: string, spec: DataQuerySpec): Sql
 	`
 }
 
-export interface DataQueryRow {
+export type DataQueryRow = {
 	key: string | null
 	n: number | string
 	s: number | string | null
@@ -139,7 +139,8 @@ const num = (v: number | string | null): number | null => (v === null ? null : N
 /** Turns the grouped rows into the response. No rows means nothing matched. */
 export function shapeDataQueryResult(rows: DataQueryRow[], spec: DataQuerySpec): DataQueryResult {
 	const op = spec.aggregate?.op ?? 'count'
-	if (rows.length === 0) {
+	const first = rows[0]
+	if (!first) {
 		return {
 			groups: [],
 			total: { count: 0, value: op === 'count' ? 0 : null },
@@ -147,7 +148,6 @@ export function shapeDataQueryResult(rows: DataQueryRow[], spec: DataQuerySpec):
 			groups_truncated: false,
 		}
 	}
-	const first = rows[0]
 	return {
 		// Without a group_by the single null-keyed row is the total, not a group.
 		groups: spec.group_by
