@@ -46490,6 +46490,8 @@ public enum Operations {
                     public var title: Swift.String
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/participant_actor_ids`.
                     public var participant_actor_ids: [Swift.String]
+                    /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/direct`.
+                    public var direct: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message`.
                     public var initial_message: Swift.String?
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata`.
@@ -47539,18 +47541,21 @@ public enum Operations {
                     ///   - subject:
                     ///   - title:
                     ///   - participant_actor_ids:
+                    ///   - direct:
                     ///   - initial_message:
                     ///   - initial_message_metadata:
                     public init(
                         subject: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.subjectPayload? = nil,
                         title: Swift.String,
                         participant_actor_ids: [Swift.String],
+                        direct: Swift.Bool? = nil,
                         initial_message: Swift.String? = nil,
                         initial_message_metadata: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload? = nil
                     ) {
                         self.subject = subject
                         self.title = title
                         self.participant_actor_ids = participant_actor_ids
+                        self.direct = direct
                         self.initial_message = initial_message
                         self.initial_message_metadata = initial_message_metadata
                     }
@@ -47558,6 +47563,7 @@ public enum Operations {
                         case subject
                         case title
                         case participant_actor_ids
+                        case direct
                         case initial_message
                         case initial_message_metadata
                     }
@@ -47751,7 +47757,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// The existing chat for this subject; new participants were added to it
+            /// The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set
             ///
             /// - Remark: Generated from `#/paths//api/conversations/post/responses/200`.
             ///
@@ -52473,6 +52479,8 @@ public enum Operations {
                     public var thread_root_id: Swift.Int?
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/also_in_channel`.
                     public var also_in_channel: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/top_level`.
+                    public var top_level: Swift.Bool?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -52481,18 +52489,21 @@ public enum Operations {
                     ///   - session_id:
                     ///   - thread_root_id:
                     ///   - also_in_channel:
+                    ///   - top_level:
                     public init(
                         content: Swift.String,
                         metadata: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload? = nil,
                         session_id: Swift.String? = nil,
                         thread_root_id: Swift.Int? = nil,
-                        also_in_channel: Swift.Bool? = nil
+                        also_in_channel: Swift.Bool? = nil,
+                        top_level: Swift.Bool? = nil
                     ) {
                         self.content = content
                         self.metadata = metadata
                         self.session_id = session_id
                         self.thread_root_id = thread_root_id
                         self.also_in_channel = also_in_channel
+                        self.top_level = top_level
                     }
                     public enum CodingKeys: String, CodingKey {
                         case content
@@ -52500,6 +52511,7 @@ public enum Operations {
                         case session_id
                         case thread_root_id
                         case also_in_channel
+                        case top_level
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/content/application\/json`.
