@@ -152,7 +152,9 @@ describe('capturePosthogEvent workspace privacy', () => {
 	})
 
 	it('hashes the distinct id and drops names and emails when anonymise is on', async () => {
-		configurePosthogPrivacy(fakeDb({ privacy: { share_usage: true, anonymize_workspace: true } }).db)
+		configurePosthogPrivacy(
+			fakeDb({ privacy: { share_usage: true, anonymize_workspace: true } }).db,
+		)
 		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
 		const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
 		// SHA-256 of 'actor-1', the same treatment as the web's hashDistinctId.
