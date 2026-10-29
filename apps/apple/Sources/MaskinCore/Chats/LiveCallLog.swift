@@ -107,11 +107,28 @@ public struct LiveCallLog {
 	private let defaults: UserDefaults
 	private let key = "live.calls.v1"
 
+	/// The last decoded list with the bytes it came from. The thread asks for its calls on every render,
+	/// so decoding up to `limit` records each time stalled the main thread in a long chat.
+	private final class Decoded {
+		var data: Data?
+		var records: [LiveCallRecord] = []
+		var decodes = 0
+	}
+	private let decoded = Decoded()
+
+	/// How many times the stored list was actually decoded (tests pin that a re-read does not).
+	var decodeCount: Int { decoded.decodes }
+
 	public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
 	public func all() -> [LiveCallRecord] {
 		guard let data = defaults.data(forKey: key) else { return [] }
-		return (try? JSONDecoder().decode([LiveCallRecord].self, from: data)) ?? []
+		if decoded.data == data { return decoded.records }
+		let records = (try? JSONDecoder().decode([LiveCallRecord].self, from: data)) ?? []
+		decoded.data = data
+		decoded.records = records
+		decoded.decodes += 1
+		return records
 	}
 
 	public func records(for conversationID: String) -> [LiveCallRecord] {

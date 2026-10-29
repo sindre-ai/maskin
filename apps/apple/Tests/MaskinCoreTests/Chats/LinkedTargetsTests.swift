@@ -15,6 +15,25 @@ struct LinkedTargetsTests {
 
 	// MARK: Extraction
 
+	@Test("a second read of the same text does not scan it again")
+	func repeatReadsAreCached() {
+		let cache = LinkScanCache<[Int]>()
+		var scans = 0
+		for _ in 0..<20 { _ = cache.value(for: "same text") { scans += 1; return [1] } }
+		_ = cache.value(for: "other text") { scans += 1; return [2] }
+		#expect(scans == 2)
+		#expect(cache.computeCount == 2)
+	}
+
+	@Test("extract and split give the same answer when read again from the cache")
+	func cachedReadsAgree() {
+		let text = "Draft: [Email](\(object(one)))\n\nmore \(UUID().uuidString)"
+		#expect(LinkedTarget.extract(from: text) == LinkedTarget.scan(text))
+		#expect(LinkedTarget.extract(from: text) == LinkedTarget.scan(text))
+		#expect(LinkedMessageSplitter.split(text) == LinkedMessageSplitter.scan(text))
+		#expect(LinkedMessageSplitter.split(text) == LinkedMessageSplitter.scan(text))
+	}
+
 	@Test("finds objects and files in links of every shape, once each, in order")
 	func extraction() {
 		let text = """

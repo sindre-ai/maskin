@@ -198,4 +198,16 @@ import Testing
 		#expect(log.records(for: "c").first?.expanded == true)
 		#expect(log.records(for: "other").isEmpty)
 	}
+
+	@Test func rereadingTheLogDoesNotDecodeItAgain() {
+		let defaults = UserDefaults(suiteName: "livecall-\(UUID().uuidString)")!
+		let log = LiveCallLog(defaults: defaults)
+		log.save(record())
+		_ = log.records(for: "c")
+		let before = log.decodeCount
+		for _ in 0..<20 { _ = log.records(for: "c") }
+		#expect(log.decodeCount == before)
+		log.update("call") { $0.expanded = true }
+		#expect(log.records(for: "c").first?.expanded == true)
+	}
 }
