@@ -90,6 +90,37 @@ export async function humanParticipants(
 }
 
 /**
+ * The other person in a direct chat: a conversation with exactly two active
+ * participants, both human. Null for a group chat, a chat with an agent in it, or
+ * when the other person has archived it. A group chat stays quiet at the top level
+ * (people there are reached by @mention); a direct chat has one person to reach.
+ */
+export async function directChatPeer(
+	db: Db,
+	conversationId: string,
+	authorId: string,
+): Promise<string | null> {
+	const rows = await db
+		.select({
+			actorId: conversationParticipants.actorId,
+			type: actors.type,
+			archived: conversationParticipants.archived,
+		})
+		.from(conversationParticipants)
+		.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, conversationId),
+				isNull(conversationParticipants.leftAt),
+			),
+		)
+	if (rows.length !== 2) return null
+	const peer = rows.find((r) => r.actorId !== authorId)
+	if (!peer || peer.type !== 'human' || peer.archived) return null
+	return peer.actorId
+}
+
+/**
  * The people a thread reply is for: the root's author and everyone who has replied
  * in it. Humans only, and only those still active in the conversation, minus the
  * author. A person who never touched the thread is not here, which is the point: a
@@ -256,12 +287,13 @@ function isSuccessfulFinalOutput(metadata: MessageMetadata | null | undefined): 
 }
 
 /**
- * An agent's auto-posted end-of-turn reply was just inserted. Called by
- * insertConversationMessage only after a fresh insert (it returns null on a
- * dedupe conflict, so a replayed log line never gets here) and only for
- * `source: 'final_output'` messages, so mid-turn/tool/step messages, human
- * messages, system messages and failure notices create nothing. Notifies every
- * other active human participant; an agent-to-agent chat has none.
+ * A top-level message was just inserted. Called by insertConversationMessage only
+ * after a fresh insert (it returns null on a dedupe conflict, so a replayed log
+ * line never gets here). An agent's auto-posted end-of-turn reply
+ * (`source: 'final_output'`) notifies every other active human participant; an
+ * agent-to-agent chat has none. Mid-turn/tool/step messages, system messages and
+ * failure notices create nothing. A person's message notifies only the other person
+ * in a direct chat (two humans); in a group chat people are reached by @mention.
  *
  * Type: the notification type enum is closed (the iOS client's generated types
  * decode it as an enum), so no new value is added. `good_news` is the neutral
@@ -291,6 +323,27 @@ export async function notifyChatReply(
 		const author = await actorProfile(db, msg.authorId)
 		if (!author) return
 		if (msg.threadRootId) return await notifyThreadReply(db, msg, author)
+		if (author.type === 'human') {
+			const peer = await directChatPeer(db, msg.conversationId, msg.authorId)
+			await createChatNotifications(db, {
+				workspaceId: msg.workspaceId,
+				authorId: msg.authorId,
+				conversationId: msg.conversationId,
+				messageId: msg.messageId,
+				targets: peer ? [peer] : [],
+				type: 'good_news',
+				status: 'seen',
+				title: author.name,
+				content: previewText(msg.content),
+				sessionId: msg.sessionId,
+				extraMetadata: {
+					push_category: 'conversation',
+					push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
+					[PUSH_ONLY_METADATA_KEY]: true,
+				},
+			})
+			return
+		}
 		if (!isSuccessfulFinalOutput(msg.metadata)) return
 		if (author.type !== 'agent') return
 		const targets = await humanParticipants(db, msg.conversationId, msg.authorId)

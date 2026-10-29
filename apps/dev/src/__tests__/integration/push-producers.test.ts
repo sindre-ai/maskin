@@ -301,6 +301,82 @@ describe('push producers', () => {
 			}
 		})
 	})
+	describe('person-to-person direct chats', () => {
+		let directId: string
+
+		beforeEach(async () => {
+			const [direct] = await db
+				.insert(conversations)
+				.values({ workspaceId, title: 'DM', createdBy: humanId })
+				.returning()
+			directId = (direct as { id: string }).id
+			await db
+				.insert(conversationParticipants)
+				.values([humanId, secondHumanId].map((actorId) => ({ conversationId: directId, actorId })))
+		})
+
+		const say = (conversationId: string, actorId: string) =>
+			insertConversationMessage(db, {
+				conversationId,
+				workspaceId,
+				actorId,
+				content: 'Got a minute?',
+				metadata: null,
+				sessionId: null,
+			})
+
+		const pushRows = (conversation: string) =>
+			db
+				.select()
+				.from(notifications)
+				.where(eq(notifications.workspaceId, workspaceId))
+				.then((rows) =>
+					rows.filter(
+						(r) => (r.metadata as { conversation_id?: string }).conversation_id === conversation,
+					),
+				)
+
+		it('pushes the other person, and only them, with the conversation push contract', async () => {
+			const created = await say(directId, humanId)
+
+			const rows = await pushRows(directId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]).toMatchObject({
+				targetActorId: secondHumanId,
+				sourceActorId: humanId,
+				type: 'good_news',
+				status: 'seen',
+				content: 'Got a minute?',
+			})
+			expect(rows[0]?.metadata).toMatchObject({
+				push_category: 'conversation',
+				push_collapse_key: `chat:${directId}`,
+				push_delay_seconds: 25,
+				push_only: true,
+				message_id: created?.id,
+			})
+		})
+
+		it('stays quiet in a group chat, where people are reached by @mention', async () => {
+			await say(conversationId, humanId)
+			expect(await pushRows(conversationId)).toHaveLength(0)
+		})
+
+		it('stays quiet once the other person has left the chat', async () => {
+			await db
+				.update(conversationParticipants)
+				.set({ leftAt: new Date() })
+				.where(
+					and(
+						eq(conversationParticipants.conversationId, directId),
+						eq(conversationParticipants.actorId, secondHumanId),
+					),
+				)
+			await say(directId, humanId)
+			expect(await pushRows(directId)).toHaveLength(0)
+		})
+	})
+
 	describe('chat mentions', () => {
 		const mentionRows = () =>
 			db
