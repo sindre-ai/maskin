@@ -71400,6 +71400,323 @@
 				}
 			}
 		},
+		"/api/desktop/put-file": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Desktop"
+				],
+				"summary": "Put a workspace file on an agent's computer",
+				"description": "The computer downloads the file straight from storage, so its bytes never pass through the caller. Starts the computer if needed. Overwrites a file of the same name in the folder. Takes up to two minutes, so a very large file can time out.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid",
+							"description": "Whose computer. Required for people; an agent may omit it (it is its own) and may not name another."
+						},
+						"required": false,
+						"name": "agent_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"file_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"folder": {
+										"type": "string",
+										"maxLength": 255,
+										"pattern": "^(\\/|~\\/)[^\\0\\r\\n]*$",
+										"default": "~/Downloads",
+										"description": "Folder on the computer. Created if missing."
+									}
+								},
+								"required": [
+									"file_id"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The file is on the computer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"path": {
+											"type": "string"
+										},
+										"size_bytes": {
+											"type": "integer"
+										},
+										"sha256": {
+											"type": "string"
+										},
+										"hash_verified": {
+											"type": "boolean",
+											"description": "True when the file has a stored hash and it matches. Large files have none, so only their size is checked."
+										}
+									},
+									"required": [
+										"path",
+										"size_bytes",
+										"sha256",
+										"hash_verified"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "agent_id missing or malformed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "An agent asked for another agent's computer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Desktop not available, or the agent is not in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Desktop could not be reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/desktop/ports": {
 			"post": {
 				"x-viewer-policy": "writer",
