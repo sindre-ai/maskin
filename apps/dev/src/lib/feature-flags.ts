@@ -63,6 +63,15 @@ export const FLAGS = {
 	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
 	 */
 	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
+	/**
+	 * Gates the @ menu in the web search page and the Cmd+K launcher (task
+	 * [Search: filter chats by person or agent](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1cb2e889-5037-4ef8-b449-b84fba4712f3)).
+	 * Read by the web app with useFeatureFlag. Off means no @ menu, no participant pill,
+	 * and a participants param in a search link is ignored. The search endpoint accepts
+	 * the participants param whatever the flag says: it only narrows chats the caller is
+	 * already in, so it is safe to leave unflagged. Retire once the filter is on for everyone.
+	 */
+	SEARCH_CHAT_PARTICIPANT_FILTER: 'search-chat-participant-filter',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
