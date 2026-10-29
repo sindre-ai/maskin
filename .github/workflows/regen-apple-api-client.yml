@@ -1,0 +1,41 @@
+name: Regen Apple API client (temporary)
+
+on:
+  push:
+    branches: [chore/regen-apple-api-client]
+    paths:
+      - '.github/workflows/regen-apple-api-client.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  regen:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          swift --version
+
+      - name: Regenerate
+        working-directory: apps/apple
+        run: ./scripts/gen-api.sh
+
+      - name: Commit the result
+        run: |
+          git diff --stat -- apps/apple/Sources/MaskinAPI/Generated
+          if git diff --quiet -- apps/apple/Sources/MaskinAPI/Generated; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/apple/Sources/MaskinAPI/Generated
+          git commit -m "Regenerate the Apple API client for the direct chat option (#2721)"
+          git push
