@@ -187,7 +187,7 @@ struct RowStatusLine: View {
 				EmptyView()
 			}
 			if !status.preview.isEmpty {
-				Text(status.preview)
+				ChatPreviewLine.text(status.preview, pieces: status.previewPieces)
 					.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
 					.foregroundStyle(previewColor)
 					.lineLimit(2)
@@ -207,6 +207,17 @@ struct RowStatusLine: View {
 		case .sending, .sent: MaskinColor.ink5
 		case .read: MaskinColor.sigInk
 		case .failed: MaskinColor.danger
+		}
+	}
+}
+
+/// The preview of a chat list line as one `Text`. A bare address reads "link", drawn muted.
+enum ChatPreviewLine {
+	static func text(_ preview: String, pieces: [ChatPreviewText.Piece]?) -> Text {
+		guard let pieces else { return Text(preview) }
+		return pieces.reduce(Text(verbatim: "")) { line, piece in
+			let run = Text(verbatim: piece.text)
+			return line + (piece.isLink ? run.foregroundStyle(MaskinColor.ink5) : run)
 		}
 	}
 }

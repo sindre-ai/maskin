@@ -120,7 +120,8 @@ describe('MessageBubble', () => {
 			}),
 		)
 		const before = screen.getByText('Before the link.')
-		const card = screen.getByText('LinkedIn message · P1')
+		// A draft starts open, so its title (not the contracted subtitle) marks the card.
+		const card = screen.getByText('Retry window')
 		const after = screen.getByText('After the link.')
 		expect(before.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(card.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -150,6 +151,24 @@ describe('MessageBubble', () => {
 		const plate = container.querySelector('.bg-primary')
 		expect(plate).toContainElement(chip)
 		expect(plate?.textContent).toContain('is this done?')
+	})
+
+	it('draws a GitHub pull request and issue in your own message as chips that open GitHub', () => {
+		const pull = 'https://github.com/sindre-ai/maskin/pull/2637'
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `can you check ${pull} and https://github.com/sindre-ai/maskin/issues/12?`,
+			}),
+		)
+		expect(screen.queryByText(pull, { exact: false })).not.toBeInTheDocument()
+		const pullChip = screen.getByRole('link', { name: 'Pull request maskin #2637, opens GitHub' })
+		expect(pullChip).toHaveAttribute('href', pull)
+		expect(pullChip).toHaveAttribute('target', '_blank')
+		expect(screen.getByRole('link', { name: 'Issue maskin #12, opens GitHub' })).toBeInTheDocument()
+		expect(container.querySelector('.bg-primary')).toContainElement(pullChip)
 	})
 
 	it('cuts the title in a chip at 30 characters', () => {

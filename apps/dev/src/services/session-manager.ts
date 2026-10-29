@@ -66,6 +66,7 @@ import {
 	sql,
 } from 'drizzle-orm'
 import { resolveChatIdleCloseMs } from '../config/session-idle'
+import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
@@ -5394,8 +5395,15 @@ ${cont.continues_prompt}
 						if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
 						await this.db
 							.update(actors)
-							.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
-							.where(eq(actors.id, session.actorId))
+							.set({
+								agentState: 'paused',
+								agentStateUpdatedAt: new Date(),
+								// An idle auto-pause is not a person's pause: it must keep waking on chat.
+								metadata: withoutHumanPauseMarker,
+								updatedAt: new Date(),
+							})
+							// Not if a person paused it meanwhile: this write would drop their marker.
+							.where(and(eq(actors.id, session.actorId), notHumanPaused))
 							.catch((err) =>
 								logger.warn('Failed to sync agentState after auto-pause', {
 									sessionId: session.id,

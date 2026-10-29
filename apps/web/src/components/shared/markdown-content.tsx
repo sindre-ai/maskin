@@ -4,10 +4,12 @@ import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
 import {
+	type GithubTarget,
 	type HastNode,
 	LINKED_CARDS_TAG,
 	type LinkedTarget,
 	type StandaloneCard,
+	githubTargetOf,
 	placeLinkedCards,
 	targetOfHref,
 } from '@/lib/linked-objects'
@@ -152,8 +154,10 @@ export interface LinkedCardsOptions {
 	/** The chat the message is in and the agent that wrote it; they let a card tell that agent. */
 	conversationId?: string
 	agentId?: string
-	/** Ids whose card an earlier message in the chat already shows: their links stay links. */
+	/** Ids whose card another message in the chat holds: their links here are chips. */
 	skipIds?: ReadonlySet<string>
+	/** Ids of drafts edited since an earlier message showed them: their card carries an Updated tag. */
+	updatedIds?: ReadonlySet<string>
 	/**
 	 * Draws the card for a link, or `fallback` when it deserves none. Passed in rather than
 	 * imported because the cards render markdown themselves. Keep its identity stable.
@@ -169,6 +173,8 @@ export interface LinkedCardsOptions {
 			inList?: boolean
 			/** The card goes under the sentence that links it: only a draft is drawn, never a reference. */
 			after?: boolean
+			/** A draft edited since an earlier message showed it: the card says so. */
+			updated?: boolean
 		},
 	) => ReactNode
 	/**
@@ -178,8 +184,17 @@ export interface LinkedCardsOptions {
 	renderChip?: (
 		target: LinkedTarget,
 		fallback: ReactNode,
-		context: { workspaceId: string },
+		context: {
+			workspaceId: string
+			/** A draft's card is drawn under the sentence, so its link stays plain; false: it is a chip. */
+			cardFollows?: boolean
+		},
 	) => ReactNode
+	/**
+	 * Draws a link to a GitHub pull request or issue as a chip built from the address alone, in a
+	 * sentence or alone on a line. Without it such a link stays a plain link. Keep its identity stable.
+	 */
+	renderGithubChip?: (target: GithubTarget, href: string) => ReactNode
 }
 
 // Decides where every linked card goes (see `placeLinkedCards`) before the tree is rendered.
@@ -250,7 +265,12 @@ function RenderedMarkdownContent({
 	const cardsAgentId = linkedCardsOption?.agentId
 	const cardsRenderer = linkedCardsOption?.renderCard
 	const chipRenderer = linkedCardsOption?.renderChip
+	const githubChipRenderer = linkedCardsOption?.renderGithubChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
+	// By value, like the rest: a fresh set with the same ids must not remount the cards.
+	const cardsUpdatedKey = linkedCardsOption?.updatedIds
+		? [...linkedCardsOption.updatedIds].sort().join(',')
+		: ''
 	const linkedCards = useMemo<LinkedCardsOptions | undefined>(
 		() =>
 			cardsWorkspaceId && cardsRenderer
@@ -258,11 +278,21 @@ function RenderedMarkdownContent({
 						workspaceId: cardsWorkspaceId,
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
+						updatedIds: cardsUpdatedKey ? new Set(cardsUpdatedKey.split(',')) : undefined,
 						renderCard: cardsRenderer,
 						renderChip: chipRenderer,
+						renderGithubChip: githubChipRenderer,
 					}
 				: undefined,
-		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer, chipRenderer],
+		[
+			cardsWorkspaceId,
+			cardsConversationId,
+			cardsAgentId,
+			cardsRenderer,
+			chipRenderer,
+			cardsUpdatedKey,
+			githubChipRenderer,
+		],
 	)
 	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
 	// any other link to an object as a chip; the original element is what shows until the card or
@@ -276,6 +306,7 @@ function RenderedMarkdownContent({
 				...linkedCards,
 				label: card.label ?? undefined,
 				inList: card.inList,
+				updated: linkedCards.updatedIds?.has(card.target.id),
 			})
 		}
 		return ({ wrap }: ComponentOverridesContext) =>
@@ -291,6 +322,10 @@ function RenderedMarkdownContent({
 					children,
 					...rest
 				}: { node?: HastNode; href?: string; children?: ReactNode } & Record<string, unknown>) => {
+					const github = githubTargetOf(href)
+					if (github && linkedCards.renderGithubChip && href) {
+						return linkedCards.renderGithubChip(github, href)
+					}
 					// Same as the renderer's own link: an address on the web opens in a new tab.
 					const external = typeof href === 'string' && /^https?:\/\//.test(href)
 					const link = (
@@ -304,7 +339,10 @@ function RenderedMarkdownContent({
 					)
 					const target = node?.data?.linkedChip ? targetOfHref(href) : null
 					return target && linkedCards.renderChip
-						? linkedCards.renderChip(target, link, linkedCards)
+						? linkedCards.renderChip(target, link, {
+								...linkedCards,
+								cardFollows: node?.data?.cardFollows !== false,
+							})
 						: link
 				},
 				[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {
@@ -319,6 +357,7 @@ function RenderedMarkdownContent({
 									{linkedCards.renderCard({ kind: 'object', id }, null, {
 										...linkedCards,
 										after: true,
+										updated: linkedCards.updatedIds?.has(id),
 									})}
 								</Fragment>
 							))}

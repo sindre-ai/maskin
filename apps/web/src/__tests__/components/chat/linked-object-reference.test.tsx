@@ -36,6 +36,7 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 import {
+	GithubReferenceChip,
 	ObjectReferenceCard,
 	ObjectReferenceChip,
 	PREVIEW_BOUNDS_ATTR,
@@ -92,6 +93,28 @@ describe('ObjectReferenceChip', () => {
 		).toBeInTheDocument()
 	})
 
+	it('keeps a draft a plain link when its card follows, and draws a chip when none does', () => {
+		useObject.mockReturnValue({
+			data: objectRow({ preview: { kind: 'email', label: 'Email' } }),
+			isLoading: false,
+		})
+		const { unmount } = render(
+			<ObjectReferenceChip workspaceId={WS} objectId={ID} fallback={fallback} />,
+		)
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+		unmount()
+		render(
+			<ObjectReferenceChip
+				workspaceId={WS}
+				objectId={ID}
+				fallback={fallback}
+				cardFollows={false}
+			/>,
+		)
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Chat preview cards/ })).toBeInTheDocument()
+	})
+
 	it('says Deleted object when the object is missing or in another workspace', () => {
 		for (const data of [undefined, objectRow({ workspaceId: 'other' })]) {
 			useObject.mockReturnValue({ data, isLoading: false })
@@ -99,6 +122,40 @@ describe('ObjectReferenceChip', () => {
 			expect(screen.getByText('Deleted object')).toBeInTheDocument()
 			unmount()
 		}
+	})
+})
+
+describe('GithubReferenceChip', () => {
+	const pull = { type: 'pull', repo: 'maskin', number: 2637 } as const
+	const issue = { type: 'issue', repo: 'maskin', number: 12 } as const
+
+	it('draws a pull request as an icon, repo and number, and opens GitHub in a new tab', () => {
+		const href = 'https://github.com/sindre-ai/maskin/pull/2637'
+		render(<GithubReferenceChip target={pull} href={href} />)
+		const chip = screen.getByRole('link', { name: 'Pull request maskin #2637, opens GitHub' })
+		expect(chip).toHaveAttribute('href', href)
+		expect(chip).toHaveAttribute('target', '_blank')
+		expect(chip).toHaveAttribute('rel', 'noopener noreferrer')
+		expect(chip).toHaveTextContent('maskin #2637')
+		// The pull-request icon and the arrow out of the app, nothing else: no status dot.
+		expect(chip.querySelectorAll('svg')).toHaveLength(2)
+		expect(chip.querySelector('svg.lucide-git-pull-request')).not.toBeNull()
+		expect(chip.querySelector('svg.lucide-arrow-up-right')).not.toBeNull()
+		expect(chip.querySelector('span.rounded-full')).toBeNull()
+	})
+
+	it('draws an issue with the circle-dot icon', () => {
+		render(
+			<GithubReferenceChip target={issue} href="https://github.com/sindre-ai/maskin/issues/12" />,
+		)
+		const chip = screen.getByRole('link', { name: 'Issue maskin #12, opens GitHub' })
+		expect(chip.querySelector('svg.lucide-circle-dot')).not.toBeNull()
+		expect(chip).toHaveTextContent('maskin #12')
+	})
+
+	it('wears the same plate as every other chip', () => {
+		render(<GithubReferenceChip target={pull} href="https://github.com/a/maskin/pull/2637" />)
+		expect(screen.getByRole('link')).toHaveClass('bg-muted', 'rounded-md', 'box-decoration-clone')
 	})
 })
 

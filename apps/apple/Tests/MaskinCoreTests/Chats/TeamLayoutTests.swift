@@ -413,3 +413,33 @@ struct WorkingTextTests {
 		#expect(ConversationRowStatus.make(conversation: convo, workingAgents: 1).workingText == "Working")
 	}
 }
+
+@Suite("ConversationRowStatus links") struct ConversationRowStatusLinkTests {
+	private func convo(_ snippet: String, who: String? = "Developer") -> ConversationSummary {
+		ConversationSummary(id: "c", title: "t", snippet: snippet, snippetActorName: who)
+	}
+
+	@Test("the author lead is unchanged and a bare address reads link in a muted run")
+	func bareAddressAfterLead() {
+		let status = ConversationRowStatus.make(conversation: convo("https://maskin.io/ws/objects/abc"))
+		#expect(status.preview == "Developer: link")
+		#expect(
+			status.previewPieces == [
+				ChatPreviewText.Piece("Developer: "), ChatPreviewText.Piece("link", isLink: true),
+			])
+	}
+
+	@Test("a cut link shows its words after the lead")
+	func cutLinkAfterLead() {
+		let status = ConversationRowStatus.make(conversation: convo("[Chat preview cards for every li"))
+		#expect(status.preview == "Developer: Chat preview cards for every li")
+		#expect(status.previewPieces == nil)
+	}
+
+	@Test("assigning a new preview drops the old runs")
+	func assigningPreviewResetsRuns() {
+		var status = ConversationRowStatus.make(conversation: convo("https://x.io/a"))
+		status.preview = "2 conversations · Title"
+		#expect(status.previewPieces == nil)
+	}
+}

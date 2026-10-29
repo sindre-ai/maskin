@@ -90,7 +90,7 @@ const BARE_URL = /https?:\/\/[^\s<>]+/gi
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
 const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
 
-const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' }>['kind']> = {
+const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' }>['kind']> = {
 	objects: 'object',
 	files: 'file',
 	loops: 'loop',
@@ -103,10 +103,45 @@ function isAppHost(host: string): boolean {
 	return host === current || host === 'maskin.io' || host.endsWith('.maskin.io')
 }
 
-/** One run of a message you wrote: words, or a link to an object, file, loop, trigger or agent in this workspace. */
+/** A GitHub pull request or issue, read from its address alone. Nothing is fetched. */
+export interface GithubTarget {
+	type: 'pull' | 'issue'
+	repo: string
+	number: number
+}
+
+const GITHUB_PATH = /^\/[\w.-]+\/([\w.-]+)\/(pull|issues)\/(\d+)\/?$/
+
+/**
+ * The pull request or issue an address points at: exactly github.com (not a lookalike or a
+ * subdomain), then `/{owner}/{repo}/pull/{n}` or `/{owner}/{repo}/issues/{n}`. A sub-path (files,
+ * commits, checks), any other github.com address and any other site is null and stays a plain link.
+ */
+export function githubTargetOf(href: unknown): GithubTarget | null {
+	if (typeof href !== 'string') return null
+	let url: URL
+	try {
+		url = new URL(href)
+	} catch {
+		return null
+	}
+	if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.host !== 'github.com') {
+		return null
+	}
+	if (url.username || url.password) return null
+	const match = GITHUB_PATH.exec(url.pathname)
+	if (!match) return null
+	return { type: match[2] === 'pull' ? 'pull' : 'issue', repo: match[1], number: Number(match[3]) }
+}
+
+/**
+ * One run of a message you wrote: words, a link to an object, file, loop, trigger or agent in this
+ * workspace, or a GitHub pull request or issue.
+ */
 export type OwnSegment =
 	| { kind: 'text'; text: string }
 	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
+	| { kind: 'github'; href: string; target: GithubTarget }
 
 /**
  * Your own message as an ordered run of words and links to this workspace's objects, files, loops, triggers and agents,
@@ -131,6 +166,13 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 		try {
 			url = new URL(address)
 		} catch {
+			continue
+		}
+		const github = githubTargetOf(address)
+		if (github) {
+			pushText(content.slice(cursor, m.index ?? 0))
+			segments.push({ kind: 'github', href: address, target: github })
+			cursor = (m.index ?? 0) + address.length
 			continue
 		}
 		const match = APP_PATH.exec(url.pathname)
@@ -499,12 +541,30 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 		element.properties = { ...element.properties, objects: ids.join(',') }
 	}
 
-	// Every link to an object that is not replaced by a card is a chip where it stands.
+	// The drafts a card is still drawn for under their sentence. The card follows the first link to
+	// each; a later link to the same id, or a link past the card cap, has no card.
+	const followed = new Set(
+		trailing.flatMap((element) =>
+			String(element.properties?.objects ?? '')
+				.split(',')
+				.filter(Boolean),
+		),
+	)
+	const seen = new Set<string>()
+
+	// Every link to an object that is not replaced by a card is a chip where it stands. A draft
+	// keeps its plain link only when its card follows; otherwise it is a chip like any object.
 	const markChips = (node: HastNode) => {
 		if (node.tagName === 'a') {
 			const target = targetOfHref(node.properties?.href)
 			if (target && isLookedUp(target) && fetchable.has(key(target))) {
-				node.data = { ...node.data, linkedChip: true }
+				const first = !seen.has(key(target))
+				seen.add(key(target))
+				node.data = {
+					...node.data,
+					linkedChip: true,
+					cardFollows: target.kind === 'object' && first && followed.has(target.id),
+				}
 			}
 		}
 		for (const child of node.children ?? []) markChips(child)
@@ -628,4 +688,14 @@ export function pickFacts(
  */
 export function unavailableCopy(kind: string): { card: string; chip: string } {
 	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
+}
+
+/** What a GitHub chip reads: the repository's name (not its owner) and the number. */
+export function githubChipText(target: GithubTarget): string {
+	return `${target.repo} #${target.number}`
+}
+
+/** The accessible name of a GitHub chip: it says it leaves the app. */
+export function githubChipName(target: GithubTarget): string {
+	return `${target.type === 'pull' ? 'Pull request' : 'Issue'} ${githubChipText(target)}, opens GitHub`
 }
