@@ -191,6 +191,18 @@ struct MaskinComposerSnapshotTests {
 		}
 	}
 
+	@Test("the + menu with every row fits above the bar on the smallest supported iPhone")
+	func attachMenuFits() throws {
+		let renderer = ImageRenderer(content: ComposerAttachMenu(actions: ComposerAttachAction.allCases, onPick: { _ in }))
+		renderer.scale = 2
+		let image = try #require(renderer.cgImage)
+		let height = CGFloat(image.height) / renderer.scale
+		// iPhone SE (667pt) with the keyboard down: minus status bar, navigation bar, the composer bar,
+		// the home indicator and the 8pt gap between the menu and the bar.
+		let visible: CGFloat = 667 - 20 - 44 - 56 - 34 - MaskinSpace.s4
+		#expect(height <= visible, "all six rows must sit inside the visible area, got \(height)pt of \(visible)pt")
+	}
+
 	@Test("the old ChatComposer wrapper still renders every voice state", arguments: [false, true])
 	func wrapper(dark: Bool) async throws {
 		let typed = await model("what changed since Friday and what is blocked")

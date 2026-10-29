@@ -317,6 +317,9 @@ struct MaskinComposer: View {
 			rotation: isTrayOpen ? 45 : 0
 		) {
 			MaskinHaptics.play(.selection)
+			// Opening the menu puts the keyboard away first: the menu is up to 7 rows tall and floats above
+			// the bar, so with the keyboard up it ran down behind it and lost its lower rows.
+			if !trayOpen { focused = false }
 			withAnimation(reduceMotion ? nil : MaskinMotion.standard) { trayOpen.toggle() }
 		}
 	}
