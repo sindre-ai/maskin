@@ -4,7 +4,8 @@
 import { readFileSync } from 'node:fs'
 
 const text = readFileSync(process.argv[2], 'utf8')
-const re = /Test Case '-\[\S+ (\w+)\]' measured \[([^\]]+)\] average: ([\d.eE+-]+).*?values: \[([^\]]*)\]/g
+const re =
+	/Test Case '-\[\S+ (\w+)\]' measured \[([^\]]+)\] average: ([\d.eE+-]+).*?values: \[([^\]]*)\]/g
 const median = (xs) => {
 	const s = [...xs].sort((a, b) => a - b)
 	const m = s.length >> 1
@@ -12,7 +13,10 @@ const median = (xs) => {
 }
 let found = false
 for (const [, test, metric, , values] of text.matchAll(re)) {
-	const xs = values.split(',').map((v) => Number(v.trim())).filter(Number.isFinite)
+	const xs = values
+		.split(',')
+		.map((v) => Number(v.trim()))
+		.filter(Number.isFinite)
 	if (!xs.length) continue
 	found = true
 	console.log(

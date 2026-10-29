@@ -286,7 +286,11 @@ let nextEventId = 9000
 export function overrides({ method, path, params, query, body, base, item }) {
 	if (PERF) {
 		const hit = perfOverrides({
-			method, path, query, item, base,
+			method,
+			path,
+			query,
+			item,
+			base,
 			ctx: { uuid, ago, ME, actors, WORKSPACE_ID, CHIEF, PRIYA },
 		})
 		if (hit) return hit

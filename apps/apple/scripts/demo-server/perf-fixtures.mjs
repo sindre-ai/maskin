@@ -279,8 +279,18 @@ function forYou(item, ctx) {
 					summary: `The agent checked the numbers for ${topic} and found nothing blocking. It recommends going ahead.`,
 					ask: 'Go ahead?',
 					options: [
-						{ label: 'Go ahead', consequences: ['Starts today'], recommended: true, destructive: false },
-						{ label: 'Hold', consequences: ['Nothing changes'], recommended: false, destructive: false },
+						{
+							label: 'Go ahead',
+							consequences: ['Starts today'],
+							recommended: true,
+							destructive: false,
+						},
+						{
+							label: 'Hold',
+							consequences: ['Nothing changes'],
+							recommended: false,
+							destructive: false,
+						},
 					],
 				},
 			},
@@ -314,8 +324,18 @@ function forYou(item, ctx) {
 					summary: 'The agent wrote a short follow-up and wants your approval before it goes out.',
 					ask: 'Send it?',
 					options: [
-						{ label: 'Send', consequences: ['Reaches a real person'], recommended: true, destructive: false },
-						{ label: 'Hold', consequences: ['Nothing is sent'], recommended: false, destructive: false },
+						{
+							label: 'Send',
+							consequences: ['Reaches a real person'],
+							recommended: true,
+							destructive: false,
+						},
+						{
+							label: 'Hold',
+							consequences: ['Nothing is sent'],
+							recommended: false,
+							destructive: false,
+						},
 					],
 					draft: {
 						id: `draft-${i}`,
@@ -327,12 +347,19 @@ function forYou(item, ctx) {
 							kind: 'email',
 							label: 'Email',
 							provider: 'gmail',
-							recipients: [{ role: 'to', name: `Contact ${i + 1}`, address: `contact${i + 1}@northwind.example` }],
+							recipients: [
+								{
+									role: 'to',
+									name: `Contact ${i + 1}`,
+									address: `contact${i + 1}@northwind.example`,
+								},
+							],
 							subject: `Following up on ${TOPICS[i % TOPICS.length]}`,
 							details: [],
 							context: null,
-							body: Array.from({ length: 3 + (i % 3) }, (_, p) =>
-								SENTENCES[(i + p * 3) % SENTENCES.length],
+							body: Array.from(
+								{ length: 3 + (i % 3) },
+								(_, p) => SENTENCES[(i + p * 3) % SENTENCES.length],
 							).join('\n\n'),
 							maxLength: null,
 							missing: [],
