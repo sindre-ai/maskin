@@ -40,6 +40,7 @@ import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
 // import desktopTeachRoutes from './routes/desktop-teach'
 import customMcpServersRoutes from './routes/custom-mcp-servers'
+import dataQueryRoutes from './routes/data-query'
 import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
@@ -449,6 +450,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/loops', loopsRoutes)
+	app.route('/api/data', dataQueryRoutes)
 	// linkedin-unipile connect + callback use LinkedIn's Hosted Auth Wizard, NOT
 	// OAuth2 — so this dedicated route file handles /connect + /callback for
 	// that provider directly. Mounted BEFORE the generic /api/integrations so
