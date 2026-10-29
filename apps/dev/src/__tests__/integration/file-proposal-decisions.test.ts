@@ -352,12 +352,28 @@ describe('Deciding proposed changes (integration)', () => {
 			expect(row).toMatchObject({ status: 'accepted', newText: 'tight', appliedText: 'modest' })
 		})
 
-		it('takes an accept with no body and writes new_text', async () => {
+		it('writes new_text when applied_text is left out, with an empty object or no body at all', async () => {
 			const file = await insertFile()
-			const { proposal, changes } = await insertProposal(file.id, [{ old: 'small', next: 'tight' }])
-			const res = await accept(file.id, proposal.id, changes[0]?.id ?? '', memberKey)
-			expect(res.status).toBe(200)
-			expect(stored(file)).toBe(DOC.replace('small', 'tight'))
+			const { proposal, changes } = await insertProposal(file.id, [
+				{ old: 'small', next: 'tight' },
+				{ old: 'on Friday', next: 'on Thursday' },
+			])
+			const path = (cid: string) =>
+				`/api/files/${file.id}/proposals/${proposal.id}/changes/${cid}/accept`
+
+			const empty = await accept(file.id, proposal.id, changes[0]?.id ?? '', memberKey, {})
+			expect(empty.status).toBe(200)
+			// No content-type and no body, the way a bare fetch with only POST sends it.
+			const bare = await app.request(
+				new Request(`http://localhost${path(changes[1]?.id ?? '')}`, {
+					method: 'POST',
+					headers: bearer(memberKey),
+				}),
+			)
+			expect(bare.status).toBe(200)
+			expect(stored(file)).toBe(
+				'# Plan\n\nWe ship on Thursday.\n\nThe budget is tight.\n\nWe ship on Monday.\n',
+			)
 		})
 
 		it('answers 409 and changes nothing when the text moved on', async () => {
