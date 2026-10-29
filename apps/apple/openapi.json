@@ -60500,6 +60500,1500 @@
 				}
 			}
 		},
+		"/api/files/{id}/proposals/{pid}/changes/{cid}/accept": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Accept one proposed change, optionally with edited text, and write it to the file.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "pid",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "cid",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"required": false,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"applied_text": {
+										"type": "string",
+										"maxLength": 8000
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The change, now accepted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"ordinal": {
+											"type": "integer"
+										},
+										"oldText": {
+											"type": "string"
+										},
+										"newText": {
+											"type": "string"
+										},
+										"reason": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"contextBefore": {
+											"type": "string"
+										},
+										"contextAfter": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending",
+												"accepted",
+												"rejected"
+											]
+										},
+										"decidedBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"decidedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"appliedText": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"stale": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"id",
+										"ordinal",
+										"oldText",
+										"newText",
+										"reason",
+										"contextBefore",
+										"contextAfter",
+										"status",
+										"decidedBy",
+										"decidedAt",
+										"appliedText",
+										"stale"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person who can decide: a viewer, an agent, or the author of the proposal",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File, proposal or change not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A change is stale (it no longer matches the file exactly once) or was already decided; nothing was changed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										},
+										"staleChangeIds": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
+										}
+									},
+									"required": [
+										"error",
+										"staleChangeIds"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Timed out waiting for the file or storage; nothing was written, retry is safe",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/{id}/proposals/{pid}/changes/{cid}/reject": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Reject one proposed change. The file is not touched.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "pid",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "cid",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The change, now rejected",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"ordinal": {
+											"type": "integer"
+										},
+										"oldText": {
+											"type": "string"
+										},
+										"newText": {
+											"type": "string"
+										},
+										"reason": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"contextBefore": {
+											"type": "string"
+										},
+										"contextAfter": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending",
+												"accepted",
+												"rejected"
+											]
+										},
+										"decidedBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"decidedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"appliedText": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"stale": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"id",
+										"ordinal",
+										"oldText",
+										"newText",
+										"reason",
+										"contextBefore",
+										"contextAfter",
+										"status",
+										"decidedBy",
+										"decidedAt",
+										"appliedText",
+										"stale"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person who can decide: a viewer, an agent, or the author of the proposal",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File, proposal or change not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A change is stale (it no longer matches the file exactly once) or was already decided; nothing was changed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										},
+										"staleChangeIds": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
+										}
+									},
+									"required": [
+										"error",
+										"staleChangeIds"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Timed out waiting for the file or storage; nothing was written, retry is safe",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/{id}/proposals/{pid}/changes/accept": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Accept several changes of one proposal, all or nothing. If any is stale none is applied.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "pid",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"change_ids": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"minItems": 1,
+										"maxItems": 50
+									}
+								},
+								"required": [
+									"change_ids"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The changes, now accepted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"changes": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"ordinal": {
+														"type": "integer"
+													},
+													"oldText": {
+														"type": "string"
+													},
+													"newText": {
+														"type": "string"
+													},
+													"reason": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"contextBefore": {
+														"type": "string"
+													},
+													"contextAfter": {
+														"type": "string"
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"accepted",
+															"rejected"
+														]
+													},
+													"decidedBy": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"decidedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"appliedText": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"stale": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"id",
+													"ordinal",
+													"oldText",
+													"newText",
+													"reason",
+													"contextBefore",
+													"contextAfter",
+													"status",
+													"decidedBy",
+													"decidedAt",
+													"appliedText",
+													"stale"
+												]
+											}
+										}
+									},
+									"required": [
+										"changes"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person who can decide: a viewer, an agent, or the author of the proposal",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File, proposal or change not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A change is stale (it no longer matches the file exactly once) or was already decided; nothing was changed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										},
+										"staleChangeIds": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
+										}
+									},
+									"required": [
+										"error",
+										"staleChangeIds"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Timed out waiting for the file or storage; nothing was written, retry is safe",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/{id}/proposals/{pid}/changes/reject": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Reject several changes of one proposal, all or nothing. The file is not touched.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "pid",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"change_ids": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"minItems": 1,
+										"maxItems": 50
+									}
+								},
+								"required": [
+									"change_ids"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The changes, now rejected",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"changes": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"ordinal": {
+														"type": "integer"
+													},
+													"oldText": {
+														"type": "string"
+													},
+													"newText": {
+														"type": "string"
+													},
+													"reason": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"contextBefore": {
+														"type": "string"
+													},
+													"contextAfter": {
+														"type": "string"
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"accepted",
+															"rejected"
+														]
+													},
+													"decidedBy": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"decidedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"appliedText": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"stale": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"id",
+													"ordinal",
+													"oldText",
+													"newText",
+													"reason",
+													"contextBefore",
+													"contextAfter",
+													"status",
+													"decidedBy",
+													"decidedAt",
+													"appliedText",
+													"stale"
+												]
+											}
+										}
+									},
+									"required": [
+										"changes"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a person who can decide: a viewer, an agent, or the author of the proposal",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File, proposal or change not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A change is stale (it no longer matches the file exactly once) or was already decided; nothing was changed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										},
+										"staleChangeIds": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"format": "uuid"
+											}
+										}
+									},
+									"required": [
+										"error",
+										"staleChangeIds"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Timed out waiting for the file or storage; nothing was written, retry is safe",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/claude-oauth": {
 			"delete": {
 				"x-viewer-policy": "writer",

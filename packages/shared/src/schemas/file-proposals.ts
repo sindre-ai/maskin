@@ -77,3 +77,22 @@ export type FileProposalDto = z.infer<typeof fileProposalSchema>
 export const listFileProposalsResponseSchema = z.object({
 	proposals: z.array(fileProposalSchema),
 })
+
+// -- Deciding a change (accept and reject) ------------------------------------
+
+export const acceptFileProposalChangeSchema = z.object({
+	// What to write instead of new_text, when the person edited the suggestion.
+	applied_text: z.string().max(MAX_PROPOSAL_NEW_TEXT).optional(),
+})
+
+export type AcceptFileProposalChangeInput = z.infer<typeof acceptFileProposalChangeSchema>
+
+export const decideFileProposalChangesSchema = z.object({
+	change_ids: z.array(z.string().uuid()).min(1).max(MAX_PROPOSAL_CHANGES),
+})
+
+export type DecideFileProposalChangesInput = z.infer<typeof decideFileProposalChangesSchema>
+
+export const decideFileProposalChangesResponseSchema = z.object({
+	changes: z.array(fileProposalChangeSchema),
+})
