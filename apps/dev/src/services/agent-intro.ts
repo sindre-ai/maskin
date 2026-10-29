@@ -24,7 +24,7 @@ const INTRO_CAP = 5
 /** The intro names at most this many needed tools. */
 const MAX_NEEDED_TOOLS = 3
 
-type IntroStage = 'resolve' | 'lock' | 'find' | 'insert' | 'render' | 'scan'
+type IntroStage = 'resolve' | 'dm' | 'lock' | 'find' | 'insert' | 'render' | 'scan'
 type ResolvedVia = 'creator' | 'chat' | 'person_started'
 type SkipReason =
 	| 'no_session'
@@ -77,6 +77,16 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 		if (!(await bothAreMembers(args.db, args.workspaceId, recipient.humanId, actor.id))) {
 			return skip(args, 'not_member')
 		}
+		// The person who made the agent has a DM with it from now on, whether or not the
+		// intro below is sent, skipped by the cap, or fails while it renders.
+		stage = 'dm'
+		await findOrCreateDirectChat(args.db, {
+			workspaceId: args.workspaceId,
+			humanId: recipient.humanId,
+			agentId: actor.id,
+			title: actor.name,
+			createdBy: recipient.humanId,
+		})
 		if ((await introsDeliveredTo(args.db, recipient.humanId)) >= INTRO_CAP) {
 			return skip(args, 'rate_cap')
 		}
@@ -96,7 +106,7 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 				workspaceId: args.workspaceId,
 				humanId: recipient.humanId,
 				agentId: actor.id,
-				title: `Meet ${actor.name}`,
+				title: actor.name,
 				createdBy: recipient.humanId,
 			})
 			stage = 'find'

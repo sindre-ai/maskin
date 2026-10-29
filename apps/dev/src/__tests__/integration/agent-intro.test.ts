@@ -48,6 +48,7 @@ const { default: conversationsRoutes } = await import('../../routes/conversation
 const { capturePosthogEvent } = await import('../../lib/analytics/posthog')
 const directChat = await import('../../services/direct-chat')
 const { introduceAgentToRecipient } = await import('../../services/agent-intro')
+const { directPairKey } = directChat
 
 const captured = vi.mocked(capturePosthogEvent)
 const postToDirectChat = vi.mocked(directChat.postToDirectChat)
@@ -150,7 +151,8 @@ function createAgent(
 	)
 }
 
-async function introChatsFor(agentId: string) {
+/** Every chat the agent is in: its DM exists before the intro is written. */
+async function directChatsFor(agentId: string) {
 	return db
 		.select({ conversation: conversations })
 		.from(conversations)
@@ -159,6 +161,21 @@ async function introChatsFor(agentId: string) {
 			eq(conversationParticipants.conversationId, conversations.id),
 		)
 		.where(eq(conversationParticipants.actorId, agentId))
+}
+
+/** The chats where the agent has said something, which is where its intro landed. */
+async function introChatsFor(agentId: string) {
+	return db
+		.select({ conversation: conversations })
+		.from(conversations)
+		.innerJoin(messages, eq(messages.conversationId, conversations.id))
+		.where(eq(messages.actorId, agentId))
+		.groupBy(conversations.id)
+}
+
+/** Messages an agent has written anywhere: its intro, when one was sent. */
+async function messagesBy(agentId: string) {
+	return db.select({ id: messages.id }).from(messages).where(eq(messages.actorId, agentId))
 }
 
 async function participantIds(conversationId: string) {
@@ -209,8 +226,9 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 		})
 		expect(chats).toHaveLength(1)
 		const chat = chats?.[0]?.conversation
-		expect(chat?.title).toBe(`Meet ${name}`)
+		expect(chat?.title).toBe(name)
 		expect(chat?.titleAutoState).toBe('none')
+		expect(chat?.directPairKey).toBe(directPairKey(human.id, created.id))
 		expect(chat?.createdBy).toBe(human.id)
 		expect(await participantIds(chat?.id as string)).toEqual([human.id, created.id].sort())
 
@@ -288,8 +306,11 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 			return calls.length > 0 ? calls : undefined
 		})
 		expect(failed?.[0]?.[2]).toMatchObject({ agent_id: created.id, stage: 'insert' })
-		// The transaction rolled back, so no half-made chat is left behind.
-		expect(await introChatsFor(created.id)).toHaveLength(0)
+		// The intro's transaction rolled back with no message, but the DM was made first.
+		const chats = await directChatsFor(created.id)
+		expect(chats).toHaveLength(1)
+		expect(chats[0]?.conversation.directPairKey).not.toBeNull()
+		expect(await messagesBy(created.id)).toHaveLength(0)
 	})
 
 	it('makes one chat when two hook calls race for the same agent', async () => {
@@ -329,7 +350,7 @@ describe('Agent intro — agent creator (Chief of Staff style)', () => {
 		})
 		expect(chats).toHaveLength(1)
 		const chat = chats?.[0]?.conversation
-		expect(chat?.title).toBe(`Meet ${name}`)
+		expect(chat?.title).toBe(name)
 		expect(await participantIds(chat?.id as string)).toEqual([human.id, created.id].sort())
 
 		const [msg] = await db
@@ -486,9 +507,12 @@ describe('Agent intro — agent creator (Chief of Staff style)', () => {
 		const secondId = ((await secondRes.json()) as { id: string }).id
 		await waitFor(async () => ((await introChatsFor(secondId)).length > 0 ? true : undefined))
 
-		const delivered = await Promise.all(firstIds.map((id) => introChatsFor(id)))
-		expect(delivered.filter((rows) => rows.length === 1)).toHaveLength(5)
-		expect(delivered[5]).toHaveLength(0)
+		// Every agent has its DM with the person; the sixth intro is the one the cap held back.
+		const chats = await Promise.all(firstIds.map((id) => directChatsFor(id)))
+		expect(chats.every((rows) => rows.length === 1)).toBe(true)
+		const intros = await Promise.all(firstIds.map((id) => messagesBy(id)))
+		expect(intros.filter((rows) => rows.length === 1)).toHaveLength(5)
+		expect(intros[5]).toHaveLength(0)
 		expect(capturesOf('agent_intro_skipped').map((c) => c[2]?.reason)).toEqual(['rate_cap'])
 		expect(await introChatsFor(secondId)).toHaveLength(1)
 	})
