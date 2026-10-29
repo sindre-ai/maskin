@@ -3,8 +3,8 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
 /**
- * A new agent introduces itself in a 1-1 chat "Meet {name}" with the person who
- * created it (bet/e9ce-agent-intro-chat-routing, slice 2).
+ * A new agent introduces itself in the direct message with the person who
+ * created it, titled with the agent's name (bet/e9ce-agent-intro-chat-routing, slice 2).
  *
  * Not covered here: an agent reply to a message in the intro chat, and asking
  * Chief of Staff in the UI to create an agent. Both need a workspace with real
@@ -12,7 +12,7 @@ import { VIEWPORTS } from '../helpers/viewports'
  */
 
 test.describe('Agent intro chat', () => {
-	test('creating an agent in the UI puts an unread "Meet {name}" chat with its intro in the list', async ({
+	test('creating an agent in the UI puts an unread direct message with its intro in the list', async ({
 		page,
 		account,
 	}) => {
@@ -27,12 +27,12 @@ test.describe('Agent intro chat', () => {
 
 		// The intro lands within seconds of creation; the chat list refreshes on its own.
 		await page.goto(`/${account.workspaceId}/chats`)
-		const row = page.getByRole('link', { name: new RegExp(`Meet ${name}`) })
+		const row = page.getByRole('link', { name: new RegExp(name) })
 		await expect(row).toBeVisible({ timeout: 15_000 })
 		await expect(row.getByLabel('1 unread')).toBeVisible()
 
 		await row.click()
-		await expect(page.getByRole('heading', { name: `Meet ${name}` })).toBeVisible()
+		await expect(page.getByRole('heading', { name })).toBeVisible()
 		await expect(page.getByPlaceholder(`Reply to ${name}…`)).toBeVisible()
 		// The chat list's snippet repeats the same text beside the thread, so take the first match.
 		await expect(page.getByText(`I'm ${name}.`).first()).toBeVisible()

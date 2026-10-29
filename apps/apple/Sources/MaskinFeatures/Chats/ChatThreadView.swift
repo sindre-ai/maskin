@@ -213,8 +213,13 @@ struct ChatThreadView: View {
 				}
 				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
 				.navigationDestination(item: $threadRoute) { route in
-					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
+					if let root = store.threadRoot(route.rootID) {
 						ThreadScreen(store: store, root: root)
+					} else {
+						// The root is older than the page held: fetch it rather than push an empty screen.
+						ProgressView()
+							.frame(maxWidth: .infinity, maxHeight: .infinity)
+							.task { _ = await store.loadedThreadRoot(route.rootID) }
 					}
 				}
 				.linkedItems(runtime)
@@ -357,9 +362,7 @@ struct ChatThreadView: View {
 		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
 			return
 		}
-		func held() -> Bool { store.allMessages.contains { $0.serverID == request.rootId } }
-		if !held() { await store.loadThread(request.rootId) }
-		if held() { threadRoute = ThreadRoute(rootID: request.rootId) }
+		if await store.loadedThreadRoot(request.rootId) != nil { threadRoute = ThreadRoute(rootID: request.rootId) }
 		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
 	}
 
