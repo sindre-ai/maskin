@@ -368,7 +368,7 @@ describe('segmentActivityByMessage', () => {
 		])
 		expect(segments).toEqual([])
 		expect(unassigned).toEqual([
-			{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' },
+			{ id: '1-0', kind: 'tool_use', text: 'search objects' },
 			{ id: '2-0', kind: 'text', text: 'Found 3 matches' },
 		])
 	})
@@ -484,12 +484,12 @@ describe('segmentActivityByMessage', () => {
 			{
 				conversationMessageId: 10,
 				containsReply: false,
-				steps: [{ id: '2-0', kind: 'tool_use', text: 'Using search_objects' }],
+				steps: [{ id: '2-0', kind: 'tool_use', text: 'search objects' }],
 			},
 			{
 				conversationMessageId: 20,
 				containsReply: false,
-				steps: [{ id: '4-0', kind: 'tool_use', text: 'Using list_objects' }],
+				steps: [{ id: '4-0', kind: 'tool_use', text: 'list objects' }],
 			},
 		])
 	})
@@ -506,7 +506,7 @@ describe('segmentActivityByMessage', () => {
 			log(1, 'stdout', tool),
 			log(2, 'stdout', taggedUserTurn(10, 'hi')),
 		])
-		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' }])
+		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'search objects' }])
 		expect(segments).toEqual([{ conversationMessageId: 10, containsReply: false, steps: [] }])
 	})
 
@@ -592,7 +592,7 @@ describe('segmentActivityByMessage', () => {
 				conversationMessageId: 10,
 				containsReply: false,
 				steps: [
-					{ id: '2-0', kind: 'tool_use', text: 'Using search_objects' },
+					{ id: '2-0', kind: 'tool_use', text: 'search objects' },
 					{ id: '3-0', kind: 'text', text: 'Found 3 matches' },
 				],
 			},
