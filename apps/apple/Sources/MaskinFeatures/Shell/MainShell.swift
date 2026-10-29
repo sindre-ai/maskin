@@ -51,7 +51,10 @@ public struct MainShell: View {
 				liveCalls.present(request, environment: environment)
 			}
 		)
-		.task(id: environment.workspaceId) { await badges.start(environment: environment) }
+		.task(id: environment.workspaceId) {
+			Perf.event("shell.task")
+			await badges.start(environment: environment)
+		}
 		// Profile pictures: loaded per workspace and again on return to the app, so one set on the web shows.
 		.environment(\.actorPictures, ActorPictures { [pictures] in pictures.url(for: $0) })
 		.task(id: environment.workspaceId) { await pictures.load(environment: environment) }
