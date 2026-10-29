@@ -212,8 +212,8 @@ public final class DiskCache: @unchecked Sendable {
 				return
 			}
 			lock.lock()
-			lastUsed[url.path] = nil
-			lastPersistedUse[url.path] = nil
+			lastUsed[usageKey(url)] = nil
+			lastPersistedUse[usageKey(url)] = nil
 			if let total = knownTotal { knownTotal = total - previous + data.count }
 			if scanning { deltaDuringScan += data.count - previous }
 			lock.unlock()
@@ -225,7 +225,7 @@ public final class DiskCache: @unchecked Sendable {
 		let url = fileURL(for: key)
 		ioQueue.sync {
 			try? fileManager.removeItem(at: url)
-			forget(path: url.path)
+			forget(path: usageKey(url))
 		}
 	}
 
@@ -368,6 +368,14 @@ public final class DiskCache: @unchecked Sendable {
 		lock.unlock()
 	}
 
+	/// How a file is named in the recency tables. Not `url.path`: the URL a write builds
+	/// (`/var/folders/...`) and the one a directory listing returns (`/private/var/folders/...`)
+	/// spell the same file differently, so a read's recency was recorded under a key the eviction
+	/// scan never looked up, and the entry just read could be evicted as the least recently used.
+	private func usageKey(_ url: URL) -> String {
+		url.deletingLastPathComponent().lastPathComponent + "/" + url.lastPathComponent
+	}
+
 	private func forget(path: String) {
 		lock.lock()
 		lastUsed[path] = nil
@@ -392,7 +400,7 @@ public final class DiskCache: @unchecked Sendable {
 		ioQueue.sync { [self] in
 			guard let current = try? Data(contentsOf: url), current == observed else { return }
 			try? fileManager.removeItem(at: url)
-			forget(path: url.path)
+			forget(path: usageKey(url))
 		}
 	}
 
@@ -401,10 +409,10 @@ public final class DiskCache: @unchecked Sendable {
 	private func noteUse(of url: URL) {
 		let stamp = now()
 		lock.lock()
-		lastUsed[url.path] = stamp
-		let persisted = lastPersistedUse[url.path]
+		lastUsed[usageKey(url)] = stamp
+		let persisted = lastPersistedUse[usageKey(url)]
 		let due = persisted.map { stamp.timeIntervalSince($0) >= 60 } ?? true
-		if due { lastPersistedUse[url.path] = stamp }
+		if due { lastPersistedUse[usageKey(url)] = stamp }
 		lock.unlock()
 		guard due else { return }
 		evictionQueue.async { [self] in
@@ -450,11 +458,20 @@ public final class DiskCache: @unchecked Sendable {
 		scanning = true
 		deltaDuringScan = 0
 		let startedAt = generation
-		let used = lastUsed
 		lock.unlock()
 
-		var files = allFiles().map { url in
-			(url: url, bytes: size(of: url), used: max(modified(url), used[url.path] ?? .distantPast))
+		let listed = allFiles().map { url in (url: url, bytes: size(of: url), modified: modified(url)) }
+		// Read the recency table only after the listing. Taken before it, a read that happened while
+		// the scan was walking the directory was missing from the copy, and the file it had just
+		// read could be evicted as the least recently used.
+		lock.lock()
+		let used = lastUsed
+		lock.unlock()
+		var files = listed.map { file in
+			(
+				url: file.url, bytes: file.bytes,
+				used: max(file.modified, used[usageKey(file.url)] ?? .distantPast)
+			)
 		}
 		let cutoff = stamp.addingTimeInterval(-limits.maxAge)
 		for file in files where file.used < cutoff {

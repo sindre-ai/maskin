@@ -43,7 +43,9 @@ import Testing
 		remote.set(.failure(ObjectsError("down")), for: id)
 		let directory = InternalLinkDirectory(store: { store })
 		for _ in 0..<5 { _ = directory.object(id) }
-		try? await Task.sleep(for: .milliseconds(100))
+		#expect(await eventually { remote.detailCalls.count == 1 })
+		// The lookup has failed; asking again must not start another.
+		for _ in 0..<5 { _ = directory.object(id) }
 		#expect(directory.object(id) == nil)
 		#expect(remote.detailCalls.count == 1)
 	}
