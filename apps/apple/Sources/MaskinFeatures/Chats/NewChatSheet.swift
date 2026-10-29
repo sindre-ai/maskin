@@ -53,7 +53,8 @@ struct NewChatSheet: View {
 					draft: $draft, query: $query, highlightedChip: $highlightedChip,
 					toFocused: $toFocused)
 			}
-			.scrollDismissesKeyboard(.interactively)
+			// Dragging the open list must not drop the keyboard: that would blur To and close the list.
+			.scrollDismissesKeyboard(toFocused ? .never : .interactively)
 			.ambientBackground(showsBottom: false)
 			.safeAreaInset(edge: .bottom) { bottomBar }
 			.toolbar {
