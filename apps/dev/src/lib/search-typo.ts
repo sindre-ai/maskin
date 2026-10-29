@@ -19,16 +19,16 @@ function editDistance(a: string, b: string, max: number): number {
 		const row = [i]
 		for (let j = 1; j <= b.length; j++) {
 			const cost = a[i - 1] === b[j - 1] ? 0 : 1
-			let best = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + cost)
+			let best = Math.min((prev[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (prev[j - 1] ?? 0) + cost)
 			if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-				best = Math.min(best, beforePrev[j - 2] + 1)
+				best = Math.min(best, (beforePrev[j - 2] ?? 0) + 1)
 			}
 			row.push(best)
 		}
 		beforePrev = prev
 		prev = row
 	}
-	return prev[b.length]
+	return prev[b.length] ?? max + 1
 }
 
 /** Typos allowed in a term. Short terms get none: one wrong letter there is a different word. */
