@@ -219,6 +219,45 @@ describe('call receipt against real Postgres', () => {
 		})
 	})
 
+	it('a call about something else says nothing was changed and leaves out the card statistics', async () => {
+		const seeded = await seedCall()
+		const top = await insertObject(db, seeded.ws.id, seeded.humanId, {
+			title: 'Pricing page review',
+		})
+		voiceCallState(seeded.session.id).startCards = [
+			{ objectId: top.id, notificationId: null, source: 'curated', rank: 1, title: top.title },
+		]
+		await recordVoiceTurn(db, seeded.session.id, { userAudioMs: 1000, agentAudioMs: 1000 })
+
+		await endVoiceSession(db, { id: seeded.session.id, reason: 'user_hangup' })
+
+		const [summary] = await chatOf(seeded.session.id)
+		expect(summary?.content).toContain('Nothing was changed.')
+		expect(summary?.content).not.toContain('card')
+		expect(summary?.content).not.toContain('Cards cleared')
+		expect(summary?.content?.split('\n').at(-1)).toBe('No sends. Call ended by hangup.')
+		expect(metaOf(summary).numbers).toMatchObject({ rank_1_card_at_start: top.id })
+	})
+
+	it('a call that read the For You list but handled no card still names the top card', async () => {
+		const seeded = await seedCall()
+		const top = await insertObject(db, seeded.ws.id, seeded.humanId, {
+			title: 'Pricing page review',
+		})
+		const state = voiceCallState(seeded.session.id)
+		state.startCards = [
+			{ objectId: top.id, notificationId: null, source: 'curated', rank: 1, title: top.title },
+		]
+		state.forYouRead = true
+		await recordVoiceTurn(db, seeded.session.id, { userAudioMs: 1000, agentAudioMs: 1000 })
+
+		await endVoiceSession(db, { id: seeded.session.id, reason: 'user_hangup' })
+
+		const [summary] = await chatOf(seeded.session.id)
+		expect(summary?.content).toContain('Nothing was changed.')
+		expect(summary?.content).toContain('No card was handled; the top card was "Pricing page review".')
+	})
+
 	it('a call that holds a send and then drops says the send was not done', async () => {
 		const seeded = await seedCall()
 		await recordVoiceTurn(db, seeded.session.id, { userAudioMs: 1000, agentAudioMs: 1000 })
