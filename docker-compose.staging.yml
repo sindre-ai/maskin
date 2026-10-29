@@ -72,6 +72,25 @@ services:
       postgres:
         condition: service_healthy
 
+  # TEMPORARY egress probe for assumed surfaces A2 and A11. Same compose network
+  # as the app. Prints once, then sleeps so the output stays readable in the
+  # container logs. Remove this service once the result is posted on the task.
+  egress-probe:
+    image: curlimages/curl:8.10.1
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "PROBE START $$(date -u +%FT%TZ)"
+        echo "A2 dns claude.ai: $$(getent hosts claude.ai | head -1 || echo FAIL)"
+        echo "A2 metadata http: $$(curl -s -o /dev/null -m 5 -w '%{http_code}' https://claude.ai/oauth/mcp-oauth-client-metadata || echo curl-failed)"
+        GW=$$(ip route | awk '/default/ {print $$3}')
+        for h in 169.254.169.254 10.0.0.1 172.17.0.1 192.168.0.1 $$GW; do
+          if curl -s -o /dev/null -m 5 "http://$$h/" ; then echo "A11 $$h CONNECTED"; else echo "A11 $$h failed rc=$$? (expected)"; fi
+        done
+        echo "PROBE END"
+        sleep 7200
+
 volumes:
   pgdata:
   seaweed_data:
