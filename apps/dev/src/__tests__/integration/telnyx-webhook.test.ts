@@ -208,6 +208,8 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 	beforeAll(() => {
 		registerToolHandler(
 			createToolRouter({
+				// The real hash needs MASKIN_PUBLIC_URL; the reducer only reads the trace, not the version.
+				scriptVersion: () => 'script-version-under-test',
 				calendarFor: async () => ({
 					ownerName: 'Sebastian',
 					client: {
