@@ -360,6 +360,70 @@ export function overrides({ method, path, params, query, body, base, item }) {
 	}
 	if (method === 'get' && path === '/api/actors')
 		return { body: actors.map((a) => ({ ...item, ...a })) }
+	// Session log reader: one finished session with a spread of envelope kinds, newest rows paged
+	// by `before` / `since` the way the real route does.
+	if (method === 'get' && path === '/api/sessions' && query.get('verbose') === 'true') {
+		return {
+			body: [
+				{
+					...item,
+					id: uuid(900),
+					actorId: query.get('actor_id') ?? OUTREACH_AGENT,
+					status: 'completed',
+					actionPrompt: 'Draft the follow-up for Priya',
+					interactive: false,
+					startedAt: ago(40),
+					completedAt: ago(35),
+					createdAt: ago(41),
+				},
+			],
+		}
+	}
+	const logsMatch = path.match(/^\/api\/sessions\/[^/]+\/logs$/)
+	if (method === 'get' && logsMatch) {
+		const env = (o) => JSON.stringify(o)
+		const all = [
+			{ stream: 'system', content: 'Container started' },
+			{ stream: 'stdout', content: env({ type: 'system', subtype: 'init' }) },
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: {
+						content: [
+							{ type: 'text', text: 'Reading the last thread with Priya before drafting.' },
+						],
+					},
+				}),
+			},
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', name: 'mcp__maskin__get_conversation' }] },
+				}),
+			},
+			{ stream: 'stderr', content: 'warn: slow response from the mail provider (retrying)' },
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: {
+						content: [{ type: 'text', text: 'Draft is ready and waiting on your approval.' }],
+					},
+				}),
+			},
+			{
+				stream: 'stdout',
+				content: env({ type: 'result', is_error: false, result: 'Draft saved for review.' }),
+			},
+		].map((r, i) => ({ ...item, id: i + 1, sessionId: uuid(900), createdAt: ago(40 - i), ...r }))
+		const since = Number(query.get('since') ?? 0)
+		const before = Number(query.get('before') ?? Number.POSITIVE_INFINITY)
+		let rows = all.filter((r) => r.id > since && r.id < before)
+		if (query.get('order') === 'desc') rows = rows.reverse()
+		return { body: rows.slice(0, Number(query.get('limit') ?? 100)) }
+	}
 	if (method === 'get' && path === '/api/subscriptions/unread') return { body: unreadFeed(item) }
 	if (method === 'get' && path === '/api/briefing') {
 		return {
