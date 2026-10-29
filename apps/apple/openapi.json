@@ -39362,7 +39362,7 @@
 				},
 				"responses": {
 					"200": {
-						"description": "The existing chat for this subject; new participants were added to it",
+						"description": "The existing chat: the chat for this subject (new participants were added to it), or the 1-1 with this agent",
 						"content": {
 							"application/json": {
 								"schema": {
