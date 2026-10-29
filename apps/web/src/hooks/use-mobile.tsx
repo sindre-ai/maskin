@@ -2,6 +2,7 @@ import * as React from 'react'
 
 const MOBILE_BREAKPOINT = 768
 const TOUCH_VIEWPORT_BREAKPOINT = 1024
+const WIDE_DESKTOP_VIEWPORT_BREAKPOINT = 1280
 
 export function useIsMobile() {
 	const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
@@ -55,4 +56,23 @@ export function useIsDesktopViewport() {
 	}, [])
 
 	return !!isDesktop
+}
+
+// True at ≥1280 CSS px (Tailwind `xl`) — wide enough for a 440px right rail
+// beside the chat column with the app sidebar open. Below it, such a rail
+// opens as an overlay Sheet instead.
+export function useIsWideDesktopViewport() {
+	const [isWide, setIsWide] = React.useState<boolean | undefined>(undefined)
+
+	React.useEffect(() => {
+		const mql = window.matchMedia(`(min-width: ${WIDE_DESKTOP_VIEWPORT_BREAKPOINT}px)`)
+		const onChange = () => {
+			setIsWide(window.innerWidth >= WIDE_DESKTOP_VIEWPORT_BREAKPOINT)
+		}
+		mql.addEventListener('change', onChange)
+		setIsWide(window.innerWidth >= WIDE_DESKTOP_VIEWPORT_BREAKPOINT)
+		return () => mql.removeEventListener('change', onChange)
+	}, [])
+
+	return !!isWide
 }

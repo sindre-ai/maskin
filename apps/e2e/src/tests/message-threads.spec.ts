@@ -16,7 +16,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * the real routes via TestAPI.
  */
 
-const isDesktop = (width: number) => width >= 1024
+// The Thread pane is a side rail from 1280 up and a bottom sheet below it (see the chat route).
+const isDesktop = (width: number) => width >= 1280
 
 async function seedChat(
 	account: { api: TestAPI; workspaceId: string },
