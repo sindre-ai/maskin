@@ -85,12 +85,14 @@ services:
       S3_SECRET_KEY: admin
       S3_REGION: us-east-1
       APP_URL: ${APP_URL:-}
-      # MCP flag under test. Soak flips by committing a new default here on
-      # the soak branch and deploying; the prod-style path (value set in
-      # Coolify, then restart) is drilled once separately. Leave both unset
-      # in Coolify unless that drill is running, or the Coolify value wins.
+      # MCP settings under test, same three as prod (tech spec v3 section 2).
+      # Soak flips by committing a new default here on the soak branch and
+      # deploying; the prod-style path (value set in Coolify, then restart)
+      # is drilled once separately. Leave all three unset in Coolify unless
+      # that drill is running, or the Coolify value wins.
       MASKIN_MCP_MODERN: ${MASKIN_MCP_MODERN:-off}
-      MASKIN_MCP_PROBE_ACTOR_IDS: ${MASKIN_MCP_PROBE_ACTOR_IDS:-}
+      MASKIN_MCP_MODERN_SCOPE: ${MASKIN_MCP_MODERN_SCOPE:-probe}
+      MASKIN_MCP_PROBE_KEY_SHA256: ${MASKIN_MCP_PROBE_KEY_SHA256:-}
     depends_on:
       postgres:
         condition: service_healthy
