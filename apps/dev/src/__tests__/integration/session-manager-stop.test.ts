@@ -979,7 +979,10 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 	// "<agent> failed to start: <text>". The text must be one plain sentence;
 	// the technical reason stays in result.error and the system log. The dead
 	// row must also stop counting as the active conversation session so the
-	// next message spawns a fresh one.
+	// next message spawns a fresh one. Driven through
+	// markSessionFailedAfterContainerLoss directly, the way conversation-responder
+	// calls it: the reaper's idle-chat-close step would complete an idle
+	// interactive row instead of failing it.
 	it('a chat session that lost its container gets plain user-facing text and frees the conversation', async () => {
 		const conversation = await insertConversation(db, workspaceId, actorId)
 		const twentyMinAgo = new Date(Date.now() - 20 * 60 * 1000)
@@ -994,7 +997,9 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			conversationId: conversation.id,
 		})
 
-		const manager = await tickReaper()
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		await manager.markSessionFailedAfterContainerLoss(session.id, workspaceId)
 		const stillActive = await manager.findConversationSessionAnyActive(conversation.id, actorId)
 		await manager.stop()
 
