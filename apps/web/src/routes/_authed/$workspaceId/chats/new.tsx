@@ -580,7 +580,7 @@ function NewChatRoute() {
 
 			{/* The composer is pinned below the scroll region, gutter-aligned with
 			    the header and with no divider above it (mockup 645–646). */}
-			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-3.5">
+			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
 				<Composer
 					workspaceId={workspaceId}
 					onSend={handleSend}
