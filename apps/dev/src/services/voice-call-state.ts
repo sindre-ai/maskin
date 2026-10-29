@@ -38,6 +38,8 @@ export interface VoiceCallState {
 	/** The first card of startCards that the call showed, opened or changed. */
 	firstCardNamed: string | null
 	pendingHold: (() => PendingHoldSummary | null) | null
+	/** True once the call read the caller's For You list, so the receipt may talk about cards. */
+	forYouRead?: boolean
 	/** Receipt rows still being written, so the closing receipt can wait for them. */
 	inflight: Set<Promise<unknown>>
 }
