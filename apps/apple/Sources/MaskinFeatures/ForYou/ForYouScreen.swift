@@ -396,7 +396,7 @@ struct ForYouFeedView: View {
 		let count = group.openCount
 		return ApprovalGroupCard(
 			group: group, typeLabel: store.typeLabel(for: group.objectType),
-			canUndo: store.canUndo(group),
+			undoableCount: store.undoableCount(group),
 			approveOne: { card in
 				MaskinHaptics.play(.success)
 				_ = withAnimation(MaskinMotion.standard) { store.approveFromGroup(card) }
@@ -514,7 +514,9 @@ struct ForYouFeedView: View {
 				// away: they keep their confirmation on the card. A plain mention has no options,
 				// so there the swipe is Done (mark read).
 				if entry.record == nil {
-					if let option = entry.card.decision?.recommended, !option.destructive {
+					if let option = entry.card.decision?.recommended, !option.destructive,
+						!store.isSendHeldBack(option, on: entry.card)
+					{
 						Button {
 							liveActions(entry).choose(option)
 						} label: {
@@ -589,7 +591,8 @@ struct ForYouFeedView: View {
 			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
 			actions: actions, chief: chief, threadInDetail: wide, agent: agent,
 			laterOpen: laterOpenId == id, acceptsReturnKey: wide,
-			typeLabel: store.typeLabel(for:), draftIsElsewhere: { entry.bucket == .needs && entry.record == nil && store.isInStrip($0) })
+			typeLabel: store.typeLabel(for:), draftIsElsewhere: { entry.bucket == .needs && entry.record == nil && store.isInStrip($0) },
+			unsentEditNote: entry.bucket == .needs && entry.record == nil ? store.unsentEditNote(for: entry.card) : nil)
 			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
 	}
 

@@ -96,6 +96,15 @@ public struct ReviewDraft: Identifiable, Equatable, Sendable {
 		return "Sending\(recipientName.map { " to \($0)" } ?? "")…"
 	}
 
+	/// An option that would send the message as it is saved: the suggested one, or one that reads
+	/// "Send…", "Approve…", "Post…" or "Publish…". A hold is not one.
+	public static func sendsMessage(_ option: DecisionOption) -> Bool {
+		if HoldReason.isHold(option.label) { return false }
+		if option.recommended { return true }
+		let first = option.label.lowercased().split(whereSeparator: { !$0.isLetter }).first
+		return first.map { ["send", "approve", "post", "publish"].contains(String($0)) } ?? false
+	}
+
 	/// A draft the strip can edit and approve: a message held by an object, with a preview, not
 	/// already approved or sent.
 	public static func isReviewable(_ draft: DecisionDraft) -> Bool {

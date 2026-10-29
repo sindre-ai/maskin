@@ -122,16 +122,17 @@ struct ForYouV8SnapshotTests {
 	func groups(dark: Bool) throws {
 		try render(
 			VStack(spacing: MaskinSpace.s7) {
-				ApprovalGroupCard(group: group(approved: 0), typeLabel: "Wiki page", canUndo: false)
-				ApprovalGroupCard(group: group(approved: 2), typeLabel: "Wiki page", canUndo: false)
-				ApprovalGroupCard(group: group(approved: 5), typeLabel: "Wiki page", canUndo: true)
+				ApprovalGroupCard(group: group(approved: 0), typeLabel: "Wiki page", undoableCount: 0)
+				ApprovalGroupCard(group: group(approved: 2), typeLabel: "Wiki page", undoableCount: 0)
+				ApprovalGroupCard(group: group(approved: 5), typeLabel: "Wiki page", undoableCount: 5)
+				ApprovalGroupCard(group: group(approved: 5), typeLabel: "Wiki page", undoableCount: 3)
 			}, dark: dark, name: "group")
 	}
 
 	@Test("group card at the largest text size")
 	func groupAccessibility() throws {
 		try render(
-			ApprovalGroupCard(group: group(approved: 0), typeLabel: "Wiki page", canUndo: false),
+			ApprovalGroupCard(group: group(approved: 0), typeLabel: "Wiki page", undoableCount: 0),
 			type: .accessibility3, name: "group-ax")
 	}
 
@@ -151,6 +152,66 @@ struct ForYouV8SnapshotTests {
 	@Test("draft card at the largest text size")
 	func draftAccessibility() throws {
 		try render(EditableDraftCard(draft: email(), store: store()), type: .accessibility3, name: "draft-ax")
+	}
+
+	@Test("draft with nothing to send says why Approve is off", arguments: [false, true])
+	func draftWithoutText(dark: Bool) throws {
+		let reviews = store()
+		let blank = email()
+		reviews.setBody("", for: blank)
+		let other = store()
+		let noSubject = email()
+		other.setSubject("", for: noSubject)
+		try render(
+			VStack(spacing: MaskinSpace.s7) {
+				EditableDraftCard(draft: blank, store: reviews)
+				EditableDraftCard(draft: noSubject, store: other)
+			}, dark: dark, name: "draft-empty")
+	}
+
+	private func editWaitingCard() -> some View {
+		let ask = ForYouCard(
+			id: "c1", objectTitle: "Follow up with Mette", objectType: "task", latestEventId: 10,
+			mention: ForYouMention(
+				eventId: 5, actorId: "dev", content: "ask",
+				decision: DecisionPrompt(
+					title: "Send it?", summary: "One email to Mette Holm.", ask: "Send it?",
+					options: [
+						DecisionOption(label: "Send", consequences: ["Goes out now"], recommended: true),
+						DecisionOption(label: "Hold", consequences: ["Waits"]),
+					])),
+			rank: 0)
+		return DecisionCardView(
+			entry: FeedEntry(card: ask, bucket: .needs), sender: "Sales Assistant", expanded: false,
+			unsentEditNote: ForYouStore.unsentEditNote)
+	}
+
+	@Test("a card whose Send is off while an edit waits", arguments: [false, true])
+	func cardWithEditWaiting(dark: Bool) throws {
+		try render(editWaitingCard(), dark: dark, name: "card-edit-waiting")
+	}
+
+	@Test("the other new views at the largest text size")
+	func largestTextSize() throws {
+		try render(
+			VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+				ForYouHeaderView(
+					dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October",
+					summary: "Forge needs a call: Is the onboarding bet worth running?")
+				ForYouHeaderView(dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October", summary: nil)
+			}, type: .accessibility3, name: "header-ax")
+		try render(
+			ApprovalGroupCard(group: group(approved: 5), typeLabel: "Wiki page", undoableCount: 3),
+			type: .accessibility3, name: "group-done-ax")
+		try render(editWaitingCard(), type: .accessibility3, name: "card-edit-waiting-ax")
+		let reviews = store()
+		let blank = email()
+		reviews.setBody("", for: blank)
+		try render(EditableDraftCard(draft: blank, store: reviews), type: .accessibility3, name: "draft-empty-ax")
+		let held = store()
+		let d = post()
+		held.approve(d)
+		try render(DraftReceiptStrip(draft: d, store: held), type: .accessibility3, name: "draft-receipt-ax")
 	}
 
 	@Test("draft receipt while Undo is free, and the send failure")

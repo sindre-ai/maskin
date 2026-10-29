@@ -56,6 +56,9 @@ struct DecisionCardView: View {
 	/// A draft that is shown, ready to edit and approve, under Drafts to review: the card does not
 	/// show it a second time and points there instead.
 	var draftIsElsewhere: (DecisionDraft) -> Bool = { _ in false }
+	/// Set while a message of this card has an edit that has not gone out: the options that would
+	/// send the saved text are off, and this says why.
+	var unsentEditNote: String?
 
 	@State private var fallbackComposer = ChatComposerModel(uploader: nil, selfActorID: "")
 	@State private var composerFocused = false
@@ -114,6 +117,7 @@ struct DecisionCardView: View {
 	private func returnKey() {
 		let (action, option) = ReturnKeyAction.resolve(for: card.decision)
 		guard let option else { return }
+		if isHeldBack(option) { return }
 		switch action {
 		case .choose: actions.choose(option)
 		case .confirmFirst: pendingDestructive = option
@@ -363,6 +367,13 @@ struct DecisionCardView: View {
 					}
 				}
 			}
+			if let note = unsentEditNote {
+				Text(note)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
+					.foregroundStyle(ForYouPalette.waitingForeground)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.fixedSize(horizontal: false, vertical: true)
+			}
 			if isExpanded, let line = Self.suggestedLine(for: decision) {
 				Text(line).font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
 					.frame(maxWidth: .infinity, alignment: .leading)
@@ -400,8 +411,15 @@ struct DecisionCardView: View {
 		}
 		.buttonStyle(.maskinPressed(.shrink))
 		.maskinHover(.fill, cornerRadius: MaskinRadius.card2xl)
+		.disabled(isHeldBack(option))
 		.accessibilityLabel(option.recommended ? "\(option.label), recommended" : option.label)
-		.accessibilityHint(option.consequences.joined(separator: ". "))
+		.accessibilityHint(
+			isHeldBack(option) ? (unsentEditNote ?? "") : option.consequences.joined(separator: ". "))
+	}
+
+	/// The option would send the saved text while the reader's edit has not gone out.
+	private func isHeldBack(_ option: DecisionOption) -> Bool {
+		unsentEditNote != nil && ReviewDraft.sendsMessage(option)
 	}
 
 	/// "Suggested: 7-day window. Ships with cycle 1 tomorrow. Adds 18 support tickets."

@@ -388,6 +388,7 @@ public final class ForYouStore {
 
 	/// Take an option on a card.
 	public func choose(_ option: DecisionOption, note: String? = nil, on card: ForYouCard) {
+		if isSendHeldBack(option, on: card) { return }
 		retain(card)
 		later.clear(card.id)
 		decisions.choose(option.label, note: note, on: DecisionTarget(card))
@@ -464,7 +465,9 @@ public final class ForYouStore {
 	public func takeSuggestedOptions() -> SuggestedBatch {
 		var batch = SuggestedBatch(taken: [], skipped: 0)
 		for entry in entries where entry.bucket == .needs && entry.card.kind == .decision {
-			if let option = entry.card.decision?.recommended, !option.destructive {
+			if let option = entry.card.decision?.recommended, !option.destructive,
+				!isSendHeldBack(option, on: entry.card)
+			{
 				choose(option, on: entry.card)
 				batch.taken.append(entry.card)
 			} else {
@@ -606,9 +609,15 @@ public final class ForYouStore {
 	/// The "Needs you" list with related approvals folded into groups.
 	public var needsItems: [FeedItem] {
 		guard v8Enabled else { return entries.filter { $0.bucket == .needs }.map(FeedItem.card) }
+		// A finished group is a receipt with Undo. Once no card in it can be taken back it has nothing
+		// left to offer, and the same cards are in Handled today.
 		return ApprovalGrouping.items(
 			entries: entries, approvedIds: groupApprovedIds,
-			agentName: { [self] in agent(of: $0)?.name ?? senderName(of: $0) })
+			agentName: { [self] in agent(of: $0)?.name ?? senderName(of: $0) }
+		).filter { item in
+			if case .group(let group) = item, group.isDone { return canUndo(group) }
+			return true
+		}
 	}
 
 	/// Approve one card of a group. It takes the card's own recommended option through the same
@@ -633,10 +642,13 @@ public final class ForYouStore {
 		return batch
 	}
 
-	/// Undo is free while any approved card is still inside its hold.
-	public func canUndo(_ group: ApprovalGroup) -> Bool {
-		group.members.contains { $0.isApproved && decisions.canUndo($0.id) }
+	/// How many approved cards of the group can still be taken back.
+	public func undoableCount(_ group: ApprovalGroup) -> Int {
+		group.members.filter { $0.isApproved && decisions.canUndo($0.id) }.count
 	}
+
+	/// Undo is free while any approved card is still inside its hold.
+	public func canUndo(_ group: ApprovalGroup) -> Bool { undoableCount(group) > 0 }
 
 	/// Take back every approved card of a group that can still be taken back.
 	public func undo(_ group: ApprovalGroup) {
@@ -666,6 +678,30 @@ public final class ForYouStore {
 	/// Whether this draft is shown in the strip, so its card does not show it a second time.
 	public func isInStrip(_ draft: DecisionDraft) -> Bool {
 		v8Enabled && reviews != nil && ReviewDraft.isReviewable(draft)
+	}
+
+	public static let unsentEditNote = "Approve your edited message under Drafts to review"
+	public static let sendingEditNote = "Your edited message is being sent under Drafts to review"
+
+	/// Why this card's own Send option is off: a message on the card has an edit that has not gone
+	/// out, and the option would send the saved text instead. Nil when nothing is in the way.
+	public func unsentEditNote(for card: ForYouCard) -> String? {
+		guard v8Enabled, let reviews else { return nil }
+		var note: String?
+		for draft in ReviewDraft.drafts(in: card, agentName: nil) where reviews.isEdited(draft) {
+			switch reviews.phase(of: draft) {
+			case .editing, .failed: return Self.unsentEditNote
+			case .held, .sending: note = Self.sendingEditNote
+			case .sent: break
+			}
+		}
+		return note
+	}
+
+	/// The option would send the saved text of a message whose edit has not gone out. Taking it
+	/// (tap, swipe, Return or "take every suggested") does nothing until the edit is approved.
+	public func isSendHeldBack(_ option: DecisionOption, on card: ForYouCard) -> Bool {
+		unsentEditNote(for: card) != nil && ReviewDraft.sendsMessage(option)
 	}
 
 	/// A draft was approved and the agent told. When it was the last message on its card the card

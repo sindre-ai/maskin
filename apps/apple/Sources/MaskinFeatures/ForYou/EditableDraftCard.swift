@@ -30,6 +30,7 @@ struct EditableDraftCard: View {
 			if draft.isEmail { emailRows }
 			bodyEditor
 			hintRow
+			if let reason = store.blockedReason(draft) { reasonRow(reason) }
 			if let failure { failureRow(failure) }
 			approveButton
 		}
@@ -163,6 +164,15 @@ struct EditableDraftCard: View {
 
 	// MARK: Actions
 
+	private func reasonRow(_ reason: String) -> some View {
+		Text(reason)
+			.font(MaskinTypeface.sans(MaskinFontSize.t13))
+			.foregroundStyle(MaskinColor.ink3)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.horizontal, MaskinSpace.s8)
+			.padding(.bottom, MaskinSpace.s4)
+	}
+
 	private func failureRow(_ message: String) -> some View {
 		Text(message)
 			.font(MaskinTypeface.sans(MaskinFontSize.t13))
@@ -202,12 +212,7 @@ struct EditableDraftCard: View {
 	}
 
 	private func hint(enabled: Bool) -> String {
-		if enabled { return "Sends the text as shown. You can undo for a few seconds." }
-		if draft.isEmail, (edit.subject ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-			return "Add a subject first"
-		}
-		if let first = draft.missing.first { return "Still needs: \(first)" }
-		return "Add some text first"
+		store.blockedReason(draft) ?? "Sends the text as shown. You can undo for a few seconds."
 	}
 }
 

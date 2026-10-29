@@ -227,6 +227,21 @@ struct DraftReviewStoreTests {
 		#expect(!store.canApprove(d))
 	}
 
+	@Test func aDimmedApproveSaysWhy() {
+		let remote = FakeReviewRemote()
+		let store = make(remote, window: 60)
+		let d = draft(remote)
+		#expect(store.blockedReason(d) == nil)
+		store.setBody("   ", for: d)
+		#expect(store.blockedReason(d) == "Add some text to approve.")
+		store.revert(d)
+		store.setSubject("", for: d)
+		#expect(store.blockedReason(d) == "Add a subject to approve.")
+		var lacking = d
+		lacking.missing = ["a recipient"]
+		#expect(store.blockedReason(lacking) == "Still needs: a recipient")
+	}
+
 	@Test func sentCallsDidSendOnce() async {
 		let remote = FakeReviewRemote()
 		let store = make(remote)

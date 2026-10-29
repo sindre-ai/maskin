@@ -183,11 +183,13 @@ struct ApprovalGroupStoreTests {
 		#expect(before?.openCount == 3)
 		let batch = store.approveAll(in: before!)
 		#expect(batch.taken.count == 3)
+		#expect(group(in: store)?.isDone == true)
 		#expect(await eventually { backend.calls.filter { $0.hasPrefix("comment:") }.count == 3 })
 		#expect(Set(backend.calls.filter { $0.hasPrefix("comment:") }) == [
 			"comment:a:Approve:5", "comment:b:Approve:5", "comment:c:Approve:5",
 		])
-		#expect(group(in: store)?.isDone == true)
+		// Past the Undo time nothing in the strip can be taken back; the cards are in Handled today.
+		#expect(group(in: store) == nil)
 	}
 
 	@Test func approvingOneCardKeepsTheGroupAndCountsDown() async {
@@ -221,6 +223,87 @@ struct ApprovalGroupStoreTests {
 		#expect(store.blockedSummary == "Forge needs a call: Publish a?")
 		store.options.intent = .questions
 		#expect(store.blockedSummary == "Forge needs a call: Publish a?")
+	}
+
+	@Test func theDoneStripCountsOnlyWhatCanStillBeUndone() async {
+		let (store, source, _) = make()
+		source.feed = .success(["a", "b", "c"].enumerated().map { approval($1, rank: $0) })
+		await store.load()
+		store.approveFromGroup(approval("a"))
+		try? await Task.sleep(for: .milliseconds(400))  // a is past its Undo time
+		store.approveFromGroup(approval("b"))
+		store.approveFromGroup(approval("c"))
+		let done = group(in: store)
+		#expect(done?.isDone == true)
+		#expect(store.undoableCount(done!) == 2)
+		store.undo(done!)
+		#expect(group(in: store)?.approvedCount == 1)
+	}
+
+	@Test func theDoneStripClearsOnceNothingCanBeUndone() async {
+		let (store, source, _) = make()
+		source.feed = .success(["a", "b", "c"].enumerated().map { approval($1, rank: $0) })
+		await store.load()
+		store.approveAll(in: group(in: store)!)
+		#expect(group(in: store)?.isDone == true)
+		#expect(await eventually { group(in: store) == nil })
+	}
+
+	@Test func anEditNotYetSentTurnsTheCardsSendOptionOff() async {
+		let (store, source, _) = make()
+		let reviews = DraftReviewStore(remote: FakeReviewRemote(), undoWindow: 60, announce: { _ in true })
+		store.reviews = reviews
+		let preview = ObjectPreview(
+			kind: "email", label: "Email", subject: "Following up", body: "Hi Mette", contentHash: "h")
+		let card = ForYouCard(
+			id: "card-1", objectTitle: "Follow up", objectType: "task", latestEventId: 10,
+			mention: ForYouMention(
+				eventId: 5, actorId: "agent-1", content: "ask",
+				decision: DecisionPrompt(
+					title: "Send it?", summary: "One email.", ask: "Send?",
+					options: [DecisionOption(label: "Send", recommended: true), DecisionOption(label: "Hold")],
+					draft: DecisionDraft(
+						id: "mette", label: "Email to Mette", body: "Hi Mette", objectId: "o1", preview: preview))),
+			rank: 0)
+		source.feed = .success([card])
+		await store.load()
+		let draft = ReviewDraft.drafts(in: card, agentName: nil)[0]
+
+		#expect(store.unsentEditNote(for: card) == nil)
+		reviews.setBody("Changed", for: draft)
+		#expect(store.unsentEditNote(for: card) == "Approve your edited message under Drafts to review")
+		store.choose(DecisionOption(label: "Send", recommended: true), on: card)
+		#expect(store.decisions.record(for: "card-1") == nil)  // the card's own Send does nothing
+		#expect(store.takeSuggestedOptions().taken.isEmpty)
+		reviews.revert(draft)
+		#expect(store.unsentEditNote(for: card) == nil)
+
+		reviews.setBody("Changed again", for: draft)
+		reviews.approve(draft)
+		#expect(store.unsentEditNote(for: card) == ForYouStore.sendingEditNote)
+
+		store.v8Enabled = false
+		#expect(store.unsentEditNote(for: card) == nil)
+	}
+
+	@Test func onlyTheOptionsThatSendTheMessageAreHeldBack() {
+		#expect(ReviewDraft.sendsMessage(DecisionOption(label: "Send", recommended: true)))
+		#expect(ReviewDraft.sendsMessage(DecisionOption(label: "Looks good", recommended: true)))
+		#expect(ReviewDraft.sendsMessage(DecisionOption(label: "Send as is")))
+		#expect(ReviewDraft.sendsMessage(DecisionOption(label: "Approve and post")))
+		#expect(!ReviewDraft.sendsMessage(DecisionOption(label: "Hold")))
+		#expect(!ReviewDraft.sendsMessage(DecisionOption(label: "Hold", recommended: true)))
+		#expect(!ReviewDraft.sendsMessage(DecisionOption(label: "Don\u{2019}t send")))
+		#expect(!ReviewDraft.sendsMessage(DecisionOption(label: "Skip")))
+	}
+
+	@Test func theFlagAnswerIsRememberedPerPersonForTheFirstDraw() {
+		let defaults = UserDefaults(suiteName: "flag-\(UUID().uuidString)")!
+		#expect(!APIForYouV8Flag.remembered(actorId: "me", defaults: defaults))
+		defaults.set(true, forKey: APIForYouV8Flag.memoryKey(actorId: "me"))
+		#expect(APIForYouV8Flag.remembered(actorId: "me", defaults: defaults))
+		#expect(!APIForYouV8Flag.remembered(actorId: "someone-else", defaults: defaults))
+		#expect(!APIForYouV8Flag.remembered(actorId: nil, defaults: defaults))
 	}
 
 	@Test func withTheFlagOffTheFeedIsPlainCards() async {

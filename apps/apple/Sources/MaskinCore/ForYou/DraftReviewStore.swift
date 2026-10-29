@@ -117,6 +117,14 @@ public final class DraftReviewStore {
 		return !draft.isEmail || !(edit.subject ?? "").trimmed.isEmpty
 	}
 
+	/// Why Approve is off, as one line for the card; nil when it is available.
+	public func blockedReason(_ draft: ReviewDraft) -> String? {
+		if canApprove(draft) { return nil }
+		if let first = draft.missing.first { return "Still needs: \(first)" }
+		if draft.isEmail, (edit(for: draft).subject ?? "").trimmed.isEmpty { return "Add a subject to approve." }
+		return "Add some text to approve."
+	}
+
 	/// The receipts that are still in flight or done, newest last.
 	public var receiptDrafts: [ReviewDraft] {
 		receipts.filter { !isEditable($0) }

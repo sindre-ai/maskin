@@ -9,8 +9,8 @@ struct ApprovalGroupCard: View {
 	let group: ApprovalGroup
 	/// The workspace's name for the cards' type ("Wiki page").
 	let typeLabel: String
-	/// Undo still works for an approved card of the group.
-	let canUndo: Bool
+	/// How many approved cards of the group can still be taken back (the rest are past their Undo time).
+	let undoableCount: Int
 	var approveOne: (ForYouCard) -> Void = { _ in }
 	var approveAll: () -> Void = {}
 	var undo: () -> Void = {}
@@ -192,9 +192,9 @@ struct ApprovalGroupCard: View {
 				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
 				.foregroundStyle(ForYouPalette.receiptForeground)
 				.frame(maxWidth: .infinity, alignment: .leading)
-			if canUndo {
+			if undoableCount > 0 {
 				Button(action: undo) {
-					Text("Undo")
+					Text(undoableCount < group.total ? "Undo \(undoableCount)" : "Undo")
 						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
 						.foregroundStyle(ForYouPalette.receiptForeground)
 						.padding(.horizontal, MaskinSpace.s4)
@@ -202,7 +202,7 @@ struct ApprovalGroupCard: View {
 						.contentShape(Rectangle())
 				}
 				.buttonStyle(.maskinPressed)
-				.accessibilityLabel("Undo approving \(group.total) \(ApprovalGrouping.plural(typeLabel.lowercased(), count: group.total))")
+				.accessibilityLabel("Undo approving \(undoableCount) \(ApprovalGrouping.plural(typeLabel.lowercased(), count: undoableCount))")
 			}
 		}
 		.padding(.horizontal, MaskinSpace.s7)
