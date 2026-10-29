@@ -147,6 +147,7 @@ export const queryKeys = {
 			['sessions', workspaceId, 'conversation', conversationId] as const,
 		firstOutput: (workspaceId: string, sessionId: string) =>
 			['sessions', workspaceId, 'first-output', sessionId] as const,
+		stats: (workspaceId: string) => ['sessions', workspaceId, 'stats'] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,

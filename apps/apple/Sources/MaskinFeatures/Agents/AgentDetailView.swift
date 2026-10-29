@@ -22,6 +22,7 @@ struct AgentDetailView: View {
 	@State private var confirmReset = false
 	@State private var confirmDelete = false
 	@State private var sessionToStop: AgentSession?
+	@State private var logSession: AgentSession?
 
 	/// Agents are changed by talking to someone, not through a form.
 	private func changeInChat() {
@@ -49,6 +50,7 @@ struct AgentDetailView: View {
 						onPause: { Task { await store.pause() } },
 						onReset: { confirmReset = true },
 						onStop: { sessionToStop = $0 },
+						onOpenLog: runtime == nil ? nil : { logSession = $0 },
 						onChangeInChat: { changeInChat() },
 						objects: objects, onOpenObject: { runtime?.openObject($0) })
 				} else {
@@ -95,6 +97,17 @@ struct AgentDetailView: View {
 			}
 			.presentationDetents([.medium, .large])
 			.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
+		}
+		.sheet(item: $logSession) { session in
+			if let runtime, let workspaceID = runtime.environment.workspaceId {
+				NavigationStack {
+					SessionLogsView(
+						sessionID: session.id,
+						api: APISessionLogsSource(client: runtime.environment.client, workspaceID: workspaceID),
+						session: store.sessions.first { $0.id == session.id } ?? session)
+				}
+				.presentationDetents([.large])
+			}
 		}
 		.sheet(isPresented: $showNewTrigger) {
 			if let triggers {
@@ -172,6 +185,8 @@ struct AgentDetailContent: View {
 	var onPause: () -> Void = {}
 	var onReset: () -> Void = {}
 	var onStop: (AgentSession) -> Void = { _ in }
+	/// Nil hides the log link on a session row (previews, snapshots).
+	var onOpenLog: ((AgentSession) -> Void)?
 	var onChangeInChat: () -> Void = {}
 	/// The objects this agent drives, and what tapping one does.
 	var objects: [WorkObject] = []
@@ -415,7 +430,19 @@ struct AgentDetailContent: View {
 			} else {
 				VStack(spacing: 0) {
 					ForEach(store.sessions) { session in
-						SessionRow(session: session)
+						if let onOpenLog {
+							Button { onOpenLog(session) } label: {
+								HStack {
+									SessionRow(session: session)
+									Image(systemName: "chevron.right").foregroundStyle(MaskinColor.ink5)
+										.accessibilityHidden(true)
+								}
+							}
+							.buttonStyle(.plain)
+							.accessibilityHint("Opens the session log")
+						} else {
+							SessionRow(session: session)
+						}
 						if session.id != store.sessions.last?.id { Divider().overlay(MaskinSurface.separator) }
 					}
 				}

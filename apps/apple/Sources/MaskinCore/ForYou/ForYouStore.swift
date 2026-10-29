@@ -159,6 +159,7 @@ public final class ForYouStore {
 	/// Bumped for every fetch (and on workspace change / stop), so only the latest response may
 	/// write `cards`: an older, slower one must not overwrite a newer result.
 	@ObservationIgnored private var generation = 0
+	@ObservationIgnored private var hasReportedNetworkContent = false
 	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var debounce: Task<Void, Never>?
 	@ObservationIgnored private let eventDebounce: Duration
@@ -210,6 +211,7 @@ public final class ForYouStore {
 		shownIds = Set(entry.value.cards.map(\.id))
 		actors = Dictionary(entry.value.actors.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 		phase = .loaded
+		Perf.event("foryou.content.cache")
 		loadedWorkspace = ws
 		freshness.hydrated(from: entry.savedAt)
 	}
@@ -288,7 +290,7 @@ public final class ForYouStore {
 			hydrate(workspace: ws)
 		}
 		if cards.isEmpty { phase = .loading }
-		await fetch(workspace: ws)
+		await Perf.measure("foryou.load") { await fetch(workspace: ws) }
 	}
 
 	/// Pull-to-refresh and event-driven refetch. Keeps what is on screen; a failure while the
@@ -335,6 +337,10 @@ public final class ForYouStore {
 			guard mine == generation, workspaceId() == ws else { return }
 			cards = fetched
 			if revealingNew || entries.isEmpty { shownIds = Set(fetched.map(\.id)) }
+			if !hasReportedNetworkContent {
+				hasReportedNetworkContent = true
+				Perf.event("foryou.content.network")
+			}
 			phase = .loaded
 			freshness.refreshed(at: cache?.now() ?? Date())
 			later.prune(keeping: Set(fetched.map(\.id)))

@@ -9,6 +9,7 @@ vi.mock('@/lib/api', () => ({
 			logs: vi.fn(),
 			create: vi.fn(),
 			stop: vi.fn(),
+			stats: vi.fn(),
 		},
 	},
 }))
@@ -28,6 +29,7 @@ import {
 	useSession,
 	useSessionErrorLog,
 	useStopSession,
+	useWorkspaceSessionStats,
 	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
@@ -126,42 +128,6 @@ describe('useWorkspaceSessions', () => {
 		})
 	})
 
-	it('does not page past the first page unless { paged: true }', async () => {
-		const fullPage = Array.from({ length: 100 }, (_, i) => buildSession({ id: `s-${i}` }))
-		vi.mocked(api.sessions.list).mockResolvedValue(fullPage)
-
-		const { result } = renderHook(() => useWorkspaceSessions(workspaceId), {
-			wrapper: TestWrapper,
-		})
-
-		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data).toHaveLength(100)
-		expect(api.sessions.list).toHaveBeenCalledTimes(1)
-	})
-
-	it('pages past the 100-row API cap until a short page when { paged: true }', async () => {
-		const fullPage = Array.from({ length: 100 }, (_, i) => buildSession({ id: `s-${i}` }))
-		const tail = [buildSession({ id: 's-100' })]
-		vi.mocked(api.sessions.list).mockResolvedValueOnce(fullPage).mockResolvedValueOnce(tail)
-
-		const { result } = renderHook(() => useWorkspaceSessions(workspaceId, { paged: true }), {
-			wrapper: TestWrapper,
-		})
-
-		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data).toHaveLength(101)
-		expect(api.sessions.list).toHaveBeenNthCalledWith(1, workspaceId, {
-			verbose: 'true',
-			limit: '100',
-			offset: '0',
-		})
-		expect(api.sessions.list).toHaveBeenNthCalledWith(2, workspaceId, {
-			verbose: 'true',
-			limit: '100',
-			offset: '100',
-		})
-	}, 10_000)
-
 	it('exposes error when API rejects', async () => {
 		vi.mocked(api.sessions.list).mockRejectedValue(new Error('Server error'))
 
@@ -171,6 +137,33 @@ describe('useWorkspaceSessions', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Server error')
+	})
+})
+
+describe('useWorkspaceSessionStats', () => {
+	it('fetches the per-agent stats in one request, however large the history is', async () => {
+		const stats = [
+			{
+				actor_id: 'actor-1',
+				total: 59_500,
+				active: 2,
+				total_cost_usd: 1234.5,
+				last_30d_cost_usd: 99.25,
+				latest_status: 'completed',
+				latest_session_at: '2026-10-29T07:00:00.000Z',
+			},
+		]
+		vi.mocked(api.sessions.stats).mockResolvedValue(stats)
+
+		const { result } = renderHook(() => useWorkspaceSessionStats(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toEqual(stats)
+		expect(api.sessions.stats).toHaveBeenCalledTimes(1)
+		expect(api.sessions.stats).toHaveBeenCalledWith(workspaceId)
+		expect(api.sessions.list).not.toHaveBeenCalled()
 	})
 })
 

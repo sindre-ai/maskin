@@ -37,6 +37,14 @@ public struct LinkedTarget: Hashable, Sendable, Identifiable {
 	/// Every object and file a text links to, in the order each first appears, without repeats.
 	/// Only real links count (`[title](url)`, `<url>` or a bare address), never an id in prose.
 	public static func extract(from markdown: String) -> [LinkedTarget] {
+		extract(from: markdown, cache: LinkScanCaches.targets)
+	}
+
+	static func extract(from markdown: String, cache: LinkScanCache<[LinkedTarget]>) -> [LinkedTarget] {
+		cache.value(for: markdown) { scan(markdown) }
+	}
+
+	static func scan(_ markdown: String) -> [LinkedTarget] {
 		var seen = Set<String>()
 		var found: [LinkedTarget] = []
 		for link in LinkScanner.links(in: markdown) {
@@ -174,6 +182,14 @@ public enum LinkedMessageSplitter {
 	/// Splits a message into ordered text and stand-alone linked items. Fenced code is never
 	/// touched. Joining the segments' sources reproduces the message's content.
 	public static func split(_ markdown: String) -> [LinkedSegment] {
+		split(markdown, cache: LinkScanCaches.segments)
+	}
+
+	static func split(_ markdown: String, cache: LinkScanCache<[LinkedSegment]>) -> [LinkedSegment] {
+		cache.value(for: markdown) { scan(markdown) }
+	}
+
+	static func scan(_ markdown: String) -> [LinkedSegment] {
 		let lines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
 		var segments: [LinkedSegment] = []
 		var buffer: [String] = []
@@ -411,4 +427,43 @@ public enum LinkedConversationItems {
 		}
 		return entries
 	}
+}
+
+/// Results of the link scans, keyed by the text. A message row re-reads its links every time the
+/// thread renders, and each read is several regex passes; the text of a message rarely changes, so
+/// the answer is remembered (bounded, and dropped under memory pressure by `NSCache`).
+final class LinkScanCache<Value: Sendable>: @unchecked Sendable {
+	private final class Box { let value: Value; init(_ value: Value) { self.value = value } }
+	private let cache = NSCache<NSString, Box>()
+	private let counter = Counter()
+
+	init(limit: Int = 500) { cache.countLimit = limit }
+
+	/// How many times `compute` ran (tests pin that a repeat read does not).
+	var computeCount: Int { counter.value }
+
+	/// The remembered result for `text`, without computing it (tests pin that a public call used the cache).
+	func peek(_ text: String) -> Value? { cache.object(forKey: text as NSString)?.value }
+
+	func value(for text: String, compute: () -> Value) -> Value {
+		let key = text as NSString
+		if let hit = cache.object(forKey: key) { return hit.value }
+		let value = compute()
+		counter.increment()
+		cache.setObject(Box(value), forKey: key)
+		return value
+	}
+
+	private final class Counter: @unchecked Sendable {
+		private let lock = NSLock()
+		private var count = 0
+		var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+		func increment() { lock.lock(); count += 1; lock.unlock() }
+	}
+}
+
+enum LinkScanCaches {
+	static let targets = LinkScanCache<[LinkedTarget]>()
+	static let segments = LinkScanCache<[LinkedSegment]>()
+	static let callLinks = LinkScanCache<[CallMentions.Link]>()
 }

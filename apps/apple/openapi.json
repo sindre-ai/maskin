@@ -44803,6 +44803,78 @@
 				}
 			}
 		},
+		"/api/sessions/stats": {
+			"get": {
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Per-agent session counts, cost and latest status for the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "One row per agent with at least one session the caller can read",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"actor_id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"total": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"active": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"total_cost_usd": {
+												"type": "number"
+											},
+											"last_30d_cost_usd": {
+												"type": "number"
+											},
+											"latest_status": {
+												"type": "string"
+											},
+											"latest_session_at": {
+												"type": [
+													"string",
+													"null"
+												]
+											}
+										},
+										"required": [
+											"actor_id",
+											"total",
+											"active",
+											"total_cost_usd",
+											"last_30d_cost_usd",
+											"latest_status",
+											"latest_session_at"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/sessions/{id}": {
 			"get": {
 				"tags": [

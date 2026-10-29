@@ -15,6 +15,40 @@ struct LinkedTargetsTests {
 
 	// MARK: Extraction
 
+	@Test("extract scans a text once and answers repeat reads from the cache")
+	func extractIsCached() {
+		let text = "Draft: [Email](\(object(one)))"
+		let cache = LinkScanCache<[LinkedTarget]>()
+		let first = LinkedTarget.extract(from: text, cache: cache)
+		for _ in 0..<20 { #expect(LinkedTarget.extract(from: text, cache: cache) == first) }
+		#expect(first.map(\.key) == ["object:\(one)"])
+		#expect(cache.computeCount == 1)
+		_ = LinkedTarget.extract(from: "Another [Email](\(object(two)))", cache: cache)
+		#expect(cache.computeCount == 2)
+	}
+
+	@Test("split scans a text once and answers repeat reads from the cache")
+	func splitIsCached() {
+		let text = "Draft:\n\n[Email](\(object(one)))\n\nmore"
+		let cache = LinkScanCache<[LinkedSegment]>()
+		let first = LinkedMessageSplitter.split(text, cache: cache)
+		for _ in 0..<20 { #expect(LinkedMessageSplitter.split(text, cache: cache) == first) }
+		#expect(first == LinkedMessageSplitter.scan(text))
+		#expect(cache.computeCount == 1)
+	}
+
+	@Test("the public calls go through the shared cache")
+	func publicCallsUseTheSharedCache() {
+		// A text no other test uses, so the shared cache cannot already hold it.
+		let text = "Draft: [Email](\(object(one))) \(UUID().uuidString)"
+		#expect(LinkScanCaches.targets.peek(text) == nil)
+		#expect(LinkedTarget.extract(from: text) == LinkedTarget.scan(text))
+		#expect(LinkScanCaches.targets.peek(text) != nil)
+		#expect(LinkScanCaches.segments.peek(text) == nil)
+		#expect(LinkedMessageSplitter.split(text) == LinkedMessageSplitter.scan(text))
+		#expect(LinkScanCaches.segments.peek(text) != nil)
+	}
+
 	@Test("finds objects and files in links of every shape, once each, in order")
 	func extraction() {
 		let text = """

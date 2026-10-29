@@ -28,6 +28,7 @@ import {
 	sessionMcpServerCardSchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionStatsResponseSchema,
 	sessionTitleFromPrompt,
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
@@ -562,6 +563,70 @@ app.openapi(sessionUsageRoute, (async (c) => {
 
 	return c.json({ buckets, totals })
 }) as RouteHandler<typeof sessionUsageRoute, Env>)
+
+// GET /stats - One row per agent: session count, active count, cost and latest status.
+// The Agents page reads this instead of paging the whole session list to count it.
+// Registered before /{id} so the static `stats` segment wins the match.
+const ACTIVE_SESSION_STATUSES = ['running', 'starting', 'pending']
+
+const sessionStatsRoute = createRoute({
+	method: 'get',
+	path: '/stats',
+	tags: ['Sessions'],
+	summary: 'Per-agent session counts, cost and latest status for the workspace',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionStatsResponseSchema } },
+			description: 'One row per agent with at least one session the caller can read',
+		},
+	},
+})
+
+app.openapi(sessionStatsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const conditions = [eq(sessions.workspaceId, workspaceId)]
+	// Same read rule as the list, so a count never includes a session the caller cannot open.
+	const visibility = await sessionListVisibility(
+		db,
+		workspaceId,
+		c.get('actorId'),
+		c.get('workspaceRole'),
+	)
+	if (visibility) conditions.push(visibility)
+
+	// ISO string + ::timestamptz cast for the same pooler reason as /usage.
+	const windowStartIso = new Date(Date.now() - 30 * DAY_MS).toISOString()
+	const settledAt = sql`COALESCE(${sessions.completedAt}, ${sessions.updatedAt})`
+
+	const rows = await db
+		.select({
+			actorId: sessions.actorId,
+			total: sql<number>`COUNT(*)::int`,
+			active: sql<number>`(COUNT(*) FILTER (WHERE ${inArray(sessions.status, ACTIVE_SESSION_STATUSES)}))::int`,
+			totalCostUsd: sql<number>`COALESCE(SUM(${sessions.totalCostUsd}), 0)::float8`,
+			last30dCostUsd: sql<number>`COALESCE(SUM(${sessions.totalCostUsd}) FILTER (WHERE ${settledAt} >= ${windowStartIso}::timestamptz), 0)::float8`,
+			latestStatus: sql<string>`(ARRAY_AGG(${sessions.status} ORDER BY ${sessions.createdAt} DESC))[1]`,
+			latestSessionAt: sql<Date | string | null>`MAX(${sessions.createdAt})`,
+		})
+		.from(sessions)
+		.where(and(...conditions))
+		.groupBy(sessions.actorId)
+
+	return c.json(
+		rows.map((r) => ({
+			actor_id: r.actorId,
+			total: Number(r.total),
+			active: Number(r.active),
+			total_cost_usd: Number(r.totalCostUsd),
+			last_30d_cost_usd: Number(r.last30dCostUsd),
+			latest_status: r.latestStatus,
+			latest_session_at: r.latestSessionAt ? new Date(r.latestSessionAt).toISOString() : null,
+		})),
+	)
+}) as RouteHandler<typeof sessionStatsRoute, Env>)
 
 // GET /:id - Get session detail
 const getSessionResponseSchema = sessionResponseSchema.extend({
