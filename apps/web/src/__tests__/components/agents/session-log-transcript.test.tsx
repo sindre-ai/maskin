@@ -194,7 +194,7 @@ describe('getLatestActivityPreview', () => {
 				content: [{ type: 'tool_use', id: 't1', name: 'search_objects', input: {} }],
 			},
 		})
-		expect(getLatestActivityPreview([log(1, 'stdout', tool)])).toBe('Using search_objects')
+		expect(getLatestActivityPreview([log(1, 'stdout', tool)])).toBe('search objects')
 	})
 
 	it('returns "Awaiting input" when the latest envelope is a successful result', () => {
@@ -227,7 +227,7 @@ describe('getLatestActivityPreview', () => {
 		})
 		const systemInit = JSON.stringify({ type: 'system', subtype: 'init' })
 		expect(getLatestActivityPreview([log(1, 'stdout', tool), log(2, 'stdout', systemInit)])).toBe(
-			'Using list_objects',
+			'list objects',
 		)
 	})
 

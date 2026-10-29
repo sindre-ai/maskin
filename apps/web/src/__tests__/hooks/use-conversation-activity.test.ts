@@ -982,7 +982,7 @@ describe('useConversationActivity — auto-posted final output', () => {
 		// the trail sits directly above the answer it explains.
 		await waitFor(() => expect(result.current.byReplyMessageId.has(2)).toBe(true))
 		const turn = result.current.byReplyMessageId.get(2)?.[0]
-		expect(turn?.steps.map((s) => s.text)).toEqual(['Using search_objects'])
+		expect(turn?.steps.map((s) => s.text)).toEqual(['search objects'])
 		expect(turn?.pendingFinalOutput).toBeUndefined()
 	})
 
