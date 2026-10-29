@@ -15,6 +15,10 @@ const LEVEL_ORDER: AgentAccess[] = ['read_write', 'read', 'none']
 /** Read & write where an irreversible action still waits for a person (sending an email). */
 const APPROVAL_GATED_WRITE = `${AGENT_ACCESS_LABELS.read_write} (all tools, but a person has to approve each email before you send it)`
 
+/** A saved draft has not gone anywhere, and agents have reported one as sent. */
+const DRAFT_IS_NOT_SENT =
+	' A saved draft is not a sent email: report "drafted" for a draft, and "sent" only after gmail_send_email returns a message id.'
+
 export function providerLabel(provider: string): string {
 	try {
 		return getProvider(provider)?.config.displayName ?? provider
@@ -57,7 +61,9 @@ export function buildAccessPreamble(
 				ordered.length === 1
 					? ordered[0]
 					: `${ordered.slice(0, -1).join(', ')} on some accounts and ${ordered[ordered.length - 1]} on others`
-			return `- ${label}: ${text}`
+			const draftNote =
+				levels.has('read_write') && requiresApprovalToAct(provider) ? DRAFT_IS_NOT_SENT : ''
+			return `- ${label}: ${text}${draftNote}`
 		})
 
 	return [
