@@ -7,6 +7,7 @@ import {
 } from '@maskin/db/schema'
 import { HUMAN_MESSAGE_STYLE_SHORT, decideWakes } from '@maskin/shared'
 import { and, count, desc, eq, inArray, isNull, lt, lte, ne, sql } from 'drizzle-orm'
+import { isHumanPaused } from '../lib/agent-pause'
 import {
 	type AgentRoutingOutcome,
 	type GroupChatDelivery,
@@ -15,6 +16,7 @@ import {
 	trackGroupChatMessageRouted,
 } from '../lib/analytics/group-chat-routing-events'
 import { logger } from '../lib/logger'
+import { insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 import { loadActiveSessionsNote } from './spawned-sessions'
@@ -106,7 +108,7 @@ export async function evaluateAndRespond(ctx: {
 		.limit(1)
 	if (!message) return undefined
 
-	const candidates = await db
+	const participants = await db
 		.select({
 			id: actors.id,
 			name: actors.name,
@@ -114,6 +116,8 @@ export async function evaluateAndRespond(ctx: {
 			systemPrompt: actors.systemPrompt,
 			llmProvider: actors.llmProvider,
 			llmConfig: actors.llmConfig,
+			agentState: actors.agentState,
+			metadata: actors.metadata,
 		})
 		.from(conversationParticipants)
 		.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
@@ -128,6 +132,20 @@ export async function evaluateAndRespond(ctx: {
 					: undefined,
 			),
 		)
+	// A person's Pause holds against chat: the message stays in the conversation but wakes
+	// nobody. The idle watcher's auto-pause is not a person's, so those agents still wake.
+	const candidates = participants.filter((a) => !isHumanPaused(a))
+	const pausedAgents = participants.filter((a) => isHumanPaused(a))
+	if (pausedAgents.length > 0) {
+		await announceHumanPaused({
+			db,
+			workspaceId,
+			conversationId,
+			message,
+			pausedAgents,
+			addressed: Boolean(options?.targetAgentId),
+		})
+	}
 	if (candidates.length === 0) return undefined
 
 	// A conversation with exactly two active participants total (the author
@@ -232,7 +250,7 @@ export async function evaluateAndRespond(ctx: {
 		.select({ actorName: actors.name, content: messages.content })
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
-		.where(eq(messages.conversationId, conversationId))
+		.where(and(eq(messages.conversationId, conversationId), eq(messages.kind, 'message')))
 		.orderBy(desc(messages.id))
 		.limit(HISTORY_CONTEXT_MESSAGES)
 	const conversationHistory = historyRows.slice().reverse()
@@ -277,6 +295,52 @@ export async function evaluateAndRespond(ctx: {
 		),
 	)
 	return undefined
+}
+
+/**
+ * Tells the chat that a person-paused agent will not reply, as a plain system line. Only said
+ * where the sender expects an answer from that agent: a direct chat, a tag, or an explicit
+ * retry. Otherwise every message in a group chat would add a line for each paused member.
+ * Never throws: the message is already in the chat, the line is only a courtesy.
+ */
+async function announceHumanPaused(ctx: {
+	db: Database
+	workspaceId: string
+	conversationId: string
+	message: { actorId: string; metadata: unknown }
+	pausedAgents: Array<{ id: string; name: string }>
+	addressed: boolean
+}): Promise<void> {
+	const { db, workspaceId, conversationId, message } = ctx
+	try {
+		const [total] = await db
+			.select({ value: count() })
+			.from(conversationParticipants)
+			.where(
+				and(
+					eq(conversationParticipants.conversationId, conversationId),
+					isNull(conversationParticipants.leftAt),
+				),
+			)
+		const isDirect = (total?.value ?? 0) === 2
+		const mentions = new Set((message.metadata as { mentions?: string[] } | null)?.mentions ?? [])
+		for (const agent of ctx.pausedAgents) {
+			if (!isDirect && !ctx.addressed && !mentions.has(agent.id)) continue
+			// Authored by the sender, not the agent: a line from the agent would count
+			// toward the consecutive-agent-messages cap.
+			await insertConversationMessage(db, {
+				conversationId,
+				workspaceId,
+				actorId: message.actorId,
+				content: `${agent.name} is paused, resume to reply`,
+				metadata: null,
+				sessionId: null,
+				kind: 'system',
+			})
+		}
+	} catch (err) {
+		logger.warn('Failed to post the paused-agent line', { conversationId, error: String(err) })
+	}
 }
 
 /** Fire-and-forget, never throws: its lookups and the capture can never delay a wake. */

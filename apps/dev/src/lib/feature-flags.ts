@@ -27,6 +27,21 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
+	 * Google Drive integration visibility on the Settings > Integrations page.
+	 * When off, the provider card + Connect button are filtered out of the
+	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
+	 * — the customer sees no google-drive entry point at all. When on, google-drive
+	 * appears alongside every other OAuth provider with a standard Connect button.
+	 * Per-actor behaviour gate, never shared state: the backend still registers the
+	 * provider unconditionally, so `POST /api/integrations/google-drive/connect` and
+	 * the `google_drive__*` MCP tools stay reachable for tester actors (add them to
+	 * `FF_TESTER_ACTOR_IDS` + `google-drive-integration-ui` to `FF_TESTER_FEATURES`).
+	 * See parent bet [Google Drive MCP — cover the Drive-shaped JTBDs across the workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e5cd108b-ad30-498b-a4ac-e961587389c5)
+	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
+	 * google-drive ships to every workspace.
+	 */
+	GOOGLE_DRIVE_INTEGRATION_UI: 'google-drive-integration-ui',
+	/**
 	 * Gates the weekly capability note that Chief of Staff sends in a person's
 	 * 1-1 (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
@@ -48,6 +63,16 @@ export const FLAGS = {
 	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
 	 */
 	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
+	/**
+	 * Gates the v8 changes to the native For you screen: the date line and one-sentence
+	 * summary, related approvals grouped under one Approve all, editable drafts and the
+	 * Drafts to review strip. Read by the iPhone app on each load of the feed from
+	 * GET /api/feature-flags, for the signed-in actor. Off means the screen is exactly as
+	 * it shipped before. Presentation only: the routes the screen calls are unchanged
+	 * (edits go through the existing object update and draft approval). Retire once the
+	 * v8 For you screen is on for everyone.
+	 */
+	APPLE_FORYOU_V8: 'apple-foryou-v8',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

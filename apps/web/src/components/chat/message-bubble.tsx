@@ -74,8 +74,10 @@ interface MessageBubbleProps {
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
 	spawnInfo?: MessageSpawnInfo
-	/** Linked objects an earlier message already shows a card for. */
+	/** Linked objects another message in the chat holds the card for: they are chips here. */
 	shownLinkedObjectIds?: ReadonlySet<string>
+	/** Linked drafts edited since an earlier message showed them: their card here is tagged Updated. */
+	updatedLinkedObjectIds?: ReadonlySet<string>
 	/** Called once a redo of this message has been accepted, so the thread can drop the failed reply it replaces. */
 	onRetried?: (message: MessageResponse) => void
 	/** Opens the reply thread under this message. Without it the bubble has no Reply action. */
@@ -101,6 +103,7 @@ export function MessageBubble({
 	questionAnswered = false,
 	spawnInfo,
 	shownLinkedObjectIds,
+	updatedLinkedObjectIds,
 	onRetried,
 	onReplyInThread,
 }: MessageBubbleProps) {
@@ -384,8 +387,8 @@ export function MessageBubble({
 						    parser backs object comments — no new payload, just the render
 						    path the chat surface was missing. `linkedCards` draws a link on its own
 						    line as a card where it stands (a draft can be approved without leaving
-						    the chat) and a link in a sentence as a chip; an id an earlier message
-						    already shows is not drawn again. */}
+						    the chat) and a link in a sentence as a chip; an id another message holds
+						    the card for is a chip here, and a revised draft's card is tagged Updated. */}
 						<MarkdownContent
 							content={message.content}
 							size="sm"
@@ -395,6 +398,7 @@ export function MessageBubble({
 								conversationId: message.conversationId,
 								agentId: message.actorId,
 								skipIds: shownLinkedObjectIds,
+								updatedIds: updatedLinkedObjectIds,
 								renderCard: renderLinkedCard,
 								renderChip: renderLinkedChip,
 								renderGithubChip: renderLinkedGithubChip,

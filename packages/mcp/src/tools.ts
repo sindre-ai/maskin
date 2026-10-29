@@ -403,7 +403,7 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` plus an always-on `setup` block (`{checks, next_steps, prose}`) — a fresh readiness check surfacing gaps (thin content, no driver, entry-status objects) to walk the user through; same shape create_objects/update_objects return. Opt into further blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. For a loop's deeper setup check (steps, connectors, members), call get_loop — it always returns its own `setup` block, richer than the lightweight per-object slice here. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide. Before you tell anyone whether something was sent, done, approved or on hold, read the task and the contact it belongs to with this tool. A drafts page, target list or search snapshot is a copy that can lag behind, and an answer taken from one is stale. If the task and the page disagree, the task wins; say so and fix the page.",
+			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` plus an always-on `setup` block (`{checks, next_steps, prose}`) — a fresh readiness check surfacing gaps (thin content, no driver, entry-status objects) to walk the user through; same shape create_objects/update_objects return. Opt into further blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges. Both are capped at 100 rows per object; when an object has more, a `relationships_page` / `connected_objects_page` block reports the returned count, the total and a hint, and the rest is paged with list_relationships using `object_id`; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. For a loop's deeper setup check (steps, connectors, members), call get_loop — it always returns its own `setup` block, richer than the lightweight per-object slice here. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide. Before you tell anyone whether something was sent, done, approved or on hold, read the task and the contact it belongs to with this tool. A drafts page, target list or search snapshot is a copy that can lag behind, and an answer taken from one is stale. If the task and the page disagree, the task wins; say so and fix the page.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
@@ -2578,6 +2578,25 @@ export const tools = {
 			agent_id: optionalDesktopAgentId,
 			command: z.string().min(1).max(10000),
 			timeout_s: z.number().int().min(1).max(120).optional().describe('Defaults to 30.'),
+		}),
+	},
+	desktop_put_file: {
+		description:
+			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, then in the chooser select the file and click Open (double click and Enter do not submit it). Only your own computer is reachable.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			file_id: z
+				.string()
+				.uuid()
+				.describe('Id of a workspace file, e.g. from create_file or list_files.'),
+			folder: z
+				.string()
+				.max(255)
+				.optional()
+				.describe(
+					'Folder on your computer, absolute or starting with ~/. Created if missing. Defaults to ~/Downloads.',
+				),
 		}),
 	},
 	desktop_expose_port: {

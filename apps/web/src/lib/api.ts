@@ -841,7 +841,12 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			provider: string,
-			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
+			body?: {
+				api_key?: string
+				receive_subdomain?: string
+				install_new_org?: boolean
+				origin?: string
+			},
 		) =>
 			request<{
 				install_url?: string
@@ -891,6 +896,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		disconnectGoogle: (
+			workspaceId: string,
+			body: { email: string; scope: 'drive' | 'drive-meet' | 'google' },
+		) =>
+			request<{ disconnected: { id: string; provider: string }[] }>(
+				'/integrations/google/disconnect',
+				{ method: 'POST', body, workspaceId },
+			),
 		githubLinkable: (workspaceId: string) =>
 			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
 		githubLink: (workspaceId: string, installationId: string) =>
@@ -925,6 +938,13 @@ export const api = {
 			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
 				workspaceId,
 			}),
+		driveWatches: (workspaceId: string) =>
+			request<DriveWatch[]>('/integrations/google-drive/watched-folders', { workspaceId }),
+		stopDriveWatch: (workspaceId: string, folderId: string) =>
+			request<{ ok: true; folderId: string }>(
+				`/integrations/google-drive/watched-folders/${encodeURIComponent(folderId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
 	},
 
 	notifications: {
@@ -2259,6 +2279,8 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Scopes the install's token response carried. Names only, never the token. */
+	grantedScopes?: string[]
 	/** Keychain: where the credential came from. Never the value. */
 	source?: string
 	/** Keychain: for source chat_capture, the session the key was pasted into. */
@@ -2340,6 +2362,21 @@ export interface ChatCaptureResponse {
 	undoUrl: string | null
 	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
 	relaunch: 'stopped' | 'failed'
+}
+
+/** One watched Drive folder, as the Folder watches section lists it. Optional
+ *  fields are null when the watch has no stored value for them. */
+export interface DriveWatch {
+	folderId: string
+	name: string
+	path: string | null
+	addedAt: string | null
+	lastFiredAt: string | null
+	integrationId: string
+	/** Google account (email) of the Drive connection the watch lives on. */
+	account: string | null
+	/** Enabled triggers whose filter names this folder; empty when none do. */
+	triggers: Array<{ id: string; name: string }>
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,

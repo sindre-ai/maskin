@@ -93,6 +93,28 @@ describe('ObjectReferenceChip', () => {
 		).toBeInTheDocument()
 	})
 
+	it('keeps a draft a plain link when its card follows, and draws a chip when none does', () => {
+		useObject.mockReturnValue({
+			data: objectRow({ preview: { kind: 'email', label: 'Email' } }),
+			isLoading: false,
+		})
+		const { unmount } = render(
+			<ObjectReferenceChip workspaceId={WS} objectId={ID} fallback={fallback} />,
+		)
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+		unmount()
+		render(
+			<ObjectReferenceChip
+				workspaceId={WS}
+				objectId={ID}
+				fallback={fallback}
+				cardFollows={false}
+			/>,
+		)
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Chat preview cards/ })).toBeInTheDocument()
+	})
+
 	it('says Deleted object when the object is missing or in another workspace', () => {
 		for (const data of [undefined, objectRow({ workspaceId: 'other' })]) {
 			useObject.mockReturnValue({ data, isLoading: false })

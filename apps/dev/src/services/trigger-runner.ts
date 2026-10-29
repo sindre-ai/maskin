@@ -15,6 +15,7 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
 import { type SQL, and, eq, gt, inArray, lt, sql } from 'drizzle-orm'
+import { isActorHumanPaused, isHumanPaused } from '../lib/agent-pause'
 import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
@@ -2344,6 +2345,16 @@ export class CommentDispatcher {
 		entityId: string
 		actionPrompt: string
 	}): Promise<boolean> {
+		// A person's Pause holds against the fallback too, for the driver and the Chief of Staff.
+		if (await isActorHumanPaused(this.db, ctx.actorId)) {
+			logger.info('Comment fallback held: agent is paused by a person', {
+				workspace_id: ctx.workspaceId,
+				actor_id: ctx.actorId,
+				object_id: ctx.entityId,
+				source_comment_event_id: ctx.sourceCommentEventId,
+			})
+			return false
+		}
 		// The fallback is the responder of last resort: it stands down when the thread-reply
 		// auto-spawn (routes/events.ts) has claimed, or is claiming, this actor for this comment.
 		// The claim is a primary-key INSERT, so it holds even when the two run ~50ms apart.
@@ -2554,6 +2565,22 @@ export class CommentDispatcher {
 		this.log(ctx.event, 'case_1_mention', ctx.actor.id)
 
 		if (ctx.actor.type !== 'agent') return
+
+		// A person's Pause holds against a mention too. Like a blocked loop guard, the
+		// notification above stays, so the mention is waiting when the agent resumes.
+		const [mentionedAgent] = await this.db
+			.select({ agentState: actors.agentState, metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, ctx.actor.id))
+			.limit(1)
+		if (mentionedAgent && isHumanPaused(mentionedAgent)) {
+			logger.info('Mention held: agent is paused by a person', {
+				event_id: ctx.event.event_id,
+				resolved_actor_id: ctx.actor.id,
+				object_id: ctx.objectId,
+			})
+			return
+		}
 
 		// Loop guards. Only agent-authored mentions are limited: a human can always
 		// wake an agent. A blocked mention keeps its notification (written above),
