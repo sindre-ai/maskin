@@ -60087,6 +60087,9 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"readable_with": {
+											"type": "string"
+										},
 										"contentHash": {
 											"type": [
 												"string",
@@ -60490,11 +60493,24 @@
 						"required": true,
 						"name": "id",
 						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"raw",
+								"text"
+							],
+							"description": "raw (default) returns the stored bytes. text returns the words in a text file: for HTML, markdown extracted from the page (no styles, scripts or embedded fonts) as content_text; other text files unchanged. Non-text files ignore it."
+						},
+						"required": false,
+						"name": "format",
+						"in": "query"
 					}
 				],
 				"responses": {
 					"200": {
-						"description": "File detail",
+						"description": "File detail. With format=text on a text file: content_text, extracted, title, meta_description, json_ld and source_object_id instead of content and encoding.",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -60630,6 +60646,9 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"readable_with": {
+											"type": "string"
+										},
 										"contentHash": {
 											"type": [
 												"string",
@@ -60656,6 +60675,63 @@
 										"content",
 										"encoding",
 										"url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid format, or an HTML file too large to extract text from",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
@@ -60779,6 +60855,35 @@
 											"base64",
 											"utf8"
 										]
+									},
+									"edits": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"old": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 200000,
+													"description": "Exact text to replace. Must occur exactly once unless replace_all is true."
+												},
+												"new": {
+													"type": "string",
+													"maxLength": 200000,
+													"description": "Replacement text. May be empty."
+												},
+												"replace_all": {
+													"type": "boolean",
+													"description": "Replace every occurrence of old. Default false: old must match exactly once."
+												}
+											},
+											"required": [
+												"old",
+												"new"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 50
 									},
 									"annotations": {
 										"type": "array",
@@ -60996,6 +61101,9 @@
 											"maxItems": 200,
 											"default": []
 										},
+										"readable_with": {
+											"type": "string"
+										},
 										"contentHash": {
 											"type": [
 												"string",
@@ -61028,7 +61136,7 @@
 						}
 					},
 					"400": {
-						"description": "Invalid request",
+						"description": "Invalid request, or an edit that cannot be applied (text not found, found more than once without replace_all, file is not text)",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -61788,6 +61896,9 @@
 											},
 											"maxItems": 200,
 											"default": []
+										},
+										"readable_with": {
+											"type": "string"
 										},
 										"contentHash": {
 											"type": [

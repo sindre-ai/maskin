@@ -166,6 +166,38 @@ export const createFileSchema = z
 
 export type CreateFileInput = z.infer<typeof createFileSchema>
 
+// -- Partial edits ------------------------------------------------------------
+// A text file is changed by naming the exact text to replace, instead of
+// re-sending the whole file. Each edit applies to the result of the one before.
+export const MAX_FILE_EDITS = 50
+export const MAX_FILE_EDIT_TEXT_CHARS = 200_000
+export const MAX_FILE_EDITS_TOTAL_CHARS = 1_000_000
+
+export const fileEditSchema = z.object({
+	old: z
+		.string()
+		.min(1)
+		.max(MAX_FILE_EDIT_TEXT_CHARS)
+		.describe('Exact text to replace. Must occur exactly once unless replace_all is true.'),
+	new: z.string().max(MAX_FILE_EDIT_TEXT_CHARS).describe('Replacement text. May be empty.'),
+	replace_all: z
+		.boolean()
+		.optional()
+		.describe('Replace every occurrence of old. Default false: old must match exactly once.'),
+})
+
+export type FileEdit = z.infer<typeof fileEditSchema>
+
+export const fileEditsSchema = z
+	.array(fileEditSchema)
+	.min(1)
+	.max(MAX_FILE_EDITS)
+	.refine(
+		(edits) =>
+			edits.reduce((n, e) => n + e.old.length + e.new.length, 0) <= MAX_FILE_EDITS_TOTAL_CHARS,
+		`Edits are too large in total (max ${MAX_FILE_EDITS_TOTAL_CHARS} characters of old and new text)`,
+	)
+
 export const updateFileSchema = z
 	.object({
 		name: fileNameSchema.optional(),
@@ -174,6 +206,8 @@ export const updateFileSchema = z
 		mime_type: mimeTypeSchema.optional(),
 		content: z.string().optional(),
 		encoding: fileEncodingSchema.optional(),
+		// Partial edit of a text file; mutually exclusive with `content`.
+		edits: fileEditsSchema.optional(),
 		annotations: fileAnnotationsSchema.optional(),
 		// Optional version check: the content hash the caller last read. A
 		// mismatch with the stored hash is refused with 409 and nothing is
@@ -185,6 +219,20 @@ export const updateFileSchema = z
 		'At least one field must be provided',
 	)
 	.superRefine((data, ctx) => {
+		if (data.edits !== undefined && data.content !== undefined) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Pass either content (replace the whole file) or edits (change parts), not both',
+				path: ['edits'],
+			})
+		}
+		if (data.edits !== undefined && data.encoding === 'base64') {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'edits apply to text files; encoding base64 is not allowed with edits',
+				path: ['encoding'],
+			})
+		}
 		if (data.content === undefined) return
 		// Without mime_type the stored type isn't known here, so the general cap
 		// applies. Replacing a video's bytes needs mime_type in the same request.
@@ -209,11 +257,18 @@ export const fileListItemSchema = z.object({
 
 export type FileListItem = z.infer<typeof fileListItemSchema>
 
+// GET /files/:id?format=text. `raw` (default) returns the stored bytes.
+export const fileReadFormatSchema = z.enum(['raw', 'text'])
+export type FileReadFormat = z.infer<typeof fileReadFormatSchema>
+
 export const fileDetailSchema = fileListItemSchema.extend({
 	content: z.string(),
 	encoding: fileEncodingSchema,
 	url: z.string().url(),
 	annotations: fileAnnotationsSchema.default([]),
+	// Present on a raw read of a large HTML file that is mostly embedded data:
+	// how to read it as text instead. Comes before `content` in the JSON.
+	readable_with: z.string().optional(),
 	// Current content hash, to be echoed as if_match on the next save. Null only
 	// for a row nobody has hashed yet; GET fills it in on first read.
 	contentHash: contentHashSchema.nullable().optional(),
@@ -223,6 +278,26 @@ export const fileDetailSchema = fileListItemSchema.extend({
 })
 
 export type FileDetail = z.infer<typeof fileDetailSchema>
+
+// Response of GET /files/:id?format=text for a text file: the words in the file
+// rather than its bytes. For HTML, `content_text` is markdown extracted from the
+// page and `extracted` is true; any other text file comes back unchanged
+// (`extracted` false). Non-text files ignore format=text and return fileDetailSchema.
+export const fileTextDetailSchema = fileListItemSchema.extend({
+	content_text: z.string(),
+	extracted: z.boolean(),
+	// HTML only.
+	title: z.string().nullable().optional(),
+	meta_description: z.string().nullable().optional(),
+	json_ld: z.array(z.unknown()).optional(),
+	// The object this file was derived from or relates to, when an edge says so.
+	source_object_id: z.string().uuid().optional(),
+	url: z.string().url(),
+	annotations: fileAnnotationsSchema.default([]),
+	contentHash: contentHashSchema.nullable().optional(),
+})
+
+export type FileTextDetail = z.infer<typeof fileTextDetailSchema>
 
 // -- Large files: direct-to-storage multipart upload ------------------------
 // 1. POST /files/uploads            → upload id + one presigned PUT URL per part

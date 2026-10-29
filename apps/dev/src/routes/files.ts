@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { fileUploads, files } from '@maskin/db/schema'
+import { fileUploads, files, relationships } from '@maskin/db/schema'
 import {
 	MAX_INLINE_FILE_SIZE_BYTES,
 	completeFileUploadSchema,
@@ -9,6 +9,8 @@ import {
 	fileDetailSchema,
 	fileKindSchema,
 	fileListItemSchema,
+	fileReadFormatSchema,
+	type fileTextDetailSchema,
 	fileUploadSessionSchema,
 	isTextMimeType,
 	planFileUploadParts,
@@ -16,7 +18,7 @@ import {
 	updateFileSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, or } from 'drizzle-orm'
 import { trackFileSaved } from '../lib/analytics/file-events'
 import {
 	buildCreatedAtCursorConditions,
@@ -26,6 +28,7 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import {
+	FileEditError,
 	FileSaveTimeoutError,
 	FileVersionConflictError,
 	ensureContentHash,
@@ -34,6 +37,7 @@ import {
 } from '../lib/file-save'
 import { abortStoredUpload, classifyCompleteFailure, deleteStoredObject } from '../lib/file-uploads'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { MAX_HTML_TEXT_INPUT_BYTES, extractHtmlText, readableWithHint } from '../lib/html-text'
 import { htmlViewerWarning } from '../lib/html-viewer-warning'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -66,16 +70,49 @@ function buildResponse(
 	bytes: Buffer,
 	frontendUrl: string,
 	warning?: string,
+	/** Set on a raw read: points a reader of a mostly-embedded-data HTML file at format=text. */
+	readableWith?: string | null,
 ) {
 	const encoding = isTextMimeType(row.mimeType) ? 'utf8' : 'base64'
 	return {
 		...serialize(row),
-		content: bytes.toString(encoding),
-		encoding,
 		annotations: row.annotations ?? [],
 		url: fileViewerUrl(frontendUrl, row.workspaceId, row.id),
+		// Ahead of `content` on purpose: a reader that stops early, or a tool
+		// result cut at a character cap, still sees the hint.
+		...(readableWith ? { readable_with: readableWith } : {}),
+		content: bytes.toString(encoding),
+		encoding,
 		...(warning ? { warning } : {}),
 	}
+}
+
+const HTML_MIME_TYPES = new Set(['text/html', 'application/xhtml+xml'])
+
+/** The object an edge ties this file to (derived_from or relates_to), if any. */
+async function findSourceObjectId(db: Database, fileId: string): Promise<string | undefined> {
+	const edges = await db
+		.select()
+		.from(relationships)
+		.where(
+			and(
+				inArray(relationships.type, ['derived_from', 'relates_to']),
+				or(
+					and(eq(relationships.sourceType, 'file'), eq(relationships.sourceId, fileId)),
+					and(eq(relationships.targetType, 'file'), eq(relationships.targetId, fileId)),
+				),
+			),
+		)
+		.orderBy(asc(relationships.createdAt))
+	for (const e of edges) {
+		if (e.sourceType === 'file' && e.sourceId === fileId && e.targetType === 'object') {
+			return e.targetId
+		}
+		if (e.targetType === 'file' && e.targetId === fileId && e.sourceType === 'object') {
+			return e.sourceId
+		}
+	}
+	return undefined
 }
 
 /** How long a download URL for a large file stays valid. */
@@ -364,11 +401,27 @@ const getFileRoute = createRoute({
 	path: '/{id}',
 	tags: ['Files'],
 	summary: 'Get a file (content as plain text for text MIME types, base64 for binary)',
-	request: { params: idParamSchema },
+	request: {
+		params: idParamSchema,
+		query: z.object({
+			format: fileReadFormatSchema.optional().openapi({
+				description:
+					'raw (default) returns the stored bytes. text returns the words in a text file: for HTML, markdown extracted from the page (no styles, scripts or embedded fonts) as content_text; other text files unchanged. Non-text files ignore it.',
+			}),
+		}),
+	},
 	responses: {
 		200: {
 			content: { 'application/json': { schema: fileDetailSchema } },
-			description: 'File detail',
+			// With format=text and a text file the body is fileTextDetailSchema
+			// instead (content_text in place of content). It is not declared as a
+			// union here so the generated native clients keep one response type.
+			description:
+				'File detail. With format=text on a text file: content_text, extracted, title, meta_description, json_ld and source_object_id instead of content and encoding.',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid format, or an HTML file too large to extract text from',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -382,6 +435,7 @@ app.openapi(getFileRoute, (async (c) => {
 	const storage = c.get('storageProvider')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
+	const { format } = c.req.valid('query')
 
 	let frontendUrl: string
 	try {
@@ -424,8 +478,67 @@ app.openapi(getFileRoute, (async (c) => {
 
 	const contentHash = await ensureContentHash(db, row, bytes)
 
+	if (format === 'text' && isTextMimeType(row.mimeType)) {
+		const text = bytes.toString('utf8')
+		const isHtml = HTML_MIME_TYPES.has(row.mimeType.toLowerCase())
+		const base = {
+			...serialize({ ...row, contentHash }),
+			annotations: row.annotations ?? [],
+			url: fileViewerUrl(frontendUrl, row.workspaceId, row.id),
+		}
+		if (!isHtml) {
+			return c.json(
+				{ ...base, content_text: text, extracted: false } as z.infer<typeof fileTextDetailSchema>,
+				200,
+			)
+		}
+		if (bytes.byteLength > MAX_HTML_TEXT_INPUT_BYTES) {
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					`This HTML file is ${bytes.byteLength} bytes, too large to extract text from (limit ${MAX_HTML_TEXT_INPUT_BYTES}). Read it with format=raw.`,
+				),
+				400,
+			)
+		}
+		let extracted: ReturnType<typeof extractHtmlText>
+		try {
+			extracted = extractHtmlText(text)
+		} catch (err) {
+			logger.error('Failed to extract text from HTML file', { fileId: row.id, error: String(err) })
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to extract text from the file'), 500)
+		}
+		let sourceObjectId: string | undefined
+		try {
+			sourceObjectId = await findSourceObjectId(db, row.id)
+		} catch (err) {
+			logger.warn('Failed to look up source object for file', {
+				fileId: row.id,
+				error: String(err),
+			})
+		}
+		return c.json(
+			{
+				...base,
+				content_text: extracted.contentText,
+				extracted: true,
+				title: extracted.title,
+				meta_description: extracted.description,
+				...(extracted.jsonLd.length > 0 ? { json_ld: extracted.jsonLd } : {}),
+				...(sourceObjectId ? { source_object_id: sourceObjectId } : {}),
+			} as z.infer<typeof fileTextDetailSchema>,
+			200,
+		)
+	}
+
+	const readableWith = HTML_MIME_TYPES.has(row.mimeType.toLowerCase())
+		? readableWithHint(bytes.toString('utf8'), bytes.byteLength)
+		: null
+
 	return c.json(
-		buildResponse({ ...row, contentHash }, bytes, frontendUrl) as z.infer<typeof fileDetailSchema>,
+		buildResponse({ ...row, contentHash }, bytes, frontendUrl, undefined, readableWith) as z.infer<
+			typeof fileDetailSchema
+		>,
 		200,
 	)
 }) as RouteHandler<typeof getFileRoute, Env>)
@@ -453,7 +566,8 @@ const updateFileRoute = createRoute({
 		},
 		400: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Invalid request',
+			description:
+				'Invalid request, or an edit that cannot be applied (text not found, found more than once without replace_all, file is not text)',
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -503,6 +617,16 @@ app.openapi(updateFileRoute, (async (c) => {
 		)
 	}
 
+	if (large && body.edits !== undefined) {
+		return c.json(
+			createApiError(
+				'VALIDATION_ERROR',
+				'A file larger than 50 MB cannot be edited; upload a new file instead',
+			),
+			400,
+		)
+	}
+
 	const newBytes =
 		body.content !== undefined ? Buffer.from(body.content, body.encoding ?? 'utf8') : null
 
@@ -516,6 +640,7 @@ app.openapi(updateFileRoute, (async (c) => {
 				fileId: existing.id,
 				ifMatch: large ? undefined : body.if_match,
 				newBytes,
+				edits: body.edits,
 				name: body.name,
 				description: body.description,
 				kind: body.kind,
@@ -543,6 +668,25 @@ app.openapi(updateFileRoute, (async (c) => {
 					currentHash: err.currentHash,
 				},
 				409,
+			)
+		}
+		if (err instanceof FileEditError) {
+			return c.json(
+				createApiError(
+					'VALIDATION_ERROR',
+					err.message,
+					err.editIndex !== undefined
+						? [
+								{
+									field: `edits.${err.editIndex}.old`,
+									message: err.reason === 'no_match' ? 'not found' : `found ${err.matches} times`,
+									...(err.matches !== undefined ? { received: String(err.matches) } : {}),
+								},
+							]
+						: undefined,
+					'Nothing was written. Fix the edit and send it again.',
+				),
+				400,
 			)
 		}
 		if (err instanceof FileSaveTimeoutError) {
@@ -589,6 +733,7 @@ app.openapi(updateFileRoute, (async (c) => {
 				name: updated.name,
 				mimeType: updated.mimeType,
 				sizeBytes: updated.sizeBytes,
+				...(body.edits ? { editCount: body.edits.length } : {}),
 			},
 			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
 		})
@@ -617,6 +762,7 @@ app.openapi(updateFileRoute, (async (c) => {
 	// Re-read latest bytes for the response so the caller sees the post-update content.
 	let responseBytes: Buffer = newBytes ?? Buffer.alloc(0)
 	let responseRow = updated
+	const contentWritten = newBytes !== null || body.edits !== undefined
 	if (!newBytes) {
 		try {
 			responseBytes = await storage.get(updated.storageKey)
@@ -637,7 +783,9 @@ app.openapi(updateFileRoute, (async (c) => {
 			responseRow,
 			responseBytes,
 			frontendUrl,
-			newBytes ? htmlViewerWarning(updated.mimeType, newBytes.toString('utf8')) : undefined,
+			contentWritten
+				? htmlViewerWarning(updated.mimeType, responseBytes.toString('utf8'))
+				: undefined,
 		) as z.infer<typeof fileDetailSchema>,
 		200,
 	)
