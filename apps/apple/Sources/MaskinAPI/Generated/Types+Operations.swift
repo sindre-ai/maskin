@@ -46490,6 +46490,8 @@ public enum Operations {
                     public var title: Swift.String
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/participant_actor_ids`.
                     public var participant_actor_ids: [Swift.String]
+                    /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/direct`.
+                    public var direct: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message`.
                     public var initial_message: Swift.String?
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata`.
@@ -47539,18 +47541,21 @@ public enum Operations {
                     ///   - subject:
                     ///   - title:
                     ///   - participant_actor_ids:
+                    ///   - direct:
                     ///   - initial_message:
                     ///   - initial_message_metadata:
                     public init(
                         subject: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.subjectPayload? = nil,
                         title: Swift.String,
                         participant_actor_ids: [Swift.String],
+                        direct: Swift.Bool? = nil,
                         initial_message: Swift.String? = nil,
                         initial_message_metadata: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload? = nil
                     ) {
                         self.subject = subject
                         self.title = title
                         self.participant_actor_ids = participant_actor_ids
+                        self.direct = direct
                         self.initial_message = initial_message
                         self.initial_message_metadata = initial_message_metadata
                     }
@@ -47558,6 +47563,7 @@ public enum Operations {
                         case subject
                         case title
                         case participant_actor_ids
+                        case direct
                         case initial_message
                         case initial_message_metadata
                     }
@@ -47751,7 +47757,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// The existing chat for this subject; new participants were added to it
+            /// The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set
             ///
             /// - Remark: Generated from `#/paths//api/conversations/post/responses/200`.
             ///
