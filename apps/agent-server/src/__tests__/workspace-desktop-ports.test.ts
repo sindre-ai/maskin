@@ -28,7 +28,9 @@ function makeMsb() {
 	const spawned: Array<{ bin: string; args: string[]; killed: boolean; stderr: EventEmitter }> = []
 	const sandboxes = new Set<string>()
 	// What `msb ssh serve --help` prints; older msb releases do not list the flag.
-	const serveHelp = { text: 'Options:\n  --no-inactivity-timeout  Disable the SSH inactivity timeout' }
+	const serveHelp = {
+		text: 'Options:\n  --no-inactivity-timeout  Disable the SSH inactivity timeout',
+	}
 	const clock = { t: 1_000_000 }
 	let nextPort = 43000
 	const spawnProcess: ProcessSpawner = (bin, args) => {
