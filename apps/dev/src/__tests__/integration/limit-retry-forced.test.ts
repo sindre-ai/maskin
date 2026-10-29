@@ -14,8 +14,9 @@ import { insertConversation, insertSession, insertWorkspace } from '../factories
 import { db, getTestActorId } from './global-setup'
 
 const { startSessionMock } = vi.hoisted(() => ({
-	startSessionMock: vi.fn(async () => ({
-		sessionId: '00000000-0000-4000-8000-0000000000bb',
+	// Replaced in beforeEach with one that inserts a real row: retried_session_id is a foreign key.
+	startSessionMock: vi.fn(async (_input: { conversationId?: string; retryOf?: string }) => ({
+		sessionId: '',
 		state: 'queued',
 		createdAt: new Date(),
 	})),
@@ -55,6 +56,10 @@ describe('forced limit: banner -> classifier -> settle -> scheduler tick', () =>
 		startSessionMock.mockClear()
 		actorId = getTestActorId()
 		workspaceId = (await insertWorkspace(db, actorId)).id
+		startSessionMock.mockImplementation(async () => {
+			const retried = await insertSession(db, workspaceId, actorId, actorId, { status: 'running' })
+			return { sessionId: retried.id, state: 'queued', createdAt: new Date() }
+		})
 	})
 
 	afterEach(() => {
@@ -103,7 +108,8 @@ describe('forced limit: banner -> classifier -> settle -> scheduler tick', () =>
 		expect(startSessionMock).toHaveBeenCalledTimes(1)
 		expect(startSessionMock.mock.calls[0][0].conversationId).toBe(conversation.id)
 		const [after] = await db.select().from(sessions).where(eq(sessions.id, session.id))
-		expect(after.retriedSessionId).toBe('00000000-0000-4000-8000-0000000000bb')
+		const retried = await startSessionMock.mock.results[0].value
+		expect(after.retriedSessionId).toBe(retried.sessionId)
 	})
 
 	it('session banner with no reset time: retry_at is 30 minutes out, notice at settle, rerun then', async () => {
@@ -121,7 +127,8 @@ describe('forced limit: banner -> classifier -> settle -> scheduler tick', () =>
 		expect(startSessionMock).toHaveBeenCalledTimes(1)
 		expect(startSessionMock.mock.calls[0][0].conversationId).toBe(conversation.id)
 		const [after] = await db.select().from(sessions).where(eq(sessions.id, session.id))
-		expect(after.retriedSessionId).toBe('00000000-0000-4000-8000-0000000000bb')
+		const retried = await startSessionMock.mock.results[0].value
+		expect(after.retriedSessionId).toBe(retried.sessionId)
 	})
 
 	it('weekly banner with no reset time: no retry_at, no notice, nothing rerun', async () => {

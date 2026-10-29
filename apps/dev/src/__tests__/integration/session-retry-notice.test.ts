@@ -10,8 +10,9 @@ import { insertConversation, insertSession, insertWorkspace } from '../factories
 import { db, getTestActorId } from './global-setup'
 
 const { startSessionMock } = vi.hoisted(() => ({
-	startSessionMock: vi.fn(async () => ({
-		sessionId: '00000000-0000-4000-8000-0000000000aa',
+	// Replaced in beforeEach with one that inserts a real row: retried_session_id is a foreign key.
+	startSessionMock: vi.fn(async (_input: { conversationId?: string; retryOf?: string }) => ({
+		sessionId: '',
 		state: 'queued',
 		createdAt: new Date(),
 	})),
@@ -41,6 +42,10 @@ describe('limit hit in a chat: notice at settle, answer after the reset', () => 
 		startSessionMock.mockClear()
 		actorId = getTestActorId()
 		workspaceId = (await insertWorkspace(db, actorId)).id
+		startSessionMock.mockImplementation(async () => {
+			const retried = await insertSession(db, workspaceId, actorId, actorId, { status: 'running' })
+			return { sessionId: retried.id, state: 'queued', createdAt: new Date() }
+		})
 	})
 
 	it('posts the note as a system message right away, then reruns into the same conversation', async () => {
@@ -79,7 +84,8 @@ describe('limit hit in a chat: notice at settle, answer after the reset', () => 
 		expect(call.retryOf).toBe(session.id)
 
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
-		expect(row.retriedSessionId).toBe('00000000-0000-4000-8000-0000000000aa')
+		const retried = await startSessionMock.mock.results[0].value
+		expect(row.retriedSessionId).toBe(retried.sessionId)
 	})
 
 	it('posts nothing for a limit hit with no chat', async () => {
