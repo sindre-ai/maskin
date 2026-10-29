@@ -24104,6 +24104,223 @@
 				}
 			}
 		},
+		"/api/data/query": {
+			"get": {
+				"tags": [
+					"data"
+				],
+				"summary": "Read-only grouped aggregation over objects",
+				"description": "Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database; scanned rows and returned groups are capped and flagged when the cap is hit.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 2,
+							"maxLength": 4000,
+							"description": "JSON-encoded query: { scope, type, filters, group_by, aggregate }. See the query_data MCP tool."
+						},
+						"required": true,
+						"name": "spec",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Grouped totals",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"groups": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"key": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"count": {
+														"type": "number"
+													},
+													"value": {
+														"type": [
+															"number",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"key",
+													"count",
+													"value"
+												]
+											}
+										},
+										"total": {
+											"type": "object",
+											"properties": {
+												"count": {
+													"type": "number"
+												},
+												"value": {
+													"type": [
+														"number",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"count",
+												"value"
+											]
+										},
+										"rows_truncated": {
+											"type": "boolean"
+										},
+										"groups_truncated": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"groups",
+										"total",
+										"rows_truncated",
+										"groups_truncated"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid query",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Loop scope not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/skjald/authorize": {
 			"post": {
 				"x-viewer-policy": "writer",
