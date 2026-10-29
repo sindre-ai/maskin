@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; color: #1a1a1a; background: transparent; }
+  @media (prefers-color-scheme: dark) { body { color: #ececec; } .card { border-color: #333 !important; } }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .headline { font-size: 32px; font-weight: 600; margin: 4px 0 16px; }
+  .muted { opacity: .65; font-size: 13px; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+  .value { font-size: 24px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1 id="outcome">Ship every task that is planned this cycle.</h1>
+  <p class="muted">Where we stand: <span id="status">Loading</span></p>
+  <div class="headline" id="headline">Loading</div>
+
+  <div class="row">
+    <div class="card"><div class="muted">Done</div><div class="value" id="m-done">Loading</div><div class="muted" id="c-done"></div><div class="muted">Source: tasks, status done</div></div>
+    <div class="card"><div class="muted">In progress</div><div class="value" id="m-active">Loading</div><div class="muted">Source: tasks, status in_progress</div></div>
+    <div class="card"><div class="muted">Waiting on review</div><div class="value" id="m-review">Loading</div><div class="muted">Source: tasks, status in_review</div></div>
+  </div>
+
+  <p id="needs" class="muted">Needs a person: checking</p>
+
+  <script id="maskin-sources" type="application/json">
+  {
+    "byStatus": { "scope": "workspace", "type": "task", "group_by": "status" }
+  }
+  </script>
+  <script>
+    var TARGET = 20
+    function count(r, key) {
+      var g = (r.groups || []).filter(function (x) { return x.key === key })[0]
+      return g ? g.count : 0
+    }
+    function fail(ids) { ids.forEach(function (id) { document.getElementById(id).textContent = 'Could not load' }) }
+    function load() {
+      window.maskin.query('byStatus').then(function (r) {
+        var done = count(r, 'done'), active = count(r, 'in_progress'), review = count(r, 'in_review')
+        document.getElementById('headline').textContent = done + ' of ' + TARGET + ' tasks done'
+        document.getElementById('status').textContent = done >= TARGET ? 'On target' : (TARGET - done) + ' to go'
+        document.getElementById('m-done').textContent = done
+        document.getElementById('c-done').textContent = Math.round(done / TARGET * 100) + '% of target (' + TARGET + ')'
+        document.getElementById('m-active').textContent = active
+        document.getElementById('m-review').textContent = review
+        document.getElementById('needs').textContent = review > 0
+          ? 'Needs a person: ' + review + ' task' + (review === 1 ? '' : 's') + ' waiting on review'
+          : 'Needs a person: nothing right now'
+      }).catch(function () {
+        fail(['headline', 'status', 'm-done', 'm-active', 'm-review'])
+        document.getElementById('needs').textContent = 'Needs a person: unknown, data failed to load'
+      })
+    }
+    load()
+    window.addEventListener('maskin:refresh', load)
+  </script>
+</body>
+</html>
