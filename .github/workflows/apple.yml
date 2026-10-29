@@ -152,6 +152,7 @@ jobs:
           name: foryou-snapshots
           path: ${{ runner.temp }}/foryou-snapshots
           if-no-files-found: warn
+          overwrite: true  # a re-run of the job replaces the images of the first try
           retention-days: 14
 
   # --- 4. Platform builds, one runner per platform ---
