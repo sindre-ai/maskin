@@ -3,10 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import type { CalendarClient } from '../../lib/integrations/providers/google-calendar/calendar-client'
 import { encodeClientState } from '../../lib/integrations/providers/telnyx/client'
-import {
-	calendarForOwner,
-	createToolRouter,
-} from '../../lib/integrations/providers/telnyx/tools'
+import { calendarForOwner, createToolRouter } from '../../lib/integrations/providers/telnyx/tools'
 import { logger } from '../../lib/logger'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'

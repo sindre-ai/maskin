@@ -207,11 +207,7 @@ async function bookMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 
 	let slots: ReturnType<typeof proposeSlots>
 	try {
-		const calendar = await deps.calendarFor(
-			db,
-			ctx.clientState.workspace_id,
-			ownerSlugOf(contact),
-		)
+		const calendar = await deps.calendarFor(db, ctx.clientState.workspace_id, ownerSlugOf(contact))
 		if (!calendar) return await calendarFailed('no_calendar_connection')
 		// Once per booking: confirm_meeting_slot always follows this call and resolves the same way.
 		if (calendar.fallbackReason) {
