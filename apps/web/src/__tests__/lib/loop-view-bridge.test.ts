@@ -121,7 +121,7 @@ describe('handleBridgeMessage', () => {
 	})
 
 	it.each([
-		['a missing id', query('by_status', undefined)],
+		['a missing id', { type: BRIDGE_QUERY_MESSAGE, name: 'by_status' }],
 		['a non-numeric id', query('by_status', '1')],
 		['a non-string name', query(42)],
 		['an unknown type', { type: 'maskin:something-else', id: 1, name: 'by_status' }],
