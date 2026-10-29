@@ -157,9 +157,11 @@ public final class AgentsActivityCoordinator {
 		}
 	}
 
-	/// Call with the turns of one conversation whenever its sessions refresh.
-	public func reconcile(_ turns: [LiveTurn]) async {
-		guard let conversationId = turns.first?.conversationId else { return }
+	/// Call with the turns of one conversation whenever its sessions refresh. Pass `conversationId`
+	/// when `turns` can be empty (every session idle or stopped), so the thread's overlay clears
+	/// instead of holding its last working agent until it expires.
+	public func reconcile(_ turns: [LiveTurn], conversationId: String? = nil) async {
+		guard let conversationId = conversationId ?? turns.first?.conversationId else { return }
 		if let identity, turns.contains(where: { $0.workspaceId != identity.workspaceId }) { return }
 		overlays[conversationId] = Overlay(
 			running: turns.compactMap(\.workingAgent),

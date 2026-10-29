@@ -363,6 +363,34 @@ describe('Claude OAuth Routes', () => {
 			expect(update.settings.claude_oauth.backup).toBeUndefined()
 		})
 
+		// A paused "no credentials" workspace only resumes on a workspace event. The
+		// import route used to write the settings without logging one, so connecting
+		// a login in Settings → Keys never lifted the pause (trigger-runner's
+		// SUPPRESSION_CLEARING_ACTIONS matches entity_type 'workspace' + 'updated').
+		it('logs a workspace updated event naming the key, never the tokens', async () => {
+			const workspace = buildWorkspace({ id: wsId })
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/claude-oauth/import', baseImport, headers),
+			)
+
+			expect(res.status).toBe(200)
+			expect(calls.inserts).toEqual([
+				{
+					workspaceId: wsId,
+					actorId: expect.any(String),
+					action: 'updated',
+					entityType: 'workspace',
+					entityId: wsId,
+					data: { changed_settings_keys: ['claude_oauth'] },
+				},
+			])
+			expect(JSON.stringify(calls.inserts)).not.toContain('access-123')
+			expect(JSON.stringify(calls.inserts)).not.toContain('refresh-123')
+		})
+
 		it('writes to the backup slot when the caller designates backup (AC-U5)', async () => {
 			const workspace = buildWorkspace({
 				id: wsId,

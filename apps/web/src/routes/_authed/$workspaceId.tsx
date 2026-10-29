@@ -1,14 +1,14 @@
+import { LiveCallSurface } from '@/components/agents/live-call-surface'
 import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
-import { CommandPalette } from '@/components/legacy/command-palette'
 import { CommandPaletteV2 } from '@/components/search/command-palette-v2'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
@@ -28,6 +28,7 @@ import {
 	registerWorkspaceProperties,
 	setCapturingEnabled,
 } from '@/lib/posthog'
+import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
@@ -47,10 +48,6 @@ function WorkspaceLayout() {
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
 
-	// The one read of the search-v2 flag in the shell (the search route reads it for the
-	// page): flag on mounts the new launcher and tells the header to show one search button.
-	const searchV2 = useFeatureFlag('search-v2')
-
 	const workspace = useMemo(
 		() => workspaces?.find((w) => w.id === workspaceId),
 		[workspaces, workspaceId],
@@ -67,6 +64,13 @@ function WorkspaceLayout() {
 	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
 	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
 	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
+	// While a call is open below 1100px the sidebar folds to its icon rail so the
+	// thread keeps room next to the call panel (design: sidebar 230 + chat + panel
+	// at 1100 and up, an icon rail between 700 and 1099). The person's own choice
+	// is left alone, so it is back as they had it when the call ends.
+	const onCall = useVoiceCallLive()
+	const narrowForCall = useMediaQuery('(max-width: 1099px)')
+	const railForCall = onCall && narrowForCall
 
 	// Pin the Synthesizer's join keys on every analytics event from this workspace,
 	// and apply the workspace's Privacy & data settings — both the share-usage
@@ -110,15 +114,17 @@ function WorkspaceLayout() {
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
 			<NewConversationProvider>
-				<CommandPaletteProvider searchV2={searchV2}>
+				<CommandPaletteProvider>
 					<PendingPromptBootstrap />
 					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
 					<PendingCommentsProvider workspaceId={workspaceId}>
 						<PageHeaderProvider>
 							<ContentPushShell>
 								<SidebarProvider
-									open={open}
-									onOpenChange={setOpen}
+									open={open && !railForCall}
+									onOpenChange={(next) => {
+										if (!railForCall) setOpen(next)
+									}}
 									className="h-dvh !min-h-0"
 									data-shell="v2"
 								>
@@ -130,10 +136,11 @@ function WorkspaceLayout() {
 											<Outlet />
 										</MainScrollArea>
 									</SidebarInset>
+									<LiveCallSurface />
 								</SidebarProvider>
 							</ContentPushShell>
 						</PageHeaderProvider>
-						{searchV2 ? <CommandPaletteV2 /> : <CommandPalette />}
+						<CommandPaletteV2 />
 						<VoiceCallHost />
 					</PendingCommentsProvider>
 				</CommandPaletteProvider>

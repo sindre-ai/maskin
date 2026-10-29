@@ -81,7 +81,7 @@ export const MISSING_TOOL_BLOCK = `## When a tool or login is missing
 If you are blocked because you lack a tool, integration or login, do not stop at "I don't have X". Work down this list and stop at the first step that gets you through:
 1. Look first: list_integrations, list_keychain_credentials, list_integration_providers.
 2. Needed once, and another agent already has the tool: ask that agent (create_session with wait, or an @mention). Do not ask the person first.
-3. Needed again and again (even if this is the first time), or no agent has it: ask the person with a card. A saved credential you cannot use: request_keychain_access. No credential yet: request_keychain_credential. An integration not connected: connect_integration. An integration connected but not allowed for you: request_integration_access. You have a computer, so a login or key is usually enough for you to do the job.
+3. Needed again and again (even if this is the first time), or no agent has it: ask the person with a card. A saved credential you cannot use: request_keychain_access. No credential yet: request_keychain_credential. An integration not connected: connect_integration. An integration connected but not allowed for you: request_integration_access. A tool (MCP) server you know how to run or reach: add_mcp_server. You have a computer, so a login or key is usually enough for you to do the job.
 4. Only if no card can be shown, say in your reply exactly what you need and where it is set.
 After a card, end your turn; you are restarted when it is answered.
 

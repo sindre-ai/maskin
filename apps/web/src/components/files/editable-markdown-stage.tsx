@@ -1,4 +1,3 @@
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	FileConflictError,
 	FileRetryableError,
@@ -19,13 +18,11 @@ function fileText(file: FileDetail): string {
 }
 
 /**
- * The one read of the rich-markdown-editor flag for the file viewer. Flag on:
- * any file the shared markdown helper accepts (a .md file with a generic type
- * included) opens in the editor. Flag off: the viewer is exactly what shipped.
+ * Whether the file viewer opens this file in the editor: any file the shared
+ * markdown helper accepts (a .md file with a generic type included).
  */
 export function useEditableMarkdown(file: FileDetail | undefined): boolean {
-	const enabled = useFeatureFlag('rich-markdown-editor')
-	return enabled && file !== undefined && isMarkdownFile(file)
+	return file !== undefined && isMarkdownFile(file)
 }
 
 export function EditableMarkdownStage({ file }: { file: FileDetail }) {

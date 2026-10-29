@@ -11,6 +11,11 @@ import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
+import { config as googleDriveConfig } from './providers/google-drive/config'
+import { setupDriveInstall } from './providers/google-drive/install'
+import { resolveExternalId as googleDriveResolveExternalId } from './providers/google-drive/resolve-id'
+import { stopDriveChannel } from './providers/google-drive/watch'
+import { driveWebhookVerifier } from './providers/google-drive/webhooks'
 import { config as googleMeetConfig } from './providers/google-meet/config'
 import { resolveExternalId as googleMeetResolveExternalId } from './providers/google-meet/resolve-id'
 import { fanOutMeetEvent, setupMeetWatch, stopMeetWatch } from './providers/google-meet/watch'
@@ -107,6 +112,23 @@ providers.set('gmail', {
 providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
+})
+
+// google-drive — provider registration + connect/revoke path. Workspace-scoped
+// like Gmail / GCal / Meet (deliberately NOT in `actorScopedProviders`).
+// `postInstall` stores config.drive.peopleId and opens the changes.watch channel;
+// `preDisconnect` only stops the channel. It does not revoke the Google grant: that
+// grant is shared with other workspaces and Google providers (same as Calendar).
+// Deliveries do not go through the '/:provider' catch-all: webhookApp has a dedicated
+// POST /google-drive route (token check, channel-id join, dedup, fan-out in
+// google-drive/webhook-handler.ts), so no pre-handler or fan-out hook is set here.
+// The verifier below only keeps the catch-all closed if that route is ever removed.
+providers.set('google-drive', {
+	config: googleDriveConfig,
+	customWebhookVerifier: driveWebhookVerifier,
+	resolveExternalId: googleDriveResolveExternalId,
+	postInstall: setupDriveInstall,
+	preDisconnect: stopDriveChannel,
 })
 
 // google-meet — provider registration + Task 3 (read-path / async ingest) webhook

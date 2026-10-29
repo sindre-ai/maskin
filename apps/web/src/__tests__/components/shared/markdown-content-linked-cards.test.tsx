@@ -12,17 +12,19 @@ let qualifying = new Set<string>()
 const renderCard = (
 	target: { kind: string; id: string },
 	fallback: ReactNode,
-	context: { label?: string; inList?: boolean; after?: boolean },
+	context: { label?: string; inList?: boolean; after?: boolean; updated?: boolean },
 ) => {
 	if (qualifying.has(target.id)) {
 		return (
 			<>
 				{context.label && context.inList ? <p>{context.label}</p> : null}
-				<div data-testid="card">{`${target.kind}:${target.id}`}</div>
+				<div data-testid="card" data-updated={context.updated ? '' : undefined}>
+					{`${target.kind}:${target.id}`}
+				</div>
 			</>
 		)
 	}
-	if (target.kind === 'object' && !context.after && !context.inList) {
+	if (target.kind !== 'file' && !context.after && !context.inList) {
 		return (
 			<>
 				{context.label ? <p>{context.label}</p> : null}
@@ -32,8 +34,12 @@ const renderCard = (
 	}
 	return context.after ? null : <>{fallback}</>
 }
-const renderChip = (target: { kind: string; id: string }, fallback: ReactNode) =>
-	qualifying.has(target.id) ? (
+const renderChip = (
+	target: { kind: string; id: string },
+	fallback: ReactNode,
+	context: { cardFollows?: boolean },
+) =>
+	qualifying.has(target.id) && context.cardFollows !== false ? (
 		fallback
 	) : (
 		<span data-testid="chip" data-id={target.id}>
@@ -41,26 +47,113 @@ const renderChip = (target: { kind: string; id: string }, fallback: ReactNode) =
 		</span>
 	)
 
+const renderGithubChip = (target: { type: string; repo: string; number: number }, href: string) => (
+	<a data-testid="github-chip" href={href}>
+		{`${target.type}:${target.repo}#${target.number}`}
+	</a>
+)
+
 const WS = 'ws-1'
 const A = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const B = 'b8278eef-4a95-43df-911e-3cb3473a55fb'
 const FILE = '5e0c0f3a-1b2c-4d5e-8f90-a1b2c3d4e5f6'
 const objectUrl = (id: string) => `https://maskin.io/${WS}/objects/${id}`
 const fileUrl = (id: string) => `https://maskin.io/${WS}/files/${id}`
+const LOOP = 'c9389ff0-5ba6-4eae-a49c-4d4c4e84e6c0'
+const TRIGGER = 'd0490aa1-6cb7-4faf-b5ad-5e5d5f95f7d1'
+const loopUrl = (id: string) => `https://maskin.io/${WS}/loops/${id}`
+const triggerUrl = (id: string) => `https://maskin.io/${WS}/triggers/${id}`
+const AGENT = 'dc2ee1b4-5659-4038-be88-0a1b298ba373'
+const agentUrl = (id: string) => `https://maskin.io/${WS}/agents/${id}`
 
 const hasOwnCard = (item: HTMLElement) =>
 	Array.from(item.children).some((child) => child.getAttribute('data-testid') === 'card')
 
-function renderMessage(content: string, withCards = true, skipIds?: ReadonlySet<string>) {
+function renderMessage(
+	content: string,
+	withCards = true,
+	skipIds?: ReadonlySet<string>,
+	updatedIds?: ReadonlySet<string>,
+) {
 	return render(
 		<MarkdownContent
 			content={content}
 			size="sm"
-			linkedCards={withCards ? { workspaceId: WS, renderCard, renderChip, skipIds } : undefined}
+			linkedCards={
+				withCards ? { workspaceId: WS, renderCard, renderChip, skipIds, updatedIds } : undefined
+			}
 		/>,
 		{ wrapper: TestWrapper },
 	)
 }
+
+describe('MarkdownContent linkedCards, GitHub links', () => {
+	const PR = 'https://github.com/sindre-ai/maskin/pull/2637'
+	const ISSUE = 'https://github.com/sindre-ai/maskin/issues/12'
+	const draw = (content: string) =>
+		render(
+			<MarkdownContent
+				content={content}
+				size="sm"
+				linkedCards={{ workspaceId: WS, renderCard, renderChip, renderGithubChip }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+	it('draws a pull request and an issue in a sentence as chips, whatever the link text', () => {
+		draw(`See [the fix](${PR}) and ${ISSUE} for context.`)
+		const chips = screen.getAllByTestId('github-chip')
+		expect(chips.map((c) => c.textContent)).toEqual(['pull:maskin#2637', 'issue:maskin#12'])
+		expect(chips[0]).toHaveAttribute('href', PR)
+		expect(screen.queryByText('the fix')).not.toBeInTheDocument()
+	})
+
+	it('keeps a link alone on a line a chip in the text flow, not a card', () => {
+		draw(`Here you go.\n\n[Review this](${PR})`)
+		expect(screen.getByTestId('github-chip')).toBeInTheDocument()
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		expect(screen.getByTestId('github-chip').closest('p')).not.toBeNull()
+	})
+
+	it('does not count toward the three-card cap', () => {
+		qualifying = new Set()
+		draw(
+			[
+				`[a](${PR})`,
+				'[b](https://github.com/a/b/pull/2)',
+				'[c](https://github.com/a/b/pull/3)',
+				'[d](https://github.com/a/b/pull/4)',
+				`[o](${objectUrl(A)})`,
+			].join('\n\n'),
+		)
+		expect(screen.getAllByTestId('github-chip')).toHaveLength(4)
+		expect(screen.getByTestId('reference')).toHaveTextContent(A)
+	})
+
+	it('leaves a sub-path, another github.com address and another site as plain links', () => {
+		draw(
+			[
+				`[files](${PR}/files)`,
+				'[repo](https://github.com/sindre-ai/maskin)',
+				'[lookalike](https://github.com.evil.com/a/b/pull/1)',
+				'[elsewhere](https://example.com/a/b/pull/1)',
+			].join('\n\n'),
+		)
+		expect(screen.queryByTestId('github-chip')).not.toBeInTheDocument()
+		for (const text of ['files', 'repo', 'lookalike', 'elsewhere']) {
+			expect(screen.getByRole('link', { name: text })).toBeInTheDocument()
+		}
+	})
+
+	it('stays a plain link when nothing draws GitHub chips, and without the prop', () => {
+		renderMessage(`See [the fix](${PR}).`)
+		expect(screen.getByRole('link', { name: 'the fix' })).toHaveAttribute('href', PR)
+		renderMessage(`See [the other fix](${PR}).`, false)
+		expect(screen.getByRole('link', { name: 'the other fix' })).toHaveAttribute('href', PR)
+		expect(screen.queryByTestId('github-chip')).not.toBeInTheDocument()
+	})
+})
 
 describe('MarkdownContent linkedCards', () => {
 	beforeEach(() => {
@@ -143,6 +236,28 @@ describe('MarkdownContent linkedCards', () => {
 		expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'the email' })).toBeInTheDocument()
 		expect(screen.getByTestId('card')).toBeInTheDocument()
+	})
+
+	it('draws a draft linked in a sentence as a chip when no card follows it', () => {
+		const D = '9d3c9f10-1111-4222-8333-444455556666'
+		const E = '1e2d3c4b-5555-4666-8777-888899990000'
+		qualifying = new Set([A, B, D, E])
+		renderMessage([A, B, D, E].map((id) => `See [n](${objectUrl(id)}) here.`).join('\n\n'))
+		// Three drafts get their card under the sentence; the fourth has none and is a chip.
+		expect(screen.getAllByTestId('card')).toHaveLength(3)
+		expect(screen.getByTestId('chip')).toHaveAttribute('data-id', E)
+	})
+
+	it('draws a draft an earlier message holds, and a draft linked twice, as a chip', () => {
+		renderMessage(`See [it](${objectUrl(A)}) now.`, true, new Set([A]))
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.getByTestId('chip')).toHaveAttribute('data-id', A)
+	})
+
+	it('keeps the first link to a draft plain and makes the repeat a chip', () => {
+		renderMessage(`See [it](${objectUrl(B)}) now.\n\nAgain [it](${objectUrl(B)}) later.`)
+		expect(screen.getAllByTestId('card')).toHaveLength(1)
+		expect(screen.getAllByTestId('chip')).toHaveLength(1)
 	})
 
 	it('keeps the order of a sentence, a link on its own line, and a sentence', () => {
@@ -326,6 +441,23 @@ describe('MarkdownContent linkedCards', () => {
 		expect(screen.getByRole('link', { name: 'Email' })).toBeInTheDocument()
 	})
 
+	it('tells the card of a revised draft it is updated, in place and under a sentence', () => {
+		renderMessage(
+			`[Email](${objectUrl(A)})\n\nSee [b](${objectUrl(B)}) for the other one.`,
+			true,
+			undefined,
+			new Set([A, B]),
+		)
+		const cards = screen.getAllByTestId('card')
+		expect(cards).toHaveLength(2)
+		for (const card of cards) expect(card).toHaveAttribute('data-updated')
+	})
+
+	it('does not tag a card whose id is not in the updated set', () => {
+		renderMessage(`[Email](${objectUrl(A)})`, true, undefined, new Set([B]))
+		expect(screen.getByTestId('card')).not.toHaveAttribute('data-updated')
+	})
+
 	it('draws a draft once, where it stands alone, even when a sentence mentioned it before', () => {
 		renderMessage(`I wrote [it](${objectUrl(A)}) for you.\n\n[Email](${objectUrl(A)})`)
 		expect(screen.getAllByTestId('card')).toHaveLength(1)
@@ -342,5 +474,98 @@ describe('MarkdownContent linkedCards', () => {
 		expect(withCards.container.innerHTML).toBe(before)
 		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Email' })).toBeInTheDocument()
+	})
+
+	describe('loops and triggers', () => {
+		it('draws a loop or trigger link alone on its line as a card, whatever the link text says', () => {
+			renderMessage(
+				`[the nightly loop](${loopUrl(LOOP)})\n\n[when it runs](${triggerUrl(TRIGGER)})`,
+			)
+			expect(screen.getAllByTestId('reference').map((el) => el.textContent)).toEqual([
+				LOOP,
+				TRIGGER,
+			])
+			expect(screen.queryByText('the nightly loop')).not.toBeInTheDocument()
+		})
+
+		it('draws a loop or trigger in a sentence as a chip where it stands', () => {
+			renderMessage(
+				`Check [this loop](${loopUrl(LOOP)}) and [that trigger](${triggerUrl(TRIGGER)}) today.`,
+			)
+			expect(screen.getAllByTestId('chip').map((el) => el.getAttribute('data-id'))).toEqual([
+				LOOP,
+				TRIGGER,
+			])
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
+
+		it('shares the three-card limit with objects: the fourth link on its own line is a chip', () => {
+			renderMessage(
+				[objectUrl(A), objectUrl(B), loopUrl(LOOP), triggerUrl(TRIGGER)]
+					.map((url) => `[x](${url})`)
+					.join('\n\n'),
+			)
+			expect(screen.getAllByTestId('card')).toHaveLength(2)
+			expect(screen.getAllByTestId('reference')).toHaveLength(1)
+			expect(screen.getByTestId('chip')).toHaveAttribute('data-id', TRIGGER)
+		})
+
+		it('draws a second link to the same loop as a chip', () => {
+			renderMessage(`[a](${loopUrl(LOOP)})\n\n[b](${loopUrl(LOOP)})`)
+			expect(screen.getAllByTestId('reference')).toHaveLength(1)
+			expect(screen.getAllByTestId('chip')).toHaveLength(1)
+		})
+
+		it('keeps a loop in a list a chip', () => {
+			renderMessage(`- [One](${loopUrl(LOOP)})\n- [Two](${triggerUrl(TRIGGER)})`)
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+			expect(screen.getAllByTestId('chip')).toHaveLength(2)
+		})
+
+		it('counts loops and triggers in the ten looked-up links of a message', () => {
+			const ids = Array.from(
+				{ length: 11 },
+				(_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+			)
+			renderMessage(ids.map((id, i) => `Link ${i} [x](${loopUrl(id)}) here.`).join('\n\n'))
+			expect(screen.getAllByTestId('chip')).toHaveLength(10)
+		})
+
+		it('draws nothing for a loop address in a code span', () => {
+			renderMessage(`Use \`${loopUrl(LOOP)}\` as the address.`)
+			expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
+	})
+
+	describe('agents', () => {
+		it('draws an agent link alone on its line as a card, whatever the link text says', () => {
+			renderMessage(`[the developer](${agentUrl(AGENT)})`)
+			expect(screen.getByTestId('reference')).toHaveTextContent(AGENT)
+			expect(screen.queryByText('the developer')).not.toBeInTheDocument()
+		})
+
+		it('draws an agent in a sentence as a chip where it stands', () => {
+			renderMessage(`Ask [the developer](${agentUrl(AGENT)}) today.`)
+			expect(screen.getByTestId('chip')).toHaveAttribute('data-id', AGENT)
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		})
+
+		it('shares the three-card limit and the never-twice rule with the other kinds', () => {
+			renderMessage(
+				[objectUrl(A), loopUrl(LOOP), agentUrl(AGENT), agentUrl(AGENT)]
+					.map((url) => `[x](${url})`)
+					.join('\n\n'),
+			)
+			expect(screen.getAllByTestId('card')).toHaveLength(1)
+			expect(screen.getAllByTestId('reference')).toHaveLength(2)
+			expect(screen.getAllByTestId('chip')).toHaveLength(1)
+		})
+
+		it('keeps an agent in a list a chip', () => {
+			renderMessage(`- [One](${agentUrl(AGENT)})`)
+			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+			expect(screen.getByTestId('chip')).toBeInTheDocument()
+		})
 	})
 })

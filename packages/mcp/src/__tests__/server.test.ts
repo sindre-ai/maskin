@@ -8069,6 +8069,64 @@ describe('X-Maskin-Session-Id source', () => {
 		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
 
+	// Threads: the handlers bypass the SDK's zod layer, so the schema assertion is
+	// what proves a real client's `thread_root_id` is not stripped before it gets here.
+	it('post_conversation_message accepts thread_root_id and also_in_channel in its schema', () => {
+		const parsed = tools.post_conversation_message.inputSchema.parse({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		expect(parsed.thread_root_id).toBe(42)
+		expect(parsed.also_in_channel).toBe(true)
+	})
+
+	it('post_conversation_message sends thread_root_id and also_in_channel to the API', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.thread_root_id).toBe(42)
+		expect(sent.also_in_channel).toBe(true)
+	})
+
+	it('list_conversation_messages passes thread_root_id as a query param', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([]),
+		} as Response)
+		const handler = handlers.get('list_conversation_messages')
+		if (!handler) throw new Error('list_conversation_messages handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			thread_root_id: 42,
+			limit: 50,
+		})
+		const url = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]))
+		expect(url.searchParams.get('thread_root_id')).toBe('42')
+		expect(
+			tools.list_conversation_messages.inputSchema.parse({
+				conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				thread_root_id: 42,
+			}).thread_root_id,
+		).toBe(42)
+	})
+
 	// POST /api/actors reads this header to find the person behind the creating
 	// session, so the new agent can introduce itself to them.
 	async function createActorHeaders(): Promise<Record<string, string>> {
@@ -8079,7 +8137,12 @@ describe('X-Maskin-Session-Id source', () => {
 		} as Response)
 		const handler = handlers.get('create_actor')
 		if (!handler) throw new Error('create_actor handler not registered')
-		await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123', description: 'Helper' })
+		await handler({
+			type: 'agent',
+			name: 'Bot',
+			workspace_id: 'ws-default-123',
+			description: 'Helper',
+		})
 		const call = vi
 			.mocked(fetch)
 			.mock.calls.find(

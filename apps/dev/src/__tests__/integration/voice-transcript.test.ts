@@ -61,7 +61,7 @@ describe('voice transcript writer — persist mode (default)', () => {
 
 		const convs = await db.select().from(conversations)
 		expect(convs).toHaveLength(1)
-		expect(convs[0]?.title).toBe('Voice call with Chief of Staff')
+		expect(convs[0]?.title).toBe('Live meeting')
 		expect(convs[0]?.createdBy).toBe(humanId)
 
 		const participants = await db.select().from(conversationParticipants)

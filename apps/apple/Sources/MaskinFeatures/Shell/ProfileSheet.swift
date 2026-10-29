@@ -178,7 +178,8 @@ struct ProfileSheet: View {
 		if let session = environment.auth.session {
 			NavigationLink(value: Route.yourProfile) {
 				HStack(spacing: MaskinSpace.s8) {
-					ActorAvatar(name: session.name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s12)
+					ActorAvatar(
+						name: session.name, kind: .human, size: MaskinSpace.s14 + MaskinSpace.s12, seed: session.actorId)
 					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 						Text(session.name).maskinText(.headline).foregroundStyle(MaskinColor.ink)
 						Text(profileSubtitle(email: session.email)).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)

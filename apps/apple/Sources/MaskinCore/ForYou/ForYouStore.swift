@@ -131,6 +131,10 @@ public final class ForYouStore {
 	}
 
 	public let decisions: DecisionService
+	/// Editing and approving drafts from the feed; nil where the runtime did not build one.
+	public var reviews: DraftReviewStore?
+	/// Cards approved from a group this sitting. They stay in it as "Approved" rows.
+	public private(set) var groupApprovedIds: Set<String> = []
 	/// Cards the reader deferred with Later (device-local).
 	public let later: LaterStore
 	/// Cards the reader has been shown. A card the server adds afterwards waits behind the
@@ -273,6 +277,8 @@ public final class ForYouStore {
 			shownIds = []
 			later.reload()
 			retained = [:]
+			groupApprovedIds = []
+			reviews?.reset()
 			actors = [:]
 			brief = .idle
 			phase = .idle
@@ -370,6 +376,7 @@ public final class ForYouStore {
 
 	/// Take an option on a card.
 	public func choose(_ option: DecisionOption, note: String? = nil, on card: ForYouCard) {
+		if isSendHeldBack(option, on: card) { return }
 		retain(card)
 		later.clear(card.id)
 		decisions.choose(option.label, note: note, on: DecisionTarget(card))
@@ -446,7 +453,9 @@ public final class ForYouStore {
 	public func takeSuggestedOptions() -> SuggestedBatch {
 		var batch = SuggestedBatch(taken: [], skipped: 0)
 		for entry in entries where entry.bucket == .needs && entry.card.kind == .decision {
-			if let option = entry.card.decision?.recommended, !option.destructive {
+			if let option = entry.card.decision?.recommended, !option.destructive,
+				!isSendHeldBack(option, on: entry.card)
+			{
 				choose(option, on: entry.card)
 				batch.taken.append(entry.card)
 			} else {
@@ -504,7 +513,7 @@ public final class ForYouStore {
 			.sorted { (later.entry(for: $0.id)?.until ?? .distantFuture) < (later.entry(for: $1.id)?.until ?? .distantFuture) }
 	}
 
-	private func build(deferred wantDeferred: Bool) -> [FeedEntry] {
+	private func build(deferred wantDeferred: Bool, ignoringIntent: Bool = false) -> [FeedEntry] {
 		var byId: [String: ForYouCard] = [:]
 		for card in cards where isOpenCandidate(card) && shownIds.contains(card.id) {
 			byId[card.id] = card
@@ -514,7 +523,7 @@ public final class ForYouStore {
 		let extra = retained.values.filter { byId[$0.id] == nil && decisions.record(for: $0.id) != nil }
 		ordered += sorted(Array(extra))
 
-		let intent = options.intent
+		let intent = ignoringIntent ? nil : options.intent
 		let at = now()
 		return ordered.compactMap { card -> (entry: FeedEntry, slot: FeedBucket, rank: Int)? in
 			let record = decisions.record(for: card.id)
@@ -564,6 +573,143 @@ public final class ForYouStore {
 				return a != b ? a > b : latest($0, $1)
 			}
 		}
+	}
+
+	// MARK: Header
+
+	/// "SUN 18 OCT" for the line above the title.
+	public func dateLine(at date: Date? = nil) -> String { ForYouHeader.dateLine(date ?? now()) }
+
+	/// The same day, written for VoiceOver.
+	public func spokenDate(at date: Date? = nil) -> String { ForYouHeader.spokenDate(date ?? now()) }
+
+	/// The one sentence under the title: what is blocked on the reader. It looks past the intent
+	/// filter, which only narrows the list below.
+	public var blockedSummary: String? {
+		let blocking = build(deferred: false, ignoringIntent: true).filter { $0.bucket == .needs }
+		return ForYouHeader.summary(
+			blocking: blocking, loaded: phase == .loaded,
+			sender: { [self] in agent(of: $0)?.name ?? senderName(of: $0) })
+	}
+
+	// MARK: Groups
+
+	/// The "Needs you" list with related approvals folded into groups.
+	public var needsItems: [FeedItem] {
+		// A finished group is a receipt with Undo. Once no card in it can be taken back it has nothing
+		// left to offer, and the same cards are in Handled today.
+		return ApprovalGrouping.items(
+			entries: entries, approvedIds: groupApprovedIds,
+			agentName: { [self] in agent(of: $0)?.name ?? senderName(of: $0) }
+		).filter { item in
+			if case .group(let group) = item, group.isDone { return canUndo(group) }
+			return true
+		}
+	}
+
+	/// Approve one card of a group. It takes the card's own recommended option through the same
+	/// path as a single approve, so the audit trail and Undo are the same. False when it could not.
+	@discardableResult
+	public func approveFromGroup(_ card: ForYouCard) -> Bool {
+		guard let option = card.decision?.recommended, !option.destructive,
+			ApprovalGrouping.isApprove(option.label)
+		else { return false }
+		groupApprovedIds.insert(card.id)
+		choose(option, on: card)
+		return true
+	}
+
+	/// Approve every open card of a group, one call per card.
+	@discardableResult
+	public func approveAll(in group: ApprovalGroup) -> SuggestedBatch {
+		var batch = SuggestedBatch(taken: [], skipped: 0)
+		for entry in group.openEntries {
+			if approveFromGroup(entry.card) { batch.taken.append(entry.card) } else { batch.skipped += 1 }
+		}
+		return batch
+	}
+
+	/// How many approved cards of the group can still be taken back.
+	public func undoableCount(_ group: ApprovalGroup) -> Int {
+		group.members.filter { $0.isApproved && decisions.canUndo($0.id) }.count
+	}
+
+	/// Undo is free while any approved card is still inside its hold.
+	public func canUndo(_ group: ApprovalGroup) -> Bool { undoableCount(group) > 0 }
+
+	/// Take back every approved card of a group that can still be taken back.
+	public func undo(_ group: ApprovalGroup) {
+		for member in group.members where member.isApproved {
+			if undo(member.entry.card) { groupApprovedIds.remove(member.id) }
+		}
+	}
+
+	// MARK: Drafts
+
+	/// Drafts waiting for the reader on open cards, ready to edit and approve. One that has been
+	/// approved is a receipt (`reviews.receiptDrafts`), not a draft.
+	public var reviewDrafts: [ReviewDraft] {
+		guard let reviews else { return [] }
+		var seen: Set<String> = []
+		var drafts: [ReviewDraft] = []
+		for entry in entries where entry.bucket == .needs && entry.record == nil {
+			let name = agent(of: entry.card)?.name ?? senderName(of: entry.card)
+			for draft in ReviewDraft.drafts(in: entry.card, agentName: name)
+			where reviews.isEditable(draft) && seen.insert(draft.id).inserted {
+				drafts.append(draft)
+			}
+		}
+		return drafts
+	}
+
+	/// Whether this draft is shown in the strip, so its card does not show it a second time.
+	public func isInStrip(_ draft: DecisionDraft) -> Bool {
+		reviews != nil && ReviewDraft.isReviewable(draft)
+	}
+
+	public static let unsentEditNote = "Approve your edited message under Drafts to review"
+	public static let sendingEditNote = "Your edited message is being sent under Drafts to review"
+
+	/// Why this card's own Send option is off: a message on the card has an edit that has not gone
+	/// out, and the option would send the saved text instead. Nil when nothing is in the way.
+	public func unsentEditNote(for card: ForYouCard) -> String? {
+		guard let reviews else { return nil }
+		var note: String?
+		for draft in ReviewDraft.drafts(in: card, agentName: nil) where reviews.isEdited(draft) {
+			switch reviews.phase(of: draft) {
+			case .editing, .failed: return Self.unsentEditNote
+			case .held, .sending: note = Self.sendingEditNote
+			case .sent: break
+			}
+		}
+		return note
+	}
+
+	/// The option would send the saved text of a message whose edit has not gone out. Taking it
+	/// (tap, swipe, Return or "take every suggested") does nothing until the edit is approved.
+	public func isSendHeldBack(_ option: DecisionOption, on card: ForYouCard) -> Bool {
+		unsentEditNote(for: card) != nil && ReviewDraft.sendsMessage(option)
+	}
+
+	/// A draft was approved and the agent told. When it was the last message on its card the card
+	/// is settled like any other answered ask.
+	func draftSent(_ draft: ReviewDraft) {
+		guard let card = cards.first(where: { $0.id == draft.target.entityId }),
+			let decision = card.decision
+		else { return }
+		let all = (decision.draft.map { [$0] } ?? []) + decision.drafts
+		let covered = all.filter { $0.objectId != nil && $0.preview != nil && $0.file == nil }
+		var sent: Set<String> = []
+		for receipt in reviews?.receipts ?? [] where reviews?.phase(of: receipt) == .sent {
+			sent.insert(receipt.id)
+		}
+		let left = covered.contains { d in
+			guard let id = d.objectId else { return false }
+			return !sent.contains(id) && d.preview?.delivery != .sent
+		}
+		// A message the strip cannot show (a file) keeps the card open for the reader.
+		if left || covered.count != all.count { return }
+		dismiss(card)
 	}
 
 	/// Asks still open: not decided, held or deferred. This is the tab badge and the "caught up"

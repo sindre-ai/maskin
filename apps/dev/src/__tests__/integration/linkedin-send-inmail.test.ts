@@ -16,7 +16,6 @@ const { captureMock } = vi.hoisted(() => ({ captureMock: vi.fn(async () => {}) }
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: captureMock }))
 
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { registerLinkedInMcpInstance } from '../../lib/integrations/providers/linkedin-unipile/mcp-server'
 import {
 	__setLinkedInClientForTests,
@@ -43,15 +42,11 @@ beforeAll(() => {
 
 afterAll(() => {
 	__setLinkedInClientForTests(null)
-	process.env.FF_WORKSPACE_FEATURES = undefined
-	_resetFeatureFlagConfig()
 })
 
 beforeEach(() => {
 	__setLinkedInClientForTests(null)
 	captureMock.mockClear()
-	process.env.FF_WORKSPACE_FEATURES = undefined
-	_resetFeatureFlagConfig()
 })
 
 const json = (status: number, body: unknown) => ({ status, body, headers: {} })
@@ -88,13 +83,9 @@ function stubClient(
 	return { getInmailCredits, getProfile, sendMessage }
 }
 
-async function connect(opts: { flag?: boolean } = {}) {
+async function connect() {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
-	if (opts.flag !== false) {
-		process.env.FF_WORKSPACE_FEATURES = `${ws.id}:linkedin-outreach-actions`
-		_resetFeatureFlagConfig()
-	}
 	const [integration] = await db
 		.insert(integrations)
 		.values({
@@ -171,13 +162,6 @@ function text(result: Awaited<ReturnType<typeof sendInmail>>): string {
 }
 
 describe('send_inmail', () => {
-	it('is not registered while the flag is off, and get_inmail_balance still is', async () => {
-		const c = await connect({ flag: false })
-		const tools = (await c.mcp.listTools()).tools.map((t) => t.name)
-		expect(tools).not.toContain(toolName(c.cfg, 'send_inmail'))
-		expect(tools).toContain(toolName(c.cfg, 'get_inmail_balance'))
-	})
-
 	it('sends the approved text as an InMail, once, and logs the credits before and after', async () => {
 		const stub = stubClient({ credits: [15, 14] })
 		const c = await connect()

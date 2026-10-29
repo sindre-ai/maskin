@@ -28,7 +28,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
@@ -67,15 +66,6 @@ interface ProposedEdit {
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
-	// Sub-flag for D5 (bet/d166-loops-v4-polish). Off → the Targets & owners
-	// section never renders even when the loop has targets, so a rollback is
-	// a flag flip rather than a code change.
-	const targetsFlag = useFeatureFlag('loops-v4-polish.targets')
-	// D8 sub-flag boundary — read once at this route, then threaded into
-	// TimelineTab as an options prop so the shared component stays flag-free
-	// for Objects and every other consumer. Off preserves the pre-bet unread
-	// divider so a rollback is a flag flip, not a code change.
-	const unreadPolishFlag = useFeatureFlag('loops-v4-polish.unread')
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -452,7 +442,7 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{targetsFlag && <TargetsAndOwners loop={loop} actors={actors} />}
+				<TargetsAndOwners loop={loop} actors={actors} />
 
 				<div className="mt-7">
 					<LoopFlow
@@ -477,7 +467,7 @@ function LoopDetailRoute() {
 						</div>
 						<TimelineTab
 							object={object}
-							loopsV4PolishUnread={unreadPolishFlag ? { loopId } : undefined}
+							loopUnread={{ loopId }}
 							additionalEvents={activityEvents}
 						/>
 					</div>

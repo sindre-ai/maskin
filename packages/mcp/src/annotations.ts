@@ -193,6 +193,7 @@ const ROWS: Record<string, Row> = {
 	list_keychain_credentials: row('List keychain credentials'),
 	request_keychain_access: row('Request keychain access'),
 	request_integration_access: row('Request integration access'),
+	add_mcp_server: row('Add MCP server'),
 	show_computer: row('Show computer'),
 	// Workspace desktop
 	desktop_screenshot: row('Desktop screenshot'),
@@ -203,6 +204,7 @@ const ROWS: Record<string, Row> = {
 	desktop_type: row('Desktop type'),
 	desktop_key: row('Desktop key'),
 	desktop_run: row('Desktop run command', { destructive: true }),
+	desktop_put_file: row('Desktop put file'),
 	desktop_expose_port: row('Desktop expose port'),
 	desktop_list_ports: row('Desktop list ports'),
 	desktop_close_port: row('Desktop close port'),

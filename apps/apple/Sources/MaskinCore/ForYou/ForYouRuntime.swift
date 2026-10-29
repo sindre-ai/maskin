@@ -82,6 +82,18 @@ public final class ForYouRuntime {
 		let store = ForYouStore(
 			source: backend, decisions: decisions, workspaceId: { environment.workspaceId },
 			cache: environment.snapshotCache)
+		let reviews = DraftReviewStore(
+			remote: APIDraftReviewRemote(
+				objects: APIObjectsRemote(
+					client: environment.client, credentials: environment.auth.credentialsProvider,
+					baseURL: environment.baseURL, clientSource: environment.clientSource)),
+			announce: { [decisions] draft in
+				// The same "Send: …" reply a stacked card sends, so the agent reads it the same way.
+				decisions.actOnDraft(
+					.send, label: draft.label, to: draft.to, id: draft.draftKey, on: draft.target)
+			})
+		reviews.didSend = { [weak store] draft in store?.draftSent(draft) }
+		store.reviews = reviews
 		if start { store.widgetReloader = makeWidgetReloader() }
 		if start {
 			outbox.start(events: environment.events)

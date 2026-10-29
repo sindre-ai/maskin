@@ -6,7 +6,7 @@ import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { TRIGGER_QUEUE_CAP, WORKSPACE_QUEUE_CAP } from '../../services/trigger-event-queue'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
-import { emitObjectCreated, newQueueRunner, pollUntil, setV2Flag } from './queue-helpers'
+import { emitObjectCreated, newQueueRunner, pollUntil } from './queue-helpers'
 
 // Backpressure proof for S3 (tech spec §4.5): at the per-trigger or
 // per-workspace cap the event is dropped and trigger_queue_overflow is
@@ -18,7 +18,6 @@ vi.mock('../../lib/analytics/posthog', () => ({
 
 describe('S3 — queue backpressure', () => {
 	afterEach(async () => {
-		setV2Flag(null)
 		vi.mocked(capturePosthogEvent).mockClear()
 		// Drop the ~110k seeded rows so later integration files do not inherit them.
 		await db.delete(triggerEventQueue)
@@ -40,7 +39,6 @@ describe('S3 — queue backpressure', () => {
 			type: 'event',
 			config: { entity_type: 'object', action: 'created' },
 		})
-		setV2Flag(ws.id)
 		await db.execute(sql`
 			INSERT INTO trigger_event_queue (workspace_id, trigger_id, event_id, event_snapshot, replay_after, reason)
 			SELECT ${ws.id}::uuid, ${trig.id}::uuid, g, '{}'::jsonb, now() + interval '1 hour', 'trigger_backoff'
@@ -85,7 +83,6 @@ describe('S3 — queue backpressure', () => {
 	it('drops the event and records trigger_queue_overflow at the per-workspace cap', async () => {
 		const actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId)
-		setV2Flag(ws.id)
 		await db.execute(sql`
 			INSERT INTO trigger_event_queue (workspace_id, trigger_id, event_id, event_snapshot, replay_after, reason)
 			SELECT ${ws.id}::uuid, NULL, g, '{}'::jsonb, now() + interval '1 hour', 'workspace_suppression'

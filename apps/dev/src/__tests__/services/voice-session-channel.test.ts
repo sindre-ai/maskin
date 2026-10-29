@@ -26,6 +26,11 @@ vi.mock('../../services/voice-session-lifecycle', () => ({
 	recordVoiceToolCall: (...args: unknown[]) => recordToolCall(...args),
 }))
 
+const recordLog = vi.fn()
+vi.mock('../../services/voice-tool-call-log', () => ({
+	recordVoiceToolCallLog: (...args: unknown[]) => recordLog(...args),
+}))
+
 const captureException = vi.fn()
 vi.mock('../../lib/sentry-voice', () => ({
 	captureVoiceException: (...args: unknown[]) => captureException(...args),
@@ -53,7 +58,9 @@ vi.mock('../../services/voice-receipt', async (importOriginal) => ({
 	postReceiptLine: (...args: unknown[]) => postReceiptLine(...args),
 }))
 
-const { createVoiceChannel } = await import('../../services/voice-session-channel')
+const { createVoiceChannel, isDecisionCardWrite } = await import(
+	'../../services/voice-session-channel'
+)
 const { dropVoiceCallState, peekVoiceCallState, voiceCallState } = await import(
 	'../../services/voice-call-state'
 )
@@ -136,6 +143,7 @@ beforeEach(() => {
 	endSession.mockReset().mockResolvedValue({})
 	recordTurn.mockReset()
 	recordToolCall.mockReset()
+	recordLog.mockReset().mockResolvedValue(undefined)
 	captureException.mockReset()
 	writeLine.mockReset()
 	showInChat.mockReset()
@@ -150,6 +158,81 @@ describe('voice channel — open', () => {
 		const { channel, sent } = setup()
 		await channel.onOpen()
 		expect(sent).toEqual([{ type: 'ready', persist_transcripts: false, conversation_id: null }])
+	})
+})
+
+describe('voice channel — tool call log', () => {
+	it('logs the arguments as the model sent them, the raw output length and the cap', async () => {
+		const big = 'x'.repeat(25_000)
+		const invoke = vi.fn().mockResolvedValue(textResult(big))
+		const { channel, toolCall } = setup(invoke)
+		await toolCall('get_objects', { ids: [ENTITY], workspace_id: OTHER_WORKSPACE })
+		await channel.idle()
+
+		expect(recordLog).toHaveBeenCalledTimes(1)
+		const row = recordLog.mock.calls[0]?.[1] as Record<string, unknown>
+		expect(row).toMatchObject({
+			voiceSessionId: SESSION_ID,
+			workspaceId: WORKSPACE,
+			callId: 'call_1',
+			toolName: 'get_objects',
+			// What the model sent, not what the server ran with.
+			args: { ids: [ENTITY], workspace_id: OTHER_WORKSPACE },
+			success: true,
+			errorCode: null,
+			outputChars: 25_000,
+			outputTruncated: true,
+		})
+		expect((row.output as string).length).toBeLessThan(25_000)
+	})
+
+	it('logs a failed call with its error text', async () => {
+		const invoke = vi
+			.fn()
+			.mockResolvedValue({ isError: true, content: [{ type: 'text', text: 'invalid id' }] })
+		const { channel, toolCall } = setup(invoke)
+		await toolCall('get_objects', { ids: ['abc'] })
+		await channel.idle()
+		expect(recordLog.mock.calls[0]?.[1]).toMatchObject({
+			success: false,
+			errorCode: 'voice_tool_failed',
+			errorMessage: 'invalid id',
+			outputChars: 10,
+			outputTruncated: false,
+		})
+	})
+
+	it('still answers the model when the log writer rejects or throws', async () => {
+		const invoke = vi.fn().mockResolvedValue(textResult('fine'))
+		for (const failure of [
+			() => Promise.reject(new Error('db down')),
+			() => {
+				throw new Error('sync boom')
+			},
+		]) {
+			recordLog.mockReset().mockImplementation(failure)
+			const { channel, sent, toolCall } = setup(invoke)
+			await toolCall('list_objects', {})
+			await channel.idle()
+			expect(lastResult(sent)).toMatchObject({ ok: true })
+			expect(lastResult(sent).event.item.output).toBe('fine')
+		}
+	})
+
+	it('does not wait for the writer before telling the model', async () => {
+		let release: () => void = () => {}
+		recordLog.mockReset().mockImplementation(
+			() =>
+				new Promise<void>((r) => {
+					release = r
+				}),
+		)
+		const invoke = vi.fn().mockResolvedValue(textResult('fine'))
+		const { channel, sent, toolCall } = setup(invoke)
+		await toolCall('list_objects', {})
+		expect(lastResult(sent)).toMatchObject({ ok: true })
+		release()
+		await channel.idle()
 	})
 })
 
@@ -693,7 +776,7 @@ describe('voice channel — show_in_chat', () => {
 	const CONV = '8ec06d7f-ea92-4476-90b3-af5c2b46d997'
 
 	it('posts into the call chat itself and never reaches the MCP server', async () => {
-		showInChat.mockResolvedValue({ conversationId: CONV, messageId: 7 })
+		showInChat.mockResolvedValue({ conversationId: CONV, messageId: 7, objectIds: [ENTITY] })
 		const { toolCall, sent, invokeTool } = setup()
 		await toolCall('show_in_chat', { object_ids: [ENTITY], workspace_id: OTHER_WORKSPACE })
 
@@ -715,6 +798,24 @@ describe('voice channel — show_in_chat', () => {
 		const result = sent.find((m) => m.type === 'tool_result') as { ok: boolean; event: never }
 		expect(result.ok).toBe(false)
 		expect(JSON.stringify(result.event)).toContain('Show at most 5 things.')
+	})
+
+	it('hands an unusable card id back as a structured error that says to ask, not to open another card', async () => {
+		const { VoiceShowInChatError } = await import('../../services/voice-show-in-chat')
+		showInChat.mockRejectedValue(
+			new VoiceShowInChatError('bad id', {
+				unresolvedIds: ['the top one'],
+				say: 'Say plainly that you cannot open that one: want to move on?',
+			}),
+		)
+		const { toolCall, sent } = setup()
+		await toolCall('show_in_chat', { object_ids: ['the top one'] })
+		const result = sent.find((m) => m.type === 'tool_result') as { ok: boolean; event: never }
+		expect(result.ok).toBe(false)
+		const text = JSON.stringify(result.event)
+		expect(text).toContain('unresolved_ids')
+		expect(text).toContain('want to move on')
+		expect(text).toContain('shown')
 	})
 })
 
@@ -798,7 +899,7 @@ describe('voice channel — receipts', () => {
 
 	it('leaves no line for a read, for show_in_chat or for a held write', async () => {
 		describeToolCall.mockResolvedValue([draft])
-		showInChat.mockResolvedValue({ conversationId: HOLD_CHAT, messageId: 1 })
+		showInChat.mockResolvedValue({ conversationId: HOLD_CHAT, messageId: 1, objectIds: [ENTITY] })
 		const { toolCall } = setup(vi.fn().mockResolvedValue(textResult('ok')))
 		await toolCall('search_objects', { q: 'x' })
 		await toolCall('show_in_chat', { object_ids: [ENTITY] }, 'call_2')
@@ -911,9 +1012,21 @@ describe('voice channel — receipts', () => {
 			{ objectId: ENTITY, notificationId: null, source: 'decision', rank: 2 },
 		]
 		describeToolCall.mockResolvedValue([draft])
-		const { toolCall } = setup(vi.fn().mockResolvedValue(textResult('ok')))
+		const { toolCall, channel, sent } = setup(vi.fn().mockResolvedValue(textResult('ok')))
 		await toolCall('create_comment', { entity_id: ENTITY, content: 'ok' })
-		expect(receiptCalls()[0]).toMatchObject({ cardId: ENTITY })
+		// A decision card is held until the person says yes to the read-back.
+		const hold = JSON.parse(lastResult(sent).event.item.output).error as string
+		const id = /confirmation_id "([^"]+)"/.exec(hold)?.[1]
+		await channel.onMessage(JSON.stringify({ type: 'user_speech_started', item_id: 'item_yes' }))
+		await channel.onMessage(
+			JSON.stringify({ type: 'transcript', role: 'user', text: 'yes', item_id: 'item_yes' }),
+		)
+		await toolCall(
+			'create_comment',
+			{ entity_id: ENTITY, content: 'ok', confirmation_id: id },
+			'call_2',
+		)
+		expect(receiptCalls().at(-1)).toMatchObject({ cardId: ENTITY })
 		expect(captureCardAction).toHaveBeenCalledWith(HUMAN, {
 			voice_session_id: SESSION_ID,
 			workspace_id: WORKSPACE,
@@ -940,9 +1053,131 @@ describe('voice channel — receipts', () => {
 	it('notes the first card shown with show_in_chat', async () => {
 		const state = voiceCallState(SESSION_ID)
 		state.startCards = [{ objectId: ENTITY, notificationId: null, source: 'curated', rank: 1 }]
-		showInChat.mockResolvedValue({ conversationId: HOLD_CHAT, messageId: 1 })
+		showInChat.mockResolvedValue({ conversationId: HOLD_CHAT, messageId: 1, objectIds: [ENTITY] })
 		const { toolCall } = setup(vi.fn())
 		await toolCall('show_in_chat', { object_ids: [ENTITY] })
 		expect(state.firstCardNamed).toBe(ENTITY)
+	})
+})
+
+describe('voice channel — a filler sound is never a decision', () => {
+	const CARD_ARGS = { entity_id: ENTITY, content: 'Go on the Unipile bet' }
+
+	function cardSetup() {
+		voiceCallState(SESSION_ID).startCards = [
+			{ objectId: ENTITY, notificationId: null, source: 'decision', rank: 1 },
+		]
+		const invoke = vi.fn().mockResolvedValue(textResult('done'))
+		const ctx = setup(invoke)
+		const results = () =>
+			ctx.sent.filter((m) => m.type === 'tool_result') as Array<{
+				ok: boolean
+				error_code: string | null
+				event: { item: { output: string } }
+			}>
+		const outputOf = (n: number) => JSON.parse(results()[n]?.event.item.output ?? '{}')
+		const heldId = (n: number) => /confirmation_id "([^"]+)"/.exec(outputOf(n).error)?.[1] ?? ''
+		const say = async (text: string, itemId: string) => {
+			await ctx.channel.onMessage(JSON.stringify({ type: 'user_speech_started', item_id: itemId }))
+			await ctx.channel.onMessage(
+				JSON.stringify({ type: 'transcript', role: 'user', text, item_id: itemId }),
+			)
+		}
+		return { ...ctx, invoke, results, outputOf, heldId, say }
+	}
+
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('holds a comment on a decision card and writes nothing', async () => {
+		const { invoke, toolCall, results, outputOf } = cardSetup()
+		await toolCall('create_comment', CARD_ARGS)
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[0]).toMatchObject({ ok: false, error_code: 'voice_confirmation_required' })
+		expect(outputOf(0).error).toContain('read the decision back')
+		expect(outputOf(0).error).toContain('Nothing has been written')
+	})
+
+	it.each(['Mm.', 'mhm', 'go on', 'okay, go on', 'uh huh'])(
+		'does not record the decision when the person only says "%s"',
+		async (filler) => {
+			vi.useFakeTimers()
+			const { invoke, toolCall, results, heldId, say } = cardSetup()
+			await toolCall('create_comment', CARD_ARGS)
+			await say(filler, 'item_filler')
+			const repeated = toolCall(
+				'create_comment',
+				{ ...CARD_ARGS, confirmation_id: heldId(0) },
+				'call_2',
+			)
+			await vi.advanceTimersByTimeAsync(4_000)
+			await repeated
+			expect(invoke).not.toHaveBeenCalled()
+			expect(results()[1]).toMatchObject({ ok: false, error_code: 'voice_confirmation_missing' })
+		},
+	)
+
+	it('records the decision after a clear yes to the read-back', async () => {
+		const { invoke, toolCall, results, heldId, say } = cardSetup()
+		await toolCall('create_comment', CARD_ARGS)
+		await say('Yes, that is right', 'item_yes')
+		await toolCall('create_comment', { ...CARD_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		expect(invoke).toHaveBeenCalledTimes(1)
+		expect(invoke.mock.calls[0]?.[1]).toEqual({ ...CARD_ARGS, workspace_id: WORKSPACE })
+		expect(results()[1]).toMatchObject({ ok: true })
+	})
+
+	it('does not record it after a no', async () => {
+		const { invoke, toolCall, results, heldId, say } = cardSetup()
+		await toolCall('create_comment', CARD_ARGS)
+		await say('no, wait', 'item_no')
+		await toolCall('create_comment', { ...CARD_ARGS, confirmation_id: heldId(0) }, 'call_2')
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[1]).toMatchObject({ ok: false })
+	})
+
+	it('still runs an ordinary comment on a card that is not a decision at once', async () => {
+		voiceCallState(SESSION_ID).startCards = [
+			{ objectId: ENTITY, notificationId: null, source: 'curated', rank: 1 },
+		]
+		const invoke = vi.fn().mockResolvedValue(textResult('done'))
+		const { toolCall } = setup(invoke)
+		await toolCall('create_comment', CARD_ARGS)
+		expect(invoke).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('isDecisionCardWrite', () => {
+	const decisionCard = {
+		objectId: ENTITY,
+		notificationId: null,
+		source: 'decision' as const,
+		rank: 1,
+	}
+
+	it('is true for a comment or an update on a decision card', () => {
+		const state = { startCards: [decisionCard] }
+		expect(isDecisionCardWrite(state, 'create_comment', { entity_id: ENTITY })).toBe(true)
+		expect(isDecisionCardWrite(state, 'update_objects', { updates: [{ id: ENTITY }] })).toBe(true)
+	})
+
+	it('is false for another tool, another object, a curated card, no cards, or an agent asking', () => {
+		const state = { startCards: [decisionCard] }
+		expect(isDecisionCardWrite(state, 'create_objects', { entity_id: ENTITY })).toBe(false)
+		expect(isDecisionCardWrite(state, 'create_comment', { entity_id: AGENT })).toBe(false)
+		expect(
+			isDecisionCardWrite(
+				{ startCards: [{ ...decisionCard, source: 'curated' as const }] },
+				'create_comment',
+				{ entity_id: ENTITY },
+			),
+		).toBe(false)
+		expect(isDecisionCardWrite({ startCards: null }, 'create_comment', { entity_id: ENTITY })).toBe(
+			false,
+		)
+		expect(
+			isDecisionCardWrite(state, 'create_comment', { entity_id: ENTITY, decision: { q: 1 } }),
+		).toBe(false)
 	})
 })

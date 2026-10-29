@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import {
 	events,
 	actors,
@@ -32,11 +31,7 @@ vi.mock('../../services/session-lifecycle', async (importOriginal) => ({
 
 const BUILTIN = 'maskin:builtin'
 const DAY_MS = 24 * 60 * 60 * 1000
-
-function restoreEnv(name: string, value: string | undefined) {
-	if (value === undefined) delete process.env[name]
-	else process.env[name] = value
-}
+const FLAG = 'agent-proactive-1-1'
 
 describe('capability digest (integration)', () => {
 	let workspaceId: string
@@ -49,19 +44,12 @@ describe('capability digest (integration)', () => {
 	let slackId: string
 	let answers: Map<string, ProbeResult>
 	let probe: ProbeFn
-	const previous: Record<string, string | undefined> = {}
+	let previousWorkspaceFeatures: string | undefined
 
 	const slackKey = () => `integration:slack:${slackId}`
 
 	function tools(map: Record<string, string>): ProbeResult {
 		return { tools: map, specHash: null }
-	}
-
-	function setFlags(testers: string[]) {
-		process.env.FF_WORKSPACE_FEATURES = `${workspaceId}:capability-scan`
-		process.env.FF_TESTER_ACTOR_IDS = testers.join(',')
-		process.env.FF_TESTER_FEATURES = 'agent-proactive-1-1'
-		_resetFeatureFlagConfig()
 	}
 
 	function scanner() {
@@ -199,16 +187,21 @@ describe('capability digest (integration)', () => {
 		})
 	}
 
+	/** The notes are behind agent-proactive-1-1, so every test but the flag ones turns it on here. */
+	function setWorkspaceFlags(entries: string[]) {
+		process.env.FF_WORKSPACE_FEATURES = entries.join(',')
+		_resetFeatureFlagConfig()
+	}
+
 	beforeEach(async () => {
-		for (const name of ['FF_WORKSPACE_FEATURES', 'FF_TESTER_ACTOR_IDS', 'FF_TESTER_FEATURES']) {
-			previous[name] = process.env[name]
-		}
 		spies.createLLMAdapter.mockClear()
 		spies.startSession.mockClear()
+		previousWorkspaceFeatures = process.env.FF_WORKSPACE_FEATURES
 
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
 		workspaceId = ws.id
+		setWorkspaceFlags([`${workspaceId}:${FLAG}`])
 		cosId = (await insertActor(db, { type: 'agent', name: 'Chief of Staff' })).id
 		salesRepId = (await insertActor(db, { type: 'agent', name: 'Sales Rep' })).id
 		researcherId = (await insertActor(db, { type: 'agent', name: 'Researcher' })).id
@@ -240,12 +233,73 @@ describe('capability digest (integration)', () => {
 			if (!answer) throw new Error(`no stub for ${source.key}`)
 			return answer
 		})
-		setFlags([ownerId, adminId, memberId])
 	})
 
 	afterEach(() => {
-		for (const [name, value] of Object.entries(previous)) restoreEnv(name, value)
+		if (previousWorkspaceFeatures === undefined) {
+			Reflect.deleteProperty(process.env, 'FF_WORKSPACE_FEATURES')
+		} else {
+			process.env.FF_WORKSPACE_FEATURES = previousWorkspaceFeatures
+		}
 		_resetFeatureFlagConfig()
+	})
+
+	describe('agent-proactive-1-1 flag', () => {
+		async function newToolFound() {
+			await scanner().tick() // baseline
+			answers.set(
+				BUILTIN,
+				tools({ create_objects: 'h-create', get_objects: 'h-get', send_chat: 'h-c' }),
+			)
+			await scanner().tick()
+		}
+
+		it('with no entry for the flag, nothing is sent; the finding waits and goes out once it is on', async () => {
+			setWorkspaceFlags([])
+			const chatId = await chatFor(ownerId)
+
+			await newToolFound()
+			expect(await eventsFor('capability_changed')).toHaveLength(1)
+			expect(await notesIn(chatId)).toHaveLength(0)
+			expect(await eventsFor('capability_digest_sent')).toHaveLength(0)
+			expect(await eventsFor('capability_note_skipped')).toHaveLength(0)
+			expect(await runCapabilityDigest(db, workspaceId)).toEqual({
+				sent: 0,
+				skipped: { flag_off: 1 },
+			})
+
+			setWorkspaceFlags([`${workspaceId}:${FLAG}`])
+			const summary = await runCapabilityDigest(db, workspaceId)
+			expect(summary.sent).toBe(1)
+			const notes = await notesIn(chatId)
+			expect(notes).toHaveLength(1)
+			expect(notes[0]?.content).toContain('send_chat')
+		})
+
+		it('an entry for another workspace does not turn it on here', async () => {
+			const other = await insertWorkspace(db, ownerId)
+			setWorkspaceFlags([`${other.id}:${FLAG}`])
+			const chatId = await chatFor(ownerId)
+
+			await newToolFound()
+			expect(await notesIn(chatId)).toHaveLength(0)
+			expect(await runCapabilityDigest(db, workspaceId)).toEqual({
+				sent: 0,
+				skipped: { flag_off: 1 },
+			})
+		})
+
+		it('an entry for this workspace sends here and leaves a neighbour without the entry off', async () => {
+			const neighbour = await insertWorkspace(db, ownerId)
+			const chatId = await chatFor(ownerId)
+
+			await newToolFound()
+			expect(await notesIn(chatId)).toHaveLength(1)
+			expect(await runCapabilityDigest(db, neighbour.id)).toEqual({
+				sent: 0,
+				skipped: { flag_off: 1 },
+			})
+		})
 	})
 
 	describe('end to end', () => {
@@ -399,19 +453,6 @@ describe('capability digest (integration)', () => {
 			const skipped = await skippedFor(ownerId)
 			expect(skipped[0]?.data).toMatchObject({ reason: 'inactive_chat' })
 		})
-
-		it('sends nothing to a person whose flag is off, and records nothing for them', async () => {
-			setFlags([randomUUID()])
-			const chatId = await chatFor(ownerId)
-			await scanner().tick()
-			answers.set(
-				BUILTIN,
-				tools({ create_objects: 'h-create', get_objects: 'h-get', send_chat: 'h-c' }),
-			)
-			await scanner().tick()
-			expect(await notesIn(chatId)).toHaveLength(0)
-			expect(await eventsFor('capability_note_skipped')).toHaveLength(0)
-		})
 	})
 
 	describe('reply stop', () => {
@@ -515,15 +556,13 @@ describe('capability digest (integration)', () => {
 	describe('shared integrations and governance', () => {
 		/** A held tool finding written by a real scan, with delivery held back until the test says so. */
 		async function pendingToolFinding() {
-			setFlags([])
-			await scanner().tick()
+			await scanner().scanWorkspace(workspaceId)
 			answers.set(
 				BUILTIN,
 				tools({ create_objects: 'h-create', get_objects: 'h-get', send_chat: 'h-c' }),
 			)
-			await scanner().tick()
+			await scanner().scanWorkspace(workspaceId)
 			expect(await eventsFor('capability_changed')).toHaveLength(1)
-			setFlags([ownerId, adminId, memberId])
 		}
 
 		it('re-resolves holders at send time: an agent whose access was removed is not named', async () => {
@@ -546,12 +585,10 @@ describe('capability digest (integration)', () => {
 
 		it('drops an item whose only holders lost access, sends nothing, and does not use the weekly cap', async () => {
 			const chatId = await chatFor(ownerId)
-			setFlags([])
-			await scanner().tick()
+			await scanner().scanWorkspace(workspaceId)
 			answers.set(slackKey(), tools({ slack_send_message: 'h-send', slack_react: 'h-react' }))
-			await scanner().tick()
+			await scanner().scanWorkspace(workspaceId)
 			expect(await eventsFor('capability_changed')).toHaveLength(1)
-			setFlags([ownerId, adminId, memberId])
 
 			// Slack is no longer exposed to any agent session since the scan.
 			await db
@@ -679,7 +716,6 @@ describe('capability digest (integration)', () => {
 				.update(integrations)
 				.set({ config: { expose_to_agent_sessions: false } })
 				.where(eq(integrations.id, slackId))
-			setFlags([ownerId])
 			await scanner().tick()
 			answers.set(slackKey(), tools({ slack_send_message: 'h-send', slack_react: 'h-react' }))
 			await scanner().tick()

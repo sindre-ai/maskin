@@ -1,7 +1,7 @@
 import { Composer, nameClipboardImage } from '@/components/chat/chat'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../../setup'
 
 const uploadFileMock = vi.fn()
@@ -216,5 +216,51 @@ describe('nameClipboardImage', () => {
 	])('leaves %s alone', (name, type) => {
 		const file = new File(['x'], name, { type })
 		expect(nameClipboardImage(file, at)).toBe(file)
+	})
+})
+
+describe('Composer text over the message cap', () => {
+	const longText = `${'long message '.repeat(800)}the end`
+
+	beforeEach(() => uploadFileMock.mockReset())
+
+	function typeAndSend(container: HTMLElement, text: string) {
+		const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+		fireEvent.change(textarea, { target: { value: text } })
+		fireEvent.submit(textarea.closest('form') as HTMLFormElement)
+	}
+
+	it('uploads the full text as a .txt file and sends a short body with it', async () => {
+		uploadFileMock.mockResolvedValueOnce({ id: 'file-long-1' })
+		const { container, props } = renderComposer({ longTextAsFile: true })
+		typeAndSend(container, longText)
+
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledTimes(1))
+		expect(uploadFileMock).toHaveBeenCalledWith(
+			expect.objectContaining({ mime_type: 'text/plain', content: longText, encoding: 'utf8' }),
+		)
+		const [body, extras] = vi.mocked(props.onSend).mock.calls[0]
+		expect(body.length).toBeLessThan(8000)
+		expect(extras?.files).toEqual([
+			expect.objectContaining({ fileId: 'file-long-1', mimeType: 'text/plain' }),
+		])
+	})
+
+	it('keeps the typed text and shows the error when the upload fails', async () => {
+		uploadFileMock.mockRejectedValueOnce(new Error('Upload failed'))
+		const { container, props } = renderComposer({ longTextAsFile: true })
+		typeAndSend(container, longText)
+
+		expect(await screen.findByText(/Upload failed/)).toBeInTheDocument()
+		expect(props.onSend).not.toHaveBeenCalled()
+		expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe(longText)
+	})
+
+	it('sends the text as typed when the caller did not opt in', async () => {
+		const { container, props } = renderComposer()
+		typeAndSend(container, longText)
+
+		await waitFor(() => expect(props.onSend).toHaveBeenCalledWith(longText.trim()))
+		expect(uploadFileMock).not.toHaveBeenCalled()
 	})
 })

@@ -1,4 +1,5 @@
 import { AgentAccess } from '@/components/integrations/agent-access'
+import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
@@ -18,8 +19,11 @@ import {
 	useLinkableGithubInstallations,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
+import { DRIVE_COPY } from '@/lib/drive-copy'
+import { DRIVE_PROVIDER } from '@/lib/drive-humans'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
+import { Link } from '@tanstack/react-router'
 import { Check, Link2, Plus } from 'lucide-react'
 import { useState } from 'react'
 
@@ -77,6 +81,16 @@ export function ProviderRow({
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
 	const isConnected = !!integration
+	// The Drive card carries a pill, a one-line pitch and a link to its detail page
+	// in Settings; the chat card stays the plain row every provider gets.
+	const isDrive = provider.name === DRIVE_PROVIDER && variant === 'settings'
+	const driveDetailsLink = isDrive ? (
+		<Button asChild variant="outline" size="sm">
+			<Link to="/$workspaceId/settings/integrations/google-drive" params={{ workspaceId }}>
+				Details
+			</Link>
+		</Button>
+	) : null
 	const handleConnect = () => {
 		if (provider.authType === 'api_key') {
 			onRequestApiKey()
@@ -140,6 +154,7 @@ export function ProviderRow({
 	return (
 		<ProviderCard
 			name={provider.displayName}
+			badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
 			compact={introState !== undefined}
 			subtitle={introSubtitle ?? connectedLabel}
 			tone={
@@ -152,6 +167,12 @@ export function ProviderRow({
 			subtitleTitle={needsReconnect ? integration?.missingScopes?.join(', ') : undefined}
 			notes={
 				<>
+					{isDrive && (
+						<>
+							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.description}</p>
+							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.meta}</p>
+						</>
+					)}
 					{isFreeIdentityAddon && (
 						<p className="text-xs text-muted-foreground">
 							Included in your enterprise plan — no per-identity charge.
@@ -169,6 +190,7 @@ export function ProviderRow({
 			actions={
 				isConnected ? (
 					<div className="flex shrink-0 items-center gap-2">
+						{driveDetailsLink}
 						{needsReconnect && (
 							<Button
 								variant="outline"
@@ -199,6 +221,7 @@ export function ProviderRow({
 					</div>
 				) : (
 					<div className="flex shrink-0 items-center gap-2">
+						{driveDetailsLink}
 						{linkableCount > 0 && (
 							<Button variant="outline" size="sm" onClick={onRequestLink}>
 								<Link2 className="mr-1 h-3.5 w-3.5" />
