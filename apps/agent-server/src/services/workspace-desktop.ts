@@ -821,20 +821,30 @@ export class WorkspaceDesktopRegistry {
 					message: `All ${relayConfig.blockSize} ports for this computer are in use. Close one first.`,
 				}
 			}
-			const relay = await startSshRelay(
+			const started = await startSshRelay(
 				sessionId,
 				guestPort,
 				relayPort,
 				relayConfig.sshKeyPath,
 				this.deps.msb,
 			)
-			if (!relay) {
+			if (!started.ok) {
+				logger.error('workspace desktop: tunnel could not be opened', {
+					workspaceId,
+					agentId,
+					sessionId,
+					guestPort,
+					relayPort,
+					step: started.step,
+					detail: started.detail,
+				})
 				return {
 					ok: false as const,
 					reason: 'relay_failed' as const,
-					message: 'The tunnel could not be opened. Is the session still running?',
+					message: `The tunnel could not be opened. ${started.detail}`,
 				}
 			}
+			const { relay } = started
 			mine.set(relayPort, { relay, sessionId })
 			this.relays.set(key, mine)
 			return { ok: true as const, port: { guestPort, relayPort, sessionId } }
