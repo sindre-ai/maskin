@@ -28,6 +28,7 @@ import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
+import { PAGE_COLUMN } from '@/lib/page-column'
 import { isTriggerChange } from '@/lib/triggers'
 import type { SafeJsonValue, conditionOperatorSchema } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -910,7 +911,7 @@ export function TriggerForm({
 	)
 
 	return (
-		<div className="mx-auto w-full max-w-[700px] px-4 pb-6 sm:px-0">
+		<div className={`mx-auto w-full ${PAGE_COLUMN} px-4 pb-6 sm:px-0`}>
 			{agents.length === 0 && (
 				<div className="mb-4 rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">
 					No agents available. Create an agent first before setting up triggers.

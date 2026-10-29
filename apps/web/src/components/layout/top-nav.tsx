@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
+import { PAGE_COLUMN } from '@/lib/page-column'
 import { ChevronDown, MoreHorizontal } from 'lucide-react'
 import type * as React from 'react'
 
@@ -63,7 +64,7 @@ export function TopNav({
 			className={cn('flex flex-none justify-center px-3 pb-1 pt-3 sm:px-6 md:px-7', className)}
 			{...rest}
 		>
-			<div className="flex w-full max-w-[700px] items-center gap-1.5">
+			<div className={`flex w-full ${PAGE_COLUMN} items-center gap-1.5`}>
 				<div
 					data-scroll="horizontal"
 					className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
