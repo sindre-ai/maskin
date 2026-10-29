@@ -7,7 +7,7 @@
  * never allowed to.
  *
  * Order of evidence, strongest first:
- *   1. the curated sets below, for tools we register ourselves (Slack, LinkedIn, Meet,
+ *   1. the curated sets below, for tools we register ourselves (Slack, LinkedIn, Meet, Drive,
  *      Search Console);
  *   2. the server's own MCP annotation (readOnlyHint), for hosted servers we do not
  *      control, and only when it says read-only — destructiveHint or a missing hint
@@ -37,6 +37,14 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_meet__list_participants',
 		'google_meet__get_transcript_entries',
 		'google_meet__list_recordings',
+	]),
+	// watch_folder is deliberately absent: it registers a Google push channel, so it is a write.
+	'google-drive': new Set([
+		'google_drive__search_files',
+		'google_drive__list_folder',
+		'google_drive__get_file_bytes',
+		'google_drive__get_document_structured',
+		'google_drive__get_sheet_range',
 	]),
 	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
 	// Matched on the verb: LinkedIn tool names carry a per-identity prefix.

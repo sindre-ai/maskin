@@ -1,0 +1,78 @@
+{
+	"_note": "Hand-authored from the documented Drive v3 files.list response shape; not recorded from a live account. Tree: root -> {doc, sub1 -> {sheet, sub2 -> {deep}}, shortcut->sub1, shortcut->file}.",
+	"interactions": [
+		{
+			"match": { "q": "'root' in parents and trashed = false", "pageToken": null },
+			"status": 200,
+			"body": {
+				"files": [
+					{
+						"id": "doc1",
+						"name": "Plan",
+						"mimeType": "application/vnd.google-apps.document",
+						"parents": ["root"]
+					},
+					{
+						"id": "sub1",
+						"name": "Sub 1",
+						"mimeType": "application/vnd.google-apps.folder",
+						"parents": ["root"]
+					},
+					{
+						"id": "sc1",
+						"name": "Shortcut to Sub 1",
+						"mimeType": "application/vnd.google-apps.shortcut",
+						"parents": ["root"],
+						"shortcutDetails": {
+							"targetId": "sub1",
+							"targetMimeType": "application/vnd.google-apps.folder"
+						}
+					},
+					{
+						"id": "sc2",
+						"name": "Shortcut to a PDF",
+						"mimeType": "application/vnd.google-apps.shortcut",
+						"parents": ["root"],
+						"shortcutDetails": { "targetId": "pdf9", "targetMimeType": "application/pdf" }
+					}
+				]
+			}
+		},
+		{
+			"match": { "q": "'sub1' in parents and trashed = false", "pageToken": null },
+			"status": 200,
+			"body": {
+				"nextPageToken": "sub1-p2",
+				"files": [
+					{
+						"id": "sheet1",
+						"name": "Budget",
+						"mimeType": "application/vnd.google-apps.spreadsheet",
+						"parents": ["sub1"]
+					}
+				]
+			}
+		},
+		{
+			"match": { "q": "'sub1' in parents and trashed = false", "pageToken": "sub1-p2" },
+			"status": 200,
+			"body": {
+				"files": [
+					{
+						"id": "sub2",
+						"name": "Sub 2",
+						"mimeType": "application/vnd.google-apps.folder",
+						"parents": ["sub1"]
+					}
+				]
+			}
+		},
+		{
+			"match": { "q": "'sub2' in parents and trashed = false", "pageToken": null },
+			"status": 200,
+			"body": {
+				"files": [{ "id": "deep1", "name": "Deep", "mimeType": "text/plain", "parents": ["sub2"] }]
+			}
+		}
+	]
+}

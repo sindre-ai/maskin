@@ -451,6 +451,106 @@ describe('IntegrationsPage', () => {
 		})
 	})
 
+	describe('google drive provider card (google-drive-integration-ui flag)', () => {
+		const googleDriveProvider = {
+			name: 'google-drive',
+			displayName: 'Google Drive',
+			authType: 'oauth2',
+			events: [],
+			externalIdDisplay: 'email' as const,
+		}
+
+		afterEach(() => {
+			localStorage.removeItem('ff:google-drive-integration-ui')
+		})
+
+		it('hides the Drive card and Connect button when the flag is off', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'off')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [
+					googleDriveProvider,
+					{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' },
+				],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByText('Google Drive')).not.toBeInTheDocument()
+			// Other OAuth providers are unaffected by the Drive flag.
+			expect(screen.getByText('Gmail')).toBeInTheDocument()
+		})
+
+		it('shows the Drive card next to the other OAuth providers when the flag is on', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [
+					googleDriveProvider,
+					{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' },
+				],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByText('Google Drive')).toBeInTheDocument()
+			expect(screen.getByText('Gmail')).toBeInTheDocument()
+			expect(screen.getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
+		})
+
+		it('shows the New pill, description, meta line and a Details link on the Drive card', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByLabelText('New')).toBeInTheDocument()
+			expect(
+				screen.getByText('File bytes, Docs, Sheets, search, folder watch, write, comments.'),
+			).toBeInTheDocument()
+			expect(screen.getByText('Free · Piggybacks on Google auth')).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+		})
+
+		it('keeps the Details link on a connected Drive card', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					buildIntegrationResponse({
+						id: 'gd-1',
+						provider: 'google-drive',
+						status: 'active',
+						externalId: 'kai@acme.test',
+					}),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
+		})
+
+		it('does not put Drive extras on other providers', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' }],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByLabelText('New')).not.toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Details' })).not.toBeInTheDocument()
+		})
+	})
+
 	describe('gmail label remains unchanged', () => {
 		const gmailProvider = {
 			name: 'gmail',
