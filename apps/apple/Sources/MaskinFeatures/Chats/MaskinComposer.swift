@@ -408,7 +408,7 @@ struct MaskinComposer: View {
 		for drop in drops {
 			switch drop {
 			case .image(let data):
-				let name = PastedImage.baseName()
+				let name = "Pasted image.jpg"
 				model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
 			case .file(let url):
 				model.attach(

@@ -97,10 +97,20 @@ enum AttachmentLoading {
 		}
 	}
 
-	/// A picture already in memory (a camera shot, an image pasted from the clipboard): decoded and
-	/// downsampled straight from the bytes, the same way as a library photo.
+	/// A picture already in memory (a camera shot, an image pasted from the clipboard): written to a temp
+	/// file and sent through the same downsampling as a library photo.
 	static func image(data: Data, name: String) -> @Sendable () async throws -> PreparedChatFile {
-		{ try PastedImage.prepare(data: data, name: name) }
+		{
+			let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jpg")
+			try data.write(to: url)
+			defer { try? FileManager.default.removeItem(at: url) }
+			guard let result = ImageDownsampler.prepare(fileAt: url) else {
+				throw ChatAttachmentError("Couldn't read that image (\(data.count) bytes).")
+			}
+			let base = (name as NSString).deletingPathExtension
+			return PreparedChatFile(
+				name: "\(base).\(result.fileExtension)", mimeType: result.mimeType, data: result.data)
+		}
 	}
 
 	/// A file from the Files picker, or one dropped on the bar (`deleteAfter` removes our temp copy).
