@@ -32,7 +32,8 @@ export interface BuildListPayloadInput {
 }
 
 /**
- * `{ <key>: rows, ...extra, notes?, page: { limit, returned, total, has_more }, next_cursor? }`.
+ * `{ ...extra, notes?, page: { limit, returned, total, has_more }, next_cursor?, <key>: rows }`.
+ * The rows come last so a text cut at a character limit still carries everything else.
  * `total` is the real count or null; it is never the page size.
  */
 export function buildListPayload(input: BuildListPayloadInput): Record<string, unknown> {
@@ -43,12 +44,15 @@ export function buildListPayload(input: BuildListPayloadInput): Record<string, u
 		total,
 		has_more: nextCursor !== null,
 	}
+	// The rows go last on purpose. A live call cuts a long tool result at a character limit and
+	// keeps the front, so anything the agent needs to read a partial list correctly (the summary,
+	// the notes, the page block with `has_more`, the cursor) has to come before the rows.
 	return {
-		[key]: rows,
 		...(extra ?? {}),
 		...(notes && notes.length > 0 ? { notes } : {}),
 		page,
 		...(nextCursor ? { next_cursor: nextCursor } : {}),
+		[key]: rows,
 	}
 }
 

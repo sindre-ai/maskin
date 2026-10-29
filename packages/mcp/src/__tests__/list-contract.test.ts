@@ -236,6 +236,34 @@ describe('list tools put the same payload on both channels', () => {
 			expect(text.page).toEqual({ limit: 5, returned: 5, total: 31, has_more: true })
 		})
 
+		it('puts the summary, page block and cursor before the rows, so a text cut at 20,000 characters still has them', async () => {
+			// 100 realistic rows: the incident asked for limit 100 and a live call keeps only the first
+			// 20,000 characters of the text (VOICE_MAX_TOOL_OUTPUT_CHARS).
+			const heavy = Array.from({ length: 99 }, (_, i) =>
+				row({
+					id: uuid('ffffffff', i),
+					provider: 'google-meet',
+					status: i < 20 ? 'active' : 'pending',
+					displayName: `Connection number ${i} with a long saved name`,
+					createdAt: day((i % 28) + 2),
+					agentGrants: Array.from({ length: 6 }, (_, g) => ({
+						actorId: uuid('99999999', g),
+						access: 'read_write',
+					})),
+				}),
+			)
+			stubFetch([...heavy, row({ id: uuid('bbbbbbbb', 1), provider: 'slack', createdAt: day(1) })])
+			const res = await call('list_integrations', { limit: 100 })
+
+			const text = res.content[0]?.text ?? ''
+			const head = text.slice(0, 20_000)
+			expect(head).toContain('"summary"')
+			expect(head).toContain('"slack"')
+			expect(head).toContain('"has_more"')
+			expect(text.indexOf('"summary"')).toBeLessThan(text.indexOf('"integrations"'))
+			expect(text.indexOf('"page"')).toBeLessThan(text.indexOf('"integrations"'))
+		})
+
 		it('walks every row once, live first, and ends with has_more false and no cursor', async () => {
 			stubFetch(incidentRows())
 			const seen: string[] = []
