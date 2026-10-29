@@ -17,7 +17,10 @@ struct MessageAttachmentLayoutTests {
 	@Test("a block is 80% of the thread and never wider than 320")
 	func widths() {
 		#expect(AttachmentLayout.width(thread: 375, fraction: AttachmentLayout.imageFraction) == 300)
-		#expect(AttachmentLayout.width(thread: 375, fraction: AttachmentLayout.fileFraction) == 345)
+		// 92% of 375 is 345, over the cap.
+		#expect(AttachmentLayout.width(thread: 375, fraction: AttachmentLayout.fileFraction) == 320)
+		// Under the cap, a file card takes 92% of the thread.
+		#expect(abs(AttachmentLayout.width(thread: 300, fraction: AttachmentLayout.fileFraction) - 276) < 0.001)
 		#expect(AttachmentLayout.width(thread: 402, fraction: AttachmentLayout.fileFraction) == 320)
 		#expect(AttachmentLayout.width(thread: 820, fraction: AttachmentLayout.imageFraction) == 320)
 		#expect(AttachmentLayout.width(thread: 0, fraction: AttachmentLayout.imageFraction) == 320)
