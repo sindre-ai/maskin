@@ -401,6 +401,12 @@ function clamp(candidateMs: number, nowMs: number): number | null {
 	return candidateMs
 }
 
+/**
+ * How many times the retry scheduler starts a session again. Lives here, not in the scheduler,
+ * because the scheduler imports session-lifecycle and settleSession needs the number too.
+ */
+export const MAX_RETRY_ATTEMPTS = 5
+
 const NO_RESET_RETRY_BACKOFF_MS = 30 * 60 * 1000
 // weekly_limit and opus_limit are left out on purpose: 5 attempts 30 minutes apart span 2.5
 // hours and cannot outlast a weekly reset, so a blind retry would only burn attempts.
