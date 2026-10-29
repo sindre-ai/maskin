@@ -105,21 +105,32 @@ public struct KeychainSecretStore: SecretStore {
 
 	private let backend: any KeychainBackend
 	private let dataProtection: Bool
+	/// A reader that never writes: `read()` returns an old-group item as-is instead of moving it.
+	/// The widget extension uses this; only the app (which owns the item) migrates.
+	private let readOnly: Bool
 
 	/// - Parameter accessGroup: leave `nil` to use this process's shared group (resolved at runtime).
+	/// - Parameter readOnly: for extensions that only consume the session (the widgets): `read()`
+	///   never migrates, so the extension never writes the app's Keychain item. The extension needs
+	///   the app's Keychain Sharing group on ITS OWN App ID (`io.maskin.app.widgets`, see
+	///   `MaskinWidgets.entitlements`); without it (unsigned or simulator builds) the widget reads
+	///   nothing and shows "signed out".
 	public init(
-		service: String = "io.maskin.app", account: String = "session", accessGroup: String? = nil
+		service: String = "io.maskin.app", account: String = "session", accessGroup: String? = nil,
+		readOnly: Bool = false
 	) {
 		self.init(
 			service: service, account: account,
 			accessGroup: accessGroup ?? SystemKeychain.defaultAccessGroup,
-			backend: SystemKeychain(), dataProtection: SystemKeychain.usesDataProtection)
+			backend: SystemKeychain(), dataProtection: SystemKeychain.usesDataProtection,
+			readOnly: readOnly)
 	}
 
 	init(
 		service: String, account: String, accessGroup: String?, backend: any KeychainBackend,
-		dataProtection: Bool = true
+		dataProtection: Bool = true, readOnly: Bool = false
 	) {
+		self.readOnly = readOnly
 		self.service = service
 		self.account = account
 		self.accessGroup = accessGroup
@@ -178,7 +189,7 @@ public struct KeychainSecretStore: SecretStore {
 		// Not in the shared group: look where older builds put it.
 		switch lookup(group: nil) {
 		case .found(let data, let oldGroup):
-			if sharedFailure == nil, let oldGroup, oldGroup != shared {
+			if !readOnly, sharedFailure == nil, let oldGroup, oldGroup != shared {
 				migrate(data, from: oldGroup, to: shared)
 			}
 			return data

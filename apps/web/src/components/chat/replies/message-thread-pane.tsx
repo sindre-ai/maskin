@@ -1,3 +1,4 @@
+import { PREVIEW_BOUNDS_ATTR } from '@/components/chat/linked-object-reference'
 import { MessageActivity } from '@/components/chat/message-activity'
 import { MessageBubble } from '@/components/chat/message-bubble'
 import { MessageDivider } from '@/components/chat/message-divider'
@@ -185,6 +186,8 @@ export function MessageThreadPane({
 					<div
 						ref={scrollerRef}
 						onScroll={handleScroll}
+						// The scroller clips a chip's hover preview, so the preview places itself inside it.
+						{...{ [PREVIEW_BOUNDS_ATTR]: '' }}
 						className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-2"
 					>
 						<MessageBubble

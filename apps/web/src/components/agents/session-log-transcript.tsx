@@ -2,6 +2,7 @@ import { AgentOutput } from '@/components/shared/agent-output'
 import type { SessionLogResponse } from '@/lib/api'
 import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
+import { formatToolName } from '@/lib/tool-name'
 import { ChevronDown, ChevronRight, Settings, User, Wrench } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
@@ -218,7 +219,9 @@ export function describeEvent(event: ChatEvent): string | null {
 		case 'text':
 			return truncate(stripInlineMarkdown(event.text).replace(/\s+/g, ' ').trim(), 80) || null
 		case 'tool_use':
-			return isConversationReplyTool(event.name) ? CONVERSATION_REPLY_LABEL : `Using ${event.name}`
+			return isConversationReplyTool(event.name)
+				? CONVERSATION_REPLY_LABEL
+				: formatToolName(event.name)
 		case 'thinking':
 			return event.redacted ? 'Thinking (redacted)…' : 'Thinking…'
 		case 'user':
@@ -368,7 +371,7 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 					<ChevronRight size={14} className="shrink-0 text-muted-foreground" />
 				)}
 				<Wrench size={12} className="shrink-0 text-muted-foreground" />
-				<span className="font-mono text-foreground shrink-0">{name}</span>
+				<span className="font-mono text-foreground shrink-0">{formatToolName(name)}</span>
 				{preview && !open && (
 					<span className="truncate font-mono text-muted-foreground min-w-0 flex-1">{preview}</span>
 				)}

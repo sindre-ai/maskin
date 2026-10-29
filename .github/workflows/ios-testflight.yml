@@ -1,0 +1,158 @@
+name: iOS TestFlight
+
+# Signed iOS archive uploaded to TestFlight on every merge to main that changes the Apple
+# app. apple.yml stays the unsigned compile check; this workflow is the release path.
+#
+# Inert until the four secrets below exist: the first step checks for them and every later
+# step is skipped, so merging this file before the Apple setup is done does not turn main red.
+#
+#   APPLE_TEAM_ID          10-character Apple Developer Team ID
+#   ASC_KEY_ID             App Store Connect API key id
+#   ASC_ISSUER_ID          App Store Connect issuer id
+#   ASC_KEY_P8             contents of the AuthKey_XXXX.p8 file (key role: Admin, so Xcode can
+#                          create and manage the distribution certificate and profiles)
+#
+# Signing is automatic and cloud managed: xcodebuild -allowProvisioningUpdates with the API
+# key creates the distribution certificate and App Store profiles for io.maskin.app and its
+# extensions, so no certificate or profile files live in the repo or in secrets.
+#
+# Build number is a UTC timestamp (yymmddHHMM), always higher than the last upload. The
+# marketing version still comes from project.yml.
+#
+# Internal testers get the build automatically once App Store Connect finishes processing it,
+# if the internal TestFlight group has "Automatic distribution" switched on.
+#
+# One macOS runner for roughly 20-30 minutes per merge (10x the per-minute cost of Linux).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/apple/**'
+      - '!apps/apple/docs/**'
+      - '!apps/apple/Tests/**'
+      - '!apps/apple/**/*.md'
+      - '.github/workflows/ios-testflight.yml'
+  workflow_dispatch:
+
+# Never cancel an upload half way; queue back-to-back merges instead.
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - name: Check signing secrets
+        id: gate
+        run: |
+          if [ -z "$APPLE_TEAM_ID" ] || [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::notice::TestFlight upload skipped: Apple signing secrets are not set yet."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.gate.outputs.enabled == 'true'
+
+      - name: Select Xcode 26
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image."
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install xcodegen and generate the project
+        if: steps.gate.outputs.enabled == 'true'
+        working-directory: apps/apple
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Write the App Store Connect key
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Archive
+        if: steps.gate.outputs.enabled == 'true'
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          build_number=$(date -u +%y%m%d%H%M)
+          echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          xcodebuild archive \
+            -project Maskin.xcodeproj -scheme Maskin \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Maskin.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation -skipMacroValidation \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CURRENT_PROJECT_VERSION="$build_number" \
+            2>&1 | tee "$RUNNER_TEMP/archive.log" | tail -n 25
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Export and upload to TestFlight
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Maskin.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee "$RUNNER_TEMP/export.log" | tail -n 25
+          test "${PIPESTATUS[0]}" -eq 0
+          echo "Uploaded build $BUILD_NUMBER to App Store Connect."
+
+      - name: Remove the key
+        if: always() && steps.gate.outputs.enabled == 'true'
+        run: rm -rf "$RUNNER_TEMP/asc"
+
+      - name: Upload logs
+        if: (failure() || cancelled()) && steps.gate.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-testflight-logs
+          path: |
+            ${{ runner.temp }}/archive.log
+            ${{ runner.temp }}/export.log
+          if-no-files-found: ignore
+          retention-days: 7

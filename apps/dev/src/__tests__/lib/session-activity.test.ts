@@ -38,7 +38,7 @@ describe('buildSessionActivity', () => {
 		expect(turns[0]?.status).toBe('completed')
 		expect(turns[0]?.result?.text).toBe('Done.')
 		const tool = turns[0]?.steps.find((s) => s.kind === 'tool_use')
-		expect(tool).toMatchObject({ label: 'Using Read', detail: '/a/b.ts', status: 'completed' })
+		expect(tool).toMatchObject({ label: 'Read', detail: '/a/b.ts', status: 'completed' })
 		expect(tool?.finished_at).not.toBeNull()
 		expect(turns[1]?.status).toBe('running')
 		expect(turns[1]?.steps[0]).toMatchObject({ status: 'running', finished_at: null })

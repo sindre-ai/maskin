@@ -10,6 +10,7 @@ import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
+import { formatToolName } from '@/lib/tool-name'
 import {
 	CheckCircle2,
 	ChevronDown,
@@ -206,7 +207,7 @@ function friendlyToolName(name: string): string {
 	if (lower.includes('web') || lower.includes('fetch') || lower.includes('search'))
 		return 'Searching'
 	if (lower.includes('todo')) return 'Updating plan'
-	return `Using ${name}`
+	return formatToolName(name)
 }
 
 function ActivityRow({

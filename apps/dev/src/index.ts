@@ -36,6 +36,7 @@ import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/provider
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { configureVoiceArtifactStorage } from './lib/outreach/voice/recordings-hook'
+import { recordDbTime } from './lib/request-timing'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
@@ -80,7 +81,7 @@ const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
-const db = createDb(databaseUrl)
+const db = createDb(databaseUrl, { onQuery: recordDbTime })
 
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.

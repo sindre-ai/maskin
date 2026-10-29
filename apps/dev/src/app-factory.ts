@@ -18,6 +18,7 @@ import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { registerVoiceCallHooks } from './lib/outreach/voice/call-hooks'
 import { redactLogLine } from './lib/redact-path'
+import { requestTiming } from './lib/request-timing'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
 	OwnershipCapExceededError,
@@ -290,6 +291,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		'*',
 		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
 	)
+
+	app.use('/api/*', requestTiming())
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)

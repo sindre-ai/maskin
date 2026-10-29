@@ -49,7 +49,7 @@ export function AgentCallButton({
 	const button = (
 		<Button
 			type="button"
-			variant={variant === 'composer' ? 'outline' : 'default'}
+			variant={variant === 'composer' ? 'outline' : variant === 'icon' ? 'ghost' : 'default'}
 			size={variant === 'icon' || variant === 'composer' ? 'icon' : 'sm'}
 			className={cn(
 				// Reads as unavailable even when the row hover pushes opacity back to full.
@@ -60,8 +60,10 @@ export function AgentCallButton({
 				// row) also reveals it, so it is never unreachable.
 				variant === 'row' &&
 					'mr-2 h-7 w-7 shrink-0 gap-1 px-0 text-xs font-semibold sm:mr-3 lg:w-auto lg:px-2.5 md:opacity-0 md:transition-opacity md:focus-visible:opacity-100 md:group-focus-within/row:opacity-100 md:group-hover/row:opacity-100',
+				// Plain ghost icon like Copy, Pin and Archive beside it. Disabled drops
+				// the muted plate so it dims instead of showing a grey square.
 				variant === 'icon' &&
-					'h-6 w-6 shrink-0 bg-brand text-brand-foreground hover:bg-brand-hover',
+					'h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground disabled:bg-transparent',
 				variant === 'composer' && 'h-7 w-7 shrink-0 rounded-full text-muted-foreground',
 			)}
 			onClick={() => startVoiceCall(agent)}
