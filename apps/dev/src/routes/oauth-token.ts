@@ -7,6 +7,7 @@ import { captureTokenRejected } from '../lib/oauth-server/analytics'
 import { requestClientIp } from '../lib/oauth-server/client-ip'
 import { createRateLimiter } from '../lib/oauth-server/rate-limit'
 import { handleTokenRequest, parseTokenForm } from '../lib/oauth-server/token'
+import smokeStub from './oauth-smoke-stub'
 
 // POST /oauth/token: where Claude trades its one-time code for an access and a refresh token, and
 // later trades the refresh token for a new pair (RFC 6749). Public: the code, its PKCE verifier and
@@ -14,6 +15,9 @@ import { handleTokenRequest, parseTokenForm } from '../lib/oauth-server/token'
 // body is form-encoded and the errors are RFC 6749's, not Maskin's. With MASKIN_MCP_OAUTH_ENABLED
 // off it answers 404. Every response, success or error, is marked not cacheable.
 const app = new Hono<{ Variables: { db: Database } }>()
+
+// THROWAWAY smoke-test stub (never merge): serves GET /oauth/authorize while no consent page exists.
+app.route('/', smokeStub)
 
 /** 30 tries a minute from one address: far more than Claude makes, far less than a guesser needs. */
 const allowToken = createRateLimiter(30, 60_000)
