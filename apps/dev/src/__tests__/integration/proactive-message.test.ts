@@ -8,6 +8,7 @@ import {
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { directPairKey } from '../../services/direct-chat'
 import { isOptedOut, sendProactiveMessage } from '../../services/proactive-message'
 import { insertActor, insertConversation, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -51,7 +52,11 @@ describe('sendProactiveMessage (integration)', () => {
 	}
 
 	async function makeChat(participantIds: string[], ws = workspaceId) {
-		const chat = await insertConversation(db, ws, participantIds[0] as string)
+		// Two people make a direct message, which is what the sender looks up.
+		const [a, b] = participantIds as [string, string]
+		const chat = await insertConversation(db, ws, a, {
+			directPairKey: participantIds.length === 2 ? directPairKey(a, b) : null,
+		})
 		for (const actorId of participantIds) {
 			await db.insert(conversationParticipants).values({ conversationId: chat.id, actorId })
 		}

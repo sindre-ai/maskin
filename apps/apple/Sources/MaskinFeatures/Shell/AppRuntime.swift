@@ -27,6 +27,9 @@ public final class AppRuntime {
 	/// moment of value, see `valueMomentSeen()`.)
 	var selectedTab: ShellTab = .forYou
 
+	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
+	let teamPill = TeamPillModel()
+
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
 	/// presentations requested in the same tick (a tap that opens an object) replace each
 	/// other deterministically instead of racing, and the sheet can't outlive its workspace.

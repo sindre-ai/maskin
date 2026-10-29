@@ -5957,11 +5957,15 @@ export function createMcpServer(config: McpConfig) {
 				first_message,
 				subject_type,
 				subject_id,
+				topical,
 				wait,
 			} = args
 			if ((subject_type === undefined) !== (subject_id === undefined)) {
 				throw new Error('subject_type and subject_id go together: give both or neither.')
 			}
+			// One other actor and no subject is the direct message with them, unless a
+			// separate topical chat was asked for. The API gets or creates it.
+			const direct = participant_actor_ids.length === 1 && subject_id === undefined && !topical
 			const wsOpts = { workspaceId: workspace_id }
 			const conversation = (await apiCall(
 				config,
@@ -5970,6 +5974,7 @@ export function createMcpServer(config: McpConfig) {
 				{
 					title,
 					participant_actor_ids,
+					...(direct ? { direct: true } : {}),
 					...(subject_type && subject_id
 						? { subject: { type: subject_type, id: subject_id } }
 						: {}),

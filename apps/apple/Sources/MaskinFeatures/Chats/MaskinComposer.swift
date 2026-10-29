@@ -423,7 +423,10 @@ struct MaskinComposer: View {
 
 	#if os(iOS)
 	fileprivate func pasteImage() {
-		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else { return }
+		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
+			model.notice = "Couldn't read an image from the clipboard."
+			return
+		}
 		addFiles([.image(data)])
 	}
 
