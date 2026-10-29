@@ -645,7 +645,8 @@ public final class ChatStore {
 	}
 
 	public func load() async {
-		if await attemptLoad() { return }
+		let loaded = await Perf.measure("chat.load") { await attemptLoad() }
+		if loaded { return }
 		scheduleRetry()
 	}
 
