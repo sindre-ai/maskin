@@ -69,7 +69,9 @@ import { logger } from './logger'
 //   - idempotency_records / linkedin_tool_calls: keyed by actor, with a 24h TTL cleaner.
 //
 // The audit trail dies with the workspace (the events table is purged), so the deletion itself is
-// recorded through the logger by the caller, not as an events row.
+// recorded through the logger by the caller, not as an events row. That includes the Keychain
+// trail: the result carries its final chain head and row counts, so the log line says what was
+// erased without keeping the data.
 
 /** Tables the purge deletes by hand. The guard test requires every NO ACTION/RESTRICT child. */
 export const WORKSPACE_PURGE_EXPLICIT = [
@@ -86,8 +88,6 @@ export const WORKSPACE_PURGE_EXPLICIT = [
 	'workspace_overage_usage',
 	'agent_chat_grants',
 	'agent_grants',
-	'credential_access_log',
-	'credential_chain_snapshots',
 	'orphan_thread_detections',
 	'awaiting_vies',
 	'agent_files',
@@ -118,6 +118,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'google_meet_space_idempotency',
 	'live_activity_cards',
 	'live_activity_tokens',
+	'live_activity_cards',
 	'loop_active_days',
 	'mcp_telemetry',
 	'message_reactions',
@@ -146,6 +147,19 @@ export interface WorkspacePurgeResult {
 	scrubbedAgentIds: string[]
 	/** Unfinished sessions that own a sandbox, to stop after commit. */
 	liveSessions: LivePurgedSession[]
+	/** What was erased of the Keychain audit trail, for the caller's deletion log line. */
+	keychainAudit: PurgedKeychainAudit
+}
+
+export interface PurgedKeychainAudit {
+	/** credential_access_log rows erased. */
+	logRows: number
+	/** credential_chain_snapshots rows erased. */
+	snapshotRows: number
+	/** Id of the last log row (the chain head), or null if the workspace had none. */
+	chainHeadId: string | null
+	/** row_hash of that last row, or null if the workspace had none. */
+	chainHeadHash: string | null
 }
 
 export interface LivePurgedSession {
@@ -234,6 +248,23 @@ export async function purgeWorkspace(
 		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
+	// The Keychain chain head and the row counts are read before the audit trail goes, because they
+	// are the only record of the delete that outlives it.
+	const [lastLogRow] = await tx
+		.select({ id: credentialAccessLog.id, rowHash: credentialAccessLog.rowHash })
+		.from(credentialAccessLog)
+		.where(eq(credentialAccessLog.workspaceId, workspaceId))
+		.orderBy(sql`${credentialAccessLog.id} desc`)
+		.limit(1)
+	const [logCount] = await tx
+		.select({ n: sql<number>`count(*)::int` })
+		.from(credentialAccessLog)
+		.where(eq(credentialAccessLog.workspaceId, workspaceId))
+	const [snapshotCount] = await tx
+		.select({ n: sql<number>`count(*)::int` })
+		.from(credentialChainSnapshots)
+		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
+
 	// Edges have no foreign keys and join objects or files; an edge is the workspace's if either
 	// end is one of its objects or files.
 	await tx
@@ -261,13 +292,6 @@ export async function purgeWorkspace(
 	await tx.delete(workspaceCreditLedger).where(eq(workspaceCreditLedger.workspaceId, workspaceId))
 	await tx.delete(workspaceOverageUsage).where(eq(workspaceOverageUsage.workspaceId, workspaceId))
 	await tx.delete(orphanThreadDetections).where(eq(orphanThreadDetections.workspaceId, workspaceId))
-	// The audit trail dies with the workspace. The snapshot table is append-only by trigger; that
-	// trigger lets a DELETE through only while this transaction-local flag is set (migration 0097).
-	await tx.execute(sql`SELECT set_config('maskin.purging_workspace', 'on', true)`)
-	await tx
-		.delete(credentialChainSnapshots)
-		.where(eq(credentialChainSnapshots.workspaceId, workspaceId))
-	await tx.delete(credentialAccessLog).where(eq(credentialAccessLog.workspaceId, workspaceId))
 	await tx.delete(agentChatGrants).where(eq(agentChatGrants.workspaceId, workspaceId))
 	await tx.delete(agentGrants).where(eq(agentGrants.workspaceId, workspaceId))
 	await tx.delete(awaitingVies).where(eq(awaitingVies.workspaceId, workspaceId))
@@ -331,6 +355,12 @@ export async function purgeWorkspace(
 		memberActorIds: members.map((m) => m.actorId),
 		scrubbedAgentIds,
 		liveSessions: liveSessions.filter((x) => x.containerId || x.agentServerId),
+		keychainAudit: {
+			logRows: logCount?.n ?? 0,
+			snapshotRows: snapshotCount?.n ?? 0,
+			chainHeadId: lastLogRow ? String(lastLogRow.id) : null,
+			chainHeadHash: lastLogRow?.rowHash ?? null,
+		},
 	}
 }
 

@@ -1539,6 +1539,7 @@ app.openapi(deleteWorkspaceRoute, (async (c) => {
 				actorId,
 				name: outcome.name,
 				members: outcome.result.memberActorIds.length,
+				keychainAudit: outcome.result.keychainAudit,
 			})
 			evictPurgedWorkspace(workspaceId, outcome.result)
 			await stopPurgedSessions(c.get('sessionManager'), outcome.result)
