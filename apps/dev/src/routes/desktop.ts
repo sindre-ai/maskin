@@ -1,11 +1,12 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { files, sessions } from '@maskin/db/schema'
 import {
 	desktopExecBodySchema,
 	desktopExecResultSchema,
 	desktopInputActionSchema,
 } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { resolveDesktopAgent } from '../lib/desktop-access'
 import { signDesktopTicket } from '../lib/desktop-ticket'
@@ -35,6 +36,7 @@ type Env = {
 		actorId: string
 		actorType?: string
 		workspaceRole?: string
+		storageProvider: StorageProvider
 		// Test seam: unit tests inject a fake instead of hitting agent-servers.
 		desktopService?: WorkspaceDesktopService
 	}
@@ -145,7 +147,9 @@ function serviceFor(c: { get: (k: 'desktopService' | 'db') => unknown }): Worksp
 }
 
 type Ctx = {
-	get: (k: 'actorId' | 'actorType' | 'db' | 'desktopService' | 'workspaceRole') => unknown
+	get: (
+		k: 'actorId' | 'actorType' | 'db' | 'desktopService' | 'workspaceRole' | 'storageProvider',
+	) => unknown
 	header: (name: string, value: string) => void
 	req: { header: (name: string) => string | undefined; query: (name: string) => string | undefined }
 	json: (body: unknown, status: number) => Response
@@ -466,6 +470,200 @@ app.openapi(
 app.openapi(
 	execRoute,
 	(c) => forwardControl(c as unknown as Ctx, 'exec', c.req.valid('json')) as never,
+)
+
+// Putting a workspace file on the agent's computer. The computer is a separate
+// machine from the agent's session, so a file can only get there over the network:
+// the computer downloads it from a short-lived storage URL, which keeps the bytes
+// (and the agent's API key) out of the model and out of the command log.
+
+/** Long enough for the computer to start the download, short enough to be worthless afterwards. */
+const PUT_FILE_URL_TTL_SECONDS = 10 * 60
+
+const putFileBodySchema = z.object({
+	file_id: z.string().uuid(),
+	folder: z
+		.string()
+		.max(255)
+		.regex(/^(\/|~\/)[^\0\r\n]*$/, 'Use an absolute path or one starting with ~/')
+		.default('~/Downloads')
+		.openapi({ description: 'Folder on the computer. Created if missing.' }),
+})
+
+const putFileResultSchema = z.object({
+	path: z.string(),
+	size_bytes: z.number().int(),
+	sha256: z.string(),
+	hash_verified: z.boolean().openapi({
+		description:
+			'True when the file has a stored hash and it matches. Large files have none, so only their size is checked.',
+	}),
+})
+
+const putFileRoute = createRoute({
+	method: 'post',
+	path: '/put-file',
+	'x-viewer-policy': 'writer',
+	tags: ['Desktop'],
+	summary: "Put a workspace file on an agent's computer",
+	description:
+		'The computer downloads the file straight from storage, so its bytes never pass through the caller. Starts the computer if needed. Overwrites a file of the same name in the folder. Takes up to two minutes, so a very large file can time out.',
+	request: {
+		headers: workspaceIdHeader,
+		query: agentQuery,
+		body: { content: { 'application/json': { schema: putFileBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'The file is on the computer',
+			content: { 'application/json': { schema: putFileResultSchema } },
+		},
+		...controlResponses,
+	},
+})
+
+const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
+
+/** A path for `sh`, with a leading ~/ turned into $HOME so quoting cannot stop it expanding. */
+function shellPath(path: string): string {
+	return path.startsWith('~/') ? `"$HOME"/${shellQuote(path.slice(2))}` : shellQuote(path)
+}
+
+/** The file's name as a plain, safe file name: no folders, no shell or dot-file surprises. */
+function safeFileName(name: string): string {
+	const base = name.split(/[\\/]/).pop() ?? ''
+	return base.replace(/[^A-Za-z0-9._ -]/g, '_').replace(/^\.+/, '').slice(0, 200) || 'file'
+}
+
+async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
+	const gated = await gate(c)
+	if (isResponse(gated)) return gated
+	const { workspaceId, actorId, agentId } = gated
+	const db = c.get('db') as Database
+
+	const [file] = await db
+		.select({
+			id: files.id,
+			name: files.name,
+			mimeType: files.mimeType,
+			sizeBytes: files.sizeBytes,
+			storageKey: files.storageKey,
+			contentHash: files.contentHash,
+		})
+		.from(files)
+		.where(and(eq(files.id, input.fileId), eq(files.workspaceId, workspaceId)))
+		.limit(1)
+	if (!file) return c.json(createApiError('NOT_FOUND', 'File not found'), 404)
+
+	let url: string
+	try {
+		url = await (c.get('storageProvider') as StorageProvider).presignDownload(file.storageKey, {
+			expiresInSeconds: PUT_FILE_URL_TTL_SECONDS,
+			contentType: file.mimeType,
+		})
+	} catch (err) {
+		logger.error('Failed to presign file for desktop', { fileId: file.id, error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create download URL'), 500)
+	}
+
+	// Downloads to a temp name and renames, so a half-finished download never looks like the file.
+	// Prints the final path, the sha256 and the size, one per line.
+	const command = [
+		'set -e',
+		`d=${shellPath(input.folder)}`,
+		'mkdir -p "$d"',
+		`f="$d"/${shellQuote(safeFileName(file.name))}`,
+		`trap 'rm -f "$f.part"' EXIT`,
+		`wget -nv --tries=2 --timeout=30 -O "$f.part" ${shellQuote(url)}`,
+		'mv -f "$f.part" "$f"',
+		'realpath "$f"',
+		`sha256sum "$f" | cut -d' ' -f1`,
+		'stat -c %s "$f"',
+	].join('\n')
+
+	let result: Awaited<ReturnType<WorkspaceDesktopService['control']>>
+	try {
+		result = await serviceFor(c as never).control(workspaceId, agentId, 'exec', {
+			command,
+			timeout_s: 120,
+		})
+	} catch (err) {
+		logger.error('desktop put-file failed', { workspaceId, agentId, error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop could not be reached'), 502)
+	}
+	if (!result) return c.json(createApiError('NOT_FOUND', 'No desktop could be started'), 404)
+	if (result.status !== 200) return c.json(result.body, result.status)
+
+	const exec = desktopExecResultSchema.safeParse(result.body)
+	if (!exec.success) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop gave an unexpected answer'), 502)
+	}
+	if (exec.data.timed_out || exec.data.exit_code !== 0) {
+		// The download tool may quote the signed URL back; it must never reach the caller.
+		const detail = exec.data.stderr.split(url).join('<url>').trim().slice(0, 500)
+		logger.warn('desktop put-file download failed', {
+			workspaceId,
+			agentId,
+			fileId: file.id,
+			exitCode: exec.data.exit_code,
+			timedOut: exec.data.timed_out,
+		})
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				exec.data.timed_out
+					? 'The download took longer than two minutes and was stopped'
+					: `The computer could not download the file: ${detail || 'no error text'}`,
+			),
+			502,
+		)
+	}
+
+	const [path, sha256, size] = exec.data.stdout.trim().split('\n')
+	const sizeBytes = Number(size)
+	const hashVerified = file.contentHash != null && sha256 === file.contentHash
+	if (
+		!path ||
+		!sha256 ||
+		sizeBytes !== file.sizeBytes ||
+		(file.contentHash != null && !hashVerified)
+	) {
+		logger.error('desktop put-file arrived different from the stored file', {
+			workspaceId,
+			agentId,
+			fileId: file.id,
+			expectedSize: file.sizeBytes,
+			gotSize: size,
+		})
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				'The file arrived on the computer with a different size or hash than the stored file',
+			),
+			502,
+		)
+	}
+
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace_desktop',
+		entityId: workspaceId,
+		// The path, not the download URL: the URL is a credential.
+		data: { agent_id: agentId, control: 'put_file', file_id: file.id, path },
+	}).catch((err) => logger.warn('desktop put-file event failed', { error: String(err) }))
+	c.header('Cache-Control', 'no-store')
+	return c.json({ path, size_bytes: sizeBytes, sha256, hash_verified: hashVerified }, 200)
+}
+
+app.openapi(
+	putFileRoute,
+	(c) =>
+		putFile(c as unknown as Ctx, {
+			fileId: c.req.valid('json').file_id,
+			folder: c.req.valid('json').folder,
+		}) as never,
 )
 
 // Dev servers an agent's computer can open. The agent starts a server in its own

@@ -2580,6 +2580,25 @@ export const tools = {
 			timeout_s: z.number().int().min(1).max(120).optional().describe('Defaults to 30.'),
 		}),
 	},
+	desktop_put_file: {
+		description:
+			'Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page\'s file field, then in the chooser select the file and click Open (double click and Enter do not submit it). Only your own computer is reachable.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			file_id: z
+				.string()
+				.uuid()
+				.describe('Id of a workspace file, e.g. from create_file or list_files.'),
+			folder: z
+				.string()
+				.max(255)
+				.optional()
+				.describe(
+					'Folder on your computer, absolute or starting with ~/. Created if missing. Defaults to ~/Downloads.',
+				),
+		}),
+	},
 	desktop_expose_port: {
 		description:
 			'Make a dev server running in YOUR session sandbox (for example Vite on 5173) openable in your computer\'s browser. Start the server first, bound to 0.0.0.0 or 127.0.0.1, then call this with its port. Returns a URL like http://host.microsandbox.internal:20003 to open in Chromium on your computer (desktop_key ["ctrl+l"], desktop_type the URL, desktop_key ["Return"]). Your computer is a separate machine, so localhost there is NOT your sandbox: always use the returned URL. Idempotent: asking again for the same port returns the same URL. You have a small fixed number of ports at once; close one with desktop_close_port to free a slot. Set MASKIN_DEV_EXTERNAL=1 when starting the Maskin web dev server, or Vite rejects the host name. The tunnel closes when your session ends. Only works from inside a session.',
