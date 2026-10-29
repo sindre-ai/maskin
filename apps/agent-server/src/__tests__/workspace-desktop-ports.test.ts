@@ -25,14 +25,15 @@ const fetchImpl = (async (url: string | URL | Request) => {
 
 function makeMsb() {
 	const calls: string[][] = []
-	const spawned: Array<{ bin: string; args: string[]; killed: boolean }> = []
+	const spawned: Array<{ bin: string; args: string[]; killed: boolean; stderr: EventEmitter }> = []
 	const sandboxes = new Set<string>()
 	const clock = { t: 1_000_000 }
 	let nextPort = 43000
 	const spawnProcess: ProcessSpawner = (bin, args) => {
-		const rec = { bin, args: [...args], killed: false }
+		const rec = { bin, args: [...args], killed: false, stderr: new EventEmitter() }
 		spawned.push(rec)
 		const proc = new EventEmitter() as unknown as ChildProcess
+		;(proc as { stderr: unknown }).stderr = rec.stderr
 		proc.unref = () => proc
 		proc.kill = () => {
 			rec.killed = true
@@ -262,6 +263,47 @@ describe('WorkspaceDesktopRegistry port exposure', () => {
 			ok: false,
 			reason: 'relay_failed',
 		})
+	})
+
+	it('says why the tunnel failed, with what ssh reported', async () => {
+		const { msb, spawned, sandboxes } = makeMsb()
+		sandboxes.add(SESSION)
+		msb.tcpPollReady = async (_host, port) => {
+			// the first poll is msb ssh serve and passes; the second is the ssh tunnel
+			if (port !== PORT_START) return
+			const tunnel = spawned.find((p) => p.bin !== '/fake/msb')
+			tunnel?.stderr.emit(
+				'data',
+				Buffer.from('Load key "/home/msb/.ssh/relay_key": Permission denied (publickey).\n'),
+			)
+			throw new Error('never ready')
+		}
+		const registry = makeRegistry(msb)
+		await registry.ensure(WS, AGENT_A)
+
+		const result = await registry.exposePort(WS, AGENT_A, SESSION, 5173)
+
+		expect(result).toMatchObject({ ok: false, reason: 'relay_failed' })
+		if (result.ok) throw new Error('expected a failure')
+		expect(result.message).toContain('ssh could not forward port 5173')
+		expect(result.message).toContain('Permission denied (publickey)')
+		// host paths stay out of what the agent sees
+		expect(result.message).not.toContain('/home/msb')
+		expect(result.message).toContain('Session sandbox: running.')
+	})
+
+	it('says when the session sandbox is already gone', async () => {
+		const { msb } = makeMsb()
+		msb.tcpPollReady = async () => {
+			throw new Error('never ready')
+		}
+		const registry = makeRegistry(msb)
+		await registry.ensure(WS, AGENT_A)
+
+		const result = await registry.exposePort(WS, AGENT_A, SESSION, 5173)
+
+		if (result.ok) throw new Error('expected a failure')
+		expect(result.message).toContain('Session sandbox: missing.')
 	})
 
 	it('refuses when the agent has no computer', async () => {
