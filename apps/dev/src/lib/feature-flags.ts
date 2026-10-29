@@ -69,6 +69,16 @@ export const FLAGS = {
 	 */
 	RICH_MARKDOWN_EDITOR: 'rich-markdown-editor',
 	/**
+	 * Gates the visual layer of agent change review (bet
+	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):
+	 * the proposal banner above a markdown file and the review view that
+	 * replaces the editor. Off means the file viewer is unchanged. The tables,
+	 * endpoints and MCP tool behind it are not gated: nothing in a file changes
+	 * until a non-viewer human accepts. Read once, in
+	 * `EditableMarkdownStage`. Retire once the review is on for everyone.
+	 */
+	AGENT_CHANGE_REVIEW: 'agent-change-review',
+	/**
 	 * Gates the daily capability scan (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
 	 * Workspace-scoped, read with `isFlagEnabledForWorkspace` in

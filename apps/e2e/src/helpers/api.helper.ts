@@ -406,6 +406,20 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async createFileProposal(
+		workspaceId: string,
+		fileId: string,
+		changes: { old_text: string; new_text: string; reason?: string }[],
+	): Promise<{ proposalId: string; changeCount: number }> {
+		const res = await fetch(`${this.baseURL}/api/files/${fileId}/proposals`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ changes }),
+		})
+		if (!res.ok) throw new Error(`createFileProposal failed: ${res.status}`)
+		return res.json()
+	}
+
 	async getFile(workspaceId: string, id: string): Promise<FileDetailResponse> {
 		const res = await fetch(`${this.baseURL}/api/files/${id}`, {
 			headers: this.headers(workspaceId),
