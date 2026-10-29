@@ -3605,6 +3605,24 @@ describe('SessionManager', () => {
 			// Should resolve (not throw) so the auto-pause loop doesn't keep retrying
 		})
 
+		it('refuses to pause a session on an agent server and leaves it running', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'remote-sandbox',
+				agentServerId: 'agent-server-1',
+			})
+			mockResults.select = [session]
+			// inspect default mock returns { running: false }: local Docker knows nothing of it
+
+			await expect(manager.pauseSession(session.id)).rejects.toThrow('runs on an agent server')
+
+			// Not marked failed, no snapshot work, no status write at all
+			expect(calls.updates).toEqual([])
+			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
+			expect(mockContainerManager.copyFrom).not.toHaveBeenCalled()
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
+		})
+
 		it('marks session failed when container vanishes mid-pause', async () => {
 			const session = buildSession({
 				status: 'running',
