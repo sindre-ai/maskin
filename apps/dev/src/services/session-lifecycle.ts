@@ -32,6 +32,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { assertInWorkspace } from '../lib/workspace-scope'
+import { postRetryNotice } from './chat-retry-notice'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
@@ -1090,6 +1091,17 @@ export async function settleSession(
 	// commits, so a usage read landing in between could re-cache the pre-settle
 	// cost. Evict again now that the final cost is visible to every connection.
 	if (flipped) evictBillingUsage(row.workspaceId)
+
+	// A chat session that hit a usage limit and has a retry time gets its notice now, while the
+	// person is looking, not when the retry fires.
+	if (flipped && outcome.retryAt && existing.conversationId) {
+		await postRetryNotice(deps.db, {
+			conversationId: existing.conversationId,
+			workspaceId: row.workspaceId,
+			actorId: row.actorId,
+			retryAt: outcome.retryAt,
+		})
+	}
 
 	// Tell the session that started this one how it ended. Fire-and-forget:
 	// returnToSender never throws, and one-shot-claims the row so the other two

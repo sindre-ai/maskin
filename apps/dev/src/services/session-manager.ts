@@ -192,6 +192,7 @@ import {
 	hasMaskinMcpEntry,
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
+import { pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
@@ -519,26 +520,6 @@ export interface SessionLogEvent extends LogChunk {
 export type SessionTurnEvent =
 	| { sessionId: string; phase: 'started' }
 	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
-
-/**
- * §17.5 companion parser at the two completion paths: convert the classifier's
- * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
- * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
- * and markRemoteSessionComplete apply the same logic — no divergence class from
- * .claude/rules/known-pitfalls.md "The Remote Completion Path Skipped ...".
- *
- * Returns null when the reason isn't credit-exhaustion-shaped (won't retry via
- * scheduler, no reset_at to persist) or when reset_at parsing didn't produce a
- * value in the [now+60s, now+24h] clamp band (§17.3, §17.7).
- */
-function pickRetryAt(failureReason: SessionResultFailureReason | null): Date | null {
-	if (!failureReason) return null
-	if (failureReason.provider !== 'anthropic') return null
-	if (!failureReason.reset_at) return null
-	const parsed = Date.parse(failureReason.reset_at)
-	if (Number.isNaN(parsed)) return null
-	return new Date(parsed)
-}
 
 /**
  * The settle classification for a sandbox exit seen by handleCompletion or
