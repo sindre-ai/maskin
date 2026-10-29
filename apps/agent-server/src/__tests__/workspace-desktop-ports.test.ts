@@ -27,6 +27,8 @@ function makeMsb() {
 	const calls: string[][] = []
 	const spawned: Array<{ bin: string; args: string[]; killed: boolean; stderr: EventEmitter }> = []
 	const sandboxes = new Set<string>()
+	// What `msb ssh serve --help` prints; older msb releases do not list the flag.
+	const serveHelp = { text: 'Options:\n  --no-inactivity-timeout  Disable the SSH inactivity timeout' }
 	const clock = { t: 1_000_000 }
 	let nextPort = 43000
 	const spawnProcess: ProcessSpawner = (bin, args) => {
@@ -53,6 +55,7 @@ function makeMsb() {
 				await writeFile(args[args.indexOf('-o') + 1] as string, 'snapshot-bytes')
 			}
 			if (cmd === 'snapshot' && sub === 'restore') sandboxes.add(nameArg)
+			if (cmd === 'ssh' && sub === 'serve') return { stdout: serveHelp.text, stderr: '' }
 			if (cmd === 'list') {
 				return {
 					stdout: JSON.stringify([...sandboxes].map((name) => ({ name, status: 'Running' }))),
@@ -67,7 +70,7 @@ function makeMsb() {
 		tcpPollReady: async () => {},
 		spawnProcess,
 	}
-	return { msb, calls, spawned, sandboxes, clock }
+	return { msb, calls, spawned, sandboxes, clock, serveHelp }
 }
 
 describe('WorkspaceDesktopRegistry port exposure', () => {
@@ -168,6 +171,19 @@ describe('WorkspaceDesktopRegistry port exposure', () => {
 		const tunnel = spawned.find((p) => p.bin === 'ssh')
 		expect(tunnel?.args).toContain(`127.0.0.1:${PORT_START}:127.0.0.1:5173`)
 		expect(tunnel?.args).toContain('/keys/relay_key')
+	})
+
+	it('opens the tunnel without the idle-timeout flag when this msb does not have it', async () => {
+		const { msb, spawned, serveHelp } = makeMsb()
+		serveHelp.text = 'Usage: msb ssh serve --host <HOST> --port <PORT> <SANDBOX>'
+		const registry = makeRegistry(msb)
+		await registry.ensure(WS, AGENT_A)
+
+		const result = await registry.exposePort(WS, AGENT_A, SESSION, 5173)
+
+		expect(result).toMatchObject({ ok: true })
+		const serve = spawned.find((p) => p.args[0] === 'ssh' && p.args[1] === 'serve')
+		expect(serve?.args).not.toContain('--no-inactivity-timeout')
 	})
 
 	it('is idempotent per session and port, and hands out the next port for a different one', async () => {

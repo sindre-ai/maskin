@@ -757,6 +757,23 @@ function safeKill(proc: ChildProcess): void {
 
 const RELAY_STDERR_TAIL_CHARS = 160
 
+const NO_INACTIVITY_TIMEOUT_FLAG = '--no-inactivity-timeout'
+
+// `msb ssh serve --no-inactivity-timeout` only exists in newer msb releases; an
+// older one rejects the unknown flag and exits, which failed every tunnel. Ask
+// this msb instead of assuming.
+async function serveHasNoInactivityTimeoutFlag(
+	msbBin: string,
+	run: CommandRunner,
+): Promise<boolean> {
+	try {
+		const { stdout, stderr } = await run(msbBin, ['ssh', 'serve', '--help'], { timeoutMs: 5_000 })
+		return `${stdout}\n${stderr}`.includes(NO_INACTIVITY_TIMEOUT_FLAG)
+	} catch {
+		return false
+	}
+}
+
 // Keeps the tail of a relay child's stderr and how it ended, so a failed tunnel
 // can say why instead of only that it never came up. The pipe is drained here:
 // an undrained stderr pipe would eventually block the child.
@@ -825,6 +842,13 @@ export async function startSshRelay(
 		return { ok: false, step: 'port', detail: 'No free local port was available.' }
 	}
 
+	const keepIdleTunnelOpen = await serveHasNoInactivityTimeoutFlag(
+		deps.msbBin,
+		deps.run ?? defaultRunner(),
+	)
+	if (!keepIdleTunnelOpen) {
+		logger.warn('msb ssh serve has no --no-inactivity-timeout, starting without it', { targetName })
+	}
 	const serveProc = spawnProcess(
 		deps.msbBin,
 		[
@@ -835,7 +859,7 @@ export async function startSshRelay(
 			SSH_RELAY_BIND_HOST,
 			'--port',
 			String(sshPort),
-			'--no-inactivity-timeout',
+			...(keepIdleTunnelOpen ? [NO_INACTIVITY_TIMEOUT_FLAG] : []),
 		],
 		{ stdio: ['ignore', 'ignore', 'pipe'] },
 	)
