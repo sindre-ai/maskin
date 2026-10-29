@@ -675,7 +675,10 @@ describe('GET /api/search against real Postgres', () => {
 			)
 
 			expect(res.partial).toEqual(['automations'])
-			expect(res.results.map((r) => r.title).sort()).toEqual(['Quarterly roadmap', 'Quarterly sync'])
+			expect(res.results.map((r) => r.title).sort()).toEqual([
+				'Quarterly roadmap',
+				'Quarterly sync',
+			])
 		})
 	})
 
