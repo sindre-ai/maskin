@@ -42,8 +42,6 @@ test.describe('Header New menu', () => {
 			await expect(page.getByRole('menuitem', { name: /^new task/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /^new insight/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /^new bet/i })).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /new loop/i })).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /new agent/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /find a past conversation/i })).toBeVisible()
 		})
 	}
@@ -75,41 +73,14 @@ test.describe('Header New menu', () => {
 		await expect(page.getByRole('radiogroup', { name: 'Type' })).toHaveCount(0)
 	})
 
-	test('New loop opens CreatePicker for a loop and creates a loop object', async ({
-		page,
-		account,
-	}) => {
+	test('menu no longer offers New loop or New agent', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await headerNewTrigger(page).click()
-		await page.getByRole('menuitem', { name: /new loop/i }).click()
 
-		const dialog = page.getByRole('dialog')
-		await expect(dialog.getByText('New loop')).toBeVisible()
-		const titleInput = page.getByRole('dialog').getByLabel('Title', { exact: true })
-		await expect(titleInput).toBeVisible()
-
-		await titleInput.fill('Header New menu loop check')
-		// The submit button names the thing being created ("Create loop").
-		await dialog.getByRole('button', { name: /^create loop$/i }).click()
-
-		// Creating a loop must land on the loop detail page, not the trigger one —
-		// confirms it created an objects row with type='loop', not a trigger.
-		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops/[^/]+$`))
-		await expect(page.getByRole('heading', { name: 'Header New menu loop check' })).toBeVisible({
-			timeout: 10000,
-		})
-	})
-
-	test('New agent opens CreatePicker for an agent', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}`)
-
-		await headerNewTrigger(page).click()
-		await page.getByRole('menuitem', { name: /new agent/i }).click()
-
-		const dialog = page.getByRole('dialog')
-		await expect(dialog.getByText('New agent')).toBeVisible()
-		await expect(page.getByRole('dialog').getByLabel('Title', { exact: true })).toBeVisible()
+		await expect(page.getByRole('menuitem', { name: /^new task/i })).toBeVisible()
+		await expect(page.getByRole('menuitem', { name: /new loop/i })).toHaveCount(0)
+		await expect(page.getByRole('menuitem', { name: /new agent/i })).toHaveCount(0)
 	})
 
 	test('Find a past conversation opens the command palette', async ({ page, account }) => {

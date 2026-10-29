@@ -19,8 +19,12 @@ test.describe('Agent intro chat', () => {
 		await page.goto(`/${account.workspaceId}/chats`)
 
 		const name = `Intro Agent ${Date.now()}`
-		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()
-		await page.getByRole('menuitem', { name: /new agent/i }).click()
+		// New agent is no longer in the header's New menu; the ⌘K launcher still creates one.
+		await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible()
+		await page.keyboard.press('ControlOrMeta+k')
+		const palette = page.getByRole('dialog', { name: 'Command palette' })
+		await palette.getByRole('combobox').fill('New agent')
+		await palette.getByRole('option', { name: /^New agent/ }).click()
 		await page.getByRole('dialog').getByLabel('Title', { exact: true }).fill(name)
 		await page.getByRole('dialog').getByLabel('Title', { exact: true }).press('Enter')
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/agents/`))

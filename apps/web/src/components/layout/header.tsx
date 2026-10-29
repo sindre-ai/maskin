@@ -1,5 +1,5 @@
 import { NavSearch } from '@/components/layout/nav-search'
-import { NewMenu, type PrimaryKind } from '@/components/shared/new-menu'
+import { NewMenu } from '@/components/shared/new-menu'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -20,22 +20,17 @@ import { Fragment } from 'react'
 interface RouteConfig {
 	label: string
 	parent?: string
-	// Which create action the split New button's label half runs on this screen
-	// (mockup `newPrimary`). Screens that create nothing in particular fall
-	// through to a new chat.
-	primary?: PrimaryKind
 }
 
 const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/': { label: 'For you' },
 	'/_authed/$workspaceId/search': { label: 'Search' },
-	'/_authed/$workspaceId/objects/': { label: 'Objects', primary: 'object' },
+	'/_authed/$workspaceId/objects/': { label: 'Objects' },
 	'/_authed/$workspaceId/objects/$objectId': {
 		label: 'Object Details',
 		parent: '/_authed/$workspaceId/objects/',
-		primary: 'object',
 	},
-	'/_authed/$workspaceId/agents/': { label: 'Agents', primary: 'agent' },
+	'/_authed/$workspaceId/agents/': { label: 'Agents' },
 	// Triggers keeps its own list route (deep links and bookmarks still resolve)
 	// even though the v2 nav reaches triggers through Loops. Without an entry
 	// here the screen renders with no title at all.
@@ -43,7 +38,7 @@ const routeConfig: Record<string, RouteConfig> = {
 	// Screens that render their own heading in the page body (Briefing, Chats'
 	// conversation list, the new-chat composer) are deliberately absent — an
 	// entry here would put a second heading of the same name in the nav row.
-	'/_authed/$workspaceId/triggers/': { label: 'Triggers', primary: 'loop' },
+	'/_authed/$workspaceId/triggers/': { label: 'Triggers' },
 	'/_authed/$workspaceId/settings/skills': {
 		label: 'Skills',
 		parent: '/_authed/$workspaceId/settings/',
@@ -90,7 +85,6 @@ const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/triggers/$triggerId': {
 		label: 'Trigger Details',
 		parent: '/_authed/$workspaceId/loops/',
-		primary: 'loop',
 	},
 	// The mockup (1584) shows a middle crumb — `Loops › Not tied to a loop › name`
 	// — but that middle term is the trigger's owning loop, or the literal
@@ -98,16 +92,14 @@ const routeConfig: Record<string, RouteConfig> = {
 	// route, which cannot know either. A hardcoded middle crumb would be wrong on
 	// every loop-owned trigger, so the chain stays `Loops › name`. Restoring it
 	// means letting the page publish its own crumb, since only it has the loop.
-	'/_authed/$workspaceId/loops/': { label: 'Loops', primary: 'loop' },
+	'/_authed/$workspaceId/loops/': { label: 'Loops' },
 	'/_authed/$workspaceId/loops/new': {
 		label: 'New loop',
 		parent: '/_authed/$workspaceId/loops/',
-		primary: 'loop',
 	},
 	'/_authed/$workspaceId/loops/$loopId': {
 		label: 'Loop Details',
 		parent: '/_authed/$workspaceId/loops/',
-		primary: 'loop',
 	},
 	'/_authed/$workspaceId/marketplace/': { label: 'Marketplace' },
 	'/_authed/$workspaceId/marketplace/$loopId/': {
@@ -180,7 +172,7 @@ export function Header() {
 
 	// Object-detail pages drop the "Create an object" section from the New
 	// menu — landing users on the generic object picker is disorienting when
-	// they're mid-edit on a specific object. New chat/loop/agent/search stay.
+	// they're mid-edit on a specific object. New chat/search stay.
 	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
 	const isDetail = crumbs.length > 1
 	const headingText = title ?? leafConfig?.label
@@ -210,7 +202,7 @@ export function Header() {
 				    (mockup 925–946 puts it at `order:10`). */}
 				<NewMenu
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
-					primaryKind={leafConfig?.primary ?? 'chat'}
+					primaryKind="chat"
 					primaryOverride={newMenuPrimaryOverride}
 					disabled={newMenuDisabled}
 				/>
@@ -294,7 +286,7 @@ export function Header() {
 				<NewMenu
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
 					hideObjectSection={isObjectDetail}
-					primaryKind={leafConfig?.primary ?? 'chat'}
+					primaryKind="chat"
 					primaryOverride={newMenuPrimaryOverride}
 					disabled={newMenuDisabled}
 				/>

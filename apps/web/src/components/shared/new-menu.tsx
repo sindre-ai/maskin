@@ -20,7 +20,7 @@ import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { defaultTypeColor, objectTypeDescriptions, typeColors } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search, Upload } from 'lucide-react'
+import { ChevronDown, MessageSquare, Plus, Search, Upload } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 
 interface CreateConfig {
@@ -51,7 +51,7 @@ interface NewMenuProps {
 	onNewChat: () => void
 	// Object-detail pages drop the "Create an object" section — landing users
 	// on the generic object picker is disorienting when they're mid-edit on a
-	// specific object. New chat/loop/agent/search stay.
+	// specific object. New chat/search stay.
 	hideObjectSection?: boolean
 	// v2 splits the control: the label half runs the screen's most likely create
 	// action, the caret half opens the full menu (mockup lines 262–265). The
@@ -225,15 +225,6 @@ export function NewMenu({
 								})}
 							</>
 						)}
-						<DropdownMenuSeparator />
-						<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'loop' })}>
-							<RefreshCw size={14} className="text-muted-foreground" />
-							New loop
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'agent' })}>
-							<Bot size={14} className="text-muted-foreground" />
-							New agent
-						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={() => setPaletteOpen(true)}>
 							<Search size={14} className="text-muted-foreground" />
