@@ -532,7 +532,12 @@ function shellPath(path: string): string {
 /** The file's name as a plain, safe file name: no folders, no shell or dot-file surprises. */
 function safeFileName(name: string): string {
 	const base = name.split(/[\\/]/).pop() ?? ''
-	return base.replace(/[^A-Za-z0-9._ -]/g, '_').replace(/^\.+/, '').slice(0, 200) || 'file'
+	return (
+		base
+			.replace(/[^A-Za-z0-9._ -]/g, '_')
+			.replace(/^\.+/, '')
+			.slice(0, 200) || 'file'
+	)
 }
 
 async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
