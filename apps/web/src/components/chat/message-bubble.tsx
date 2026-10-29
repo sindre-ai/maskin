@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFiles } from '@/hooks/use-files'
+import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObject } from '@/hooks/use-objects'
 import { useTrigger } from '@/hooks/use-triggers'
@@ -612,6 +613,7 @@ function OwnLinkChip({
 		| { kind: 'loop'; id: string }
 		| { kind: 'trigger'; id: string }
 		| { kind: 'agent'; id: string }
+		| { kind: 'chat'; id: string }
 		| { kind: 'object' | 'file'; id: string }
 		| { kind: 'github'; href: string; target: GithubTarget }
 }) {
@@ -622,6 +624,7 @@ function OwnLinkChip({
 	if (segment.kind === 'trigger')
 		return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'agent') return <OwnAgentChip workspaceId={workspaceId} id={segment.id} />
+	if (segment.kind === 'chat') return <OwnChatChip workspaceId={workspaceId} id={segment.id} />
 	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
 }
 
@@ -703,6 +706,24 @@ function OwnAgentChip({ workspaceId, id }: { workspaceId: string; id: string }) 
 		>
 			<Link2 size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{name ? chipTitle(name) : 'Agent'}</span>
+		</Link>
+	)
+}
+
+function OwnChatChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const chat = useLinkedChat(workspaceId, id)
+	const name = chat?.title.trim()
+	return (
+		<Link
+			to="/$workspaceId/chats/$conversationId"
+			params={{ workspaceId, conversationId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Chat'}</span>
 		</Link>
 	)
 }

@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TRIGGER_TYPE_ICON, describeTrigger } from '@/components/triggers/trigger-row'
 import { Sheet, SheetClose, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useActors } from '@/hooks/use-actors'
+import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject } from '@/hooks/use-objects'
@@ -21,6 +22,7 @@ import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTrigger } from '@/hooks/use-triggers'
 import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	defaultStatusColor,
@@ -32,9 +34,11 @@ import {
 import {
 	type CardFact,
 	type GithubTarget,
+	chatSummary,
 	cutLabel,
 	githubChipName,
 	githubChipText,
+	peopleLine,
 	pickFacts,
 	plainSnippet,
 	shortName,
@@ -51,6 +55,7 @@ import {
 	ExternalLink,
 	GitPullRequest,
 	Link2,
+	MessageCircle,
 	RefreshCw,
 	Zap,
 } from 'lucide-react'
@@ -1432,6 +1437,176 @@ export function AgentReferenceCard({
 		link
 	) : (
 		<FoldableCard title={name} head={head} state={state}>
+			{link}
+		</FoldableCard>
+	)
+}
+
+/**
+ * A link to a chat inside a sentence: the message icon and the chat's title, on the same plate as
+ * the other chips. Pinned or archived and the people are in the preview. The whole chip is one
+ * link to the chat, in the same tab. While the chat loads the original link stays; a chat that
+ * cannot be shown (deleted, or one you are not in) reads "Chat not available".
+ */
+export function ChatReferenceChip({
+	workspaceId,
+	chatId,
+	fallback,
+}: {
+	workspaceId: string
+	chatId: string
+	fallback: ReactNode
+}) {
+	const chat = useLinkedChat(workspaceId, chatId)
+	const card = (actions: ReactNode) => (
+		<ChatReferenceCard workspaceId={workspaceId} chatId={chatId} preview actions={actions} />
+	)
+	const sheet: ChipSheetContent = {
+		card: <ChatReferenceCard workspaceId={workspaceId} chatId={chatId} sheet />,
+		openLink: (
+			<Link
+				to="/$workspaceId/chats/$conversationId"
+				params={{ workspaceId, conversationId: chatId }}
+			/>
+		),
+		path: `/${workspaceId}/chats/${chatId}`,
+	}
+
+	if (chat === null) return <UnavailableChip kind="chat" />
+	if (chat === undefined) {
+		return (
+			<ChipPreview card={card} sheet={sheet} enabled>
+				{loadingChip(fallback, false)}
+			</ChipPreview>
+		)
+	}
+
+	const title = chat.title.trim() || 'Untitled chat'
+	return (
+		<ChipPreview card={card} sheet={sheet} enabled>
+			<Link
+				to="/$workspaceId/chats/$conversationId"
+				params={{ workspaceId, conversationId: chat.id }}
+				aria-label={`Chat: ${title}`}
+				className={CHIP}
+			>
+				<ChipText
+					lead={
+						<MessageCircle
+							size="0.95em"
+							aria-hidden
+							className={cn('mr-[0.4em] inline-block align-middle', typeIconColor('conversation'))}
+						/>
+					}
+					text={cutLabel(title)}
+				/>
+			</Link>
+		</ChipPreview>
+	)
+}
+
+/**
+ * A link to a chat that stands alone on its line, drawn as a card where it stands: its title, the
+ * last message and who wrote it, who is in it, and when it last moved. A chat read by id has no
+ * last message, so the line and the author are left out. Unread counts are never shown. The whole
+ * card is one link to the chat.
+ */
+export function ChatReferenceCard({
+	workspaceId,
+	chatId,
+	preview = false,
+	sheet = false,
+	actions,
+}: {
+	workspaceId: string
+	chatId: string
+	/** Drawn as the hover preview of a chip: same card, not a link, not counted as a card. */
+	preview?: boolean
+	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
+	sheet?: boolean
+	/** The preview's Copy link and Open, at the right end of the footer. */
+	actions?: ReactNode
+}) {
+	const chat = useLinkedChat(workspaceId, chatId)
+	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const marker = preview || sheet ? undefined : ''
+
+	if (chat === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
+	if (chat === null) {
+		return <UnavailableCard shell={shell} marker={marker} kind="chat" />
+	}
+
+	const title = chat.title.trim() || 'Untitled chat'
+	// You are named "You" in the summary, as the chat list does, and last in the People row.
+	const selfId = getStoredActor()?.id
+	const author = chat.lastMessage?.authorId
+		? chat.lastMessage.authorId === selfId
+			? 'You'
+			: chat.lastMessage.authorName
+		: null
+	const summary = chatSummary(author, chat.lastMessage?.text)
+	const others = chat.participants.filter((p) => p.actorId !== selfId)
+	const me = chat.participants.filter((p) => p.actorId === selfId)
+	const people = peopleLine([...others, ...me].map((p) => p.actorName))
+	const facts: CardFact[] = people ? [{ label: 'People', value: people }] : []
+	const lastAuthor = chat.participants.find((p) => p.actorId === chat.lastMessage?.authorId)
+	const badge = chat.archived ? 'Archived' : chat.pinned ? 'Pinned' : null
+	const head = (
+		<span className={KIND_TAG}>
+			<MessageCircle size={11} aria-hidden />
+			Chat
+		</span>
+	)
+	const state = badge ? (
+		<span className="text-[11px] font-semibold text-muted-foreground">{badge}</span>
+	) : null
+	const link = (
+		<CardFace
+			shell={shell}
+			preview={preview}
+			sheet={sheet}
+			link={
+				<Link
+					to="/$workspaceId/chats/$conversationId"
+					params={{ workspaceId, conversationId: chat.id }}
+				/>
+			}
+		>
+			<LinkedCardFace
+				icon={<MessageCircle size={14} aria-hidden />}
+				tile={typeTileClass('conversation')}
+				eyebrow="Chat"
+				state={state}
+				trailing={preview || sheet ? null : <OpenArrow />}
+				title={title}
+				summary={summary ?? undefined}
+				facts={facts}
+				actions={actions}
+				footer={
+					<>
+						{lastAuthor ? (
+							<AgentLabel
+								agent={{
+									id: lastAuthor.actorId,
+									name: lastAuthor.actorName,
+									type: lastAuthor.actorType,
+								}}
+							/>
+						) : null}
+						{chat.updatedAt ? (
+							<span>
+								Updated <RelativeTime date={chat.updatedAt} />
+							</span>
+						) : null}
+					</>
+				}
+			/>
+		</CardFace>
+	)
+	return preview || sheet ? (
+		link
+	) : (
+		<FoldableCard title={title} head={head} state={state}>
 			{link}
 		</FoldableCard>
 	)
