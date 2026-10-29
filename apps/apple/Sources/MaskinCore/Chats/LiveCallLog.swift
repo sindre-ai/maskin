@@ -139,7 +139,12 @@ public struct LiveCallLog {
 		var list = all()
 		if let index = list.firstIndex(where: { $0.id == record.id }) { list[index] = record } else { list.append(record) }
 		if list.count > Self.limit { list.removeFirst(list.count - Self.limit) }
-		if let data = try? JSONEncoder().encode(list) { defaults.set(data, forKey: key) }
+		if let data = try? JSONEncoder().encode(list) {
+			defaults.set(data, forKey: key)
+			// What was just written is what the next read gets: no decode for it.
+			decoded.data = data
+			decoded.records = list
+		}
 	}
 
 	public func update(_ id: String, _ change: (inout LiveCallRecord) -> Void) {

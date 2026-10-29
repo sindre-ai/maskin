@@ -37,7 +37,11 @@ public struct LinkedTarget: Hashable, Sendable, Identifiable {
 	/// Every object and file a text links to, in the order each first appears, without repeats.
 	/// Only real links count (`[title](url)`, `<url>` or a bare address), never an id in prose.
 	public static func extract(from markdown: String) -> [LinkedTarget] {
-		LinkScanCaches.targets.value(for: markdown) { scan(markdown) }
+		extract(from: markdown, cache: LinkScanCaches.targets)
+	}
+
+	static func extract(from markdown: String, cache: LinkScanCache<[LinkedTarget]>) -> [LinkedTarget] {
+		cache.value(for: markdown) { scan(markdown) }
 	}
 
 	static func scan(_ markdown: String) -> [LinkedTarget] {
@@ -178,7 +182,11 @@ public enum LinkedMessageSplitter {
 	/// Splits a message into ordered text and stand-alone linked items. Fenced code is never
 	/// touched. Joining the segments' sources reproduces the message's content.
 	public static func split(_ markdown: String) -> [LinkedSegment] {
-		LinkScanCaches.segments.value(for: markdown) { scan(markdown) }
+		split(markdown, cache: LinkScanCaches.segments)
+	}
+
+	static func split(_ markdown: String, cache: LinkScanCache<[LinkedSegment]>) -> [LinkedSegment] {
+		cache.value(for: markdown) { scan(markdown) }
 	}
 
 	static func scan(_ markdown: String) -> [LinkedSegment] {
@@ -393,6 +401,9 @@ final class LinkScanCache<Value: Sendable>: @unchecked Sendable {
 	/// How many times `compute` ran (tests pin that a repeat read does not).
 	var computeCount: Int { counter.value }
 
+	/// The remembered result for `text`, without computing it (tests pin that a public call used the cache).
+	func peek(_ text: String) -> Value? { cache.object(forKey: text as NSString)?.value }
+
 	func value(for text: String, compute: () -> Value) -> Value {
 		let key = text as NSString
 		if let hit = cache.object(forKey: key) { return hit.value }
@@ -413,4 +424,5 @@ final class LinkScanCache<Value: Sendable>: @unchecked Sendable {
 enum LinkScanCaches {
 	static let targets = LinkScanCache<[LinkedTarget]>()
 	static let segments = LinkScanCache<[LinkedSegment]>()
+	static let callLinks = LinkScanCache<[CallMentions.Link]>()
 }

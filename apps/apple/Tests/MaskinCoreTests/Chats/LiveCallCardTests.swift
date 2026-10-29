@@ -199,6 +199,19 @@ import Testing
 		#expect(log.records(for: "other").isEmpty)
 	}
 
+	@Test func aSaveIsReadBackWithoutDecoding() {
+		let defaults = UserDefaults(suiteName: "livecall-\(UUID().uuidString)")!
+		let log = LiveCallLog(defaults: defaults)
+		log.save(record())
+		let before = log.decodeCount
+		#expect(log.records(for: "c").count == 1)
+		log.update("call") { $0.expanded = true }
+		#expect(log.records(for: "c").first?.expanded == true)
+		#expect(log.decodeCount == before)
+		let other = LiveCallLog(defaults: defaults)
+		#expect(other.records(for: "c").first?.expanded == true)
+	}
+
 	@Test func rereadingTheLogDoesNotDecodeItAgain() {
 		let defaults = UserDefaults(suiteName: "livecall-\(UUID().uuidString)")!
 		let log = LiveCallLog(defaults: defaults)
