@@ -79,6 +79,7 @@ function mount(proposals: FileProposalDto[]) {
 }
 
 beforeEach(() => {
+	vi.mocked(api.fileProposals.listOpen).mockReset()
 	vi.mocked(api.fileProposals.accept).mockReset().mockResolvedValue({})
 	vi.mocked(api.fileProposals.reject).mockReset().mockResolvedValue({})
 	vi.mocked(trackChangeReviewOpened).mockClear()
