@@ -47,6 +47,12 @@ export interface SearchSource {
 	 * text scan: it also gives facets.types its zero-count keys.
 	 */
 	statusPairs: (ctx: SearchContext) => SQL
+	/**
+	 * A boolean over a candidate row (aliased `s`): true when the row passes the
+	 * participants filter. A source without it never passes once a participant is
+	 * picked. It is a flag, not a WHERE, so the relaxed counts can still ignore it.
+	 */
+	participantsOk?: (participants: string[]) => SQL
 }
 
 export const SEARCH_SOURCES: SearchSource[] = [
@@ -86,6 +92,17 @@ export const SEARCH_SOURCES: SearchSource[] = [
 				LIMIT 1
 			) lm ON true
 			WHERE c.workspace_id = ${workspaceId}`,
+		// The chat must hold every picked actor (still a member, not left).
+		participantsOk: (participants) =>
+			sql.join(
+				participants.map(
+					(actorId) => sql`EXISTS (
+						SELECT 1 FROM conversation_participants cpf
+						WHERE cpf.conversation_id = s.id AND cpf.actor_id = ${actorId} AND cpf.left_at IS NULL
+					)`,
+				),
+				sql` AND `,
+			),
 	},
 	{
 		key: 'loops',
@@ -198,6 +215,8 @@ interface AggregateRow {
 	type: string
 	status: string
 	in_window: boolean
+	/** False when the row misses the participants filter; always true with none picked. */
+	p_ok: boolean
 	n: number
 }
 
@@ -221,7 +240,7 @@ interface SourceResult {
 	statusCounts: Record<StatusGroupKey, number>
 	/** Text match with every filter dropped (archive rule kept). */
 	withoutFilters: number
-	/** Text match plus selected types (archive rule kept). */
+	/** Text match plus selected types and participants (archive rule kept). */
 	withoutStatuses: number
 	knownTypes: string[]
 }
@@ -276,6 +295,14 @@ async function runSource(
 	}
 
 	const match = matchCondition(tokens)
+	const participants = query.participants ?? []
+	// With a participant picked, a source that cannot filter by one never matches.
+	const participantsOk =
+		participants.length === 0
+			? sql`true`
+			: source.participantsOk
+				? source.participantsOk(participants)
+				: sql`false`
 	const inWindow = cutoff ? sql`coalesce(x.updated_at > ${cutoff}::timestamptz, false)` : sql`true`
 	const pairList = sql.join(
 		passingPairs.map(({ type, status }) => sql`(${type}::text, ${status}::text)`),
@@ -284,7 +311,7 @@ async function runSource(
 	const topFilter =
 		passingPairs.length === 0
 			? sql`false`
-			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window`
+			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window AND m.p_ok`
 	const ordering = orderBy(query.sort)
 
 	// One scan. x computes the per-word hit flags once per row (OFFSET 0 keeps the
@@ -293,21 +320,22 @@ async function runSource(
 	const [raw] = await rowsOf<{ aggregate: unknown; top_rows: unknown }>(
 		executor,
 		sql`WITH x AS (
-				SELECT s.id, s.type, s.title, s.sub, left(s.body, 160) AS snippet, s.status, s.updated_at
+				SELECT s.id, s.type, s.title, s.sub, left(s.body, 160) AS snippet, s.status, s.updated_at,
+					(${participantsOk}) AS p_ok
 					${flagColumns(tokens)}
 				FROM (${source.candidates(ctx)}) s
 				OFFSET 0
 			),
 			m AS (
-				SELECT x.id, x.type, x.title, x.sub, x.snippet, x.status, x.updated_at,
+				SELECT x.id, x.type, x.title, x.sub, x.snippet, x.status, x.updated_at, x.p_ok,
 					${scoreExpression(tokens)} AS score,
 					${inWindow} AS in_window
 				FROM x
 				WHERE ${match}
 			),
 			counted AS (
-				SELECT m.type, m.status, m.in_window, count(*)::int AS n
-				FROM m GROUP BY 1, 2, 3 LIMIT ${MAX_AGGREGATE_ROWS}
+				SELECT m.type, m.status, m.in_window, m.p_ok, count(*)::int AS n
+				FROM m GROUP BY 1, 2, 3, 4 LIMIT ${MAX_AGGREGATE_ROWS}
 			),
 			picked AS (
 				SELECT m.id, m.type, m.title, m.sub, m.snippet, m.status,
@@ -336,12 +364,13 @@ async function runSource(
 		const group = getStatusGroup(row.type, row.status)
 		const hidden = archivedHidden(row.status)
 
+		// The "search everything" count ignores the participants along with every other filter.
+		if (row.status !== ARCHIVED) result.withoutFilters += row.n
+		if (!row.p_ok) continue
+
 		if (!hidden) result.typeCounts.set(row.type, (result.typeCounts.get(row.type) ?? 0) + row.n)
 		if (typeOk(row.type)) result.statusCounts[group] += row.n
-		if (row.status !== ARCHIVED) {
-			result.withoutFilters += row.n
-			if (typeOk(row.type)) result.withoutStatuses += row.n
-		}
+		if (row.status !== ARCHIVED && typeOk(row.type)) result.withoutStatuses += row.n
 		if (!hidden && typeOk(row.type) && statusOk(group) && (!cutoff || row.in_window)) {
 			result.total += row.n
 		}

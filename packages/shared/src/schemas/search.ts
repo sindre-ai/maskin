@@ -6,6 +6,7 @@ import { objectTypeSchema } from './objects'
 export const SEARCH_MAX_LIMIT = 150
 export const SEARCH_QUERY_MAX_LENGTH = 200
 export const SEARCH_MAX_TYPES = 30
+export const SEARCH_MAX_PARTICIPANTS = 5
 
 export const SEARCH_SORTS = ['rel', 'recent', 'az'] as const
 
@@ -31,11 +32,14 @@ const csvParam = <T extends z.ZodTypeAny>(item: T, max: number) =>
  * GET /api/search query string. Types are any object type key plus chat, agent
  * and automation; an unknown key is accepted and matches nothing. Statuses are
  * the five group keys, and an unknown group is a 400. There is no owner filter.
+ * Participants are actor ids (people or agents): only chats the caller is in AND
+ * every listed actor is in can match, so the other four sources return nothing.
  */
 export const searchQuerySchema = z.object({
 	q: z.string().trim().max(SEARCH_QUERY_MAX_LENGTH).optional(),
 	types: csvParam(objectTypeSchema, SEARCH_MAX_TYPES).optional(),
 	statuses: csvParam(statusGroupKeySchema, STATUS_GROUP_KEYS.length).optional(),
+	participants: csvParam(z.string().uuid(), SEARCH_MAX_PARTICIPANTS).optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Same meaning as the objects routes. */
 	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: z.enum(SEARCH_SORTS).default('rel'),
