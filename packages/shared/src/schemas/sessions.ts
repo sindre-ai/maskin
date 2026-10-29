@@ -467,6 +467,12 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  *                         path so the retry lands on the next slot; if that
  *                         slot's token is only expired-not-revoked, the retry's
  *                         session-start refresh recovers it in place.
+ * - oauth_expired         401 — "Failed to authenticate: OAuth session expired
+ *                         and could not be refreshed", the CLI's final error
+ *                         when its login lapsed. Auth-class like not_logged_in,
+ *                         but not a failover trigger and never retried.
+ * - invalid_api_key       401 — "Invalid API key", the CLI's final error when
+ *                         the API key is rejected. Handled like oauth_expired.
  *
  * OpenRouter HTTP error codes:
  * - insufficient_credits  402 — OpenRouter credit balance exhausted
@@ -495,6 +501,8 @@ export const failureReasonCodeSchema = z.enum([
 	'max_plan_rate_limit',
 	'rate_limit_error',
 	'oauth_revoked',
+	'oauth_expired',
+	'invalid_api_key',
 	'insufficient_credits',
 	'agent_server_lost',
 	'plan_cap_exceeded',

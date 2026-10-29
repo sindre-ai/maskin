@@ -86,6 +86,7 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import {
+	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	classifySessionExit,
 	endsInClaudeAuthDeath,
@@ -4946,9 +4947,12 @@ ${cont.continues_prompt}
 		// its result text. Read it the way the two exit paths do, so the retry
 		// scheduler can rerun the helper once the allowance is back. Banners only:
 		// this is the helper's final error text, not a whole stdout tail, so the
-		// looser substring signals have nothing to add.
+		// looser substring signals have nothing to add. A dead login or rejected API
+		// key is named first: it has no reset time, so it is stored with its reason
+		// but pickRetryAt returns null and nothing is retried or failed over.
 		const limitReason = outcome.isError
-			? classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false })
+			? (classifyClaudeAuthFailureText(outcome.text) ??
+				classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false }))
 			: null
 		const scheduledRetryAt = pickRetryAt(limitReason)
 

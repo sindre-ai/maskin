@@ -248,6 +248,29 @@ describe('FailureCard', () => {
 		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
 	})
 
+	it.each([
+		[
+			'oauth_expired',
+			'Claude login expired and could not be refreshed — reconnect your Claude subscription',
+		],
+		[
+			'invalid_api_key',
+			'Claude API key was rejected — reconnect your Claude subscription or API key',
+		],
+	])('shows the reconnect hint for %s', (reasonCode, message) => {
+		renderCard({
+			provider: 'anthropic',
+			reason_code: reasonCode,
+			human_message: message,
+			http_status: 401,
+			reset_at: null,
+			verbatim_output: null,
+		})
+		expect(screen.getByText(new RegExp(message))).toBeInTheDocument()
+		expect(screen.getByText('Connect Claude subscription')).toBeInTheDocument()
+		expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+	})
+
 	it('shows only Wait chip for server_rate_limit (no Top up or Switch button)', () => {
 		renderCard({
 			provider: 'anthropic',
