@@ -555,6 +555,28 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`createConversation failed: ${res.status}`)
+		const conversation: ConversationDetailResponse = await res.json()
+		// One agent plus the caller is a 1-1, and the API hands back the existing one
+		// (200) instead of a new chat. Adding an agent already made that 1-1, so rename
+		// it: specs that ask for a titled chat still find it by that title. A spec that
+		// needs a second, separate chat with the same agent adds another participant.
+		if (res.status === 200 && conversation.title !== data.title) {
+			return this.renameConversation(conversation.id, workspaceId, data.title)
+		}
+		return conversation
+	}
+
+	async renameConversation(
+		id: string,
+		workspaceId: string,
+		title: string,
+	): Promise<ConversationDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/conversations/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ title }),
+		})
+		if (!res.ok) throw new Error(`renameConversation failed: ${res.status}`)
 		return res.json()
 	}
 
