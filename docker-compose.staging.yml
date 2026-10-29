@@ -68,6 +68,8 @@ services:
       # resolve to false. Leave actor ids empty until a staging user exists.
       FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
       FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-mcp-oauth-consent}
+      # THROWAWAY smoke-test stub (never merge): the tester account's API key, read by oauth-smoke-stub.ts.
+      SMOKE_STUB_API_KEY: ${SMOKE_STUB_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
