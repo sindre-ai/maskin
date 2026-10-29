@@ -373,7 +373,11 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				stream: 'stdout',
 				content: env({
 					type: 'assistant',
-					message: { content: [{ type: 'text', text: 'Reading the last thread with Priya before drafting.' }] },
+					message: {
+						content: [
+							{ type: 'text', text: 'Reading the last thread with Priya before drafting.' },
+						],
+					},
 				}),
 			},
 			{
@@ -388,13 +392,18 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				stream: 'stdout',
 				content: env({
 					type: 'assistant',
-					message: { content: [{ type: 'text', text: 'Draft is ready and waiting on your approval.' }] },
+					message: {
+						content: [{ type: 'text', text: 'Draft is ready and waiting on your approval.' }],
+					},
 				}),
 			},
-			{ stream: 'stdout', content: env({ type: 'result', is_error: false, result: 'Draft saved for review.' }) },
+			{
+				stream: 'stdout',
+				content: env({ type: 'result', is_error: false, result: 'Draft saved for review.' }),
+			},
 		].map((r, i) => ({ ...item, id: i + 1, sessionId: uuid(900), createdAt: ago(40 - i), ...r }))
 		const since = Number(query.get('since') ?? 0)
-		const before = Number(query.get('before') ?? Infinity)
+		const before = Number(query.get('before') ?? Number.POSITIVE_INFINITY)
 		let rows = all.filter((r) => r.id > since && r.id < before)
 		if (query.get('order') === 'desc') rows = rows.reverse()
 		return { body: rows.slice(0, Number(query.get('limit') ?? 100)) }
