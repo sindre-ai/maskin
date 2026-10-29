@@ -130,24 +130,27 @@ describe('Header', () => {
 		expect(picker).toHaveAttribute('data-subtype', 'insight')
 	})
 
-	it('opens CreatePicker as a loop from New loop', async () => {
+	it('does not offer New loop or New agent in the menu', async () => {
 		const user = userEvent.setup()
 		render(<Header />)
 
 		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
-		await user.click(screen.getByRole('menuitem', { name: /new loop/i }))
 
-		expect(screen.getByTestId('create-picker')).toHaveAttribute('data-type', 'loop')
+		expect(screen.queryByRole('menuitem', { name: /new loop/i })).toBeNull()
+		expect(screen.queryByRole('menuitem', { name: /new agent/i })).toBeNull()
 	})
 
-	it('opens CreatePicker as an agent from New agent', async () => {
-		const user = userEvent.setup()
+	it.each([
+		['/_authed/$workspaceId/objects/', '/ws-1/objects'],
+		['/_authed/$workspaceId/loops/', '/ws-1/loops'],
+		['/_authed/$workspaceId/agents/', '/ws-1/agents'],
+	])('defaults the primary half to New chat on %s', (routeId, pathname) => {
+		vi.mocked(useMatches).mockReturnValue([
+			{ routeId, pathname, params: { workspaceId: 'ws-1' } },
+		] as ReturnType<typeof useMatches>)
 		render(<Header />)
 
-		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
-		await user.click(screen.getByRole('menuitem', { name: /new agent/i }))
-
-		expect(screen.getByTestId('create-picker')).toHaveAttribute('data-type', 'agent')
+		expect(screen.getByRole('button', { name: 'New chat' })).toBeInTheDocument()
 	})
 
 	it('opens the command palette from Find a past conversation', async () => {
