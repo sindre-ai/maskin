@@ -66,7 +66,7 @@ import {
 	sql,
 } from 'drizzle-orm'
 import { resolveChatIdleCloseMs } from '../config/session-idle'
-import { withoutHumanPauseMarker } from '../lib/agent-pause'
+import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
@@ -5402,7 +5402,8 @@ ${cont.continues_prompt}
 								metadata: withoutHumanPauseMarker,
 								updatedAt: new Date(),
 							})
-							.where(eq(actors.id, session.actorId))
+							// Not if a person paused it meanwhile: this write would drop their marker.
+							.where(and(eq(actors.id, session.actorId), notHumanPaused))
 							.catch((err) =>
 								logger.warn('Failed to sync agentState after auto-pause', {
 									sessionId: session.id,
