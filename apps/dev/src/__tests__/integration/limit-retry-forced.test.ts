@@ -30,11 +30,12 @@ vi.mock('../../services/session-lifecycle', async (importOriginal) => ({
 	startSession: startSessionMock,
 }))
 
-const deps = {
+// db is a live binding set in global-setup beforeAll, so read it when settling, not at import.
+const makeDeps = () => ({
 	db,
 	stopSandbox: async () => 'local' as const,
 	pushAgentFiles: async () => 'ok' as const,
-}
+})
 
 // The recorded weekly banner from 26-28 Oct 2026, and a session-limit banner without a reset.
 const WEEKLY_WITH_RESET =
@@ -77,7 +78,7 @@ describe('forced limit: banner -> classifier -> settle -> scheduler tick', () =>
 				retryAt: retryAt ?? undefined,
 				failureReason: reason,
 			},
-			deps,
+			makeDeps(),
 		)
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 		const notices = await db

@@ -26,11 +26,12 @@ vi.mock('../../services/session-lifecycle', async (importOriginal) => ({
 	startSession: startSessionMock,
 }))
 
-const deps = {
+// db is a live binding set in global-setup beforeAll, so read it when settling, not at import.
+const makeDeps = () => ({
 	db,
 	stopSandbox: async () => 'local' as const,
 	pushAgentFiles: async () => 'ok' as const,
-}
+})
 
 describe('limit hit in a chat: notice at settle, answer after the reset', () => {
 	let workspaceId: string
@@ -53,7 +54,7 @@ describe('limit hit in a chat: notice at settle, answer after the reset', () => 
 		await settleSession(
 			session.id,
 			{ kind: 'fail', classification: 'credit_exhaustion', source: 'sandbox-exit', retryAt },
-			deps,
+			makeDeps(),
 		)
 
 		const posted = await db
@@ -91,7 +92,7 @@ describe('limit hit in a chat: notice at settle, answer after the reset', () => 
 				source: 'sandbox-exit',
 				retryAt: new Date(Date.now() + 60 * 60_000),
 			},
-			deps,
+			makeDeps(),
 		)
 		expect(await db.select().from(messages)).toHaveLength(0)
 	})
