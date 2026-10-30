@@ -69,7 +69,9 @@ import {
 	type ReactElement,
 	type ReactNode,
 	cloneElement,
+	createContext,
 	isValidElement,
+	useContext,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -138,6 +140,12 @@ function previewBounds(chip: Element) {
 }
 
 const PREVIEW_QUERY = '(min-width: 640px) and (hover: hover) and (pointer: fine)'
+
+/**
+ * Provided true around chips that sit inside text being edited: no hover preview and no phone
+ * sheet there, because a card opening over words you are about to change gets in the way.
+ */
+export const ChipPreviewOffContext = createContext(false)
 
 /** True on a pointer device at 640px or wider, the only place a chip opens a preview. */
 function usePreviewCapable() {
@@ -219,7 +227,7 @@ function PreviewActions({ openLink, path }: Pick<ChipSheetContent, 'openLink' | 
 function ChipPreview({
 	card,
 	sheet,
-	enabled,
+	enabled: enabledByChip,
 	children,
 }: {
 	/** The card to open, drawn as a preview (see the cards' `preview` prop), given the buttons for its footer. */
@@ -228,6 +236,8 @@ function ChipPreview({
 	enabled: boolean
 	children: ReactNode
 }) {
+	const previewOff = useContext(ChipPreviewOffContext)
+	const enabled = enabledByChip && !previewOff
 	const capable = usePreviewCapable()
 	const [open, setOpen] = useState(false)
 	const [sheetOpen, setSheetOpen] = useState(false)
