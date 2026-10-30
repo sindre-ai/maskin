@@ -102,6 +102,8 @@ struct SearchStoreMentionTests {
 		let store = make(remote)
 		store.setQuery("@product marketing")
 		await untilMenu(store)
+		await store.settle()
+		let askedBeforePick = await remote.objectQueries.count  // the typed text is searched while the menu is open
 		store.pick(marketing)
 		await store.settle()
 		#expect(store.participants == [marketing])
@@ -109,7 +111,9 @@ struct SearchStoreMentionTests {
 		#expect(store.phase == .results)
 		#expect(store.allResults.map(\.id) == ["chat:c1", "chat:c2"])
 		#expect(store.mentionSuggestions.isEmpty)
-		#expect(await remote.objectQueries.isEmpty, "other sources are not asked while people are picked")
+		#expect(
+			await remote.objectQueries.count == askedBeforePick,
+			"other sources are not asked while people are picked")
 	}
 
 	@Test("several people narrow to chats containing all of them")
