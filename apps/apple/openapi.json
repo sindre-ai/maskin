@@ -68694,7 +68694,7 @@
 				"tags": [
 					"Telemetry"
 				],
-				"summary": "Record an MCP telemetry event (tool_call, mutation, error, or tool_call_response_size).",
+				"summary": "Record an MCP telemetry event (tool_call, mutation, error, alias_use, or tool_call_response_size).",
 				"parameters": [
 					{
 						"schema": {
@@ -69064,6 +69064,108 @@
 										"required": [
 											"event_type",
 											"kind",
+											"tool_name"
+										]
+									},
+									{
+										"type": "object",
+										"properties": {
+											"event_type": {
+												"type": "string",
+												"enum": [
+													"alias_use"
+												]
+											},
+											"tool_name": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 128,
+												"pattern": "^[A-Za-z0-9_.-]+$"
+											},
+											"session_id": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 128
+											},
+											"session_source": {
+												"type": "string",
+												"enum": [
+													"maskin-session",
+													"process",
+													"unknown"
+												]
+											},
+											"transport": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"renames": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"old": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 64,
+															"pattern": "^[A-Za-z0-9_.-]+$"
+														},
+														"new": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 64,
+															"pattern": "^[A-Za-z0-9_.-]+$"
+														}
+													},
+													"required": [
+														"old",
+														"new"
+													]
+												},
+												"maxItems": 64,
+												"default": []
+											},
+											"both_sent": {
+												"type": "boolean",
+												"default": false
+											},
+											"dropped_keys": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 64,
+													"pattern": "^[A-Za-z0-9_.-]+$"
+												},
+												"maxItems": 16
+											},
+											"tool_alias": {
+												"type": "object",
+												"properties": {
+													"old": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 128,
+														"pattern": "^[A-Za-z0-9_.-]+$"
+													},
+													"new": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 128,
+														"pattern": "^[A-Za-z0-9_.-]+$"
+													}
+												},
+												"required": [
+													"old",
+													"new"
+												]
+											}
+										},
+										"required": [
+											"event_type",
 											"tool_name"
 										]
 									}

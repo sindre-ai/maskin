@@ -41,8 +41,8 @@ export function editErrorMessage(error: unknown): string {
 
 /**
  * Rename a saved key or login, replace its secret, or both. The current secret is never sent to
- * the browser, so the secret fields start empty and blank means "keep it". A login is replaced
- * as a whole: the username and password are entered together.
+ * the browser, so the secret fields start empty and blank means "keep it". A login changes one
+ * part at a time: fill only the password and the saved username stays.
  */
 export function CredentialEditDialog({ open, onOpenChange, ...form }: CredentialEditDialogProps) {
 	return (
@@ -68,16 +68,16 @@ function EditForm({
 	const [name, setName] = useState(savedName)
 	const [secret, setSecret] = useState('')
 	const [username, setUsername] = useState('')
+	const [email, setEmail] = useState('')
 	const [password, setPassword] = useState('')
 
 	const trimmed = name.trim()
 	const renamed = trimmed !== savedName
 	const nameProblem = trimmed ? checkCredentialName(trimmed) : null
-	const hasSecret = isLogin ? username.trim().length > 0 && password.length > 0 : secret.length > 0
-	// A login's username and password go together: half of one is not a change.
-	const halfLogin = isLogin && !hasSecret && (username.trim().length > 0 || password.length > 0)
-	const canSave =
-		trimmed.length > 0 && !nameProblem && !halfLogin && (renamed || hasSecret) && !update.isPending
+	const hasSecret = isLogin
+		? username.trim().length > 0 || password.length > 0 || email.trim().length > 0
+		: secret.length > 0
+	const canSave = trimmed.length > 0 && !nameProblem && (renamed || hasSecret) && !update.isPending
 
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault()
@@ -86,8 +86,9 @@ function EditForm({
 		if (renamed) body.displayName = trimmed
 		if (hasSecret) {
 			if (isLogin) {
-				body.username = username.trim()
-				body.password = password
+				if (username.trim()) body.username = username.trim()
+				if (password) body.password = password
+				if (email.trim()) body.email = email.trim()
 			} else {
 				body.rawSecret = secret
 			}
@@ -107,9 +108,11 @@ function EditForm({
 			<ResponsiveDialogHeader>
 				<ResponsiveDialogTitle>Edit {savedName}</ResponsiveDialogTitle>
 				<ResponsiveDialogDescription>
-					Change the name, the {isLogin ? 'login' : 'key'}, or both. Leave the{' '}
-					{isLogin ? 'username and password' : 'key'} empty to keep the current one. Running
-					sessions keep what they started with; the next one gets the change.
+					Change the name, the {isLogin ? 'login' : 'key'}, or both.{' '}
+					{isLogin
+						? 'Fill only what changes; empty fields keep their current value.'
+						: 'Leave the key empty to keep the current one.'}{' '}
+					Running sessions keep what they started with; the next one gets the change.
 				</ResponsiveDialogDescription>
 			</ResponsiveDialogHeader>
 
@@ -138,14 +141,26 @@ function EditForm({
 			{isLogin ? (
 				<>
 					<div className="space-y-1.5">
-						<Label htmlFor={`${id}-username`}>New username or email</Label>
+						<Label htmlFor={`${id}-username`}>New username</Label>
 						<Input
 							id={`${id}-username`}
 							value={username}
 							onChange={(e) => setUsername(e.target.value)}
 							autoComplete="off"
 							spellCheck={false}
-							placeholder="Leave empty to keep the current login"
+							placeholder="Leave empty to keep the current username"
+						/>
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor={`${id}-email`}>New email</Label>
+						<Input
+							id={`${id}-email`}
+							inputMode="email"
+							value={email}
+							onChange={(e) => setEmail(e.target.value)}
+							autoComplete="off"
+							spellCheck={false}
+							placeholder="Leave empty to keep the current email, if any"
 						/>
 					</div>
 					<div className="space-y-1.5">
@@ -155,13 +170,8 @@ function EditForm({
 							value={password}
 							onChange={setPassword}
 							required={false}
-							placeholder="Leave empty to keep the current login"
+							placeholder="Leave empty to keep the current password"
 						/>
-						{halfLogin && (
-							<p className="text-xs text-error">
-								Enter the username and the password together to replace the login.
-							</p>
-						)}
 					</div>
 				</>
 			) : (
