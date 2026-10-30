@@ -17,12 +17,6 @@ import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-f
 import { CreatePicker } from '@/components/shared/create-picker'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
@@ -38,7 +32,7 @@ import { toUploadInput } from '@/lib/large-file-upload'
 import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, Hash, Info, Mic, Paperclip, Plus, X } from 'lucide-react'
+import { ArrowUp, Hash, Info, Mic, Paperclip, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -294,7 +288,7 @@ function writeDraft(key: string, value: string): void {
  *  - `@` typed at a word boundary opens the mention picker (agents + humans)
  *    inline at the caret; ↑↓ navigate, ↵ inserts, Escape closes. Textarea
  *    keeps DOM focus while the picker is open.
- *  - The `+` menu offers "Attach a file"; `/` and `@` cover the rest.
+ *  - The paperclip attaches a file; `/` and `@` cover the rest.
  */
 export function Composer({
 	workspaceId,
@@ -1219,45 +1213,7 @@ export function Composer({
 					</output>
 				)}
 				<div className="flex items-center gap-2">
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							{/* No 44 px `::before` here: Attach next to it already carries one,
-							    and two overlapping invisible hit surfaces 8 px apart steal
-							    taps from each other. The v2 control row is 28 px by design.
-							    Attach's hit area is anchored to its right edge, so it reaches 8 px
-							    over this button; `z-[1]` keeps this one's full box on top. */}
-							<Button
-								type="button"
-								size="icon"
-								variant="outline"
-								className="relative z-[1] h-7 w-7 shrink-0 rounded-full text-muted-foreground"
-								disabled={disabled}
-								aria-label="Add an object, file, or mention"
-							>
-								<Plus size={15} aria-hidden />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="start" className="w-[252px]">
-							{/* The row triggers the same hidden fileInputRef as the visible
-							    Paperclip sibling, so the file-attach handler that is already
-							    wired for this composer is what runs. `/` and `@` cover
-							    references, mentions and creating objects. */}
-							<DropdownMenuItem
-								onSelect={() => fileInputRef.current?.click()}
-								className="flex-col items-start gap-0.5"
-							>
-								<span className="flex items-center gap-2">
-									<Paperclip size={15} aria-hidden />
-									Attach a file
-								</span>
-								<span className="pl-[23px] text-xs text-muted-foreground">PDF, image, or doc</span>
-							</DropdownMenuItem>
-						</DropdownMenuContent>
-					</DropdownMenu>
-					{/* Attach stays a visible sibling rather than a menu row: it is the
-					    one composer affordance with a pinned 44 px touch target
-					    (`ios-chat-attach-tap-area.spec.ts`), which a closed menu can't
-					    satisfy. */}
+					{/* Attach carries a pinned 44 px touch target (`ios-chat-attach-tap-area.spec.ts`). */}
 					<Button
 						type="button"
 						size="icon"
