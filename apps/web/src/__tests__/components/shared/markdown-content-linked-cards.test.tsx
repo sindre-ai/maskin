@@ -66,6 +66,12 @@ const triggerUrl = (id: string) => `https://maskin.io/${WS}/triggers/${id}`
 const AGENT = 'dc2ee1b4-5659-4038-be88-0a1b298ba373'
 const agentUrl = (id: string) => `https://maskin.io/${WS}/agents/${id}`
 
+const settingsUrl = (section = '') => `https://maskin.io/${WS}/settings${section}`
+// A stand-in for the real settings chip: placement is what is under test here.
+const renderSettingsChip = (target: { label: string }) => (
+	<a data-testid="settings-chip" href="/settings">{`Settings: ${target.label}`}</a>
+)
+
 const hasOwnCard = (item: HTMLElement) =>
 	Array.from(item.children).some((child) => child.getAttribute('data-testid') === 'card')
 
@@ -74,13 +80,25 @@ function renderMessage(
 	withCards = true,
 	skipIds?: ReadonlySet<string>,
 	updatedIds?: ReadonlySet<string>,
+	withSettingsChip = true,
+	enterprise = false,
 ) {
 	return render(
 		<MarkdownContent
 			content={content}
 			size="sm"
 			linkedCards={
-				withCards ? { workspaceId: WS, renderCard, renderChip, skipIds, updatedIds } : undefined
+				withCards
+					? {
+							workspaceId: WS,
+							enterprise,
+							renderCard,
+							renderChip,
+							skipIds,
+							updatedIds,
+							renderSettingsChip: withSettingsChip ? renderSettingsChip : undefined,
+						}
+					: undefined
 			}
 		/>,
 		{ wrapper: TestWrapper },
@@ -158,6 +176,74 @@ describe('MarkdownContent linkedCards, GitHub links', () => {
 describe('MarkdownContent linkedCards', () => {
 	beforeEach(() => {
 		qualifying = new Set([A, B, FILE])
+	})
+
+	it('draws a settings link in a sentence as a chip, whatever its link text', () => {
+		renderMessage(`Set it up under [the billing page](${settingsUrl('/billing')}) first.`)
+		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: Billing')
+		expect(screen.queryByText('the billing page')).not.toBeInTheDocument()
+		expect(screen.getByText(/Set it up under/)).toBeInTheDocument()
+	})
+
+	it('keeps a settings link alone on its line a chip in the text, not a card', () => {
+		renderMessage(`Here you go.\n\n[Settings](${settingsUrl()})`)
+		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: General')
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		expect(screen.getByTestId('settings-chip').closest('p')).not.toBeNull()
+	})
+
+	it('does not count settings chips toward the three cards of a message', () => {
+		renderMessage(
+			[
+				`[a](${settingsUrl('/mcp')})`,
+				`[a](${settingsUrl('/billing')})`,
+				`[a](${settingsUrl('/members')})`,
+				`[a](${settingsUrl('/skills')})`,
+				`[e](${objectUrl(A)})`,
+			].join('\n\n'),
+		)
+		expect(screen.getAllByTestId('settings-chip')).toHaveLength(4)
+		expect(screen.getAllByTestId('card')).toHaveLength(1)
+	})
+
+	it('leaves an unknown section, a deeper path and another workspace as plain links', () => {
+		renderMessage(
+			[
+				`[nope](${settingsUrl('/nope')})`,
+				`[deep](${settingsUrl('/keychain/new')})`,
+				`[other](https://maskin.io/${A}/settings/mcp)`,
+			].join('\n\n'),
+		)
+		expect(screen.queryByTestId('settings-chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'nope' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'deep' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'other' })).toBeInTheDocument()
+	})
+
+	it('draws a Keys link as a chip in an enterprise workspace', () => {
+		renderMessage(
+			`[the keys page](${settingsUrl('/keys')})`,
+			true,
+			undefined,
+			undefined,
+			true,
+			true,
+		)
+		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: Keys')
+		expect(screen.queryByText('the keys page')).not.toBeInTheDocument()
+	})
+
+	it('leaves a Keys link a plain link when the workspace is not enterprise', () => {
+		renderMessage(`[the keys page](${settingsUrl('/keys')})`)
+		expect(screen.queryByTestId('settings-chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'the keys page' })).toBeInTheDocument()
+	})
+
+	it('leaves a settings link as it was when no settings chip renderer is given', () => {
+		renderMessage(`[the keys page](${settingsUrl('/keys')})`, true, undefined, undefined, false)
+		expect(screen.queryByTestId('settings-chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'the keys page' })).toBeInTheDocument()
 	})
 
 	it('replaces a paragraph that is only a link by its card and drops the link text', () => {
@@ -567,5 +653,200 @@ describe('MarkdownContent linkedCards', () => {
 			expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
 			expect(screen.getByTestId('chip')).toBeInTheDocument()
 		})
+	})
+})
+
+describe('MarkdownContent linkedCards: links into another workspace', () => {
+	const OTHER = '11111111-2222-4333-8444-555555555555'
+	const otherUrl = (kind: string, id: string) => `https://maskin.io/${OTHER}/${kind}/${id}`
+
+	// Stand-ins that only record what the placement asked for, by workspace. A file is never a
+	// placeholder, whichever workspace it is in.
+	type Target = { kind: string; id: string; workspaceId?: string | null }
+	const isOther = (target: Target) => target.kind !== 'file' && target.workspaceId === OTHER
+	const card = (target: Target) => (
+		<div data-testid={isOther(target) ? 'other-card' : 'card'}>{target.id}</div>
+	)
+	const chip = (target: Target) => (
+		<span data-testid={isOther(target) ? 'other-chip' : 'chip'}>{target.id}</span>
+	)
+	const lookedUp: string[] = []
+
+	function render_(content: string) {
+		lookedUp.length = 0
+		return render(
+			<MarkdownContent
+				content={content}
+				size="sm"
+				linkedCards={{
+					workspaceId: WS,
+					renderCard: (target, _fallback, context) => {
+						if (!isOther(target)) lookedUp.push(target.id)
+						// Like the real card renderer: a link in a list is a chip, not a card.
+						if (context.after) return null
+						return context.inList ? chip(target) : card(target)
+					},
+					renderChip: (target) => chip(target),
+				}}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+	}
+
+	it('draws an object, loop or trigger link alone on its line as a card', () => {
+		render_(
+			`[a](${otherUrl('objects', A)})\n\n[b](${otherUrl('loops', LOOP)})\n\n[c](${otherUrl('triggers', TRIGGER)})`,
+		)
+		expect(screen.getAllByTestId('other-card')).toHaveLength(3)
+	})
+
+	it('draws an agent link alone on its line as a card and in a sentence as a chip', () => {
+		render_(
+			`[the developer](${otherUrl('agents', AGENT)})\n\nAsk [them](${otherUrl('agents', B)}).`,
+		)
+		expect(screen.getAllByTestId('other-card')).toHaveLength(1)
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(1)
+		expect(lookedUp).toEqual([])
+	})
+
+	it('shares the three-card limit with the other kinds: the fourth link on its own line is a chip', () => {
+		render_(
+			`[a](${objectUrl(A)})\n\n[b](${otherUrl('loops', LOOP)})\n\n[c](${otherUrl('triggers', TRIGGER)})\n\n[d](${otherUrl('objects', B)})`,
+		)
+		expect(screen.getAllByTestId('other-card')).toHaveLength(2)
+		expect(screen.getAllByTestId('card')).toHaveLength(1)
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(1)
+	})
+
+	it('draws a link in a sentence as a chip and puts no card under it', () => {
+		render_(`I looked at [the bet](${otherUrl('objects', A)}) today.`)
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(1)
+		expect(screen.queryByTestId('other-card')).not.toBeInTheDocument()
+		expect(lookedUp).toEqual([])
+	})
+
+	it('keeps a link in a list a chip', () => {
+		render_(`- [One](${otherUrl('objects', A)})\n- [Two](${otherUrl('loops', LOOP)})`)
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(2)
+		expect(screen.queryByTestId('other-card')).not.toBeInTheDocument()
+	})
+
+	it('does not count toward the ten looked-up links of a message', () => {
+		const ids = Array.from(
+			{ length: 11 },
+			(_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+		)
+		render_(ids.map((id, i) => `Link ${i} [x](${otherUrl('objects', id)}) here.`).join('\n\n'))
+		expect(screen.getAllByTestId('other-chip')).toHaveLength(11)
+	})
+
+	it('leaves a file in another workspace as it was, and a link with no workspace as this one', () => {
+		render_(`[f](${otherUrl('files', FILE)})\n\nSee [x](/objects/${A}) here.`)
+		expect(screen.queryByTestId('other-card')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('other-chip')).not.toBeInTheDocument()
+	})
+})
+
+describe('MarkdownContent linkedCards outside chat', () => {
+	const C = 'e1591bb2-7dc8-4fb0-b6fe-6e6e6e06a8e2'
+	const draw = (
+		content: string,
+		options: { mode?: 'full' | 'chips'; draftsAndFiles?: boolean } = {},
+	) =>
+		render(
+			<MarkdownContent
+				content={content}
+				size="sm"
+				linkedCards={{ workspaceId: WS, renderCard, renderChip, ...options }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+	beforeEach(() => {
+		qualifying = new Set()
+	})
+
+	it('chips: a link alone on its line is a chip in the paragraph, never a card', () => {
+		draw(`Look at this.\n\n[Plan](${objectUrl(A)})\n\n- [Loop](${loopUrl(LOOP)})`, {
+			mode: 'chips',
+			draftsAndFiles: false,
+		})
+		expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		const chips = screen.getAllByTestId('chip')
+		expect(chips.map((c) => c.getAttribute('data-id'))).toEqual([A, LOOP])
+		expect(chips[0].closest('p')).not.toBeNull()
+		expect(screen.getByText('Plan')).toBeInTheDocument()
+	})
+
+	it('chips: agents, triggers and an object in a sentence are chips too', () => {
+		draw(`[a](${agentUrl(AGENT)}) asked [b](${triggerUrl(TRIGGER)}) about [c](${objectUrl(B)}).`, {
+			mode: 'chips',
+			draftsAndFiles: false,
+		})
+		expect(screen.getAllByTestId('chip').map((c) => c.getAttribute('data-id'))).toEqual([
+			AGENT,
+			TRIGGER,
+			B,
+		])
+	})
+
+	it('chips: a file link stays a plain link and no card is added under a sentence', () => {
+		draw(`Here is [the file](${fileUrl(FILE)}) and [a draft](${objectUrl(C)}).`, {
+			mode: 'chips',
+			draftsAndFiles: false,
+		})
+		expect(screen.getByRole('link', { name: 'the file' })).toBeInTheDocument()
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+	})
+
+	it('chips: a draft link stays plain because no approval card follows it outside chat', () => {
+		qualifying = new Set([C])
+		draw(`[a draft](${objectUrl(C)}) is ready.`, { mode: 'chips', draftsAndFiles: false })
+		// The chip renderer is told a card follows, which for a draft means "keep the link".
+		expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'a draft' })).toBeInTheDocument()
+	})
+
+	it('full without drafts and files: a link alone on its line is a card, a file stays a link', () => {
+		draw(
+			`[Plan](${objectUrl(A)})\n\n[the file](${fileUrl(FILE)})\n\nSee [b](${objectUrl(B)}) too.`,
+			{
+				mode: 'full',
+				draftsAndFiles: false,
+			},
+		)
+		expect(screen.getByTestId('reference')).toHaveTextContent(A)
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'the file' })).toBeInTheDocument()
+		expect(screen.getByTestId('chip')).toHaveAttribute('data-id', B)
+	})
+
+	it('full is the default mode and chat behaviour is unchanged', () => {
+		qualifying = new Set([A])
+		draw(`[a draft](${objectUrl(A)})\n\n[file](${fileUrl(FILE)})`)
+		expect(screen.getByTestId('card')).toHaveTextContent(`object:${A}`)
+	})
+
+	it('chips: the lookup cap is per rendered body, ten links', () => {
+		const ids = Array.from(
+			{ length: 12 },
+			(_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+		)
+		draw(ids.map((id) => `[o${id.slice(-2)}](${objectUrl(id)})`).join(' '), {
+			mode: 'chips',
+			draftsAndFiles: false,
+		})
+		expect(screen.getAllByTestId('chip')).toHaveLength(10)
+	})
+
+	it('full: each body gets its own three cards', () => {
+		const body = (ids: string[]) => ids.map((id) => `[x](${objectUrl(id)})`).join('\n\n')
+		const four = [A, B, C, 'f2602cc3-8ed9-4ac1-87af-7f7f7f17b9f3']
+		const first = draw(body(four), { mode: 'full', draftsAndFiles: false })
+		expect(screen.getAllByTestId('reference')).toHaveLength(3)
+		first.unmount()
+		draw(body(four), { mode: 'full', draftsAndFiles: false })
+		expect(screen.getAllByTestId('reference')).toHaveLength(3)
 	})
 })

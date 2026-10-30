@@ -103,12 +103,13 @@ export function SearchPageV2() {
 	// The words and filters this page knows about, from real workspace types.
 	const vocab = useSearchVocabulary()
 
-	// Chats, Loops, Agents, then the workspace's object types, then Automations.
+	// Chats, Loops, Agents, People, then the workspace's object types, then Automations.
 	const typeOptions = useMemo<TypeOption[]>(
 		() => [
 			{ key: 'chat', label: 'Chats' },
 			{ key: 'loop', label: 'Loops' },
 			{ key: 'agent', label: 'Agents' },
+			{ key: 'person', label: 'People' },
 			...objectTypes
 				.filter((t) => t.value !== 'loop')
 				.map((t) => ({ key: t.value, label: t.label })),
@@ -601,7 +602,7 @@ function SearchIdleState({
 				emphasis="page"
 				className="py-0"
 				title="Search the workspace"
-				description="Chats, loops, agents, objects and automations, everything you and the agents have touched, in one result list you can filter."
+				description="Chats, loops, agents, people, objects and automations, everything you and the agents have touched, in one result list you can filter."
 				action={
 					<div className="flex flex-col items-center gap-4">
 						{recentSearches.length > 0 ? (

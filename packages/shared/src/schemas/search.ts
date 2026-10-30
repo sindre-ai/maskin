@@ -10,8 +10,15 @@ export const SEARCH_MAX_PARTICIPANTS = 5
 
 export const SEARCH_SORTS = ['rel', 'recent', 'az'] as const
 
-/** The five places search reads from. Also the order of groups under Relevance sort. */
-export const SEARCH_SOURCE_GROUPS = ['chats', 'loops', 'agents', 'objects', 'automations'] as const
+/** The six places search reads from. Also the order of groups under Relevance sort. */
+export const SEARCH_SOURCE_GROUPS = [
+	'chats',
+	'loops',
+	'agents',
+	'people',
+	'objects',
+	'automations',
+] as const
 
 export const statusGroupKeySchema = z.enum(STATUS_GROUP_KEYS)
 
@@ -29,8 +36,8 @@ const csvParam = <T extends z.ZodTypeAny>(item: T, max: number) =>
 	)
 
 /**
- * GET /api/search query string. Types are any object type key plus chat, agent
- * and automation; an unknown key is accepted and matches nothing. Statuses are
+ * GET /api/search query string. Types are any object type key plus chat, agent,
+ * person and automation; an unknown key is accepted and matches nothing. Statuses are
  * the five group keys, and an unknown group is a 400. There is no owner filter.
  * Participants are actor ids (people or agents): only chats the caller is in AND
  * every listed actor is in can match, so the other four sources return nothing.
@@ -53,13 +60,13 @@ export type SearchSourceGroup = (typeof SEARCH_SOURCE_GROUPS)[number]
 export const searchResultRowSchema = z.object({
 	id: z.string().uuid(),
 	group: z.enum(SEARCH_SOURCE_GROUPS),
-	/** chat, agent, automation, or the object type key (loop included). */
+	/** chat, agent, person, automation, or the object type key (loop included). */
 	type: z.string(),
 	title: z.string(),
 	sub: z.string().nullable(),
 	/** Cut to 160 characters on the server; never the full body. */
 	snippet: z.string().max(160).nullable(),
-	/** The raw status (or the value derived for chats, agents and automations). */
+	/** The raw status (or the value derived for chats, agents and automations; a person is always member). */
 	status: z.string(),
 	statusGroup: statusGroupKeySchema,
 	/** ISO timestamp of the last update, null when the source has none. */

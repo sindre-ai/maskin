@@ -1788,6 +1788,13 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in running state`)
 		}
 
+		// A remote session's sandbox lives on the agent-server, so the local Docker
+		// check below would always call it gone and mark a live session failed.
+		// Snapshot and resume are local-only: refuse, and leave the session running.
+		if (session.agentServerId) {
+			throw new Error(`Session ${sessionId} runs on an agent server and cannot be paused`)
+		}
+
 		// Self-heal: if the container disappeared (stopped or removed externally),
 		// the session can never be snapshotted. Mark it failed and exit so the
 		// auto-pause loop stops retrying every minute.

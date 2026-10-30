@@ -9,10 +9,18 @@ extension InternalLinkDirectory {
 		guard let link = DeepLink(url: url) else { return nil }
 		switch link {
 		case .object(_, let id):
-			let found = object(id)
-			return MarkdownLinkInfo(
-				symbol: found.flatMap { MaskinObjectType.symbol(for: $0.type) } ?? "doc.text",
-				kindLabel: found.map { Self.label(forType: $0.type) } ?? "Object", title: found?.title)
+			switch lookup(id) {
+			case .object(let found):
+				return MarkdownLinkInfo(
+					symbol: MaskinObjectType.symbol(for: found.type) ?? "doc.text", kindLabel: Self.label(forType: found.type),
+					title: found.title, objectType: found.type, status: found.status)
+			case .loading:
+				return MarkdownLinkInfo(symbol: "doc.text", kindLabel: "Object", phase: .loading)
+			case .deleted:
+				return MarkdownLinkInfo(symbol: "trash", kindLabel: "Object", phase: .deleted)
+			case .unreadable:
+				return MarkdownLinkInfo(symbol: "doc.text", kindLabel: "Object")
+			}
 		case .chat, .thread:
 			return MarkdownLinkInfo(symbol: "bubble.left", kindLabel: "Chat")
 		case .file:

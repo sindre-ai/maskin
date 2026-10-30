@@ -34,6 +34,7 @@ const SCOPE_TYPES: VocabularyType[] = [
 	{ key: 'chat', label: 'Chat' },
 	{ key: 'loop', label: 'Loop' },
 	{ key: 'agent', label: 'Agent' },
+	{ key: 'person', label: 'Person', plural: 'People' },
 	{ key: 'automation', label: 'Automation' },
 ]
 
@@ -103,7 +104,7 @@ function pluralize(label: string): string {
 
 /**
  * Builds the alias tables. `objectTypes` are the workspace's real object types;
- * the four scopes (chat, loop, agent, automation) are always added. A type listed
+ * the five scopes (chat, loop, agent, person, automation) are always added. A type listed
  * in both (loop) is kept once.
  */
 export function buildVocabulary(
@@ -120,6 +121,9 @@ export function buildVocabulary(
 	for (const t of types.values()) {
 		const plural = t.plural ?? pluralize(t.label)
 		typeLabels.set(t.key, plural)
+		// People is a scope with a label for its chip and pill, not a typed word: "person" and
+		// "people" stay synonyms of contact, and only when the workspace has that type.
+		if (t.key === 'person') continue
 		for (const w of [t.key, `${t.key}s`, t.label, plural]) {
 			const word = w.toLowerCase()
 			// A word is claimed by the first type that uses it.

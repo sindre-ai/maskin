@@ -72,6 +72,14 @@ export const FLAGS = {
 	 * already in, so it is safe to leave unflagged. Retire once the filter is on for everyone.
 	 */
 	SEARCH_CHAT_PARTICIPANT_FILTER: 'search-chat-participant-filter',
+	/**
+	 * Web chat: images and files on a message sit outside the text bubble (images as their own
+	 * rounded blocks, files as cards), and only the text keeps a bubble. Read once, in
+	 * `apps/web/src/components/chat/message-bubble.tsx`. Off keeps the files inside the bubble as
+	 * before. Visual only, per actor; no data or API change. Retire (drop the old branch and this
+	 * entry) once it is on for everyone.
+	 */
+	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -1131,6 +1131,18 @@ public final class ChatStore {
 			readThrough: threadReadThrough[rootID])
 	}
 
+	/// The message a thread hangs under, when the store holds it.
+	public func threadRoot(_ rootID: Int) -> ChatMessage? {
+		allMessages.first { $0.serverID == rootID }
+	}
+
+	/// The thread's root, fetching the thread first when the root is older than the page held. Nil
+	/// when it cannot be reached.
+	public func loadedThreadRoot(_ rootID: Int) async -> ChatMessage? {
+		if threadRoot(rootID) == nil { await loadThread(rootID) }
+		return threadRoot(rootID)
+	}
+
 	/// Fetch every reply of a thread and fold them in (a root opened from the Threads list, or one
 	/// whose replies are older than the page held).
 	public func loadThread(_ rootID: Int) async {

@@ -1,0 +1,85 @@
+name: TestFlight automatic distribution (one-off)
+
+# Manual run only. Sets hasAccessToAllBuilds (the "Automatic distribution" tickbox) to true on
+# every internal TestFlight beta group of io.maskin.app, through the App Store Connect API.
+# Uses the same API key secrets as ios-testflight.yml, so no Apple login or 2FA code is needed.
+# Logs each group name and the value before and after. The key and the token are never printed.
+#
+# Remove this file once the log shows hasAccessToAllBuilds true on the internal group.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - name: Tick Automatic distribution on internal groups
+        run: |
+          set -euo pipefail
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::error::ASC_KEY_ID, ASC_ISSUER_ID or ASC_KEY_P8 is not set."
+            exit 1
+          fi
+          node --input-type=module <<'EOF'
+          import { createPrivateKey, sign } from 'node:crypto';
+
+          const { ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 } = process.env;
+          const BUNDLE_ID = 'io.maskin.app';
+          const API = 'https://api.appstoreconnect.apple.com';
+
+          const b64url = (v) => Buffer.from(v).toString('base64url');
+          const now = Math.floor(Date.now() / 1000);
+          const signingInput =
+            b64url(JSON.stringify({ alg: 'ES256', kid: ASC_KEY_ID, typ: 'JWT' })) + '.' +
+            b64url(JSON.stringify({ iss: ASC_ISSUER_ID, iat: now, exp: now + 600, aud: 'appstoreconnect-v1' }));
+          const signature = sign('sha256', Buffer.from(signingInput), {
+            key: createPrivateKey(ASC_KEY_P8),
+            dsaEncoding: 'ieee-p1363',
+          });
+          const token = signingInput + '.' + b64url(signature);
+
+          async function asc(method, path, body) {
+            const res = await fetch(API + path, {
+              method,
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: body ? JSON.stringify(body) : undefined,
+            });
+            const text = await res.text();
+            if (!res.ok) {
+              console.error(`::error::${method} ${path} -> ${res.status}: ${text}`);
+              process.exit(1);
+            }
+            return text ? JSON.parse(text) : {};
+          }
+
+          const apps = await asc('GET', `/v1/apps?filter[bundleId]=${BUNDLE_ID}`);
+          if (apps.data.length !== 1) {
+            console.error(`::error::Expected 1 app for ${BUNDLE_ID}, found ${apps.data.length}.`);
+            process.exit(1);
+          }
+          const appId = apps.data[0].id;
+
+          const groups = await asc('GET', `/v1/apps/${appId}/betaGroups?limit=200`);
+          const internal = groups.data.filter((g) => g.attributes.isInternalGroup);
+          console.log(`Found ${groups.data.length} beta groups, ${internal.length} internal.`);
+          if (internal.length === 0) {
+            console.error('::error::No internal beta group found.');
+            process.exit(1);
+          }
+
+          for (const g of internal) {
+            const name = g.attributes.name;
+            console.log(`${name}: hasAccessToAllBuilds before = ${g.attributes.hasAccessToAllBuilds}`);
+            await asc('PATCH', `/v1/betaGroups/${g.id}`, {
+              data: { type: 'betaGroups', id: g.id, attributes: { hasAccessToAllBuilds: true } },
+            });
+            const after = await asc('GET', `/v1/betaGroups/${g.id}`);
+            console.log(`${name}: hasAccessToAllBuilds after = ${after.data.attributes.hasAccessToAllBuilds}`);
+          }
+          EOF

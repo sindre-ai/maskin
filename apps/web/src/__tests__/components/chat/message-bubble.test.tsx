@@ -1,6 +1,6 @@
 import type { MessageResponse } from '@/lib/api'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -8,11 +8,31 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+const workspaceState = vi.hoisted(() => ({ enterprise: false }))
+
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspace: { settings: { statuses: { bet: ['active', 'done'] } } } }),
+	useWorkspace: () => ({
+		workspace: {
+			enterprise: workspaceState.enterprise,
+			settings: { statuses: { bet: ['active', 'done'] } },
+		},
+	}),
+	useIsEnterpriseWorkspace: () => workspaceState.enterprise,
 }))
 
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
+
+vi.mock('@/hooks/use-linked-chat', () => ({
+	useLinkedChat: (_ws: string, id: string) => ({
+		id,
+		title: 'Launch plan',
+		pinned: false,
+		archived: false,
+		updatedAt: null,
+		participants: [],
+		lastMessage: null,
+	}),
+}))
 
 const objectState = vi.hoisted(() => ({ title: 'Retry window' }))
 
@@ -69,7 +89,17 @@ const mockUseFiles = vi.fn((_workspaceId: string, _params?: { ids?: string[] }) 
 }))
 vi.mock('@/hooks/use-files', () => ({
 	useFiles: (workspaceId: string, params?: { ids?: string[] }) => mockUseFiles(workspaceId, params),
-	useFile: () => ({ data: undefined }),
+	useFile: (_workspaceId: string, id: string | null) => ({
+		data: id?.startsWith('img')
+			? { id, name: 'shot.png', mimeType: 'image/png', encoding: 'base64', content: 'iVBORw0KGgo=' }
+			: undefined,
+		isError: false,
+	}),
+}))
+
+const flagState = vi.hoisted(() => ({ lifted: false }))
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => id === 'chat-attachments-lifted' && flagState.lifted,
 }))
 
 import { MessageBubble } from '@/components/chat/message-bubble'
@@ -171,6 +201,76 @@ describe('MessageBubble', () => {
 		expect(container.querySelector('.bg-primary')).toContainElement(pullChip)
 	})
 
+	it('draws a settings address in your own message as a settings chip that opens in a new tab', () => {
+		const address = 'https://maskin.io/ws-1/settings/billing'
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `pay here ${address}`,
+			}),
+		)
+		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		const chip = screen.getByRole('link', { name: 'Settings: Billing' })
+		expect(chip).toHaveAttribute('href', '/ws-1/settings/billing')
+		expect(chip).toHaveAttribute('target', '_blank')
+		expect(container.querySelector('.bg-primary')).toContainElement(chip)
+	})
+
+	it('draws a Keys address in your own message as a chip only in an enterprise workspace', () => {
+		const address = 'https://maskin.io/ws-1/settings/keys'
+		const own = buildMessage({
+			actorId: 'me',
+			actorName: 'Me',
+			actorType: 'human',
+			content: `keys live here ${address}`,
+		})
+		workspaceState.enterprise = true
+		try {
+			const { unmount } = renderBubble(own)
+			expect(screen.getByRole('link', { name: 'Settings: Keys' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/keys',
+			)
+			unmount()
+			workspaceState.enterprise = false
+			renderBubble(own)
+			expect(screen.queryByRole('link', { name: 'Settings: Keys' })).not.toBeInTheDocument()
+			expect(screen.getByText(address, { exact: false })).toBeInTheDocument()
+		} finally {
+			workspaceState.enterprise = false
+		}
+	})
+
+	it('draws a link to a chat in your own message inline, as a chip with its title', () => {
+		const id = '3ecab143-9e98-4474-9e52-779a55d95952'
+		const address = `https://maskin.io/ws-1/chats/${id}`
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `see ${address}`,
+			}),
+		)
+		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		const chip = screen.getByRole('link', { name: 'Launch plan' })
+		expect(container.querySelector('.bg-primary')).toContainElement(chip)
+	})
+
+	it('draws a chat link alone on its line as a chat card, and one in a sentence as a chip', () => {
+		const id = '3ecab143-9e98-4474-9e52-779a55d95952'
+		const { container } = renderBubble(
+			buildMessage({
+				content: `Where we talked:\n\n[the thread](/ws-1/chats/${id})\n\nAnd [that chat](/ws-1/chats/4aee24db-5d54-476a-8399-9586516e7de1) too.`,
+			}),
+		)
+		expect(container.querySelectorAll('[data-linked-card]')).toHaveLength(1)
+		expect(screen.getByText('Chat', { selector: '.eyebrow' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Chat: Launch plan' })).toBeInTheDocument()
+	})
+
 	it('cuts the title in a chip at 30 characters', () => {
 		objectState.title = 'A very long title for an object that goes on and on'
 		try {
@@ -262,6 +362,89 @@ describe('MessageBubble', () => {
 		expect(screen.getByText('Billing Agent joined')).toBeInTheDocument()
 		expect(container.querySelectorAll('.bg-border')).toHaveLength(2)
 		expect(container.querySelector('.rounded-full')).toBeNull()
+	})
+})
+
+describe('MessageBubble — lifted attachments', () => {
+	beforeEach(() => {
+		flagState.lifted = true
+		mockUseFiles.mockReturnValue({ data: [fileRow(image), fileRow(pdf)] })
+	})
+	afterEach(() => {
+		flagState.lifted = false
+		mockUseFiles.mockReturnValue({ data: [] })
+	})
+
+	const ownMessage = (overrides: Partial<MessageResponse>) =>
+		buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', ...overrides })
+	const image = { file_id: 'img-1', name: 'shot.png', mime_type: 'image/png' }
+	const pdf = { file_id: 'doc-1', name: 'review.pdf', mime_type: 'application/pdf' }
+	const fileRow = (a: { file_id: string; name: string; mime_type: string }) => ({
+		id: a.file_id,
+		workspaceId: 'ws-1',
+		name: a.name,
+		mimeType: a.mime_type,
+		sizeBytes: 1200,
+	})
+
+	it('draws an own message with one image and no text with no bubble around it', () => {
+		const { container } = renderBubble(
+			ownMessage({ content: '', metadata: { attachments: [image] } }),
+		)
+		expect(screen.getByRole('button', { name: 'Image 1, shot.png, open' })).toBeInTheDocument()
+		expect(container.querySelector('.bg-primary')).toBeNull()
+	})
+
+	it('stacks the image block above a text bubble that holds only the text', () => {
+		const { container } = renderBubble(
+			ownMessage({ content: 'Sunset from the ridge.', metadata: { attachments: [image] } }),
+		)
+		const tile = screen.getByRole('button', { name: 'Image 1, shot.png, open' })
+		const plate = container.querySelector('.bg-primary')
+		expect(plate).not.toBeNull()
+		expect(plate?.contains(tile)).toBe(false)
+		expect(
+			tile.compareDocumentPosition(plate as Element) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy()
+		expect(plate).toHaveTextContent('Sunset from the ridge.')
+	})
+
+	it('lifts a file card out of the bubble too', () => {
+		const { container } = renderBubble(
+			ownMessage({
+				content: 'Read page 4 first.',
+				metadata: { attachments: [pdf] },
+			}),
+		)
+		const card = screen.getByRole('link', { name: 'Open review.pdf' })
+		expect(container.querySelector('.bg-primary')?.contains(card)).toBe(false)
+	})
+
+	it('draws attachments of another author under their name, left aligned', () => {
+		const { container } = renderBubble(
+			buildMessage({ content: 'Pipeline by week.', metadata: { attachments: [image] } }),
+		)
+		expect(screen.getByRole('button', { name: 'Image 1, shot.png, open' })).toBeInTheDocument()
+		expect(container.querySelector('.items-start')).not.toBeNull()
+		expect(container.querySelector('.bg-primary')).toBeNull()
+	})
+
+	it('shows a file that was deleted as gone, with its name struck through', () => {
+		mockUseFiles.mockReturnValue({ data: [] })
+		renderBubble(ownMessage({ content: '', metadata: { attachments: [pdf] } }))
+		expect(screen.getByText('File no longer available')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: 'Open review.pdf' })).not.toBeInTheDocument()
+	})
+
+	it('keeps the files inside the bubble while the flag is off', () => {
+		flagState.lifted = false
+		const { container } = renderBubble(
+			ownMessage({
+				content: 'Read page 4 first.',
+				metadata: { attachments: [pdf] },
+			}),
+		)
+		expect(container.querySelector('.bg-primary')).toContainElement(screen.getByText('review.pdf'))
 	})
 })
 
