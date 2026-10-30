@@ -403,6 +403,43 @@ describe('Workspaces Routes', () => {
 				expect(openSecret(stored)).toBe('sk-ant-rotated')
 			})
 
+			it('keeps the stored custom_llm.api_key when an admin edits the endpoint without sending one', async () => {
+				const { api_key: _key, ...readBack } = STORED_CUSTOM_LLM
+				const ws = buildByoWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [ws], HUMAN_ADMIN]
+				mockResults.update = [{ ...ws }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { custom_llm: { ...readBack, model: 'model-b' } },
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.updates[0]).toMatchObject({
+					settings: { custom_llm: { ...STORED_CUSTOM_LLM, model: 'model-b' } },
+				})
+			})
+
+			it('clears custom_llm.api_key only when the admin sends null', async () => {
+				const ws = buildByoWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [ws], HUMAN_ADMIN]
+				mockResults.update = [{ ...ws }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { custom_llm: { ...STORED_CUSTOM_LLM, enabled: false, api_key: null } },
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.updates[0]).toMatchObject({
+					settings: { custom_llm: { enabled: false, api_key: null } },
+				})
+			})
+
 			it('lets a plain member pin files (a member-level settings key)', async () => {
 				const pinnedId = randomUUID()
 				const ws = buildWorkspace()
@@ -446,6 +483,25 @@ describe('Workspaces Routes', () => {
 							llm_keys: { anthropic: 'sk-ant-stored' },
 							custom_llm: STORED_CUSTOM_LLM,
 						},
+					})
+				})
+
+				it('gets 200 for the custom_llm read back from GET, which has no api_key, and keeps the stored key', async () => {
+					const { api_key: _key, ...readBack } = STORED_CUSTOM_LLM
+					const ws = buildByoWorkspace()
+					const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+					mockResults.selectQueue = [MEMBER, [ws]] // no admin lookup: nothing admin-only changed
+					mockResults.update = [{ ...ws }]
+
+					const res = await app.request(
+						jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+							settings: { custom_llm: readBack, max_concurrent_sessions: 5 },
+						}),
+					)
+
+					expect(res.status).toBe(200)
+					expect(calls.updates[0]).toMatchObject({
+						settings: { custom_llm: STORED_CUSTOM_LLM, max_concurrent_sessions: 5 },
 					})
 				})
 

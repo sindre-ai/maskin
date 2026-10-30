@@ -2095,6 +2095,10 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	/** Whether a BYO key is stored. The keys themselves are never returned. */
+	llm_configured?: { anthropic: boolean; openai: boolean; custom_llm: boolean }
+	/** Last four characters of each stored key, for a workspace admin or owner only. */
+	llm_key_hints?: { anthropic: string | null; openai: string | null; custom_llm: string | null }
 	enterprise: boolean
 	// Single accountable human payer for this workspace's plan — read-only,
 	// server-set. See apps/dev/src/lib/workspace-capacity.ts.

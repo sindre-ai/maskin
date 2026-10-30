@@ -646,6 +646,36 @@ const llmProviders = [
 	{ key: 'openai' as const, label: 'OpenAI', placeholder: 'sk-...' },
 ]
 
+/** What the settings screen shows of a saved key: it never has the key itself. */
+function SavedKey({
+	hint,
+	onReplace,
+	onClear,
+	disabled,
+	testId,
+}: {
+	hint: string | null | undefined
+	onReplace: () => void
+	onClear: () => void
+	disabled?: boolean
+	testId: string
+}) {
+	return (
+		<div className="flex items-center gap-2" data-testid={testId}>
+			<span className="flex-1 text-sm text-foreground">
+				Key saved
+				{hint ? <span className="text-muted-foreground"> · ends in {hint}</span> : null}
+			</span>
+			<Button variant="outline" size="sm" onClick={onReplace} disabled={disabled}>
+				Replace
+			</Button>
+			<Button variant="outline" size="sm" onClick={onClear} disabled={disabled}>
+				Clear
+			</Button>
+		</div>
+	)
+}
+
 function LLMKeysEditor({
 	workspace,
 	workspaceId,
@@ -654,74 +684,102 @@ function LLMKeysEditor({
 	workspaceId: string
 }) {
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
-	const settings = workspace.settings as Record<string, unknown>
-	const savedKeys = (settings?.llm_keys as Record<string, string>) ?? {}
 
-	const [keys, setKeys] = useState<Record<string, string>>({
-		anthropic: savedKeys.anthropic ?? '',
-		openai: savedKeys.openai ?? '',
-	})
+	// Saved keys are write-only: the API says whether one is stored and its last
+	// four characters, never the key. Saving sends only the provider that
+	// changed, so nothing else in the stored keys is touched.
+	const [keys, setKeys] = useState<Record<string, string>>({ anthropic: '', openai: '' })
+	const [replacing, setReplacing] = useState<Record<string, boolean>>({})
 	const [visible, setVisible] = useState<Record<string, boolean>>({})
+
+	const finish = (provider: string) => {
+		setKeys((prev) => ({ ...prev, [provider]: '' }))
+		setReplacing((prev) => ({ ...prev, [provider]: false }))
+		setVisible((prev) => ({ ...prev, [provider]: false }))
+	}
 
 	const handleSave = (provider: string) => {
 		const value = keys[provider]?.trim()
-		const updatedKeys = { ...savedKeys }
-		if (value) {
-			updatedKeys[provider] = value
-		} else {
-			delete updatedKeys[provider]
-		}
-		updateWorkspace.mutate({
-			settings: { llm_keys: updatedKeys },
-		})
+		if (!value) return
+		updateWorkspace.mutate(
+			{ settings: { llm_keys: { [provider]: value } } },
+			{ onSuccess: () => finish(provider) },
+		)
 	}
 
-	const isDirty = (provider: string) => {
-		const saved = savedKeys[provider] ?? ''
-		return keys[provider] !== saved
+	const handleClear = (provider: string) => {
+		updateWorkspace.mutate(
+			{ settings: { llm_keys: { [provider]: null } } },
+			{ onSuccess: () => finish(provider) },
+		)
 	}
 
 	return (
 		<div>
 			<Label className="mb-1 text-bold">LLM API Keys</Label>
 			<p className="text-xs text-muted-foreground mb-3">
-				Set API keys per provider. All agents in this workspace will use these keys.
+				Set API keys per provider. All agents in this workspace will use these keys. A saved key
+				cannot be shown again; replace it to change it.
 			</p>
 			<div className="space-y-3">
-				{llmProviders.map((provider) => (
-					<div key={provider.key}>
-						<Label className="mb-1 text-xs text-muted-foreground">{provider.label}</Label>
-						<div className="flex gap-2">
-							<div className="relative flex-1">
-								<Input
-									type={visible[provider.key] ? 'text' : 'password'}
-									value={keys[provider.key]}
-									onChange={(e) => setKeys((prev) => ({ ...prev, [provider.key]: e.target.value }))}
-									placeholder={provider.placeholder}
-									className="pr-9"
+				{llmProviders.map((provider) => {
+					const saved = Boolean(workspace.llm_configured?.[provider.key])
+					const showInput = !saved || replacing[provider.key]
+					return (
+						<div key={provider.key}>
+							<Label className="mb-1 text-xs text-muted-foreground">{provider.label}</Label>
+							{showInput ? (
+								<div className="flex gap-2">
+									<div className="relative flex-1">
+										<Input
+											type={visible[provider.key] ? 'text' : 'password'}
+											value={keys[provider.key]}
+											onChange={(e) =>
+												setKeys((prev) => ({ ...prev, [provider.key]: e.target.value }))
+											}
+											placeholder={provider.placeholder}
+											aria-label={`${provider.label} API key`}
+											autoComplete="off"
+											className="pr-9"
+										/>
+										<button
+											type="button"
+											aria-label={visible[provider.key] ? 'Hide typed key' : 'Show typed key'}
+											className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+											onClick={() =>
+												setVisible((prev) => ({
+													...prev,
+													[provider.key]: !prev[provider.key],
+												}))
+											}
+										>
+											{visible[provider.key] ? <EyeOff size={14} /> : <Eye size={14} />}
+										</button>
+									</div>
+									<Button
+										onClick={() => handleSave(provider.key)}
+										disabled={!keys[provider.key]?.trim() || updateWorkspace.isPending}
+									>
+										Save
+									</Button>
+									{saved && (
+										<Button variant="ghost" onClick={() => finish(provider.key)}>
+											Cancel
+										</Button>
+									)}
+								</div>
+							) : (
+								<SavedKey
+									testId={`llm-key-saved-${provider.key}`}
+									hint={workspace.llm_key_hints?.[provider.key]}
+									disabled={updateWorkspace.isPending}
+									onReplace={() => setReplacing((prev) => ({ ...prev, [provider.key]: true }))}
+									onClear={() => handleClear(provider.key)}
 								/>
-								<button
-									type="button"
-									className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-									onClick={() =>
-										setVisible((prev) => ({
-											...prev,
-											[provider.key]: !prev[provider.key],
-										}))
-									}
-								>
-									{visible[provider.key] ? <EyeOff size={14} /> : <Eye size={14} />}
-								</button>
-							</div>
-							<Button
-								onClick={() => handleSave(provider.key)}
-								disabled={!isDirty(provider.key) || updateWorkspace.isPending}
-							>
-								Save
-							</Button>
+							)}
 						</div>
-					</div>
-				))}
+					)
+				})}
 			</div>
 		</div>
 	)
@@ -745,35 +803,52 @@ function CustomLlmEditor({
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const saved = (settings?.custom_llm as CustomLlmConfig | undefined) ?? {}
+	const keySaved = Boolean(workspace.llm_configured?.custom_llm)
 
 	const [enabled, setEnabled] = useState(Boolean(saved.enabled))
 	const [baseUrl, setBaseUrl] = useState(saved.base_url ?? '')
-	const [apiKey, setApiKey] = useState(saved.api_key ?? '')
 	const [model, setModel] = useState(saved.model ?? '')
 	const [smallModel, setSmallModel] = useState(saved.small_fast_model ?? '')
+	// The saved key is write-only. It is kept unless the user replaces or clears
+	// it, and a save only carries api_key in those two cases.
+	const [keyMode, setKeyMode] = useState<'keep' | 'replace' | 'clear'>('keep')
+	const [apiKey, setApiKey] = useState('')
 	const [keyVisible, setKeyVisible] = useState(false)
+
+	const showKeyInput = !keySaved || keyMode === 'replace'
+	const typedKey = apiKey.trim()
 
 	const handleSave = () => {
 		const next: CustomLlmConfig = {
 			enabled,
 			base_url: baseUrl.trim() || null,
-			api_key: apiKey.trim() || null,
 			model: model.trim() || null,
 			small_fast_model: smallModel.trim() || null,
 		}
-		updateWorkspace.mutate({
-			settings: { custom_llm: next },
-		})
+		if (keyMode === 'clear') next.api_key = null
+		else if (typedKey) next.api_key = typedKey
+		updateWorkspace.mutate(
+			{ settings: { custom_llm: next } },
+			{
+				onSuccess: () => {
+					setKeyMode('keep')
+					setApiKey('')
+					setKeyVisible(false)
+				},
+			},
+		)
 	}
 
 	const isDirty =
 		enabled !== Boolean(saved.enabled) ||
 		baseUrl !== (saved.base_url ?? '') ||
-		apiKey !== (saved.api_key ?? '') ||
+		keyMode === 'clear' ||
+		typedKey !== '' ||
 		model !== (saved.model ?? '') ||
 		smallModel !== (saved.small_fast_model ?? '')
 
-	const canEnable = baseUrl.trim() && apiKey.trim() && model.trim()
+	const hasKey = keyMode === 'clear' ? false : keySaved || typedKey !== ''
+	const canEnable = baseUrl.trim() && hasKey && model.trim()
 
 	return (
 		<div>
@@ -806,22 +881,60 @@ function CustomLlmEditor({
 
 				<div>
 					<Label className="mb-1 text-xs text-muted-foreground">API Key</Label>
-					<div className="relative">
-						<Input
-							type={keyVisible ? 'text' : 'password'}
-							value={apiKey}
-							onChange={(e) => setApiKey(e.target.value)}
-							placeholder="sk-or-..."
-							className="pr-9"
+					{showKeyInput ? (
+						<div className="flex gap-2">
+							<div className="relative flex-1">
+								<Input
+									type={keyVisible ? 'text' : 'password'}
+									value={apiKey}
+									onChange={(e) => setApiKey(e.target.value)}
+									placeholder="sk-or-..."
+									aria-label="Custom endpoint API key"
+									autoComplete="off"
+									className="pr-9"
+								/>
+								<button
+									type="button"
+									aria-label={keyVisible ? 'Hide typed key' : 'Show typed key'}
+									className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+									onClick={() => setKeyVisible((v) => !v)}
+								>
+									{keyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+								</button>
+							</div>
+							{keySaved && (
+								<Button
+									variant="ghost"
+									onClick={() => {
+										setKeyMode('keep')
+										setApiKey('')
+										setKeyVisible(false)
+									}}
+								>
+									Cancel
+								</Button>
+							)}
+						</div>
+					) : keyMode === 'clear' ? (
+						<div className="flex items-center gap-2" data-testid="custom-llm-key-clearing">
+							<span className="flex-1 text-sm text-muted-foreground">
+								The key is removed when you save.
+							</span>
+							<Button variant="ghost" size="sm" onClick={() => setKeyMode('keep')}>
+								Undo
+							</Button>
+						</div>
+					) : (
+						<SavedKey
+							testId="custom-llm-key-saved"
+							hint={workspace.llm_key_hints?.custom_llm}
+							onReplace={() => setKeyMode('replace')}
+							onClear={() => {
+								setKeyMode('clear')
+								setEnabled(false)
+							}}
 						/>
-						<button
-							type="button"
-							className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-							onClick={() => setKeyVisible((v) => !v)}
-						>
-							{keyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
-						</button>
-					</div>
+					)}
 				</div>
 
 				<div>
