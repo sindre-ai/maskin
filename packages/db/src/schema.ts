@@ -1295,6 +1295,66 @@ export const voiceToolCalls = pgTable(
 export type VoiceToolCall = typeof voiceToolCalls.$inferSelect
 export type NewVoiceToolCall = typeof voiceToolCalls.$inferInsert
 
+// ── Research runs ───────────────────────────────────────────────────────────
+//
+// One row per deep_research run: the question, what it cost and the cap it ran
+// under, and the report. cost_cents is added to the workspace's plan usage
+// (getWorkspacePlanUsdCentsUsage), so a run can never spend past the plan cap
+// unseen. The raw findings hold quotes from the web and are deleted 30 days
+// after the run; report, cost and sources stay.
+export const researchRuns = pgTable(
+	'research_runs',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id),
+		question: text('question').notNull(),
+		context: text('context'),
+		// simple | comparison | broad
+		effort: text('effort').notNull(),
+		// queued | running | done | capped | failed | interrupted
+		status: text('status').notNull().default('queued'),
+		// The cap this run was started under, after the plan-cap clamp, and the
+		// metered cost so far. Both in USD cents.
+		capCents: integer('cap_cents').notNull(),
+		costCents: integer('cost_cents').notNull().default(0),
+		tokensIn: integer('tokens_in').notNull().default(0),
+		tokensOut: integer('tokens_out').notNull().default(0),
+		searches: integer('searches').notNull().default(0),
+		extracts: integer('extracts').notNull().default(0),
+		// Same values as sessions.config.llm_route. Only maskin_plan runs count
+		// toward the plan cap, like sessions.
+		llmRoute: text('llm_route'),
+		model: text('model'),
+		brief: jsonb('brief').$type<unknown>(),
+		findings: jsonb('findings').$type<unknown>(),
+		reportMd: text('report_md'),
+		sources: jsonb('sources').$type<unknown>(),
+		warnings: jsonb('warnings').$type<unknown>(),
+		// Per-stage cost and time.
+		stages: jsonb('stages').$type<unknown>(),
+		error: text('error'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		startedAt: timestamp('started_at', { withTimezone: true }),
+		finishedAt: timestamp('finished_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('research_runs_workspace_created_idx').on(t.workspaceId, t.createdAt),
+		check(
+			'research_runs_status_check',
+			sql`${t.status} IN ('queued', 'running', 'done', 'capped', 'failed', 'interrupted')`,
+		),
+		check('research_runs_effort_check', sql`${t.effort} IN ('simple', 'comparison', 'broad')`),
+	],
+)
+
+export type ResearchRun = typeof researchRuns.$inferSelect
+export type NewResearchRun = typeof researchRuns.$inferInsert
+
 // ── Imports ───────────────────────────────────────────────────────────
 
 export const imports = pgTable(

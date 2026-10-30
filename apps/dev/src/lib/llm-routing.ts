@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { researchRuns, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
@@ -281,6 +281,7 @@ export function ceilCents(cents: number): number {
  * session's own reported `total_cost_usd` (populated from the CLI's own
  * reported cost, so it reflects whichever model actually ran) and falls back
  * to a flat token-rate estimate only for sessions that never reported one.
+ * Research runs add their own `cost_cents` (see the research_runs table).
  * Tracking dollars instead of raw tokens is what lets different agents run
  * different models — each with a different $/token ratio — without the cap
  * silently over- or under-counting usage. The route filter is what makes
@@ -307,7 +308,7 @@ export async function getWorkspacePlanUsdCentsUsage(
 	if (periodStartMs !== undefined) {
 		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))
 	}
-	const rows = await db
+	const sessionRows = db
 		.select({
 			totalCostUsd: sessions.totalCostUsd,
 			inputTokens: sessions.inputTokens,
@@ -316,7 +317,24 @@ export async function getWorkspacePlanUsdCentsUsage(
 		.from(sessions)
 		.where(and(...conds))
 
-	let totalCents = 0
+	// Research runs (deep_research) are metered in cents already, so they are
+	// summed in SQL. Only the maskin_plan route counts, like sessions: a run on
+	// the workspace's own key is not plan spend.
+	const researchConds = [
+		eq(researchRuns.workspaceId, workspaceId),
+		eq(researchRuns.llmRoute, LLM_ROUTE_MASKIN_PLAN),
+	]
+	if (periodStartMs !== undefined) {
+		researchConds.push(gte(researchRuns.createdAt, new Date(periodStartMs)))
+	}
+	const researchRows = db
+		.select({ costCents: sql<string | null>`sum(${researchRuns.costCents})` })
+		.from(researchRuns)
+		.where(and(...researchConds))
+
+	const [rows, researchSum] = await Promise.all([sessionRows, researchRows])
+
+	let totalCents = Number(researchSum[0]?.costCents ?? 0)
 	for (const row of rows) {
 		const reportedUsd = row.totalCostUsd !== null ? Number(row.totalCostUsd) : Number.NaN
 		if (Number.isFinite(reportedUsd) && reportedUsd > 0) {
@@ -397,7 +415,7 @@ export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | nul
 	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
 
-function effectivePeriodEnd(
+export function effectivePeriodEnd(
 	periodStartMs: number | undefined,
 	periodEndMs: number | undefined,
 ): number | null {
