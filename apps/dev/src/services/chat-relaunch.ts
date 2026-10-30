@@ -31,8 +31,8 @@ export interface RelaunchTarget {
 
 const terminal: ReadonlySet<string> = new Set(TERMINAL_STATUSES)
 
-// One relaunch in flight per (conversation, agent). In-process on purpose: the
-// sessions_conversation_actor_active_uniq index is the database backstop if a second
+// One relaunch in flight per (conversation, agent, thread). In-process on purpose: the
+// sessions unique indexes (conversation, agent, thread) are the database backstop if a second
 // process ever races this one.
 const inFlight = new Map<string, Promise<RelaunchOutcome>>()
 
@@ -43,7 +43,7 @@ const inFlight = new Map<string, Promise<RelaunchOutcome>>()
  * last 15 messages. pauseSession and resumeSession are never used: a pause snapshots a
  * local container, so pauseSession refuses a remote session.
  *
- * A second vault for the same (conversation, agent) while one is in flight joins it
+ * A second vault for the same (conversation, agent, thread) while one is in flight joins it
  * instead of stopping again.
  */
 export async function relaunchChatSession(
@@ -80,6 +80,8 @@ interface Origin {
 	status: string
 	actorId: string
 	conversationId: string | null
+	/** The thread the origin session answers in; null = the main chat. */
+	threadRootId: number | null
 }
 
 async function loadOrigin(db: Database, target: RelaunchTarget): Promise<Origin | null> {
@@ -89,6 +91,7 @@ async function loadOrigin(db: Database, target: RelaunchTarget): Promise<Origin 
 			status: sessions.status,
 			actorId: sessions.actorId,
 			conversationId: sessions.conversationId,
+			threadRootId: sessions.threadRootId,
 		})
 		.from(sessions)
 		.where(
@@ -99,7 +102,7 @@ async function loadOrigin(db: Database, target: RelaunchTarget): Promise<Origin 
 }
 
 function lockKey(origin: Origin): string {
-	return `${origin.conversationId ?? origin.sessionId}:${origin.actorId}`
+	return `${origin.conversationId ?? origin.sessionId}:${origin.actorId}:${origin.threadRootId ?? ''}`
 }
 
 function track(key: string, run: () => Promise<RelaunchOutcome>): Promise<RelaunchOutcome> {
@@ -163,6 +166,7 @@ async function findHolder(
 		const active = await deps.sessionManager.findConversationSessionAnyActive(
 			origin.conversationId,
 			origin.actorId,
+			origin.threadRootId,
 		)
 		return active ? { id: active.id, status: active.status } : null
 	}
