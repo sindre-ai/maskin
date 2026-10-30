@@ -10,6 +10,7 @@ import AppKit
 import UIKit
 #endif
 
+@testable import MaskinCore
 @testable import MaskinFeatures
 
 private let ws = "7d1f0c52-0e0a-4f43-9c1e-aaaaaaaaaaaa"
@@ -43,7 +44,9 @@ private struct StubFiles: FilesRemote {
 
 	func summaries(ids: [String]) async throws -> [FileSummary] {
 		ids.map {
-			$0 == pageID
+			$0 == pdfID
+			? FileSummary(id: $0, name: "Contract.pdf", mimeType: "application/pdf", sizeBytes: 90_000)
+			: $0 == pageID
 				? FileSummary(id: $0, name: "Pilot plan.md", mimeType: "text/markdown", sizeBytes: 80)
 				: FileSummary(id: $0, name: "Landing page.html", mimeType: "text/html", sizeBytes: 4000)
 		}
@@ -52,6 +55,7 @@ private struct StubFiles: FilesRemote {
 
 private let taskID = "55555555-2222-3333-4444-555555555555"
 private let goneID = "66666666-2222-3333-4444-555555555555"
+private let pdfID = "77777777-2222-3333-4444-555555555555"
 
 /// Answers a task for `taskID` and "not found" for anything else.
 private struct StubTasks: ObjectDraftsRemote {
@@ -275,6 +279,38 @@ struct LinkedCardSnapshotTests {
 		}
 	}
 
+	@Test("object chips in a sentence, wrapped across lines, in your own bubble, at 390 wide, light and dark, default and largest text")
+	func chips() async throws {
+		let store = await objectStore()
+		let directory = InternalLinkDirectory(store: { store })
+		let task = "https://maskin.io/\(ws)/objects/\(taskID)"
+		let gone = "https://maskin.io/\(ws)/objects/\(goneID)"
+		let theirs = ChatMessage(
+			id: "m1", serverID: 1, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content: "I checked [the login fix](\(task)) and it holds. The older one, [\(gone)](\(gone)), is gone.",
+			createdAt: Date(timeIntervalSince1970: 1_790_000_000))
+		let wrapped = ChatMessage(
+			id: "m2", serverID: 2, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content:
+				"Before we ship anything to the testers this week I would like somebody to look at [the login fix](\(task)) once more, because it touches the code entry screen.",
+			createdAt: Date(timeIntervalSince1970: 1_790_000_100))
+		let own = ChatMessage(
+			id: "m3", serverID: 3, conversationID: "c", actorID: "me", actorName: "Me", author: .human,
+			content: "Is [this one](\(task)) done?", createdAt: Date(timeIntervalSince1970: 1_790_000_200))
+		for dark in [false, true] {
+			for largest in [false, true] {
+				let column = VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+					MessageRow(message: theirs, isOwn: false, showsAuthor: true)
+					MessageRow(message: wrapped, isOwn: false, showsAuthor: false)
+					MessageRow(message: own, isOwn: true, showsAuthor: false)
+				}
+				.environment(\.linkedItems, store)
+				.environment(\.markdownInternalLinkInfo, { url in directory.info(for: url) })
+				try await render(column, width: 390, dark: dark, name: "linked-chips", largest: largest)
+			}
+		}
+	}
+
 	@Test("a stand-alone agent link and chat link are cards in the message")
 	func placesInMessage() async throws {
 		let store = await placesStore()
@@ -287,6 +323,61 @@ struct LinkedCardSnapshotTests {
 			try await render(
 				MessageRow(message: message, isOwn: false, showsAuthor: true).environment(\.linkedItems, store), width: 390,
 				dark: dark, name: "linked-place-message")
+		}
+	}
+	@Test("the chip preview sheet, default and Copied, at 390 wide, light and dark, default and largest text")
+	func chipSheet() async throws {
+		let store = await objectStore()
+		guard case .object(let object)? = store.item(for: LinkedTarget(kind: .object, uuid: taskID)) else {
+			Issue.record("the task did not resolve")
+			return
+		}
+		let web = try #require(URL(string: "https://maskin.io/\(ws)/objects/\(taskID)"))
+		for dark in [false, true] {
+			for largest in [false, true] {
+				for copied in [false, true] {
+					let sheet = LinkedChipSheet(object: object, webURL: web, copied: copied)
+						.background(MaskinSurface.card)
+						.environment(\.linkedItems, store)
+					try await render(
+						sheet, width: 390, dark: dark, name: copied ? "chip-sheet-copied" : "chip-sheet", largest: largest)
+				}
+			}
+		}
+	}
+}
+
+extension LinkedCardSnapshotTests {
+	@Test("the Linked sheet draws an object, a deleted object and a page as cards and a PDF as the plain row, light and dark")
+	func linkedSheet() async throws {
+		let store = LinkedItemStore(
+			objects: StubTasks(), files: StubFiles(),
+			actors: { [ActorRef(id: "agent-1", name: "Developer", isAgent: true)] }, workspaceID: { ws })
+		let targets = [
+			LinkedTarget(kind: .object, uuid: taskID), LinkedTarget(kind: .object, uuid: goneID),
+			LinkedTarget(kind: .file, uuid: pageID), LinkedTarget(kind: .file, uuid: pdfID),
+		]
+		await store.resolve(targets)
+		for _ in 0..<40 where store.owner(for: "agent-1") == nil { try? await Task.sleep(for: .milliseconds(50)) }
+		let object = LinkedTarget(kind: .object, uuid: taskID)
+		let gone = LinkedTarget(kind: .object, uuid: goneID)
+		let pdf = LinkedTarget(kind: .file, uuid: pdfID)
+		guard case .object? = store.item(for: object), case .deleted? = store.item(for: gone),
+			case .plain? = store.item(for: pdf)
+		else {
+			Issue.record("the targets did not resolve to an object, a deleted object and a plain PDF")
+			return
+		}
+		let entries = targets.enumerated().map {
+			LinkedEntry(
+				target: $0.element, messageID: "m\($0.offset)", actorID: "agent-1", actorName: "Developer",
+				author: .agent, date: Date(timeIntervalSinceNow: -3600))
+		}
+		for dark in [false, true] {
+			let sheet = LinkedSheet(entries: entries, onJump: { _ in }, onApproved: { _, _, _ in })
+				.frame(height: 820)
+				.environment(\.linkedItems, store)
+			try await render(sheet, width: 390, dark: dark, name: "linked-sheet")
 		}
 	}
 }

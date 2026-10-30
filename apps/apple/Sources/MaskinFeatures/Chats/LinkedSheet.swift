@@ -54,16 +54,7 @@ struct LinkedSheet: View {
 	}
 
 	private func openAfterClosing(_ target: LinkedTarget) {
-		dismiss()
-		Task {
-			try? await Task.sleep(for: .milliseconds(450))
-			switch target.kind {
-			case .object: runtime?.openObject(target.uuid)
-			case .file: runtime?.openFile(target.uuid)
-			case .agent: runtime?.openAgent(target.uuid)
-			case .chat: runtime?.openChat(target.uuid)
-			}
-		}
+		LinkedOpener.openAfterClosing(target, close: { dismiss() }, runtime: runtime)
 	}
 
 	private func row(_ entry: LinkedEntry) -> some View {

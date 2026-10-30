@@ -8,9 +8,11 @@ import {
 	type HastNode,
 	LINKED_CARDS_TAG,
 	type LinkedTarget,
+	type SettingsTarget,
 	type StandaloneCard,
 	githubTargetOf,
 	placeLinkedCards,
+	settingsTargetOf,
 	targetOfHref,
 } from '@/lib/linked-objects'
 import {
@@ -151,6 +153,19 @@ function renderChartBlock({ language, source }: RenderCodeBlockArgs) {
  */
 export interface LinkedCardsOptions {
 	workspaceId: string
+	/** Whether the workspace is enterprise: only then is a link to the Keys settings page a chip. */
+	enterprise?: boolean
+	/**
+	 * `full` (chat, comments): a link alone on its line is a card, a link in a sentence a chip.
+	 * `chips` (For You cards, the brief drawer, object bodies): every link is a chip, a card
+	 * inside a card being a box in a box. Defaults to `full`.
+	 */
+	mode?: 'full' | 'chips'
+	/**
+	 * Chat only: drafts get their approval card and files their preview card. Outside chat pass
+	 * `false`: a draft or file link stays the plain link it was before. Defaults to `true`.
+	 */
+	draftsAndFiles?: boolean
 	/** The chat the message is in and the agent that wrote it; they let a card tell that agent. */
 	conversationId?: string
 	agentId?: string
@@ -175,6 +190,8 @@ export interface LinkedCardsOptions {
 			after?: boolean
 			/** A draft edited since an earlier message showed it: the card says so. */
 			updated?: boolean
+			/** False outside chat: a draft keeps its plain link, no approval card. */
+			draftsAndFiles?: boolean
 		},
 	) => ReactNode
 	/**
@@ -195,11 +212,22 @@ export interface LinkedCardsOptions {
 	 * sentence or alone on a line. Without it such a link stays a plain link. Keep its identity stable.
 	 */
 	renderGithubChip?: (target: GithubTarget, href: string) => ReactNode
+	/**
+	 * Draws a link to a settings page of this workspace as a chip built from the address alone, in a
+	 * sentence or alone on a line. Without it such a link stays a plain link. Keep its identity stable.
+	 */
+	renderSettingsChip?: (target: SettingsTarget, context: { workspaceId: string }) => ReactNode
 }
 
 // Decides where every linked card goes (see `placeLinkedCards`) before the tree is rendered.
-function placeCardsPlugin(skipIds: ReadonlySet<string> | undefined) {
-	return () => (tree: HastNode) => placeLinkedCards(tree, skipIds)
+function placeCardsPlugin(
+	skipIds: ReadonlySet<string> | undefined,
+	workspaceId: string | undefined,
+	chipsOnly: boolean,
+	draftsAndFiles: boolean,
+) {
+	return () => (tree: HastNode) =>
+		placeLinkedCards(tree, skipIds, workspaceId, { chipsOnly, draftsAndFiles })
 }
 
 // A list item holding a card gives up its bullet (a numbered one keeps its number, so the
@@ -261,12 +289,16 @@ function RenderedMarkdownContent({
 	// Keyed on the values, not the object: a caller passing a fresh literal each render must not
 	// change the component map, or every card in the message would remount.
 	const cardsWorkspaceId = linkedCardsOption?.workspaceId
+	const cardsEnterprise = linkedCardsOption?.enterprise
 	const cardsConversationId = linkedCardsOption?.conversationId
 	const cardsAgentId = linkedCardsOption?.agentId
 	const cardsRenderer = linkedCardsOption?.renderCard
 	const chipRenderer = linkedCardsOption?.renderChip
 	const githubChipRenderer = linkedCardsOption?.renderGithubChip
+	const settingsChipRenderer = linkedCardsOption?.renderSettingsChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
+	const chipsOnly = linkedCardsOption?.mode === 'chips'
+	const draftsAndFiles = linkedCardsOption?.draftsAndFiles !== false
 	// By value, like the rest: a fresh set with the same ids must not remount the cards.
 	const cardsUpdatedKey = linkedCardsOption?.updatedIds
 		? [...linkedCardsOption.updatedIds].sort().join(',')
@@ -276,22 +308,30 @@ function RenderedMarkdownContent({
 			cardsWorkspaceId && cardsRenderer
 				? {
 						workspaceId: cardsWorkspaceId,
+						enterprise: cardsEnterprise,
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
 						updatedIds: cardsUpdatedKey ? new Set(cardsUpdatedKey.split(',')) : undefined,
+						mode: chipsOnly ? 'chips' : 'full',
+						draftsAndFiles,
 						renderCard: cardsRenderer,
 						renderChip: chipRenderer,
 						renderGithubChip: githubChipRenderer,
+						renderSettingsChip: settingsChipRenderer,
 					}
 				: undefined,
 		[
+			chipsOnly,
+			draftsAndFiles,
 			cardsWorkspaceId,
+			cardsEnterprise,
 			cardsConversationId,
 			cardsAgentId,
 			cardsRenderer,
 			chipRenderer,
 			cardsUpdatedKey,
 			githubChipRenderer,
+			settingsChipRenderer,
 		],
 	)
 	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
@@ -326,6 +366,12 @@ function RenderedMarkdownContent({
 					if (github && linkedCards.renderGithubChip && href) {
 						return linkedCards.renderGithubChip(github, href)
 					}
+					const settings = linkedCards.renderSettingsChip
+						? settingsTargetOf(href, linkedCards.workspaceId, linkedCards.enterprise)
+						: null
+					if (settings && linkedCards.renderSettingsChip) {
+						return linkedCards.renderSettingsChip(settings, linkedCards)
+					}
 					// Same as the renderer's own link: an address on the web opens in a new tab.
 					const external = typeof href === 'string' && /^https?:\/\//.test(href)
 					const link = (
@@ -341,7 +387,8 @@ function RenderedMarkdownContent({
 					return target && linkedCards.renderChip
 						? linkedCards.renderChip(target, link, {
 								...linkedCards,
-								cardFollows: node?.data?.cardFollows !== false,
+								// Outside chat no approval card follows a draft: its link stays plain.
+								cardFollows: draftsAndFiles ? node?.data?.cardFollows !== false : true,
 							})
 						: link
 				},
@@ -370,10 +417,13 @@ function RenderedMarkdownContent({
 					)
 				},
 			}) as unknown as Components
-	}, [linkedCards])
+	}, [linkedCards, draftsAndFiles])
 	const rehypePlugins = useMemo(
-		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds)] : undefined),
-		[linkedCards, cardsSkipIds],
+		() =>
+			linkedCards
+				? [placeCardsPlugin(cardsSkipIds, cardsWorkspaceId, chipsOnly, draftsAndFiles)]
+				: undefined,
+		[linkedCards, cardsSkipIds, cardsWorkspaceId, chipsOnly, draftsAndFiles],
 	)
 
 	return (

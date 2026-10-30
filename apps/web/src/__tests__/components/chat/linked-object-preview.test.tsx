@@ -71,7 +71,11 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
-import { LinkedCardOrLink, LinkedObjectCard } from '@/components/chat/linked-object-preview'
+import {
+	LinkedCardOrLink,
+	LinkedObjectCard,
+	outsideChatLinkedCards,
+} from '@/components/chat/linked-object-preview'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 
 const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
@@ -713,6 +717,29 @@ describe('LinkedCardOrLink', () => {
 		renderObject()
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+	})
+
+	it('keeps the plain link for a draft outside chat, with no approval card', () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				draftsAndFiles={false}
+			/>,
+		)
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+		expect(screen.queryByText('LinkedIn note to Catja')).not.toBeInTheDocument()
+	})
+
+	it('outsideChatLinkedCards names the mode, leaves drafts and files plain and uses the shared renderers', () => {
+		const full = outsideChatLinkedCards(WS, 'full')
+		const chips = outsideChatLinkedCards(WS, 'chips')
+		expect(full).toMatchObject({ workspaceId: WS, mode: 'full', draftsAndFiles: false })
+		expect(chips.mode).toBe('chips')
+		expect(chips.renderCard).toBe(full.renderCard)
+		expect(chips.renderChip).toBe(full.renderChip)
 	})
 
 	it('keeps the link for a file that is loading or not previewable, and replaces it for a page', () => {

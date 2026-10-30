@@ -1,18 +1,23 @@
 import {
 	AgentReferenceCard,
 	AgentReferenceChip,
+	ChatReferenceCard,
+	ChatReferenceChip,
 	GithubReferenceChip,
 	LoopReferenceCard,
 	LoopReferenceChip,
 	ObjectReferenceCard,
 	ObjectReferenceChip,
+	OtherWorkspaceCard,
+	OtherWorkspaceChip,
+	SettingsReferenceChip,
 	TriggerReferenceCard,
 	TriggerReferenceChip,
 } from '@/components/chat/linked-object-reference'
 import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { StatusSelect } from '@/components/objects/property-selects'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { type LinkedCardsOptions, MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
@@ -22,7 +27,13 @@ import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { type GithubTarget, type LinkedTarget, showsObjectCard } from '@/lib/linked-objects'
+import {
+	type GithubTarget,
+	type LinkedTarget,
+	type SettingsTarget,
+	isOtherWorkspace,
+	showsObjectCard,
+} from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
@@ -371,7 +382,7 @@ export function LinkedObjectCard({
  * the reference card (what it is, where it stands, who has it), except in a list, where only a
  * draft is a card. A file is a card once it is known to be previewable. Otherwise `fallback` (the
  * original link or paragraph; nothing for a card that is only ever added) stays, so a link never
- * vanishes. A loop or a trigger is never a draft: it is a reference card on its own line, a chip
+ * vanishes. A loop, a trigger or a chat is never a draft: it is a reference card on its own line, a chip
  * (the fallback) in a list, and nothing under a sentence.
  */
 export function LinkedCardOrLink({
@@ -384,6 +395,7 @@ export function LinkedCardOrLink({
 	inList = false,
 	after = false,
 	updated = false,
+	draftsAndFiles = true,
 }: {
 	workspaceId: string
 	target: LinkedTarget
@@ -398,7 +410,23 @@ export function LinkedCardOrLink({
 	after?: boolean
 	/** A draft edited since an earlier message showed it. */
 	updated?: boolean
+	/** False outside chat: a draft keeps its plain link, with no approval card. */
+	draftsAndFiles?: boolean
 }) {
+	// A link into another workspace is a placeholder, whatever it points at: nothing is fetched,
+	// and only a card on its own line is drawn (in a list it stays the chip, under a sentence nothing).
+	if (isOtherWorkspace(target, workspaceId)) {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return withLabel(
+			label,
+			<OtherWorkspaceCard
+				kind={target.kind}
+				otherWorkspaceId={target.workspaceId}
+				id={target.id}
+			/>,
+		)
+	}
 	if (target.kind === 'agent') {
 		if (after) return null
 		if (inList) return <>{fallback}</>
@@ -411,15 +439,17 @@ export function LinkedCardOrLink({
 			/>
 		)
 	}
-	if (target.kind === 'loop' || target.kind === 'trigger') {
+	if (target.kind === 'loop' || target.kind === 'trigger' || target.kind === 'chat') {
 		if (after) return null
 		if (inList) return <>{fallback}</>
 		return withLabel(
 			label,
 			target.kind === 'loop' ? (
 				<LoopReferenceCard workspaceId={workspaceId} loopId={target.id} />
-			) : (
+			) : target.kind === 'trigger' ? (
 				<TriggerReferenceCard workspaceId={workspaceId} triggerId={target.id} />
+			) : (
+				<ChatReferenceCard workspaceId={workspaceId} chatId={target.id} />
 			),
 		)
 	}
@@ -434,6 +464,7 @@ export function LinkedCardOrLink({
 			inList={inList}
 			after={after}
 			updated={updated}
+			draftsAndFiles={draftsAndFiles}
 		/>
 	) : (
 		<FileCardOrLink
@@ -485,9 +516,29 @@ export function renderLinkedCard(
 		inList?: boolean
 		after?: boolean
 		updated?: boolean
+		draftsAndFiles?: boolean
 	},
 ): ReactNode {
 	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
+}
+
+/**
+ * `MarkdownContent`'s `linkedCards` for a surface that is not chat: comments and thread replies
+ * (`full`: a card on its own line, a chip in a sentence) and For You cards, the brief drawer and
+ * object bodies (`chips`: every link a chip). A draft or file link stays a plain link.
+ */
+export function outsideChatLinkedCards(
+	workspaceId: string,
+	mode: 'full' | 'chips',
+): LinkedCardsOptions {
+	return {
+		workspaceId,
+		mode,
+		draftsAndFiles: false,
+		renderCard: renderLinkedCard,
+		renderChip: renderLinkedChip,
+		renderGithubChip: renderLinkedGithubChip,
+	}
 }
 
 /** `MarkdownContent`'s `linkedCards.renderGithubChip`: a link to a GitHub pull request or issue, as a chip that opens GitHub. */
@@ -495,12 +546,25 @@ export function renderLinkedGithubChip(target: GithubTarget, href: string): Reac
 	return <GithubReferenceChip target={target} href={href} />
 }
 
-/** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop or trigger inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
+/** `MarkdownContent`'s `linkedCards.renderSettingsChip`: a link to a settings page, as a chip wherever it stands. */
+export function renderLinkedSettingsChip(
+	target: SettingsTarget,
+	context: { workspaceId: string },
+): ReactNode {
+	return <SettingsReferenceChip workspaceId={context.workspaceId} target={target} />
+}
+
+/** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop, trigger, agent or chat inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
 export function renderLinkedChip(
 	target: LinkedTarget,
 	fallback: ReactNode,
 	context: { workspaceId: string; cardFollows?: boolean },
 ): ReactNode {
+	if (isOtherWorkspace(target, context.workspaceId)) {
+		return (
+			<OtherWorkspaceChip kind={target.kind} otherWorkspaceId={target.workspaceId} id={target.id} />
+		)
+	}
 	switch (target.kind) {
 		case 'object':
 			return (
@@ -535,6 +599,14 @@ export function renderLinkedChip(
 					fallback={fallback}
 				/>
 			)
+		case 'chat':
+			return (
+				<ChatReferenceChip
+					workspaceId={context.workspaceId}
+					chatId={target.id}
+					fallback={fallback}
+				/>
+			)
 		default:
 			return fallback
 	}
@@ -550,6 +622,7 @@ function ObjectCardOrLink({
 	inList,
 	after,
 	updated,
+	draftsAndFiles,
 }: {
 	workspaceId: string
 	objectId: string
@@ -560,8 +633,11 @@ function ObjectCardOrLink({
 	inList: boolean
 	after: boolean
 	updated: boolean
+	draftsAndFiles: boolean
 }) {
 	const { data: object } = useObject(objectId)
+	// Outside chat there is no approval card: a draft stays the link it was.
+	if (!draftsAndFiles && showsObjectCard(object, workspaceId)) return <>{fallback}</>
 	// A draft keeps today's card, and its lead-in only in a list.
 	if (showsObjectCard(object, workspaceId)) {
 		return withLabel(

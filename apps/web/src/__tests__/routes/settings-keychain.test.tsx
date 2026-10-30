@@ -268,7 +268,7 @@ describe('AddCredentialPage', () => {
 			await switchToLogin(user)
 
 			expect(screen.queryByLabelText('Secret')).not.toBeInTheDocument()
-			expect(screen.getByLabelText('Username or email')).toBeInTheDocument()
+			expect(screen.getByLabelText('Username')).toBeInTheDocument()
 			expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
 		})
 
@@ -279,10 +279,34 @@ describe('AddCredentialPage', () => {
 			const save = screen.getByRole('button', { name: 'Save' })
 
 			await user.type(screen.getByLabelText('Name'), 'e-conomic')
-			await user.type(screen.getByLabelText('Username or email'), 'me@example.test')
+			await user.type(screen.getByLabelText('Username'), 'me@example.test')
 			expect(save).toBeDisabled()
 			await user.type(screen.getByLabelText('Password'), PASSWORD)
 			expect(save).toBeEnabled()
+		})
+
+		it('takes an optional email next to the username', async () => {
+			mockCreateLogin.mockResolvedValue({ integrationId: 'login-id' })
+			const user = userEvent.setup()
+			render(<AddCredentialPage />)
+			await switchToLogin(user)
+			await user.type(screen.getByLabelText('Name'), 'Dinero')
+			await user.type(screen.getByLabelText('Username'), 'me')
+			await user.type(screen.getByLabelText('Password'), PASSWORD)
+			// The email is optional: the form saves without it.
+			expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+			await user.type(screen.getByLabelText('Email (optional)'), 'me@example.test')
+
+			await user.click(screen.getByRole('button', { name: 'Save' }))
+
+			await waitFor(() =>
+				expect(mockCreateLogin).toHaveBeenCalledWith({
+					displayName: 'Dinero',
+					username: 'me',
+					password: PASSWORD,
+					email: 'me@example.test',
+				}),
+			)
 		})
 
 		it('sends the login to the login endpoint, not the key one, and clears the password', async () => {
@@ -291,7 +315,7 @@ describe('AddCredentialPage', () => {
 			render(<AddCredentialPage />)
 			await switchToLogin(user)
 			await user.type(screen.getByLabelText('Name'), '  e-conomic  ')
-			await user.type(screen.getByLabelText('Username or email'), '  me@example.test  ')
+			await user.type(screen.getByLabelText('Username'), '  me@example.test  ')
 			await user.type(screen.getByLabelText('Password'), PASSWORD)
 			expect(JSON.stringify({ ...localStorage })).not.toContain(PASSWORD)
 			expect(JSON.stringify({ ...sessionStorage })).not.toContain(PASSWORD)
@@ -635,18 +659,39 @@ describe('KeychainPage: edit a credential', () => {
 		expect(JSON.stringify({ ...localStorage })).not.toContain(SECRET)
 	})
 
-	it('replaces a login as a whole: both fields together, never one alone', async () => {
+	it('changes only the password of a login, without asking for the username again', async () => {
 		const user = userEvent.setup()
 		open({ providerMode: 'byo_login' })
 		await user.click(editButton() as HTMLElement)
 		const d = await dialog()
-		await user.type(d.getByLabelText('New username or email'), 'me@example.test')
 		expect(save(d)).toBeDisabled()
-		expect(d.getByText(/together to replace the login/)).toBeInTheDocument()
 		await user.type(d.getByLabelText('New password'), 'p4ss"word')
+		expect(save(d)).toBeEnabled()
+		await user.click(save(d))
+		expect(mockUpdate).toHaveBeenCalledWith({ password: 'p4ss"word' }, expect.any(Object))
+	})
+
+	it('changes only the username of a login', async () => {
+		const user = userEvent.setup()
+		open({ providerMode: 'byo_login' })
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		await user.type(d.getByLabelText('New username'), 'me@example.test')
+		await user.click(save(d))
+		expect(mockUpdate).toHaveBeenCalledWith({ username: 'me@example.test' }, expect.any(Object))
+	})
+
+	it('sets a username and an email together, and an email alone', async () => {
+		const user = userEvent.setup()
+		open({ providerMode: 'byo_login' })
+		await user.click(editButton() as HTMLElement)
+		const d = await dialog()
+		await user.type(d.getByLabelText('New email'), 'me@work.test')
+		expect(save(d)).toBeEnabled()
+		await user.type(d.getByLabelText('New username'), 'me')
 		await user.click(save(d))
 		expect(mockUpdate).toHaveBeenCalledWith(
-			{ username: 'me@example.test', password: 'p4ss"word' },
+			{ username: 'me', email: 'me@work.test' },
 			expect.any(Object),
 		)
 	})

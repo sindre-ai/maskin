@@ -7,6 +7,7 @@ import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useLoops } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObjects } from '@/hooks/use-objects'
+import { useParticipantMenu, useParticipantOptions } from '@/hooks/use-participant-menu'
 import { useSearchFieldHandlers } from '@/hooks/use-search-field-handlers'
 import {
 	SEARCH_QUERY_DEBOUNCE_MS,
@@ -72,6 +73,7 @@ import {
 	useState,
 } from 'react'
 import { toast } from 'sonner'
+import { ParticipantMenu } from './participant-menu'
 import { SearchField } from './search-field'
 import { RowIcon, orderRows } from './search-results'
 import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
@@ -339,7 +341,8 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	const inputRef = useRef<HTMLInputElement>(null)
 	const listboxId = useId()
 	const vocab = useSearchVocabulary()
-	const { state, dispatch, suggestion, types, statuses, query } = useSearchState(vocab)
+	const { state, dispatch, suggestion, types, statuses, participants, query } =
+		useSearchState(vocab)
 	const { parts } = state
 	const [announcement, setAnnouncement] = useState('')
 
@@ -347,7 +350,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		inputRef.current?.focus()
 	}, [])
 
-	const { onTextChange, onAcceptSuggestion, onBackspaceToWord, onRemovePill } =
+	const { onTextChange, onAcceptSuggestion, onBackspaceToWord, onRemovePill, onPickParticipant } =
 		useSearchFieldHandlers({
 			surface: 'command_palette',
 			parts,
@@ -356,6 +359,12 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 			dispatch,
 			inputRef,
 		})
+	const participantOptions = useParticipantOptions(vocab)
+	const menu = useParticipantMenu({
+		parts,
+		options: participantOptions,
+		onPick: onPickParticipant,
+	})
 
 	const hasQuery = query !== ''
 	const hasPills = parts.pills.length > 0
@@ -367,6 +376,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		text: debouncedText,
 		types,
 		statuses,
+		participants,
 		updated: '',
 		sort: 'rel',
 		limit: MAX_JUMP_ROWS,
@@ -744,6 +754,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						listboxId={listboxId}
 						activeOptionId={activeDomId}
 						listboxOpen
+						menu={menu}
 						onTextChange={onTextChange}
 						onAcceptSuggestion={onAcceptSuggestion}
 						onDismissSuggestion={() => {
@@ -763,6 +774,17 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					</kbd>
 				</div>
 
+				{/* The @ menu takes the results' place while it is open; the results stay mounted underneath. */}
+				{menu.open ? (
+					<ParticipantMenu
+						rows={menu.rows}
+						activeIndex={menu.activeIndex}
+						listboxId={menu.listboxId}
+						onPick={menu.pick}
+						className="m-1.5 border-0 p-0 shadow-none"
+					/>
+				) : null}
+
 				{/* biome-ignore lint/a11y/useFocusableInteractive: focus stays in the search field, the listbox is never tabbed to */}
 				<div
 					id={listboxId}
@@ -770,7 +792,10 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					role="listbox"
 					aria-label="Commands and results"
 					aria-busy={loading || isFetching}
-					className="max-h-[360px] min-h-0 flex-1 overflow-auto p-1.5 max-sm:max-h-none"
+					className={cn(
+						'max-h-[360px] min-h-0 flex-1 overflow-auto p-1.5 max-sm:max-h-none',
+						menu.open && 'hidden',
+					)}
 				>
 					{rows.map((group) => (
 						<div
