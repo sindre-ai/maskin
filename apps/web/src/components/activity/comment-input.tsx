@@ -1,4 +1,5 @@
 import { SlashPicker, type SlashPickerResult } from '@/components/chat/slash-picker'
+import { TagInput, type TagInputHandle } from '@/components/chat/tag-input'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -8,7 +9,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
-import { useActors } from '@/hooks/use-actors'
 import { useDictation } from '@/hooks/use-dictation'
 import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -18,11 +18,11 @@ import { cn } from '@/lib/cn'
 import { getTypeColor } from '@/lib/constants'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
+import type { TagValue } from '@/lib/tag-input-model'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
-import { MentionedText } from '../shared/mentioned-text'
 import { UploadProgress } from '../shared/upload-progress'
 
 interface CommentInputProps {
@@ -40,15 +40,10 @@ interface CommentInputProps {
 	// falling back to `onSubmitted`, because a caller that never opted in would
 	// otherwise treat a queued draft as a posted one.
 	onQueued?: () => void
-	// Direction the @-mention dropdown opens. Defaults to 'below' (object detail
-	// page, plenty of room underneath). Callers pinned to the viewport bottom
-	// (e.g. ForYouQueueCard) pass 'above' so the dropdown doesn't render
-	// off-screen.
-	mentionDropdownPlacement?: 'below' | 'above'
-	// Optional external ownership of the textarea node. When set, the composer
-	// forwards its textarea ref so callers can programmatically focus the answer
+	// Optional external ownership of the input. When set, the composer forwards
+	// the tag input's handle so callers can programmatically focus the answer
 	// control (e.g. the ask banner's "Answer it ↓" button).
-	focusRef?: React.Ref<HTMLTextAreaElement>
+	focusRef?: React.Ref<TagInputHandle>
 	// Replaces the composer's own keyboard hint in the control row. The mockup
 	// gives this slot one line, so a caller with something more useful to say
 	// (object detail names the agent that will read the comment) passes it here
@@ -69,10 +64,6 @@ function randomDraftId(): string {
 	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-// The field grows with its content up to this share of the viewport, then
-// scrolls. Matches the maxHeight on the textarea below.
-const MAX_INPUT_HEIGHT_VH = 50
-
 // Show the live character counter once the draft reaches this fraction of the
 // limit. Keeps the UI quiet for the common short-comment case.
 const COUNTER_VISIBILITY_THRESHOLD = 0.9
@@ -83,7 +74,6 @@ export function CommentInput({
 	parentEventId,
 	onSubmitted,
 	onQueued,
-	mentionDropdownPlacement = 'below',
 	focusRef,
 	hint,
 	variant = 'stacked',
@@ -92,14 +82,13 @@ export function CommentInput({
 	const isBar = variant === 'bar'
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
-	const { data: actors } = useActors(workspaceId)
 	const isMobile = useIsMobile()
 
-	const [content, setContent] = useState('')
-	const [mentions, setMentions] = useState<string[]>([])
-	const [showMentions, setShowMentions] = useState(false)
-	const [mentionFilter, setMentionFilter] = useState('')
-	const [selectedIndex, setSelectedIndex] = useState(0)
+	// What the tag input holds: the text (a tag reads "@Name") and the ids of the tags that went
+	// through the picker. Only those ids are sent, so a typed "@name" notifies nobody.
+	const [value, setValue] = useState<TagValue>({ text: '', ids: [] })
+	const content = value.text
+	const mentions = value.ids
 	const [isDraggingFile, setIsDraggingFile] = useState(false)
 	// "Reference an object" reuses the composer's own picker rather than a
 	// second search UI; the pick is inserted as the canonical markdown object
@@ -111,17 +100,16 @@ export function CommentInput({
 		[],
 	)
 
-	const inputRef = useRef<HTMLTextAreaElement>(null)
-	const overlayRef = useRef<HTMLDivElement>(null)
+	const tagRef = useRef<TagInputHandle>(null)
 	const fileInputRef = useRef<HTMLInputElement>(null)
 
-	// Merge the internal inputRef (which the resize / mention / scroll logic
-	// reads) with an optional external focusRef so callers own the same node.
-	const setTextareaRef = useCallback(
-		(node: HTMLTextAreaElement | null) => {
-			inputRef.current = node
-			if (typeof focusRef === 'function') focusRef(node)
-			else if (focusRef) focusRef.current = node
+	// Merge the internal tagRef (which the dictation / mention logic reads) with
+	// an optional external focusRef so callers own the same handle.
+	const setTagHandle = useCallback(
+		(handle: TagInputHandle | null) => {
+			tagRef.current = handle
+			if (typeof focusRef === 'function') focusRef(handle)
+			else if (focusRef) focusRef.current = handle
 		},
 		[focusRef],
 	)
@@ -136,168 +124,39 @@ export function CommentInput({
 	const attachmentLimitReached = attachments.length >= COMMENT_MAX_ATTACHMENTS
 	const isUploadingAny = attachments.some((f) => f.status === 'uploading')
 
-	const fitHeight = useCallback(() => {
-		const ta = inputRef.current
-		if (!ta) return
-		ta.style.height = 'auto'
-		const maxHeight = (window.innerHeight * MAX_INPUT_HEIGHT_VH) / 100
-		const overflows = ta.scrollHeight > maxHeight
-		ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`
-		ta.style.overflowY = overflows ? 'auto' : 'hidden'
-	}, [])
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: content drives the resize, including programmatic setContent (mention insert, post-submit reset)
-	useLayoutEffect(() => {
-		fitHeight()
-	}, [content, fitHeight])
-
-	// The field's own width also drives how many lines the draft wraps to, and
-	// it settles after first paint — the bar composer shares its row with the
-	// `+`, mic and send buttons, so measuring only on mount leaves the field
-	// several lines too tall on a narrow viewport. Re-fit whenever it resizes.
-	useLayoutEffect(() => {
-		const ta = inputRef.current
-		if (!ta || typeof ResizeObserver === 'undefined') return
-		const observer = new ResizeObserver(() => fitHeight())
-		observer.observe(ta)
-		return () => observer.disconnect()
-	}, [fitHeight])
-
-	const handleScroll = useCallback(() => {
-		const overlay = overlayRef.current
-		const ta = inputRef.current
-		if (overlay && ta) overlay.scrollTop = ta.scrollTop
-	}, [])
-
-	const mentionableActors = useMemo(
-		() => actors?.filter((a) => a.id !== actor?.id && !a.isSystem) ?? [],
-		[actors, actor?.id],
-	)
-	const filteredActors = useMemo(
-		() =>
-			mentionableActors.filter((a) => a.name.toLowerCase().includes(mentionFilter.toLowerCase())),
-		[mentionableActors, mentionFilter],
-	)
-
-	const insertMention = useCallback(
-		(actorId: string, actorName: string) => {
-			const textarea = inputRef.current
-			if (!textarea) return
-
-			// Find the @ position to replace
-			const cursorPos = textarea.selectionStart
-			const textBefore = content.slice(0, cursorPos)
-			const atIndex = textBefore.lastIndexOf('@')
-			if (atIndex === -1) return
-
-			const before = content.slice(0, atIndex)
-			const after = content.slice(cursorPos)
-			const newContent = `${before}@${actorName} ${after}`
-
-			setContent(newContent)
-			if (!mentions.includes(actorId)) {
-				setMentions([...mentions, actorId])
-			}
-			setShowMentions(false)
-			setMentionFilter('')
-
-			// Focus back and set cursor after mention
-			requestAnimationFrame(() => {
-				textarea.focus()
-				const newPos = atIndex + actorName.length + 2
-				textarea.setSelectionRange(newPos, newPos)
-			})
-		},
-		[content, mentions],
-	)
-
-	const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-		const value = e.target.value
-		setContent(value)
-
-		// Check if we're in a mention context
-		const cursorPos = e.target.selectionStart
-		const textBefore = value.slice(0, cursorPos)
-		const atIndex = textBefore.lastIndexOf('@')
-
-		if (atIndex !== -1) {
-			const textAfterAt = textBefore.slice(atIndex + 1)
-			// Show mention dropdown if @ is at start or preceded by whitespace, and no space in the filter
-			const charBeforeAt = atIndex > 0 ? textBefore[atIndex - 1] : ' '
-			if (
-				(charBeforeAt === ' ' || charBeforeAt === '\n' || atIndex === 0) &&
-				!textAfterAt.includes(' ')
-			) {
-				setShowMentions(true)
-				setMentionFilter(textAfterAt)
-				setSelectedIndex(0)
-				return
-			}
-		}
-		setShowMentions(false)
-		setMentionFilter('')
-	}, [])
-
 	// Appends the dictated transcript to the draft. Renders nothing at all when
 	// the browser cannot record audio — never a dead control.
 	const dictation = useDictation(
-		useCallback((text: string) => {
-			setContent((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
-		}, []),
+		useCallback((text: string) => tagRef.current?.appendText(text), []),
 		workspaceId,
 		// The clean pass only replaces the streamed text while it is untouched.
-		useCallback((streamed: string, refined: string) => {
-			setContent((prev) => (prev.includes(streamed) ? prev.replace(streamed, () => refined) : prev))
-		}, []),
+		useCallback(
+			(streamed: string, refined: string) => tagRef.current?.replaceText(streamed, refined),
+			[],
+		),
 	)
 
-	// `trailingSpace` exists for the "@" opener: the mention dropdown stays open
-	// only while the text after the "@" contains no space (see handleInput), so
-	// seeding "@ " would close it on the very first keystroke.
-	const insertAtCursor = useCallback((snippet: string, { trailingSpace = true } = {}) => {
-		const textarea = inputRef.current
-		setContent((prev) => {
-			const pos = textarea?.selectionStart ?? prev.length
-			const before = prev.slice(0, pos)
-			const after = prev.slice(pos)
-			const spacer = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
-			const tail = trailingSpace ? ' ' : ''
-			const next = `${before}${spacer}${snippet}${tail}${after}`
-			requestAnimationFrame(() => {
-				const caret = before.length + spacer.length + snippet.length + tail.length
-				textarea?.focus()
-				textarea?.setSelectionRange(caret, caret)
-			})
-			return next
-		})
+	const handleObjectPicked = useCallback((result: SlashPickerResult) => {
+		if (result.kind === 'object') {
+			const picked = {
+				id: result.ref.id,
+				title: result.ref.title?.trim() || 'Untitled',
+				type: result.ref.type ?? 'object',
+			}
+			setReferences((prev) => (prev.some((r) => r.id === picked.id) ? prev : [...prev, picked]))
+		} else if (result.kind === 'agent') {
+			tagRef.current?.insertTag(result.ref)
+		}
+		setObjectPickerOpen(false)
 	}, [])
 
-	const handleObjectPicked = useCallback(
-		(result: SlashPickerResult) => {
-			if (result.kind === 'object') {
-				const picked = {
-					id: result.ref.id,
-					title: result.ref.title?.trim() || 'Untitled',
-					type: result.ref.type ?? 'object',
-				}
-				setReferences((prev) => (prev.some((r) => r.id === picked.id) ? prev : [...prev, picked]))
-			} else if (result.kind === 'agent') {
-				insertAtCursor(`@${result.ref.name}`)
-				setMentions((prev) => (prev.includes(result.ref.id) ? prev : [...prev, result.ref.id]))
-			}
-			setObjectPickerOpen(false)
-		},
-		[insertAtCursor],
-	)
-
-	// Opens the @-mention flow the textarea already owns instead of a parallel
-	// picker — one mention path, one dropdown.
+	// Opens the same picker the field opens when you type "@": one mention path.
+	// It waits for the menu to close and decide where focus goes, then takes focus
+	// itself — the menu would otherwise hand it back to the + button.
+	const startTagAfterMenu = useRef(false)
 	const startMention = useCallback(() => {
-		insertAtCursor('@', { trailingSpace: false })
-		setShowMentions(true)
-		setMentionFilter('')
-		setSelectedIndex(0)
-	}, [insertAtCursor])
+		startTagAfterMenu.current = true
+	}, [])
 
 	// The one place a comment's structured extras are built. Both submit paths
 	// — the direct POST and the attachment queue — spread this, so they cannot
@@ -312,8 +171,7 @@ export function CommentInput({
 	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
 
 	const resetComposer = useCallback(() => {
-		setContent('')
-		setMentions([])
+		tagRef.current?.clear()
 		setReferences([])
 		draftIdRef.current = randomDraftId()
 	}, [])
@@ -332,11 +190,9 @@ export function CommentInput({
 		// second Enter posts the same comment twice.
 		if (createComment.isPending) return
 
-		// Reconcile mentions: only include actors whose @Name is still in the text
-		const activeMentions = mentions.filter((id) => {
-			const actor = actors?.find((a) => a.id === id)
-			return actor && trimmed.includes(`@${actor.name}`)
-		})
+		// The tag input keeps the id list in step with its chips, so a tag that was
+		// deleted is already gone from it.
+		const activeMentions = mentions
 
 		const metadata = buildMetadata()
 
@@ -391,7 +247,6 @@ export function CommentInput({
 	}, [
 		content,
 		mentions,
-		actors,
 		objectId,
 		parentEventId,
 		createComment,
@@ -432,32 +287,10 @@ export function CommentInput({
 	discardRef.current = draft.discard
 	useEffect(() => () => discardRef.current(), [])
 
+	// The tag input handles the picker's keys, Shift+Enter and chips itself; this
+	// is what is left: Enter sends.
 	const handleKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (showMentions && filteredActors.length > 0) {
-				if (e.key === 'ArrowDown') {
-					e.preventDefault()
-					setSelectedIndex((i) => Math.min(i + 1, filteredActors.length - 1))
-					return
-				}
-				if (e.key === 'ArrowUp') {
-					e.preventDefault()
-					setSelectedIndex((i) => Math.max(i - 1, 0))
-					return
-				}
-				if (e.key === 'Enter' || e.key === 'Tab') {
-					e.preventDefault()
-					const selected = filteredActors[selectedIndex]
-					if (selected) insertMention(selected.id, selected.name)
-					return
-				}
-				if (e.key === 'Escape') {
-					e.preventDefault()
-					setShowMentions(false)
-					return
-				}
-			}
-
+		(e: React.KeyboardEvent<HTMLDivElement>) => {
 			if (e.key === 'Enter' && !e.shiftKey) {
 				// On touch-primary devices (iOS, mobile), let Enter insert a newline —
 				// the soft keyboard's Enter is the source of accidental submits. The
@@ -469,7 +302,7 @@ export function CommentInput({
 				handleSubmit()
 			}
 		},
-		[showMentions, filteredActors, selectedIndex, insertMention, handleSubmit],
+		[handleSubmit],
 	)
 
 	if (!actor) return null
@@ -500,7 +333,16 @@ export function CommentInput({
 						<Plus size={15} aria-hidden />
 					</Button>
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="start" className="w-[250px]">
+				<DropdownMenuContent
+					align="start"
+					className="w-[250px]"
+					onCloseAutoFocus={(e) => {
+						if (!startTagAfterMenu.current) return
+						startTagAfterMenu.current = false
+						e.preventDefault()
+						tagRef.current?.startTag()
+					}}
+				>
 					<DropdownMenuItem
 						disabled={attachmentLimitReached}
 						onSelect={() => fileInputRef.current?.click()}
@@ -674,45 +516,25 @@ export function CommentInput({
 						)}
 						<div className={cn(isBar && 'flex items-center gap-2 px-2 py-1.5')}>
 							{isBar && controlsLeft}
-							<div className={cn('relative', isBar && 'min-w-0 flex-1')}>
-								<div
-									ref={overlayRef}
-									aria-hidden
-									className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1 text-base"
-									style={{ minHeight: '28px' }}
-								>
-									<MentionedText
-										content={content}
-										actors={mentionableActors}
-										mentionClassName="rounded bg-primary/10 text-primary"
-									/>
-									{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
-									{content.endsWith('\n') && '​'}
-								</div>
-								{/* wrap="soft" + break-words match the overlay's whitespace-pre-wrap
-							    break-words so the textarea's scrollHeight (which the
-							    useLayoutEffect resize reads) reflects the wrapped layout
-							    instead of one runaway line. text-base stays for the iOS
-							    Safari zoom-on-focus guard (#655). */}
-								<textarea
-									ref={setTextareaRef}
-									value={content}
-									onChange={handleInput}
-									onKeyDown={handleKeyDown}
-									onScroll={handleScroll}
-									placeholder={
-										placeholder ??
-										(isMobile
-											? 'Write a comment...'
-											: 'Write a comment... Use @ to mention an agent')
-									}
-									rows={1}
-									wrap="soft"
-									aria-invalid={overLimit || undefined}
-									className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
-									style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_VH}vh` }}
-								/>
-							</div>
+							<TagInput
+								workspaceId={workspaceId}
+								selfActorId={actor.id}
+								initialSegments={[]}
+								handleRef={setTagHandle}
+								ariaLabel="Comment"
+								placeholder={
+									placeholder ??
+									(isMobile ? 'Write a comment...' : 'Write a comment... Use @ to mention an agent')
+								}
+								className={cn(
+									'min-h-7 max-h-[50vh] px-2 py-1 text-base',
+									isBar && 'min-w-0 flex-1',
+									overLimit && 'text-error',
+								)}
+								invalid={overLimit}
+								onChange={setValue}
+								onKeyDown={handleKeyDown}
+							/>
 							{isBar && controlsRight}
 						</div>
 						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). The
@@ -752,36 +574,6 @@ export function CommentInput({
 					}}
 				/>
 			</div>
-
-			{/* @mention autocomplete dropdown */}
-			{showMentions && filteredActors.length > 0 && (
-				<div
-					className={cn(
-						'absolute left-7 z-50 max-h-48 w-56 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md',
-						mentionDropdownPlacement === 'above' ? 'bottom-full mb-1' : 'mt-1',
-					)}
-				>
-					{filteredActors.map((a, i) => (
-						<button
-							key={a.id}
-							type="button"
-							className={cn(
-								'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm',
-								i === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-							)}
-							onMouseDown={(e) => {
-								e.preventDefault()
-								insertMention(a.id, a.name)
-							}}
-							onMouseEnter={() => setSelectedIndex(i)}
-						>
-							<ActorAvatar name={a.name} type={a.type} size="sm" />
-							<span className="truncate">{a.name}</span>
-							<span className="ml-auto text-xs text-muted-foreground">{a.type}</span>
-						</button>
-					))}
-				</div>
-			)}
 		</div>
 	)
 }

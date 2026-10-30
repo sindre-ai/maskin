@@ -333,7 +333,6 @@ export function FeedCard({
 					// Object detail split lands them on the v2 composer (branch
 					// commit 9c126196). Until then the composer renders in its
 					// stacked form with the default placeholder.
-					mentionDropdownPlacement="above"
 					onSubmitted={onReplied}
 				/>
 			</div>

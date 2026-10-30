@@ -2,17 +2,18 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { type NamedViewport, SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * Regression pin for the object-page @ mention dropdown being clipped.
+ * Regression pin for the object-page @ mention picker being clipped.
  *
  * Repro (Sebastian, #maskin-app): typing @ in the comment bar on an object
  * page shows no agent list; it only appears after scrolling to the bottom.
  * The bar is docked (sticky) to the bottom of the page scroller, so a list
  * that opens below it lands in the area the scroller clips.
  *
- * The fix passes mentionDropdownPlacement="above" at that one mount. The
- * assertions below are about the visible result, not class names: the list
- * sits above the bar, inside the viewport, and the last option is the
- * element a pointer would actually hit (a clipped list hit-tests to the
+ * The comment bar uses the shared tag input, whose picker is a popover that
+ * flips above the bar when there is no room below, and a bottom sheet on a
+ * phone. The assertions are about the visible result, not class names: the
+ * option is inside the viewport, on a computer it sits above the bar, and it
+ * is the element a pointer would actually hit (a clipped list hit-tests to the
  * scroller instead).
  */
 
@@ -40,38 +41,38 @@ for (const vp of [...SHIP_GATE_VIEWPORTS, SHORT_VIEWPORT]) {
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 
-			// The placeholder is "Comment…" on mobile and a longer form on
-			// desktop, so match only the shared prefix.
-			const composer = page.getByRole('textbox', { name: /Comment/ })
+			const composer = page.getByRole('textbox', { name: 'Comment' })
 			await expect(composer).toBeVisible({ timeout: 10_000 })
+			// Measured first: a phone's bottom sheet hides the page from the accessibility tree.
+			const composerBox = await composer.boundingBox()
 			await composer.click()
 			await composer.pressSequentially('@')
 
-			const firstOption = page.getByRole('button', { name: agentName })
-			await expect(firstOption).toBeVisible()
-			const dropdown = firstOption.locator('xpath=..')
-			const lastOption = dropdown.getByRole('button').last()
+			const option = page.getByRole('option', { name: new RegExp(agentName) })
+			await expect(option).toBeVisible()
 
-			const composerBox = await composer.boundingBox()
-			const dropdownBox = await dropdown.boundingBox()
-			if (!composerBox || !dropdownBox) throw new Error('composer or dropdown has no box')
+			const optionBox = await option.boundingBox()
+			if (!composerBox || !optionBox) throw new Error('composer or option has no box')
 
 			// Fully inside the viewport.
-			expect(dropdownBox.x).toBeGreaterThanOrEqual(0)
-			expect(dropdownBox.y).toBeGreaterThanOrEqual(0)
-			expect(dropdownBox.x + dropdownBox.width).toBeLessThanOrEqual(vp.width)
-			expect(dropdownBox.y + dropdownBox.height).toBeLessThanOrEqual(vp.height)
+			expect(optionBox.x).toBeGreaterThanOrEqual(0)
+			expect(optionBox.y).toBeGreaterThanOrEqual(0)
+			expect(optionBox.x + optionBox.width).toBeLessThanOrEqual(vp.width)
+			expect(optionBox.y + optionBox.height).toBeLessThanOrEqual(vp.height)
 
-			// Sits above the composer, not below it.
-			expect(dropdownBox.y + dropdownBox.height).toBeLessThanOrEqual(composerBox.y)
+			// On a computer the list sits above the bar, not over it. A phone gets a
+			// bottom sheet, which covers the bar by design.
+			if (vp.width >= 768) {
+				expect(optionBox.y + optionBox.height).toBeLessThanOrEqual(composerBox.y)
+			}
 
 			// A clipped list hit-tests to the scroller; a visible one hits the option.
-			const hitsLastOption = await lastOption.evaluate((el) => {
+			const hitsOption = await option.evaluate((el) => {
 				const r = el.getBoundingClientRect()
 				const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
 				return hit !== null && el.contains(hit)
 			})
-			expect(hitsLastOption).toBe(true)
+			expect(hitsOption).toBe(true)
 		})
 	})
 }

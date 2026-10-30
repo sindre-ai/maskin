@@ -46,16 +46,13 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 
 			// Post a comment so the timeline renders an authored row — that row's
 			// ActorAvatar is the slot under test, and it exists at every viewport.
-			const composer = page.getByPlaceholder(
-				viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions',
-			)
+			const composer = page.getByRole('textbox', { name: 'Comment' })
 			await composer.fill('Avatar slot check')
 			await page.getByRole('button', { name: 'Send comment' }).click()
 			// The composer clearing is the signal the post landed. Asserting on the
-			// comment's text instead would be ambiguous: the composer overlays a
-			// mirror div on its textarea, so the string matches twice while the
-			// draft is still in the field.
-			await expect(composer).toHaveValue('', { timeout: 10000 })
+			// comment's text instead would be ambiguous: the string matches twice
+			// while the draft is still in the field.
+			await expect(composer).toHaveText('', { timeout: 10000 })
 
 			// AC: initials render in the avatar slot with the account name.
 			const actorName = await page.evaluate(() => {
