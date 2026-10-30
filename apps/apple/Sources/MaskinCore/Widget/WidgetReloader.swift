@@ -35,19 +35,28 @@ public func makeWidgetReloader() -> any WidgetReloader {
 public final class DebouncedWidgetReloader: WidgetReloader, @unchecked Sendable {
 	private let base: any WidgetReloader
 	private let delay: TimeInterval
+	private let sleep: @Sendable (TimeInterval) async -> Void
 	private let lock = NSLock()
 	private var pending: Task<Void, Never>?
 
-	public init(wrapping base: any WidgetReloader, delay: TimeInterval = 1.5) {
+	/// `sleep` is how the delay is waited out; tests pass their own so a burst is coalesced by
+	/// construction instead of by racing a real clock.
+	public init(
+		wrapping base: any WidgetReloader, delay: TimeInterval = 1.5,
+		sleep: @escaping @Sendable (TimeInterval) async -> Void = {
+			try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
+		}
+	) {
 		self.base = base
 		self.delay = delay
+		self.sleep = sleep
 	}
 
 	public func reload() {
 		lock.withLock {
 			pending?.cancel()
-			pending = Task { [base, delay] in
-				try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+			pending = Task { [base, delay, sleep] in
+				await sleep(delay)
 				guard !Task.isCancelled else { return }
 				base.reload()
 			}

@@ -56,6 +56,16 @@ describe('buildSearchParams', () => {
 	})
 })
 
+describe('participants', () => {
+	it('are sent as a comma list and count as something to ask', () => {
+		expect(buildSearchParams({ ...base, participants: ['a1', 'b2'] })).toEqual({
+			participants: 'a1,b2',
+		})
+		expect(buildSearchParams({ ...base, participants: [] })).toEqual({})
+		expect(hasSearchInput({ ...base, participants: ['a1'] })).toBe(true)
+	})
+})
+
 describe('hasSearchInput', () => {
 	it('needs words or a filter, and a sort alone is not enough', () => {
 		expect(hasSearchInput(base)).toBe(false)

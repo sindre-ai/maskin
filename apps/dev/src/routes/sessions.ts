@@ -1,6 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, messages, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	integrations,
+	messages,
+	sessionLogs,
+	sessions,
+	triggers,
+} from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
@@ -10,6 +18,7 @@ import {
 	formatIntegrationConnectAsMarkdown,
 	formatKeychainAccessRequestAsMarkdown,
 	formatKeychainRequestAsMarkdown,
+	formatMcpServerRequestAsMarkdown,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
 	sessionActivityQuerySchema,
@@ -24,21 +33,28 @@ import {
 	sessionLeanRowSchema,
 	sessionLogQuerySchema,
 	sessionLogsDeepQuerySchema,
+	sessionMcpServerCardSchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionStatsResponseSchema,
 	sessionTitleFromPrompt,
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
 import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import { maskArgs } from '../lib/actor-tools-redaction'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { accessCovers, levelNotAllowed } from '../lib/integrations/access-level'
 import { providerLabel } from '../lib/integrations/access-preamble'
 import { isKeychainMode, resolveAgentAccess } from '../lib/integrations/agent-access'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
-import { isGatedRow } from '../lib/integrations/custom-mcp'
+import {
+	customMcpServerSchema,
+	isCredentialReference,
+	isGatedRow,
+} from '../lib/integrations/custom-mcp'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
 import { listProviders } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
@@ -62,10 +78,13 @@ import { loadSessionActivity } from '../lib/session-activity-query'
 import { redactSessionConfig } from '../lib/session-config-redaction'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { assertInWorkspace } from '../lib/workspace-scope'
+import { wakeAgentFromCard } from '../services/chat-card-wake'
 import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
-import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief-of-staff-chat'
+import { resolveAskTargetHuman } from '../services/chief-of-staff-chat'
 import { insertConversationMessage } from '../services/conversation-messages'
+import { findOrCreateDirectChat } from '../services/direct-chat'
+import { findDirectChatQuestion } from '../services/direct-chat-question'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
 import { ensureChatForSession } from '../services/session-chat'
@@ -494,9 +513,12 @@ app.openapi(sessionUsageRoute, (async (c) => {
 	const fromIso = fromDate.toISOString()
 	const toIso = toDate.toISOString()
 
+	// Bucketed by when the session settled, or by its last activity while it has not:
+	// a running or paused chat has no completed_at, and its usage is saved turn by turn,
+	// so it must show up live instead of only after it ends.
 	const rows = (await db.execute(sql`
 		SELECT
-			date_trunc(${bucket}, completed_at AT TIME ZONE 'UTC') AS bucket,
+			date_trunc(${bucket}, COALESCE(completed_at, updated_at) AT TIME ZONE 'UTC') AS bucket,
 			COUNT(*)::int AS session_count,
 			COALESCE(SUM(total_cost_usd), 0)::float8 AS total_cost_usd,
 			COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
@@ -508,9 +530,8 @@ app.openapi(sessionUsageRoute, (async (c) => {
 		FROM sessions
 		WHERE workspace_id = ${workspaceId}
 			AND actor_id = ${actorId}
-			AND completed_at IS NOT NULL
-			AND completed_at >= ${fromIso}::timestamptz
-			AND completed_at <  ${toIso}::timestamptz
+			AND COALESCE(completed_at, updated_at) >= ${fromIso}::timestamptz
+			AND COALESCE(completed_at, updated_at) <  ${toIso}::timestamptz
 		GROUP BY 1
 		ORDER BY 1 ASC
 	`)) as unknown as Array<{
@@ -553,6 +574,70 @@ app.openapi(sessionUsageRoute, (async (c) => {
 
 	return c.json({ buckets, totals })
 }) as RouteHandler<typeof sessionUsageRoute, Env>)
+
+// GET /stats - One row per agent: session count, active count, cost and latest status.
+// The Agents page reads this instead of paging the whole session list to count it.
+// Registered before /{id} so the static `stats` segment wins the match.
+const ACTIVE_SESSION_STATUSES = ['running', 'starting', 'pending']
+
+const sessionStatsRoute = createRoute({
+	method: 'get',
+	path: '/stats',
+	tags: ['Sessions'],
+	summary: 'Per-agent session counts, cost and latest status for the workspace',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionStatsResponseSchema } },
+			description: 'One row per agent with at least one session the caller can read',
+		},
+	},
+})
+
+app.openapi(sessionStatsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const conditions = [eq(sessions.workspaceId, workspaceId)]
+	// Same read rule as the list, so a count never includes a session the caller cannot open.
+	const visibility = await sessionListVisibility(
+		db,
+		workspaceId,
+		c.get('actorId'),
+		c.get('workspaceRole'),
+	)
+	if (visibility) conditions.push(visibility)
+
+	// ISO string + ::timestamptz cast for the same pooler reason as /usage.
+	const windowStartIso = new Date(Date.now() - 30 * DAY_MS).toISOString()
+	const settledAt = sql`COALESCE(${sessions.completedAt}, ${sessions.updatedAt})`
+
+	const rows = await db
+		.select({
+			actorId: sessions.actorId,
+			total: sql<number>`COUNT(*)::int`,
+			active: sql<number>`(COUNT(*) FILTER (WHERE ${inArray(sessions.status, ACTIVE_SESSION_STATUSES)}))::int`,
+			totalCostUsd: sql<number>`COALESCE(SUM(${sessions.totalCostUsd}), 0)::float8`,
+			last30dCostUsd: sql<number>`COALESCE(SUM(${sessions.totalCostUsd}) FILTER (WHERE ${settledAt} >= ${windowStartIso}::timestamptz), 0)::float8`,
+			latestStatus: sql<string>`(ARRAY_AGG(${sessions.status} ORDER BY ${sessions.createdAt} DESC))[1]`,
+			latestSessionAt: sql<Date | string | null>`MAX(${sessions.createdAt})`,
+		})
+		.from(sessions)
+		.where(and(...conditions))
+		.groupBy(sessions.actorId)
+
+	return c.json(
+		rows.map((r) => ({
+			actor_id: r.actorId,
+			total: Number(r.total),
+			active: Number(r.active),
+			total_cost_usd: Number(r.totalCostUsd),
+			last_30d_cost_usd: Number(r.last30dCostUsd),
+			latest_status: r.latestStatus,
+			latest_session_at: r.latestSessionAt ? new Date(r.latestSessionAt).toISOString() : null,
+		})),
+	)
+}) as RouteHandler<typeof sessionStatsRoute, Env>)
 
 // GET /:id - Get session detail
 const getSessionResponseSchema = sessionResponseSchema.extend({
@@ -1000,6 +1085,53 @@ app.openapi(inputSessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
+	// A tapped answer to a question the agent asked in its direct message with the person. That
+	// session has usually ended, or was started by an agent, so there is nothing to type into: the
+	// answer is recorded in the chat and the asking agent gets a turn, as for any card in a chat.
+	// Only for a question in a conversation that carries the direct pair key, in the direct message
+	// of the caller and the asking agent; every other call takes the path below.
+	if (body.question_answer) {
+		const directQuestion = await findDirectChatQuestion(db, {
+			workspaceId,
+			sessionId: session.id,
+			agentId: session.actorId,
+			callerId: actorId,
+			questionMessageId: body.question_answer.question_message_id,
+		})
+		if (directQuestion) {
+			if (directQuestion.answered) {
+				return c.json(createApiError('CONFLICT', 'This question has already been answered'), 409)
+			}
+			const secretRefusal = await refuseRawSecret(db, {
+				content: body.content,
+				workspaceId,
+				actorId,
+				actorType: c.get('actorType'),
+				entityType: 'session',
+				entityId: id,
+			})
+			if (secretRefusal) return c.json(secretRefusal, 400)
+
+			await insertConversationMessage(db, {
+				conversationId: directQuestion.conversationId,
+				workspaceId,
+				actorId,
+				content: body.content,
+				metadata: { question_answer: body.question_answer },
+				sessionId: null,
+			})
+			await wakeAgentFromCard({
+				db,
+				sessionManager: c.get('sessionManager'),
+				workspaceId,
+				callerId: actorId,
+				card: { conversation_id: directQuestion.conversationId, agent_id: session.actorId },
+				instruction: body.content,
+			})
+			return c.json({ ok: true as const })
+		}
+	}
+
 	// The turn is written as the session's user, so only whoever started the
 	// session may add one. Checked before the state gates so a stranger learns
 	// nothing about whether it is running.
@@ -1276,9 +1408,11 @@ const askSessionRoute = createRoute({
 					schema: z.object({
 						message_id: z.number(),
 						posted: z.literal(true),
-						// 'chief_of_staff' means the answer goes to the Chief of Staff's chat,
-						// not back into this session, so the agent must not wait for it.
-						delivered_to: z.enum(['chat', 'chief_of_staff']),
+						// 'master' means the question is in the asking agent's direct message with the
+						// person; the answer wakes the agent there. 'chief_of_staff' is no longer
+						// returned (the Chief of Staff has a direct message like any agent) and stays so
+						// an older client still validates.
+						delivered_to: z.enum(['chat', 'chief_of_staff', 'master']),
 					}),
 				},
 			},
@@ -1323,18 +1457,40 @@ app.openapi(askSessionRoute, (async (c) => {
 
 	// A chat session asks in its own conversation; a helper another agent started
 	// asks in the one it was started from. Anything else (a trigger-driven run, a
-	// session started from the sessions UI) asks in the person's 1-1 with the
-	// Chief of Staff, so every question lands in one thread.
+	// session started from the sessions UI) asks in the asking agent's direct message
+	// with the person (the pair's stored DM, reported as 'master'), so a question never
+	// lands in a chat that merely holds the same two people.
 	let conversationId = session.conversationId ?? helperAskConversationId(session)
-	let deliveredTo: 'chat' | 'chief_of_staff' = 'chat'
-	let cosHumanId: string | null = null
+	let deliveredTo: 'chat' | 'master' = 'chat'
+	const routedTo: 'session_chat' | 'helper_chat' | 'master' = session.conversationId
+		? 'session_chat'
+		: conversationId
+			? 'helper_chat'
+			: 'master'
+	let masterHumanId: string | null = null
 	if (!conversationId) {
 		const humanId = await resolveAskTargetHuman(db, session.workspaceId, session.createdBy)
-		cosHumanId = humanId
-		const cosChat = humanId ? await ensureChiefOfStaffChat(db, session.workspaceId, humanId) : null
-		if (cosChat) {
-			conversationId = cosChat.conversationId
-			deliveredTo = 'chief_of_staff'
+		const [agent] = humanId
+			? await db
+					.select({ name: actors.name })
+					.from(actors)
+					.where(eq(actors.id, session.actorId))
+					.limit(1)
+			: []
+		const directChat =
+			humanId && agent
+				? await findOrCreateDirectChat(db, {
+						workspaceId: session.workspaceId,
+						humanId,
+						agentId: session.actorId,
+						title: agent.name,
+						createdBy: humanId,
+					})
+				: null
+		if (directChat) {
+			conversationId = directChat.id
+			deliveredTo = 'master'
+			masterHumanId = humanId
 		}
 	}
 	if (!conversationId || (deliveredTo === 'chat' && !session.interactive)) {
@@ -1357,7 +1513,8 @@ app.openapi(askSessionRoute, (async (c) => {
 			question: {
 				session_id: session.id,
 				questions,
-				...(isHelper ? { reply_to_session: true } : {}),
+				...(isHelper || deliveredTo === 'master' ? { reply_to_session: true } : {}),
+				routed_to: routedTo,
 			},
 		},
 		sessionId: session.id,
@@ -1392,17 +1549,16 @@ app.openapi(askSessionRoute, (async (c) => {
 			.where(eq(sessions.id, session.id))
 	}
 
-	// Push the person: an agent is blocked on them. Recipients: for the Chief of
-	// Staff 1-1 it is the resolved human (the 1-1's only human); otherwise every
-	// active human in the conversation the question was posted to, because that
-	// chat -- not session.createdBy, which for a helper is the asking agent and
-	// for a chat session is whoever sent the first message -- is where the
-	// answer will be read. Best effort and after the post: it never alters the
-	// response.
+	// Push the person: an agent is blocked on them. Recipients: for the direct message it
+	// is the resolved human (the chat's only human); otherwise every active human
+	// in the conversation the question was posted to, because that chat -- not
+	// session.createdBy, which for a helper is the asking agent and for a chat
+	// session is whoever sent the first message -- is where the answer will be read.
+	// Best effort and after the post: it never alters the response.
 	try {
 		const askTargets =
-			deliveredTo === 'chief_of_staff' && cosHumanId
-				? [cosHumanId]
+			deliveredTo === 'master' && masterHumanId
+				? [masterHumanId]
 				: await humanParticipants(db, conversationId, session.actorId)
 		await notifyAgentQuestion(db, {
 			workspaceId: session.workspaceId,
@@ -2238,6 +2394,199 @@ app.openapi(integrationAccessCardRoute, (async (c) => {
 	})
 	return c.json({ posted: true, already_granted: false, message_id: created.id }, 200)
 }) as RouteHandler<typeof integrationAccessCardRoute, Env>)
+
+// POST /:id/mcp-server-card - Ask the human to add a tool (MCP) server the agent already has the details of
+//
+// Called by the `add_mcp_server` MCP tool. Posts a card with the server's details, ready to Add,
+// and an input for each secret the server needs. The card holds no secret: the person types those
+// in, and adding the server is their own call to POST /api/custom-mcp-servers (a person only), then
+// /integrations/:id/allow-access for the agent that asked, so an agent can never add a server or
+// widen its own access from here.
+const mcpServerCardRoute = createRoute({
+	method: 'post',
+	path: '/{id}/mcp-server-card',
+	'x-viewer-policy': 'writer',
+	tags: ['Sessions'],
+	summary: 'Post a card in the session chat asking the person to add a tool server',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionMcpServerCardSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({ posted: z.literal(true), message_id: z.number() }),
+				},
+			},
+			description: 'Card posted',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description:
+				'The server definition is not valid, or carries a secret the agent must not hold',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Card could not be persisted',
+		},
+	},
+})
+
+app.openapi(mcpServerCardRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+	await isWorkspaceWriter(db, actorId, session.workspaceId)
+
+	const target = cardTarget(session)
+	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
+
+	// One or the other: with both, the card could show an address while a command is what runs.
+	if (body.command && body.url) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'Give either command (a server that runs inside you) or url (a remote server), not both.',
+			),
+			400,
+		)
+	}
+
+	const secretEnv = [...new Set(body.secret_env ?? [])]
+	const secretHeaders = [...new Set(body.secret_headers ?? [])]
+	if (
+		secretEnv.some((n) => body.env && n in body.env) ||
+		secretHeaders.some((n) => body.headers && n in body.headers)
+	) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'A name is in both the values and the secrets. Put a secret only in secret_env or secret_headers, with no value.',
+			),
+			400,
+		)
+	}
+
+	// A value under a secret-looking name is the secret itself: the person types those, and only a
+	// Keychain reference may be given here (the message is readable by everyone in the chat).
+	const looksSecret = (name: string) =>
+		/authorization|token|secret|passw(or)?d|api[-_]?key|apikey|credential|private[-_]?key/i.test(
+			name,
+		)
+	const literalSecret = [
+		...Object.entries(body.env ?? {}),
+		...Object.entries(body.headers ?? {}),
+	].find(([name, value]) => looksSecret(name) && !isCredentialReference(value))
+	if (literalSecret) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`${literalSecret[0]} looks like a secret, so it cannot be given as a value. Name it in secret_env or secret_headers so the person types it into the card, or give a Keychain reference like \${KEYCHAIN_BYO_APIKEY_NAME}.`,
+			),
+			400,
+		)
+	}
+
+	// The definition as it will be saved, with the secrets still empty: the same rules as adding
+	// a server by hand, so a card is never posted for one that could not be added.
+	const candidate = customMcpServerSchema.safeParse({
+		...(body.type ? { type: body.type } : {}),
+		...(body.command ? { command: body.command } : {}),
+		...(body.args ? { args: body.args } : {}),
+		...(body.url ? { url: body.url } : {}),
+		...(body.env || secretEnv.length > 0
+			? { env: { ...body.env, ...Object.fromEntries(secretEnv.map((n) => [n, ''])) } }
+			: {}),
+		...(body.headers || secretHeaders.length > 0
+			? { headers: { ...body.headers, ...Object.fromEntries(secretHeaders.map((n) => [n, ''])) } }
+			: {}),
+	})
+	if (!candidate.success) {
+		const problem = candidate.error.issues[0]
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				`Not a valid tool server${problem ? `: ${problem.path.join('.') || 'server'} ${problem.message}` : ''}`,
+			),
+			400,
+		)
+	}
+	// Args are shown to every member and stored in the message, so a credential in one is refused:
+	// the masking pass is what the settings page uses to spot a secret-looking arg.
+	const args = candidate.data.args ?? []
+	if (maskArgs(args).some((masked, i) => masked !== args[i])) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'An argument looks like a secret. Never put a key in args: pass it as an env var or header and name it in secret_env or secret_headers so the person types it into the card.',
+			),
+			400,
+		)
+	}
+
+	const created = await insertConversationMessage(db, {
+		conversationId: target.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatMcpServerRequestAsMarkdown(body.name, body.hint),
+		metadata: {
+			mcp_server_request: {
+				session_id: session.id,
+				name: body.name,
+				...(body.hint ? { hint: body.hint } : {}),
+				...(candidate.data.type ? { type: candidate.data.type } : {}),
+				...(candidate.data.command ? { command: candidate.data.command } : {}),
+				...(candidate.data.args ? { args: candidate.data.args } : {}),
+				...(candidate.data.url ? { url: candidate.data.url } : {}),
+				...(body.env && Object.keys(body.env).length > 0 ? { env: body.env } : {}),
+				...(body.headers && Object.keys(body.headers).length > 0 ? { headers: body.headers } : {}),
+				...(secretEnv.length > 0 ? { secret_env: secretEnv } : {}),
+				...(secretHeaders.length > 0 ? { secret_headers: secretHeaders } : {}),
+				...(target.helper ? { reply_to_session: true } : {}),
+			},
+		},
+		sessionId: session.id,
+	})
+	if (!created) {
+		logger.error('Tool server card insert returned no row', {
+			sessionId: session.id,
+			conversationId: target.conversationId,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Tool server card could not be posted'), 500)
+	}
+	if (target.helper) {
+		await markHelperAwaitingCard(db, session.id, created.id, `add the ${body.name} tool server`)
+	}
+	// Never the definition: a command or URL can name an account.
+	logger.info('Posted tool server card into conversation', {
+		sessionId: session.id,
+		conversationId: target.conversationId,
+		messageId: created.id,
+	})
+	return c.json({ posted: true as const, message_id: created.id }, 200)
+}) as RouteHandler<typeof mcpServerCardRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({

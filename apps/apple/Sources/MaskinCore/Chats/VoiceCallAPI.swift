@@ -23,8 +23,7 @@ public enum VoiceCallEndReason: String, Sendable {
 }
 
 public enum VoiceCallFailure: Error, Sendable, Equatable {
-	/// 404: voice mode is off for this person, or the agent is not in the workspace. The caller
-	/// falls back to the dictation-based call.
+	/// 404: the agent is not in the workspace. The caller falls back to the dictation-based call.
 	case unavailable
 	/// 400: the target is not an agent.
 	case notAnAgent

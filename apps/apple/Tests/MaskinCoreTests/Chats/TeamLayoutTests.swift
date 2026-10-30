@@ -203,6 +203,32 @@ struct TeamLayoutTests {
 		#expect(none.empty?.action == "Search all of Maskin")
 	}
 
+	@Test("a search also finds archived chats, keeps the Archived row for them and is not a dead end")
+	func searchFindsArchived() {
+		let archived = [
+			chatConvo("old", title: "Roadmap 2025", last: ago(hours: 900)),
+			chatConvo("other", title: "Budget", last: ago(hours: 800)),
+		]
+		let found = build([chatConvo("a")], archived: archived, query: "road")
+		#expect(found.archivedMatches.map(\.id) == ["old"])
+		#expect(found.showsArchived)
+		#expect(found.archivedCount == 2)
+		#expect(found.empty == nil, "an archived match is a result")
+		#expect(found.sections.isEmpty)
+
+		let miss = build([chatConvo("a")], archived: archived, query: "zzz")
+		#expect(miss.archivedMatches.isEmpty)
+		#expect(miss.showsArchived == false)
+		#expect(miss.empty == .noResults("zzz"))
+
+		let plain = build([chatConvo("a")], archived: archived)
+		#expect(plain.archivedMatches.isEmpty, "no query, no matches list")
+		#expect(plain.showsArchived)
+
+		let chipped = build([chatConvo("a")], archived: archived, chip: .unread, query: "road")
+		#expect(chipped.archivedMatches.isEmpty, "a filter chip leaves archived chats out")
+	}
+
 	@Test("nothing at all shows the first-run empty state; archived rows count and show when not filtering")
 	func emptyAndArchived() {
 		let nothing = build([])
@@ -411,5 +437,35 @@ struct WorkingTextTests {
 		#expect(text(["Forge", "Ida"]) == "Forge and Ida are working")
 		#expect(text(["Forge", "Ida", "Relay"]) == "3 working")
 		#expect(ConversationRowStatus.make(conversation: convo, workingAgents: 1).workingText == "Working")
+	}
+}
+
+@Suite("ConversationRowStatus links") struct ConversationRowStatusLinkTests {
+	private func convo(_ snippet: String, who: String? = "Developer") -> ConversationSummary {
+		ConversationSummary(id: "c", title: "t", snippet: snippet, snippetActorName: who)
+	}
+
+	@Test("the author lead is unchanged and a bare address reads link in a muted run")
+	func bareAddressAfterLead() {
+		let status = ConversationRowStatus.make(conversation: convo("https://maskin.io/ws/objects/abc"))
+		#expect(status.preview == "Developer: link")
+		#expect(
+			status.previewPieces == [
+				ChatPreviewText.Piece("Developer: "), ChatPreviewText.Piece("link", isLink: true),
+			])
+	}
+
+	@Test("a cut link shows its words after the lead")
+	func cutLinkAfterLead() {
+		let status = ConversationRowStatus.make(conversation: convo("[Chat preview cards for every li"))
+		#expect(status.preview == "Developer: Chat preview cards for every li")
+		#expect(status.previewPieces == nil)
+	}
+
+	@Test("assigning a new preview drops the old runs")
+	func assigningPreviewResetsRuns() {
+		var status = ConversationRowStatus.make(conversation: convo("https://x.io/a"))
+		status.preview = "2 conversations · Title"
+		#expect(status.previewPieces == nil)
 	}
 }

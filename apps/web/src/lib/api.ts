@@ -6,6 +6,7 @@ import type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileUploadSession,
 	FromSuggestedStep,
 	ListLoopsResponse,
 	LoopSummary,
@@ -41,7 +42,7 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
+import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -747,7 +748,7 @@ export const api = {
 			}),
 		createByoLogin: (
 			workspaceId: string,
-			body: { displayName: string; username: string; password: string },
+			body: { displayName: string; username: string; password: string; email?: string },
 		) =>
 			request<{ integrationId: string }>('/integrations/byo-login', {
 				method: 'POST',
@@ -762,6 +763,7 @@ export const api = {
 				rawSecret?: string
 				username?: string
 				password?: string
+				email?: string
 			},
 		) =>
 			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
@@ -840,7 +842,12 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			provider: string,
-			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
+			body?: {
+				api_key?: string
+				receive_subdomain?: string
+				install_new_org?: boolean
+				origin?: string
+			},
 		) =>
 			request<{
 				install_url?: string
@@ -890,6 +897,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		disconnectGoogle: (
+			workspaceId: string,
+			body: { email: string; scope: 'drive' | 'drive-meet' | 'google' },
+		) =>
+			request<{ disconnected: { id: string; provider: string }[] }>(
+				'/integrations/google/disconnect',
+				{ method: 'POST', body, workspaceId },
+			),
 		githubLinkable: (workspaceId: string) =>
 			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
 		githubLink: (workspaceId: string, installationId: string) =>
@@ -924,6 +939,13 @@ export const api = {
 			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
 				workspaceId,
 			}),
+		driveWatches: (workspaceId: string) =>
+			request<DriveWatch[]>('/integrations/google-drive/watched-folders', { workspaceId }),
+		stopDriveWatch: (workspaceId: string, folderId: string) =>
+			request<{ ok: true; folderId: string }>(
+				`/integrations/google-drive/watched-folders/${encodeURIComponent(folderId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
 	},
 
 	notifications: {
@@ -1006,6 +1028,7 @@ export const api = {
 			const qs = new URLSearchParams(params).toString()
 			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
 		},
+		stats: (workspaceId: string) => request<SessionStatsRow[]>('/sessions/stats', { workspaceId }),
 	},
 
 	events: {
@@ -1304,7 +1327,7 @@ export const api = {
 		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
 		// credential comes back: the connection to the vendor is made by the
 		// server when the offer below is posted.
-		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+		create: (workspaceId: string, body: { agent_actor_id: string; conversation_id?: string }) =>
 			request<{ voice_session_id: string }>('/voice-sessions', {
 				method: 'POST',
 				body,
@@ -1567,6 +1590,20 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		// Threads the caller started or replied in, across their conversations.
+		replyThreads: (workspaceId: string, params?: { limit?: number }) => {
+			const qs = params?.limit ? `?limit=${params.limit}` : ''
+			return request<ReplyThreadListResponse>(`/conversations/threads${qs}`, { workspaceId })
+		},
+		markThreadRead: (id: string, workspaceId: string, rootId: number, lastReadMessageId: number) =>
+			request<{ last_read_message_id: number }>(
+				`/conversations/${id}/messages/${rootId}/thread/read`,
+				{
+					method: 'PUT',
+					body: { last_read_message_id: lastReadMessageId },
+					workspaceId,
+				},
+			),
 	},
 
 	files: {
@@ -1594,6 +1631,25 @@ export const api = {
 			data: CreateFileInput,
 			opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 		) => uploadFileWithProgress(workspaceId, data, opts),
+		startUpload: (
+			workspaceId: string,
+			data: { name: string; mime_type: string; size_bytes: number; description?: string | null },
+		) => request<FileUploadSession>('/files/uploads', { method: 'POST', body: data, workspaceId }),
+		completeUpload: (
+			workspaceId: string,
+			uploadId: string,
+			parts: { part_number: number; etag: string }[],
+		) =>
+			request<FileDetail>(`/files/uploads/${uploadId}/complete`, {
+				method: 'POST',
+				body: { parts },
+				workspaceId,
+			}),
+		abortUpload: (workspaceId: string, uploadId: string) =>
+			request<{ aborted: boolean }>(`/files/uploads/${uploadId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
 		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
@@ -2225,6 +2281,8 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Scopes the install's token response carried. Names only, never the token. */
+	grantedScopes?: string[]
 	/** Keychain: where the credential came from. Never the value. */
 	source?: string
 	/** Keychain: for source chat_capture, the session the key was pasted into. */
@@ -2306,6 +2364,21 @@ export interface ChatCaptureResponse {
 	undoUrl: string | null
 	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
 	relaunch: 'stopped' | 'failed'
+}
+
+/** One watched Drive folder, as the Folder watches section lists it. Optional
+ *  fields are null when the watch has no stored value for them. */
+export interface DriveWatch {
+	folderId: string
+	name: string
+	path: string | null
+	addedAt: string | null
+	lastFiredAt: string | null
+	integrationId: string
+	/** Google account (email) of the Drive connection the watch lives on. */
+	account: string | null
+	/** Enabled triggers whose filter names this folder; empty when none do. */
+	triggers: Array<{ id: string; name: string }>
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
@@ -2493,6 +2566,10 @@ export interface FileDetail extends FileListItem {
 	annotations: FileAnnotation[]
 	/** sha256 of the stored bytes, echoed as if_match so a save cannot overwrite a newer version. */
 	contentHash?: string | null
+	/** True for files too large to inline: `content` is empty, read the bytes from `downloadUrl`. */
+	contentOmitted?: boolean
+	/** Short-lived storage URL for the bytes of a file with `contentOmitted`. Expires; refetch the file for a fresh one. */
+	downloadUrl?: string
 }
 
 export interface CreateFileInput {
@@ -2732,6 +2809,25 @@ export interface MessageIntegrationAccessRequest {
 	reason?: string
 }
 
+/** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
+export interface MessageMcpServerRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	name: string
+	hint?: string
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	url?: string
+	/** Values the agent may know (not secret): a region, or a Keychain reference. */
+	env?: Record<string, string>
+	headers?: Record<string, string>
+	/** Names the person types the value for in the card. */
+	secret_env?: string[]
+	secret_headers?: string[]
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
@@ -2785,6 +2881,8 @@ export interface MessageMetadata {
 	keychain_access_request?: MessageKeychainAccessRequest
 	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
 	integration_access_request?: MessageIntegrationAccessRequest
+	/** Backend-owned: an agent's request to add a tool (MCP) server, rendered as a card. */
+	mcp_server_request?: MessageMcpServerRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
@@ -2820,6 +2918,39 @@ export interface MessageResponse {
 	 * and for callers that are not participants of the conversation.
 	 */
 	spawned_sessions?: SpawnedSession[]
+	/** The root this message replies under; null or absent on a top-level message. */
+	threadRootId?: number | null
+	/** A reply that was also sent to the main timeline. */
+	threadAlsoInChannel?: boolean
+	/** Reply summary on a top-level message that has replies; null when it has none. */
+	thread?: ReplyThreadSummary | null
+}
+
+export interface ReplyThreadParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
+}
+
+export interface ReplyThreadSummary {
+	replyCount: number
+	lastReplyId: number
+	lastReplyAt: string | null
+	/** Replies by others newer than the caller's thread read cursor. */
+	unreadCount: number
+	participants: ReplyThreadParticipant[]
+}
+
+export interface ReplyThreadListItem {
+	conversationId: string
+	conversationTitle: string
+	root: MessageResponse
+	thread: ReplyThreadSummary
+	lastReply: MessageResponse | null
+}
+
+export interface ReplyThreadListResponse {
+	threads: ReplyThreadListItem[]
 }
 
 /**
@@ -2875,6 +3006,8 @@ export interface MessagesListResponse {
 export interface CreateConversationInput {
 	title: string
 	participant_actor_ids: string[]
+	/** Open the pair's one direct message instead of a new topical chat. */
+	direct?: boolean
 	initial_message?: string
 	initial_message_metadata?: MessageMetadata
 }
@@ -2894,6 +3027,10 @@ export interface PostMessageInput {
 	content: string
 	metadata?: MessageMetadata
 	session_id?: string
+	/** Post as a reply under this top-level message. */
+	thread_root_id?: number
+	/** With thread_root_id: also show the reply in the main timeline. */
+	also_in_channel?: boolean
 }
 
 export interface SessionConfigInput {

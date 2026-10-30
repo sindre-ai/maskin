@@ -17,12 +17,6 @@ import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-f
 import { CreatePicker } from '@/components/shared/create-picker'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
@@ -32,12 +26,13 @@ import { useUploadFile } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { trackChatMentionInserted, trackChatObjectReferenceCreated } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
-import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
+import type { ChatSelection, ChatSelectionAction, ChatSelectionFile } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { readFileAsBase64 } from '@/lib/file-utils'
+import { toUploadInput } from '@/lib/large-file-upload'
+import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, Hash, Info, Mic, Paperclip, Plus, X } from 'lucide-react'
+import { ArrowUp, Hash, Info, Mic, Paperclip, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -180,8 +175,17 @@ export function detectUnifiedSlashTransition({
 
 export interface ComposerProps {
 	workspaceId: string
-	onSend: (content: string) => Promise<void>
+	/**
+	 * `extras.files` carries attachments the composer made itself (the full text of a message
+	 * over the cap, see `longTextAsFile`). A caller that sets `longTextAsFile` must send them.
+	 */
+	onSend: (content: string, extras?: { files: ChatSelectionFile[] }) => Promise<void>
 	disabled: boolean
+	/**
+	 * Text over the chat message cap is sent as a .txt attachment with a short body instead of
+	 * being rejected. Only for callers that put `extras.files` on the message.
+	 */
+	longTextAsFile?: boolean
 	pending: boolean
 	surface: ChatSurface
 	placeholder: string
@@ -284,11 +288,12 @@ function writeDraft(key: string, value: string): void {
  *  - `@` typed at a word boundary opens the mention picker (agents + humans)
  *    inline at the caret; ↑↓ navigate, ↵ inserts, Escape closes. Textarea
  *    keeps DOM focus while the picker is open.
- *  - The `+` menu offers "Attach a file"; `/` and `@` cover the rest.
+ *  - The paperclip attaches a file; `/` and `@` cover the rest.
  */
 export function Composer({
 	workspaceId,
 	onSend,
+	longTextAsFile,
 	disabled,
 	pending,
 	placeholder,
@@ -535,6 +540,35 @@ export function Composer({
 		value.trim().length > 0 && !disabled && !sending && !pending && pendingUploads.length === 0
 	const showSpinner = sending || pending
 
+	// Text over the cap is uploaded whole as a .txt file and the message carries a short body.
+	// An upload that fails rejects, so the caller's catch keeps the draft in the box.
+	const sendContent = useCallback(
+		async (content: string) => {
+			const split = longTextAsFile ? splitLongMessage(content) : null
+			if (!split) {
+				await onSend(content)
+				return
+			}
+			const created = await uploadFile({
+				name: split.file.name,
+				mime_type: 'text/plain',
+				content: split.file.content,
+				encoding: 'utf8',
+			})
+			await onSend(split.body, {
+				files: [
+					{
+						fileId: created.id,
+						name: split.file.name,
+						sizeBytes: new TextEncoder().encode(split.file.content).length,
+						mimeType: 'text/plain',
+					},
+				],
+			})
+		},
+		[longTextAsFile, onSend, uploadFile],
+	)
+
 	const handleSubmit = useCallback(
 		async (e?: FormEvent<HTMLFormElement>) => {
 			e?.preventDefault()
@@ -557,7 +591,7 @@ export function Composer({
 			onDismissExternalError?.()
 			let sent = false
 			try {
-				await onSend(content)
+				await sendContent(content)
 				sent = true
 			} catch (err) {
 				setSendError(err instanceof Error ? err.message : 'Failed to send')
@@ -569,7 +603,7 @@ export function Composer({
 			// without losing a carefully crafted prompt.
 			if (sent) setValue('')
 		},
-		[canSend, draftKey, onDismissExternalError, onSend, setValue, value, workspaceId],
+		[canSend, draftKey, onDismissExternalError, sendContent, setValue, value, workspaceId],
 	)
 
 	// Commits the picker's highlighted row into a mention pill: strips the
@@ -854,23 +888,14 @@ export function Composer({
 			const controller = new AbortController()
 			abortControllersRef.current.set(tempId, controller)
 			try {
-				const content = await readFileAsBase64(file)
-				const created = await uploadFile(
-					{
-						name: file.name,
-						mime_type: file.type || 'application/octet-stream',
-						content,
-						encoding: 'base64',
+				const created = await uploadFile(await toUploadInput(file), {
+					signal: controller.signal,
+					onProgress: (progress) => {
+						setPendingUploads((prev) =>
+							prev.map((p) => (p.tempId === tempId ? { ...p, progress } : p)),
+						)
 					},
-					{
-						signal: controller.signal,
-						onProgress: (progress) => {
-							setPendingUploads((prev) =>
-								prev.map((p) => (p.tempId === tempId ? { ...p, progress } : p)),
-							)
-						},
-					},
-				)
+				})
 				// Cancel-vs-resolve race: if the user removed the chip between the
 				// XHR completing on the wire and this microtask firing, the chip is
 				// already gone and the abort fired — don't dispatch add_file so the
@@ -1100,7 +1125,7 @@ export function Composer({
 					capture={secretCapture ?? null}
 					agentName={secretCapture?.agent.name ?? 'the agent'}
 					restarting={secretRestarting}
-					onSend={onSend}
+					onSend={sendContent}
 					onCancel={() => {
 						// The message is dropped, not the person's words: the text comes back
 						// without the secret, so cancelling never costs them what they wrote.
@@ -1188,45 +1213,7 @@ export function Composer({
 					</output>
 				)}
 				<div className="flex items-center gap-2">
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							{/* No 44 px `::before` here: Attach next to it already carries one,
-							    and two overlapping invisible hit surfaces 8 px apart steal
-							    taps from each other. The v2 control row is 28 px by design.
-							    Attach's hit area is anchored to its right edge, so it reaches 8 px
-							    over this button; `z-[1]` keeps this one's full box on top. */}
-							<Button
-								type="button"
-								size="icon"
-								variant="outline"
-								className="relative z-[1] h-7 w-7 shrink-0 rounded-full text-muted-foreground"
-								disabled={disabled}
-								aria-label="Add an object, file, or mention"
-							>
-								<Plus size={15} aria-hidden />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="start" className="w-[252px]">
-							{/* The row triggers the same hidden fileInputRef as the visible
-							    Paperclip sibling, so the file-attach handler that is already
-							    wired for this composer is what runs. `/` and `@` cover
-							    references, mentions and creating objects. */}
-							<DropdownMenuItem
-								onSelect={() => fileInputRef.current?.click()}
-								className="flex-col items-start gap-0.5"
-							>
-								<span className="flex items-center gap-2">
-									<Paperclip size={15} aria-hidden />
-									Attach a file
-								</span>
-								<span className="pl-[23px] text-xs text-muted-foreground">PDF, image, or doc</span>
-							</DropdownMenuItem>
-						</DropdownMenuContent>
-					</DropdownMenu>
-					{/* Attach stays a visible sibling rather than a menu row: it is the
-					    one composer affordance with a pinned 44 px touch target
-					    (`ios-chat-attach-tap-area.spec.ts`), which a closed menu can't
-					    satisfy. */}
+					{/* Attach carries a pinned 44 px touch target (`ios-chat-attach-tap-area.spec.ts`). */}
 					<Button
 						type="button"
 						size="icon"

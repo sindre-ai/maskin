@@ -55,7 +55,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
 - Agent file storage: `packages/storage` provides abstract `StorageProvider` interface with S3 implementation (`@aws-sdk/client-s3`). `apps/dev/src/services/agent-storage.ts` manages pull/push of agent files.
-- MCP server: `packages/mcp` wraps the API as 89 tools for external agents (stdio + HTTP transport)
+- MCP server: `packages/mcp` wraps the API as 90 tools for external agents (stdio + HTTP transport)
 - Workspace context passed via `X-Workspace-Id` header on all workspace-scoped routes
 
 ## Prerequisites
@@ -78,6 +78,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `pnpm lint` — lint with Biome (`biome check .`)
 - `pnpm lint:fix` — auto-fix lint issues
 - `pnpm format` — format with Biome
+- A pre-commit hook (`.githooks/pre-commit`, installed by `pnpm install`) runs the Biome auto-fix on staged files; skip it with `git commit --no-verify` or `SKIP_BIOME_HOOK=1`
 - `docker-compose up postgres -d` — start PostgreSQL only (not needed if using `pnpm dev`)
 - `docker-compose up` — start PostgreSQL + all services
 - `pnpm db:generate` — generate Drizzle migration from schema changes

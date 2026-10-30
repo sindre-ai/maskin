@@ -11,6 +11,7 @@
  * Deep links (custom `deep_link` key in the payload root, consumed by the apps):
  *   maskin://<workspaceId>/objects/<objectId>        a notification about an object
  *   maskin://<workspaceId>/chats/<conversationId>    a notification about a chat
+ *   maskin://<workspaceId>/chats/<conversationId>?thread=<rootMessageId>   one thread in a chat
  *   maskin://<workspaceId>/notifications             fallback: open the inbox / For You
  * `aps.thread-id` is `PushMessage.collapseKey` when set, else groups pushes per chat (`chat:<id>`), per object
  * (`object:<id>`) or per workspace (`workspace:<id>`). `aps.mutable-content = 1`
@@ -120,8 +121,15 @@ function truncate(s: string, max: number): string {
 	return s.length > max ? `${s.slice(0, max - 1)}…` : s
 }
 
+function isThreadRootId(id: number | null | undefined): id is number {
+	return typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+}
+
 export function deepLinkFor(msg: PushMessage): string {
-	if (msg.conversationId) return `maskin://${msg.workspaceId}/chats/${msg.conversationId}`
+	if (msg.conversationId) {
+		const base = `maskin://${msg.workspaceId}/chats/${msg.conversationId}`
+		return isThreadRootId(msg.threadRootId) ? `${base}?thread=${msg.threadRootId}` : base
+	}
 	if (msg.objectId) return `maskin://${msg.workspaceId}/objects/${msg.objectId}`
 	return `maskin://${msg.workspaceId}/notifications`
 }

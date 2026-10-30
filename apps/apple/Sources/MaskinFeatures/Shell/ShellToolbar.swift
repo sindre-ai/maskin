@@ -147,7 +147,8 @@ private struct ShellToolbarModifier: ViewModifier {
 						Button {
 							runtime?.showProfile = true
 						} label: {
-							ShellNavAvatar(name: environment.auth.session?.name ?? "")
+							ShellNavAvatar(
+								name: environment.auth.session?.name ?? "", actorID: environment.auth.session?.actorId)
 							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 							.contentShape(Circle())
 						}
@@ -188,6 +189,9 @@ struct ShellInkCircle: View {
 /// The profile button in the bar: a Patina tint disc with a thin ring and the person's one initial.
 struct ShellNavAvatar: View {
 	let name: String
+	/// The person's actor id, to show their picture over the initial once it has loaded.
+	var actorID: String? = nil
+	@Environment(\.actorPictures) private var pictures
 
 	private var initial: String {
 		name.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "?"
@@ -199,6 +203,14 @@ struct ShellNavAvatar: View {
 			.foregroundStyle(MaskinColor.sigInk)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
 			.background(Circle().fill(MaskinColor.sigTint))
+			.overlay {
+				if let actorID, let url = pictures.url(actorID) {
+					AsyncImage(url: url) { phase in
+						if let image = phase.image { image.resizable().scaledToFill() }
+					}
+					.clipShape(Circle())
+				}
+			}
 			.overlay(Circle().strokeBorder(MaskinColor.sig.opacity(0.3), lineWidth: 1))
 			.accessibilityHidden(true)
 	}

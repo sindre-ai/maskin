@@ -27,6 +27,9 @@ public final class AppRuntime {
 	/// moment of value, see `valueMomentSeen()`.)
 	var selectedTab: ShellTab = .forYou
 
+	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
+	let teamPill = TeamPillModel()
+
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
 	/// presentations requested in the same tick (a tap that opens an object) replace each
 	/// other deterministically instead of racing, and the sheet can't outlive its workspace.
@@ -34,6 +37,7 @@ public final class AppRuntime {
 		case object(String)
 		case agent(String)
 		case file(String)
+		case triggers(String)
 		case profile
 		case files
 		case agents
@@ -44,6 +48,7 @@ public final class AppRuntime {
 			case .object(let id): "object:\(id)"
 			case .agent(let id): "agent:\(id)"
 			case .file(let id): "file:\(id)"
+			case .triggers(let id): "triggers:\(id)"
 			case .profile: "profile"
 			case .files: "files"
 			case .agents: "agents"
@@ -85,12 +90,12 @@ public final class AppRuntime {
 		set { presentation = newValue ? .profile : clearing(.profile) }
 	}
 
-	private enum Kind { case object, agent, file, files, agents, settings, profile }
+	private enum Kind { case object, agent, file, triggers, files, agents, settings, profile }
 
 	/// Closing one kind of sheet must not close a DIFFERENT one that replaced it meanwhile.
 	private func clearing(_ kind: Kind) -> Presentation? {
 		switch (kind, presentation) {
-		case (.object, .object), (.agent, .agent), (.file, .file), (.settings, .settings),
+		case (.object, .object), (.agent, .agent), (.file, .file), (.triggers, .triggers), (.settings, .settings),
 			(.profile, .profile), (.files, .files), (.agents, .agents):
 			return nil
 		default:
@@ -104,6 +109,16 @@ public final class AppRuntime {
 
 	/// Set by a chat link; `ChatsScreen` takes it and resets it to nil.
 	public var requestedConversationId: String?
+	/// Set by a loop link; the Flows tab takes it, opens that loop and resets it to nil.
+	public var requestedLoopId: String?
+	/// A thread push or link names the root message to open inside the requested chat. `ChatThreadView`
+	/// takes it once that chat is on screen and resets it to nil.
+	public var requestedThreadRoot: ThreadRequest?
+
+	public struct ThreadRequest: Equatable, Sendable {
+		public let conversationId: String
+		public let rootId: Int
+	}
 
 	/// Agents and loops are built by talking, never by filling in a form. Screens that used to offer
 	/// a builder form call `buildInChat(_:)`; `ChatsScreen` takes the draft and opens a new chat
@@ -253,10 +268,12 @@ public final class AppRuntime {
 		// scoped but rebuild themselves, so only the id-addressed sheets are dropped.
 		if let previous = lastSyncedWorkspaceId, previous != environment.workspaceId {
 			switch presentation {
-			case .object, .agent, .file, .profile: presentation = nil
+			case .object, .agent, .file, .triggers, .profile: presentation = nil
 			default: break
 			}
 			requestedConversationId = nil
+			requestedLoopId = nil
+			requestedThreadRoot = nil
 			forYouSelection = nil
 			// Switching workspace starts over on For you; a link that caused the switch then
 			// selects its own tab (`handlePendingLink` below).
@@ -327,6 +344,8 @@ public final class AppRuntime {
 		environment.events.disconnect()
 		presentation = nil
 		requestedConversationId = nil
+		requestedLoopId = nil
+		requestedThreadRoot = nil
 		forYouSelection = nil
 		selectedTab = .forYou
 		FileStore.clearExports()
@@ -411,9 +430,12 @@ public final class AppRuntime {
 		case .object(_, let id):
 			presentation = .object(id)
 		case .chat(_, let id):
+			openChat(id)
+		case .thread(_, let id, let rootId):
 			presentation = nil
 			selectedTab = .chats
 			requestedConversationId = id
+			requestedThreadRoot = ThreadRequest(conversationId: id, rootId: rootId)
 		case .file(_, let id):
 			openFile(id)
 		case .notifications:
@@ -424,6 +446,10 @@ public final class AppRuntime {
 			presentation = .agents
 		case .agent(_, let id):
 			presentedAgentId = id
+		case .loop(_, let id):
+			openLoop(id)
+		case .trigger(_, let id):
+			openTrigger(id)
 		}
 	}
 
@@ -433,7 +459,25 @@ public final class AppRuntime {
 	}
 
 	public func openAgent(_ id: String) { presentedAgentId = id }
+
+	/// Selects the Chats tab and asks for the thread.
+	public func openChat(_ id: String) {
+		presentation = nil
+		selectedTab = .chats
+		requestedConversationId = id
+		requestedThreadRoot = nil
+	}
 	public func openFile(_ id: String) { presentedFileId = id }
+
+	/// A loop opens on the Flows tab, the way a chat link opens on Chats: the tab takes the request.
+	public func openLoop(_ id: String) {
+		presentation = nil
+		selectedTab = .loops
+		requestedLoopId = id
+	}
+
+	/// A trigger opens in the triggers sheet, on that trigger.
+	public func openTrigger(_ id: String) { presentation = .triggers(id) }
 
 	/// Where a search result lands: objects, agents and files open in a sheet over the current
 	/// tab; a chat selects the Chats tab and requests the thread.
@@ -491,6 +535,8 @@ public final class AppRuntime {
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
+		requestedLoopId = nil
+		requestedThreadRoot = nil
 		forYouSelection = nil
 		selectedTab = .forYou
 		// Local traces of this account: what they searched for and files they exported to share.

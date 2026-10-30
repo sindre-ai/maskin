@@ -104,18 +104,11 @@ import Testing
 		#expect(m.interrupted(at: at(2)).isEmpty)
 	}
 
-	@Test("the call greets once, on the first session.created, and not again")
-	func greetsOnce() throws {
+	@Test("the call sends nothing when it connects: the server makes the agent greet")
+	func sendsNothingOnConnect() {
 		var m = RealtimeCallMachine()
-		let first = m.handle(event("session.created"), at: at(0))
-		#expect(first == [.sendEvent(RealtimeCallMachine.greetingRequest)])
+		#expect(m.handle(event("session.created"), at: at(0)).isEmpty)
 		#expect(m.handle(event("session.created"), at: at(1)).isEmpty)
-
-		let sent = try #require(JSONSerialization.jsonObject(with: Data(RealtimeCallMachine.greetingRequest.utf8)) as? [String: Any])
-		#expect(sent["type"] as? String == "response.create")
-		let response = try #require(sent["response"] as? [String: Any])
-		#expect((response["instructions"] as? String)?.isEmpty == false)
-		#expect(response["tool_choice"] as? String == "none")
 	}
 
 	@Test("events it does not know, or that are not JSON, change nothing")

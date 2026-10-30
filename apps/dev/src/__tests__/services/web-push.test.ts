@@ -70,6 +70,13 @@ describe('buildWebPushPayload', () => {
 		expect(webUrlFor(msg)).toBe('/ws-1/notifications')
 	})
 
+	it('opens the thread inside the chat for a thread reply', () => {
+		expect(webUrlFor({ ...msg, conversationId: 'c1', threadRootId: 42 })).toBe(
+			'/ws-1/chats/c1?thread=42',
+		)
+		expect(webUrlFor({ ...msg, conversationId: 'c1', threadRootId: -3 })).toBe('/ws-1/chats/c1')
+	})
+
 	it('uses the notification id as the tag so duplicates collapse', () => {
 		expect(buildWebPushPayload(msg).tag).toBe(msg.notificationId)
 	})

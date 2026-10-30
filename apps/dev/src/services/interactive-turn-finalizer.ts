@@ -15,6 +15,7 @@ import {
 } from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
+import { resolveThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
 
 /**
  * Posts an agent's end-of-turn output into the chat it is talking in.
@@ -37,17 +38,6 @@ import { insertConversationMessage } from './conversation-messages'
 
 const describeError = (err: unknown): string =>
 	err instanceof Error ? err.stack || err.message : String(err)
-
-/**
- * Every complete line in one session_logs row.
- *
- * splitLines drops the trailing partial, which for a stored row is the last
- * envelope when the chunk did not end on a newline — so terminate the row
- * first. A row is only ever a whole number of envelopes by the time it is
- * persisted; the cross-chunk partial is reassembled live by onStdout.
- */
-const splitRowLines = (content: string): string[] =>
-	splitLines(content.endsWith('\n') ? content : `${content}\n`).lines
 
 /** Guards against a stream that never emits a newline eating memory. */
 const MAX_BUFFERED_PARTIAL_BYTES = 256 * 1024
@@ -239,7 +229,7 @@ const permanentErrorMessage = (detail: string): string =>
  * see what happened, not to prompt any action.
  */
 const subscriptionMovedMessage = (detail: string): string =>
-	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and stopped this session. Send your next message here and I'll pick up on the new subscription.\n\nThe error was:\n\n${detail}`
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and I'm picking your message back up on the new subscription.\n\nThe error was:\n\n${detail}`
 
 /**
  * A replayed turn we are waiting on, plus everything needed to report it if it
@@ -352,6 +342,19 @@ export type InteractiveTurnFinalizerOptions = {
 	 */
 	onStopSession?: (sessionId: string, reason: string) => Promise<void>
 	/**
+	 * Called once the spent session is stopped after a subscription move, to
+	 * answer the human's unanswered message on the new subscription without
+	 * making them send it again. Injected for the same reason as the options
+	 * above. Best-effort: a failure is logged and the notice already tells the
+	 * human to send their message again.
+	 */
+	onResumeAfterMove?: (args: {
+		sessionId: string
+		conversationId: string
+		workspaceId: string
+		agentId: string
+	}) => Promise<void>
+	/**
 	 * Switches the running CLI onto another model for its next turns. Injected
 	 * for the same reason as the options above. Without it an empty turn can
 	 * only be retried on the model that produced it.
@@ -428,6 +431,7 @@ export class InteractiveTurnFinalizer {
 	private readonly fallbackModel: string | null
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
+	private readonly onResumeAfterMove?: InteractiveTurnFinalizerOptions['onResumeAfterMove']
 	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
 	private readonly delay: (ms: number) => Promise<void>
@@ -441,6 +445,7 @@ export class InteractiveTurnFinalizer {
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onHelperResult = options.onHelperResult
 		this.onStopSession = options.onStopSession
+		this.onResumeAfterMove = options.onResumeAfterMove
 		this.onTurnFinished = options.onTurnFinished
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
@@ -1391,6 +1396,23 @@ export class InteractiveTurnFinalizer {
 					)
 				}
 			}
+			// Answer the unanswered message on the new subscription ourselves. Only
+			// reached when the pointer actually moved, so a spent chain (movedTo
+			// null) cannot loop: each resume consumes one slot of the chain.
+			if (movedTo && this.onResumeAfterMove) {
+				try {
+					await this.onResumeAfterMove({
+						sessionId,
+						conversationId,
+						workspaceId: gate.workspaceId,
+						agentId: gate.actorId,
+					})
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not resume the chat after subscription move: ${describeError(err)}`,
+					)
+				}
+			}
 			return
 		}
 
@@ -1880,66 +1902,14 @@ export class InteractiveTurnFinalizer {
 		return rows.length < RECOVERY_SCAN_LIMIT ? { kind: 'empty' } : { kind: 'unknown' }
 	}
 
-	/**
-	 * Which chat message's turn produced this output.
-	 *
-	 * writeInput tags each user turn's persisted envelope with
-	 * `maskin_message_id`; the nearest such envelope before this result is the
-	 * turn that is now closing. Null is fine — a seeded first turn may carry no
-	 * message id, and the frontend anchors those by position instead.
-	 *
-	 * Split into lines for the same reason recoverTurnText does: the tagged
-	 * envelope can share a Docker chunk with its neighbours, and parsing the
-	 * whole row would throw and silently yield an unanchored message.
-	 */
-	/**
-	 * A reply to a message posted inside a thread answers in that thread. The turn's
-	 * triggering message is either the thread's root (which starts the thread) or one
-	 * of its replies; only a reply carries a root, so an agent answering a top-level
-	 * message still posts to the main timeline. Best-effort: a lookup failure posts
-	 * the reply top-level rather than losing it.
-	 */
-	private async resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
-		if (turnMessageId === null) return null
-		try {
-			const [row] = await this.db
-				.select({ threadRootId: messages.threadRootId })
-				.from(messages)
-				.where(eq(messages.id, turnMessageId))
-				.limit(1)
-			return row?.threadRootId ?? null
-		} catch (err) {
-			logger.warn(`Could not resolve thread for message ${turnMessageId}: ${describeError(err)}`)
-			return null
-		}
+	/** The chat message whose turn produced this output; see resolveTurnMessageId. */
+	private resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
+		return resolveTurnMessageId(this.db, sessionId, logId)
 	}
 
-	private async resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
-		const [row] = await this.db
-			.select({ content: sessionLogs.content })
-			.from(sessionLogs)
-			.where(
-				and(
-					eq(sessionLogs.sessionId, sessionId),
-					lte(sessionLogs.id, logId),
-					eq(sessionLogs.stream, 'stdout'),
-					like(sessionLogs.content, '%maskin_message_id%'),
-				),
-			)
-			.orderBy(desc(sessionLogs.id))
-			.limit(1)
-
-		if (!row) return null
-		const lines = splitRowLines(row.content)
-		for (let i = lines.length - 1; i >= 0; i--) {
-			try {
-				const parsed = JSON.parse((lines[i] ?? '').trim()) as { maskin_message_id?: unknown }
-				if (typeof parsed.maskin_message_id === 'number') return parsed.maskin_message_id
-			} catch {
-				// Not JSON, or a partial — keep walking the row's other lines.
-			}
-		}
-		return null
+	/** The thread the turn's triggering message sits in; see resolveThreadRootId. */
+	private resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
+		return resolveThreadRootId(this.db, turnMessageId)
 	}
 
 	private rememberRetry(retryKey: string, count: number): void {

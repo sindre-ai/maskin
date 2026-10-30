@@ -24,6 +24,7 @@ import {
 } from '../lib/claude-oauth-slots'
 import { isEnterprise } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import {
 	billingAfterByoTransition,
 	cancelActivePaidSubscription,
@@ -539,6 +540,18 @@ app.openapi(importRoute, (async (c) => {
 				updatedAt: new Date(),
 			})
 			.where(eq(workspaces.id, workspaceId))
+		// Connecting a login improves what the workspace can run, so it must log
+		// the same event a settings PATCH does: that is what lifts a trigger pause
+		// for "no credentials" (trigger-runner SUPPRESSION_CLEARING_ACTIONS).
+		// Key names only, never the tokens.
+		await recordEvent(tx, {
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'workspace',
+			entityId: workspaceId,
+			data: { changed_settings_keys: ['claude_oauth'] },
+		})
 		return { kind: 'ok', slot }
 	})
 

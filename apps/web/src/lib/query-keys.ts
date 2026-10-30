@@ -24,6 +24,7 @@ export const queryKeys = {
 			['objects', workspaceId, 'facets', filters] as const,
 		groupPage: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'groupPage', filters] as const,
+		groupPagePrefix: (workspaceId: string) => ['objects', workspaceId, 'groupPage'] as const,
 		board: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'board', filters] as const,
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
@@ -44,6 +45,10 @@ export const queryKeys = {
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,
 		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,
+		// Sits under messagesPrefix, so the conversation SSE invalidation refreshes it too.
+		threadMessages: (id: string, rootId: number) =>
+			['conversations', 'detail', id, 'messages', { thread_root_id: rootId }] as const,
+		replyThreads: (workspaceId: string) => ['conversations', workspaceId, 'replyThreads'] as const,
 		unreadCount: (workspaceId: string) => ['conversations', workspaceId, 'unreadCount'] as const,
 	},
 	actors: {
@@ -93,6 +98,8 @@ export const queryKeys = {
 			['integrations', integrationId, 'slack', 'conversations', [...types].sort()] as const,
 		slackUsers: (integrationId: string) =>
 			['integrations', integrationId, 'slack', 'users'] as const,
+		driveWatches: (workspaceId: string) =>
+			['integrations', workspaceId, 'google-drive', 'watched-folders'] as const,
 		linkedinIdentities: (workspaceId: string) =>
 			['integrations', workspaceId, 'linkedin-unipile', 'identities'] as const,
 	},
@@ -140,6 +147,7 @@ export const queryKeys = {
 			['sessions', workspaceId, 'conversation', conversationId] as const,
 		firstOutput: (workspaceId: string, sessionId: string) =>
 			['sessions', workspaceId, 'first-output', sessionId] as const,
+		stats: (workspaceId: string) => ['sessions', workspaceId, 'stats'] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,

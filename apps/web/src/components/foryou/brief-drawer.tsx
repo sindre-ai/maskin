@@ -1,4 +1,5 @@
 import { Composer } from '@/components/chat/chat'
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -17,6 +18,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { deriveConversationTitle } from '@maskin/shared'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Pause, Play } from 'lucide-react'
 import { useCallback, useMemo, useReducer, useState } from 'react'
@@ -183,7 +185,7 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 					)
 				: content
 			const conversation = await createConversation.mutateAsync({
-				title: agent.name ?? 'New chat',
+				title: deriveConversationTitle(content, agent.name ?? 'New chat'),
 				participant_actor_ids: [agent.id],
 				initial_message: initialMessage,
 			})
@@ -245,7 +247,10 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 
 							{readMode && (
 								<div className="mt-3.5">
-									<MarkdownContent content={body} />
+									<MarkdownContent
+										content={body}
+										linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+									/>
 								</div>
 							)}
 

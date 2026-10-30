@@ -14,7 +14,7 @@ import { db, getTestActorId } from './global-setup'
  *       carries reset_source / reset_confidence.
  *   (b) attempt_number at the cap → scheduler tick emits session_retry_capped,
  *       clears retry_at, does NOT fire a retry session.
- *   (c) no parseable reset → row sits terminal-failed with retry_at null.
+ *   (c) no parseable reset on a short-window limit → retry_at is the 30 minute back-off.
  *
  * Load-bearing because unit-mocked cells can't prove the DB write shape — a
  * schema regression on failure_reason (reset_source / reset_confidence
@@ -110,7 +110,8 @@ describe('subscription-limit reset-at parity cells (§7.9)', () => {
 		expect(data?.cap).toBe(MAX_RETRY_ATTEMPTS)
 	})
 
-	it('(c) no parseable reset → row sits terminal-failed with retry_at null', async () => {
+	it('(c) no parseable reset on a session limit → retry_at is the 30 minute back-off', async () => {
+		const before = Date.now()
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
 			config: { llm_route: 'claude_oauth' },
@@ -127,16 +128,17 @@ describe('subscription-limit reset-at parity cells (§7.9)', () => {
 
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 		expect(row?.status).toBe('failed')
-		// Classifier still stamped a failure_reason (session_limit banner
-		// matched), but with reset_at null there's no retry to schedule and
-		// reset_source / reset_confidence must be absent (they only land when
-		// the parser produced a value).
+		// Classifier stamped a failure_reason (session_limit banner matched) with reset_at
+		// null, so reset_source / reset_confidence must be absent (they only land when the
+		// parser produced a value). A short-window limit still gets the fixed back-off.
 		const failure = (row?.result as { failure_reason?: Record<string, unknown> } | null)
 			?.failure_reason
 		expect(failure?.reason_code).toBe('session_limit')
 		expect(failure?.reset_at).toBeNull()
 		expect(failure?.reset_source).toBeUndefined()
 		expect(failure?.reset_confidence).toBeUndefined()
-		expect(row?.retryAt).toBeNull()
+		const retryAtMs = row?.retryAt?.getTime() ?? 0
+		expect(retryAtMs).toBeGreaterThanOrEqual(before + 30 * 60_000)
+		expect(retryAtMs).toBeLessThanOrEqual(Date.now() + 30 * 60_000)
 	})
 })

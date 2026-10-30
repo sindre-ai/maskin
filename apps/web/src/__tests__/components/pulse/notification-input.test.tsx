@@ -103,13 +103,6 @@ describe('NotificationInput', () => {
 			await user.click(screen.getByRole('button', { name: 'Submit' }))
 			expect(onSubmit).toHaveBeenCalledWith('hello world')
 		})
-
-		it('renders textarea for multiline text', () => {
-			const metadata = { input_type: 'text', multiline: true }
-			render(<NotificationInput metadata={metadata} onSubmit={vi.fn()} />)
-			const textarea = screen.getByPlaceholderText('Type your response...')
-			expect(textarea.tagName).toBe('TEXTAREA')
-		})
 	})
 
 	describe('confirmation', () => {
@@ -250,29 +243,18 @@ describe('NotificationInput', () => {
 	})
 })
 
-describe('NotificationInput behind rich-markdown-editor', () => {
-	const multiline = { input_type: 'text', multiline: true }
-
-	afterEach(() => {
-		localStorage.removeItem('ff:rich-markdown-editor')
-	})
-
-	it('keeps the textarea for multiline text when the flag is off', () => {
-		render(<NotificationInput metadata={multiline} onSubmit={vi.fn()} />)
-		expect(screen.getByPlaceholderText('Type your response...').tagName).toBe('TEXTAREA')
-	})
-
-	it('mounts the notification-variant editor for multiline text when the flag is on', async () => {
-		localStorage.setItem('ff:rich-markdown-editor', 'on')
-		const { container } = render(<NotificationInput metadata={multiline} onSubmit={vi.fn()} />)
+describe('NotificationInput multiline text', () => {
+	it('mounts the notification-variant editor for multiline text', async () => {
+		const { container } = render(
+			<NotificationInput metadata={{ input_type: 'text', multiline: true }} onSubmit={vi.fn()} />,
+		)
 		await waitFor(() => expect(container.querySelector('.ProseMirror')).not.toBeNull(), {
 			timeout: 10000,
 		})
 		expect(container.querySelector('textarea')).toBeNull()
 	})
 
-	it('leaves the single-line input alone when the flag is on', () => {
-		localStorage.setItem('ff:rich-markdown-editor', 'on')
+	it('leaves the single-line input alone', () => {
 		const { container } = render(
 			<NotificationInput metadata={{ input_type: 'text' }} onSubmit={vi.fn()} />,
 		)

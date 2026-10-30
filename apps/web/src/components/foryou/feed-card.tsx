@@ -1,4 +1,5 @@
 import { CommentInput } from '@/components/activity/comment-input'
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -304,7 +305,12 @@ export function FeedCard({
 						// The whole comment, not a preview: the reader answers here, so
 						// nothing about the ask lives behind a second click.
 						<div className="-mt-1 max-w-[58ch] text-[13px] leading-[1.55] text-pretty text-muted-foreground">
-							<MarkdownContent content={mentionBody} size="sm" mentionActors={actors} />
+							<MarkdownContent
+								content={mentionBody}
+								size="sm"
+								mentionActors={actors}
+								linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+							/>
 						</div>
 					)
 				)}
@@ -486,7 +492,7 @@ function TimelineHistory({
 					)
 				)}
 				{shown.map((event) => (
-					<TimelineMessage key={event.id} event={event} actors={actors} />
+					<TimelineMessage key={event.id} workspaceId={workspaceId} event={event} actors={actors} />
 				))}
 				{remaining > 0 && (
 					<button
@@ -503,9 +509,11 @@ function TimelineHistory({
 }
 
 function TimelineMessage({
+	workspaceId,
 	event,
 	actors,
 }: {
+	workspaceId: string
 	event: EventResponse
 	actors: ActorListItem[] | undefined
 }) {
@@ -531,7 +539,12 @@ function TimelineMessage({
 					/>
 				</div>
 				<div className="mt-px line-clamp-3 text-[12px] leading-[1.5] text-pretty text-muted-foreground">
-					<MarkdownContent content={content} size="xs" mentionActors={actors} />
+					<MarkdownContent
+						content={content}
+						size="xs"
+						mentionActors={actors}
+						linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+					/>
 				</div>
 			</div>
 		</div>

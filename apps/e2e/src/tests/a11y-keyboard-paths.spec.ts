@@ -2,9 +2,6 @@ import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
-// The command palette's placeholder.
-const PALETTE_PLACEHOLDER = 'Run a command or jump to…'
-
 // Keyboard reachability + focus containment for the surfaces the bet's
 // accessibility criterion specifically calls out: interactive paths reachable
 // without a pointer, focus visible on every interactive element, and focus
@@ -79,9 +76,9 @@ test.describe('keyboard-only interactive paths', () => {
 		await gotoWorkspaceShell(page, account.workspaceId)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder(PALETTE_PLACEHOLDER)
+		const palette = page.getByRole('dialog', { name: 'Command palette' })
 		await expect(palette).toBeVisible()
-		await expect(palette).toBeFocused()
+		await expect(palette.getByRole('combobox', { name: 'Search or run a command' })).toBeFocused()
 
 		await page.keyboard.press('Escape')
 		await expect(palette).toHaveCount(0)
@@ -92,7 +89,7 @@ test.describe('keyboard-only interactive paths', () => {
 		account,
 	}) => {
 		// Focus containment inside the command palette. Regression guard for the
-		// current implementation which mounts cmdk in a plain overlay rather than
+		// current implementation which mounts the palette in a plain overlay rather than
 		// a Radix Dialog — if the trap is broken, Tab will jump to a page-level
 		// button and the focused element will no longer be inside the palette
 		// tree. Owning fix goes on the app-shell bet; this spec fails if the
@@ -100,7 +97,7 @@ test.describe('keyboard-only interactive paths', () => {
 		await gotoWorkspaceShell(page, account.workspaceId)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder(PALETTE_PLACEHOLDER)
+		const palette = page.getByRole('dialog', { name: 'Command palette' })
 		await expect(palette).toBeVisible()
 
 		for (let i = 0; i < 8; i++) {
@@ -108,7 +105,7 @@ test.describe('keyboard-only interactive paths', () => {
 			const escaped = await page.evaluate(() => {
 				const el = document.activeElement as HTMLElement | null
 				if (!el || el === document.body) return true
-				return !el.closest('[cmdk-root]')
+				return !el.closest('[role="dialog"][aria-label="Command palette"]')
 			})
 			expect(escaped, `Tab #${i + 1} escaped the palette focus scope`).toBe(false)
 		}

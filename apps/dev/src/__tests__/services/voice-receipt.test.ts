@@ -182,6 +182,22 @@ describe('describeToolCall', () => {
 		expect(await describe_(rows, 'get_objects', { ids: [B] })).toEqual([])
 	})
 
+	it('gives a failed get_objects a line, even for an item that is not a task', async () => {
+		const rows = [{ id: B, title: 'Live receipts', type: 'bet' }]
+		const lines = await describeToolCall({
+			db: fakeDb(rows),
+			workspaceId: WORKSPACE,
+			tool: 'get_objects',
+			args: { ids: [B] },
+			resultText: null,
+			state: { startCards: null },
+			outcome: 'failed',
+		})
+		expect(lines).toMatchObject([
+			{ objectId: B, objectTitle: 'Live receipts', template: 'Open {title}' },
+		])
+	})
+
 	it('maps a comment on a decision card to decided, and any other comment to other', async () => {
 		const rows = [{ id: A, title: 'Pricing call', type: 'task' }]
 		const startCards = [{ objectId: A, notificationId: null, source: 'decision', rank: 1 }] as never
@@ -299,6 +315,39 @@ describe('receipt numbers', () => {
 		expect(words).toContain('Send 2: read-back matched, 2 yeses.')
 		expect(words).toContain('Send 3: no preview to compare, 0 yeses, not sent.')
 		expect(words).toContain('Call ended by socket drop.')
+	})
+
+	it('says plainly, by title, when the first card handled was not the top card', () => {
+		const n = buildReceiptNumbers(
+			[],
+			{
+				startCards: [
+					{ objectId: A, notificationId: null, source: 'curated', rank: 1, title: 'Pricing page' },
+					{ objectId: B, notificationId: null, source: 'curated', rank: 2, title: 'Reply to Anna' },
+				],
+				firstCardNamed: B,
+				pendingHold: null,
+				inflight: new Set(),
+			},
+			'user_hangup',
+		)
+		const words = numbersInWords(n, { rank1: 'Pricing page', first: 'Reply to Anna' })
+		expect(words).toContain(
+			'The first card handled ("Reply to Anna") was not the top card: the top card "Pricing page" was skipped.',
+		)
+		expect(words).not.toContain(A.slice(0, 8))
+	})
+
+	it('leaves the card sentences out when told the call had nothing to do with cards', () => {
+		const n = buildReceiptNumbers([], undefined, 'user_hangup')
+		const words = numbersInWords(n, { rank1: null, first: null }, { cards: false })
+		expect(words).toBe('No sends. Call ended by hangup.')
+	})
+
+	it('never prints a card id when the cards are unknown', () => {
+		expect(numbersInWords(buildReceiptNumbers([], undefined, 'user_hangup'))).toContain(
+			'The top card at the start of the call is not known.',
+		)
 	})
 
 	it('holds ids and counts only, never an object title or a line of text', () => {

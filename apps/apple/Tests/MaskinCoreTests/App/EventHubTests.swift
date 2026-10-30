@@ -16,11 +16,15 @@ private actor Script {
 	private(set) var opens = 0
 	init(_ bodies: [String]) { self.bodies = bodies }
 	/// Polls until `count` opens have happened (generous timeout, no fixed-sleep assumptions).
-	func waitForOpens(_ count: Int, timeout: Duration = .seconds(20)) async -> Bool {
-		let deadline = ContinuousClock.now + timeout
+	func waitForOpens(_ count: Int, timeout: Duration = .seconds(15)) async -> Bool {
+		var budget = PollBudget(timeout)
 		while opens < count {
-			if ContinuousClock.now > deadline { return false }
 			try? await Task.sleep(for: .milliseconds(5))
+			// The open it waits for is made from the main actor. Touch the main actor each round, so
+			// a round held up there spends little of the budget (see `PollBudget`) instead of the
+			// budget running out while the main actor is merely busy with other suites.
+			await MainActor.run {}
+			if !budget.spend() { return false }
 		}
 		return true
 	}
@@ -170,8 +174,8 @@ struct EventHubAuthTests {
 		hub.onUnauthorized = { _ in called += 1 }
 
 		hub.connect(workspaceId: "w1")
-		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-		while hub.connection != .failed, ContinuousClock.now < deadline {
+		var budget = PollBudget()
+		while hub.connection != .failed, budget.spend() {
 			try? await Task.sleep(for: .milliseconds(5))
 		}
 
@@ -190,8 +194,8 @@ struct EventHubAuthTests {
 		hub.onUnauthorized = { reported.append($0) }
 
 		hub.connect(workspaceId: "w1", credentialKey: "ank_old")
-		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-		while hub.connection != .failed, ContinuousClock.now < deadline {
+		var budget = PollBudget()
+		while hub.connection != .failed, budget.spend() {
 			try? await Task.sleep(for: .milliseconds(5))
 		}
 
@@ -205,8 +209,8 @@ struct EventHubAuthTests {
 		var called = 0
 		hub.onUnauthorized = { _ in called += 1 }
 		hub.connect(workspaceId: "w1")
-		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-		while hub.connection != .failed, ContinuousClock.now < deadline {
+		var budget = PollBudget()
+		while hub.connection != .failed, budget.spend() {
 			try? await Task.sleep(for: .milliseconds(5))
 		}
 		#expect(hub.failure == .badStatus(404))
@@ -222,8 +226,8 @@ struct EventHubAuthTests {
 		})
 		let hub = EventHub(client: client, retryAfterFailure: .milliseconds(5))
 		hub.connect(workspaceId: "w1")
-		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-		while hub.connection != .live, ContinuousClock.now < deadline {
+		var budget = PollBudget()
+		while hub.connection != .live, budget.spend() {
 			try? await Task.sleep(for: .milliseconds(5))
 		}
 		#expect(hub.connection == .live)
@@ -241,8 +245,8 @@ struct EventHubAuthTests {
 			})
 			let hub = EventHub(client: client, retryAfterFailure: .milliseconds(5))
 			hub.connect(workspaceId: "w1")
-			let deadline = ContinuousClock.now.advanced(by: .seconds(20))
-			while hub.connection != .failed, ContinuousClock.now < deadline {
+			var budget = PollBudget()
+			while hub.connection != .failed, budget.spend() {
 				try? await Task.sleep(for: .milliseconds(5))
 			}
 			try? await Task.sleep(for: .milliseconds(100))

@@ -7,24 +7,39 @@ public enum LinkedItem: Equatable, Sendable {
 	case draft(WorkObject, ObjectPreview)
 	/// A page, document, picture or text the reader can look at.
 	case file(FileReference)
-	/// Something that stays a link in the chat (a contact, a plain task, a PDF): the drawer lists it
-	/// as a compact row.
+	/// Any other object in this workspace: drawn with the shared card face.
+	case object(LinkedObject)
+	/// An object the lookup could not find. The lookup cannot tell a deleted object from a private
+	/// one, and nothing is private inside a workspace, so the card says it was deleted.
+	case deleted(LinkedTarget)
+	/// An agent in this workspace: drawn with the shared card face.
+	case agent(LinkedAgent)
+	/// A chat you are in: drawn with the shared card face.
+	case chat(LinkedChat)
+	/// A chat you cannot be shown, because you are not in it or it is gone. One answer for both, so the
+	/// card says nothing about whether the chat exists.
+	case chatUnavailable(LinkedTarget)
+	/// Something that stays a link in the chat (a PDF): the drawer lists it as a compact row.
 	case plain(LinkedReference)
+	/// A loop in this workspace.
+	case loop(LinkedLoop)
+	/// A trigger in this workspace, found in the triggers list.
+	case trigger(LinkedTrigger)
 
 	/// Whether it is drawn as a card in the message.
 	public var isCard: Bool {
 		switch self {
-		case .draft, .file: true
+		case .draft, .file, .object, .deleted, .loop, .trigger, .agent, .chat, .chatUnavailable: true
 		case .plain: false
 		}
 	}
 }
 
-/// The name and kind of a linked thing that has no card.
+/// The name and kind of a linked file that has no card.
 public struct LinkedReference: Equatable, Sendable {
 	public var target: LinkedTarget
 	public var title: String
-	/// "Task", "Contact", "PDF".
+	/// "PDF", "File".
 	public var kindLabel: String
 
 	public init(target: LinkedTarget, title: String, kindLabel: String) {
@@ -77,6 +92,23 @@ public final class LinkedItemStore {
 
 	@ObservationIgnored private let objects: any ObjectDraftsRemote
 	@ObservationIgnored private let files: any FilesRemote
+	@ObservationIgnored private let places: (any LinkedPlacesRemote)?
+	@ObservationIgnored private let loadActors: (@Sendable () async throws -> [ActorRef])?
+	@ObservationIgnored private var actorsTask: Task<Void, Never>?
+	@ObservationIgnored private let loadLoops: (@Sendable () async throws -> [LoopSummary])?
+	@ObservationIgnored private let loadTriggers: (@Sendable () async throws -> TriggerListing)?
+	/// The loops list and the triggers list, each read once and shared by every link that needs it
+	/// (a message with five loops asks once). A copy older than `retryAfter` is read again, so a loop
+	/// or trigger made a minute ago is found.
+	@ObservationIgnored private var loopsHeld: Held<[String: LoopSummary]>?
+	@ObservationIgnored private var loopsRead: Task<[LoopSummary], Error>?
+	@ObservationIgnored private var triggersHeld: Held<TriggerListing>?
+	@ObservationIgnored private var triggersRead: Task<TriggerListing, Error>?
+
+	private struct Held<Value> {
+		var value: Value
+		var readAt: Date
+	}
 	@ObservationIgnored private let workspaceID: @MainActor () -> String?
 	@ObservationIgnored private let now: @MainActor () -> Date
 	@ObservationIgnored private var inFlight: [String: Task<Void, Never>] = [:]
@@ -86,6 +118,9 @@ public final class LinkedItemStore {
 	public let retryAfter: TimeInterval
 
 	private var entries: [String: Entry] = [:]
+	/// The workspace's people and agents by id, read once: a card names its owner from here, so no
+	/// card asks for its own.
+	public private(set) var actorsByID: [String: ActorRef] = [:]
 	public private(set) var approvals: [String: DraftApprovalPhase] = [:]
 	public private(set) var fileTexts: [String: LinkedFileText] = [:]
 	/// A file larger than this is opened, not previewed in the message.
@@ -98,11 +133,18 @@ public final class LinkedItemStore {
 	public static let maxRetries = 4
 
 	public init(
-		objects: any ObjectDraftsRemote, files: any FilesRemote, workspaceID: @escaping @MainActor () -> String?,
+		objects: any ObjectDraftsRemote, files: any FilesRemote,
+		actors: (@Sendable () async throws -> [ActorRef])? = nil, places: (any LinkedPlacesRemote)? = nil,
+		loops: (@Sendable () async throws -> [LoopSummary])? = nil,
+		triggers: (@Sendable () async throws -> TriggerListing)? = nil, workspaceID: @escaping @MainActor () -> String?,
 		retryAfter: TimeInterval = 30, now: @escaping @MainActor () -> Date = { Date() }
 	) {
 		self.objects = objects
 		self.files = files
+		self.places = places
+		self.loadActors = actors
+		self.loadLoops = loops
+		self.loadTriggers = triggers
 		self.workspaceID = workspaceID
 		self.retryAfter = retryAfter
 		self.now = now
@@ -117,6 +159,21 @@ public final class LinkedItemStore {
 
 	/// True when the target is drawn as a card in a message.
 	public func isCard(_ target: LinkedTarget) -> Bool { item(for: target)?.isCard == true }
+
+	/// True when the link should be a card now. An object link counts before its answer is in (the
+	/// card is a placeholder), so the message does not jump when the answer arrives; one that cannot
+	/// be shown goes back to text.
+	public func showsCard(_ target: LinkedTarget) -> Bool {
+		guard let state = entries[target.key]?.state else { return target.kind != .file }
+		switch state {
+		case .loading: return target.kind != .file
+		case .unavailable: return false
+		case .ready(let item): return item.isCard
+		}
+	}
+
+	/// The person or agent behind an id, once the workspace's actors have been read.
+	public func owner(for id: String?) -> ActorRef? { id.flatMap { actorsByID[$0] } }
 
 	// MARK: Resolving
 
@@ -160,6 +217,7 @@ public final class LinkedItemStore {
 			}
 		}
 		entries[target.key] = Entry(state: .loading)
+		if target.kind != .file { loadActorsOnce() }
 		let task = Task { [weak self] in
 			guard let self else { return }
 			await self.lookup(target)
@@ -168,15 +226,106 @@ public final class LinkedItemStore {
 		return task
 	}
 
+	/// Reads the workspace's actors the first time an object is looked up; a failed read is tried
+	/// again with the next lookup.
+	private func loadActorsOnce() {
+		guard actorsTask == nil, let loadActors else { return }
+		actorsTask = Task { [weak self] in
+			let loaded = try? await loadActors()
+			guard let self else { return }
+			if let loaded {
+				self.actorsByID = Dictionary(loaded.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+			} else {
+				self.actorsTask = nil
+			}
+		}
+	}
+
 	private func fetch(_ target: LinkedTarget, workspace: String?) async throws -> LinkedItem? {
 		switch target.kind {
 		case .object:
 			return classify(try await objects.detail(objectId: target.uuid), workspace: workspace)
+		case .agent:
+			guard let agent = try await places?.agent(id: target.uuid) else { return nil }
+			return .agent(agent)
+		case .chat:
+			guard let places else { return nil }
+			return try await places.chat(id: target.uuid).map(LinkedItem.chat) ?? .chatUnavailable(target)
 		case .file:
 			let found = try await files.summaries(ids: [target.uuid]).first { $0.id.lowercased() == target.uuid }
 			guard let found else { return nil }
 			return classify(found)
+		case .loop:
+			return try await fetchLoop(target, workspace: workspace)
+		case .trigger:
+			return try await fetchTrigger(target)
 		}
+	}
+
+	/// A loop is a card when it is in this workspace. The loops list has the counts; a loop the list
+	/// does not hold (made since it was read) is read as an object, which has no counts, so the
+	/// card leaves those facts out.
+	private func fetchLoop(_ target: LinkedTarget, workspace: String?) async throws -> LinkedItem? {
+		if loadLoops != nil, let found = try await loopSummaries()[target.uuid] {
+			return .loop(LinkedLoop(target: target, summary: found))
+		}
+		let detail = try await objects.detail(objectId: target.uuid)
+		if let current = workspace, detail.workspaceId.lowercased() != current.lowercased() { return nil }
+		guard detail.object.type == "loop" else { return nil }
+		return .loop(LinkedLoop(target: target, object: detail.object))
+	}
+
+	/// A trigger is read from the triggers list: there is no read of one trigger. One missing from a
+	/// list that is known to be whole is gone. One missing from a list cut short, or no list at all,
+	/// stays a link.
+	private func fetchTrigger(_ target: LinkedTarget) async throws -> LinkedItem? {
+		guard loadTriggers != nil else { return nil }
+		func find(in listing: TriggerListing) -> Trigger? {
+			listing.triggers.first { $0.id.lowercased() == target.uuid }
+		}
+		var listing = try await triggerListing(maxAge: retryAfter)
+		// A trigger made since the list was read is not gone: before saying so, read the list again.
+		if find(in: listing) == nil { listing = try await triggerListing(maxAge: Self.missRecheck) }
+		if let found = find(in: listing) { return .trigger(LinkedTrigger(target: target, trigger: found)) }
+		return listing.isComplete ? .deleted(target) : nil
+	}
+
+	private func loopSummaries() async throws -> [String: LoopSummary] {
+		if let held = loopsHeld, now().timeIntervalSince(held.readAt) < retryAfter { return held.value }
+		guard let loadLoops else { return [:] }
+		let started = loopsRead == nil
+		let task: Task<[LoopSummary], Error>
+		if let running = loopsRead {
+			task = running
+		} else {
+			task = Task { try await loadLoops() }
+			loopsRead = task
+		}
+		defer { if started { loopsRead = nil } }
+		let list = try await task.value
+		let byID = Dictionary(list.map { ($0.id.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
+		loopsHeld = Held(value: byID, readAt: now())
+		return byID
+	}
+
+	/// A list read less than this long ago is not read again to double-check a missing trigger.
+	static let missRecheck: TimeInterval = 2
+
+	private func triggerListing(maxAge: TimeInterval) async throws -> TriggerListing {
+		if let held = triggersHeld, now().timeIntervalSince(held.readAt) < maxAge { return held.value }
+		guard let loadTriggers else { return TriggerListing(triggers: [], isComplete: false) }
+		let started = triggersRead == nil
+		let task: Task<TriggerListing, Error>
+		if let running = triggersRead {
+			task = running
+		} else {
+			task = Task { try await loadTriggers() }
+			triggersRead = task
+		}
+		defer { if started { triggersRead = nil } }
+		let listing = try await task.value
+		triggersHeld = Held(value: listing, readAt: now())
+		return listing
 	}
 
 	private func lookup(_ target: LinkedTarget) async {
@@ -192,7 +341,13 @@ public final class LinkedItemStore {
 			}
 			settle(target, with: item)
 		} catch {
-			// A missing object or file is final; anything else (offline, a 5xx) is tried again later.
+			if target.kind != .file, Self.isGone(error) {
+				// Gone is final, and it is an answer: the card says so.
+				entries[target.key] =
+					workspaceID() == workspace ? Entry(state: .ready(.deleted(target)), failedAt: nil) : nil
+				return
+			}
+			// A missing file is final; anything else (offline, a 5xx) is tried again later.
 			entries[target.key] = Entry(state: .unavailable, failedAt: Self.isGone(error) ? nil : now())
 		}
 	}
@@ -207,18 +362,14 @@ public final class LinkedItemStore {
 		return false
 	}
 
-	/// An object is a card only when it is in this workspace, is a draft worth acting on (it has a
-	/// preview) and has text to show. Anything else is a plain reference.
+	/// An object is a card when it is in this workspace: the approval card for a draft worth acting
+	/// on (it has a preview and text), the shared card face for anything else.
 	func classify(_ detail: ObjectDetail, workspace: String?) -> LinkedItem? {
 		if let current = workspace, detail.workspaceId.lowercased() != current.lowercased() { return nil }
 		let object = detail.object
 		let hasText = !(object.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 		if let preview = detail.preview, hasText { return .draft(object, preview) }
-		let title = object.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return .plain(
-			LinkedReference(
-				target: LinkedTarget(kind: .object, uuid: object.id), title: title.isEmpty ? "Untitled" : title,
-				kindLabel: Self.label(forType: object.type)))
+		return .object(LinkedObject(object: object, kindLabel: Self.label(forType: object.type)))
 	}
 
 	/// A file is a card when it can be read in place: a page, a document, a picture or plain text.

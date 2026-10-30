@@ -1449,13 +1449,56 @@ describe('Objects Routes', () => {
 	})
 
 	describe('POST /api/objects/migrate-type', () => {
+		// isWorkspaceHumanAdminOrOwner lookup: the caller is a human owner.
+		const humanAdmin = [{ role: 'owner', type: 'human' }]
+
+		it.each([
+			['a plain member', { role: 'member', type: 'human' }],
+			['an agent', { role: 'member', type: 'agent' }],
+			['an admin agent', { role: 'admin', type: 'agent' }],
+		])('returns 403 and changes nothing when the caller is %s', async (_label, callerRow) => {
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[callerRow]]
+
+			for (const body of [
+				{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+				{ fromType: 'task', mode: 'delete' },
+			]) {
+				const res = await app.request(
+					jsonRequest('POST', '/api/objects/migrate-type', body, { 'x-workspace-id': wsId }),
+				)
+				expect(res.status).toBe(403)
+				mockResults.selectQueue = [[callerRow]]
+			}
+
+			expect(calls.updates).toHaveLength(0)
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('returns 200 for a human admin', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[{ role: 'admin', type: 'human' }], [ws], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects/migrate-type',
+					{ fromType: 'task', toType: 'bet', mode: 'migrate' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
 		it('returns 200 and migrates rows to the new type', async () => {
 			const ws = buildWorkspace({ id: wsId })
 			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
 			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'done' })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// 1) workspace lookup, 2) rows of fromType
-			mockResults.selectQueue = [[ws], [obj1, obj2]]
+			// 1) admin check, 2) workspace lookup, 3) rows of fromType
+			mockResults.selectQueue = [humanAdmin, [ws], [obj1, obj2]]
 			// 2 update calls + 2 event inserts inside the transaction
 			mockResults.update = [{}]
 			mockResults.insert = [{}]
@@ -1482,7 +1525,7 @@ describe('Objects Routes', () => {
 		it('returns 200 and 0 count when fromType has no rows', async () => {
 			const ws = buildWorkspace({ id: wsId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[ws], []]
+			mockResults.selectQueue = [humanAdmin, [ws], []]
 
 			const res = await app.request(
 				jsonRequest(
@@ -1501,7 +1544,7 @@ describe('Objects Routes', () => {
 		it('returns 400 for invalid toType', async () => {
 			const ws = buildWorkspace({ id: wsId })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[ws]]
+			mockResults.selectQueue = [humanAdmin, [ws]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -1549,8 +1592,8 @@ describe('Objects Routes', () => {
 			const ws = buildWorkspace({ id: wsId })
 			const obj1 = buildObject({ workspaceId: wsId, type: 'task' })
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			// 1) workspace lookup, 2) rows to delete (id list)
-			mockResults.selectQueue = [[ws], [{ id: obj1.id }]]
+			// 1) admin check, 2) workspace lookup, 3) rows to delete (id list)
+			mockResults.selectQueue = [humanAdmin, [ws], [{ id: obj1.id }]]
 			mockResults.delete = [{}]
 			mockResults.insert = [{}]
 
@@ -1575,7 +1618,7 @@ describe('Objects Routes', () => {
 			const obj1 = buildObject({ workspaceId: wsId, type: 'task', status: 'todo' })
 			const obj2 = buildObject({ workspaceId: wsId, type: 'task', status: 'done' })
 			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[ws], [obj1, obj2]]
+			mockResults.selectQueue = [humanAdmin, [ws], [obj1, obj2]]
 			mockResults.update = [{}]
 			mockResults.insert = [{}]
 
@@ -1614,7 +1657,7 @@ describe('Objects Routes', () => {
 				},
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[ws]]
+			mockResults.selectQueue = [humanAdmin, [ws]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -1630,7 +1673,7 @@ describe('Objects Routes', () => {
 
 		it('returns 404 when workspace not found', async () => {
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[]]
+			mockResults.selectQueue = [humanAdmin, []]
 
 			const res = await app.request(
 				jsonRequest(

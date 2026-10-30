@@ -629,3 +629,51 @@ describe('createWriteGate: what the call receipt reads from the gate', () => {
 		expect(gate.pendingHold()).toBeNull()
 	})
 })
+
+describe('createWriteGate: a decision write needs a clear yes', () => {
+	const ARGS = { entity_id: 'card-1', content: 'go' }
+	const make = () =>
+		createWriteGate({
+			voiceSessionId: 's1',
+			isReadOnlyTool: () => false,
+			isDecisionWrite: (tool, args) =>
+				tool === 'create_comment' && (args as { entity_id?: string }).entity_id === 'card-1',
+		})
+
+	it('holds a decision write and flags it as a decision, but not other comments', async () => {
+		const gate = make()
+		expect(await gate.review('create_comment', ARGS, null)).toMatchObject({
+			kind: 'hold',
+			decision: true,
+			risky: false,
+		})
+		expect(await gate.review('create_comment', { entity_id: 'other' }, null)).toEqual({
+			kind: 'run',
+		})
+	})
+
+	it.each(['mm', 'Mm.', 'mhm', 'go on', 'okay go on', 'right'])(
+		'does not take "%s" for the yes',
+		async (line) => {
+			vi.useFakeTimers()
+			const gate = make()
+			const hold = await gate.review('create_comment', ARGS, null)
+			if (hold.kind !== 'hold') throw new Error('expected a hold')
+			gate.noteSpeechStarted('i1')
+			gate.noteUserLine(line, 'i1')
+			const result = gate.review('create_comment', ARGS, hold.id)
+			await vi.advanceTimersByTimeAsync(4_000)
+			expect(await result).toEqual({ kind: 'refuse', reason: 'no_yes' })
+			vi.useRealTimers()
+		},
+	)
+
+	it('runs after a clear yes spoken after the hold', async () => {
+		const gate = make()
+		const hold = await gate.review('create_comment', ARGS, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		gate.noteSpeechStarted('i1')
+		gate.noteUserLine('yes', 'i1')
+		expect(await gate.review('create_comment', ARGS, hold.id)).toMatchObject({ kind: 'run' })
+	})
+})

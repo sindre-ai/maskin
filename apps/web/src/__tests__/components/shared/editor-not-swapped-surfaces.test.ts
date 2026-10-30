@@ -7,13 +7,12 @@ import pulseCardSource from '@/components/pulse/pulse-card.tsx?raw'
 import { describe, expect, it } from 'vitest'
 
 // Tech spec section 1, "Deliberately NOT swapped": the rich editor never mounts
-// on these inputs, with the rich-markdown-editor flag on or off. The mounts
+// on these inputs. The mounts
 // that do swap are asserted in their own component tests.
 const EDITOR_REFERENCES = [
 	'MarkdownEditor',
 	'DocumentMarkdownEditor',
 	'@maskin/markdown/react/editor',
-	'rich-markdown-editor',
 ]
 
 function expectNoEditor(source: string) {
@@ -52,9 +51,9 @@ describe('surfaces that stay on a plain input', () => {
 	})
 
 	it('notification input swaps the multiline branch only', () => {
-		// The single-line Input is covered by a render test (flag on, no editor).
+		// The single-line Input is covered by a render test (no editor).
 		expect(notificationInputSource).toContain('<Input')
 		expect(notificationInputSource.match(/<MarkdownEditor/g)).toHaveLength(1)
-		expect(notificationInputSource).toContain('(metadata.multiline as boolean) && richEditor')
+		expect(notificationInputSource).toContain('(metadata.multiline as boolean) ?')
 	})
 })

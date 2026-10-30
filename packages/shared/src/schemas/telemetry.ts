@@ -259,11 +259,55 @@ export const recordMcpErrorSchema = z.object({
 	mcp_protocol_version: mcpProtocolVersionSchema,
 })
 
+// Old-name use for the MCP tool-surface bet: one event per call that reached a
+// tool through a deprecated tool name or a deprecated argument key. Its own
+// event type, NOT a misfire kind: an alias hit is a success, and the misfire
+// count is a headline metric that must not move for this reason. Persisted in
+// `mcp_telemetry.data` (jsonb, no schema migration) and fanned out to PostHog
+// as `mcp_alias_use`.
+//
+// Key NAMES only, never values — the same bar as `arg_keys`. `renames` pairs
+// the old and new dotted path; array indexes are dropped, so `edges.source_id`,
+// never `edges[0].source_id`. `tool_alias` is present only when the tool NAME
+// was the old one (run_agent) and absent for key renames. The actor is
+// deliberately NOT a field: the ingest route takes it from the authenticated
+// request, so a payload cannot claim to be someone else.
+export const MAX_ALIAS_RENAMES = 64
+export const MAX_ALIAS_DROPPED_KEYS = 16
+
+const keyPathSchema = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^[A-Za-z0-9_.-]+$/, 'key path must be identifier-like')
+
+export const recordMcpAliasUseSchema = z.object({
+	event_type: z.literal('alias_use'),
+	// The tool that was called. For a tool-name alias this is the old name.
+	tool_name: toolNameSchema,
+	session_id: sessionIdSchema,
+	session_source: z.enum(['maskin-session', 'process', 'unknown']).optional(),
+	transport: z.enum(['stdio', 'http']).optional(),
+	renames: z
+		.array(z.object({ old: keyPathSchema, new: keyPathSchema }))
+		.max(MAX_ALIAS_RENAMES)
+		.default([]),
+	// Both the old and the new spelling were sent. The new one wins; no value
+	// comparison is made or logged.
+	both_sent: z.boolean().default(false),
+	// Key names removed with no replacement (the run_agent alias only).
+	dropped_keys: z.array(keyPathSchema).max(MAX_ALIAS_DROPPED_KEYS).optional(),
+	tool_alias: z.object({ old: toolNameSchema, new: toolNameSchema }).optional(),
+})
+
+export type RecordMcpAliasUseBody = z.infer<typeof recordMcpAliasUseSchema>
+
 export const recordMcpTelemetrySchema = z.discriminatedUnion('event_type', [
 	recordMcpToolCallSchema,
 	recordMcpMutationSchema,
 	recordMcpToolCallResponseSizeSchema,
 	recordMcpErrorSchema,
+	recordMcpAliasUseSchema,
 ])
 
 export type RecordMcpTelemetryBody = z.infer<typeof recordMcpTelemetrySchema>

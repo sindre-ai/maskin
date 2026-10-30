@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
 import { actors, conversationParticipants, conversations, messages } from '@maskin/db/schema'
 import { and, desc, eq, isNull } from 'drizzle-orm'
+import { isHumanPaused } from '../lib/agent-pause'
 import { logger } from '../lib/logger'
 import { deliverTurnToAgent } from './conversation-responder'
 import type { SessionManager } from './session-manager'
@@ -65,7 +66,13 @@ export async function wakeAgentFromCard(params: {
 		if (!conversation) return false
 
 		const participants = await db
-			.select({ actorId: actors.id, name: actors.name, type: actors.type })
+			.select({
+				actorId: actors.id,
+				name: actors.name,
+				type: actors.type,
+				agentState: actors.agentState,
+				metadata: actors.metadata,
+			})
 			.from(conversationParticipants)
 			.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
 			.where(
@@ -78,6 +85,15 @@ export async function wakeAgentFromCard(params: {
 		const agent = participants.find((p) => p.actorId === agentId && p.type === 'agent')
 		if (!caller || !agent) {
 			logger.warn('Chat card wake skipped: caller or agent is not in the chat', {
+				conversationId,
+				agentId,
+			})
+			return false
+		}
+
+		// A person's Pause holds against a card approval too: no session, nothing written into a live one.
+		if (isHumanPaused(agent)) {
+			logger.info('Chat card wake skipped: the agent is paused by a person', {
 				conversationId,
 				agentId,
 			})

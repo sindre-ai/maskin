@@ -9,6 +9,9 @@ import Speech
 /// Live dictation into the composer. Prefers on-device recognition (no audio leaves the phone);
 /// when the device or language can't, the system's recogniser is used instead.
 ///
+/// With `start(backend: true)`, speech is sent to the Maskin server instead (`BackendDictationRun`),
+/// and the recogniser above takes over if that fails.
+///
 /// Needs `NSSpeechRecognitionUsageDescription` and `NSMicrophoneUsageDescription` in Info.plist.
 @MainActor
 @Observable
@@ -40,20 +43,35 @@ final class Dictation {
 	@ObservationIgnored private var flushing = false
 	@ObservationIgnored private var feed: AudioFeed?
 	@ObservationIgnored private var watchers: [Task<Void, Never>] = []
+	/// The server-backed session, while one is running. Nil on the phone's recogniser.
+	@ObservationIgnored private var backendRun: BackendDictationRun?
+	/// What the server transcribed before the phone's recogniser took over; goes before its text.
+	@ObservationIgnored private var backendText = ""
+	@ObservationIgnored private var finishing: Task<Void, Never>?
+
+	/// True while a session is sending speech to the server.
+	var usesBackend: Bool { backendRun != nil }
 
 	/// Start listening; `onText` gets the running transcript (the whole utterance so far).
 	///
 	/// `continuous` keeps recording across the recogniser ending on a pause, until `stop()`: the
 	/// transcript then accumulates across restarts. Without it (a live conversation, which treats
 	/// the end of an utterance as a turn) the session ends when the recogniser does.
-	func start(continuous: Bool = false, onText: @escaping @MainActor (String) -> Void) async {
+	///
+	/// `backend` dictates through the server, with the phone's recogniser as the fallback; it is for
+	/// the composer's mic, never for a live conversation.
+	func start(
+		continuous: Bool = false, backend: Bool = false, onText: @escaping @MainActor (String) -> Void
+	) async {
 		guard state != .listening else { return }
 		if flushing { finishFlush() }
 		self.onText = onText
 		self.continuous = continuous
 		accumulator = DictationAccumulator()
 		restartPolicy = DictationRestartPolicy()
+		backendText = ""
 		guard await requestPermissions() else { return }
+		if backend, await startBackend() { return }
 		guard let recognizer = Self.makeRecognizer() else {
 			state = .unavailable("Dictation isn't available for this language right now.")
 			return
@@ -69,6 +87,75 @@ final class Dictation {
 				(error as? DictationError)?.message
 					?? "Couldn't start the microphone (\(error.localizedDescription)).")
 		}
+	}
+
+	/// Starts dictating through the server. False means use the phone's recogniser: there is no
+	/// server service (previews, tests) or the microphone wouldn't open.
+	private func startBackend() async -> Bool {
+		guard let service = DictationBackend.service else { return false }
+		let run = BackendDictationRun(
+			service: service, language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
+			onText: { [weak self] text in
+				self?.backendText = text
+				self?.onText?(text)
+			},
+			onFailure: { [weak self] in self?.backendFailed() },
+			onInterrupted: { [weak self] in
+				self?.fail("Dictation was interrupted. Tap the microphone to continue.")
+			},
+			onLimit: { [weak self] in self?.backendLimitReached() })
+		SpeechReader.shared.inputDidBegin()
+		do {
+			try run.start()
+		} catch {
+			run.cancel()
+			SpeechReader.shared.inputDidEnd()
+			return false
+		}
+		backendRun = run
+		state = .listening
+		return true
+	}
+
+	/// A request failed or the microphone changed under us: keep the text the server already
+	/// returned and carry on with the phone's recogniser, so dictation never just stops.
+	private func backendFailed() {
+		guard let run = backendRun else { return }
+		backendText = run.text
+		run.cancel()
+		backendRun = nil
+		continueOnDevice()
+	}
+
+	/// The session hit the server's length limit: let the phrases in flight land, then go on with
+	/// the phone's recogniser for as long as the person keeps talking.
+	private func backendLimitReached() {
+		guard let run = backendRun else { return }
+		Task { [self] in
+			await run.finish()
+			guard backendRun === run, finishing == nil, state == .listening else { return }
+			backendText = run.text
+			backendRun = nil
+			continueOnDevice()
+		}
+	}
+
+	private func continueOnDevice() {
+		accumulator = DictationAccumulator()
+		restartPolicy = DictationRestartPolicy()
+		guard let recognizer = Self.makeRecognizer() else {
+			fail("Dictation isn't available for this language right now.")
+			return
+		}
+		do {
+			try launch(recognizer)
+		} catch {
+			fail("Dictation stopped: \(error.localizedDescription)")
+		}
+	}
+
+	private func report() {
+		onText?(backendText.isEmpty ? accumulator.text : DictationText.merge(base: backendText, transcript: accumulator.text))
 	}
 
 	private static func makeRecognizer() -> SFSpeechRecognizer? {
@@ -124,7 +211,7 @@ final class Dictation {
 					if let text {
 						self.heardText = self.heardText || !text.isEmpty
 						self.accumulator.update(text)
-						self.onText?(self.accumulator.text)
+						self.report()
 					}
 					guard finished else { return }
 					if self.flushing {
@@ -280,7 +367,30 @@ final class Dictation {
 
 	/// `flush` is for Done: the microphone closes now, but the recogniser gets a moment to deliver the
 	/// words it was still working on. Without it the last second or two of speech is dropped.
+	/// Done. On the phone's recogniser this is `stop()`. On the server the microphone closes now and
+	/// the session ends once the last phrases have been transcribed, so the text lands before the
+	/// composer takes the keyboard back.
+	func finish() async {
+		if let finishing {
+			await finishing.value
+			return
+		}
+		guard let run = backendRun else {
+			stop()
+			return
+		}
+		let task = Task { [self] in
+			await run.finish()
+			stop()
+		}
+		finishing = task
+		await task.value
+		finishing = nil
+	}
+
 	func stop(flush: Bool = false) {
+		backendRun?.cancel()
+		backendRun = nil
 		if flush, state == .listening, request != nil {
 			watchers.forEach { $0.cancel() }
 			watchers = []
