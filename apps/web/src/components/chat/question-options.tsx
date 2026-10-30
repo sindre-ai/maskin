@@ -1,5 +1,7 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useSendMessage } from '@/hooks/use-conversation'
 import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageQuestion, MessageQuestionAnswer, MessageQuestionItem } from '@/lib/api'
@@ -54,6 +56,8 @@ export function QuestionOptions({
 	// A helper another agent started is not in this chat, so its answer goes to
 	// the session itself, not to the chat's agents.
 	const sendInput = useSendSessionInput(workspaceId)
+	// An answer is a message to the agent, which a viewer cannot send.
+	const canWrite = useCanWrite()
 	const isPending = sendMessage.isPending || sendInput.isPending
 	const isError = sendMessage.isError || sendInput.isError
 
@@ -124,56 +128,67 @@ export function QuestionOptions({
 					<fieldset key={index} className="flex flex-col gap-1.5 border-0 p-0">
 						<legend className="eyebrow">{q.header}</legend>
 						<p className="text-[13.5px] leading-[1.5] text-foreground">{q.question}</p>
-						<ul className="flex list-none flex-wrap gap-1.5 p-0">
-							{q.options.map((option) => {
-								const isChosen = chosen.includes(option.label)
-								return (
-									<li key={option.label}>
-										<button
-											type="button"
-											aria-pressed={isChosen}
-											title={option.description || undefined}
-											onClick={() => toggle(q, index, option.label)}
-											className={cn(
-												'inline-flex max-w-full items-center gap-1.5 rounded-[9px] border px-2.5 py-1.5 text-left text-[12.5px] font-semibold transition-colors',
-												isChosen
-													? 'border-primary bg-primary text-primary-foreground'
-													: 'border-border bg-card text-foreground hover:border-primary',
-											)}
-										>
-											{isChosen ? <Check size={12} aria-hidden /> : null}
-											<span className="truncate">{option.label}</span>
-										</button>
-									</li>
-								)
-							})}
-						</ul>
+						<ViewerTooltip className="block">
+							<ul className="flex list-none flex-wrap gap-1.5 p-0">
+								{q.options.map((option) => {
+									const isChosen = chosen.includes(option.label)
+									return (
+										<li key={option.label}>
+											<button
+												type="button"
+												aria-pressed={isChosen}
+												disabled={!canWrite}
+												title={option.description || undefined}
+												onClick={() => toggle(q, index, option.label)}
+												className={cn(
+													'inline-flex max-w-full items-center gap-1.5 rounded-[9px] border px-2.5 py-1.5 text-left text-[12.5px] font-semibold transition-colors disabled:opacity-50',
+													isChosen
+														? 'border-primary bg-primary text-primary-foreground'
+														: 'border-border bg-card text-foreground hover:border-primary',
+												)}
+											>
+												{isChosen ? <Check size={12} aria-hidden /> : null}
+												<span className="truncate">{option.label}</span>
+											</button>
+										</li>
+									)
+								})}
+							</ul>
+						</ViewerTooltip>
 						{q.multi_select ? (
 							<p className="text-[10.5px] text-muted-foreground">Pick as many as apply</p>
 						) : null}
 					</fieldset>
 				)
 			})}
-			<div className="flex flex-wrap items-center gap-2">
-				<Button type="button" size="sm" onClick={submit} disabled={!allAnswered || isPending}>
-					{isPending ? 'Sending…' : 'Send answer'}
-				</Button>
-				{/* Answering is optional — the agent is waiting on a turn, not blocked
-				    on this widget, so typing a reply instead has to stay obviously
-				    available rather than reading as a dead end. */}
-				{typing ? null : (
+			<ViewerTooltip className="flex">
+				<div className="flex flex-wrap items-center gap-2">
 					<Button
 						type="button"
-						variant="ghost"
 						size="sm"
-						className="h-7 px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
-						onClick={() => setTyping(true)}
+						onClick={submit}
+						disabled={!allAnswered || isPending || !canWrite}
 					>
-						or type your reply
+						{isPending ? 'Sending…' : 'Send answer'}
 					</Button>
-				)}
-				{trailingAction ? <div className="ml-auto">{trailingAction}</div> : null}
-			</div>
+					{/* Answering is optional — the agent is waiting on a turn, not blocked
+					    on this widget, so typing a reply instead has to stay obviously
+					    available rather than reading as a dead end. */}
+					{typing ? null : (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="h-7 px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
+							onClick={() => setTyping(true)}
+							disabled={!canWrite}
+						>
+							or type your reply
+						</Button>
+					)}
+					{trailingAction ? <div className="ml-auto">{trailingAction}</div> : null}
+				</div>
+			</ViewerTooltip>
 			{typing ? (
 				<div className="flex items-end gap-2">
 					<Textarea

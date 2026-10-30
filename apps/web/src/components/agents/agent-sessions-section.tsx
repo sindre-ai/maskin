@@ -1,7 +1,9 @@
 import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ConversationThread } from '@/hooks/use-conversation-threads'
 import {
 	useActorSessions,
@@ -14,6 +16,7 @@ import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
 import { useWorkspace } from '@/lib/workspace-context'
+import { isViewerRefusal } from '@/lib/workspace-role'
 import {
 	AlertCircle,
 	CheckCircle2,
@@ -261,6 +264,8 @@ function SessionCard({
 	const createSession = useCreateSession(workspaceId)
 	const pauseSession = usePauseSession(workspaceId)
 	const resumeSession = useResumeSession(workspaceId)
+	// Pause, resume and restart all act on the session, which a viewer cannot do.
+	const canWrite = useCanWrite()
 
 	const name = title
 	const StateIcon = meta.Icon
@@ -287,7 +292,9 @@ function SessionCard({
 			},
 			{
 				onSuccess: () => toast.success('Session restarted'),
-				onError: () => toast.error(`Couldn't restart this session for ${agent.name}`),
+				onError: (err) => {
+					if (!isViewerRefusal(err)) toast.error(`Couldn't restart this session for ${agent.name}`)
+				},
 			},
 		)
 
@@ -303,42 +310,50 @@ function SessionCard({
 		if (canPause) {
 			pauseSession.mutate(thread.latestId, {
 				onSuccess: () => toast.success('Session paused'),
-				onError: () => toast.error("Couldn't pause this session"),
+				onError: (err) => {
+					if (!isViewerRefusal(err)) toast.error("Couldn't pause this session")
+				},
 			})
 			return
 		}
 		resumeSession.mutate(thread.latestId, {
 			onSuccess: () => toast.success('Session resumed'),
-			onError: () => toast.error("Couldn't resume this session"),
+			onError: (err) => {
+				if (!isViewerRefusal(err)) toast.error("Couldn't resume this session")
+			},
 		})
 	}
 
 	const pauseResumeButton = (
-		<Button
-			size="sm"
-			variant="outline"
-			className="h-7 rounded-md px-2.5 text-xs"
-			onClick={handlePauseResume}
-			disabled={isPauseResumePending}
-		>
-			{canPause ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
-			<span className="sr-only md:not-sr-only">{canPause ? 'Pause' : 'Resume'}</span>
-		</Button>
+		<ViewerTooltip>
+			<Button
+				size="sm"
+				variant="outline"
+				className="h-7 rounded-md px-2.5 text-xs"
+				onClick={handlePauseResume}
+				disabled={isPauseResumePending || !canWrite}
+			>
+				{canPause ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
+				<span className="sr-only md:not-sr-only">{canPause ? 'Pause' : 'Resume'}</span>
+			</Button>
+		</ViewerTooltip>
 	)
 
 	const restartButton = (
-		<Button
-			size="sm"
-			variant="outline"
-			className="h-7 rounded-md px-2.5 text-xs"
-			onClick={handleRestart}
-			disabled={createSession.isPending}
-		>
-			<RotateCcw size={12} aria-hidden />
-			<span className="sr-only md:not-sr-only">
-				{createSession.isPending ? 'Restarting…' : 'Restart'}
-			</span>
-		</Button>
+		<ViewerTooltip>
+			<Button
+				size="sm"
+				variant="outline"
+				className="h-7 rounded-md px-2.5 text-xs"
+				onClick={handleRestart}
+				disabled={createSession.isPending || !canWrite}
+			>
+				<RotateCcw size={12} aria-hidden />
+				<span className="sr-only md:not-sr-only">
+					{createSession.isPending ? 'Restarting…' : 'Restart'}
+				</span>
+			</Button>
+		</ViewerTooltip>
 	)
 
 	return (
