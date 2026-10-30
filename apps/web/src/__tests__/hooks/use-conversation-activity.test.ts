@@ -1056,3 +1056,141 @@ describe('useConversationActivity — auto-posted final output', () => {
 		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
 	})
 })
+
+describe('useConversationActivity — one session per agent and thread', () => {
+	const mainSession = buildSession({ id: 'sess-main', threadRootId: null })
+	const threadSession = buildSession({ id: 'sess-thread', threadRootId: 20 })
+
+	// Both sessions belong to agent-1; each is mid-turn on a different message.
+	function mockMainAndThreadSessions() {
+		vi.mocked(api.sessions.list).mockResolvedValue([threadSession, mainSession])
+		vi.mocked(api.sessions.logs).mockImplementation(async (id: string) =>
+			id === 'sess-thread'
+				? [
+						buildLog({ id: 1, sessionId: id, content: taggedUserTurn(21, 'in the thread') }),
+						buildLog({ id: 2, sessionId: id, content: toolUse('search_objects') }),
+					]
+				: [
+						buildLog({ id: 3, sessionId: id, content: taggedUserTurn(30, 'in the main chat') }),
+						buildLog({ id: 4, sessionId: id, content: toolUse('search_objects') }),
+					],
+		)
+	}
+
+	const messages = [
+		buildMessage({ id: 20, actorId: 'human-1', content: 'thread root' }),
+		buildMessage({ id: 21, actorId: 'human-1', content: 'in the thread', threadRootId: 20 }),
+		buildMessage({ id: 30, actorId: 'human-1', content: 'in the main chat' }),
+	]
+
+	it('keeps both sessions of one agent, each live turn with its own session and thread', async () => {
+		mockMainAndThreadSessions()
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(30)).toBeDefined())
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(21)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(21)).toMatchObject([
+			{ sessionId: 'sess-thread', threadRootId: 20, inProgress: true },
+		])
+		expect(result.current.byTriggerMessageId.get(30)).toMatchObject([
+			{ sessionId: 'sess-main', threadRootId: null, inProgress: true },
+		])
+	})
+
+	it('the main chat shows only the main session, so Stop there targets the main session', async () => {
+		mockMainAndThreadSessions()
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages, { threadRootId: null }),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(30)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(30)?.map((t) => t.sessionId)).toEqual([
+			'sess-main',
+		])
+		expect(result.current.byTriggerMessageId.get(21)).toBeUndefined()
+		expect(api.sessions.logs).not.toHaveBeenCalledWith(
+			'sess-thread',
+			workspaceId,
+			expect.anything(),
+		)
+	})
+
+	it("a thread shows only its own session's turn, not the main session's", async () => {
+		mockMainAndThreadSessions()
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages, { threadRootId: 20 }),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(21)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(21)?.map((t) => t.sessionId)).toEqual([
+			'sess-thread',
+		])
+		expect(result.current.byTriggerMessageId.get(30)).toBeUndefined()
+		expect(api.sessions.logs).not.toHaveBeenCalledWith('sess-main', workspaceId, expect.anything())
+	})
+
+	it("does not pair a thread reply with the main session's turn, or the other way round", async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([threadSession, mainSession])
+		vi.mocked(api.sessions.logs).mockImplementation(async (id: string) =>
+			id === 'sess-thread'
+				? [
+						buildLog({ id: 1, sessionId: id, content: taggedUserTurn(21, 'in the thread') }),
+						buildLog({ id: 2, sessionId: id, content: replyTool() }),
+						buildLog({ id: 3, sessionId: id, content: resultEnvelope() }),
+					]
+				: [
+						buildLog({ id: 4, sessionId: id, content: taggedUserTurn(30, 'in the main chat') }),
+						buildLog({ id: 5, sessionId: id, content: replyTool() }),
+						buildLog({ id: 6, sessionId: id, content: resultEnvelope() }),
+					],
+		)
+		const withReplies = [
+			...messages,
+			buildMessage({ id: 22, actorId: 'agent-1', content: 'thread answer', threadRootId: 20 }),
+			buildMessage({ id: 31, actorId: 'agent-1', content: 'main answer' }),
+		]
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, withReplies),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byReplyMessageId.get(22)).toBeDefined())
+		await waitFor(() => expect(result.current.byReplyMessageId.get(31)).toBeDefined())
+
+		expect(result.current.byReplyMessageId.get(22)?.map((t) => t.sessionId)).toEqual([
+			'sess-thread',
+		])
+		expect(result.current.byReplyMessageId.get(31)?.map((t) => t.sessionId)).toEqual(['sess-main'])
+	})
+
+	it("routes a thread session's untagged first moments to fallback, marked with its thread", async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([threadSession, mainSession])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages, { threadRootId: 20 }),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.fallback).toHaveLength(1))
+
+		expect(result.current.fallback[0]).toMatchObject({ sessionId: 'sess-thread', threadRootId: 20 })
+	})
+
+	it('a thread whose agent has no session of its own still reads its main session, as before', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([mainSession])
+		vi.mocked(api.sessions.logs).mockResolvedValue([
+			buildLog({ id: 1, content: taggedUserTurn(21, 'in the thread') }),
+			buildLog({ id: 2, content: toolUse('search_objects') }),
+		])
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages, { threadRootId: 20 }),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(21)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(21)).toMatchObject([{ sessionId: 'sess-main' }])
+	})
+})
