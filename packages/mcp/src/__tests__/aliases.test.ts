@@ -6,7 +6,6 @@ import { ALIASES } from '../aliases'
 import { tools } from '../tools'
 import {
 	type AliasHarness,
-	DEFAULT_WORKSPACE_ID,
 	ROW_SCENARIOS,
 	isValidationError,
 	startAliasHarness,
