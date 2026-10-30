@@ -29,8 +29,19 @@ export interface ToolGateConfig {
 /** The level as the UI names it ("Read", "Read & write"), so a refusal matches what the person sees. */
 const levelName = (access: AgentAccess) => AGENT_ACCESS_LABELS[access]
 
+/** A held tool is for no access level: a person's approval, not a permission, lets it through. */
 export function allows(access: AgentAccess, kind: ToolKind): boolean {
+	if (kind === 'outbound') return false
 	return kind === 'read' ? canRead(access) : canWrite(access)
+}
+
+/** Said when a call to a held tool is refused, whatever the agent's access. Plain words. */
+function heldMessage(providerLabel: string, toolName: string): string {
+	return [
+		`Held: ${toolName} sends email through ${providerLabel}, or can set a send off (an automation, a broadcast, an event, a webhook, an API key), so it is never available to an agent directly, whatever its access.`,
+		'This is a rule, not an outage, so do not retry and do not look for a workaround.',
+		'To send an email: keep it as an object (create_objects with metadata kind "email", to and subject, the text as content), ask a person to approve it, then call resend_send_email with that object_id. Anything else here needs a person to do it in Resend.',
+	].join(' ')
 }
 
 /** What the agent is told when a call is refused. Plain words, no ids, says what to do next. */
@@ -41,6 +52,7 @@ export function accessDeniedMessage(input: {
 	access: AgentAccess
 }): string {
 	const { providerLabel, toolName, kind, access } = input
+	if (kind === 'outbound') return heldMessage(providerLabel, toolName)
 	const need = kind === 'read' ? 'read' : 'write'
 	const have =
 		access === 'none'
@@ -59,6 +71,9 @@ export function unavailableNote(
 	kind: ToolKind,
 	access: AgentAccess,
 ): string {
+	if (kind === 'outbound') {
+		return '[Held: sends email or can set a send off, so it is not available to you. Use resend_send_email with an approved email object.]'
+	}
 	const need = kind === 'read' ? 'read' : 'write'
 	return access === 'none'
 		? `[Unavailable: you have no access to ${providerLabel}.]`

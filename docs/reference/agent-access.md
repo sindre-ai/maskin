@@ -120,10 +120,18 @@ Two MCP tools, used inside a chat:
 
 When you add a tool to a provider Maskin hosts, add it to `READ_TOOLS` if it only reads. Otherwise do nothing.
 
+### Held tools (Resend)
+
+A third kind, `outbound`, is a tool that sends email or can set a send off. **No access level unlocks it**, Read & write included: the gateway refuses the call with a message that points to `resend_send_email`, and `tools/list` marks it unavailable.
+
+Resend is curated the other way round from Slack: `RESEND_READ_TOOLS` (reads) and `RESEND_SAFE_WRITE_TOOLS` (templates, contacts, domains) are exact name lists, and **everything else is held**. Resend loads more tools on demand (`get_more_tools`), so a tool nobody has classified, a new one included, is held until someone adds it to a list. The server's own hints never move a Resend tool: `readOnlyHint` on `send-email` changes nothing. The held tools include the seven send tools, `send-event`, `update-email`, `cancel-email`, broadcasts, automations, API keys, webhooks, inboxes and drafts, suppressions and segments. Every refusal is logged as an `agent_access_denied` event with `kind: "outbound"`.
+
+Adding a Resend tool to either list is a decision about whether it can send, directly or later: read the tool's schema first.
+
 ## What is not gated
 
 - **GitHub.** Its MCP server runs in the container with the installation token, which git itself also needs. Its limit is the GitHub App's permissions.
-- **Resend, Ubersuggest.** API-key services the agent also calls over plain HTTP.
+- **Ubersuggest.** An API-key service the agent also calls over plain HTTP. (Resend is gated, see Held tools above.)
 - **The Maskin MCP.** Exempt by design.
 
 Adding a provider to `GATEWAY_PROVIDERS` changes what a container receives (no token env var), so it is a deliberate edit, not a side effect.
