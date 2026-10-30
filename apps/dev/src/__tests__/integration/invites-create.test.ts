@@ -24,7 +24,9 @@ vi.mock('@maskin/email', async (importOriginal) => ({
 }))
 
 const { hashInviteToken } = await import('../../lib/invites-token')
-const { default: workspaceInvitationsRoutes } = await import('../../routes/workspace-invitations')
+const { default: workspaceInvitationsRoutes, _resetInviteAttemptLimiter } = await import(
+	'../../routes/workspace-invitations'
+)
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -104,6 +106,7 @@ describe('Invites — POST / (create)', () => {
 
 	beforeEach(async () => {
 		capturePosthogEventMock.mockClear()
+		_resetInviteAttemptLimiter()
 		sendInviteEmailMock.mockReset()
 		sendInviteEmailMock.mockResolvedValue(undefined)
 		callerId = getTestActorId()
@@ -308,6 +311,32 @@ describe('Invites — POST / (create)', () => {
 			expect(retryAfter).toBeLessThanOrEqual(24 * 60 * 60)
 			expect(await invitesFor(workspaceId)).toHaveLength(20)
 			expect(sendInviteEmailMock).toHaveBeenCalledTimes(1)
+		})
+
+		it('rejects the 31st attempt in an hour per caller, including for existing accounts', async () => {
+			const email = uniqueEmail('lookup')
+			const member = await insertActor(db, { email })
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: member.id, role: 'member' })
+
+			// The existing-account branch stores no invite, so only the per-caller
+			// limit can stop a caller probing addresses through it.
+			for (let i = 0; i < 30; i++) {
+				const res = await app().request(invite(workspaceId, email))
+				expect(res.status).toBe(409)
+			}
+
+			const blocked = await app().request(invite(workspaceId, email))
+			expect(blocked.status).toBe(429)
+			expect((await blocked.json()).error.code).toBe('RATE_LIMITED')
+			expect(Number(blocked.headers.get('Retry-After'))).toBeGreaterThan(0)
+
+			// The limit is per caller: another admin of the workspace is not blocked.
+			const otherAdmin = await insertActor(db, { type: 'human' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId, actorId: otherAdmin.id, role: 'admin' })
+			const other = await appAs(otherAdmin.id).request(invite(workspaceId, email))
+			expect(other.status).toBe(409)
 		})
 
 		it('does not count invites older than 24 hours or from other workspaces', async () => {

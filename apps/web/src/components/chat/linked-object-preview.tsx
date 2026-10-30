@@ -10,6 +10,7 @@ import {
 	ObjectReferenceChip,
 	OtherWorkspaceCard,
 	OtherWorkspaceChip,
+	SettingsReferenceChip,
 	TriggerReferenceCard,
 	TriggerReferenceChip,
 } from '@/components/chat/linked-object-reference'
@@ -29,6 +30,7 @@ import { statusLabel } from '@/lib/constants'
 import {
 	type GithubTarget,
 	type LinkedTarget,
+	type SettingsTarget,
 	isOtherWorkspace,
 	showsObjectCard,
 } from '@/lib/linked-objects'
@@ -518,6 +520,14 @@ export function renderLinkedCard(
 /** `MarkdownContent`'s `linkedCards.renderGithubChip`: a link to a GitHub pull request or issue, as a chip that opens GitHub. */
 export function renderLinkedGithubChip(target: GithubTarget, href: string): ReactNode {
 	return <GithubReferenceChip target={target} href={href} />
+}
+
+/** `MarkdownContent`'s `linkedCards.renderSettingsChip`: a link to a settings page, as a chip wherever it stands. */
+export function renderLinkedSettingsChip(
+	target: SettingsTarget,
+	context: { workspaceId: string },
+): ReactNode {
+	return <SettingsReferenceChip workspaceId={context.workspaceId} target={target} />
 }
 
 /** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop, trigger, agent or chat inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */

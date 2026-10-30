@@ -219,6 +219,59 @@ struct LinkedCardSnapshotTests {
 			try await render(column, width: 390, dark: dark, name: "linked-object-message")
 		}
 	}
+
+	@Test("object chips in a sentence, wrapped across lines, in your own bubble, at 390 wide, light and dark, default and largest text")
+	func chips() async throws {
+		let store = await objectStore()
+		let directory = InternalLinkDirectory(store: { store })
+		let task = "https://maskin.io/\(ws)/objects/\(taskID)"
+		let gone = "https://maskin.io/\(ws)/objects/\(goneID)"
+		let theirs = ChatMessage(
+			id: "m1", serverID: 1, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content: "I checked [the login fix](\(task)) and it holds. The older one, [\(gone)](\(gone)), is gone.",
+			createdAt: Date(timeIntervalSince1970: 1_790_000_000))
+		let wrapped = ChatMessage(
+			id: "m2", serverID: 2, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content:
+				"Before we ship anything to the testers this week I would like somebody to look at [the login fix](\(task)) once more, because it touches the code entry screen.",
+			createdAt: Date(timeIntervalSince1970: 1_790_000_100))
+		let own = ChatMessage(
+			id: "m3", serverID: 3, conversationID: "c", actorID: "me", actorName: "Me", author: .human,
+			content: "Is [this one](\(task)) done?", createdAt: Date(timeIntervalSince1970: 1_790_000_200))
+		for dark in [false, true] {
+			for largest in [false, true] {
+				let column = VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+					MessageRow(message: theirs, isOwn: false, showsAuthor: true)
+					MessageRow(message: wrapped, isOwn: false, showsAuthor: false)
+					MessageRow(message: own, isOwn: true, showsAuthor: false)
+				}
+				.environment(\.linkedItems, store)
+				.environment(\.markdownInternalLinkInfo, { url in directory.info(for: url) })
+				try await render(column, width: 390, dark: dark, name: "linked-chips", largest: largest)
+			}
+		}
+	}
+
+	@Test("the chip preview sheet, default and Copied, at 390 wide, light and dark, default and largest text")
+	func chipSheet() async throws {
+		let store = await objectStore()
+		guard case .object(let object)? = store.item(for: LinkedTarget(kind: .object, uuid: taskID)) else {
+			Issue.record("the task did not resolve")
+			return
+		}
+		let web = try #require(URL(string: "https://maskin.io/\(ws)/objects/\(taskID)"))
+		for dark in [false, true] {
+			for largest in [false, true] {
+				for copied in [false, true] {
+					let sheet = LinkedChipSheet(object: object, webURL: web, copied: copied)
+						.background(MaskinSurface.card)
+						.environment(\.linkedItems, store)
+					try await render(
+						sheet, width: 390, dark: dark, name: copied ? "chip-sheet-copied" : "chip-sheet", largest: largest)
+				}
+			}
+		}
+	}
 }
 
 extension LinkedCardSnapshotTests {

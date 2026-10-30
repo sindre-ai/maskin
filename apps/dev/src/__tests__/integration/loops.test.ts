@@ -5,6 +5,7 @@ import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import {
+	ensureWorkspaceMember,
 	insertActor,
 	insertObject,
 	insertRelationship,
@@ -1560,6 +1561,8 @@ describe('Loops read API integration', () => {
 			const quill = await insertActor(db, { name: 'Quill', type: 'agent' })
 			const sebk = await insertActor(db, { name: 'Sebk', type: 'human' })
 			const magnus = await insertActor(db, { name: 'Magnus', type: 'human' })
+			await ensureWorkspaceMember(db, workspaceId, sebk.id)
+			await ensureWorkspaceMember(db, workspaceId, magnus.id)
 
 			const trigA = await insertTrigger(db, workspaceId, actorId, relay.id, {
 				name: 'Watch inbox',
@@ -1622,6 +1625,46 @@ describe('Loops read API integration', () => {
 			expect(stepB?.handsOffToActor?.name).toBe('Magnus')
 			expect(stepB?.escalatesToActor).toBeNull()
 			expect(stepB?.escalatesToActorId).toBeNull()
+		})
+
+		it('returns no name or description for a step actor outside the loop workspace', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			// Exists in the actors table but is not a member of this workspace.
+			const outsider = await insertActor(db, {
+				name: 'Outsider',
+				type: 'agent',
+				description: 'Secret outsider description',
+			})
+			const trig = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				handsOffToActorId: outsider.id,
+				escalatesToActorId: outsider.id,
+			})
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Foreign actor loop',
+				metadata: { trigger_ids: [trig.id] },
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const raw = await res.text()
+			const body = JSON.parse(raw) as {
+				steps: Array<{
+					agent: { name: string | null } | null
+					handsOffToActor: unknown
+					escalatesToActor: unknown
+				}>
+			}
+			expect(body.steps).toHaveLength(1)
+			expect(body.steps[0].agent?.name).toBe('Relay')
+			expect(body.steps[0].handsOffToActor).toBeNull()
+			expect(body.steps[0].escalatesToActor).toBeNull()
+			expect(raw).not.toContain('Outsider')
+			expect(raw).not.toContain('Secret outsider description')
 		})
 
 		it('sets waitingOnViewer=true and pendingCount from sessions in waiting_for_input status', async () => {
