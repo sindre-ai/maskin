@@ -82,7 +82,7 @@ export function urlIsInDefaultShape(
 	return (
 		(!search.sort || search.sort === DEFAULT_SORT) &&
 		(!search.order || search.order === DEFAULT_ORDER) &&
-		(!search.groupBy || search.groupBy === 'status') &&
+		(!search.groupBy || search.groupBy === 'none') &&
 		!search.status &&
 		!search.driver &&
 		// `q`, `attention` and `includeArchived` are display intent too: a
