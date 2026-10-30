@@ -1,6 +1,7 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
 import { EditorBanner } from '@/components/shared/editor-banner'
 import { useEditorLinkChips } from '@/components/shared/editor-link-chips'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
@@ -463,7 +464,10 @@ export function MarkdownContent({
 	objectId,
 	...renderProps
 }: MarkdownContentProps) {
-	if (editable) {
+	// A viewer reads the rendered text and never drops into an editor.
+	const canWrite = useCanWrite()
+
+	if (editable && canWrite) {
 		return (
 			<EditorAdapter
 				content={renderProps.content}
