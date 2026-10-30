@@ -272,10 +272,12 @@ describe('useEditMessage — tagged ids', () => {
 			result.current.mutate({ messageId: 7, content: 'new @Forge', mentions: ['agent-1'] })
 		})
 
-		expect(api.conversations.editMessage).toHaveBeenCalledWith(CONV, WS, 7, {
-			content: 'new @Forge',
-			metadata: { mentions: ['agent-1'] },
-		})
+		await waitFor(() =>
+			expect(api.conversations.editMessage).toHaveBeenCalledWith(CONV, WS, 7, {
+				content: 'new @Forge',
+				metadata: { mentions: ['agent-1'] },
+			}),
+		)
 		await waitFor(() => {
 			const cached = client.getQueryData<InfiniteData<MessagesListResponse>>(mainKey)
 			const edited = cached?.pages[0]?.messages[0]
