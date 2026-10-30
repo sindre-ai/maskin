@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { masterChats, messages } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { conversationParticipants, conversations, messages } from '@maskin/db/schema'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -13,7 +13,7 @@ import { db, getTestActorId } from './global-setup'
 const { default: sessionsRoutes } = await import('../../routes/sessions')
 
 /**
- * Tapping an option on a question an agent asked in its master chat. The session that asked has
+ * Tapping an option on a question an agent asked in its direct message with the person. The session that asked has
  * usually ended, or an agent started it, so the answer cannot be typed into it: it is recorded in
  * the chat and the asking agent gets a turn there. Real Postgres, because the claims are rows:
  * the answer message, and that no turn was written into the finished session.
@@ -87,11 +87,17 @@ async function setup() {
 	return { humanId, workspaceId: workspace.id, agent }
 }
 
-/** The agent asks from a finished run that an agent started, so its question lands in the master chat. */
-async function askFromEndedSession(s: Awaited<ReturnType<typeof setup>>) {
-	const session = await insertSession(db, s.workspaceId, s.agent.id, s.agent.id, {
+/**
+ * The agent asks from a run with no chat of its own, so its question lands in the direct message.
+ * By default the run is finished and an agent started it; pass other options for the other shapes.
+ */
+async function askFromSession(
+	s: Awaited<ReturnType<typeof setup>>,
+	opts: { createdBy?: string; status?: string } = {},
+) {
+	const session = await insertSession(db, s.workspaceId, s.agent.id, opts.createdBy ?? s.agent.id, {
 		interactive: false,
-		status: 'completed',
+		status: opts.status ?? 'completed',
 	})
 	if (!session) throw new Error('failed to seed session')
 	const asked = await appFor(s.agent.id, 'agent').app.request(
@@ -99,21 +105,23 @@ async function askFromEndedSession(s: Awaited<ReturnType<typeof setup>>) {
 	)
 	expect(asked.status).toBe(200)
 	const { message_id } = (await asked.json()) as { message_id: number }
-	const [master] = await db
-		.select()
-		.from(masterChats)
-		.where(eq(masterChats.workspaceId, s.workspaceId))
-	if (!master) throw new Error('no master chat was created')
-	return { session, questionId: message_id, conversationId: master.conversationId }
+	const [direct] = await db
+		.select({ id: conversations.id })
+		.from(conversations)
+		.where(
+			and(eq(conversations.workspaceId, s.workspaceId), isNotNull(conversations.directPairKey)),
+		)
+	if (!direct) throw new Error('no direct message was created')
+	return { session, questionId: message_id, conversationId: direct.id }
 }
 
 const chatMessages = (conversationId: string) =>
 	db.select().from(messages).where(eq(messages.conversationId, conversationId))
 
-describe('POST /sessions/:id/input on a master-chat question', () => {
+describe('POST /sessions/:id/input on a direct-message question', () => {
 	it('records the answer in the chat and gives the asking agent a turn, without resuming the ended session', async () => {
 		const s = await setup()
-		const { session, questionId, conversationId } = await askFromEndedSession(s)
+		const { session, questionId, conversationId } = await askFromSession(s)
 		const { app, sessionManager } = appFor(s.humanId, 'human')
 
 		const res = await app.request(
@@ -127,7 +135,7 @@ describe('POST /sessions/:id/input on a master-chat question', () => {
 		expect(rows[1]?.metadata).toMatchObject({
 			question_answer: { question_message_id: questionId },
 		})
-		// The agent gets its turn in the master chat, with the chat so far.
+		// The agent gets its turn in the direct message, with the chat so far.
 		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 		const [, params] = sessionManager.createSession.mock.calls[0] as unknown as [
 			string,
@@ -143,19 +151,69 @@ describe('POST /sessions/:id/input on a master-chat question', () => {
 
 	it('refuses a second answer to the same question', async () => {
 		const s = await setup()
-		const { session, questionId, conversationId } = await askFromEndedSession(s)
-		const { app } = appFor(s.humanId, 'human')
+		const { session, questionId, conversationId } = await askFromSession(s)
+		const { app, sessionManager } = appFor(s.humanId, 'human')
 		const tap = () =>
 			app.request(post(`/api/sessions/${session.id}/input`, s.workspaceId, answerBody(questionId)))
 
 		expect((await tap()).status).toBe(200)
 		expect((await tap()).status).toBe(409)
 		expect(await chatMessages(conversationId)).toHaveLength(2)
+		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 	})
 
-	it('leaves a person who is not in the master chat on the old path, which refuses an ended session', async () => {
+	it.each([
+		['a finished run the person started', 'person', 'completed'],
+		['a run an agent started, still running', 'agent', 'running'],
+	] as const)('takes a tap on %s', async (_label, startedBy, status) => {
 		const s = await setup()
-		const { session, questionId, conversationId } = await askFromEndedSession(s)
+		const { session, questionId, conversationId } = await askFromSession(s, {
+			createdBy: startedBy === 'person' ? s.humanId : s.agent.id,
+			status,
+		})
+		const { app, sessionManager } = appFor(s.humanId, 'human')
+
+		const res = await app.request(
+			post(`/api/sessions/${session.id}/input`, s.workspaceId, answerBody(questionId)),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await chatMessages(conversationId)).toHaveLength(2)
+		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+		expect(sessionManager.writeInput.mock.calls.filter((call) => call[0] === session.id)).toEqual(
+			[],
+		)
+	})
+
+	it('leaves a question in a topical chat of the same two people on the old path', async () => {
+		const s = await setup()
+		const { session, questionId, conversationId } = await askFromSession(s)
+		// The same question, as if it had been posted in a chat with no direct pair key.
+		const [question] = await chatMessages(conversationId)
+		const [topical] = await db
+			.insert(conversations)
+			.values({ workspaceId: s.workspaceId, title: 'Pricing', createdBy: s.humanId })
+			.returning({ id: conversations.id })
+		if (!question || !topical) throw new Error('failed to seed topical chat')
+		await db.insert(conversationParticipants).values([
+			{ conversationId: topical.id, actorId: s.humanId },
+			{ conversationId: topical.id, actorId: s.agent.id },
+		])
+		await db.update(messages).set({ conversationId: topical.id }).where(eq(messages.id, questionId))
+		const { app, sessionManager } = appFor(s.humanId, 'human')
+
+		const res = await app.request(
+			post(`/api/sessions/${session.id}/input`, s.workspaceId, answerBody(questionId)),
+		)
+
+		expect(res.status).toBe(409)
+		expect(await chatMessages(topical.id)).toHaveLength(1)
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+	})
+
+	it('leaves a person who is not in the direct message on the old path, which refuses an ended session', async () => {
+		const s = await setup()
+		const { session, questionId, conversationId } = await askFromSession(s)
 		const stranger = await insertActor(db, { type: 'human' })
 		await ensureWorkspaceMember(db, s.workspaceId, stranger.id)
 		const { app, sessionManager } = appFor(stranger.id, 'human')
@@ -179,7 +237,7 @@ describe('POST /sessions/:id/input on a master-chat question', () => {
 		if (!session) throw new Error('failed to seed session')
 		const { app, sessionManager } = appFor(s.humanId, 'human')
 
-		// Plain text, and an answer that points at no master-chat question: both go to the session.
+		// Plain text, and an answer that points at no direct-message question: both go to the session.
 		for (const body of [{ content: 'carry on' }, answerBody(987654)]) {
 			const res = await app.request(post(`/api/sessions/${session.id}/input`, s.workspaceId, body))
 			expect(res.status).toBe(200)
@@ -189,7 +247,12 @@ describe('POST /sessions/:id/input on a master-chat question', () => {
 		expect(sessionManager.writeInput.mock.calls.every((call) => call[0] === session.id)).toBe(true)
 		expect(sessionManager.createSession).not.toHaveBeenCalled()
 		expect(
-			await db.select().from(masterChats).where(eq(masterChats.workspaceId, s.workspaceId)),
+			await db
+				.select()
+				.from(conversations)
+				.where(
+					and(eq(conversations.workspaceId, s.workspaceId), isNotNull(conversations.directPairKey)),
+				),
 		).toEqual([])
 	})
 })

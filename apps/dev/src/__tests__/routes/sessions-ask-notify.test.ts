@@ -13,13 +13,13 @@ const {
 	notifyAgentQuestion,
 	humanParticipants,
 	resolveAskTargetHuman,
-	findOrCreateMasterChat,
+	findOrCreateDirectChat,
 } = vi.hoisted(() => ({
 	insertConversationMessage: vi.fn(),
 	notifyAgentQuestion: vi.fn(),
 	humanParticipants: vi.fn(),
 	resolveAskTargetHuman: vi.fn(),
-	findOrCreateMasterChat: vi.fn(),
+	findOrCreateDirectChat: vi.fn(),
 }))
 
 vi.mock('../../services/conversation-messages', () => ({ insertConversationMessage }))
@@ -28,9 +28,9 @@ vi.mock('../../services/chief-of-staff-chat', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../services/chief-of-staff-chat')>()),
 	resolveAskTargetHuman,
 }))
-vi.mock('../../services/master-chat', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../services/master-chat')>()),
-	findOrCreateMasterChat,
+vi.mock('../../services/direct-chat', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/direct-chat')>()),
+	findOrCreateDirectChat,
 }))
 
 const { default: sessionsRoutes } = await import('../../routes/sessions')
@@ -81,7 +81,7 @@ describe('POST /api/sessions/:id/ask notification', () => {
 		notifyAgentQuestion.mockReset().mockResolvedValue(undefined)
 		humanParticipants.mockReset().mockResolvedValue([humanA, humanB])
 		resolveAskTargetHuman.mockReset()
-		findOrCreateMasterChat.mockReset()
+		findOrCreateDirectChat.mockReset()
 	})
 
 	it('notifies the conversation humans once, keyed on the posted message', async () => {
@@ -103,9 +103,9 @@ describe('POST /api/sessions/:id/ask notification', () => {
 		})
 	})
 
-	it('notifies only the resolved person for a question put in a master chat', async () => {
+	it('notifies only the resolved person for a question put in a direct message', async () => {
 		resolveAskTargetHuman.mockResolvedValue(humanA)
-		findOrCreateMasterChat.mockResolvedValue({ id: conversationId, created: false })
+		findOrCreateDirectChat.mockResolvedValue({ id: conversationId, created: false })
 		const { app, session } = setup({ conversationId: null, interactive: false })
 
 		const res = await app.request(ask(session.id))

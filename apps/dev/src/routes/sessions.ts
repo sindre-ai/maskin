@@ -1,6 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, messages, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	integrations,
+	messages,
+	sessionLogs,
+	sessions,
+	triggers,
+} from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
@@ -75,9 +83,10 @@ import { humanParticipants, notifyAgentQuestion } from '../services/chat-notific
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { resolveAskTargetHuman } from '../services/chief-of-staff-chat'
 import { insertConversationMessage } from '../services/conversation-messages'
+import { findOrCreateDirectChat } from '../services/direct-chat'
+import { findDirectChatQuestion } from '../services/direct-chat-question'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
-import { findMasterQuestion, findOrCreateMasterChat } from '../services/master-chat'
 import { ensureChatForSession } from '../services/session-chat'
 import { continueEndedSession } from '../services/session-continue'
 import { TERMINAL_STATUSES, startSession } from '../services/session-lifecycle'
@@ -1076,22 +1085,21 @@ app.openapi(inputSessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	// A tapped answer to a question the agent asked in its master chat. That session has usually
-	// ended, or was started by an agent, so there is nothing to type into: the answer is recorded
-	// in the chat and the asking agent gets a turn, as for any card in a chat. Only for a question
-	// stored in master_chats and a person in that chat; every other call takes the path below.
+	// A tapped answer to a question the agent asked in its direct message with the person. That
+	// session has usually ended, or was started by an agent, so there is nothing to type into: the
+	// answer is recorded in the chat and the asking agent gets a turn, as for any card in a chat.
+	// Only for a question in a conversation that carries the direct pair key, in the direct message
+	// of the caller and the asking agent; every other call takes the path below.
 	if (body.question_answer) {
-		const masterQuestion = await findMasterQuestion(db, {
+		const directQuestion = await findDirectChatQuestion(db, {
 			workspaceId,
 			sessionId: session.id,
 			agentId: session.actorId,
+			callerId: actorId,
 			questionMessageId: body.question_answer.question_message_id,
 		})
-		if (
-			masterQuestion &&
-			(await isConversationParticipant(db, masterQuestion.conversationId, actorId))
-		) {
-			if (masterQuestion.answered) {
+		if (directQuestion) {
+			if (directQuestion.answered) {
 				return c.json(createApiError('CONFLICT', 'This question has already been answered'), 409)
 			}
 			const secretRefusal = await refuseRawSecret(db, {
@@ -1105,7 +1113,7 @@ app.openapi(inputSessionRoute, (async (c) => {
 			if (secretRefusal) return c.json(secretRefusal, 400)
 
 			await insertConversationMessage(db, {
-				conversationId: masterQuestion.conversationId,
+				conversationId: directQuestion.conversationId,
 				workspaceId,
 				actorId,
 				content: body.content,
@@ -1117,7 +1125,7 @@ app.openapi(inputSessionRoute, (async (c) => {
 				sessionManager: c.get('sessionManager'),
 				workspaceId,
 				callerId: actorId,
-				card: { conversation_id: masterQuestion.conversationId, agent_id: session.actorId },
+				card: { conversation_id: directQuestion.conversationId, agent_id: session.actorId },
 				instruction: body.content,
 			})
 			return c.json({ ok: true as const })
@@ -1400,9 +1408,9 @@ const askSessionRoute = createRoute({
 					schema: z.object({
 						message_id: z.number(),
 						posted: z.literal(true),
-						// 'master' means the question is in the asking agent's master chat with the
+						// 'master' means the question is in the asking agent's direct message with the
 						// person; the answer wakes the agent there. 'chief_of_staff' is no longer
-						// returned (the Chief of Staff has a master chat like any agent) and stays so
+						// returned (the Chief of Staff has a direct message like any agent) and stays so
 						// an older client still validates.
 						delivered_to: z.enum(['chat', 'chief_of_staff', 'master']),
 					}),
@@ -1449,9 +1457,9 @@ app.openapi(askSessionRoute, (async (c) => {
 
 	// A chat session asks in its own conversation; a helper another agent started
 	// asks in the one it was started from. Anything else (a trigger-driven run, a
-	// session started from the sessions UI) asks in the asking agent's master chat
-	// with the person, so a question never lands in a chat that merely holds the
-	// same two people.
+	// session started from the sessions UI) asks in the asking agent's direct message
+	// with the person (the pair's stored DM, reported as 'master'), so a question never
+	// lands in a chat that merely holds the same two people.
 	let conversationId = session.conversationId ?? helperAskConversationId(session)
 	let deliveredTo: 'chat' | 'master' = 'chat'
 	const routedTo: 'session_chat' | 'helper_chat' | 'master' = session.conversationId
@@ -1462,11 +1470,25 @@ app.openapi(askSessionRoute, (async (c) => {
 	let masterHumanId: string | null = null
 	if (!conversationId) {
 		const humanId = await resolveAskTargetHuman(db, session.workspaceId, session.createdBy)
-		const masterChat = humanId
-			? await findOrCreateMasterChat(db, session.workspaceId, humanId, session.actorId)
-			: null
-		if (masterChat) {
-			conversationId = masterChat.id
+		const [agent] = humanId
+			? await db
+					.select({ name: actors.name })
+					.from(actors)
+					.where(eq(actors.id, session.actorId))
+					.limit(1)
+			: []
+		const directChat =
+			humanId && agent
+				? await findOrCreateDirectChat(db, {
+						workspaceId: session.workspaceId,
+						humanId,
+						agentId: session.actorId,
+						title: agent.name,
+						createdBy: humanId,
+					})
+				: null
+		if (directChat) {
+			conversationId = directChat.id
 			deliveredTo = 'master'
 			masterHumanId = humanId
 		}
@@ -1527,12 +1549,12 @@ app.openapi(askSessionRoute, (async (c) => {
 			.where(eq(sessions.id, session.id))
 	}
 
-	// Push the person: an agent is blocked on them. Recipients: for a master chat it
+	// Push the person: an agent is blocked on them. Recipients: for the direct message it
 	// is the resolved human (the chat's only human); otherwise every active human
 	// in the conversation the question was posted to, because that chat -- not
 	// session.createdBy, which for a helper is the asking agent and for a chat
-	// session is whoever sent the first message -- is where the answer will be read. Best effort and after the post: it never alters the
-	// response.
+	// session is whoever sent the first message -- is where the answer will be read.
+	// Best effort and after the post: it never alters the response.
 	try {
 		const askTargets =
 			deliveredTo === 'master' && masterHumanId

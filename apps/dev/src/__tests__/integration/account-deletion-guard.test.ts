@@ -37,7 +37,6 @@ const KEPT: Record<string, string> = {
 	message_thread_reads: 'attached to kept threads',
 	conversations: 'created_by on a kept conversation',
 	conversation_participants: 'membership record of a kept conversation',
-	master_chats: 'pointer to a kept conversation; the person stays as a deleted user',
 	conversation_pending_turns: 'agent turn queue of a kept conversation (agent actor, not a person)',
 	files: 'content authored by the person is kept',
 	file_comments: 'content authored by the person is kept',
