@@ -84,12 +84,14 @@ function occurrences(haystack: string, needle: string): number {
  * Lays out the review view: one card per change at the place its old text sits
  * in the file, the block on each side of a change as muted context, and a gap
  * row for every run of blocks in between. A change whose old text no longer
- * occurs exactly once in the text is left out; the server marks those stale.
+ * occurs exactly once in the text (a stale change) has no place in the text, so
+ * its card goes before the first placed change with a higher ordinal, or last.
  */
 export function buildReviewItems(fileText: string, changes: ReviewChangeInput[]): ReviewItem[] {
 	const blocks = splitBlocks(fileText)
+	const isPlaced = (c: ReviewChangeInput) => occurrences(fileText, c.oldText) === 1
 	const placed = changes
-		.filter((c) => occurrences(fileText, c.oldText) === 1)
+		.filter(isPlaced)
 		.map((c) => {
 			const at = fileText.indexOf(c.oldText)
 			const to = at + c.oldText.length
@@ -132,6 +134,21 @@ export function buildReviewItems(fileText: string, changes: ReviewChangeInput[])
 		} else gap++
 	}
 	flushGap('gap-end')
+
+	const ordinals = new Map(changes.map((c) => [c.id, c.ordinal]))
+	const unplaced = changes.filter((c) => !isPlaced(c)).sort((a, b) => a.ordinal - b.ordinal)
+	for (const c of unplaced) {
+		const before = items.findIndex(
+			(i) => i.kind === 'change' && (ordinals.get(i.changeId) ?? 0) > c.ordinal,
+		)
+		const item: ReviewItem = { kind: 'change', key: c.id, changeId: c.id, number: 0 }
+		if (before < 0) items.push(item)
+		else items.splice(before, 0, item)
+	}
+	if (unplaced.length > 0) {
+		let n = 0
+		for (const item of items) if (item.kind === 'change') item.number = ++n
+	}
 	return items
 }
 

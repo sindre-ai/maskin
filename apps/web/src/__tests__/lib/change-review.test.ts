@@ -76,12 +76,29 @@ describe('buildReviewItems', () => {
 		expect(items[0]).toMatchObject({ changeId: 'a', number: 1 })
 	})
 
-	it('leaves out a change whose old text no longer occurs exactly once', () => {
+	it('gives a change whose old text no longer occurs exactly once a card but no place in the text', () => {
 		const doc = 'Same.\n\nSame.\n\nOther.'
 		expect(buildReviewItems(doc, [{ id: 'dup', oldText: 'Same.', ordinal: 0 }])).toEqual([
 			{ kind: 'gap', key: 'gap-end', count: 3 },
+			{ kind: 'change', key: 'dup', changeId: 'dup', number: 1 },
 		])
-		expect(buildReviewItems(doc, [{ id: 'gone', oldText: 'Missing', ordinal: 0 }])).toHaveLength(1)
+	})
+
+	it('puts a change that no longer matches by ordinal, before the first placed change after it', () => {
+		const doc = 'One.\n\nTwo.\n\nThree.'
+		const items = buildReviewItems(doc, [
+			{ id: 'a', oldText: 'One.', ordinal: 0 },
+			{ id: 'gone', oldText: 'Missing', ordinal: 1 },
+			{ id: 'c', oldText: 'Three.', ordinal: 2 },
+		])
+		const cards = items.flatMap((i) => (i.kind === 'change' ? [[i.changeId, i.number]] : []))
+		expect(cards).toEqual([
+			['a', 1],
+			['gone', 2],
+			['c', 3],
+		])
+		const tail = buildReviewItems(doc, [{ id: 'gone', oldText: 'Missing', ordinal: 0 }])
+		expect(tail.at(-1)).toMatchObject({ kind: 'change', changeId: 'gone', number: 1 })
 	})
 })
 
