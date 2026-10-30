@@ -248,6 +248,8 @@ type MarkdownContentProps = {
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
 	onMentionClick?: (actor: ActorListItem) => void
+	/** Ids the author tagged (a comment's stored mentions): those @names draw as the brand chip. */
+	taggedActorIds?: string[]
 	/**
 	 * Opt-in: when true, fenced blocks tagged ```chart render as inline visuals
 	 * (e.g. recharts). Defaults to false so object-document body markdown is
@@ -280,6 +282,7 @@ function RenderedMarkdownContent({
 	disallowedElements,
 	mentionActors,
 	onMentionClick,
+	taggedActorIds,
 	renderVisuals = false,
 	linkedCards: linkedCardsOption,
 }: Omit<
@@ -434,6 +437,7 @@ function RenderedMarkdownContent({
 				disallowedElements={disallowedElements}
 				mentionActors={mentionActors as MentionActor[] | undefined}
 				onMentionClick={onMentionClick as ((actor: MentionActor) => void) | undefined}
+				taggedActorIds={taggedActorIds}
 				renderVisuals={renderVisuals}
 				renderCodeBlock={renderChartBlock}
 				renderImage={renderMarkdownImage}

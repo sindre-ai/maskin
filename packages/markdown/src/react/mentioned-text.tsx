@@ -14,10 +14,20 @@ interface MentionedTextProps {
 	mentionClassName?: string
 	/** When provided, @mentions are rendered as clickable buttons. */
 	onMentionClick?: (actor: MentionActor) => void
+	/**
+	 * Ids the author tagged through the picker (a comment's stored `mentions`).
+	 * A mention of one of these draws as the brand chip chat uses; any other
+	 * @name keeps `mentionClassName`, so text with no stored ids is unchanged.
+	 */
+	taggedActorIds?: string[]
 }
 
 const DEFAULT_MENTION_CLASS =
 	'inline-flex items-center rounded px-1 py-0.5 text-xs font-medium bg-primary/10 text-primary'
+
+// The chat tag chip (design spec: bg-brand/10, text-brand, semibold, rounded-md, 4px side padding).
+const TAGGED_MENTION_CLASS =
+	'inline-flex items-center rounded-md px-1 font-semibold bg-brand/10 text-brand'
 
 const CLICKABLE_MENTION_CLASS = 'cursor-pointer hover:opacity-80 transition-opacity'
 
@@ -31,6 +41,7 @@ export function MentionedText({
 	actors,
 	mentionClassName = DEFAULT_MENTION_CLASS,
 	onMentionClick,
+	taggedActorIds,
 }: MentionedTextProps) {
 	const sortedNames = useMemo(
 		() =>
@@ -46,6 +57,8 @@ export function MentionedText({
 		for (const a of actors) if (a.name) map.set(a.name, a)
 		return map
 	}, [actors])
+
+	const taggedIds = useMemo(() => new Set(taggedActorIds), [taggedActorIds])
 
 	const parts = useMemo<
 		Array<{ type: 'text' | 'mention'; text: string; actor?: MentionActor; key: string }>
@@ -87,6 +100,8 @@ export function MentionedText({
 		<>
 			{parts.map((p): ReactNode => {
 				if (p.type === 'mention') {
+					const className =
+						p.actor && taggedIds.has(p.actor.id) ? TAGGED_MENTION_CLASS : mentionClassName
 					if (onMentionClick && p.actor) {
 						const actor = p.actor
 						return (
@@ -94,14 +109,14 @@ export function MentionedText({
 								key={p.key}
 								type="button"
 								onClick={() => onMentionClick(actor)}
-								className={`${mentionClassName} ${CLICKABLE_MENTION_CLASS}`}
+								className={`${className} ${CLICKABLE_MENTION_CLASS}`}
 							>
 								{p.text}
 							</button>
 						)
 					}
 					return (
-						<span key={p.key} className={mentionClassName}>
+						<span key={p.key} className={className}>
 							{p.text}
 						</span>
 					)
