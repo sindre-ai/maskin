@@ -231,7 +231,7 @@ app.openapi(sendRoute, async (c) => {
 
 	// 3. Exactly what a person approved.
 	const loaded = await loadObjectEmail(db, workspaceId, objectId)
-	if ('failure' in loaded) return c.json(loaded.failure.body, loaded.failure.status)
+	if (loaded.failure) return c.json(loaded.failure.body, loaded.failure.status)
 	if (!loaded.approvalEventId) {
 		const f = fail(
 			403,
