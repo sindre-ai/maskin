@@ -4,6 +4,8 @@ import type {
 	ActorResponse,
 	AgentState,
 	CreateFileCommentInput,
+	DataQueryResult,
+	DataQuerySpec,
 	DisplaySettingsBody,
 	FileCommentDto,
 	FileUploadSession,
@@ -690,6 +692,18 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
+	},
+
+	data: {
+		query: (workspaceId: string, spec: DataQuerySpec) =>
+			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
+				workspaceId,
+			}),
+		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
+			request<{ in_ms: number | null }>(
+				`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				{ workspaceId },
+			),
 	},
 
 	triggers: {

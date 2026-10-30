@@ -416,6 +416,15 @@ function workspaceSetupHint(config: McpConfig): string {
 		: 'Either pass workspace_id to this tool, set DEFAULT_WORKSPACE_ID environment variable, or call list_workspaces to find your workspace ID.'
 }
 
+// Echoed in the set_loop_view success response; the full guidance is in the tool description.
+const LOOP_VIEW_CHECKLIST = [
+	'Opens with the loop outcome in one plain sentence and where it stands against it.',
+	'Three to five metrics at most, each with a value and unit, a comparison and its source.',
+	'Every number has a declared source in maskin-sources and an empty and an error state.',
+	'Says what needs a person now, if anything. Nothing that does not change a decision.',
+	'One self-contained file, no network calls, readable in light and dark.',
+]
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // Tool-to-resource URI mapping
@@ -7033,6 +7042,96 @@ export function createMcpServer(config: McpConfig) {
 					],
 				}
 			})
+		},
+	)
+
+	registerAppTool(
+		server,
+		'set_loop_view',
+		{
+			description: tools.set_loop_view.description,
+			inputSchema: tools.set_loop_view.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, loop_id, file_id } = args
+			const loop = (await apiCall(config, 'GET', `/api/objects/${loop_id}`, undefined, {
+				workspaceId: workspace_id,
+			})) as { type?: string; metadata?: Record<string, unknown> | null }
+			if (loop.type !== 'loop') {
+				throw new Error(
+					`Object ${loop_id} has type '${String(loop.type)}', not 'loop'. set_loop_view only operates on loops — use list_loops to find loop ids.`,
+				)
+			}
+			if (file_id !== null) {
+				const rows = (await apiCall(
+					config,
+					'GET',
+					`/api/files?ids=${encodeURIComponent(file_id)}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as Array<{ id: string; mimeType?: string | null }>
+				const file = Array.isArray(rows) ? rows.find((r) => r.id === file_id) : undefined
+				if (!file) {
+					throw new Error(
+						`File ${file_id} not found in this workspace. Create the HTML file with create_file first, or find it with list_files.`,
+					)
+				}
+				if (!file.mimeType?.toLowerCase().startsWith('text/html')) {
+					throw new Error(
+						`File ${file_id} is '${String(file.mimeType)}', not text/html. A loop view must be an HTML file.`,
+					)
+				}
+			}
+			const current = loop.metadata?.view_file_id
+			const unchanged = (typeof current === 'string' ? current : null) === file_id
+			if (!unchanged) {
+				await apiCall(
+					config,
+					'PATCH',
+					`/api/objects/${loop_id}`,
+					{ metadata: { view_file_id: file_id } },
+					{ workspaceId: workspace_id },
+				)
+			}
+			return {
+				_meta: meta('set_loop_view', config, (args as { workspace_id?: string }).workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({
+							loop_id,
+							view_file_id: file_id,
+							changed: !unchanged,
+							...(file_id === null ? {} : { checklist: LOOP_VIEW_CHECKLIST }),
+						}),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'query_data',
+		{
+			description: tools.query_data.description,
+			inputSchema: tools.query_data.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...spec } = args
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('query_data', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
 		},
 	)
 

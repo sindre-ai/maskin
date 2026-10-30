@@ -533,6 +533,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_loop: 'loop_create',
 	update_loop: 'loop_update',
 	delete_loop: 'loop_delete',
+	set_loop_view: 'loop_view_set',
 	// Comments
 	create_comment: 'comment_create',
 	// Notifications

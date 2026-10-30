@@ -7,6 +7,7 @@ import {
 	MESSAGE_MAX_LENGTH,
 	SAFE_METADATA_FIELD_NAME_RE,
 	createCommentSchema,
+	dataQuerySpecSchema,
 	firstStepSchema,
 	loopTargetSchema,
 	messageMetadataSchema,
@@ -1698,6 +1699,44 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+		}),
+	},
+
+	set_loop_view: {
+		description: [
+			'Pin an HTML file to a loop as its custom view, or clear it with file_id null. The loop page shows it in place of the default stats and flow (for viewers with the custom-view feature on). Sets metadata.view_file_id; the same file again is a no-op. Fails if the id is not a loop or the file is not text/html.',
+			'',
+			'How to build a good view. A loop view answers one question: are we reaching the outcome?',
+			'1. Open with the loop outcome in one plain sentence, then where it stands: status and the headline number vs its target.',
+			'2. Then the three to five metrics that matter most for that outcome, never more. Each shows a name, the current value with its unit, a comparison (vs target, vs last week) and where it comes from. No metric without a declared source.',
+			'3. Then what needs a person now, if anything. Cut anything that does not change a decision.',
+			'Build rules: one self-contained HTML file (create_file, mime_type text/html), no network calls, light math in the page is fine, an empty state and an error state for every number, readable in light and dark. Test every query with query_data before pinning.',
+			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>"), which returns a promise. Only declared names are answered; the page can read data, never write it.',
+			'Live: every query runs against the database each time, so numbers are current without anyone rewriting the page. While the page is open it reloads itself when a change to the objects it queries changes one of its numbers, so query once at start and do not poll or add refresh code. Use moving date bounds ("now-7d", "today-30d") in sources, never fixed dates, and group_by "created_at.day" for per-day series, so a pinned view stays correct over time.',
+			'Skeleton:',
+			'<h1 id="outcome">Outcome in one plain sentence</h1>',
+			'<p id="headline">Loading</p>',
+			'<ul id="metrics"><!-- 3 to 5 rows: name, value + unit, vs target, source --></ul>',
+			'<p id="needs">Needs a person: nothing right now</p>',
+			'<script id="maskin-sources" type="application/json">{"done":{"scope":"<loop id>","type":"task","filters":{"status":"done"}}}</script>',
+			'<script>maskin.query("done").then(r => { headline.textContent = r.total.count + " tasks done" }).catch(() => { headline.textContent = "Could not load" })</script>',
+		].join('\n'),
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			loop_id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			file_id: z
+				.string()
+				.uuid()
+				.nullable()
+				.describe('Id of a text/html file to render as the loop view, or null to clear it.'),
+		}),
+	},
+	query_data: {
+		description:
+			'Read-only totals over objects, computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, rows_truncated, groups_truncated }`; with no `group_by`, read `total`. At most 10000 rows are scanned and 50 groups returned; a flag says when a cap was hit. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It never returns object rows; use list_objects for those.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			...dataQuerySpecSchema.shape,
 		}),
 	},
 

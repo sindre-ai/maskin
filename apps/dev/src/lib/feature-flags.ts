@@ -70,6 +70,21 @@ export const FLAGS = {
 	 * entry) once it is on for everyone.
 	 */
 	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
+	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
+	/**
+	 * Custom agent-built view on the loop page (task
+	 * [Prototype: agent-built custom view on the loop page (HTML + data bridge)](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c9d7469b-7922-4123-8681-925bd7f30044)).
+	 * Read once, in the loop detail route in apps/web. Off means the loop page is
+	 * exactly the default page (stats and flow). On, a loop with
+	 * metadata.view_file_id gets a Default / Custom view toggle and renders that
+	 * HTML file in place of the stats and flow, with live data from the read-only
+	 * bridge. Per-actor visual gate only: set_loop_view, query_data and
+	 * GET /api/data/query are read-only or metadata-only and stay reachable for
+	 * everyone. Not for customers until scripted self-navigation out of the
+	 * sandboxed frame is closed (the frame is only reset, not prevented). Retire
+	 * once that is fixed and the view ships to everyone.
+	 */
+	LOOP_CUSTOM_VIEW: 'loop-custom-view',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

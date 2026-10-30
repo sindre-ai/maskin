@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
+import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
@@ -20,6 +21,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -28,6 +30,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
@@ -47,6 +50,9 @@ import { toast } from 'sonner'
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
+
+/** Mirrors `FLAGS.LOOP_CUSTOM_VIEW` in `apps/dev/src/lib/feature-flags.ts`. */
+const LOOP_CUSTOM_VIEW_FLAG = 'loop-custom-view'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
@@ -95,6 +101,19 @@ function LoopDetailRoute() {
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
+
+	// Custom view: the one read of the flag for this page. An agent pins an HTML
+	// file with set_loop_view (metadata.view_file_id); with the flag on it replaces
+	// the stats and flow, and the toggle switches back. A view that cannot be shown
+	// sets customFailure and the default page renders with a note; choosing
+	// "Custom view" again clears it and retries.
+	const customViewFlag = useFeatureFlag(LOOP_CUSTOM_VIEW_FLAG)
+	const viewFileId =
+		typeof object?.metadata?.view_file_id === 'string' ? object.metadata.view_file_id : null
+	const hasCustomView = customViewFlag && viewFileId !== null
+	const [viewMode, setViewMode] = useState<'default' | 'custom'>('custom')
+	const [customFailure, setCustomFailure] = useState<string | null>(null)
+	const showCustomView = hasCustomView && viewMode === 'custom' && customFailure === null
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
 	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
@@ -427,13 +446,52 @@ function LoopDetailRoute() {
 					)}
 				</div>
 
+				{hasCustomView && (
+					<div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+						<p className="text-xs text-muted-foreground">
+							{viewMode === 'custom' && customFailure
+								? `Custom view unavailable: ${customFailure} Showing the default page.`
+								: ''}
+						</p>
+						<ButtonGroup aria-label="Loop view">
+							<Button
+								type="button"
+								variant={viewMode === 'default' ? 'secondary' : 'ghost'}
+								size="sm"
+								onClick={() => setViewMode('default')}
+							>
+								Default
+							</Button>
+							<Button
+								type="button"
+								variant={viewMode === 'custom' ? 'secondary' : 'ghost'}
+								size="sm"
+								onClick={() => {
+									setCustomFailure(null)
+									setViewMode('custom')
+								}}
+							>
+								Custom view
+							</Button>
+						</ButtonGroup>
+					</div>
+				)}
+
 				<div className="mt-5">
-					<LoopStats
-						loop={loop}
-						cyclesRunning={cyclesRunning}
-						asksWaiting={asksWaiting}
-						nextFire={nextFire}
-					/>
+					{showCustomView && viewFileId ? (
+						<LoopCustomView
+							workspaceId={workspaceId}
+							fileId={viewFileId}
+							onFailure={setCustomFailure}
+						/>
+					) : (
+						<LoopStats
+							loop={loop}
+							cyclesRunning={cyclesRunning}
+							asksWaiting={asksWaiting}
+							nextFire={nextFire}
+						/>
+					)}
 				</div>
 
 				{isPreFirstRun && (
@@ -444,15 +502,17 @@ function LoopDetailRoute() {
 
 				<TargetsAndOwners loop={loop} actors={actors} />
 
-				<div className="mt-7">
-					<LoopFlow
-						workspaceId={workspaceId}
-						triggers={loopTriggers}
-						actors={actors}
-						childObjects={children ?? []}
-						loop={loop}
-					/>
-				</div>
+				{!showCustomView && (
+					<div className="mt-7">
+						<LoopFlow
+							workspaceId={workspaceId}
+							triggers={loopTriggers}
+							actors={actors}
+							childObjects={children ?? []}
+							loop={loop}
+						/>
+					</div>
+				)}
 
 				{/* The same Activity block object detail carries (mockup 1138–1143):
 				    a mono micro-heading on a hairline rule, then the shared timeline.

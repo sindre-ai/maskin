@@ -18,6 +18,8 @@
 // CSP metas that slip through the strip can only add restrictions, never relax
 // ours — browsers enforce every CSP meta in the document.
 
+import { type DataQuerySpec, dataQuerySpecSchema } from '@maskin/shared'
+
 export const MINI_APP_CSP = [
 	"default-src 'none'",
 	"style-src 'unsafe-inline'",
@@ -272,4 +274,82 @@ export function prepareViewerHtml(html: string, options?: { paged?: boolean }): 
 	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
 	const paging = options?.paged ? VIEWER_PAGING_CONTROLLER : ''
 	return injectIntoHtml(scrubbed, CSP_META + DATA_SLOT_BOOTSTRAP + VIEWER_REPORTER + paging)
+}
+
+// ---------------------------------------------------------------------------
+// Data bridge for agent-built loop views (v2 of the seam named in the header).
+//
+// A view is an ordinary mini-app document under the SAME platform CSP
+// (connect-src 'none', null origin, no allow-same-origin) — none of that is
+// loosened. Data reaches it only by message: the frame asks the host through
+// window.maskin.query(name), the host answers from the viewer's own session,
+// and no credential ever enters the frame. The view declares what it may ask
+// for in <script id="maskin-sources" type="application/json">: a map of source
+// name to a query_data input. The host answers ONLY declared names.
+// ---------------------------------------------------------------------------
+
+export const SOURCES_SLOT_ID = 'maskin-sources'
+
+/** Frame -> host: { type, id: number, name: string }. */
+export const BRIDGE_QUERY_MESSAGE = 'maskin:bridge:query'
+/** Host -> frame: { type, id, data } or { type, id, error }. */
+export const BRIDGE_RESULT_MESSAGE = 'maskin:bridge:result'
+/** Host -> frame: fired every refresh tick; the frame re-emits it as a window "maskin:refresh" event. */
+export const BRIDGE_REFRESH_MESSAGE = 'maskin:bridge:refresh'
+
+// Same posting model as the viewer reporter above: null origin, so targetOrigin
+// is '*' and the host validates event.source against its own iframe instead.
+// The frame only accepts results from window.parent. Unlike VIEWER_REPORTER this
+// does not swallow wheel events: an inline view must let the page scroll.
+const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:function(name){return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}',id:id,name:String(name)},'*')})}};window.addEventListener('message',function(e){if(e.source!==parent)return;var d=e.data;if(!d)return;if(d.type==='${BRIDGE_RESULT_MESSAGE}'){var h=p[d.id];if(!h)return;delete p[d.id];if(d.error)h.rej(new Error(d.error));else h.res(d.data)}else if(d.type==='${BRIDGE_REFRESH_MESSAGE}'){window.dispatchEvent(new Event('maskin:refresh'))}})})();</script>`
+
+// Reports the document's content height (not scrollHeight, which can never
+// shrink below the frame's own height) on load, resize and every layout change,
+// so an inline view can size its iframe to fit as data arrives.
+const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:Math.ceil(d.getBoundingClientRect().height)},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
+
+// Inline-view variant of `prepareMiniAppHtml`: same CSP + data-slot bootstrap,
+// plus the size reporter and the bridge. One `injectIntoHtml` call, as above.
+export function prepareBridgedViewHtml(html: string): string {
+	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
+	return injectIntoHtml(
+		scrubbed,
+		CSP_META + DATA_SLOT_BOOTSTRAP + VIEW_SIZE_REPORTER + BRIDGE_SCRIPT,
+	)
+}
+
+export type ViewSourcesResult =
+	| { ok: true; sources: Map<string, DataQuerySpec> }
+	| { ok: false; error: string }
+
+// Reads the declared sources out of a view document. DOMParser builds an inert
+// document (scripts never run), so this is safe on untrusted HTML. A missing
+// slot is a valid view with no data; malformed JSON or an invalid query is an
+// error the host shows as a fallback to the default page.
+export function readViewSources(html: string): ViewSourcesResult {
+	const slot = new DOMParser().parseFromString(html, 'text/html').getElementById(SOURCES_SLOT_ID)
+	if (!slot) return { ok: true, sources: new Map() }
+	let raw: unknown
+	try {
+		raw = JSON.parse(slot.textContent ?? '')
+	} catch {
+		return { ok: false, error: `The ${SOURCES_SLOT_ID} block is not valid JSON.` }
+	}
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+		return { ok: false, error: `The ${SOURCES_SLOT_ID} block must be a JSON object.` }
+	}
+	const sources = new Map<string, DataQuerySpec>()
+	for (const [name, value] of Object.entries(raw)) {
+		const parsed = dataQuerySpecSchema.safeParse(value)
+		if (!parsed.success) {
+			const issue = parsed.error.issues[0]
+			return {
+				ok: false,
+				error:
+					`Source "${name}" is not a valid query: ${issue?.path.join('.') || 'query'} ${issue?.message ?? ''}`.trim(),
+			}
+		}
+		sources.set(name, parsed.data)
+	}
+	return { ok: true, sources }
 }

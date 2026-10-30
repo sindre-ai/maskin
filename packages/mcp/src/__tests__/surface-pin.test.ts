@@ -74,6 +74,7 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_notifications',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'query_data',
 ]
 
 // get_started is in READ_TOOL_NAMES but its confirm path installs a loop.
@@ -325,13 +326,14 @@ describe('MCP surface pin', () => {
 			for (const name of expected) expect(registeredTools.has(name)).toBe(true)
 		})
 
-		it('idempotentHint is true for update_*, delete_*, pause_session and mark_read only', () => {
+		it('idempotentHint is true for update_*, delete_*, pause_session, mark_read and set_loop_view only', () => {
 			const expected = [
 				...Object.keys(TOOL_ANNOTATIONS).filter(
 					(n) => n.startsWith('update_') || n.startsWith('delete_'),
 				),
 				'pause_session',
 				'mark_read',
+				'set_loop_view',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)
 				.filter(([, entry]) => entry.idempotentHint)

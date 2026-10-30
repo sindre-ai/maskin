@@ -94,7 +94,33 @@ function scheduleTrailingRefetch(
 	)
 }
 
+// Things that live outside the query cache (a custom loop view's frame) listen for the same
+// stream here instead of opening a second one. `null` means events may have been missed
+// (a reconnect), so a listener should treat everything it shows as possibly stale.
+export type SSEListener = (event: SSEEvent | null) => void
+const sseListeners = new Set<SSEListener>()
+
+export function subscribeToSSE(listener: SSEListener): () => void {
+	sseListeners.add(listener)
+	return () => {
+		sseListeners.delete(listener)
+	}
+}
+
+export function notifySSEGap() {
+	for (const listener of sseListeners) listener(null)
+}
+
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
+	for (const listener of sseListeners) {
+		try {
+			listener(event)
+		} catch (err) {
+			// One broken listener must not stop the cache invalidation below.
+			console.error('[sse] listener failed', err)
+		}
+	}
+
 	// `session.state_changed` frames (bet/444b-handed-off-strip) carry a
 	// `SessionStateChangedPayload` — not the generic `events` row shape — so
 	// `entity_type`/`entity_id` are absent and the switch below never matches
