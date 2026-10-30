@@ -656,7 +656,7 @@
    an iPhone in landscape (~844px+) or an iPad is wider than 767px but still
    zooms on a sub-16px field. */
 @media (max-width: 767px), (pointer: coarse) {
-	:is(input, select, textarea, [role="combobox"]):not(
+	:is(input, select, textarea, [role="combobox"], [role="textbox"][contenteditable]):not(
 			:where(
 					[class~="text-lg"],
 					[class~="text-xl"],
