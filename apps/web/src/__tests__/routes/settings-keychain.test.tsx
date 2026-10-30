@@ -18,7 +18,9 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 const mockRole = vi.fn<() => string>(() => 'member')
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspace: { role: mockRole() }, workspaceId: 'ws-1' }),
 }))
 

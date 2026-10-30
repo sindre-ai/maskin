@@ -10,6 +10,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildIntegrationResponse } from '../../factories'
+import { createWorkspaceWrapper } from '../../setup'
 
 const AGENTS = [
 	{ id: 'agent-1', name: 'Infra & DevOps', type: 'agent' },
@@ -219,10 +220,13 @@ describe('ToolsSection', () => {
 		expect(screen.queryByRole('button', { name: 'Remove Docs search' })).not.toBeInTheDocument()
 	})
 
-	it('hides the add controls from a viewer', () => {
+	it('disables the add controls for a viewer', () => {
 		role = 'viewer'
-		render(<ToolsSection workspaceId="ws-1" />)
-		expect(screen.queryByRole('button', { name: /Add server/ })).not.toBeInTheDocument()
+		render(<ToolsSection workspaceId="ws-1" />, {
+			wrapper: createWorkspaceWrapper({ role: 'viewer' }),
+		})
+		expect(screen.getByRole('button', { name: /Add server/ })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /Import \.mcp\.json/ })).toBeDisabled()
 	})
 })
 
