@@ -56,7 +56,7 @@ public final class InternalLinkDirectory {
 				return .object(
 					Object(type: object.type, title: Self.title(object.title), status: Self.title(object.status)))
 			case .deleted: return .deleted
-			case .file, .plain: return .unreadable
+			case .file, .plain, .agent, .chat, .chatUnavailable: return .unreadable
 			}
 		case .loading?:
 			return .loading

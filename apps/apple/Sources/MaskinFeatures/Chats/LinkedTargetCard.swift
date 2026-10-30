@@ -21,8 +21,14 @@ struct LinkedTargetCard: View {
 			LinkedObjectCard(object: object)
 		case .deleted?:
 			LinkedDeletedCard()
+		case .agent(let agent)?:
+			LinkedAgentCard(agent: agent)
+		case .chat(let chat)?:
+			LinkedChatCard(chat: chat)
+		case .chatUnavailable?:
+			LinkedDeletedCard(kind: "chat", symbol: "message", text: "Chat not available")
 		default:
-			if target.kind == .object, store?.showsCard(target) == true { LinkedCardSkeleton() }
+			if target.kind != .file, store?.showsCard(target) == true { LinkedCardSkeleton() }
 		}
 	}
 }
