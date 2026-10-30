@@ -41,25 +41,53 @@ interface DecideInput {
 	appliedText?: string
 }
 
-function useDecide(call: (input: DecideInput) => Promise<unknown>, failure: string) {
+function useDecide<T>(call: (input: T) => Promise<unknown>, failure: string | null) {
 	return useMutation({
 		mutationFn: call,
-		onError: () => toast.error(failure),
+		// Failures are shown on the card, in the stale note or by the toast below, never as the raw API message.
+		meta: { handlesOwnErrors: true },
+		onError: () => {
+			if (failure) toast.error(failure)
+		},
 	})
 }
 
+// A failed accept is shown on its card (Retry), so it raises no toast.
 export function useAcceptChange(workspaceId: string, fileId: string) {
 	return useDecide(
-		({ proposalId, changeId, appliedText }) =>
+		({ proposalId, changeId, appliedText }: DecideInput) =>
 			api.fileProposals.accept(workspaceId, fileId, proposalId, changeId, appliedText),
-		"Couldn't apply this change. Try again.",
+		null,
 	)
 }
 
 export function useRejectChange(workspaceId: string, fileId: string) {
 	return useDecide(
-		({ proposalId, changeId }) =>
+		({ proposalId, changeId }: DecideInput) =>
 			api.fileProposals.reject(workspaceId, fileId, proposalId, changeId),
 		"Couldn't reject this change. Try again.",
+	)
+}
+
+interface DecideAllInput {
+	proposalId: string
+	changeIds: string[]
+}
+
+// Accept all: a refusal for stale changes is handled by the review view (the stale
+// cards are marked), so only other failures raise a toast, from the view.
+export function useAcceptAll(workspaceId: string, fileId: string) {
+	return useDecide(
+		({ proposalId, changeIds }: DecideAllInput) =>
+			api.fileProposals.acceptAll(workspaceId, fileId, proposalId, changeIds),
+		null,
+	)
+}
+
+export function useRejectAll(workspaceId: string, fileId: string) {
+	return useDecide(
+		({ proposalId, changeIds }: DecideAllInput) =>
+			api.fileProposals.rejectAll(workspaceId, fileId, proposalId, changeIds),
+		"Couldn't reject these changes. Try again.",
 	)
 }
