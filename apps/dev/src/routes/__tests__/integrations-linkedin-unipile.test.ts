@@ -1006,8 +1006,9 @@ describe('GET /list-conversations — reads are NOT idempotency-tracked', () => 
 
 describe('direct sends have no HTTP route', () => {
 	// A route that took the text from the caller would be a way round the approval a person
-	// gives on the card. Messages, replies and posts leave only through the MCP tools.
-	it.each(['/send-message', '/reply', '/publish-post'])(
+	// gives on the card. Messages, replies, posts, comments and comment replies leave only through
+	// the MCP tools.
+	it.each(['/send-message', '/reply', '/publish-post', '/comment-on-post', '/reply-to-comment'])(
 		'POST %s is not served and never reaches LinkedIn',
 		async (path) => {
 			stubCredential(ACTOR_A, 'linkedin-A')

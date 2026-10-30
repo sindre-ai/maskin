@@ -36,6 +36,9 @@ Agents learn this from the `draft-approval-tasks` skill, which every default age
 | `linkedin_connection_request` | LinkedIn | `to` (required), `recipient_provider_id` (required, the LinkedIn id the invitation goes to) | 300 | `send_connection_request({ object_id })` |
 | `linkedin_inmail` | LinkedIn | `to` (required), `recipient_provider_id` (required, shown as "LinkedIn id"), `attachment_file_id`; no subject | 1,900 | `send_inmail` |
 | `linkedin_post` | LinkedIn | `account` ("Posting as"), `scheduled_date`, `attachment_file_ids` (workspace PNG or JPEG file ids, comma separated, up to 9) | 3,000 | `publish_post({ object_id })` |
+| `linkedin_comment` | LinkedIn | `post_id` (required, the post commented on), `to` (recommended): whose post it is | 3,000 | `comment_on_post({ object_id })` |
+| `linkedin_comment_reply` | LinkedIn | `post_id` (required), `comment_id` (required, the comment answered), `reply_to` (the comment text, shown above the draft), `to` (recommended) | 3,000 | `reply_to_comment({ object_id })` |
+| `linkedin_post_edit` | LinkedIn | `post_id` (required, a post this identity already published); the content is the new post text | 3,000 | `edit_post({ object_id })` |
 | `slack_message` | Slack | `channel` (required): the name, `#coach-maskin`, never the id | 40,000 | `slack_send_message` |
 
 LinkedIn tools are served per identity, so each is prefixed `linkedin-{account}-{identity}__`.
@@ -121,7 +124,7 @@ Three places draw them: a chat message that links `/files/<id>`, a file attached
    - **The Approve button** (`POST /api/objects/:id/approval`, used by the chat card, the Claude card, and by web before it replies on For You). Only a person can: an agent gets 403. The body may carry the `content_hash` the person saw; if the draft changed since, the answer is 409. This is the stricter path, because it is bound to the exact text shown.
 2. The approval is an `approved` event on the object carrying the hash. **Editing the recipients, subject or text changes the hash, which withdraws the approval.**
 3. The agent sends. For an email: `gmail_send_email({ object_id })`. It needs "Read & write" access and a current approval: nothing is sent without a person's yes. One approval sends once (the same claim a decision card uses, keyed on the approval event). A send records a `delivered` event on the object and, when the object is a task, moves it to `done`, so nothing still says "to do" for an email that went out.
-   For LinkedIn it is `reply({ object_id })` on the identity's tools: the text sent is the approved text read from the object (a `body` is refused), it is refused until a person has approved that exact text, refused once sent, and the conversation is the `thread_id` on the object or one the agent passes. There is no direct path: `reply`, `send_message`, `send_connection_request` and `publish_post` all refuse a call without `object_id` (`INVALID_INPUT`, "held for a person"), and nothing is sent.
+   For LinkedIn it is `reply({ object_id })` on the identity's tools: the text sent is the approved text read from the object (a `body` is refused), it is refused until a person has approved that exact text, refused once sent, and the conversation is the `thread_id` on the object or one the agent passes. There is no direct path: `reply`, `send_message`, `send_connection_request`, `publish_post`, `comment_on_post`, `reply_to_comment` and `edit_post` all refuse a call without `object_id` (`INVALID_INPUT`, "held for a person"), and nothing is sent.
 
 In chat, the card for a linked draft ends in **Approve draft**: it approves the text as it reads in the card (an edit made there is what is approved), then tells the agent, naming the object id to send. The approval is not the send, so the card reads "Approved, waiting for send" until the send is recorded, and then "Sent".
 
@@ -131,15 +134,15 @@ To have an agent send the moment a person approves (for example from the Claude 
 
 ## LinkedIn sends
 
-The LinkedIn send tools (`send_message`, `reply`, `send_connection_request`, `publish_post`, `send_inmail`) take an `object_id`: the task or draft the send carries out. It is required. A call without it is refused with `INVALID_INPUT` ("held for a person") and nothing goes out. The text, the person and any file or images are read from the object, never from the call; passing them next to `object_id` is refused. The server checks the object before sending and ends it after:
+The LinkedIn send tools (`send_message`, `reply`, `send_connection_request`, `publish_post`, `comment_on_post`, `reply_to_comment`, `edit_post`, `send_inmail`) take an `object_id`: the task or draft the send carries out. It is required. A call without it is refused with `INVALID_INPUT` ("held for a person") and nothing goes out. The text, the person and any file or images are read from the object, never from the call; passing them next to `object_id` is refused. The server checks the object before sending and ends it after:
 
-- The object must exist in the workspace, be a draft of the kind the tool sends (`linkedin_message` for `send_message` and `reply`, `linkedin_connection_request`, `linkedin_post`, `linkedin_inmail`), be complete, and carry a person's approval of exactly its current content. An edit withdraws the approval.
+- The object must exist in the workspace, be a draft of the kind the tool sends (`linkedin_message` for `send_message` and `reply`, `linkedin_connection_request`, `linkedin_post`, `linkedin_comment`, `linkedin_comment_reply`, `linkedin_post_edit`, `linkedin_inmail`), be complete, and carry a person's approval of exactly its current content. An edit withdraws the approval.
 - A draft that was already sent is refused with `INVALID_INPUT` and nothing goes out. Create a new task for a new message.
 - Once LinkedIn accepts the send, a `delivered` event is written on the object and a task moves to `done` (a `status_changed` event records it). A task already `done`, `validated` or `discarded` is left alone, and other object types get the event only.
 - The tool's result carries `object: { id, delivered, task_closed }`, so the agent can see what happened and does not update the task itself.
 - A failure to write the record never turns into an error: the send is gone, so the tool still reports success with `delivered: false`, and the failure is logged.
 
-Not held yet: `comment_on_post`, `reply_to_comment` and `edit_post` still act directly. `delete_post` and `react_to_post` stay direct by decision.
+`delete_post` and `react_to_post` stay direct by decision. `edit_post` changes the text only: who may comment on the post is not part of a held edit. The post, the comment and the comment answered are detail lines on the draft, so changing one withdraws the approval. There is no HTTP route that comments or replies to a comment either; those go out only through the MCP tools.
 
 ## Older paths
 
