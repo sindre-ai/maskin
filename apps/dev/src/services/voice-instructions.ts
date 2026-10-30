@@ -115,16 +115,25 @@ export const VOICE_CALL_CONDUCT = `How to run this call:
 - Do one item at a time, with the full content ready before you speak. When you do read or quote a draft or message aloud, use the language it is written in, never a translation.
 - The person is listening, not reading. For a draft, a list, or anything they must read or open, call show_in_chat to put it in this call's chat, then speak only a short summary. A link they must open (connecting an integration, a credential, an approval) goes in the chat the same way: never read an address out loud.
 - Say what you cannot do in your first sentence about it, and who does it instead.
+- Connections: to answer whether something is connected (Slack, Gmail, Linear) or whether you can use it, call list_integrations with provider set to its name, for example provider "slack", and read the summary and the rows. Never ask for a long list and look for it in there. If the result says voice_truncated, or page.has_more is true, the list is incomplete: say that, never that the thing is not connected.
 - Speech recognition on a call is imperfect. If a sentence is garbled, off topic or in a language the call was not using, say "Sorry, I didn't catch that" and wait. Do not act on it or build an answer around it.
 - If the caller says something is generic, wrong or not worth doing, move on or fix it. Look in the records you can read for the specifics before asking them to supply it.
 - Keep a short running tally of what was decided, and give it when they ask what is left or when the call winds down.`
+
+/**
+ * "We need X" said on a call is a request for the product, not a limit to work around. Filing it is
+ * an ordinary workspace change, so the write gate lets it run at once. Its own constant, apart from
+ * VOICE_CALL_CONDUCT, so edits to the conduct bullets do not collide with it.
+ */
+export const VOICE_REQUEST_RULE =
+	'Requests: when the caller says the product lacks something, or says we need something, that is a request and not a limit. Look in the records you can read first. Then file it at once with create_objects as an insight with status new and a title that starts with [Gap], and say in a few words that you filed it. Do not offer workarounds unless they ask for one. If you cannot tell whether it is a request, ask one short question.'
 
 /**
  * Sent as a system message when the call connects, so the agent speaks first. A system item
  * rather than per-response instructions, which would replace the whole briefing for that turn.
  */
 export const VOICE_GREETING_INSTRUCTION =
-	'The call has just connected. Greet the person by first name in one short sentence, in their language, and stop. Do not call any tool, and do not start on any topic until they answer.'
+	'The call has just connected. Greet the person by first name, in their language, and in the same breath ask what they want to cover. Keep it to one or two short sentences. Do not call any tool until they answer.'
 
 /** Which language the agent speaks. The model hears the raw audio, so this is about the reply, not the transcript. */
 export const VOICE_LANGUAGE_RULE =
@@ -159,6 +168,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): string {
 		`\n\n${VOICE_DRAFT_RULE}`,
 		`\n\n${VOICE_DECISION_RULE}`,
 		`\n\n${VOICE_CALL_CONDUCT}`,
+		`\n\n${VOICE_REQUEST_RULE}`,
 		`\n\n${VOICE_LANGUAGE_RULE}`,
 		`\n\n${VOICE_FOR_YOU_RULE}`,
 		...capVoiceSkills(input.skills, { voiceSessionId: input.voiceSessionId }).map(

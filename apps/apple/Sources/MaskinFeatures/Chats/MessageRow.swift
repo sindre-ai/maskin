@@ -500,8 +500,8 @@ struct MessageRow: View {
 			}
 			if let computer = ComputerRequest(message: message) {
 				ComputerRequestCard(
-					request: computer, agentName: message.actorName, conversationID: message.conversationID,
-					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
+					request: computer, agentID: message.actorID, agentName: message.actorName,
+					conversationID: message.conversationID, messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
 			}
 			if let credential = KeychainCredentialRequest(message: message) {
 				KeychainRequestCard(

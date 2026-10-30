@@ -3,6 +3,7 @@
 // Display add or remove pills, so the field and the chips can never disagree.
 
 import { type WordHit, applyWord } from '@/lib/search/empty-state'
+import { pickParticipant } from '@/lib/search/mention'
 import {
 	EMPTY_PARTS,
 	type SearchParts,
@@ -47,6 +48,7 @@ export type SearchAction =
 	| { type: 'applyWord'; hit: WordHit }
 	| { type: 'toggleType'; value: string }
 	| { type: 'toggleStatus'; value: string }
+	| { type: 'pickParticipant'; id: string }
 	| { type: 'setUpdated'; value: UpdatedFilter }
 	| { type: 'setSort'; value: SearchSort }
 	| { type: 'clearFilters' }
@@ -85,6 +87,8 @@ export function createSearchReducer(vocab: Vocabulary) {
 				return { ...state, parts: toggle(parts, 'type', action.value) }
 			case 'toggleStatus':
 				return { ...state, parts: toggle(parts, 'status', action.value) }
+			case 'pickParticipant':
+				return { ...state, parts: pickParticipant(parts, action.id) }
 			case 'setUpdated':
 				return { ...state, updated: action.value }
 			case 'setSort':
@@ -110,6 +114,7 @@ export interface UseSearchState {
 	suggestion: Suggestion | null
 	types: string[]
 	statuses: string[]
+	participants: string[]
 	/** The words to search for. */
 	query: string
 }
@@ -129,6 +134,7 @@ export function useSearchState(
 			suggestion: suggest(state.parts, vocab),
 			types: pillValues(state.parts, 'type'),
 			statuses: pillValues(state.parts, 'status'),
+			participants: pillValues(state.parts, 'participant'),
 			query: queryText(state.parts),
 		}),
 		[state, vocab],

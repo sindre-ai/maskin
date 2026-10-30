@@ -20,15 +20,16 @@ export function byoApiKeyEnvName(displayName: string): string | null {
 }
 
 /**
- * Env var names for a login: KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME and _PASSWORD, so a
- * login named e-conomic becomes KEYCHAIN_BYO_LOGIN_E_CONOMIC_USERNAME. Null when the
- * display name has no usable characters; such a login is not injected.
+ * Env var names for a login: KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME, _PASSWORD and _EMAIL, so a
+ * login named e-conomic becomes KEYCHAIN_BYO_LOGIN_E_CONOMIC_USERNAME. The email is set only
+ * for a login saved with one. Null when the display name has no usable characters; such a
+ * login is not injected.
  */
 export function byoLoginEnvNames(
 	displayName: string,
-): { username: string; password: string } | null {
+): { username: string; password: string; email: string } | null {
 	const slug = credentialSlug(displayName)
 	if (!slug) return null
 	const base = `${KEYCHAIN_ENV_PREFIX}${BYO_LOGIN_ENV_SEGMENT}_${slug}`
-	return { username: `${base}_USERNAME`, password: `${base}_PASSWORD` }
+	return { username: `${base}_USERNAME`, password: `${base}_PASSWORD`, email: `${base}_EMAIL` }
 }

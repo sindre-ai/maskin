@@ -173,6 +173,82 @@ describe('POST /api/integrations/:id/update', () => {
 		})
 	})
 
+	it('changes only the password and keeps the saved username', async () => {
+		const s = await setup()
+		await insertAgentGrant(db, {
+			workspaceId: s.ws.id,
+			integrationId: s.loginId,
+			actorId: s.agent.id,
+		})
+
+		const res = await post(s.app, `${s.loginId}/update`, s.ws.id, { password: NEW_PASSWORD })
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ id: s.loginId, renamed: false, secretReplaced: true })
+		expect(decodeLogin((await readAs(s, s.loginId)).value)).toEqual({
+			username: 'me@example.test',
+			password: NEW_PASSWORD,
+		})
+	})
+
+	it('changes only the username and keeps the saved password', async () => {
+		const s = await setup()
+		await insertAgentGrant(db, {
+			workspaceId: s.ws.id,
+			integrationId: s.loginId,
+			actorId: s.agent.id,
+		})
+
+		const res = await post(s.app, `${s.loginId}/update`, s.ws.id, { username: 'you@example.test' })
+		expect(res.status).toBe(200)
+		expect(decodeLogin((await readAs(s, s.loginId)).value)).toEqual({
+			username: 'you@example.test',
+			password: 'old-password',
+		})
+	})
+
+	it('adds an email to a saved login and keeps the rest, then replaces it', async () => {
+		const s = await setup()
+		await insertAgentGrant(db, {
+			workspaceId: s.ws.id,
+			integrationId: s.loginId,
+			actorId: s.agent.id,
+		})
+
+		const add = await post(s.app, `${s.loginId}/update`, s.ws.id, { email: 'me@work.test' })
+		expect(add.status).toBe(200)
+		expect(decodeLogin((await readAs(s, s.loginId)).value)).toEqual({
+			username: 'me@example.test',
+			password: 'old-password',
+			email: 'me@work.test',
+		})
+
+		// A later password change keeps the email.
+		await post(s.app, `${s.loginId}/update`, s.ws.id, { password: NEW_PASSWORD })
+		expect(decodeLogin((await readAs(s, s.loginId)).value)).toEqual({
+			username: 'me@example.test',
+			password: NEW_PASSWORD,
+			email: 'me@work.test',
+		})
+	})
+
+	it('refuses a bad new part of a login and leaves the saved login as it was', async () => {
+		const s = await setup()
+		await insertAgentGrant(db, {
+			workspaceId: s.ws.id,
+			integrationId: s.loginId,
+			actorId: s.agent.id,
+		})
+		const bad = (body: Record<string, unknown>) =>
+			post(s.app, `${s.loginId}/update`, s.ws.id, body).then((r) => r.status)
+
+		expect(await bad({ password: 'two\nlines' })).toBe(400)
+		expect(await bad({ email: ' padded@example.test' })).toBe(400)
+		expect(decodeLogin((await readAs(s, s.loginId)).value)).toEqual({
+			username: 'me@example.test',
+			password: 'old-password',
+		})
+	})
+
 	it('refuses a name another credential holds, but lets a credential keep its own name in another case', async () => {
 		const s = await setup()
 		const taken = await post(s.app, `${s.keyId}/update`, s.ws.id, { displayName: 'E-Conomic' })
@@ -183,16 +259,16 @@ describe('POST /api/integrations/:id/update', () => {
 		expect(own.status).toBe(200)
 	})
 
-	it('refuses a bad name, a bad value, a half login, an empty edit and the wrong shape', async () => {
+	it('refuses a bad name, a bad value, an empty edit and the wrong shape', async () => {
 		const s = await setup()
 		const bad = (id: string, body: Record<string, unknown>) =>
 			post(s.app, `${id}/update`, s.ws.id, body).then((r) => r.status)
 		expect(await bad(s.keyId, { displayName: 'has [brackets]' })).toBe(400)
 		expect(await bad(s.keyId, { rawSecret: 'two\nlines' })).toBe(400)
-		expect(await bad(s.loginId, { username: 'only-a-username' })).toBe(400)
 		expect(await bad(s.keyId, {})).toBe(400)
-		// A login takes a username and password, a key takes a key.
+		// A login takes a username, password or email, a key takes a key.
 		expect(await bad(s.keyId, { username: 'a', password: 'b' })).toBe(400)
+		expect(await bad(s.keyId, { email: 'a@example.test' })).toBe(400)
 		expect(await bad(s.loginId, { rawSecret: NEW_KEY })).toBe(400)
 	})
 
