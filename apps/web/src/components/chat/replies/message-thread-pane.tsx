@@ -131,7 +131,9 @@ export function MessageThreadPane({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: rootReady only decides when the composer exists; it is not read inside.
 	useEffect(() => {
 		if (!isDesktop) return
-		const frame = requestAnimationFrame(() => paneRef.current?.querySelector('textarea')?.focus())
+		const frame = requestAnimationFrame(() =>
+			paneRef.current?.querySelector<HTMLElement>('[aria-label="Reply in thread"]')?.focus(),
+		)
 		return () => cancelAnimationFrame(frame)
 	}, [rootReady, isDesktop])
 
