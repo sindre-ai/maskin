@@ -42,8 +42,11 @@ export interface VoiceCall {
 	end: () => void
 }
 
-/** How long a dropped connection gets to come back before the call is ended (SPEC §Reconnecting). */
-export const VOICE_RECONNECT_WINDOW_MS = 15_000
+/** How long a dropped connection gets to come back by itself before a new call is started. */
+export const VOICE_RECONNECT_WINDOW_MS = 30_000
+
+/** Wait before each try at a new call once the old one is lost; also bounds how many tries there are. */
+export const VOICE_RECOVERY_DELAYS_MS = [1_000, 3_000, 6_000, 10_000, 15_000]
 
 /** Browser mic failures that mean "the user said no", as opposed to "there is no mic". */
 function isMicBlocked(err: unknown): boolean {
@@ -100,6 +103,8 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	const outputAudioMsRef = useRef(0)
 	const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const iceRestartedRef = useRef(false)
+	// Bumped whenever the person ends the call, so a recovery in flight stops.
+	const recoveryRunRef = useRef(0)
 
 	const clearReconnectTimer = useCallback(() => {
 		if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
@@ -138,13 +143,14 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	// 5xx) must not trap the user in the dialog, and the server's idle sweeper
 	// closes the row regardless.
 	const finish = useCallback(
-		(reason: 'user_hangup' | 'network_error') => {
+		(reason: 'user_hangup' | 'network_error'): Promise<string | null> => {
 			// Taking the call here is what makes the toast fire once however many
 			// exit paths run.
 			const call = callRef.current
 			callRef.current = null
 			const voiceSessionId = voiceSessionIdRef.current
 			const durationMs = call ? Date.now() - call.startedAt : 0
+			let conversationIdResult: Promise<string | null> = Promise.resolve(null)
 			if (voiceSessionId) {
 				voiceSessionIdRef.current = null
 				const now = Date.now()
@@ -152,12 +158,17 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 					? Math.round((now - connectedAtRef.current) / 1000)
 					: 0
 				const speakingMs = agentSpeakingSinceRef.current ? now - agentSpeakingSinceRef.current : 0
-				api.voiceSessions
-					.hangup(workspaceId, voiceSessionId, {
-						reason,
-						input_audio_seconds: inputSeconds,
-						output_audio_seconds: Math.round((outputAudioMsRef.current + speakingMs) / 1000),
-					})
+				const hangup = api.voiceSessions.hangup(workspaceId, voiceSessionId, {
+					reason,
+					input_audio_seconds: inputSeconds,
+					output_audio_seconds: Math.round((outputAudioMsRef.current + speakingMs) / 1000),
+				})
+				// Which chat the call was saved to, for a call started to take over from it.
+				conversationIdResult = hangup.then(
+					(ended) => ended.conversation_id ?? null,
+					() => null,
+				)
+				hangup
 					.then((ended) => {
 						// Only when the transcript's fate is known: saved (the hangup names
 						// a conversation) or the workspace opted out. If neither is known,
@@ -188,12 +199,14 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 			agentSpeakingSinceRef.current = null
 			outputAudioMsRef.current = 0
 			teardown()
+			return conversationIdResult
 		},
 		[teardown, workspaceId],
 	)
 
 	// End the call and let the caller close the dialog.
 	const end = useCallback(() => {
+		recoveryRunRef.current += 1
 		finish('user_hangup')
 		setState('permission')
 		setNotice(null)
@@ -206,12 +219,14 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	// dialog.
 	useEffect(() => {
 		if (!open) {
+			recoveryRunRef.current += 1
 			finish('user_hangup')
 			setState('permission')
 			setNotice(null)
 			setTranscriptLines([])
 		}
 		return () => {
+			recoveryRunRef.current += 1
 			finish('user_hangup')
 		}
 	}, [open, finish])
@@ -241,159 +256,200 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 		}
 	}, [state])
 
-	const start = useCallback(async () => {
-		setNotice(null)
+	// One try at a call. While recovering, a failure that may only be the network still
+	// being down returns false (the caller tries again) and leaves the screen on
+	// Reconnecting; otherwise a failure shows its notice. True means it is up or over.
+	const connect = useCallback(
+		async (recovery?: { runId: number; conversationId: string | null }): Promise<boolean> => {
+			const recovering = recovery !== undefined
+			const abandoned = () => recovering && recoveryRunRef.current !== recovery.runId
+			setNotice(null)
 
-		let stream: MediaStream
-		try {
-			stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-		} catch (err) {
-			// No session has been minted yet, so there is nothing to hang up.
-			if (isMicBlocked(err)) {
-				setState('mic-blocked')
-			} else if (isMicMissing(err)) {
-				setState('no-mic')
-			} else {
-				setNotice('Could not access a microphone. Check your device settings, then try again.')
+			let stream: MediaStream
+			try {
+				stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+			} catch (err) {
+				// No session has been minted yet, so there is nothing to hang up.
+				if (isMicBlocked(err)) {
+					setState('mic-blocked')
+				} else if (isMicMissing(err)) {
+					setState('no-mic')
+				} else {
+					setNotice('Could not access a microphone. Check your device settings, then try again.')
+					setState('permission')
+				}
+				return true
+			}
+			localStreamRef.current = stream
+
+			if (!recovering) setState('connecting')
+
+			// Session mint. A failure here (route not deployed, agent not found in
+			// this workspace, 429) returns the dialog to Permission with a notice.
+			let session: Awaited<ReturnType<typeof api.voiceSessions.create>>
+			try {
+				session = await api.voiceSessions.create(workspaceId, {
+					agent_actor_id: agentActorId,
+					...(recovery?.conversationId ? { conversation_id: recovery.conversationId } : {}),
+				})
+			} catch (err) {
+				teardown()
+				// Still offline, or the lost call's slot not freed yet (409): try again later.
+				if (recovering) return false
+				if (err instanceof ApiError && err.status === 429) {
+					// Vendor rate limit or the workspace's daily minutes: every Call
+					// button disables until the server says to retry. The server's
+					// message names the wait, so show that rather than a generic line.
+					markVoiceUnavailable(err.retryAfterSeconds ?? 30)
+					setNotice(err.message || VOICE_UNAVAILABLE_TOOLTIP)
+				} else {
+					setNotice(err instanceof Error ? err.message : 'Could not start the voice session.')
+				}
+				setState('permission')
+				return true
+			}
+			voiceSessionIdRef.current = session.voice_session_id
+			// Ended while the slot was being reserved: give it straight back.
+			if (abandoned()) {
+				finish('user_hangup')
+				return true
+			}
+
+			const pc = new RTCPeerConnection()
+			pcRef.current = pc
+
+			// Local audio → OpenAI. The mic track is the one thing the mute control
+			// flips (track.enabled = false); we hold onto the reference for that.
+			for (const track of stream.getTracks()) {
+				pc.addTrack(track, stream)
+			}
+
+			// Remote audio ← OpenAI. Attach to a floating <audio> element rather than
+			// a React-managed one so the audio element outlives any parent re-render
+			// during the connect phase.
+			const audio = document.createElement('audio')
+			audio.autoplay = true
+			audio.muted = !speakerOnRef.current
+			audio.setAttribute('data-voice-call-audio', 'true')
+			document.body.appendChild(audio)
+			remoteAudioRef.current = audio
+			pc.ontrack = (e) => {
+				if (audio && e.streams[0]) audio.srcObject = e.streams[0]
+			}
+
+			// Event channel. server_vad emits `input_audio_buffer.speech_started` /
+			// `.speech_stopped` for the user side; `response.audio.done` marks the
+			// end of an agent utterance. Barge-in is server-side — the UI only
+			// mirrors the state, it does not have to cancel anything.
+			const dc = pc.createDataChannel('oai-events')
+			dataChannelRef.current = dc
+
+			// Tools and transcript persistence run on the server's own connection to
+			// the call; the relay only mirrors the call into the transcript pane (and
+			// covers for the server if it could not attach). It exists once the offer
+			// answer says which, and no event can arrive before that answer is set.
+			callRef.current = { startedAt: Date.now(), persistTranscripts: null }
+			setTranscriptLines([])
+			let relay: VoiceRelay | null = null
+
+			dc.addEventListener('message', (e) => {
+				try {
+					const evt = JSON.parse(e.data)
+					relay?.handleRealtimeEvent(evt)
+					trackOutputAudio(evt, agentSpeakingSinceRef, outputAudioMsRef)
+					handleRealtimeEvent(evt, mutedRef, preMuteStateRef, setState)
+					if (evt?.type === 'session.created' && connectedAtRef.current === null) {
+						connectedAtRef.current = Date.now()
+					}
+				} catch {
+					// Ignore non-JSON frames (Realtime never sends any).
+				}
+			})
+
+			pc.addEventListener('iceconnectionstatechange', () => {
+				const s = pc.iceConnectionState
+				if (s === 'disconnected' || s === 'failed') {
+					if (!mutedRef.current) setState('reconnecting')
+					// One ICE restart per drop, then the call gets the SPEC's 15s window
+					// to recover before it is ended as a network error.
+					if (s === 'failed' && !iceRestartedRef.current) {
+						iceRestartedRef.current = true
+						try {
+							pc.restartIce()
+						} catch {
+							// Closed connection: the timer below ends the call.
+						}
+					}
+					if (!reconnectTimerRef.current) {
+						reconnectTimerRef.current = setTimeout(() => {
+							reconnectTimerRef.current = null
+							void recoverRef.current()
+						}, VOICE_RECONNECT_WINDOW_MS)
+					}
+				} else if (s === 'connected' || s === 'completed') {
+					clearReconnectTimer()
+					iceRestartedRef.current = false
+					// The initial connect flip to live-agent-speaking is driven by
+					// `session.created` in the data channel; this branch handles the
+					// recovery flip out of reconnecting.
+					setState((prev) => (prev === 'reconnecting' ? 'live-agent-speaking' : prev))
+				}
+			})
+
+			try {
+				const offer = await pc.createOffer()
+				await pc.setLocalDescription(offer)
+
+				// The server posts the offer to the vendor with the operator key and
+				// returns the answer: this browser never holds a vendor credential.
+				const answer = await api.voiceSessions.offer(
+					workspaceId,
+					session.voice_session_id,
+					offer.sdp ?? '',
+				)
+				if (callRef.current) callRef.current.persistTranscripts = answer.persist_transcripts
+				relay = createVoiceRelay({
+					channel: dc,
+					toolsAvailable: answer.tools_available,
+					onLine: (line) => setTranscriptLines((prev) => [...prev, line]),
+				})
+				await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp })
+			} catch (err) {
+				// The row was minted, so release it; otherwise the caller could not
+				// start another call until the idle timeout.
+				finish('network_error')
+				if (recovering) return false
+				const message =
+					err instanceof Error ? err.message : 'Could not connect to the voice service.'
+				setNotice(message)
 				setState('permission')
 			}
-			return
+			return true
+		},
+		[agentActorId, clearReconnectTimer, finish, teardown, workspaceId],
+	)
+
+	const start = useCallback(async () => {
+		await connect()
+	}, [connect])
+
+	// The connection did not come back by itself. The person is still there, so rather
+	// than ending the call: close this one and start a new call on the chat it was saved
+	// to (the server hands the agent that chat's messages), trying again for a while.
+	const recover = useCallback(async () => {
+		const runId = ++recoveryRunRef.current
+		const conversationId = await finish('network_error')
+		for (const delay of VOICE_RECOVERY_DELAYS_MS) {
+			await new Promise((resolve) => setTimeout(resolve, delay))
+			if (recoveryRunRef.current !== runId) return
+			if (await connect({ runId, conversationId })) return
 		}
-		localStreamRef.current = stream
-
-		setState('connecting')
-
-		// Session mint. A failure here (route not deployed, agent not found in
-		// this workspace, 429) returns the dialog to Permission with a notice.
-		let session: Awaited<ReturnType<typeof api.voiceSessions.create>>
-		try {
-			session = await api.voiceSessions.create(workspaceId, { agent_actor_id: agentActorId })
-		} catch (err) {
-			teardown()
-			if (err instanceof ApiError && err.status === 429) {
-				// Vendor rate limit or the workspace's daily minutes: every Call
-				// button disables until the server says to retry. The server's
-				// message names the wait, so show that rather than a generic line.
-				markVoiceUnavailable(err.retryAfterSeconds ?? 30)
-				setNotice(err.message || VOICE_UNAVAILABLE_TOOLTIP)
-			} else {
-				setNotice(err instanceof Error ? err.message : 'Could not start the voice session.')
-			}
-			setState('permission')
-			return
-		}
-		voiceSessionIdRef.current = session.voice_session_id
-
-		const pc = new RTCPeerConnection()
-		pcRef.current = pc
-
-		// Local audio → OpenAI. The mic track is the one thing the mute control
-		// flips (track.enabled = false); we hold onto the reference for that.
-		for (const track of stream.getTracks()) {
-			pc.addTrack(track, stream)
-		}
-
-		// Remote audio ← OpenAI. Attach to a floating <audio> element rather than
-		// a React-managed one so the audio element outlives any parent re-render
-		// during the connect phase.
-		const audio = document.createElement('audio')
-		audio.autoplay = true
-		audio.muted = !speakerOnRef.current
-		audio.setAttribute('data-voice-call-audio', 'true')
-		document.body.appendChild(audio)
-		remoteAudioRef.current = audio
-		pc.ontrack = (e) => {
-			if (audio && e.streams[0]) audio.srcObject = e.streams[0]
-		}
-
-		// Event channel. server_vad emits `input_audio_buffer.speech_started` /
-		// `.speech_stopped` for the user side; `response.audio.done` marks the
-		// end of an agent utterance. Barge-in is server-side — the UI only
-		// mirrors the state, it does not have to cancel anything.
-		const dc = pc.createDataChannel('oai-events')
-		dataChannelRef.current = dc
-
-		// Tools and transcript persistence run on the server's own connection to
-		// the call; the relay only mirrors the call into the transcript pane (and
-		// covers for the server if it could not attach). It exists once the offer
-		// answer says which, and no event can arrive before that answer is set.
-		callRef.current = { startedAt: Date.now(), persistTranscripts: null }
-		setTranscriptLines([])
-		let relay: VoiceRelay | null = null
-
-		dc.addEventListener('message', (e) => {
-			try {
-				const evt = JSON.parse(e.data)
-				relay?.handleRealtimeEvent(evt)
-				trackOutputAudio(evt, agentSpeakingSinceRef, outputAudioMsRef)
-				handleRealtimeEvent(evt, mutedRef, preMuteStateRef, setState)
-				if (evt?.type === 'session.created' && connectedAtRef.current === null) {
-					connectedAtRef.current = Date.now()
-				}
-			} catch {
-				// Ignore non-JSON frames (Realtime never sends any).
-			}
-		})
-
-		pc.addEventListener('iceconnectionstatechange', () => {
-			const s = pc.iceConnectionState
-			if (s === 'disconnected' || s === 'failed') {
-				if (!mutedRef.current) setState('reconnecting')
-				// One ICE restart per drop, then the call gets the SPEC's 15s window
-				// to recover before it is ended as a network error.
-				if (s === 'failed' && !iceRestartedRef.current) {
-					iceRestartedRef.current = true
-					try {
-						pc.restartIce()
-					} catch {
-						// Closed connection: the timer below ends the call.
-					}
-				}
-				if (!reconnectTimerRef.current) {
-					reconnectTimerRef.current = setTimeout(() => {
-						reconnectTimerRef.current = null
-						finish('network_error')
-						setNotice('The connection dropped and could not be restored. Try again.')
-						setState('permission')
-					}, VOICE_RECONNECT_WINDOW_MS)
-				}
-			} else if (s === 'connected' || s === 'completed') {
-				clearReconnectTimer()
-				iceRestartedRef.current = false
-				// The initial connect flip to live-agent-speaking is driven by
-				// `session.created` in the data channel; this branch handles the
-				// recovery flip out of reconnecting.
-				setState((prev) => (prev === 'reconnecting' ? 'live-agent-speaking' : prev))
-			}
-		})
-
-		try {
-			const offer = await pc.createOffer()
-			await pc.setLocalDescription(offer)
-
-			// The server posts the offer to the vendor with the operator key and
-			// returns the answer: this browser never holds a vendor credential.
-			const answer = await api.voiceSessions.offer(
-				workspaceId,
-				session.voice_session_id,
-				offer.sdp ?? '',
-			)
-			if (callRef.current) callRef.current.persistTranscripts = answer.persist_transcripts
-			relay = createVoiceRelay({
-				channel: dc,
-				toolsAvailable: answer.tools_available,
-				onLine: (line) => setTranscriptLines((prev) => [...prev, line]),
-			})
-			await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp })
-		} catch (err) {
-			// The row was minted, so release it; otherwise the caller could not
-			// start another call until the idle timeout.
-			finish('network_error')
-			const message = err instanceof Error ? err.message : 'Could not connect to the voice service.'
-			setNotice(message)
-			setState('permission')
-		}
-	}, [agentActorId, clearReconnectTimer, finish, teardown, workspaceId])
+		if (recoveryRunRef.current !== runId) return
+		setNotice('The connection dropped and could not be restored. Try again.')
+		setState('permission')
+	}, [connect, finish])
+	const recoverRef = useRef(recover)
+	recoverRef.current = recover
 
 	const retryMic = useCallback(async () => {
 		try {
