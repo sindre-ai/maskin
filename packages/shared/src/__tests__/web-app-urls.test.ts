@@ -89,11 +89,11 @@ describe('buildWebAppPath', () => {
 		expect(buildWebAppPath(ws, { kind: 'trigger', id: 't-1' })).toBe('/ws-123/triggers/t-1')
 	})
 
-	it('routes session links to the actor that ran them, falling back to the agents list', () => {
+	it('routes session links to the route that opens the session as a chat', () => {
 		expect(buildWebAppPath(ws, { kind: 'session', id: 'sess-1', actorId: 'a-1' })).toBe(
-			'/ws-123/agents/a-1',
+			'/ws-123/sessions/sess-1',
 		)
-		expect(buildWebAppPath(ws, { kind: 'session', id: 'sess-1' })).toBe('/ws-123/agents')
+		expect(buildWebAppPath(ws, { kind: 'session', id: 'sess-1' })).toBe('/ws-123/sessions/sess-1')
 	})
 
 	it('routes notification links to the pulse dashboard (no detail page yet)', () => {
