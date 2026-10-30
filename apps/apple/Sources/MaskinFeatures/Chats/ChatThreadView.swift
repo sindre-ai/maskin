@@ -15,8 +15,27 @@ import SwiftUI
 /// a live status line under it. Takes a ready `ChatStore` and `ChatComposerModel` so it previews
 /// and snapshots without a server.
 /// Which thread is open over a chat: the id of its root message.
-struct ThreadRoute: Hashable {
+struct ThreadRoute: Hashable, Identifiable {
 	let rootID: Int
+	var id: Int { rootID }
+
+	/// The route a tap on a message's thread pill (or Reply in thread) opens. Nil for a message the
+	/// server has not stored yet: it has no thread to open (and shows no pill).
+	static func opening(_ message: ChatMessage) -> ThreadRoute? {
+		message.serverID.map(ThreadRoute.init(rootID:))
+	}
+
+	/// The route "jump to message" opens for a message that lives in a thread (a reply not also posted
+	/// in the channel). Nil for a channel message: the jump scrolls to it instead.
+	static func opening(replyIn message: ChatMessage) -> ThreadRoute? {
+		guard !message.alsoInChannel else { return nil }
+		return message.threadRootID.map(ThreadRoute.init(rootID:))
+	}
+
+	/// The route a thread requested from outside the chat (a notification or link) opens.
+	static func opening(request: AppRuntime.ThreadRequest) -> ThreadRoute {
+		ThreadRoute(rootID: request.rootId)
+	}
 }
 
 struct ChatThreadView: View {
@@ -212,15 +231,17 @@ struct ChatThreadView: View {
 					Text(store.notice ?? "")
 				}
 				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
-				.navigationDestination(item: $threadRoute) { route in
-					if let root = store.threadRoot(route.rootID) {
-						ThreadScreen(store: store, root: root)
-					} else {
-						// The root is older than the page held: fetch it rather than push an empty screen.
-						ProgressView()
-							.frame(maxWidth: .infinity, maxHeight: .infinity)
-							.task { _ = await store.loadedThreadRoot(route.rootID) }
+				// The thread opens as a sheet at every width. A pushed destination declared here is not
+				// reliably honoured: the chat sits in the detail column of the Team split view, which
+				// collapses on iPhone and has no stack of its own on iPad or a wide Mac window.
+				.sheet(item: $threadRoute) { route in
+					NavigationStack {
+						threadDestination(route)
+							.toolbar {
+								ToolbarItem(placement: .confirmationAction) { Button("Done") { threadRoute = nil } }
+							}
 					}
+					.presentationDetents([.large])
 				}
 				.linkedItems(runtime)
 				.sheet(item: $caughtSecret) { caught in
@@ -355,6 +376,18 @@ struct ChatThreadView: View {
 		}
 	}
 
+	@ViewBuilder
+	private func threadDestination(_ route: ThreadRoute) -> some View {
+		if let root = store.threadRoot(route.rootID) {
+			ThreadScreen(store: store, root: root)
+		} else {
+			// The root is older than the page held: fetch it rather than show an empty screen.
+			ProgressView()
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+				.task { _ = await store.loadedThreadRoot(route.rootID) }
+		}
+	}
+
 	/// A thread push or link names a root inside this chat: open it once the root is held, fetching
 	/// the thread first when it is older than the loaded page. Nothing happens for another chat's
 	/// request, and an unreachable root leaves the chat open on its own.
@@ -362,7 +395,7 @@ struct ChatThreadView: View {
 		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
 			return
 		}
-		if await store.loadedThreadRoot(request.rootId) != nil { threadRoute = ThreadRoute(rootID: request.rootId) }
+		if await store.loadedThreadRoot(request.rootId) != nil { threadRoute = ThreadRoute.opening(request: request) }
 		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
 	}
 
@@ -374,8 +407,12 @@ struct ChatThreadView: View {
 	/// Brings the message that linked something into view: in the timeline, or in its thread.
 	private func jump(to entry: LinkedEntry, proxy: ScrollViewProxy) {
 		guard let message = store.allMessages.first(where: { $0.id == entry.messageID }) else { return }
-		if let rootID = message.threadRootID, !message.alsoInChannel {
-			threadRoute = ThreadRoute(rootID: rootID)
+		if let route = ThreadRoute.opening(replyIn: message) {
+			// The Linked sheet is still closing, and a sheet presented over it is dropped.
+			Task {
+				try? await Task.sleep(for: .milliseconds(450))
+				threadRoute = route
+			}
 		} else {
 			scroll(to: message.id, proxy: proxy)
 		}
@@ -492,8 +529,7 @@ struct ChatThreadView: View {
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
 			onOpenThread: { message in
-				guard let id = message.serverID else { return }
-				threadRoute = ThreadRoute(rootID: id)
+				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
 			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)

@@ -96,7 +96,7 @@ struct LinkedSheet: View {
 		case .unavailable?:
 			// Missing, in another workspace, or not reachable now: still a way to try it.
 			LinkedPlainRow(
-				target: entry.target, title: entry.target.kind == .file ? "Linked file" : "Linked object",
+				target: entry.target, title: "Linked \(entry.target.kind.rawValue)",
 				kindLabel: "Couldn't show a preview", symbol: entry.target.kind == .file ? "doc" : "doc.text")
 		case .loading?, nil:
 			RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)

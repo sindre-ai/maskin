@@ -17,6 +17,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateInvite } from '@/hooks/use-invites'
 import { ApiError, api } from '@/lib/api'
 import { formatRetryAfter, inviteRoleLabel, isValidInviteEmail } from '@/lib/invite-format'
@@ -68,6 +69,7 @@ export function InviteMemberDialog({
 	workspaceName: string
 }) {
 	const queryClient = useQueryClient()
+	const canWrite = useCanWrite()
 	const createInvite = useCreateInvite(workspaceId)
 	const [email, setEmail] = useState('')
 	const [role, setRole] = useState<InviteRole>('member')
@@ -92,6 +94,7 @@ export function InviteMemberDialog({
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
+		if (!canWrite) return
 		if (!isValidInviteEmail(trimmed)) {
 			setTouched(true)
 			return
@@ -209,7 +212,10 @@ export function InviteMemberDialog({
 						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={!isValidInviteEmail(trimmed) || createInvite.isPending}>
+						<Button
+							type="submit"
+							disabled={!isValidInviteEmail(trimmed) || createInvite.isPending || !canWrite}
+						>
 							{createInvite.isPending ? 'Sending…' : 'Send invite'}
 						</Button>
 					</ResponsiveDialogFooter>

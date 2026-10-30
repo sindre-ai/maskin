@@ -18,7 +18,9 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 const mockRole = vi.fn<() => string>(() => 'member')
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspace: { role: mockRole() }, workspaceId: 'ws-1' }),
 }))
 
@@ -268,7 +270,7 @@ describe('AddCredentialPage', () => {
 			await switchToLogin(user)
 
 			expect(screen.queryByLabelText('Secret')).not.toBeInTheDocument()
-			expect(screen.getByLabelText('Username')).toBeInTheDocument()
+			expect(screen.getByLabelText('Username or email')).toBeInTheDocument()
 			expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
 		})
 
@@ -279,32 +281,29 @@ describe('AddCredentialPage', () => {
 			const save = screen.getByRole('button', { name: 'Save' })
 
 			await user.type(screen.getByLabelText('Name'), 'e-conomic')
-			await user.type(screen.getByLabelText('Username'), 'me@example.test')
+			await user.type(screen.getByLabelText('Username or email'), 'me@example.test')
 			expect(save).toBeDisabled()
 			await user.type(screen.getByLabelText('Password'), PASSWORD)
 			expect(save).toBeEnabled()
 		})
 
-		it('takes an optional email next to the username', async () => {
+		it('takes one username-or-email value and sends no separate email', async () => {
 			mockCreateLogin.mockResolvedValue({ integrationId: 'login-id' })
 			const user = userEvent.setup()
 			render(<AddCredentialPage />)
 			await switchToLogin(user)
+			expect(screen.queryByLabelText(/^Email/)).not.toBeInTheDocument()
 			await user.type(screen.getByLabelText('Name'), 'Dinero')
-			await user.type(screen.getByLabelText('Username'), 'me')
+			await user.type(screen.getByLabelText('Username or email'), 'me@example.test')
 			await user.type(screen.getByLabelText('Password'), PASSWORD)
-			// The email is optional: the form saves without it.
-			expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
-			await user.type(screen.getByLabelText('Email (optional)'), 'me@example.test')
 
 			await user.click(screen.getByRole('button', { name: 'Save' }))
 
 			await waitFor(() =>
 				expect(mockCreateLogin).toHaveBeenCalledWith({
 					displayName: 'Dinero',
-					username: 'me',
+					username: 'me@example.test',
 					password: PASSWORD,
-					email: 'me@example.test',
 				}),
 			)
 		})
@@ -315,7 +314,7 @@ describe('AddCredentialPage', () => {
 			render(<AddCredentialPage />)
 			await switchToLogin(user)
 			await user.type(screen.getByLabelText('Name'), '  e-conomic  ')
-			await user.type(screen.getByLabelText('Username'), '  me@example.test  ')
+			await user.type(screen.getByLabelText('Username or email'), '  me@example.test  ')
 			await user.type(screen.getByLabelText('Password'), PASSWORD)
 			expect(JSON.stringify({ ...localStorage })).not.toContain(PASSWORD)
 			expect(JSON.stringify({ ...sessionStorage })).not.toContain(PASSWORD)

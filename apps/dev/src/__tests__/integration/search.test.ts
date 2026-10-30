@@ -187,8 +187,6 @@ describe('GET /api/search against real Postgres', () => {
 			(await search({ q: 'other person', types: ['chat'] })).results.map((r) => r.title),
 		).toEqual(['Weekly sync'])
 		expect((await search({ q: 'budget' })).total).toBe(1)
-		// Only the latest message is searched.
-		expect((await search({ q: 'quarterly' })).total).toBe(0)
 		const [row] = (await search({ q: 'budget' })).results
 		expect(row?.snippet).toBe('please review the budget')
 	})
@@ -273,6 +271,171 @@ describe('GET /api/search against real Postgres', () => {
 			expect(res.total).toBe(1)
 			// 3 chats the caller is in, plus the bet. The status-only widening keeps the participant.
 			expect(res.relaxed).toEqual({ withoutFilters: 4, withoutStatuses: 1 })
+		})
+	})
+
+	describe('message text of a chat', () => {
+		it('finds a chat by a word that is only in an older message, with that message as the snippet', async () => {
+			const chat = await seedChat('Roadmap', [actorId])
+			await say(chat.id, actorId, 'Stripe invoices fail on retry')
+			await say(chat.id, actorId, 'anyway, lunch?')
+
+			const res = await search({ q: 'stripe' })
+
+			expect(res.total).toBe(1)
+			expect(res.facets.types.chat).toBe(1)
+			expect(res.partial).toEqual([])
+			expect(res.results[0]?.snippet).toBe('Stripe invoices fail on retry')
+		})
+
+		it('needs every word somewhere in the chat, in any order, across title, people and messages', async () => {
+			const chat = await seedChat('Pricing review', [actorId, otherUserId])
+			await say(chat.id, actorId, 'Stripe invoices fail on retry')
+			await say(chat.id, actorId, 'anyway, lunch?')
+			await seedChat('Standup notes', [actorId])
+
+			const ids = async (q: string) => (await search({ q })).results.map((r) => r.id)
+
+			expect(await ids('invoices stripe')).toEqual([chat.id])
+			// Two words that sit in two different messages.
+			expect(await ids('stripe lunch')).toEqual([chat.id])
+			// One in the title, one in a message, one in a person's name.
+			expect(await ids('lunch pricing other')).toEqual([chat.id])
+			// A word the chat never mentions rules it out.
+			expect(await ids('stripe standup')).toEqual([])
+			expect(await ids('zzzznothing')).toEqual([])
+		})
+
+		it('shows the newest message that holds a searched word, and the latest one for a title hit', async () => {
+			const chat = await seedChat('Relaunch plan', [actorId])
+			await say(chat.id, actorId, 'relaunch is slipping, first note')
+			await say(chat.id, actorId, 'relaunch is slipping, second note')
+			await say(chat.id, actorId, 'moving on')
+
+			const [byMessage] = (await search({ q: 'slipping' })).results
+			expect(byMessage?.snippet).toBe('relaunch is slipping, second note')
+
+			// The title matches and no message holds the word: the latest message stays.
+			const other = await seedChat('Offsite', [actorId])
+			await say(other.id, actorId, 'booking the venue')
+			const [byTitle] = (await search({ q: 'offsite' })).results
+			expect(byTitle?.snippet).toBe('booking the venue')
+		})
+
+		it('ranks a title hit above a chat that only mentions the word', async () => {
+			const mentioned = await seedChat('Standup', [actorId])
+			await say(mentioned.id, actorId, 'relaunch is slipping')
+			const titled = await seedChat('Relaunch plan', [actorId])
+			await say(titled.id, actorId, 'nothing to see')
+			await tick()
+			// Make the message-only chat the newest one.
+			await say(mentioned.id, actorId, 'relaunch again')
+
+			const res = await search({ q: 'relaunch' })
+
+			expect(res.results.map((r) => r.id)).toEqual([titled.id, mentioned.id])
+		})
+
+		it('reads LIKE wildcards in a word as plain characters inside messages', async () => {
+			const chat = await seedChat('Numbers', [actorId])
+			await say(chat.id, actorId, 'we are 100% sure')
+			await say(chat.id, actorId, 'anyway')
+
+			expect((await search({ q: '0% su' })).total).toBe(1)
+			expect((await search({ q: 'sur_' })).total).toBe(0)
+		})
+
+		it('never reads messages of a chat the caller is not in, or of another workspace', async () => {
+			const mine = await seedChat('Mine', [actorId])
+			await say(mine.id, actorId, 'unique-zebra here')
+			await say(mine.id, actorId, 'later')
+			const theirs = await seedChat('Theirs', [otherUserId])
+			await say(theirs.id, otherUserId, 'unique-zebra there')
+			await say(theirs.id, otherUserId, 'later')
+
+			expect((await search({ q: 'unique-zebra' })).results.map((r) => r.id)).toEqual([mine.id])
+			expect(
+				(
+					await runSearch(
+						db,
+						{ workspaceId: otherWorkspaceId, callerId: actorId },
+						query({ q: 'unique-zebra' }),
+					)
+				).total,
+			).toBe(0)
+		})
+
+		it('checks messages only in the newest chats past the cap, and reports the source as partial', async () => {
+			const old = await seedChat('Old chat', [actorId])
+			await say(old.id, actorId, 'ancient-llama is here')
+			await say(old.id, actorId, 'later')
+			await tick()
+			const fresh = await seedChat('Fresh chat', [actorId])
+			await say(fresh.id, actorId, 'ancient-llama too')
+			await say(fresh.id, actorId, 'later')
+			// A scan cap of 1 chat: only the newest one has its messages read.
+			const chats = SEARCH_SOURCES.find((s) => s.key === 'chats') as (typeof SEARCH_SOURCES)[number]
+			const capped = SEARCH_SOURCES.map((source) =>
+				source.key === 'chats'
+					? {
+							...chats,
+							candidates: (ctx: Parameters<typeof chats.candidates>[0]) => sql`
+								SELECT c2.id, c2.type, c2.title, c2.sub, c2.body, c2.status, c2.updated_at,
+									(row_number() OVER (ORDER BY c2.updated_at DESC NULLS LAST, c2.id) <= 1) AS deep
+								FROM (${chats.candidates(ctx)}) c2`,
+						}
+					: source,
+			)
+
+			const res = await runSearch(
+				db,
+				{ workspaceId, callerId: actorId },
+				query({ q: 'ancient-llama' }),
+				capped,
+			)
+
+			expect(res.results.map((r) => r.id)).toEqual([fresh.id])
+			expect(res.partial).toEqual(['chats'])
+			// Title and people still reach the older chat.
+			const byTitle = await runSearch(
+				db,
+				{ workspaceId, callerId: actorId },
+				query({ q: 'old chat' }),
+				capped,
+			)
+			expect(byTitle.results.map((r) => r.id)).toEqual([old.id])
+		})
+
+		it('does not report partial for a search with no words', async () => {
+			await seedChat('Anything', [actorId])
+			expect((await search({})).partial).toEqual([])
+		})
+
+		it('counts a chat found through an older message once when the typo pass runs too', async () => {
+			const chat = await seedChat('Roadmapping sync', [actorId])
+			await say(chat.id, actorId, 'the roadmaping doc is stale')
+			await say(chat.id, actorId, 'anyway, lunch?')
+
+			// "roadmaping" is exact in a message (strict hit) and a typo of the title (typo hit).
+			const res = await search({ q: 'roadmaping' })
+
+			expect(res.results.map((r) => r.id)).toEqual([chat.id])
+			expect(res.total).toBe(1)
+			expect(res.facets.types.chat).toBe(1)
+		})
+
+		it('keeps the participant filter working next to the message text', async () => {
+			const chat = await seedChat('Planning', [actorId, otherUserId])
+			await say(chat.id, actorId, 'the zebra budget is late')
+			await say(chat.id, actorId, 'anyway')
+			const solo = await seedChat('Solo planning', [actorId])
+			await say(solo.id, actorId, 'the zebra budget too')
+			await say(solo.id, actorId, 'anyway')
+
+			const res = await search({ q: 'zebra', participants: [otherUserId] })
+
+			expect(res.results.map((r) => r.id)).toEqual([chat.id])
+			expect(res.total).toBe(1)
 		})
 	})
 

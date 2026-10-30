@@ -384,9 +384,16 @@ function pickChangedAdminSettings(
 		}
 	}
 
-	if (custom_llm !== undefined && !isDeepStrictEqual(custom_llm, stored.custom_llm)) {
-		settings.custom_llm = custom_llm
-		changed = true
+	if (custom_llm !== undefined) {
+		// A body spread back from GET has no api_key (the key is write-only), so
+		// without one the comparison leaves the stored key out too.
+		const storedCustom = stored.custom_llm as Record<string, unknown> | undefined
+		const { api_key: _storedKey, ...storedWithoutKey } = storedCustom ?? {}
+		const comparable = 'api_key' in custom_llm || !storedCustom ? storedCustom : storedWithoutKey
+		if (!isDeepStrictEqual(custom_llm, comparable)) {
+			settings.custom_llm = custom_llm
+			changed = true
+		}
 	}
 
 	return { settings, changed }
@@ -539,12 +546,26 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 			merged.llm_keys = mergedLlm
 		}
 
+		// custom_llm is replaced as a whole object, and its api_key is write-only:
+		// a patch without one keeps the stored (sealed) key, null clears it.
+		const storedCustomKey = (existingSettings.custom_llm as { api_key?: unknown } | undefined)
+			?.api_key
+		const keptCustomKey =
+			sealedPatch.custom_llm && !('api_key' in sealedPatch.custom_llm) && storedCustomKey
+		if (keptCustomKey) {
+			merged.custom_llm = { ...sealedPatch.custom_llm, api_key: storedCustomKey }
+		}
+
 		// BYO-LLM ↔ paid plan mutex: if the PATCH is adding a BYO Anthropic
 		// key or enabling custom_llm AND a live Stripe subscription exists,
 		// cancel the subscription via API first and roll the billing slot
 		// into the same merged write. The .deleted webhook will arrive
 		// shortly after and is idempotent against this exact terminal state.
-		if (patchAddsByoSource(patchSettings)) {
+		// The kept key counts: enabling a stored endpoint is adding a BYO source.
+		const effectivePatch = keptCustomKey
+			? { ...patchSettings, custom_llm: merged.custom_llm as SettingsPatch['custom_llm'] }
+			: patchSettings
+		if (patchAddsByoSource(effectivePatch)) {
 			const errorRes = await cancelPaidPlanForByoTransition(existingSettings, merged, id)
 			if (errorRes) return c.json(...errorRes)
 		}

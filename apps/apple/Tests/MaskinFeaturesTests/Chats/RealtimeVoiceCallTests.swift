@@ -219,19 +219,18 @@ private actor FakeCalls: VoiceCalling {
 		#expect(transport.micEnabled.last == true)
 	}
 
-	@Test("the agent is asked to greet once, also when muted and after an ICE restart")
-	func greetsOnce() async {
+	@Test("the app does not ask the agent to greet: the server does, also after an ICE restart")
+	func doesNotGreet() async {
 		let (call, _, transport) = make()
 		call.begin(existing: [])
-		call.toggleMute()
 		await settle()
 		transport.receive("session.created")
-		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+		#expect(transport.sent.isEmpty)
 		transport.onConnection?(.failed)
 		transport.onConnection?(.connected)
 		transport.receive("session.created")
 		#expect(transport.iceRestarts == 1)
-		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+		#expect(transport.sent.isEmpty)
 	}
 
 	private func chatMessage(_ id: Int, agent: Bool = false, _ text: String, name: String = "Me") -> ChatMessage {
@@ -270,7 +269,7 @@ private actor FakeCalls: VoiceCalling {
 				"Anna typed in the chat during this call: Also Anna is joining",
 			])
 		// Handing a line over does not ask the agent to talk over the person.
-		#expect(transport.sent.filter { $0.contains("response.create") } == [RealtimeCallMachine.greetingRequest])
+		#expect(transport.sent.filter { $0.contains("response.create") }.isEmpty)
 	}
 
 	@Test("the person's own spoken lines, saved into the chat during the call, are not fed back")

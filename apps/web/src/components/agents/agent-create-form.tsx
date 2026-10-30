@@ -1,3 +1,4 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -8,6 +9,8 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useCanWrite } from '@/hooks/use-can-write'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useEffect, useRef, useState } from 'react'
 
 interface AgentCreateFormProps {
@@ -25,6 +28,7 @@ export function AgentCreateForm({
 	isPending = false,
 	error,
 }: AgentCreateFormProps) {
+	const canWrite = useCanWrite()
 	const [name, setName] = useState('')
 	const hasAutoCreatedRef = useRef(false)
 	const [descriptionDraft, setDescriptionDraft] = useState('')
@@ -76,39 +80,47 @@ export function AgentCreateForm({
 	return (
 		<div className="w-full min-w-0 max-w-3xl mx-auto">
 			{/* Name */}
-			<textarea
-				value={name}
-				onChange={(e) => {
-					setName(e.target.value)
-					e.target.style.height = 'auto'
-					e.target.style.height = `${e.target.scrollHeight}px`
-				}}
-				onBlur={handleNameBlur}
-				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-				placeholder="Agent name"
-				// biome-ignore lint/a11y/noAutofocus: focus title on create
-				autoFocus
-				rows={1}
-				className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 resize-none overflow-hidden p-0 focus:outline-none"
-				ref={(el) => {
-					if (el) {
-						el.style.height = 'auto'
-						el.style.height = `${el.scrollHeight}px`
-					}
-				}}
-			/>
+			<ViewerTooltip className="flex w-full">
+				<textarea
+					value={name}
+					onChange={(e) => {
+						setName(e.target.value)
+						e.target.style.height = 'auto'
+						e.target.style.height = `${e.target.scrollHeight}px`
+					}}
+					onBlur={handleNameBlur}
+					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					placeholder={canWrite ? 'Agent name' : VIEWER_READ_ONLY_MESSAGE}
+					disabled={!canWrite}
+					// biome-ignore lint/a11y/noAutofocus: focus title on create
+					autoFocus
+					rows={1}
+					className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 resize-none overflow-hidden p-0 focus:outline-none"
+					ref={(el) => {
+						if (el) {
+							el.style.height = 'auto'
+							el.style.height = `${el.scrollHeight}px`
+						}
+					}}
+				/>
+			</ViewerTooltip>
 
 			{/* Description (short one-liner shown on the Agents page card) */}
-			<Input
-				type="text"
-				value={descriptionDraft}
-				onChange={(e) => setDescriptionDraft(e.target.value)}
-				onBlur={handleDescriptionBlur}
-				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-				placeholder="Short description shown on the Agents page"
-				maxLength={80}
-				className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
-			/>
+			<ViewerTooltip className="flex w-full">
+				<Input
+					type="text"
+					value={descriptionDraft}
+					onChange={(e) => setDescriptionDraft(e.target.value)}
+					onBlur={handleDescriptionBlur}
+					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					placeholder={
+						canWrite ? 'Short description shown on the Agents page' : VIEWER_READ_ONLY_MESSAGE
+					}
+					disabled={!canWrite}
+					maxLength={80}
+					className="mb-3 border-none bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
+				/>
+			</ViewerTooltip>
 
 			{/* Metadata badges row */}
 			<div className="flex flex-wrap items-center gap-2 mb-6">
@@ -123,13 +135,16 @@ export function AgentCreateForm({
 
 			{/* Instructions */}
 			<Section title="Instructions">
-				<Textarea
-					value={systemPromptDraft}
-					onChange={(e) => setSystemPromptDraft(e.target.value)}
-					onBlur={handleSystemPromptBlur}
-					placeholder="Instructions for the agent..."
-					className="min-h-[120px] font-mono text-sm"
-				/>
+				<ViewerTooltip className="flex w-full">
+					<Textarea
+						value={systemPromptDraft}
+						onChange={(e) => setSystemPromptDraft(e.target.value)}
+						onBlur={handleSystemPromptBlur}
+						placeholder={canWrite ? 'Instructions for the agent...' : VIEWER_READ_ONLY_MESSAGE}
+						disabled={!canWrite}
+						className="min-h-[120px] font-mono text-sm"
+					/>
+				</ViewerTooltip>
 			</Section>
 
 			{/* LLM Configuration */}
@@ -137,25 +152,30 @@ export function AgentCreateForm({
 				<div className="flex flex-col sm:flex-row gap-3">
 					<div className="flex-1">
 						<Label>Provider</Label>
-						<Select value={llmProvider} onValueChange={handleProviderChange}>
-							<SelectTrigger>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="anthropic">Anthropic</SelectItem>
-								<SelectItem value="openai">OpenAI</SelectItem>
-							</SelectContent>
-						</Select>
+						<ViewerTooltip className="flex w-full">
+							<Select value={llmProvider} onValueChange={handleProviderChange} disabled={!canWrite}>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="anthropic">Anthropic</SelectItem>
+									<SelectItem value="openai">OpenAI</SelectItem>
+								</SelectContent>
+							</Select>
+						</ViewerTooltip>
 					</div>
 					<div className="flex-1">
 						<Label>Model</Label>
-						<Input
-							type="text"
-							value={modelDraft}
-							onChange={(e) => setModelDraft(e.target.value)}
-							onBlur={handleModelBlur}
-							placeholder="e.g. claude-sonnet-5-5"
-						/>
+						<ViewerTooltip className="flex w-full">
+							<Input
+								type="text"
+								value={modelDraft}
+								onChange={(e) => setModelDraft(e.target.value)}
+								onBlur={handleModelBlur}
+								placeholder={canWrite ? 'e.g. claude-sonnet-5-5' : VIEWER_READ_ONLY_MESSAGE}
+								disabled={!canWrite}
+							/>
+						</ViewerTooltip>
 					</div>
 				</div>
 			</Section>

@@ -2,10 +2,12 @@ import { GrantAgentDialog } from '@/components/extensions/grant-agent-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useExtensionAttempted,
 	useRevokeAgentGrant,
@@ -32,6 +34,7 @@ export function AgentAccessSection({
 	ext,
 	workspaceId,
 }: { ext: ExtensionResponse; workspaceId: string }) {
+	const canWrite = useCanWrite()
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: attempted } = useExtensionAttempted(workspaceId, ext.id)
 	const setGrant = useSetAgentGrant(workspaceId, ext.id)
@@ -42,6 +45,7 @@ export function AgentAccessSection({
 	const agents = (actors ?? []).filter((a) => a.type === 'agent')
 
 	const submitGrant = async (agent: ActorListItem, selection: Record<string, boolean>) => {
+		if (!canWrite) return
 		const effects: Record<string, ExtensionToolEffect> = {}
 		for (const t of tools) effects[t.name] = selection[t.name] ? 'allow' : 'deny'
 		try {
@@ -54,6 +58,7 @@ export function AgentAccessSection({
 	}
 
 	const removeAccess = async (agent: ActorListItem) => {
+		if (!canWrite) return
 		try {
 			await revoke.mutateAsync(agent.id)
 		} catch (err) {
@@ -142,23 +147,34 @@ export function AgentAccessSection({
 												</Badge>
 											)}
 											{tried && !on && (
-												<Button size="sm" onClick={() => setGrantFor(agent)}>
-													Grant
-												</Button>
+												<ViewerTooltip>
+													<Button size="sm" disabled={!canWrite} onClick={() => setGrantFor(agent)}>
+														Grant
+													</Button>
+												</ViewerTooltip>
 											)}
 											{on && (
-												<Button variant="ghost" size="sm" onClick={() => setGrantFor(agent)}>
-													Edit tools
-												</Button>
+												<ViewerTooltip>
+													<Button
+														variant="ghost"
+														size="sm"
+														disabled={!canWrite}
+														onClick={() => setGrantFor(agent)}
+													>
+														Edit tools
+													</Button>
+												</ViewerTooltip>
 											)}
-											<Switch
-												checked={on}
-												disabled={revoke.isPending}
-												aria-label={`${agent.name} can call ${ext.name} tools`}
-												onCheckedChange={(next) =>
-													next ? setGrantFor(agent) : removeAccess(agent)
-												}
-											/>
+											<ViewerTooltip>
+												<Switch
+													checked={on}
+													disabled={revoke.isPending || !canWrite}
+													aria-label={`${agent.name} can call ${ext.name} tools`}
+													onCheckedChange={(next) =>
+														next ? setGrantFor(agent) : removeAccess(agent)
+													}
+												/>
+											</ViewerTooltip>
 										</div>
 									</div>
 									{on && (

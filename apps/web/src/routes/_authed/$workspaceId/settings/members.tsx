@@ -5,6 +5,7 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -27,6 +28,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useResendInvite, useRevokeInvite, useWorkspaceInvites } from '@/hooks/use-invites'
 import {
 	useRemoveWorkspaceMember,
@@ -56,6 +58,7 @@ const ROLE_OPTIONS = ['admin', 'member'] as const
 
 function MembersPage() {
 	const { workspaceId, workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const { member: memberFromSearch } = Route.useSearch()
 	const { data: allMembers, isLoading } = useWorkspaceMembers(workspaceId)
 	// Connected integrations hold a 'system' member row so they can act in the
@@ -139,12 +142,14 @@ function MembersPage() {
 					{count} {count === 1 ? 'person or agent' : 'people & agents'}
 				</span>
 				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button variant="outline" size="sm" className="ml-auto">
-							<Plus size={14} className="mr-1" />
-							Add member
-						</Button>
-					</DropdownMenuTrigger>
+					<ViewerTooltip className="ml-auto inline-flex">
+						<DropdownMenuTrigger asChild>
+							<Button variant="outline" size="sm" className="ml-auto" disabled={!canWrite}>
+								<Plus size={14} className="mr-1" />
+								Add member
+							</Button>
+						</DropdownMenuTrigger>
+					</ViewerTooltip>
 					<DropdownMenuContent align="end">
 						<DropdownMenuItem onClick={() => setShowInviteDialog(true)}>
 							<UserPlus size={14} className="mr-2" />
@@ -213,36 +218,43 @@ function MembersPage() {
 										{member.role}
 									</span>
 								) : (
-									<Select
-										value={member.role}
-										onValueChange={(value) => handleRoleChange(member, value)}
-										disabled={updateRole.isPending}
-									>
-										<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											{ROLE_OPTIONS.map((role) => (
-												<SelectItem key={role} value={role}>
-													{role}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+									<ViewerTooltip>
+										<Select
+											value={member.role}
+											onValueChange={(value) => handleRoleChange(member, value)}
+											disabled={updateRole.isPending || !canWrite}
+										>
+											<SelectTrigger
+												className="w-28 shrink-0"
+												aria-label={`Role for ${member.name}`}
+											>
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												{ROLE_OPTIONS.map((role) => (
+													<SelectItem key={role} value={role}>
+														{role}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</ViewerTooltip>
 								)}
-								<Button
-									variant="ghost"
-									size="icon"
-									className={cn('shrink-0', isOwner && 'invisible')}
-									aria-label={`Remove ${member.name}`}
-									disabled={isOwner}
-									onClick={() => {
-										setRemoveError(null)
-										setPendingRemoval(member)
-									}}
-								>
-									<Trash2 size={14} />
-								</Button>
+								<ViewerTooltip>
+									<Button
+										variant="ghost"
+										size="icon"
+										className={cn('shrink-0', isOwner && 'invisible')}
+										aria-label={`Remove ${member.name}`}
+										disabled={isOwner || !canWrite}
+										onClick={() => {
+											setRemoveError(null)
+											setPendingRemoval(member)
+										}}
+									>
+										<Trash2 size={14} />
+									</Button>
+								</ViewerTooltip>
 							</div>
 						)
 					})}

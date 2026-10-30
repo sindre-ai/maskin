@@ -24,6 +24,10 @@ public struct LinkedOtherWorkspace: Equatable, Sendable {
 		case .file:
 			kindLabel = "File"
 			url = DeepLink.file(workspaceId: workspaceID, id: target.uuid).url
+		case .agent, .chat, .loop, .trigger:
+			// Never built for these: a link names its workspace only for an object or a file.
+			kindLabel = "Object"
+			url = DeepLink.object(workspaceId: workspaceID, id: target.uuid).url
 		}
 	}
 

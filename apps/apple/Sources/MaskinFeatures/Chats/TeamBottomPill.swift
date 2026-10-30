@@ -42,9 +42,13 @@ final class TeamPillModel {
 	var unreadCount = 0
 	/// Row selection is on: the selection bar takes the bottom, so the pill steps aside.
 	var isSelecting = false
+	/// A chat, flow room or the Threads screen is open over the list. On iPhone the Team screen stays
+	/// mounted while a chat is pushed, so the pill steps aside until the list is on top again.
+	var isCovered = false
 
-	/// Whether the pill should be on screen: Quick filters is on and no selection is running.
-	var isShown: Bool { store?.displayOptions.showsFilterChips == true && !isSelecting }
+	/// Whether the pill should be on screen: Quick filters is on, the list is on top and no selection
+	/// is running.
+	var isShown: Bool { store?.displayOptions.showsFilterChips == true && !isSelecting && !isCovered }
 
 	func attach(store: ConversationsStore, onThreads: @escaping () -> Void) {
 		self.store = store

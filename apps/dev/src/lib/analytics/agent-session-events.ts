@@ -169,6 +169,8 @@ export async function trackAgentSessionCompletedWithSkills(p: {
 	outcome: 'completed' | 'failed' | 'timeout'
 	skillsAttached?: number
 	skillsStaged?: number
+	/** Wall-clock run time; absent when the session has no start time on record. */
+	durationMs?: number
 }): Promise<void> {
 	try {
 		await capturePosthogEvent('agent_session_completed', p.agentId, {
@@ -178,6 +180,7 @@ export async function trackAgentSessionCompletedWithSkills(p: {
 			outcome: p.outcome,
 			skills_attached: p.skillsAttached,
 			skills_staged: p.skillsStaged,
+			duration_ms: p.durationMs,
 			// Distinguishes the dev-side emission from the frontend one at query
 			// time. PostHog treats absent properties as null; setting this on the
 			// dev-side path lets a query filter to a single source when needed.

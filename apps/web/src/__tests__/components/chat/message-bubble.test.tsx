@@ -10,7 +10,9 @@ vi.mock('@tanstack/react-router', async () => {
 
 const workspaceState = vi.hoisted(() => ({ enterprise: false }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: {
 			enterprise: workspaceState.enterprise,
@@ -579,5 +581,67 @@ describe('MessageBubble — Reply in thread', () => {
 		renderWithReply(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
 		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
 		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+})
+
+describe('MessageBubble — own bubble fits its text', () => {
+	const NATURAL_WIDTH = 560
+	const WIDEST_LINE = 200
+	const originalRects = Range.prototype.getClientRects
+	const originalBox = HTMLElement.prototype.getBoundingClientRect
+
+	beforeEach(() => {
+		// jsdom has no layout: the column is 560px wide until it is given a width, and the
+		// widest line of text ends at 200px.
+		Range.prototype.getClientRects = () =>
+			[{ left: 0, right: WIDEST_LINE, width: WIDEST_LINE }] as unknown as DOMRectList
+		HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+			const width = Number.parseFloat(this.style.width) || NATURAL_WIDTH
+			return { left: 0, right: width, width, top: 0, bottom: 0, height: 0 } as DOMRect
+		}
+	})
+	afterEach(() => {
+		Range.prototype.getClientRects = originalRects
+		HTMLElement.prototype.getBoundingClientRect = originalBox
+		flagState.lifted = false
+	})
+
+	const own = (overrides: Partial<MessageResponse> = {}) =>
+		buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', ...overrides })
+	const columnOf = (container: HTMLElement) =>
+		container.querySelector<HTMLElement>('.bg-primary')?.closest<HTMLElement>('[style]')
+
+	it('gives the column the width of the widest line of text', () => {
+		const { container } = renderBubble(own({ content: 'a long line\nand a shorter one' }))
+		// jsdom applies no stylesheet, so the plate has no padding to add here.
+		expect(columnOf(container)?.style.width).toBe(`${WIDEST_LINE}px`)
+	})
+
+	it('keeps lifted attachments as wide as the bubble, and not narrower than the minimum', () => {
+		flagState.lifted = true
+		Range.prototype.getClientRects = () =>
+			[{ left: 0, right: 40, width: 40 }] as unknown as DOMRectList
+		const { container } = renderBubble(
+			own({
+				content: 'ok',
+				metadata: { attachments: [{ file_id: 'img-1', name: 'shot.png', mime_type: 'image/png' }] },
+			}),
+		)
+		const column = columnOf(container)
+		expect(column?.style.width).toBe('160px')
+		expect(column).toContainElement(screen.getByLabelText('Attached files'))
+	})
+
+	it('leaves the full width while the message is being edited', () => {
+		const { container } = renderBubble(own({ content: 'a long line' }))
+		expect(columnOf(container)?.style.width).toBe(`${WIDEST_LINE}px`)
+		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
+		// Leaving the fit clears the width but keeps an empty style attribute behind.
+		expect(columnOf(container)?.style.width ?? '').toBe('')
+	})
+
+	it('does not fit a message from someone else', () => {
+		const { container } = renderBubble(buildMessage({ content: 'a long line' }))
+		expect(container.querySelector('[style*="width"]')).toBeNull()
 	})
 })

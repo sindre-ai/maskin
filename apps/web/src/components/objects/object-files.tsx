@@ -1,4 +1,5 @@
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	ResponsivePopover,
@@ -6,6 +7,7 @@ import {
 	ResponsivePopoverTrigger,
 } from '@/components/ui/responsive-popover'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
 import { useObjectFileAttachments } from '@/hooks/use-object-file-attachments'
 import { useCreateRelationship } from '@/hooks/use-relationships'
@@ -108,6 +110,7 @@ export function ObjectFiles({
 		objectType,
 	})
 
+	const canWrite = useCanWrite()
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [isDragging, setIsDragging] = useState(false)
 	const [visible, setVisible] = useState<Record<ToggleableProperty, boolean>>(DEFAULT_VISIBLE)
@@ -168,9 +171,9 @@ export function ObjectFiles({
 			e.preventDefault()
 			setIsDragging(false)
 			const dropped = e.dataTransfer.files
-			if (dropped?.length) handleUpload(Array.from(dropped))
+			if (canWrite && dropped?.length) handleUpload(Array.from(dropped))
 		},
-		[handleUpload],
+		[handleUpload, canWrite],
 	)
 
 	const toggleProperty = useCallback((id: ToggleableProperty, next: boolean) => {
@@ -206,7 +209,7 @@ export function ObjectFiles({
 		<div
 			onDragOver={(e) => {
 				e.preventDefault()
-				if (!isDragging) setIsDragging(true)
+				if (canWrite && !isDragging) setIsDragging(true)
 			}}
 			onDragLeave={() => setIsDragging(false)}
 			onDrop={handleDrop}
@@ -265,17 +268,19 @@ export function ObjectFiles({
 						</div>
 					</ResponsivePopoverContent>
 				</ResponsivePopover>
-				<Button
-					variant="ghost"
-					size="icon"
-					className="size-6 text-muted-foreground"
-					title="Attach file"
-					aria-label="Attach file"
-					onClick={() => inputRef.current?.click()}
-					disabled={isUploading}
-				>
-					{isUploading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="size-6 text-muted-foreground"
+						title="Attach file"
+						aria-label="Attach file"
+						onClick={() => inputRef.current?.click()}
+						disabled={isUploading || !canWrite}
+					>
+						{isUploading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+					</Button>
+				</ViewerTooltip>
 			</div>
 
 			<input ref={inputRef} type="file" multiple className="hidden" onChange={handleFileChange} />

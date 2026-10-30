@@ -375,6 +375,7 @@
 		],
 		"request_keychain_access": ["credential_name", "hint", "workspace_id"],
 		"request_keychain_credential": ["hint", "kind", "suggested_name", "workspace_id"],
+		"resend_send_email": ["object_id", "workspace_id"],
 		"resume_session": ["id", "workspace_id"],
 		"search_objects": [
 			"driver_id",

@@ -168,6 +168,14 @@ async function memberActorIdsFor(workspaceId: string): Promise<string[]> {
 	return rows.map((r) => r.actorId).sort()
 }
 
+async function storedSettings(id: string): Promise<Record<string, unknown>> {
+	const [row] = await db
+		.select({ settings: workspacesTable.settings })
+		.from(workspacesTable)
+		.where(eq(workspacesTable.id, id))
+	return row.settings as Record<string, unknown>
+}
+
 describe('Workspaces Integration', () => {
 	beforeEach(() => {
 		capturePosthogEventMock.mockClear()
@@ -364,10 +372,12 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterSet = await second.json()
-			expect(afterSet.settings.llm_keys).toEqual({
-				anthropic: 'sk-ant-AAA',
-				openai: 'sk-oai-BBB',
-			})
+			// No caller gets a key back; the row holds both, sealed.
+			expect(afterSet.settings.llm_keys).toBeUndefined()
+			expect(afterSet.llm_configured).toMatchObject({ anthropic: true, openai: true })
+			const setKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(openSecret(setKeys.llm_keys.anthropic)).toBe('sk-ant-AAA')
+			expect(openSecret(setKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 
 			// `null` inside llm_keys signals deletion; other providers stay.
 			const third = await app.request(
@@ -376,7 +386,10 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterDelete = await third.json()
-			expect(afterDelete.settings.llm_keys).toEqual({ openai: 'sk-oai-BBB' })
+			expect(afterDelete.llm_configured).toMatchObject({ anthropic: false, openai: true })
+			const deletedKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(deletedKeys.llm_keys.anthropic).toBeUndefined()
+			expect(openSecret(deletedKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 		})
 	})
 
@@ -710,7 +723,8 @@ describe('Workspaces Integration', () => {
 				)
 				expect(res.status).toBe(200)
 				const body = await res.json()
-				expect(body.settings.llm_keys.anthropic).toBe('sk-ant-enterprise')
+				expect(body.settings.llm_keys).toBeUndefined()
+				expect(body.llm_configured.anthropic).toBe(true)
 			} finally {
 				// '' parses to an empty allowlist, same as unset.
 				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
@@ -816,7 +830,8 @@ describe('Workspaces Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.settings.llm_keys.anthropic).toBe('sk-ant-allowed')
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(true)
 		})
 
 		it('does not block deleting an existing (pre-entitlement) BYO key', async () => {
@@ -846,7 +861,10 @@ describe('Workspaces Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.settings.llm_keys).toEqual({})
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(false)
+			const stored = (await storedSettings(ws.id)) as { llm_keys?: Record<string, string> }
+			expect(stored.llm_keys?.anthropic).toBeUndefined()
 		})
 	})
 

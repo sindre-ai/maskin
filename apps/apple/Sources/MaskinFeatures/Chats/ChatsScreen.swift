@@ -144,6 +144,9 @@ private struct ChatsContainer: View {
 			Task { await startWithChiefOfStaff(text: draft.text) }
 		}
 		.task { await store.start() }
+		.onChange(of: selection != nil || showThreads, initial: true) { _, covered in
+			runtime?.teamPill.isCovered = covered
+		}
 		.onAppear { runtime?.teamPill.attach(store: store, onThreads: { showThreads = true }) }
 		.onDisappear {
 			store.stop()

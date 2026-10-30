@@ -12,8 +12,10 @@ import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
 import { AgentTriggersSection } from '@/components/agents/agent-triggers-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
@@ -29,6 +31,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const run = useAgentRun(workspaceId)
 	const pause = useAgentPause(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 	// The one read of the desktop flag for the whole feature: the computer lives
 	// on this page only, so this is its boundary.
@@ -100,15 +103,18 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 						</Button>
 					</div>
 				) : (
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7 text-muted-foreground hover:text-error"
-						onClick={() => setConfirmDelete(true)}
-						aria-label="Delete agent"
-					>
-						<Trash2 size={15} />
-					</Button>
+					<ViewerTooltip>
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7 text-muted-foreground hover:text-error"
+							disabled={!canWrite}
+							onClick={() => setConfirmDelete(true)}
+							aria-label="Delete agent"
+						>
+							<Trash2 size={15} />
+						</Button>
+					</ViewerTooltip>
 				))}
 		</div>
 	)

@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	removeDeletedWorkspaceQueries,
 	useDeleteWorkspace,
@@ -35,6 +36,7 @@ export function DeleteWorkspaceDialog({
 	onOpenChange: (open: boolean) => void
 }) {
 	const navigate = useNavigate()
+	const canWrite = useCanWrite()
 	const queryClient = useQueryClient()
 	const { data: workspaces } = useWorkspaces()
 	// Deleting the only workspace leaves the person with nothing to open, so we offer to delete the
@@ -73,7 +75,7 @@ export function DeleteWorkspaceDialog({
 
 	const handleDelete = (e?: React.FormEvent) => {
 		e?.preventDefault()
-		if (!canDelete || !nameMatches || deleteWorkspace.isPending) return
+		if (!canWrite || !canDelete || !nameMatches || deleteWorkspace.isPending) return
 		deleteWorkspace.mutate(confirmName, {
 			onSuccess: () => {
 				toast.success(`Deleted ${workspaceName}`)
@@ -198,7 +200,7 @@ export function DeleteWorkspaceDialog({
 						<Button
 							type="submit"
 							variant="destructive"
-							disabled={!canDelete || !nameMatches || deleteWorkspace.isPending}
+							disabled={!canWrite || !canDelete || !nameMatches || deleteWorkspace.isPending}
 						>
 							{deleteWorkspace.isPending ? 'Deleting…' : 'Delete workspace'}
 						</Button>

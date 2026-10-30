@@ -89,7 +89,7 @@ function row(
 // destructive: delete_*, stop_session, stop_chat_agent, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, mark_read.
 // openWorld: create_session, its alias run_agent, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
-// send a message out (gmail_send_email, approve_object_draft).
+// send a message out (gmail_send_email, resend_send_email, approve_object_draft).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
 	create_objects: row('Create objects'),
@@ -185,6 +185,7 @@ const ROWS: Record<string, Row> = {
 	get_session_activity: row('Get session activity'),
 	approve_object_draft: row('Approve object draft', { openWorld: true }),
 	gmail_send_email: row('Send Gmail email', { openWorld: true }),
+	resend_send_email: row('Send Resend email', { openWorld: true }),
 	update_integration_access: row('Update integration access', {
 		idempotent: true,
 		openWorld: true,

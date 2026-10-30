@@ -16,16 +16,12 @@ import {
 import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import { CreatePicker } from '@/components/shared/create-picker'
 import { UploadProgress } from '@/components/shared/upload-progress'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
 import { useUploadFile } from '@/hooks/use-files'
@@ -37,8 +33,9 @@ import { cn } from '@/lib/cn'
 import { toUploadInput } from '@/lib/large-file-upload'
 import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
+import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, Hash, Info, Mic, Paperclip, Plus, X } from 'lucide-react'
+import { ArrowUp, Hash, Info, Mic, Paperclip, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -294,7 +291,7 @@ function writeDraft(key: string, value: string): void {
  *  - `@` typed at a word boundary opens the mention picker (agents + humans)
  *    inline at the caret; ↑↓ navigate, ↵ inserts, Escape closes. Textarea
  *    keeps DOM focus while the picker is open.
- *  - The `+` menu offers "Attach a file"; `/` and `@` cover the rest.
+ *  - The paperclip attaches a file; `/` and `@` cover the rest.
  */
 export function Composer({
 	workspaceId,
@@ -460,6 +457,7 @@ export function Composer({
 	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
+	const canWrite = useCanWrite()
 	const selfActor = getStoredActor()
 	const selfActorId = selfActor?.id ?? null
 
@@ -932,7 +930,11 @@ export function Composer({
 				// surface and no error state to set.
 				if (controller.signal.aborted) return
 				console.error(`[chat] failed to upload ${file.name}`, err)
-				const message = err instanceof Error ? err.message : 'Upload failed'
+				const message = isViewerRefusal(err)
+					? VIEWER_READ_ONLY_MESSAGE
+					: err instanceof Error
+						? err.message
+						: 'Upload failed'
 				// Mirror the comment input: the failed chip stays put so the user
 				// can see which attachment broke and remove it. Send stays blocked
 				// (via canSend) until every pending row is resolved or removed.
@@ -950,6 +952,7 @@ export function Composer({
 	// paste both end here, so a chip behaves the same whichever way it arrived.
 	const attachFiles = useCallback(
 		(files: File[]) => {
+			if (!canWrite) return
 			const additions: PendingUpload[] = files.map((file) => ({
 				tempId: makeTempId(),
 				name: file.name,
@@ -964,7 +967,7 @@ export function Composer({
 				void uploadPickedFile(p.tempId, files[idx])
 			})
 		},
-		[uploadPickedFile],
+		[uploadPickedFile, canWrite],
 	)
 
 	const handleFileSelection = useCallback(
@@ -1219,56 +1222,20 @@ export function Composer({
 					</output>
 				)}
 				<div className="flex items-center gap-2">
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							{/* No 44 px `::before` here: Attach next to it already carries one,
-							    and two overlapping invisible hit surfaces 8 px apart steal
-							    taps from each other. The v2 control row is 28 px by design.
-							    Attach's hit area is anchored to its right edge, so it reaches 8 px
-							    over this button; `z-[1]` keeps this one's full box on top. */}
-							<Button
-								type="button"
-								size="icon"
-								variant="outline"
-								className="relative z-[1] h-7 w-7 shrink-0 rounded-full text-muted-foreground"
-								disabled={disabled}
-								aria-label="Add an object, file, or mention"
-							>
-								<Plus size={15} aria-hidden />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="start" className="w-[252px]">
-							{/* The row triggers the same hidden fileInputRef as the visible
-							    Paperclip sibling, so the file-attach handler that is already
-							    wired for this composer is what runs. `/` and `@` cover
-							    references, mentions and creating objects. */}
-							<DropdownMenuItem
-								onSelect={() => fileInputRef.current?.click()}
-								className="flex-col items-start gap-0.5"
-							>
-								<span className="flex items-center gap-2">
-									<Paperclip size={15} aria-hidden />
-									Attach a file
-								</span>
-								<span className="pl-[23px] text-xs text-muted-foreground">PDF, image, or doc</span>
-							</DropdownMenuItem>
-						</DropdownMenuContent>
-					</DropdownMenu>
-					{/* Attach stays a visible sibling rather than a menu row: it is the
-					    one composer affordance with a pinned 44 px touch target
-					    (`ios-chat-attach-tap-area.spec.ts`), which a closed menu can't
-					    satisfy. */}
-					<Button
-						type="button"
-						size="icon"
-						variant="ghost"
-						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={disabled}
-						aria-label="Attach file"
-					>
-						<Paperclip size={14} aria-hidden />
-					</Button>
+					{/* Attach carries a pinned 44 px touch target (`ios-chat-attach-tap-area.spec.ts`). */}
+					<ViewerTooltip>
+						<Button
+							type="button"
+							size="icon"
+							variant="ghost"
+							className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={disabled || !canWrite}
+							aria-label="Attach file"
+						>
+							<Paperclip size={14} aria-hidden />
+						</Button>
+					</ViewerTooltip>
 					{dictation.supported ? (
 						<Button
 							type="button"
