@@ -10,10 +10,26 @@ export interface LLMToolCall {
 	arguments: Record<string, unknown>
 }
 
+/**
+ * Token counts exactly as the provider reported them. The four figures never
+ * overlap: input_tokens excludes cached tokens, so a caller can price each
+ * bucket at its own rate and add them up. All zero when the provider sends no
+ * usage block.
+ */
+export interface LLMUsage {
+	input_tokens: number
+	output_tokens: number
+	/** Input tokens written to the provider's prompt cache. */
+	cache_creation_input_tokens: number
+	/** Input tokens served from the provider's prompt cache. */
+	cache_read_input_tokens: number
+}
+
 export interface LLMResponse {
 	content: string | null
 	tool_calls: LLMToolCall[]
 	finish_reason: 'stop' | 'tool_calls' | 'length'
+	usage: LLMUsage
 }
 
 export interface LLMTool {

@@ -1,4 +1,4 @@
-import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './adapter'
+import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool, LLMUsage } from './adapter'
 import { assertNoRawSecrets } from './secret-guard'
 
 export class AnthropicAdapter implements LLMAdapter {
@@ -84,6 +84,23 @@ export class AnthropicAdapter implements LLMAdapter {
 			content: (textContent?.text as string) ?? null,
 			tool_calls: toolCalls,
 			finish_reason: finishReason,
+			usage: readUsage(data.usage),
 		}
+	}
+}
+
+function count(value: unknown): number {
+	return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+// Anthropic reports input_tokens without the cached buckets, so the figures
+// already match the LLMUsage convention.
+function readUsage(raw: unknown): LLMUsage {
+	const usage = (raw ?? {}) as Record<string, unknown>
+	return {
+		input_tokens: count(usage.input_tokens),
+		output_tokens: count(usage.output_tokens),
+		cache_creation_input_tokens: count(usage.cache_creation_input_tokens),
+		cache_read_input_tokens: count(usage.cache_read_input_tokens),
 	}
 }
