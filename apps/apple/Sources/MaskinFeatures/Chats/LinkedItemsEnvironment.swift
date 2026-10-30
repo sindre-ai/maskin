@@ -53,6 +53,11 @@ extension View {
 }
 
 extension EnvironmentValues {
+	/// The card sits inside a message bubble, where its summary is one line (stand-alone it is two).
+	@Entry var linkedInBubble: Bool = false
+}
+
+extension EnvironmentValues {
 	/// How a card opens its object or file. The Linked sheet sets it to close itself first: the
 	/// shell presents objects and files from above everything, and cannot while a sheet is up.
 	@Entry var linkedOpen: ((LinkedTarget) -> Void)? = nil

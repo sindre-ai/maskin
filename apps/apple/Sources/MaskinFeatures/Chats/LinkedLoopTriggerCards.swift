@@ -104,6 +104,7 @@ struct LinkedKindCard: View {
 
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.dynamicTypeSize) private var typeSize
+	@Environment(\.linkedInBubble) private var inBubble
 	@State private var folded = false
 
 	private var stacked: Bool { typeSize.isAccessibilitySize }
@@ -153,7 +154,7 @@ struct LinkedKindCard: View {
 					Text(summary)
 						.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
 						.foregroundStyle(MaskinColor.ink3)
-						.lineLimit(2).multilineTextAlignment(.leading)
+						.lineLimit(inBubble ? 1 : 2).multilineTextAlignment(.leading)
 				}
 			}
 			ForEach(facts) { fact in factRow(label: fact.label, value: fact.value) }

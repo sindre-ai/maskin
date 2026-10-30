@@ -326,6 +326,7 @@ struct MessageRow: View {
 				}
 			}
 		}
+		.environment(\.linkedInBubble, true)
 	}
 
 	/// The "Mentioned X" caption only names people the words do not show; a tag in the text is
