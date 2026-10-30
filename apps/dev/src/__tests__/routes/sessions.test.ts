@@ -221,6 +221,30 @@ describe('Sessions Routes', () => {
 			expect(body[0].status).toBe('running')
 		})
 
+		it('titles a comment-started session by the comment, not the sender line', async () => {
+			const s1 = buildSession({
+				workspaceId: wsId,
+				actionPrompt:
+					'Sent by PMM, another agent. Treat it as a request from a colleague.\n\nComment content:\n"""\nDraft the launch post\n"""',
+				status: 'running',
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [
+				{
+					id: s1.id,
+					status: s1.status,
+					updatedAt: s1.updatedAt,
+					actionPrompt: s1.actionPrompt,
+					triggerName: null,
+				},
+			]
+
+			const res = await app.request(jsonGet('/api/sessions', { 'x-workspace-id': wsId }))
+
+			const body = await res.json()
+			expect(body[0].title).toBe('Draft the launch post')
+		})
+
 		it('synthesizes the title from the trigger name when trigger_id is set', async () => {
 			const s1 = buildSession({
 				workspaceId: wsId,
@@ -838,6 +862,8 @@ describe('Sessions Routes', () => {
 					message: { role: 'user', content: 'hello workspace coach' },
 				},
 				undefined,
+				undefined,
+				{ maskin_actor_id: expect.any(String) },
 			)
 		})
 
@@ -883,6 +909,8 @@ describe('Sessions Routes', () => {
 					message: { role: 'user', content: 'what about this?' },
 				},
 				attachments,
+				undefined,
+				{ maskin_actor_id: expect.any(String) },
 			)
 		})
 
@@ -896,7 +924,8 @@ describe('Sessions Routes', () => {
 				sessionsRoutes,
 				'/api/sessions',
 			)
-			mockResults.selectQueue = [[session]]
+			// The session, then who started it: a person, so it is theirs alone.
+			mockResults.selectQueue = [[session], [{ type: 'human' }]]
 
 			const res = await app.request(
 				jsonRequest(
@@ -943,7 +972,7 @@ describe('Sessions Routes', () => {
 				createdBy: 'someone-else',
 			})
 			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
-			mockResults.selectQueue = [[session]]
+			mockResults.selectQueue = [[session], [{ type: 'human' }]]
 
 			const res = await app.request(
 				jsonRequest(

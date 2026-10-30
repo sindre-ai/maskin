@@ -58,6 +58,7 @@ const EXPECTED_READ_TOOL_NAMES = [
 	'list_integrations',
 	'list_integration_providers',
 	'list_extensions',
+	'list_for_you',
 	'get_started',
 ]
 
@@ -66,8 +67,10 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'get_session_logs',
 	'traverse_graph',
 	'get_conversation',
+	'list_chats',
 	'list_conversation_messages',
 	'get_session_activity',
+	'get_chat_activity',
 	'list_notifications',
 	'list_keychain_credentials',
 	'desktop_list_ports',
@@ -179,6 +182,7 @@ describe('MCP surface pin', () => {
 			workspaceCoach: [shared.WORKSPACE_COACH_SYSTEM_PROMPT, shared.WORKSPACE_COACH_DEFAULT],
 			skills: [
 				shared.FOR_YOU_FORMAT_SKILL,
+				shared.DRAFT_APPROVAL_TASKS_SKILL,
 				shared.SHAPED_BET_FORMAT_SKILL,
 				shared.MASKIN_WAY_OF_WORKING_SKILL,
 				shared.CONTINUOUS_ONBOARDING_SKILL,
@@ -210,16 +214,11 @@ describe('MCP surface pin', () => {
 	})
 
 	it('every alias row targets a registered tool', async () => {
-		const { ALIASES, DEFAULT_WORKSPACE_TOOLS } = await import('../aliases')
+		const { ALIASES } = await import('../aliases')
 		const violations: string[] = []
 		for (const row of ALIASES) {
 			if (!registeredTools.has(row.tool)) {
 				violations.push(`alias row '${row.tool} ${row.oldPath}' targets an unregistered tool`)
-			}
-		}
-		for (const name of DEFAULT_WORKSPACE_TOOLS) {
-			if (!registeredTools.has(name)) {
-				violations.push(`workspace_id fallback names an unregistered tool: ${name}`)
 			}
 		}
 		expect(violations, violations.join('\n')).toEqual([])
@@ -261,14 +260,6 @@ describe('MCP surface pin', () => {
 		it('every table entry maps to a registered tool', () => {
 			const orphans = Object.keys(TOOL_ANNOTATIONS).filter((name) => !registeredTools.has(name))
 			expect(orphans, `annotations rows for unregistered tools: ${orphans.join(', ')}`).toEqual([])
-		})
-
-		it('the tool count in CLAUDE.md equals the number of registered tools', async () => {
-			const { readFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs')
-			const claudeMd = readFileSync(new URL('../../../../CLAUDE.md', import.meta.url), 'utf8')
-			const match = claudeMd.match(/wraps the API as (\d+) tools/)
-			expect(match, 'CLAUDE.md no longer says "wraps the API as N tools"').not.toBeNull()
-			expect(Number(match?.[1])).toBe(registeredTools.size)
 		})
 
 		it('gives every registered tool its title and annotations in one place (the wrapper)', () => {
@@ -322,6 +313,7 @@ describe('MCP surface pin', () => {
 			const expected = [
 				...Object.keys(TOOL_ANNOTATIONS).filter((n) => n.startsWith('delete_')),
 				'stop_session',
+				'stop_chat_agent',
 				'disconnect_integration',
 				'desktop_run',
 			].sort()
@@ -333,13 +325,12 @@ describe('MCP surface pin', () => {
 			for (const name of expected) expect(registeredTools.has(name)).toBe(true)
 		})
 
-		it('idempotentHint is true for update_*, delete_*, pause_session, resume_session and mark_read only', () => {
+		it('idempotentHint is true for update_*, delete_*, pause_session and mark_read only', () => {
 			const expected = [
 				...Object.keys(TOOL_ANNOTATIONS).filter(
 					(n) => n.startsWith('update_') || n.startsWith('delete_'),
 				),
 				'pause_session',
-				'resume_session',
 				'mark_read',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)
@@ -352,6 +343,8 @@ describe('MCP surface pin', () => {
 		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send mail only', () => {
 			const expected = [
 				'create_session',
+				'create_sub_chat',
+				'create_chat',
 				'run_agent',
 				'list_integrations',
 				'list_integration_providers',

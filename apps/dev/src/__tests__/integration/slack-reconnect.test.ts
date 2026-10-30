@@ -339,11 +339,14 @@ describe('Slack OAuth reconnect lifecycle (integration)', () => {
 		const rows = (await listRes.json()) as {
 			provider: string
 			missingScopes?: string[]
+			grantedScopes?: string[]
 			needsReconnect?: boolean
 		}[]
 		const slackRow = rows.find((r) => r.provider === 'slack')
 
 		expect(slackRow?.needsReconnect).toBe(true)
+		// The scopes the token actually carried, names only, for the detail pages.
+		expect(slackRow?.grantedScopes).toEqual(['chat:write', 'app_mentions:read'])
 		expect(slackRow?.missingScopes).toEqual(
 			expect.arrayContaining(['channels:history', 'groups:history', 'search:read.public']),
 		)
@@ -370,10 +373,12 @@ describe('Slack OAuth reconnect lifecycle (integration)', () => {
 		const rows = (await listRes.json()) as {
 			provider: string
 			missingScopes?: string[]
+			grantedScopes?: string[]
 			needsReconnect?: boolean
 		}[]
 		const slackRow = rows.find((r) => r.provider === 'slack')
 		expect(slackRow?.missingScopes).toEqual([])
 		expect(slackRow?.needsReconnect).toBe(false)
+		expect(slackRow?.grantedScopes).toEqual(slackProviderConfig.auth.config.scopes)
 	})
 })

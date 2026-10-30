@@ -19,10 +19,9 @@ import MaskinAPI
 // and the answer, so a double tap, an OS retry, or this attempt timing out on the wire and then
 // being replayed from the outbox cannot post the answer twice.
 //
-// OUTBOX FILE: the fallback appends to the actor's outbox file. If the app is running in the
-// foreground at the same moment AND offline, its own in-memory queue could overwrite that file;
-// the window is a few milliseconds on a device that just lost the network, and the worst case
-// is the answer is lost (the notification stays, the user retries) rather than sent twice.
+// OUTBOX FILE: the fallback appends to the actor's outbox file. If the app process is still alive
+// (suspended or running), its own outbox adopts entries it did not write the next time it saves or
+// drains, so the answer is neither overwritten nor left unsent until the process dies.
 
 public enum NotificationActionOutcome: Sendable, Equatable {
 	/// The answer was posted and the thread marked read.
@@ -66,14 +65,21 @@ public struct NotificationActionHandler: Sendable {
 	/// ONE budget for the whole tap (comment + mark-read), not per write: two sequential 20 s
 	/// attempts could outlast the ~30 s background window.
 	private let attemptTimeout: Duration
+	/// Waits out a deadline; tests replace it so "the budget ran out" is an event, not a race
+	/// against the wall clock.
+	private let waitForDeadline: @Sendable (ContinuousClock.Instant) async throws -> Void
 	private let now: @Sendable () -> Date
 	private let laterDefaults: DefaultsBox
 
 	public init(
 		secrets: any SecretStore, backend: @escaping BackendFactory, queue: any DecisionQueueing,
 		attemptTimeout: Duration = .seconds(20), now: @escaping @Sendable () -> Date = { Date() },
-		laterDefaults: UserDefaults = .standard
+		laterDefaults: UserDefaults = .standard,
+		waitForDeadline: @escaping @Sendable (ContinuousClock.Instant) async throws -> Void = {
+			try await Task.sleep(until: $0, clock: .continuous)
+		}
 	) {
+		self.waitForDeadline = waitForDeadline
 		self.now = now
 		self.laterDefaults = DefaultsBox(value: laterDefaults)
 		self.secrets = secrets
@@ -174,10 +180,11 @@ public struct NotificationActionHandler: Sendable {
 	private func attempt(
 		until deadline: ContinuousClock.Instant, _ work: @escaping @Sendable () async throws -> Void
 	) async throws {
+		let waitForDeadline = waitForDeadline
 		try await withThrowingTaskGroup(of: Void.self) { group in
 			group.addTask { try await work() }
 			group.addTask {
-				try await Task.sleep(until: deadline, clock: .continuous)
+				try await waitForDeadline(deadline)
 				throw URLError(.timedOut)
 			}
 			defer { group.cancelAll() }

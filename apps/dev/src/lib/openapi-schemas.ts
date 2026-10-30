@@ -269,6 +269,9 @@ export const integrationResponseSchema = z.object({
 	// and reconnecting is what fixes it. Scope names only — never the token.
 	missingScopes: z.array(z.string()).optional(),
 	needsReconnect: z.boolean().optional(),
+	// Scopes this install's token response actually carried, so a provider detail
+	// page can show per-scope status without ever seeing the token. Names only.
+	grantedScopes: z.array(z.string()).optional(),
 	// Keychain. Where the credential came from, and for source chat_capture the
 	// session the key was pasted into. Never the value or the wrapped data key.
 	source: z.string().optional(),
@@ -370,11 +373,18 @@ export const conversationListItemResponseSchema = z.object({
 	// the viewer said it.
 	snippet_actor_id: z.string().uuid().nullable(),
 	snippet_actor_name: z.string().nullable(),
+	// True when the caller wrote the snippet.
+	snippet_is_caller: z.boolean(),
 	participants: z.array(conversationParticipantResponseSchema),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
-	.omit({ snippet: true, snippet_actor_id: true, snippet_actor_name: true })
+	.omit({
+		snippet: true,
+		snippet_actor_id: true,
+		snippet_actor_name: true,
+		snippet_is_caller: true,
+	})
 	.extend({
 		last_read_message_id: z.number().nullable(),
 	})
@@ -434,6 +444,22 @@ export const threadListItemSchema = z.object({
 // message still posts, but nobody was pulled in or woken for those ids.
 export const postMessageResponseSchema = messageResponseSchema.extend({
 	unresolved_mentions: z.array(z.string().uuid()).optional(),
+	// A thread reply that reached the sub-chat the thread holds: how it got there.
+	delivered_to_session: z
+		.discriminatedUnion('mode', [
+			z.object({ mode: z.literal('live'), session_id: z.string().uuid() }),
+			z.object({
+				mode: z.literal('continued'),
+				session_id: z.string().uuid(),
+				previous_session_id: z.string().uuid(),
+			}),
+			z.object({
+				mode: z.literal('not_delivered'),
+				session_id: z.string().uuid(),
+				reason: z.string(),
+			}),
+		])
+		.optional(),
 })
 
 /**

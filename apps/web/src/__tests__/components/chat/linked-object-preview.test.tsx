@@ -1,10 +1,9 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const useObject = vi.fn()
 const updateMutate = vi.fn()
-const sendMutate = vi.fn()
 const approveMutate = vi.fn()
 
 vi.mock('@/hooks/use-objects', () => ({
@@ -21,15 +20,20 @@ const useFiles = vi.fn()
 vi.mock('@/hooks/use-files', () => ({
 	useFiles: (...args: unknown[]) => useFiles(...args),
 }))
-vi.mock('@/hooks/use-conversation', () => ({
-	useSendMessage: () => ({ mutate: sendMutate }),
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: [{ id: 'actor-1', name: 'Developer', type: 'agent' }] }),
 }))
 vi.mock('@/hooks/use-object-type-label', () => ({
 	useObjectTypeLabel: () => (type: string) => type,
 }))
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({
-		workspace: { settings: { statuses: { task: ['backlog', 'in_review', 'done'] } } },
+		workspace: {
+			settings: {
+				statuses: { task: ['backlog', 'in_review', 'done'] },
+				field_definitions: { task: [{ name: 'priority', type: 'enum' }] },
+			},
+		},
 	}),
 }))
 vi.mock('@/components/objects/property-selects', () => ({
@@ -67,13 +71,19 @@ vi.mock('@tanstack/react-router', () => ({
 	),
 }))
 
-import { LinkedCardOrLink, LinkedObjectCard } from '@/components/chat/linked-object-preview'
+import {
+	LinkedCardOrLink,
+	LinkedObjectCard,
+	outsideChatLinkedCards,
+} from '@/components/chat/linked-object-preview'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 
 const ID = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 const WS = 'ws-1'
 const CHAT = 'chat-1'
 const AGENT = 'agent-1'
+// What the card sends along so the server tells the agent; nothing is posted in the chat.
+const CARD = { conversation_id: CHAT, agent_id: AGENT }
 
 function objectRow(overrides: Record<string, unknown> = {}) {
 	return {
@@ -106,16 +116,18 @@ const DRAFT_PREVIEW = {
 	delivery: { state: 'draft', at: null },
 }
 
-// The card starts contracted; click its top to read the text.
+// An ordinary object starts contracted; click its top to read the text. A draft starts open,
+// so there is nothing to click.
 async function expand() {
-	await userEvent.click(screen.getByText('LinkedIn note to Catja'))
+	if (screen.queryByRole('button', { name: 'Expand preview' })) {
+		await userEvent.click(screen.getByText('LinkedIn note to Catja'))
+	}
 }
 
 describe('LinkedObjectCard', () => {
 	beforeEach(() => {
 		useObject.mockReset()
 		updateMutate.mockReset()
-		sendMutate.mockReset()
 		approveMutate.mockReset()
 	})
 
@@ -137,21 +149,13 @@ describe('LinkedObjectCard', () => {
 		}
 	}
 
-	it('ends a draft in Approve and send, not the next phase, and tells the agent to send the text', async () => {
+	it('ends a draft in Approve draft, not the next phase, and names the chat so the server tells the agent', async () => {
 		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
-		approveMutate.mockImplementation((_vars, options) => options.onSuccess())
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
-		await userEvent.click(screen.getByRole('button', { name: /Approve and send/ }))
-		expect(approveMutate).toHaveBeenCalledWith(
-			{ id: ID, contentHash: 'hash-1' },
-			expect.any(Object),
-		)
-		const message = sendMutate.mock.calls[0][0]
-		expect(message.metadata).toEqual({ mentions: [AGENT] })
-		expect(message.content).toContain(`passing object_id ${ID}`)
-		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+		await userEvent.click(screen.getByRole('button', { name: /Approve draft/ }))
+		expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 	})
 
 	it('shows what the draft answers and who it goes to, above the text', async () => {
@@ -187,7 +191,7 @@ describe('LinkedObjectCard', () => {
 		})
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
-		expect(screen.getByRole('button', { name: /Approve and send/ })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /Approve draft/ })).toBeDisabled()
 	})
 
 	it('shows a sent draft as sent, with nothing left to approve', async () => {
@@ -197,7 +201,7 @@ describe('LinkedObjectCard', () => {
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		expect(screen.getByText('Sent')).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /Approve and send/ })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Approve draft/ })).not.toBeInTheDocument()
 	})
 
 	it('shows the title and text of an object the message links to', async () => {
@@ -217,6 +221,33 @@ describe('LinkedObjectCard', () => {
 		})
 		renderCard()
 		expect(screen.getByText('LinkedIn message · P1')).toBeInTheDocument()
+	})
+
+	describe('a draft whose metadata names the recipient', () => {
+		const filed = () =>
+			objectRow({
+				metadata: { channel: 'linkedin_dm', priority: 'P1', recipient: 'Liz Benison' },
+				preview: previewOf({
+					recipients: [{ role: 'to', name: 'Liz Benison', address: null }],
+				}),
+			})
+
+		it('shows the recipient once when open: in the To row, not under the title', async () => {
+			useObject.mockReturnValue({ data: filed() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			expect(screen.getAllByText('Liz Benison')).toHaveLength(1)
+			expect(screen.queryByText(/Recipient: Liz Benison/)).not.toBeInTheDocument()
+			expect(screen.getByText('P1')).toBeInTheDocument()
+		})
+
+		it('still shows the recipient under the title when contracted', async () => {
+			useObject.mockReturnValue({ data: filed() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			// A draft starts open; the person folds it.
+			await userEvent.click(screen.getByRole('button', { name: 'Contract preview' }))
+			expect(screen.getByText('LinkedIn message · P1 · Recipient: Liz Benison')).toBeInTheDocument()
+		})
 	})
 
 	it('shows nothing for an object from another workspace', () => {
@@ -243,6 +274,7 @@ describe('LinkedObjectCard', () => {
 	it('lists the workspace statuses for the type and moves the object to the chosen one', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		const menu = screen.getByLabelText('Status')
 		expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
 			'backlog',
@@ -250,35 +282,16 @@ describe('LinkedObjectCard', () => {
 			'done',
 		])
 		await userEvent.selectOptions(menu, 'done')
-		expect(updateMutate).toHaveBeenCalledWith(
-			{ id: ID, data: { status: 'done' } },
-			expect.any(Object),
-		)
-	})
-
-	it('tells the agent, with the text as it stands, once the move has saved', async () => {
-		useObject.mockReturnValue({ data: objectRow() })
-		updateMutate.mockImplementation((_vars, options) => options.onSuccess())
-		renderCard({ conversationId: CHAT, agentId: AGENT })
-		await userEvent.selectOptions(screen.getByLabelText('Status'), 'done')
-		expect(sendMutate).toHaveBeenCalledTimes(1)
-		const message = sendMutate.mock.calls[0][0]
-		expect(message.metadata).toEqual({ mentions: [AGENT] })
-		expect(message.content).toContain('to Done')
-		expect(message.content).toContain('> Hej Catja, tillykke med fusionen.')
+		// The chat rides along with the move: the server tells the agent, no message is posted.
+		expect(updateMutate).toHaveBeenCalledWith({ id: ID, data: { status: 'done', chat: CARD } })
 	})
 
 	it('offers the next phase in the workspace order as a button that moves and tells the agent', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
-		updateMutate.mockImplementation((_vars, options) => options.onSuccess())
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
-		expect(updateMutate).toHaveBeenCalledWith(
-			{ id: ID, data: { status: 'done' } },
-			expect.any(Object),
-		)
-		expect(sendMutate).toHaveBeenCalledTimes(1)
+		expect(updateMutate).toHaveBeenCalledWith({ id: ID, data: { status: 'done', chat: CARD } })
 	})
 
 	it('has no next-phase button on the last status', async () => {
@@ -312,14 +325,42 @@ describe('LinkedObjectCard', () => {
 	it('does not toggle when the status menu or Open is used', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		await userEvent.selectOptions(screen.getByLabelText('Status'), 'done')
 		await userEvent.click(screen.getByRole('link', { name: /Open/ }))
+		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
+	})
+
+	it('shows the status as a plain chip, with no menu, while contracted', async () => {
+		useObject.mockReturnValue({ data: objectRow() })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		expect(screen.queryByLabelText('Status')).not.toBeInTheDocument()
+		expect(screen.getByText('in review')).toBeInTheDocument()
+		await expand()
+		expect(screen.getByLabelText('Status')).toBeInTheDocument()
+	})
+
+	it('opens a draft by default, with its text, a live status menu and Approve draft', () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
+		expect(screen.getByLabelText('Status')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
+	})
+
+	it('lets the person fold a draft, and then it shows a plain status chip', async () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await userEvent.click(screen.getByRole('button', { name: 'Contract preview' }))
 		expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
+		expect(screen.queryByLabelText('Status')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Approve draft/ })).not.toBeInTheDocument()
 	})
 
 	it('does nothing when the chosen status is the current one', async () => {
 		useObject.mockReturnValue({ data: objectRow() })
 		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
 		await userEvent.selectOptions(screen.getByLabelText('Status'), 'in_review')
 		expect(updateMutate).not.toHaveBeenCalled()
 	})
@@ -350,7 +391,11 @@ describe('LinkedObjectCard', () => {
 				preview: preview(previewOverrides),
 				...row,
 			})
-		const expandDraft = () => userEvent.click(screen.getByText('Follow up with Torben'))
+		const expandDraft = async () => {
+			if (screen.queryByRole('button', { name: 'Expand preview' })) {
+				await userEvent.click(screen.getByText('Follow up with Torben'))
+			}
+		}
 
 		it('says what kind of message it is, not that it is a task', () => {
 			useObject.mockReturnValue({ data: draft() })
@@ -367,57 +412,48 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByText('Dokumenter efter demoen')).toBeInTheDocument()
 		})
 
-		it('approves the exact text on screen and tells the agent what was approved', async () => {
+		it('approves the exact text on screen and names the chat whose agent sends it', async () => {
 			useObject.mockReturnValue({ data: draft() })
-			approveMutate.mockImplementation((_vars, options) => options.onSuccess())
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
-			await userEvent.click(screen.getByRole('button', { name: 'Approve and send' }))
-			expect(approveMutate).toHaveBeenCalledWith(
-				{ id: ID, contentHash: 'hash-1' },
-				expect.any(Object),
-			)
-			expect(sendMutate).toHaveBeenCalledTimes(1)
-			const message = sendMutate.mock.calls[0][0]
-			expect(message.metadata).toEqual({ mentions: [AGENT] })
-			expect(message.content).toContain('Approved "Follow up with Torben"')
-			expect(message.content).toContain('> Hej Torben, her er dokumenterne.')
+			await userEvent.click(screen.getByRole('button', { name: 'Approve draft' }))
+			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
 		})
 
 		it('cannot be approved from a card that has no agent to tell', async () => {
 			useObject.mockReturnValue({ data: draft() })
 			renderCard()
 			await expandDraft()
-			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeDisabled()
+			expect(screen.getByRole('button', { name: 'Approve draft' })).toBeDisabled()
 			expect(approveMutate).not.toHaveBeenCalled()
 		})
 
-		it('does not offer a next phase instead of Approve and send', async () => {
+		it('does not offer a next phase instead of Approve draft', async () => {
 			useObject.mockReturnValue({ data: draft() })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
 			expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
-			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Approve draft' })).toBeInTheDocument()
 		})
 
 		it('cannot be approved while something it needs is missing', async () => {
 			useObject.mockReturnValue({ data: draft({ missing: ['To'], recipients: [] }) })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
 			await expandDraft()
-			expect(screen.getByRole('button', { name: 'Approve and send' })).toBeDisabled()
+			expect(screen.getByRole('button', { name: 'Approve draft' })).toBeDisabled()
 			expect(screen.getByText('Missing: To')).toBeInTheDocument()
 		})
 
 		it('shows that it is approved, and that it has been sent, instead of the button', async () => {
 			for (const [state, label] of [
-				['approved', 'Approved'],
+				['approved', 'Approved, waiting for send'],
 				['sent', 'Sent'],
 			] as const) {
 				useObject.mockReturnValue({ data: draft({ delivery: { state, at: null } }) })
 				const { unmount } = renderCard()
 				await expandDraft()
 				expect(screen.getByText(label)).toBeInTheDocument()
-				expect(screen.queryByRole('button', { name: 'Approve and send' })).not.toBeInTheDocument()
+				expect(screen.queryByRole('button', { name: 'Approve draft' })).not.toBeInTheDocument()
 				unmount()
 			}
 		})
@@ -445,6 +481,134 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByText('Most agent demos fail on the handoff.')).toBeInTheDocument()
 			expect(screen.getByText('sebk_personal')).toBeInTheDocument()
 			expect(screen.queryByText(/--- POST ---/)).not.toBeInTheDocument()
+		})
+	})
+
+	describe('a draft longer than the clamp', () => {
+		const CLAMP = 304
+		let heights: { scroll: number }
+		// The clock the card reads, moved by hand so a test can wait out the guard without waiting.
+		let now: number
+		const advance = (ms: number) => {
+			now += ms
+		}
+		const longDraft = (hash = 'hash-1') =>
+			objectRow({
+				title: 'Follow up with Torben',
+				content: 'Hej Torben, her er dokumenterne.',
+				preview: {
+					...DRAFT_PREVIEW,
+					body: 'Hej Torben, her er dokumenterne.',
+					content_hash: hash,
+				},
+			})
+		// A draft starts open; only click when it has been folded.
+		const expandDraft = async () => {
+			if (screen.queryByRole('button', { name: 'Expand preview' })) {
+				await userEvent.click(screen.getByText('Follow up with Torben'))
+			}
+		}
+		const approveButton = () => screen.getByRole('button', { name: 'Approve draft' })
+		const readButton = () => screen.getByRole('button', { name: 'Read full draft to approve' })
+
+		// jsdom has no layout: say how tall the text is against the clamp.
+		beforeEach(() => {
+			heights = { scroll: CLAMP + 200 }
+			vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(
+				() => heights.scroll,
+			)
+			vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(CLAMP)
+			now = 1_000_000
+			vi.spyOn(Date, 'now').mockImplementation(() => now)
+		})
+		afterEach(() => vi.restoreAllMocks())
+
+		it('makes no approve call on the first tap, which opens the full text, and approves on the second', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			expect(readButton()).toBeEnabled()
+			expect(screen.queryByRole('button', { name: 'Approve draft' })).not.toBeInTheDocument()
+			expect(screen.queryByText('Read the full draft first')).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Show all' })).toBeInTheDocument()
+
+			await userEvent.click(readButton())
+			expect(approveMutate).not.toHaveBeenCalled()
+			expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Read full draft to approve' })).toBeNull()
+
+			expect(approveButton()).toBeEnabled()
+			advance(600)
+			await userEvent.click(approveButton())
+			expect(approveMutate).toHaveBeenCalledTimes(1)
+			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+		})
+
+		it('ignores a second tap right after the full text opens, and approves once the moment has passed', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(readButton())
+			advance(100)
+			await userEvent.click(approveButton())
+			expect(approveMutate).not.toHaveBeenCalled()
+			advance(500)
+			await userEvent.click(approveButton())
+			expect(approveMutate).toHaveBeenCalledTimes(1)
+		})
+
+		it('reads Approve draft after Show all is used, and approves on that tap', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
+			expect(approveMutate).not.toHaveBeenCalled()
+			await userEvent.click(approveButton())
+			expect(approveMutate).toHaveBeenCalledWith({ id: ID, contentHash: 'hash-1', chat: CARD })
+		})
+
+		it('asks to read the full draft again after Show less', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
+			await userEvent.click(screen.getByRole('button', { name: 'Show less' }))
+			expect(readButton()).toBeEnabled()
+			await userEvent.click(readButton())
+			expect(approveMutate).not.toHaveBeenCalled()
+		})
+
+		it('asks to read the full draft again when the text changes after it was opened in full', async () => {
+			useObject.mockReturnValue({ data: longDraft('hash-1') })
+			const { rerender } = renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
+			expect(approveButton()).toBeEnabled()
+			useObject.mockReturnValue({ data: longDraft('hash-2') })
+			rerender(
+				<LinkedObjectCard workspaceId={WS} objectId={ID} conversationId={CHAT} agentId={AGENT} />,
+			)
+			expect(readButton()).toBeEnabled()
+			expect(approveMutate).not.toHaveBeenCalled()
+		})
+
+		it('has no gate and no Show all when the draft fits', async () => {
+			heights.scroll = CLAMP
+			useObject.mockReturnValue({ data: longDraft() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			expect(approveButton()).toBeEnabled()
+			expect(screen.queryByRole('button', { name: 'Show all' })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Read full draft to approve' })).toBeNull()
+			await userEvent.click(approveButton())
+			expect(approveMutate).toHaveBeenCalledTimes(1)
+		})
+
+		it('keeps no scroll box around the text', async () => {
+			useObject.mockReturnValue({ data: longDraft() })
+			const { container } = renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expandDraft()
+			expect(container.querySelector('.overflow-y-auto')).toBeNull()
 		})
 	})
 
@@ -484,32 +648,98 @@ describe('LinkedCardOrLink', () => {
 		useFiles.mockReturnValue({ data: undefined })
 	})
 
-	it('keeps the link while the object loads, is missing, or failed to load', () => {
-		for (const result of [{ data: undefined }, { data: undefined, isError: true }]) {
+	it('shows a skeleton while the object loads, and says the object was deleted when it is missing or elsewhere', () => {
+		useObject.mockReturnValue({ data: undefined, isLoading: true })
+		const loading = renderObject()
+		expect(loading.container.querySelector('[aria-busy="true"]')).not.toBeNull()
+		loading.unmount()
+		for (const result of [
+			{ data: undefined, isLoading: false },
+			{ data: objectRow({ workspaceId: 'other' }), isLoading: false },
+		]) {
 			useObject.mockReturnValue(result)
 			const { unmount } = renderObject()
-			expect(screen.getByText('the original link')).toBeInTheDocument()
+			expect(screen.getByText('This object was deleted')).toBeInTheDocument()
+			expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 			unmount()
 		}
 	})
 
-	it('keeps the link for an object in another workspace', () => {
-		useObject.mockReturnValue({ data: objectRow({ workspaceId: 'other', preview: DRAFT_PREVIEW }) })
+	it('draws any other object as a reference card: type, status, priority, title, text and owner', () => {
+		useObject.mockReturnValue({
+			data: objectRow({
+				title: 'Ship the card',
+				status: 'in_review',
+				content: '## Plan\n\nDo **the thing** with [a link](https://x.test).',
+				metadata: { priority: 'P2' },
+				driver: 'actor-1',
+				updatedAt: new Date().toISOString(),
+				active_session_state: 'running',
+			}),
+			isLoading: false,
+		})
 		renderObject()
+		const card = screen.getByRole('link')
+		expect(card).toHaveTextContent('Ship the card')
+		expect(card).toHaveTextContent('Plan Do the thing with a link.')
+		expect(card).toHaveTextContent('P2')
+		expect(card).toHaveTextContent('Developer')
+		expect(card).toHaveTextContent('Working now')
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+	})
+
+	it('says Unassigned, and leaves out the text row and Working now, when there is nothing to show', () => {
+		useObject.mockReturnValue({
+			data: objectRow({ content: null, driver: null, active_session_state: null }),
+			isLoading: false,
+		})
+		renderObject()
+		const card = screen.getByRole('link')
+		expect(card).toHaveTextContent('Unassigned')
+		expect(card).not.toHaveTextContent('Working now')
+	})
+
+	it('keeps the link of a list item unless the object is a draft', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				inList
+			/>,
+		)
 		expect(screen.getByText('the original link')).toBeInTheDocument()
 	})
 
-	it('keeps the link for an object that is not a draft', () => {
-		useObject.mockReturnValue({ data: objectRow() })
-		renderObject()
-		expect(screen.getByText('the original link')).toBeInTheDocument()
-	})
-
-	it('replaces the link by the card for a draft', () => {
+	it('replaces the link by the approval card for a draft, in a paragraph or a list', () => {
 		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
 		renderObject()
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+	})
+
+	it('keeps the plain link for a draft outside chat, with no approval card', () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: DRAFT_PREVIEW }) })
+		render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				draftsAndFiles={false}
+			/>,
+		)
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+		expect(screen.queryByText('LinkedIn note to Catja')).not.toBeInTheDocument()
+	})
+
+	it('outsideChatLinkedCards names the mode, leaves drafts and files plain and uses the shared renderers', () => {
+		const full = outsideChatLinkedCards(WS, 'full')
+		const chips = outsideChatLinkedCards(WS, 'chips')
+		expect(full).toMatchObject({ workspaceId: WS, mode: 'full', draftsAndFiles: false })
+		expect(chips.mode).toBe('chips')
+		expect(chips.renderCard).toBe(full.renderCard)
+		expect(chips.renderChip).toBe(full.renderChip)
 	})
 
 	it('keeps the link for a file that is loading or not previewable, and replaces it for a page', () => {

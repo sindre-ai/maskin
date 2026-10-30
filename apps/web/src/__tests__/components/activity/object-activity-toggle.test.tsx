@@ -102,7 +102,7 @@ describe('ObjectActivity — Timeline ↔ Table format switch', () => {
 				id: 1,
 				action: 'status_changed',
 				createdAt: '2026-06-22T00:00:00Z',
-				data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+				data: { previous: { status: 'opportunity' }, updated: { status: 'active' } },
 			}),
 		]
 		const linked = buildObjectResponse({ id: 'obj-link', title: 'Linked Insight' })
@@ -156,7 +156,7 @@ describe('ObjectActivity — Timeline ↔ Table format switch', () => {
 
 		// Build a bet with three status phases so we have room for a phase to
 		// drop out on the Table view without emptying the timeline. The
-		// leading "signal" phase carries only a relationship (its edge was
+		// leading "opportunity" phase carries only a relationship (its edge was
 		// created before any status change), so it disappears when
 		// relationships stop being projected into the timeline (Table view).
 		// The remaining two phases (active, done) carry events and stay in
@@ -178,7 +178,7 @@ describe('ObjectActivity — Timeline ↔ Table format switch', () => {
 				id: 1,
 				action: 'status_changed',
 				createdAt: '2026-06-22T00:00:00Z',
-				data: { previous: { status: 'signal' }, updated: { status: 'active' } },
+				data: { previous: { status: 'opportunity' }, updated: { status: 'active' } },
 			}),
 		]
 		const doneBet = buildObjectResponse({

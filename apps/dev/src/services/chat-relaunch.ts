@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { TERMINAL_STATUSES } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
@@ -40,8 +40,8 @@ const inFlight = new Map<string, Promise<RelaunchOutcome>>()
  * Stops the session that holds a vaulted key in its env and waits until it has ended.
  * The respawn is not here: the client posts the redaction-marker message next, and the
  * conversation responder finds no active session and spawns a fresh one seeded with the
- * last 15 messages. pauseSession and resumeSession are never used: on a remote session
- * pauseSession marks the live one failed.
+ * last 15 messages. pauseSession and resumeSession are never used: a pause snapshots a
+ * local container, so pauseSession refuses a remote session.
  *
  * A second vault for the same (conversation, agent) while one is in flight joins it
  * instead of stopping again.
@@ -55,7 +55,7 @@ export async function relaunchChatSession(
 	const key = lockKey(origin)
 	const running = inFlight.get(key)
 	if (running) return running
-	return track(key, () => stopHoldingSession(deps, origin))
+	return track(key, () => stopHoldingSession(deps, origin, true))
 }
 
 /**
@@ -72,7 +72,7 @@ export async function endSessionHoldingKey(
 	const key = lockKey(origin)
 	const running = inFlight.get(key)
 	if (running) await running.catch(() => undefined)
-	return (await track(key, () => stopHoldingSession(deps, origin))) === 'stopped'
+	return (await track(key, () => stopHoldingSession(deps, origin, false))) === 'stopped'
 }
 
 interface Origin {
@@ -110,11 +110,21 @@ function track(key: string, run: () => Promise<RelaunchOutcome>): Promise<Relaun
 	return promise
 }
 
-async function stopHoldingSession(deps: RelaunchDeps, origin: Origin): Promise<RelaunchOutcome> {
+async function stopHoldingSession(
+	deps: RelaunchDeps,
+	origin: Origin,
+	followUpWillStart: boolean,
+): Promise<RelaunchOutcome> {
 	const holder = await findHolder(deps, origin)
 	// Nothing running, or still queued: a queued session reads the key when it is
 	// dispatched, and the vault already committed.
 	if (!holder || holder.status === 'pending' || holder.status === 'queued') return 'stopped'
+
+	// A helper has no chat to respawn it: the card's answer carries on in a follow-up (the
+	// continue route). Mark the stop so the sender is not told a person stopped the helper.
+	// Only when a follow-up will start: an undo or removal starts none, so the sender is told.
+	const marked = followUpWillStart && !origin.conversationId
+	if (marked) await setRelaunching(deps, holder.id, true)
 
 	try {
 		await deps.sessionManager.stopSession(holder.id)
@@ -125,9 +135,24 @@ async function stopHoldingSession(deps: RelaunchDeps, origin: Origin): Promise<R
 			sessionId: holder.id,
 			error: err instanceof Error ? err.message : 'unknown',
 		})
+		// No follow-up follows a failed stop, and the helper's own ending must still reach its sender.
+		if (marked) await setRelaunching(deps, holder.id, false)
 		return 'failed'
 	}
-	return (await waitForTerminal(deps, holder.id)) ? 'stopped' : 'failed'
+	if (await waitForTerminal(deps, holder.id)) return 'stopped'
+	if (marked) await setRelaunching(deps, holder.id, false)
+	return 'failed'
+}
+
+async function setRelaunching(deps: RelaunchDeps, sessionId: string, on: boolean) {
+	await deps.db
+		.update(sessions)
+		.set({
+			config: on
+				? sql`jsonb_set(coalesce(${sessions.config}, '{}'::jsonb), '{relaunching}', 'true')`
+				: sql`coalesce(${sessions.config}, '{}'::jsonb) - 'relaunching'`,
+		})
+		.where(eq(sessions.id, sessionId))
 }
 
 async function findHolder(

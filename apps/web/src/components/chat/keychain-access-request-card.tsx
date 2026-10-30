@@ -1,8 +1,9 @@
-import { keychainEnvNames } from '@/components/chat/keychain-request-card'
+import { keychainUseHint } from '@/components/chat/keychain-request-card'
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
-import { useSendMessage } from '@/hooks/use-conversation'
+import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
+import { useContinueSession, useSendSessionInput } from '@/hooks/use-sessions'
 import { ApiError, type MessageKeychainAccessRequest, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { queryKeys } from '@/lib/query-keys'
@@ -15,6 +16,8 @@ import { useState } from 'react'
 interface KeychainAccessRequestCardProps {
 	workspaceId: string
 	conversationId: string
+	/** The message this card is drawn in. */
+	messageId: number
 	/** The agent that asked: the one an Allow gives the credential to. */
 	askingAgentId: string
 	request: MessageKeychainAccessRequest
@@ -24,7 +27,8 @@ interface KeychainAccessRequestCardProps {
  * The card an agent puts in chat via `request_keychain_access` to use a credential that
  * is already in the Keychain. It names the credential and holds no secret. Allow grants
  * the agent access on the server, stops its idle session and posts a short message, which
- * starts a fresh session with the credential in its environment. Not now only tells the
+ * starts a fresh session with the credential (an API key in its environment; a login to
+ * type with desktop_type, never to read). Not now only tells the
  * agent, so it does not wait.
  *
  * Whether it was allowed is read from the integration list, so a card scrolled back to
@@ -33,6 +37,7 @@ interface KeychainAccessRequestCardProps {
 export function KeychainAccessRequestCard({
 	workspaceId,
 	conversationId,
+	messageId,
 	askingAgentId,
 	request,
 }: KeychainAccessRequestCardProps) {
@@ -40,10 +45,17 @@ export function KeychainAccessRequestCard({
 	const { workspace } = useWorkspace()
 	const { data: integrations } = useIntegrations(workspaceId)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
+	// A helper another agent started is not in this chat: it is answered through its own
+	// session, and has no chat of its own to scope an Allow to.
+	const helper = request.reply_to_session === true
+	const continueSession = useContinueSession(workspaceId, conversationId)
+	const sendInput = useSendSessionInput(workspaceId)
 
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
-	const [declined, setDeclined] = useState(false)
+	const [declinedNow, setDeclinedNow] = useState(false)
+	const storedAnswer = useCardAnswer(conversationId, workspaceId, messageId)
+	const declined = declinedNow || storedAnswer === 'declined'
 	const [agentStillRunning, setAgentStillRunning] = useState(false)
 	const [allowedNow, setAllowedNow] = useState<'chat' | 'always' | null>(null)
 
@@ -86,11 +98,18 @@ export function KeychainAccessRequestCard({
 				setAgentStillRunning(true)
 				return
 			}
-			const vars = keychainEnvNames(request.kind, request.credential_name)
-			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
+			const where = keychainUseHint(request.kind, request.credential_name)
+			if (helper) {
+				continueSession.mutate({
+					id: request.session_id,
+					content: `I've allowed you to use ${request.credential_name} from the Keychain${where}. Carry on with the work.`,
+				})
+				return
+			}
 			sendMessage.mutate({
 				// Plain text: a person's own message is not rendered as markdown.
-				content: `I've allowed you to use ${request.credential_name} from the Keychain${scope === 'chat' ? ' in this chat only' : ''}${where}. Please carry on.`,
+				content: `I've allowed you to use ${request.credential_name} from the Keychain${scope === 'chat' ? ' in this chat only' : ''}${where}. Reply with one short line to say you have it, then carry on.`,
+				metadata: { hidden_from_chat: true },
 			})
 		} catch (err) {
 			setError(
@@ -102,9 +121,22 @@ export function KeychainAccessRequestCard({
 	}
 
 	const decline = () => {
-		setDeclined(true)
+		setDeclinedNow(true)
+		if (helper) {
+			sendInput.mutate({
+				id: request.session_id,
+				content: `Not now: please don't use ${request.credential_name}. Carry on without it, or tell me what you need instead.`,
+				card_answer: { message_id: messageId, outcome: 'declined' },
+				conversationId,
+			})
+			return
+		}
 		sendMessage.mutate({
 			content: `Not now: please don't use ${request.credential_name}. Carry on without it, or tell me what you need instead.`,
+			metadata: {
+				hidden_from_chat: true,
+				card_answer: { message_id: messageId, outcome: 'declined' },
+			},
 		})
 	}
 
@@ -152,7 +184,7 @@ export function KeychainAccessRequestCard({
 	return (
 		<fieldset
 			aria-label={`Allow ${request.credential_name}`}
-			className="mt-2 flex min-w-0 flex-col gap-3 rounded-xl border border-brand/40 bg-brand-subtle p-4"
+			className="mt-2 flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
 		>
 			<div className="flex items-start gap-2">
 				<Lock className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -171,28 +203,32 @@ export function KeychainAccessRequestCard({
 			) : null}
 			<FormError error={error ?? undefined} />
 			<ul className="list-disc space-y-0.5 pl-8 text-xs text-muted-foreground">
-				<li>
-					<strong className="font-medium text-foreground">Allow in this chat</strong>: only this
-					agent, only in this conversation.
-				</li>
+				{helper ? null : (
+					<li>
+						<strong className="font-medium text-foreground">Allow in this chat</strong>: only this
+						agent, only in this conversation.
+					</li>
+				)}
 				<li>
 					<strong className="font-medium text-foreground">Always allow</strong>: this agent, in any
 					chat or run, until you remove it in Settings → Keychain.
 				</li>
 			</ul>
 			<div className="flex flex-wrap items-center gap-2">
+				{helper ? null : (
+					<Button
+						type="button"
+						size="sm"
+						disabled={busy || !canAllow}
+						onClick={() => void allow('chat')}
+					>
+						Allow in this chat
+					</Button>
+				)}
 				<Button
 					type="button"
 					size="sm"
-					disabled={busy || !canAllow}
-					onClick={() => void allow('chat')}
-				>
-					Allow in this chat
-				</Button>
-				<Button
-					type="button"
-					size="sm"
-					variant="outline"
+					variant={helper ? 'default' : 'outline'}
 					disabled={busy || !canAllow}
 					onClick={() => void allow('always')}
 				>

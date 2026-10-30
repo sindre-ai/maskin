@@ -24,6 +24,7 @@ function gatewayUpstreamUrls(): Map<string, string> {
 	}
 	return out
 }
+import { issueApiKey, revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -64,6 +65,8 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import { resolveChatIdleCloseMs } from '../config/session-idle'
+import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
@@ -78,10 +81,17 @@ import {
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
+	reportClaudeSessionAuthDeath,
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifySessionExit } from '../lib/credit-classifier'
+import {
+	classifyClaudeAuthFailureText,
+	classifyCreditExhaustion,
+	classifySessionExit,
+	endsInClaudeAuthDeath,
+	isClaudeAuthDeathText,
+} from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
@@ -89,20 +99,22 @@ import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
+	type GitHubInstallSkip,
 	type PreflightVerdict,
 	collectGitHubMcpIdentities,
+	formatGitHubInstallSkip,
 	postGitHubPreflightSlackAlert,
 	runGitHubPreflight,
 	stripFailedIdentities,
 } from '../lib/github/preflight'
-import { buildAccessPreamble } from '../lib/integrations/access-preamble'
+import { HANDOFF_PROOF_BLOCK } from '../lib/handoff-rule'
+import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../lib/integrations/access-preamble'
 import {
 	type ActorIntegrationAccess,
 	attachesServer,
 	effectiveAccess,
 	listAgentAccess,
 } from '../lib/integrations/agent-access'
-import { decodeLogin } from '../lib/integrations/byo-login'
 import {
 	CUSTOM_MCP_PROVIDER,
 	customGatewayServerSpec,
@@ -117,10 +129,10 @@ import {
 	isAuthRevokedError,
 } from '../lib/integrations/errors'
 import {
-	byoApiKeyEnvName,
-	byoLoginEnvNames,
-	redactLaunchEnv,
-} from '../lib/integrations/keychain-env'
+	buildExtensionMcpServers,
+	createExtensionMcpKeyReader,
+} from '../lib/integrations/extensions-db'
+import { byoApiKeyEnvName, redactLaunchEnv } from '../lib/integrations/keychain-env'
 import {
 	findUnresolvedKeychainReferences,
 	stripSessionLevelMcps,
@@ -134,7 +146,10 @@ import {
 } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
-import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
+import {
+	GITHUB_MCP_SERVER_SPEC,
+	GITHUB_MCP_SUPERVISED_SPEC,
+} from '../lib/integrations/providers/github/config'
 import {
 	type SessionGithubInstall,
 	sessionGithubLogClassifier,
@@ -160,6 +175,7 @@ import {
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
 	resolveLlmRoute,
+	unreadableKeyError,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -177,8 +193,10 @@ import {
 	hasMaskinMcpEntry,
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
+import { pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
+import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
 import {
 	AgentServerAuthError,
 	AgentServerClient,
@@ -186,6 +204,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { applyExtensionGuards } from './extension-guard-launch'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -207,13 +226,13 @@ import {
 	settleSession,
 } from './session-lifecycle'
 import {
+	SESSION_RESUMED_LOG,
 	type SessionUsage,
-	extractSessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
-	sumRunningSessionUsage,
+	sumUncountedResultUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing'
 
@@ -225,10 +244,23 @@ import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
 
-/** Failure reasons for a session whose container is gone / was never assigned. */
-const CONTAINER_LOST_MESSAGE = 'Container disappeared before pause could complete'
+/**
+ * Technical reasons for a session whose container is gone / was never
+ * assigned. These go to the system log and `result.error` only; users see
+ * CONTAINER_LOST_FAILURE_REASON.human_message instead.
+ */
+const CONTAINER_LOST_MESSAGE = 'Container no longer running'
 const NO_CONTAINER_ASSIGNED_MESSAGE =
 	'No container was ever assigned to this session — it was marked running but never started'
+
+const CONTAINER_LOST_FAILURE_REASON: SessionResultFailureReason = {
+	provider: 'local-docker',
+	reason_code: 'container_lost',
+	human_message: 'This session stopped unexpectedly. Send another message to start a new one.',
+	http_status: null,
+	reset_at: null,
+	verbatim_output: null,
+}
 
 /**
  * Guards the MCP health check's partial-line buffer against a stdout stream
@@ -504,26 +536,6 @@ export type SessionTurnEvent =
 	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
 
 /**
- * §17.5 companion parser at the two completion paths: convert the classifier's
- * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
- * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
- * and markRemoteSessionComplete apply the same logic — no divergence class from
- * .claude/rules/known-pitfalls.md "The Remote Completion Path Skipped ...".
- *
- * Returns null when the reason isn't credit-exhaustion-shaped (won't retry via
- * scheduler, no reset_at to persist) or when reset_at parsing didn't produce a
- * value in the [now+60s, now+24h] clamp band (§17.3, §17.7).
- */
-function pickRetryAt(failureReason: SessionResultFailureReason | null): Date | null {
-	if (!failureReason) return null
-	if (failureReason.provider !== 'anthropic') return null
-	if (!failureReason.reset_at) return null
-	const parsed = Date.parse(failureReason.reset_at)
-	if (Number.isNaN(parsed)) return null
-	return new Date(parsed)
-}
-
-/**
  * The settle classification for a sandbox exit seen by handleCompletion or
  * markRemoteSessionComplete. Keeps the budget-stop and credit-exhaustion
  * reasons distinguishable from a plain non-zero exit.
@@ -590,10 +602,12 @@ export class SessionManager extends EventEmitter {
 	 * How long an interactive conversation session may sit with no log
 	 * activity (no user turn, no agent output) before the watchdog closes it
 	 * gracefully as `completed`. Well below the 2h hard timeout: an idle chat
-	 * container serves no one, and the conversation responder transparently
-	 * spawns a fresh session (seeded with history) on the next message.
+	 * container serves no one and holds an agent-server slot that queued
+	 * background sessions are waiting for, and the conversation responder
+	 * transparently spawns a fresh session (seeded with history) on the next
+	 * message. 15 min by default; CHAT_IDLE_CLOSE_MINUTES overrides it.
 	 */
-	private static readonly CHAT_IDLE_CLOSE_MS = 30 * 60 * 1000
+	private readonly chatIdleCloseMs = resolveChatIdleCloseMs()
 	/**
 	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
 	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
@@ -683,6 +697,34 @@ export class SessionManager extends EventEmitter {
 			// signature so a future stop-reason column can pick it up without
 			// re-plumbing the finalizer.
 			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
+			// The human's message went unanswered on the spent subscription. Re-run
+			// the responder for it so a fresh session answers on the new one —
+			// the same call as the chat's "retry" action, so nobody re-sends by hand.
+			onResumeAfterMove: async ({ conversationId, workspaceId, agentId }) => {
+				const [latest] = await db
+					.select({ id: messages.id })
+					.from(messages)
+					.where(
+						and(
+							eq(messages.conversationId, conversationId),
+							eq(messages.kind, 'message'),
+							ne(messages.actorId, agentId),
+						),
+					)
+					.orderBy(desc(messages.id))
+					.limit(1)
+				if (!latest) return
+				// Lazy import: conversation-responder imports this module's types.
+				const { evaluateAndRespond } = await import('./conversation-responder')
+				await evaluateAndRespond({
+					db,
+					sessionManager: this,
+					workspaceId,
+					conversationId,
+					messageId: latest.id,
+					options: { forceRespond: true, targetAgentId: agentId },
+				})
+			},
 			// An empty completion that survives the retries is tried once on
 			// another model. Both are optional: with no env var set the finalizer
 			// still retries and still tells the human.
@@ -1746,6 +1788,13 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in running state`)
 		}
 
+		// A remote session's sandbox lives on the agent-server, so the local Docker
+		// check below would always call it gone and mark a live session failed.
+		// Snapshot and resume are local-only: refuse, and leave the session running.
+		if (session.agentServerId) {
+			throw new Error(`Session ${sessionId} runs on an agent server and cannot be paused`)
+		}
+
 		// Self-heal: if the container disappeared (stopped or removed externally),
 		// the session can never be snapshotted. Mark it failed and exit so the
 		// auto-pause loop stops retrying every minute.
@@ -1884,6 +1933,7 @@ export class SessionManager extends EventEmitter {
 				source: 'reaper',
 				reason,
 				exitCode: 0,
+				failureReason: CONTAINER_LOST_FAILURE_REASON,
 			},
 			this.buildSettleDeps({ skipStop: true, skipPush: true }),
 		)
@@ -2013,7 +2063,7 @@ export class SessionManager extends EventEmitter {
 				data: {},
 			})
 
-			await this.insertSystemLog(sessionId, 'Session resumed from snapshot')
+			await this.insertSystemLog(sessionId, SESSION_RESUMED_LOG)
 
 			this.streamContainerLogs(sessionId, containerId)
 			this.watchContainerExit(sessionId, containerId)
@@ -2288,21 +2338,35 @@ export class SessionManager extends EventEmitter {
 		// agent into calling the MCP tool — it has to tell the agent that its
 		// closing words ARE the reply, and that a heads-up is optional.
 		const conversationPreamble = sessionConfig.conversation
-			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody.\n\n'
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody. Whenever you would end your reply by asking the person to choose or confirm something that fits in 2 to 4 options (a confirmation, a choice between alternatives, a timing, a go-ahead), do not write the question in your reply: call the ask_user_question tool so they can tap an answer, with your recommended option first and the reason for it in the description of that option, then end your turn without repeating the question. This holds even if your own instructions say to list open questions or recommend an option in prose. Do not ask at all when you can reasonably decide yourself.\n\n'
 			: ''
 		// A helper another agent started from a chat. It is interactive only so it
 		// can ask the person something, and it ends the moment it gives a result.
 		const helperPreamble =
 			sessionConfig.stop_on_result === true
-				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer.\n\n'
+				? 'Another agent started you to do one piece of work, and the person it is working with can see your progress. Your final message is sent back to that agent and ends this session, so only give it when the work is done. If you cannot continue without a decision or detail only the person can give, ask with the ask_user_question tool (the Maskin MCP tool; the built-in AskUserQuestion is not available here) and end your turn: the session stays open for their answer. Do the same when you would otherwise finish with a question for the person, such as which direction to take or which of a few options they want: do not put that question in your final message, because the final message ends this session and nobody can answer it. Ask with ask_user_question (recommended option first, the reason in its description) and end your turn, or finish without the question if you can reasonably decide yourself.\n\n'
 				: ''
 		// What the agent may do with each connected integration, told up front so it does
 		// not learn it by having calls refused. Best effort: a failed lookup leaves it out.
 		const accessRows = await this.loadAgentAccess(session)
-		const accessPreamble = buildAccessPreamble(accessRows)
+		// A person can answer a card in a chat, and for a helper started from one.
+		const personReachable =
+			Boolean(sessionConfig.conversation) ||
+			(sessionConfig.stop_on_result === true &&
+				(typeof sessionConfig.ask_conversation_id === 'string' ||
+					typeof sessionConfig.origin_conversation_id === 'string'))
+		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
+		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
+		const handoffBlock = sessionConfig.conversation ? HANDOFF_PROOF_BLOCK : ''
+		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
+		// in its reply, and the later instruction is the one that is followed.
+		const askWithButtonsRule =
+			sessionConfig.conversation || sessionConfig.stop_on_result === true
+				? '\n\n## Asking the person\nWhen you want the person to choose, confirm or decide something that fits in 2 to 4 options, never write that question in your reply. Call the ask_user_question tool instead, with your recommended option first and the reason in its description, and end your turn without repeating the question. This overrides any instruction above to ask a follow-up question in your reply. A question that needs a free-text answer can still be written.'
+				: ''
 		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${helperPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}
 
-${accessPreamble}${HUMAN_MESSAGE_STYLE}`
+${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWithButtonsRule}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -2310,14 +2374,22 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// letting each session invent its own address (see ../lib/git-identity).
 		const gitIdentity = buildAgentGitIdentity(agent.name)
 
+		const maskinApiUrl = process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000'
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: resolvedSystemPrompt,
-			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
+			MASKIN_API_URL: maskinApiUrl,
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 			GIT_IDENTITY_NAME: gitIdentity.name,
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
+		}
+		// Rollback for agent-run.sh's stdio tool-server environment scrub
+		// (docker/agent-base/mcp-scrub-env.jq): set MASKIN_MCP_ENV_SCRUB=off on this
+		// service and the next session launches its tool servers with the full
+		// environment again. No image rebuild.
+		if (process.env.MASKIN_MCP_ENV_SCRUB === 'off') {
+			envVars.MASKIN_MCP_ENV_SCRUB = 'off'
 		}
 
 		// Resolve the workspace-skill manifest here so both the emitted
@@ -2406,7 +2478,28 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			envVars.INTERACTIVE = '1'
 			// No ACTION_PROMPT to prepend to, so a chat gets the startup block
 			// through the system prompt instead.
-			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}`
+			// A follow-up to a helper that ended: say what the agent did before, so the person's
+			// message (the prompt) can be read as what it is, a reply to that work.
+			const cont = session.config as {
+				continues_session_id?: unknown
+				continues_prompt?: unknown
+				continues_chain?: unknown
+			} | null
+			const continuation =
+				typeof cont?.continues_session_id === 'string'
+					? `
+
+## Earlier work
+You finished some work earlier in this chat and the person is now writing to you about it. ${
+							typeof cont.continues_prompt === 'string' && cont.continues_prompt
+								? `What you were asked then:
+${cont.continues_prompt}
+
+`
+								: ''
+						}The full log of each earlier session of this conversation is available with get_session_logs, oldest first: ${(Array.isArray(cont.continues_chain) ? cont.continues_chain : [cont.continues_session_id]).join(', ')}.`
+					: ''
+			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}${continuation}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
 			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
@@ -2496,7 +2589,10 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				},
 			})
 			if (credentialGap) {
-				throw new LlmCredentialsUnavailableError(credentialGap.detail)
+				throw new LlmCredentialsUnavailableError(credentialGap.detail, false, {
+					workspaceName: ws.name,
+					noCredentialsConfigured: true,
+				})
 			}
 		}
 
@@ -2509,7 +2605,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			}
 			// Workspace OpenAI key — independent of the anthropic-side routing above.
 			if (!llmConfig.api_key && wsLlmKeys.openai) {
-				envVars.OPENAI_API_KEY = wsLlmKeys.openai
+				try {
+					envVars.OPENAI_API_KEY = openSecret(wsLlmKeys.openai, 'llm_keys.openai')
+				} catch (err) {
+					if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
+					throw err
+				}
 			}
 		}
 
@@ -2550,16 +2651,19 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			}
 		}
 
-		// Inject agent's API key for Maskin MCP access. Refuse to launch without
-		// one — an empty Bearer token causes MCP writes to either fail outright
-		// or, when a fallback key is present in the env, get attributed to the
-		// wrong actor (the original "agent comments posted as a human" bug).
-		if (!agent.apiKey) {
-			throw new Error(
-				`Cannot launch session for agent ${agent.id} (${agent.name ?? 'unnamed'}): apiKey is null. Backfill the actor row before retrying.`,
-			)
-		}
-		envVars.MASKIN_API_KEY = agent.apiKey
+		// Mint a key for this launch. Keys are stored hashed, so the agent's own key can't be
+		// read back; each launch, resume and relaunch gets a fresh one tied to the session, the
+		// previous one for the session is revoked, and settleSession revokes the last. An empty
+		// Bearer token would make MCP writes fail outright or, when a fallback key is present in
+		// the env, get attributed to the wrong actor (the original "agent comments posted as a
+		// human" bug), so a mint that throws aborts the launch.
+		const sessionKey = await issueApiKey(this.db, {
+			actorId: agent.id,
+			kind: 'session',
+			sessionId: session.id,
+		})
+		await revokeSessionKeys(this.db, session.id, sessionKey.keyHash)
+		envVars.MASKIN_API_KEY = sessionKey.key
 
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
 		// The AGENT_MCP_JSON env var is written further down, after the GitHub
@@ -2617,6 +2721,21 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
 		const integrationTokens: Record<string, string> = {}
+		// Custom extension MCPs (extension-<slug>). Only extensions this agent holds a
+		// grant on are attached. Each key is read through Keychain for this agent and
+		// session; one that cannot be read leaves its server off.
+		const extensionMcp = await buildExtensionMcpServers(
+			this.db,
+			session.workspaceId,
+			agent.id,
+			createExtensionMcpKeyReader(this.db, {
+				workspaceId: session.workspaceId,
+				actorId: agent.id,
+				sessionId: session.id,
+			}),
+		)
+		Object.assign(autoInjectedMcpServers, extensionMcp.servers)
+		Object.assign(envVars, extensionMcp.env)
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -2624,6 +2743,23 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			installationId: string
 			tokenMetadata: TokenMetadata
 		}> = []
+		// Why each GitHub install was left out of this session. A `missing-token` preflight
+		// verdict only says no token arrived; these say which install and which skip point.
+		const githubInstallSkips: GitHubInstallSkip[] = []
+		const noteGithubSkip = (
+			integration: typeof integrations.$inferSelect,
+			reason: GitHubInstallSkip['reason'],
+			detail?: string,
+		) => {
+			if (integration.provider !== 'github') return
+			githubInstallSkips.push({
+				integrationId: integration.id,
+				reason,
+				installationId: integration.externalId ?? undefined,
+				ownerLogin: (integration.config as IntegrationConfig | null)?.owner_login,
+				detail,
+			})
+		}
 		for (const integration of activeIntegrations) {
 			let resolved: ReturnType<typeof getProvider>
 			try {
@@ -2641,6 +2777,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			// Per-integration switch: the credential stays usable server-side, but
 			// agent sessions get neither the token env var nor the MCP server.
 			if ((integration.config as IntegrationConfig | null)?.expose_to_agent_sessions === false) {
+				noteGithubSkip(integration, 'not-exposed')
 				logger.info('Integration not exposed to agent sessions; skipping injection', {
 					sessionId: session.id,
 					workspaceId: session.workspaceId,
@@ -2710,6 +2847,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
 			} catch (err) {
 				if (isAuthRevokedError(err)) {
+					noteGithubSkip(integration, 'revoked')
 					logger.warn(
 						`Integration ${integration.provider} is revoked — skipping token injection; user must reconnect`,
 						{
@@ -2724,6 +2862,11 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				// var below), a missing/broken token blocks the whole integration
 				// — log and skip.
 				if (serverNeedsToken || integration.provider === 'github') {
+					noteGithubSkip(
+						integration,
+						'token-load-failed',
+						err instanceof Error ? err.message : String(err),
+					)
 					logger.warn(`Failed to load credentials for ${integration.provider}`, {
 						integrationId: integration.id,
 						error: String(err),
@@ -2744,16 +2887,22 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 
 			if (integration.provider === 'github') {
 				// No access means no installation token and no MCP entry for this org.
-				if (access === 'none') continue
+				if (access === 'none') {
+					noteGithubSkip(integration, 'no-access')
+					continue
+				}
 				// Unreachable when accessToken is null: the catch above continues on
 				// getValidToken failure for github. Guard for the type checker.
 				if (accessToken === null) continue
 
-				const ownerLogin = await this.resolveGithubOwnerLogin(integration)
+				const ownerLogin = await this.resolveGithubOwnerLogin(integration, (reason, detail) =>
+					noteGithubSkip(integration, reason, detail),
+				)
 				if (!ownerLogin) continue
 
 				const installationId = integration.externalId
 				if (!installationId) {
+					noteGithubSkip(integration, 'no-install-id')
 					logger.warn(
 						'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
 						{
@@ -2857,9 +3006,11 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				const gated = isGatedRow(integration.config)
 				const missing = gated ? [] : referencedVars(server).filter((v) => !(v in keychainEnv))
 				if (missing.length > 0) {
+					// A login is never put in the container, so asking for access cannot fix it.
+					const usesLogin = missing.some((v) => index.get(v)?.kind === 'login')
 					const names = [...new Set(missing.map((v) => index.get(v)?.displayName ?? v))]
 					unattached.push(
-						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}`,
+						`- ${integration.displayName ?? 'A tool server'}: needs ${names.map((n) => `"${n}"`).join(', ')}${usesLogin ? ' (a saved login can only be typed on your computer, not given to a tool server that runs here)' : ''}`,
 					)
 					continue
 				}
@@ -2876,13 +3027,34 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
 		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
-		for (const { ownerLogin, token } of resolvedGithubInstalls) {
-			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
-				type: 'stdio',
-				command: GITHUB_MCP_SERVER_SPEC.command,
-				args: GITHUB_MCP_SERVER_SPEC.args,
-				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
-			}
+		// MASKIN_GITHUB_MCP_REFRESH is the host kill switch for the token-refresh
+		// supervisor. Unset (the default), "0" or "false" keeps today's entries. When on,
+		// each entry mints against its OWN install, and the Maskin vars stay envsubst
+		// placeholders so the key is never baked into the session row. The launch token
+		// stays in env because the startup preflight reads it from there.
+		const githubMcpRefresh = !['', '0', 'false'].includes(
+			(process.env.MASKIN_GITHUB_MCP_REFRESH ?? '').trim().toLowerCase(),
+		)
+		for (const { ownerLogin, token, integrationId } of resolvedGithubInstalls) {
+			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = githubMcpRefresh
+				? {
+						type: 'stdio',
+						command: GITHUB_MCP_SUPERVISED_SPEC.command,
+						args: GITHUB_MCP_SUPERVISED_SPEC.args,
+						env: {
+							GITHUB_PERSONAL_ACCESS_TOKEN: token,
+							GITHUB_MCP_INTEGRATION_ID: integrationId,
+							MASKIN_API_URL: '${MASKIN_API_URL}',
+							MASKIN_API_KEY: '${MASKIN_API_KEY}',
+							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+						},
+					}
+				: {
+						type: 'stdio',
+						command: GITHUB_MCP_SERVER_SPEC.command,
+						args: GITHUB_MCP_SERVER_SPEC.args,
+						env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
+					}
 		}
 		// Register the session's github installs with the log classifier so
 		// tool_result envelopes coming back from the container carry a cause_tag
@@ -2952,6 +3124,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			'MCP_SERVERS_JSON',
 			'AGENT_MCP_JSON',
 			'MASKIN_API_KEY',
+			'MASKIN_MCP_ENV_SCRUB',
 			'CLAUDE_OAUTH_ACCESS_TOKEN',
 			'CLAUDE_OAUTH_REFRESH_TOKEN',
 			'CLAUDE_OAUTH_EXPIRES_AT',
@@ -3001,6 +3174,16 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
+		// Custom-extension servers start behind the guard wrapper (default-deny per
+		// tool). Built-in integrations are left alone.
+		await applyExtensionGuards({
+			db: this.db,
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			agentId: agent.id,
+			apiUrl: maskinApiUrl,
+			servers: autoInjectedMcpServers,
+		})
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {
 			if (Object.keys(keychainEnv).length > 0) {
@@ -3086,7 +3269,26 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 						installationId: v.installationId,
 						statusSnippet: v.statusSnippet,
 					})),
+					skippedInstalls: githubInstallSkips.map(formatGitHubInstallSkip),
 				})
+				// A `missing-token` verdict means an install was skipped above. Name the skips in the
+				// alert and keep them in the session log: the host log only holds about 2 minutes.
+				const skippedInstalls = failed.some((v) => v.failureClass === 'missing-token')
+					? githubInstallSkips
+					: []
+				if (skippedInstalls.length > 0) {
+					await this.insertSystemLog(
+						session.id,
+						`GitHub preflight: no token attached. Installs skipped at launch: ${skippedInstalls
+							.map(formatGitHubInstallSkip)
+							.join('; ')}`,
+					).catch((err) =>
+						logger.warn('Failed to store GitHub install skip reasons', {
+							sessionId: session.id,
+							error: err instanceof Error ? err.message : String(err),
+						}),
+					)
+				}
 				const slackBotToken = envVars.SLACK_BOT_TOKEN ?? integrationTokens.SLACK_BOT_TOKEN
 				if (slackBotToken) {
 					await postGitHubPreflightSlackAlert({
@@ -3096,6 +3298,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 						context: {
 							sessionId: session.id,
 							workspaceId: session.workspaceId,
+							skippedInstalls,
 						},
 					})
 				} else {
@@ -3206,8 +3409,10 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 
 	/**
 	 * Env vars for the Keychain credentials this session may read: bring-your-own API
-	 * keys and logins, active or still inside their undo window, that an agent grant names
-	 * for the session's actor. The grant filter runs in SQL so a key
+	 * keys, active or still inside their undo window, that an agent grant names for the
+	 * session's actor. A saved LOGIN is never injected, so its password never reaches the
+	 * session: the agent types it with desktop_type and a {{keychain:Name.password}}
+	 * reference that Maskin fills in (lib/integrations/keychain-typing.ts). The grant filter runs in SQL so a key
 	 * scoped to another actor is never decrypted and never writes a denied-read event
 	 * on every launch of an unrelated agent. Each match then goes through getCredential,
 	 * which re-checks status and scope, decrypts, and writes the audit row.
@@ -3215,8 +3420,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 	 * A key whose config sets expose_to_agent_sessions to false is left out, as for any
 	 * other integration.
 	 *
-	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name} for a key, and
-	 * KEYCHAIN_BYO_LOGIN_{SLUG}_USERNAME / _PASSWORD for a login. A name with no usable
+	 * Name: KEYCHAIN_BYO_APIKEY_{SLUG of the display name}. A name with no usable
 	 * characters is skipped, and so is a later credential whose name an earlier one
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
@@ -3249,7 +3453,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			.where(
 				and(
 					eq(integrations.workspaceId, session.workspaceId),
-					inArray(integrations.providerMode, ['byo_apikey', 'byo_login']),
+					eq(integrations.providerMode, 'byo_apikey'),
 					inArray(integrations.status, ['active', 'pending_undo']),
 					// Main's per-integration switch (config.expose_to_agent_sessions === false):
 					// a switched-off key is neither injected nor decrypted, so no read is audited.
@@ -3265,13 +3469,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			.orderBy(asc(integrations.createdAt))
 
 		for (const row of rows) {
-			const isLogin = row.providerMode === 'byo_login'
-			const loginNames = isLogin && row.displayName ? byoLoginEnvNames(row.displayName) : null
-			const name = isLogin
-				? (loginNames?.username ?? null)
-				: row.displayName
-					? byoApiKeyEnvName(row.displayName)
-					: null
+			const name = row.displayName ? byoApiKeyEnvName(row.displayName) : null
 			if (!name) {
 				logger.warn('Keychain credential has no usable name for an env var; not injected', {
 					sessionId: session.id,
@@ -3294,20 +3492,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					sessionId: session.id,
 					requestId: `launch:${session.id}:${row.id}`,
 				})
-				if (isLogin && loginNames) {
-					const login = decodeLogin(credential.value)
-					if (!login) {
-						logger.error('Keychain login is not a well-formed login; not injected', {
-							sessionId: session.id,
-							integrationId: row.id,
-						})
-						continue
-					}
-					env[loginNames.username] = login.username
-					env[loginNames.password] = login.password
-				} else {
-					env[name] = credential.value
-				}
+				env[name] = credential.value
 			} catch (err) {
 				// Undone, or its grants changed, between the query and the read. Either way
 				// this session does not get it.
@@ -3514,12 +3699,14 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 	 */
 	private async resolveGithubOwnerLogin(
 		integration: typeof integrations.$inferSelect,
+		onSkip?: (reason: 'no-install-id' | 'owner-lookup-failed', detail?: string) => void,
 	): Promise<string | undefined> {
 		const config = (integration.config as IntegrationConfig | null) ?? {}
 		if (config.owner_login) return config.owner_login
 
 		const installationId = integration.externalId
 		if (!installationId) {
+			onSkip?.('no-install-id')
 			logger.warn('GitHub integration has no externalId; cannot backfill owner_login', {
 				integrationId: integration.id,
 			})
@@ -3541,6 +3728,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			})
 			return ownerLogin
 		} catch (err) {
+			onSkip?.('owner-lookup-failed', err instanceof Error ? err.message : String(err))
 			logger.warn('Failed to backfill owner_login for GitHub integration; skipping', {
 				integrationId: integration.id,
 				installationId,
@@ -3607,6 +3795,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 							} satisfies SessionLogEvent)
 							if (chunk.stream === 'stdout') {
 								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
+								await this.recordTurnUsage(sessionId, chunk.data)
 							}
 						}
 
@@ -4094,6 +4283,14 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			void this.emitCompletedWithSkills(session, status)
 		}
 
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
+
 		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
@@ -4321,29 +4518,53 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 	 * returns null when no usage could be parsed (e.g. Codex/custom runtimes
 	 * that emit no structured usage).
 	 */
-	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
+	private async accumulateSessionUsage(
+		sessionId: string,
+		opts: { live?: boolean } = {},
+	): Promise<SessionUsage | null> {
 		let usage: SessionUsage | null = null
 		let tokensOnly = false
+		let watermark: { logId: number; cliCost: number } | null = null
+		let previousWatermarkLogId: number | null = null
 		try {
-			const drained = this.activeSessions.get(sessionId)?.logsDrained
+			// A live (per-turn) write runs inside the log-ingest loop that `logsDrained`
+			// represents, so waiting on it would only burn the timeout.
+			const drained = opts.live ? undefined : this.activeSessions.get(sessionId)?.logsDrained
 			if (drained) {
 				await Promise.race([
 					drained,
 					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
 				])
 			}
-			const tail = this.activeSessions.get(sessionId)?.stdoutTail
-			if (tail) {
-				usage = parseUsageFromLogChunks([tail])
-			}
-			if (!usage) {
-				usage = await extractSessionUsage(this.db, sessionId)
-			}
-			// No `result` envelope (e.g. killed at the wall-time ceiling): fall back
-			// to the tokens the assistant messages reported. Cost stays null.
-			if (!usage) {
-				usage = await sumAssistantUsage(this.db, sessionId)
-				tokensOnly = usage !== null
+			// Add only the `result` envelopes the row does not hold yet. A per-turn write
+			// (recordTurnUsage) may already have saved the earlier turns, and a pause saved
+			// an earlier segment; the watermark on the row says where counting resumes.
+			const [counted] = await this.db
+				.select({
+					logId: sessions.usageCountedLogId,
+					cliCost: sessions.usageCountedCliCost,
+				})
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			previousWatermarkLogId = counted?.logId ?? null
+			const uncounted = await sumUncountedResultUsage(this.db, sessionId, {
+				logId: previousWatermarkLogId,
+				cliCost: counted?.cliCost != null ? Number(counted.cliCost) : null,
+			})
+			if (uncounted) {
+				usage = uncounted.usage
+				watermark = uncounted.watermark
+			} else if (previousWatermarkLogId === null && !opts.live) {
+				// Nothing was ever counted and no envelope is in the logs yet: the in-memory
+				// tail may hold one that is not flushed, and a run killed at the wall-time
+				// ceiling has none, so fall back to the tokens the assistant messages reported.
+				const tail = this.activeSessions.get(sessionId)?.stdoutTail
+				if (tail) usage = parseUsageFromLogChunks([tail])
+				if (!usage) {
+					usage = await sumAssistantUsage(this.db, sessionId)
+					tokensOnly = usage !== null
+				}
 			}
 		} catch (err) {
 			logger.warn('Failed to parse usage from session logs', { sessionId, error: String(err) })
@@ -4371,7 +4592,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		}
 
 		try {
-			await this.db
+			const updated = await this.db
 				.update(sessions)
 				.set({
 					totalCostUsd:
@@ -4398,17 +4619,67 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 						usage.durationMs != null
 							? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
 							: undefined,
+					usageCountedLogId: watermark?.logId,
+					usageCountedCliCost: watermark ? String(watermark.cliCost) : undefined,
 					updatedAt: new Date(),
 				})
 				// Terminal rows are final: every caller writes before it settles the
 				// row (or, for pause, on a non-terminal 'paused' row), so a write that
 				// finds a terminal status is a late straggler and must not add cost.
-				.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TERMINAL_STATUSES])))
+				// The watermark compare-and-set is what stops two writers adding the same
+				// envelopes: the loser finds the watermark moved and adds nothing.
+				.where(
+					and(
+						eq(sessions.id, sessionId),
+						notInArray(sessions.status, [...TERMINAL_STATUSES]),
+						watermark
+							? sql`${sessions.usageCountedLogId} IS NOT DISTINCT FROM ${previousWatermarkLogId}`
+							: undefined,
+					),
+				)
+				.returning({ id: sessions.id })
+			if (watermark && updated.length === 0) return null
 		} catch (err) {
 			logger.error('Failed to persist accumulated session usage', { sessionId, error: String(err) })
 		}
 
 		return usage
+	}
+
+	/**
+	 * Saves one turn's tokens and cost onto the session row as soon as its `result`
+	 * envelope lands, so a chat that is still running shows its usage live instead of
+	 * zero until it settles. Every settle path adds only what the row's usage watermark
+	 * says is not counted yet (accumulateSessionUsage), so this never double-counts.
+	 *
+	 * Credits are still debited at settle; this only moves the displayed usage. Never
+	 * throws: a usage hiccup must not break log ingest.
+	 */
+	private async recordTurnUsage(sessionId: string, chunk: string): Promise<void> {
+		if (!chunk.includes('"type":"result"')) return
+		try {
+			const usage = await this.accumulateSessionUsage(sessionId, { live: true })
+			if (!usage) return
+			const [row] = await this.db
+				.select({ workspaceId: sessions.workspaceId, actorId: sessions.actorId })
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			if (!row) return
+			// A step event, not a lifecycle one: the web app refetches the session lists and
+			// the usage block on any session event, while the live-activity fan-out treats
+			// `session_updated` as a throttled step change.
+			await recordEvent(this.db, {
+				workspaceId: row.workspaceId,
+				actorId: row.actorId,
+				action: 'session_updated',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+		} catch (err) {
+			logger.warn('Failed to record per-turn session usage', { sessionId, error: String(err) })
+		}
 	}
 
 	/**
@@ -4425,13 +4696,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 	 *
 	 * Combines the workspace's already-persisted usage from other sessions
 	 * (`getWorkspacePlanUsdCentsUsage`, which reads this session's own
-	 * totalCostUsd/inputTokens/outputTokens columns too — still NULL/0 while
-	 * it's running, since those are only written on pause/completion) with a
-	 * fresh live scan of *this* session's own logs
-	 * (`sumRunningSessionUsage`), so no separate persistence step is needed
-	 * here — nothing is written until the session actually stops, at which
-	 * point `handleCompletion` → `accumulateSessionUsage` +
-	 * `debitCreditIfApplicable` record and bill it exactly as normal.
+	 * totalCostUsd/inputTokens/outputTokens columns too, which `recordTurnUsage`
+	 * fills turn by turn) with a scan of the results of *this* session that are
+	 * not saved on its row yet (`sumUncountedResultUsage`). Nothing is written
+	 * here — when the session stops, `handleCompletion` →
+	 * `accumulateSessionUsage` + `debitCreditIfApplicable` record and bill it
+	 * exactly as normal.
 	 *
 	 * Stops the session once its own overage would cost *more than* the
 	 * remaining credit balance — not just once the balance hits exactly
@@ -4459,7 +4729,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
 		const [persistedUsedCents, liveUsage] = await Promise.all([
 			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
-			sumRunningSessionUsage(this.db, session.id),
+			// Only this session's results not yet saved on its row: the saved ones are already in
+			// the persisted figure above, so a full scan would count every earlier turn twice.
+			sumUncountedResultUsage(this.db, session.id, {
+				logId: session.usageCountedLogId ?? null,
+				cliCost: session.usageCountedCliCost != null ? Number(session.usageCountedCliCost) : null,
+			}).then((r) => r?.usage ?? null),
 		])
 		// Route-aware cost, not the live scan's own reported figure: only
 		// maskin_plan sessions reach this check (the watchdog query filters on
@@ -4564,6 +4839,10 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// closes it as `timeout` so the chat UI surfaces the interruption.
 		if (await this.hasUnansweredConversationTurn(session)) return
 		const now = new Date()
+		// Save the usage first, as the timeout close does: the terminal row is final
+		// for usage writes, and the settle below reads these totals for its
+		// $ai_generation event. Must run before cleanupSession() clears the tail.
+		await this.accumulateSessionUsage(session.id)
 		// settleSession is the only writer of terminal sessions.status. Route
 		// the flip through it AND fold the previously-inline pushAgentFiles /
 		// stopSandbox into its post-commit callbacks per §3.1 (folded from
@@ -4663,14 +4942,36 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			.limit(1)
 		if (!session || session.status !== 'running') return
 
+		// Same reason as the idle close: save the usage before the row goes final.
+		await this.accumulateSessionUsage(session.id)
+
+		// A helper that stopped on a Claude limit banner carries the reset time in
+		// its result text. Read it the way the two exit paths do, so the retry
+		// scheduler can rerun the helper once the allowance is back. Banners only:
+		// this is the helper's final error text, not a whole stdout tail, so the
+		// looser substring signals have nothing to add. A dead login or rejected API
+		// key is named first: it has no reset time, so it is stored with its reason
+		// but pickRetryAt returns null and nothing is retried or failed over.
+		const limitReason = outcome.isError
+			? (classifyClaudeAuthFailureText(outcome.text) ??
+				classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false }))
+			: null
+		const scheduledRetryAt = pickRetryAt(limitReason)
+
 		const settled = await settleSession(
 			session.id,
 			outcome.isError
 				? {
 						kind: 'fail',
-						classification: 'unknown',
+						classification: classifyExit({
+							userStopped: false,
+							status: 'failed',
+							failureReason: limitReason,
+						}),
 						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
 						resultText: outcome.text,
+						failureReason: limitReason ?? undefined,
+						retryAt: scheduledRetryAt ?? undefined,
 						// Same settle source the idle close uses: the remote stop endpoint
 						// validates it against a fixed list, and this is a close-out of an
 						// idle interactive session.
@@ -4685,6 +4986,14 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			this.buildSettleDeps(),
 		)
 		if (settled.alreadySettled) return
+
+		if (outcome.isError && isClaudeAuthDeathText(outcome.text)) {
+			reportClaudeSessionAuthDeath({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				config: session.config as Record<string, unknown> | null,
+			})
+		}
 
 		logger.info(`Helper session finished: ${session.id}`, { isError: outcome.isError })
 
@@ -4786,6 +5095,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// after it, and its duration is logged once per pass.
 		const passStartedAt = Date.now()
 		const stepDurationsMs: Record<string, number> = {}
+		let queuedForCapacity: number | null = null
 		const runStep = async (name: string, step: () => Promise<void>): Promise<void> => {
 			const stepStartedAt = Date.now()
 			try {
@@ -4977,7 +5287,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			// NULL`) is intentionally gone — every terminal writer now stamps
 			// session_state='done' via settleSession, and §16.2 collapses to five
 			// sections; the primary wall-timeout above catches every stuck row.
-			const chatIdleCutoff = new Date(Date.now() - SessionManager.CHAT_IDLE_CLOSE_MS)
+			const chatIdleCutoff = new Date(Date.now() - this.chatIdleCloseMs)
 			const idleChatCandidates = await this.db
 				.select()
 				.from(sessions)
@@ -5036,6 +5346,12 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				// idle; if it's still running, leave the reattach loop in
 				// streamContainerLogs to recover and try again next tick.
 				if (!session.containerId) {
+					// A row still waiting for a workspace or agent-server slot has no
+					// container yet, however long its last log line is. It is not
+					// dead; the dispatcher stamps it running once it starts. How long
+					// a row may wait is bounded by the waiting-bound step, not here.
+					if (session.status !== 'running') continue
+
 					// A `running` row with no containerId is unrecoverable — pauseSession
 					// would reject on the same guard and the watchdog would log-spam
 					// every minute forever. Route to terminal-failed instead.
@@ -5085,8 +5401,15 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 						if (await this.hasOtherActiveSessions(session.actorId, session.id)) return
 						await this.db
 							.update(actors)
-							.set({ agentState: 'paused', agentStateUpdatedAt: new Date(), updatedAt: new Date() })
-							.where(eq(actors.id, session.actorId))
+							.set({
+								agentState: 'paused',
+								agentStateUpdatedAt: new Date(),
+								// An idle auto-pause is not a person's pause: it must keep waking on chat.
+								metadata: withoutHumanPauseMarker,
+								updatedAt: new Date(),
+							})
+							// Not if a person paused it meanwhile: this write would drop their marker.
+							.where(and(eq(actors.id, session.actorId), notHumanPaused))
 							.catch((err) =>
 								logger.warn('Failed to sync agentState after auto-pause', {
 									sessionId: session.id,
@@ -5402,10 +5725,53 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 			}
 		})
 
+		await runStep('queue-depth', async () => {
+			// 11. Queue depth — sessions waiting for a slot, either a workspace
+			// session budget (status='queued') or an agent-server machine
+			// (session_state='waiting_for_machine'). A non-zero count means work is
+			// stuck behind full slots; alert on this line. Read-only.
+			const queued = await this.getQueuedForCapacity()
+			queuedForCapacity = queued.count
+			if (queued.count > 0) {
+				logger.warn('Sessions queued for capacity', {
+					queuedForCapacity: queued.count,
+					oldestWaitSeconds:
+						queued.oldestWaitMs === null ? null : Math.round(queued.oldestWaitMs / 1000),
+				})
+			}
+		})
+
 		logger.info('Session watchdog pass complete', {
 			totalMs: Date.now() - passStartedAt,
+			queuedForCapacity,
 			stepDurationsMs,
 		})
+	}
+
+	/**
+	 * How many live sessions are waiting for a slot, and how long the oldest has
+	 * waited. Counts both queues: the per-workspace session budget
+	 * (status='queued') and the agent-server's machine slots
+	 * (session_state='waiting_for_machine'). Terminal rows never count.
+	 */
+	async getQueuedForCapacity(): Promise<{ count: number; oldestWaitMs: number | null }> {
+		const [row] = await this.db
+			.select({
+				count: countFn(),
+				oldest: sql<
+					Date | string | null
+				>`min(coalesce(${sessions.stateEnteredAt}, ${sessions.createdAt}))`,
+			})
+			.from(sessions)
+			.where(
+				and(
+					notInArray(sessions.status, [...TERMINAL_STATUSES]),
+					or(eq(sessions.status, 'queued'), eq(sessions.sessionState, 'waiting_for_machine')),
+				),
+			)
+		const count = Number(row?.count ?? 0)
+		const oldest = row?.oldest ? new Date(row.oldest) : null
+		return { count, oldestWaitMs: oldest ? Math.max(0, Date.now() - oldest.getTime()) : null }
 	}
 
 	private async reportSkillPullFailures(
@@ -5653,6 +6019,7 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 				} satisfies SessionLogEvent)
 				if (line.stream === 'stdout') {
 					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
+					await this.recordTurnUsage(sessionId, line.content)
 				}
 			}
 		}
@@ -5851,9 +6218,31 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// back, doubling the bytes pulled from Postgres on every completion.
 		let usage: SessionUsage | null = null
 		let stdoutChunks: string[] = []
+		let newWatermark: { logId: number; cliCost: number } | null = null
+		let previousWatermarkLogId: number | null = null
 		try {
 			stdoutChunks = await readSessionStdoutChunks(this.db, sessionId)
-			usage = parseUsageFromLogChunks(stdoutChunks)
+			// Only the envelopes no earlier write counted: per-turn writes already saved the
+			// earlier turns of a chat, and the tail read above holds just the newest turn.
+			const [counted] = await this.db
+				.select({
+					logId: sessions.usageCountedLogId,
+					cliCost: sessions.usageCountedCliCost,
+				})
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			previousWatermarkLogId = counted?.logId ?? null
+			const uncounted = await sumUncountedResultUsage(this.db, sessionId, {
+				logId: previousWatermarkLogId,
+				cliCost: counted?.cliCost != null ? Number(counted.cliCost) : null,
+			})
+			if (uncounted) {
+				usage = uncounted.usage
+				newWatermark = uncounted.watermark
+			} else if (previousWatermarkLogId === null) {
+				usage = parseUsageFromLogChunks(stdoutChunks)
+			}
 		} catch (err) {
 			logger.warn('Failed to read or parse usage from remote session logs', {
 				sessionId,
@@ -5939,6 +6328,8 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 							usage.durationMs != null
 								? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
 								: undefined,
+						usageCountedLogId: newWatermark ? sql`${newWatermark.logId}` : undefined,
+						usageCountedCliCost: newWatermark ? sql`${String(newWatermark.cliCost)}` : undefined,
 					}
 				: null
 
@@ -5985,7 +6376,16 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 					await this.db
 						.update(sessions)
 						.set(usageColumns)
-						.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, resolvedStatuses)))
+						.where(
+							and(
+								eq(sessions.id, sessionId),
+								notInArray(sessions.status, resolvedStatuses),
+								// A per-turn write may have moved the watermark since it was read.
+								newWatermark
+									? sql`${sessions.usageCountedLogId} IS NOT DISTINCT FROM ${previousWatermarkLogId}`
+									: undefined,
+							),
+						)
 					usageApplied = true
 				}
 				// The agent-server owns the sandbox and the workspace is already in
@@ -6098,6 +6498,14 @@ ${accessPreamble}${HUMAN_MESSAGE_STYLE}`
 		// on both the started and completed events. Best-effort. A user stop has
 		// no outcome in that event's vocabulary; settle's unified event carries it.
 		if (!userStopped) void this.emitCompletedWithSkills(updated, status)
+
+		if (status === 'failed' && !userStopped && endsInClaudeAuthDeath(stdoutTail)) {
+			reportClaudeSessionAuthDeath({
+				sessionId,
+				workspaceId: updated.workspaceId,
+				config: updated.config as Record<string, unknown> | null,
+			})
+		}
 
 		if (status === 'failed' && !userStopped) {
 			await this.maybeRetryClaudeOAuthOnNextSlot({

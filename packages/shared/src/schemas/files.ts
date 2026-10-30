@@ -2,6 +2,43 @@ import { z } from 'zod'
 
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
 
+// Video gets a higher cap than other files. Uploads are still a single base64
+// JSON request held in memory (no streaming), so this stays well short of what
+// storage could hold: 50 MB of video is ~67 MB on the wire.
+export const MAX_VIDEO_FILE_SIZE_BYTES = 50 * 1024 * 1024 // 50 MB
+
+// Above this size a file is read back as a download URL instead of inline
+// content, and cannot be edited through the API. This is a read-side threshold
+// only: any file the JSON route's per-type cap (`maxFileSizeBytesFor`) refuses is
+// uploaded straight to storage in parts (presigned URLs), whatever its type, and
+// a file of 10 to 50 MB uploaded that way is still read back inline.
+export const MAX_INLINE_FILE_SIZE_BYTES = MAX_VIDEO_FILE_SIZE_BYTES
+
+// Ceiling for the direct upload path. Raising it later is a one-line change here:
+// storage allows 5 TiB per object and part sizes scale with the file (see
+// `planFileUploadParts`), and `files.size_bytes` is a bigint.
+export const MAX_LARGE_FILE_SIZE_BYTES = 1024 * 1024 * 1024 // 1 GiB
+
+const MIN_UPLOAD_PART_BYTES = 16 * 1024 * 1024 // 16 MiB; S3's own minimum is 5 MiB
+const MAX_UPLOAD_PARTS = 10_000 // S3's limit
+
+/** How a file of `sizeBytes` is cut into parts for a multipart upload. */
+export function planFileUploadParts(sizeBytes: number): { partSize: number; partCount: number } {
+	const MiB = 1024 * 1024
+	const needed = Math.ceil(sizeBytes / MAX_UPLOAD_PARTS / MiB) * MiB
+	const partSize = Math.max(MIN_UPLOAD_PART_BYTES, needed)
+	return { partSize, partCount: Math.max(1, Math.ceil(sizeBytes / partSize)) }
+}
+
+export function isVideoMimeType(mime: string): boolean {
+	return mime.toLowerCase().startsWith('video/')
+}
+
+/** Upload cap for a file of this MIME type. Unknown type falls back to the general cap. */
+export function maxFileSizeBytesFor(mime: string | undefined): number {
+	return mime && isVideoMimeType(mime) ? MAX_VIDEO_FILE_SIZE_BYTES : MAX_FILE_SIZE_BYTES
+}
+
 export const mimeTypeSchema = z
 	.string()
 	.min(3)
@@ -36,6 +73,7 @@ function validateContent(
 	content: string,
 	encoding: FileEncoding,
 	ctx: z.RefinementCtx,
+	maxBytes: number,
 	path: (string | number)[] = ['content'],
 ) {
 	if (encoding === 'base64') {
@@ -48,19 +86,19 @@ function validateContent(
 			})
 			return
 		}
-		if (decodedByteLength(content) > MAX_FILE_SIZE_BYTES) {
+		if (decodedByteLength(content) > maxBytes) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: `Content exceeds ${MAX_FILE_SIZE_BYTES} bytes`,
+				message: `Content exceeds ${maxBytes} bytes`,
 				path,
 			})
 		}
 		return
 	}
-	if (utf8ByteLength(content) > MAX_FILE_SIZE_BYTES) {
+	if (utf8ByteLength(content) > maxBytes) {
 		ctx.addIssue({
 			code: z.ZodIssueCode.custom,
-			message: `Content exceeds ${MAX_FILE_SIZE_BYTES} bytes`,
+			message: `Content exceeds ${maxBytes} bytes`,
 			path,
 		})
 	}
@@ -109,6 +147,10 @@ export type FileAnnotation = z.infer<typeof fileAnnotationSchema>
 
 export const fileAnnotationsSchema = z.array(fileAnnotationSchema).max(MAX_ANNOTATIONS_PER_FILE)
 
+// sha256 of the stored bytes, lowercase hex. The server computes it; clients
+// only echo it back as if_match.
+export const contentHashSchema = z.string().regex(/^[0-9a-f]{64}$/, 'Expected a sha256 hex digest')
+
 export const createFileSchema = z
 	.object({
 		name: fileNameSchema,
@@ -118,7 +160,9 @@ export const createFileSchema = z
 		content: z.string(),
 		encoding: fileEncodingSchema.default('utf8'),
 	})
-	.superRefine((data, ctx) => validateContent(data.content, data.encoding, ctx))
+	.superRefine((data, ctx) =>
+		validateContent(data.content, data.encoding, ctx, maxFileSizeBytesFor(data.mime_type)),
+	)
 
 export type CreateFileInput = z.infer<typeof createFileSchema>
 
@@ -131,14 +175,20 @@ export const updateFileSchema = z
 		content: z.string().optional(),
 		encoding: fileEncodingSchema.optional(),
 		annotations: fileAnnotationsSchema.optional(),
+		// Optional version check: the content hash the caller last read. A
+		// mismatch with the stored hash is refused with 409 and nothing is
+		// written. Omitted = last write wins (MCP update_file, scripts).
+		if_match: contentHashSchema.optional(),
 	})
 	.refine(
-		(o) => Object.values(o).some((v) => v !== undefined),
+		(o) => Object.entries(o).some(([key, v]) => key !== 'if_match' && v !== undefined),
 		'At least one field must be provided',
 	)
 	.superRefine((data, ctx) => {
 		if (data.content === undefined) return
-		validateContent(data.content, data.encoding ?? 'utf8', ctx)
+		// Without mime_type the stored type isn't known here, so the general cap
+		// applies. Replacing a video's bytes needs mime_type in the same request.
+		validateContent(data.content, data.encoding ?? 'utf8', ctx, maxFileSizeBytesFor(data.mime_type))
 	})
 
 export type UpdateFileInput = z.infer<typeof updateFileSchema>
@@ -164,9 +214,56 @@ export const fileDetailSchema = fileListItemSchema.extend({
 	encoding: fileEncodingSchema,
 	url: z.string().url(),
 	annotations: fileAnnotationsSchema.default([]),
+	// Current content hash, to be echoed as if_match on the next save. Null only
+	// for a row nobody has hashed yet; GET fills it in on first read.
+	contentHash: contentHashSchema.nullable().optional(),
 	// Set on create/update responses when the save succeeded but the viewer
 	// will not render the content as written (e.g. outside resources in HTML).
 	warning: z.string().optional(),
 })
 
 export type FileDetail = z.infer<typeof fileDetailSchema>
+
+// -- Large files: direct-to-storage multipart upload ------------------------
+// 1. POST /files/uploads            → upload id + one presigned PUT URL per part
+// 2. PUT each part to its URL       → read the ETag response header of each
+// 3. POST /files/uploads/:id/complete with the ETags → the file
+// DELETE /files/uploads/:id abandons an upload.
+
+export const startFileUploadSchema = z.object({
+	name: fileNameSchema,
+	description: z.string().max(1000).nullable().optional(),
+	kind: fileKindSchema.nullable().optional(),
+	mime_type: mimeTypeSchema,
+	size_bytes: z
+		.number()
+		.int()
+		.positive()
+		.max(MAX_LARGE_FILE_SIZE_BYTES, `File exceeds ${MAX_LARGE_FILE_SIZE_BYTES} bytes`),
+})
+
+export type StartFileUploadInput = z.infer<typeof startFileUploadSchema>
+
+export const fileUploadSessionSchema = z.object({
+	upload_id: z.string().uuid(),
+	file_id: z.string().uuid(),
+	part_size: z.number().int().positive(),
+	parts: z.array(z.object({ part_number: z.number().int().positive(), url: z.string().url() })),
+	expires_at: z.string(),
+})
+
+export type FileUploadSession = z.infer<typeof fileUploadSessionSchema>
+
+export const completeFileUploadSchema = z.object({
+	parts: z
+		.array(
+			z.object({
+				part_number: z.number().int().min(1).max(10_000),
+				etag: z.string().min(1).max(200),
+			}),
+		)
+		.min(1)
+		.max(10_000),
+})
+
+export type CompleteFileUploadInput = z.infer<typeof completeFileUploadSchema>

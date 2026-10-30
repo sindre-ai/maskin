@@ -1,11 +1,14 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { issueApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
 	agentSkills,
+	notificationPreferences,
 	voiceSessions,
 	workspaceMembers,
 	workspaceSkills,
+	workspaces,
 } from '@maskin/db/schema'
 import { createVoiceToolkit } from '@maskin/mcp'
 import type { VoiceToolkit } from '@maskin/mcp'
@@ -13,32 +16,42 @@ import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import {
+	captureLiveCallStarted,
 	captureVoiceSessionDenied,
 	captureVoiceSessionStarted,
 } from '../lib/analytics/voice-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { errorSchema } from '../lib/openapi-schemas'
+import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
-import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { getWorkspaceRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
+import { cardIdOf, readStartCards } from '../services/voice-call-state'
+import {
+	findReadableConversationId,
+	formatVoiceChatHistory,
+	loadVoiceChatHistory,
+} from '../services/voice-chat-history'
+import { buildVoiceInstructions } from '../services/voice-instructions'
 import {
 	VOICE_OFFER_CLAIM,
 	VOICE_REALTIME_MODEL,
-	VOICE_REALTIME_VOICE,
 	attachVoiceCall,
 	closeVoiceCall,
 	createRealtimeCall,
 	realtimeCallsUrl,
+	resolveRealtimeVoice,
 } from '../services/voice-realtime-call'
+import { postClosingReceipt } from '../services/voice-receipt'
 import {
-	VOICE_DAILY_MINUTE_CAP,
 	endVoiceSession,
-	getVoiceMinutesUsedToday,
-	secondsUntilVoiceCapResets,
 	setCloseVendorSessionFn,
+	setEndedReceiptFn,
 } from '../services/voice-session-lifecycle'
+import { VOICE_SHOW_IN_CHAT_TOOL, voiceShowInChatTool } from '../services/voice-show-in-chat'
+import { listVoiceToolCalls } from '../services/voice-tool-call-log'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
+import { withConfirmationArg } from '../services/voice-write-gate'
 
 type Env = {
 	Variables: {
@@ -52,6 +65,8 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 // Ending a call (hangup, sweeper, shutdown, socket drop) closes the server
 // socket and hangs the call up at OpenAI.
 setCloseVendorSessionFn(closeVoiceCall)
+// ...and leaves one closing receipt in the call's chat, whichever path ended it.
+setEndedReceiptFn((db, ended, info) => postClosingReceipt(db, ended, { reason: info.reason }))
 
 // ── Schemas ──────────────────────────────────────────────────────────
 
@@ -59,6 +74,10 @@ const createVoiceSessionBody = z
 	.object({
 		agent_actor_id: z.string().uuid().openapi({
 			description: 'Actor id of the agent to call. Must be an agent that is a workspace member.',
+		}),
+		conversation_id: z.string().uuid().optional().openapi({
+			description:
+				'The chat the call is started from. When the caller is a participant of it, the agent is given its recent messages and the transcript is saved into it. Ignored otherwise.',
 		}),
 	})
 	.openapi('CreateVoiceSessionBody')
@@ -130,6 +149,9 @@ export function setVoiceInvokeToolFactory(fn: VoiceInvokeToolFactory | null): vo
 
 const PG_UNIQUE_VIOLATION = '23505'
 
+/** Lifetime of the key a voice call uses to run the agent's tools. */
+const VOICE_AGENT_KEY_TTL_MS = 2 * 60 * 60 * 1000
+
 /**
  * Drizzle wraps driver errors, so the Postgres code lives on err.cause.code
  * rather than err.code. Walk the cause chain (bounded) and match either.
@@ -179,7 +201,7 @@ const postVoiceSessionRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Start a 1:1 voice call: reserve the caller’s live-call slot',
 	description:
-		'Body: { agent_actor_id }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.',
+		"Any agent in the workspace can be called: the agent's own voice_enabled field is not checked. Body: { agent_actor_id, conversation_id? }. On success, inserts a voice_sessions row (status=pending) and returns its id. The browser then posts its WebRTC offer to POST /voice-sessions/{id}/offer. No credential is returned: the connection to the vendor is made by the server.",
 	request: {
 		body: {
 			content: { 'application/json': { schema: createVoiceSessionBody } },
@@ -192,7 +214,7 @@ const postVoiceSessionRoute = createRoute({
 			content: { 'application/json': { schema: createVoiceSessionResponse } },
 		},
 		400: {
-			description: 'Target agent is not voice-enabled',
+			description: 'Target actor is not an agent',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -202,11 +224,6 @@ const postVoiceSessionRoute = createRoute({
 		409: {
 			description: 'Caller already has a live voice session',
 			content: { 'application/json': { schema: errorSchema } },
-		},
-		429: {
-			description:
-				'The workspace has used its daily voice minutes (60 min/workspace/day crash floor); retry after `retry_after_seconds`',
-			content: { 'application/json': { schema: rateLimitedResponse } },
 		},
 		500: {
 			description: 'The reservation row could not be written',
@@ -282,26 +299,22 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Target actor is not an agent'), 400)
 	}
 
-	// Per-workspace daily minute cap (tech spec §Error handling). A crash floor,
-	// not the packaging number: Pricing Strategist owns that. Checked before any
-	// row is written or vendor call is made, so a capped workspace costs nothing.
-	const minutesUsed = await getVoiceMinutesUsedToday(db, workspaceId)
-	if (minutesUsed >= VOICE_DAILY_MINUTE_CAP) {
-		await captureVoiceSessionDenied(humanActorId, {
-			agent_id: agentActorId,
-			workspace_id: workspaceId,
-			reason: 'rate_limited',
+	// A call started from a chat carries that chat's history and saves its transcript
+	// there. A chat the caller cannot read is ignored, not an error, so a stale id
+	// never blocks the call.
+	let conversationId: string | null = null
+	if (body.conversation_id) {
+		conversationId = await findReadableConversationId(db, {
+			conversationId: body.conversation_id,
+			workspaceId,
+			humanActorId,
 		})
-		return c.json(
-			{
-				error: {
-					code: 'RATE_LIMITED' as const,
-					message: 'This workspace has used its voice minutes for today',
-				},
-				retry_after_seconds: secondsUntilVoiceCapResets(),
-			},
-			429,
-		)
+		if (!conversationId) {
+			logger.warn('Voice call started from a conversation the caller cannot read; ignoring it', {
+				workspace_id: workspaceId,
+				agent_actor_id: agentActorId,
+			})
+		}
 	}
 
 	// The DB unique index on (human_actor_id) partial to status IN
@@ -315,6 +328,7 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 				workspaceId,
 				agentActorId,
 				humanActorId,
+				conversationId,
 				status: 'pending',
 				vendor: 'openai_realtime',
 				model: VOICE_REALTIME_MODEL,
@@ -373,7 +387,7 @@ const postOfferRoute = createRoute({
 	tags: ['Voice'],
 	summary: 'Connect a reserved voice session to the vendor',
 	description:
-		'Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tool whitelist, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. The browser never receives a vendor credential.',
+		'Only the human who reserved the session, still a member of its workspace, can call this; anyone else gets 404. Accepts one offer per session. The server posts the SDP offer and the session config (instructions, tools, transcription) to the vendor with the operator key, attaches its own tool connection to the new call, and returns the SDP answer. During the call, tools that read and ordinary changes inside the workspace run at once; tools that send outside the workspace, start work, delete or change access are held until the person says yes out loud. The browser never receives a vendor credential.',
 	request: {
 		params: z.object({ id: z.string().uuid() }),
 		body: { content: { 'application/json': { schema: offerBody } }, required: true },
@@ -397,7 +411,7 @@ const postOfferRoute = createRoute({
 		},
 		500: {
 			description:
-				'Voice is not configured (no operator key) or the vendor connect failed — the session row is marked errored so the caller can start again',
+				'Voice is not configured (no operator key), the vendor connect failed, or the vendor refused it over quota or billing (message says the team has been notified) — the session row is released so the caller can start again',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -443,18 +457,17 @@ app.openapi(postOfferRoute, async (c) => {
 		.select({
 			name: actors.name,
 			systemPrompt: actors.systemPrompt,
-			apiKey: actors.apiKey,
 			tools: actors.tools,
 		})
 		.from(actors)
 		.where(eq(actors.id, session.agentActorId))
 		.limit(1)
-	if (!agent?.apiKey) {
-		logger.error('Voice session agent has no API key', {
+	if (!agent) {
+		logger.error('Voice session agent not found', {
 			voice_session_id: session.id,
 			agent_actor_id: session.agentActorId,
 		})
-		captureVoiceException(session.id, new Error('Voice session agent has no API key'))
+		captureVoiceException(session.id, new Error('Voice session agent not found'))
 		await releasePendingSession(db, session.id)
 		return c.json(createApiError('INTERNAL_ERROR', 'Voice session cannot run tools'), 500)
 	}
@@ -486,19 +499,60 @@ app.openapi(postOfferRoute, async (c) => {
 		.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
 		.where(eq(agentSkills.actorId, session.agentActorId))
 
-	const instructions = [
-		agent.systemPrompt ?? '',
-		`\n\nThe current workspace id is ${session.workspaceId}. Pass it as workspace_id to tools that take one.`,
-		...skillRows.map((row) => `\n\n## Skill: ${row.name}\n\n${row.content}`),
-	]
-		.join('')
-		.trim()
+	// Who is calling and their time zone (when they have set one), so the agent knows the date.
+	const [caller] = await db
+		.select({ name: actors.name, timezone: notificationPreferences.timezone })
+		.from(actors)
+		.leftJoin(notificationPreferences, eq(notificationPreferences.actorId, actors.id))
+		.where(eq(actors.id, humanActorId))
+		.limit(1)
+
+	// The chat the call was started from, re-checked here: the caller may have left it
+	// between the two requests.
+	let chatHistory = ''
+	if (
+		session.conversationId &&
+		(await findReadableConversationId(db, {
+			conversationId: session.conversationId,
+			workspaceId: session.workspaceId,
+			humanActorId,
+		}))
+	) {
+		chatHistory = formatVoiceChatHistory(await loadVoiceChatHistory(db, session.conversationId))
+	}
+
+	// The names the transcription is told to expect. Missing ones are skipped: the hint is
+	// never worth failing a call over.
+	const [workspace] = await db
+		.select({ name: workspaces.name })
+		.from(workspaces)
+		.where(eq(workspaces.id, session.workspaceId))
+		.limit(1)
+	const transcriptionNames = [caller?.name, agent.name, workspace?.name].filter(
+		(n): n is string => typeof n === 'string',
+	)
+
+	const instructions = buildVoiceInstructions({
+		systemPrompt: agent.systemPrompt,
+		workspaceId: session.workspaceId,
+		voiceSessionId: session.id,
+		caller: { id: humanActorId, name: caller?.name ?? null, timezone: caller?.timezone ?? null },
+		skills: skillRows,
+		chatHistory,
+	})
 
 	let toolkit: Awaited<ReturnType<VoiceInvokeToolFactory>>
 	try {
+		// Stored keys are hashed, so the call gets its own. The daily cap keeps one call under an
+		// hour; the expiry is the backstop that closes the key if the call never ends cleanly.
+		const { key: agentApiKey } = await issueApiKey(db, {
+			actorId: session.agentActorId,
+			kind: 'session',
+			expiresAt: new Date(Date.now() + VOICE_AGENT_KEY_TTL_MS),
+		})
 		toolkit = await invokeToolFactory({
 			db,
-			apiKey: agent.apiKey,
+			apiKey: agentApiKey,
 			workspaceId: session.workspaceId,
 			agentTools: agent.tools,
 		})
@@ -506,15 +560,19 @@ app.openapi(postOfferRoute, async (c) => {
 		await releasePendingSession(db, session.id)
 		throw err
 	}
+	// show_in_chat is the call's own tool (see services/voice-show-in-chat.ts): not in the MCP
+	// toolkit, and not a write, so it takes no confirmation_id and is never held.
+	const readOnlyTools = new Set([...toolkit.readOnlyTools, VOICE_SHOW_IN_CHAT_TOOL])
 	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
 	try {
 		outcome = await createRealtimeCall({
-			tools: toolkit.tools,
+			tools: withConfirmationArg([...toolkit.tools, voiceShowInChatTool], readOnlyTools),
 			apiKey,
 			callsUrl: realtimeCallsUrl(),
 			offerSdp: sdp,
 			instructions,
-			voice: VOICE_REALTIME_VOICE,
+			voice: resolveRealtimeVoice(),
+			transcriptionNames,
 			model: VOICE_REALTIME_MODEL,
 		})
 	} catch (err) {
@@ -526,8 +584,35 @@ app.openapi(postOfferRoute, async (c) => {
 
 	if (outcome.kind !== 'ok') void toolkit.close().catch(() => {})
 
+	if (outcome.kind === 'quota_exhausted') {
+		await releasePendingSession(db, session.id)
+		logger.error('Voice vendor refused the call: quota or billing', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+			agent_actor_id: session.agentActorId,
+			vendor_status: 429,
+			vendor_body: outcome.vendorBody.slice(0, 500),
+		})
+		captureVoiceException(
+			session.id,
+			new Error('Voice vendor returned 429 for quota or billing (insufficient_quota)'),
+		)
+		return c.json(
+			createApiError('INTERNAL_ERROR', 'Voice is unavailable, the team has been notified'),
+			500,
+		)
+	}
+
 	if (outcome.kind === 'rate_limited') {
 		await releasePendingSession(db, session.id)
+		logger.warn('Voice vendor rate limited the call', {
+			voice_session_id: session.id,
+			workspace_id: session.workspaceId,
+			agent_actor_id: session.agentActorId,
+			vendor_status: 429,
+			retry_after_seconds: outcome.retryAfterSeconds,
+			vendor_body: (outcome.vendorBody ?? '').slice(0, 500),
+		})
 		await captureVoiceSessionDenied(humanActorId, {
 			agent_id: session.agentActorId,
 			workspace_id: session.workspaceId,
@@ -537,7 +622,7 @@ app.openapi(postOfferRoute, async (c) => {
 			{
 				error: {
 					code: 'RATE_LIMITED' as const,
-					message: 'Vendor rate limit; retry after retry_after_seconds',
+					message: `Voice is busy at OpenAI, try again in ${outcome.retryAfterSeconds} seconds`,
 				},
 				retry_after_seconds: outcome.retryAfterSeconds,
 			},
@@ -580,12 +665,16 @@ app.openapi(postOfferRoute, async (c) => {
 		throw err
 	}
 
+	// The top of the ranked list is read before the call is attached, so the call's channel and its
+	// closing receipt share the same list.
+	const startCards = await readStartCards(db, session)
 	const [toolsAvailable, persistTranscripts] = await Promise.all([
 		attachVoiceCall({
 			db,
 			session: { ...session, vendorSessionId: outcome.callId },
 			agentName: agent.name,
 			invokeTool: toolkit.invokeTool,
+			readOnlyTools,
 			dispose: () => toolkit.close(),
 			callId: outcome.callId,
 			apiKey,
@@ -598,9 +687,16 @@ app.openapi(postOfferRoute, async (c) => {
 		agent_id: session.agentActorId,
 		agent_name: agent.name,
 		workspace_id: session.workspaceId,
-		conversation_id: null,
+		conversation_id: session.conversationId,
 		model: VOICE_REALTIME_MODEL,
 		vendor: 'openai_realtime',
+	})
+	const topCard = startCards?.[0]
+	void captureLiveCallStarted(humanActorId, {
+		voice_session_id: session.id,
+		actor_id: humanActorId,
+		workspace_id: session.workspaceId,
+		rank_1_card_id: topCard ? cardIdOf(topCard) : null,
 	})
 
 	return c.json(
@@ -721,6 +817,151 @@ app.openapi(hangupVoiceSessionRoute, async (c) => {
 		captureVoiceException(id, err)
 		throw err
 	}
+})
+
+// ── Tool call log ────────────────────────────────────────────────────
+
+const TOOL_CALLS_DEFAULT_LIMIT = 50
+const TOOL_CALLS_MAX_LIMIT = 200
+
+const toolCallsQuery = z.object({
+	// z.coerce turns 'abc' into NaN, which fails int(), so a bad limit is a 400, never a NaN in SQL.
+	limit: z.coerce.number().int().min(1).max(TOOL_CALLS_MAX_LIMIT).default(TOOL_CALLS_DEFAULT_LIMIT),
+	cursor: z.string().min(1).max(200).optional(),
+})
+
+const toolCallItem = z
+	.object({
+		id: z.string().uuid(),
+		voice_session_id: z.string().uuid(),
+		call_id: z.string().nullable(),
+		started_at: z.string(),
+		tool_name: z.string(),
+		args_summary: z.unknown().openapi({
+			description: 'The arguments the model sent, redacted and size-capped.',
+		}),
+		success: z.boolean(),
+		error_code: z.string().nullable(),
+		error_message: z.string().nullable(),
+		output_chars: z.number().int().openapi({
+			description: "Length of the tool's output before voice's 20,000-character cap.",
+		}),
+		output_truncated: z.boolean(),
+		latency_ms: z.number().int(),
+		output_preview: z.string().nullable().openapi({
+			description: 'The first ~500 characters of what the model was told, redacted.',
+		}),
+	})
+	.openapi('VoiceToolCall')
+
+const toolCallsResponse = z
+	.object({
+		tool_calls: z.array(toolCallItem),
+		next_cursor: z.string().nullable(),
+	})
+	.openapi('VoiceToolCallList')
+
+function encodeToolCallCursor(row: { startedAt: Date; id: string }): string {
+	return Buffer.from(`${row.startedAt.toISOString()}|${row.id}`).toString('base64url')
+}
+
+function decodeToolCallCursor(raw: string): { startedAt: Date; id: string } | null {
+	try {
+		const [iso, id] = Buffer.from(raw, 'base64url').toString().split('|')
+		const startedAt = new Date(iso ?? '')
+		if (!id || !z.string().uuid().safeParse(id).success || Number.isNaN(startedAt.getTime())) {
+			return null
+		}
+		return { startedAt, id }
+	} catch {
+		return null
+	}
+}
+
+const listToolCallsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/tool-calls',
+	tags: ['Voice'],
+	summary: "List a voice call's tool calls",
+	description:
+		"What the voice model asked each tool to do and what came back: tool, redacted arguments, success, error, output length, whether the 20,000-character cap cut it, latency, and the first ~500 characters of the output. Oldest first, paged with `cursor`. Visible to the person on the call and to workspace owners and admins. Rows are kept 30 days. A call's tool calls that could not be logged are missing, not failed.",
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+		query: toolCallsQuery,
+	},
+	responses: {
+		200: {
+			description: 'A page of tool calls',
+			content: { 'application/json': { schema: toolCallsResponse } },
+		},
+		400: {
+			description: 'Bad limit or cursor',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No such voice session in this workspace, or not visible to the caller',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(listToolCallsRoute, async (c) => {
+	const actorId = c.get('actorId')
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const { limit, cursor } = c.req.valid('query')
+
+	// The call must belong to the workspace in the header, so ids are not probeable across workspaces.
+	const [session] = await db
+		.select({ id: voiceSessions.id, humanActorId: voiceSessions.humanActorId })
+		.from(voiceSessions)
+		.where(and(eq(voiceSessions.id, id), eq(voiceSessions.workspaceId, workspaceId)))
+		.limit(1)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	if (session.humanActorId !== actorId) {
+		const role = await getWorkspaceRole(db, actorId, workspaceId)
+		if (role !== 'owner' && role !== 'admin') {
+			return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+		}
+	}
+
+	let after: { startedAt: Date; id: string } | null = null
+	if (cursor) {
+		after = decodeToolCallCursor(cursor)
+		if (!after) return c.json(createApiError('VALIDATION_ERROR', 'Invalid cursor'), 400)
+	}
+
+	const rows = await listVoiceToolCalls(db, {
+		voiceSessionId: id,
+		workspaceId,
+		limit: limit + 1,
+		after,
+	})
+	const page = rows.slice(0, limit)
+	const last = page[page.length - 1]
+	return c.json(
+		{
+			tool_calls: page.map((r) => ({
+				id: r.id,
+				voice_session_id: r.voiceSessionId,
+				call_id: r.callId,
+				started_at: r.startedAt.toISOString(),
+				tool_name: r.toolName,
+				args_summary: r.argsSummary ?? null,
+				success: r.success,
+				error_code: r.errorCode,
+				error_message: r.errorMessage,
+				output_chars: r.outputChars,
+				output_truncated: r.outputTruncated,
+				latency_ms: r.latencyMs,
+				output_preview: r.outputPreview,
+			})),
+			next_cursor: rows.length > limit && last ? encodeToolCallCursor(last) : null,
+		},
+		200,
+	)
 })
 
 export default app

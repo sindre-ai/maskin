@@ -172,12 +172,14 @@ private actor FakePreferences: NotificationPreferencesAPI {
 @MainActor
 @Suite("AppRuntime push permission")
 struct AppRuntimePushPermissionTests {
-	/// Polls up to 5 s: these hop through unstructured tasks and the suite runs in parallel.
+	/// Polls until the condition holds (wall-clock bound): these hop through unstructured tasks
+	/// and the suite runs in parallel.
 	private func eventually(_ condition: () async -> Bool) async -> Bool {
-		for _ in 0..<500 {
+		var budget = PollBudget()
+		repeat {
 			if await condition() { return true }
 			try? await Task.sleep(for: .milliseconds(10))
-		}
+		} while budget.spend()
 		return await condition()
 	}
 

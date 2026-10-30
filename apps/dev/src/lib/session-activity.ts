@@ -1,4 +1,5 @@
 import type { SessionActivityStep, SessionActivityTurn } from '@maskin/shared'
+import { formatToolName } from './tool-name'
 
 /**
  * Server-side port of the web's `segmentActivityByMessage`
@@ -158,7 +159,7 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 						const step: SessionActivityStep = {
 							id,
 							kind: 'tool_use',
-							label: reply ? REPLY_LABEL : truncate(`Using ${name}`, MAX_LABEL),
+							label: reply ? REPLY_LABEL : truncate(formatToolName(name), MAX_LABEL),
 							...(detail ? { detail } : {}),
 							started_at: at,
 							finished_at: null,
@@ -176,7 +177,7 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 						open.steps.push({
 							id,
 							kind: 'thinking',
-							label: redacted ? 'Thinking (redacted)…' : 'Thinking…',
+							label: 'Thinking…',
 							started_at: at,
 							finished_at: at,
 							status: 'completed',

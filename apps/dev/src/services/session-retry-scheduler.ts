@@ -23,12 +23,12 @@ import type { Database } from '@maskin/db'
 import { events, sessions } from '@maskin/db'
 import type { SessionResult } from '@maskin/shared'
 
-import { CHAT_RESUME_INTERIM_MESSAGE_ENABLED } from '../config/chat-resume'
 import { logger } from '../lib/logger'
+import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { startSession } from './session-lifecycle'
 
 const TICK_MS = 30_000
-export const MAX_RETRY_ATTEMPTS = 5
+export { MAX_RETRY_ATTEMPTS }
 export const KILLSWITCH_ENV_VAR = 'FEATURE_RETRY_SCHEDULER'
 
 /** Row shape the scheduler cares about — every column it reads. */
@@ -44,6 +44,8 @@ type RetryableSession = {
 	attemptNumber: number
 	retryAt: Date | null
 	result: SessionResult | null
+	spawnedBySessionId: string | null
+	spawnedByMessageId: number | null
 }
 
 export class SessionRetryScheduler {
@@ -93,6 +95,8 @@ export class SessionRetryScheduler {
 					attemptNumber: sessions.attemptNumber,
 					retryAt: sessions.retryAt,
 					result: sessions.result,
+					spawnedBySessionId: sessions.spawnedBySessionId,
+					spawnedByMessageId: sessions.spawnedByMessageId,
 				})
 				.from(sessions)
 				.where(and(lte(sessions.retryAt, now), isNull(sessions.retriedSessionId)))
@@ -163,7 +167,13 @@ export class SessionRetryScheduler {
 				// any session_failed event still link back to what it was doing.
 				initiatedFromObjectId: row.initiatedFromObjectId,
 				retryOf: row.id,
+				// Restore the failed session's /agent folder snapshot (same as the usage-limit failover); a missing snapshot starts fresh.
+				parentSessionId: row.id,
 				attemptNumber: row.attemptNumber + 1,
+				// Whoever handed this work over still wants its result, so the rerun
+				// reports back to them like the first attempt would have.
+				spawnedBySessionId: row.spawnedBySessionId ?? undefined,
+				spawnedByMessageId: row.spawnedByMessageId ?? undefined,
 			})
 			newSessionId = handle.sessionId
 		} catch (err) {
@@ -198,20 +208,6 @@ export class SessionRetryScheduler {
 			retriedSessionId: newSessionId,
 			attemptNumber: row.attemptNumber + 1,
 		})
-
-		// §7.8 chat-resume interim message: on the retry schedule, atomically post
-		// a system message so the user sees "Claude is at limit — resuming at HH:MM"
-		// instead of a silent gap. Config flag lets Magnus flip to silence-then-resume
-		// without a code re-open. Only fires when the session was chat-shaped.
-		if (row.conversationId && CHAT_RESUME_INTERIM_MESSAGE_ENABLED && row.retryAt) {
-			await this.emitInterimChatMessage(row).catch((err) =>
-				logger.warn('SessionRetryScheduler failed to post interim chat message', {
-					sessionId: row.id,
-					conversationId: row.conversationId,
-					error: String(err),
-				}),
-			)
-		}
 	}
 
 	private async clearRetryAtForCap(row: RetryableSession): Promise<void> {
@@ -264,42 +260,6 @@ export class SessionRetryScheduler {
 			logger.warn('SessionRetryScheduler failed to insert audit event', {
 				sessionId: row.id,
 				action,
-				error: String(err),
-			})
-		}
-	}
-
-	private async emitInterimChatMessage(row: RetryableSession): Promise<void> {
-		if (!row.conversationId || !row.retryAt) return
-		const retryAtIso = row.retryAt.toISOString()
-		const minutes = Math.max(1, Math.round((row.retryAt.getTime() - Date.now()) / 60_000))
-		const hhmm = row.retryAt.toISOString().slice(11, 16)
-		const body =
-			`Claude is at limit — your last message will get an answer at ${hhmm} UTC ` +
-			`(in ~${minutes} minute${minutes === 1 ? '' : 's'}).`
-
-		// Recorded via the `events` audit trail — the conversation UI subscribes
-		// to the events channel via PG NOTIFY and renders a system row for the
-		// `chat_resume_interim_posted` action. Kept as an event, not a real
-		// conversation message row, so the CAS-owned message ordering isn't
-		// disturbed by a system emission the user can't reply to.
-		try {
-			await this.db.insert(events).values({
-				workspaceId: row.workspaceId,
-				actorId: row.actorId,
-				action: 'chat_resume_interim_posted',
-				entityType: 'session',
-				entityId: row.id,
-				data: {
-					conversationId: row.conversationId,
-					retryAt: retryAtIso,
-					body,
-				},
-			})
-		} catch (err) {
-			logger.warn('SessionRetryScheduler failed to insert chat_resume_interim_posted event', {
-				sessionId: row.id,
-				conversationId: row.conversationId,
 				error: String(err),
 			})
 		}

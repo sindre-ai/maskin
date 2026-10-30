@@ -5,11 +5,17 @@ import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } fro
 import * as Sentry from '@sentry/node'
 import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
-import { classifyTurnError } from '../lib/turn-error-classifier'
+import {
+	classifyTurnError,
+	extractCloudflareRayId,
+	isProviderBlockPage,
+} from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
+import { resolveThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
 
 /**
  * Posts an agent's end-of-turn output into the chat it is talking in.
@@ -32,17 +38,6 @@ import { insertConversationMessage } from './conversation-messages'
 
 const describeError = (err: unknown): string =>
 	err instanceof Error ? err.stack || err.message : String(err)
-
-/**
- * Every complete line in one session_logs row.
- *
- * splitLines drops the trailing partial, which for a stored row is the last
- * envelope when the chunk did not end on a newline — so terminate the row
- * first. A row is only ever a whole number of envelopes by the time it is
- * persisted; the cross-chunk partial is reassembled live by onStdout.
- */
-const splitRowLines = (content: string): string[] =>
-	splitLines(content.endsWith('\n') ? content : `${content}\n`).lines
 
 /** Guards against a stream that never emits a newline eating memory. */
 const MAX_BUFFERED_PARTIAL_BYTES = 256 * 1024
@@ -112,6 +107,22 @@ const RETRY_EXHAUSTED_MESSAGE =
  */
 const RETRY_UNAVAILABLE_MESSAGE =
 	"I hit a temporary error from the Claude API and couldn't finish that. Send the message again and I'll pick it up."
+
+/**
+ * What the human reads when the provider's edge blocked the request (a 403
+ * Cloudflare page) and the replays did not get past it. Kept short on purpose
+ * and free of the CLI's own wording ("Failed to authenticate"), which points at
+ * a key problem that does not exist. The detail stays in the session log.
+ */
+const PROVIDER_BLOCKED_MESSAGE = 'Something went wrong. Try again in a minute.'
+
+/**
+ * The provider's display name for the session log. Only the Maskin-funded route
+ * is known to be OpenRouter; any other route is the user's own endpoint, which
+ * the session does not record, so it is named generically rather than guessed.
+ */
+const providerDisplayName = (llmRoute: string): string =>
+	llmRoute === LLM_ROUTE_MASKIN_PLAN ? 'OpenRouter' : 'Your model provider'
 
 /** What the human reads when the replay could not reach a session that has gone. */
 const RETRY_UNDELIVERABLE_MESSAGE =
@@ -218,7 +229,7 @@ const permanentErrorMessage = (detail: string): string =>
  * see what happened, not to prompt any action.
  */
 const subscriptionMovedMessage = (detail: string): string =>
-	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and stopped this session. Send your next message here and I'll pick up on the new subscription.\n\nThe error was:\n\n${detail}`
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and I'm picking your message back up on the new subscription.\n\nThe error was:\n\n${detail}`
 
 /**
  * A replayed turn we are waiting on, plus everything needed to report it if it
@@ -331,6 +342,19 @@ export type InteractiveTurnFinalizerOptions = {
 	 */
 	onStopSession?: (sessionId: string, reason: string) => Promise<void>
 	/**
+	 * Called once the spent session is stopped after a subscription move, to
+	 * answer the human's unanswered message on the new subscription without
+	 * making them send it again. Injected for the same reason as the options
+	 * above. Best-effort: a failure is logged and the notice already tells the
+	 * human to send their message again.
+	 */
+	onResumeAfterMove?: (args: {
+		sessionId: string
+		conversationId: string
+		workspaceId: string
+		agentId: string
+	}) => Promise<void>
+	/**
 	 * Switches the running CLI onto another model for its next turns. Injected
 	 * for the same reason as the options above. Without it an empty turn can
 	 * only be retried on the model that produced it.
@@ -407,6 +431,7 @@ export class InteractiveTurnFinalizer {
 	private readonly fallbackModel: string | null
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
+	private readonly onResumeAfterMove?: InteractiveTurnFinalizerOptions['onResumeAfterMove']
 	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
 	private readonly delay: (ms: number) => Promise<void>
@@ -420,6 +445,7 @@ export class InteractiveTurnFinalizer {
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onHelperResult = options.onHelperResult
 		this.onStopSession = options.onStopSession
+		this.onResumeAfterMove = options.onResumeAfterMove
 		this.onTurnFinished = options.onTurnFinished
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
@@ -1278,6 +1304,33 @@ export class InteractiveTurnFinalizer {
 	}
 
 	/**
+	 * Leave a trace of a provider block in the session's own log, so a block can
+	 * be traced to the rule that fired: provider, status and the Cloudflare Ray ID
+	 * when the page text carries one. Never throws, since it sits ahead of the
+	 * retry and a failed write must not cost the human their reply.
+	 */
+	private async recordProviderBlock(
+		sessionId: string,
+		gate: SessionGate,
+		raw: string,
+		logId: number,
+	): Promise<void> {
+		const provider = providerDisplayName(gate.llmRoute)
+		const rayId = extractCloudflareRayId(raw)
+		const note = `provider_block provider="${provider}" route=${gate.llmRoute || 'unknown'} status=403 cf_ray=${rayId ?? 'not_in_page'} source_log=${logId}`
+		logger.warn(`Interactive session ${sessionId} hit a provider block page: ${note}`)
+		try {
+			await this.db
+				.insert(sessionLogs)
+				.values({ sessionId, stream: 'system', content: `${note}\n` })
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${sessionId} could not log a provider block: ${describeError(err)}`,
+			)
+		}
+	}
+
+	/**
 	 * A turn that closed with `is_error: true`: replay it if that stands a
 	 * chance of working, otherwise tell the human in words.
 	 *
@@ -1303,6 +1356,8 @@ export class InteractiveTurnFinalizer {
 
 		const detail = result.text.trim() || 'no detail reported'
 		const kind = classifyTurnError(detail)
+		const providerBlock = isProviderBlockPage(detail)
+		if (providerBlock) await this.recordProviderBlock(sessionId, gate, result.raw, logId)
 
 		if (kind === 'permanent') {
 			logger.warn(
@@ -1341,6 +1396,23 @@ export class InteractiveTurnFinalizer {
 					)
 				}
 			}
+			// Answer the unanswered message on the new subscription ourselves. Only
+			// reached when the pointer actually moved, so a spent chain (movedTo
+			// null) cannot loop: each resume consumes one slot of the chain.
+			if (movedTo && this.onResumeAfterMove) {
+				try {
+					await this.onResumeAfterMove({
+						sessionId,
+						conversationId,
+						workspaceId: gate.workspaceId,
+						agentId: gate.actorId,
+					})
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not resume the chat after subscription move: ${describeError(err)}`,
+					)
+				}
+			}
 			return
 		}
 
@@ -1357,7 +1429,7 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				RETRY_UNAVAILABLE_MESSAGE,
+				providerBlock ? PROVIDER_BLOCKED_MESSAGE : RETRY_UNAVAILABLE_MESSAGE,
 				{
 					error_kind: 'transient',
 					retry: 'unavailable',
@@ -1383,7 +1455,7 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				RETRY_EXHAUSTED_MESSAGE,
+				providerBlock ? PROVIDER_BLOCKED_MESSAGE : RETRY_EXHAUSTED_MESSAGE,
 				{
 					error_kind: 'transient',
 					retries: spent,
@@ -1830,66 +1902,14 @@ export class InteractiveTurnFinalizer {
 		return rows.length < RECOVERY_SCAN_LIMIT ? { kind: 'empty' } : { kind: 'unknown' }
 	}
 
-	/**
-	 * Which chat message's turn produced this output.
-	 *
-	 * writeInput tags each user turn's persisted envelope with
-	 * `maskin_message_id`; the nearest such envelope before this result is the
-	 * turn that is now closing. Null is fine — a seeded first turn may carry no
-	 * message id, and the frontend anchors those by position instead.
-	 *
-	 * Split into lines for the same reason recoverTurnText does: the tagged
-	 * envelope can share a Docker chunk with its neighbours, and parsing the
-	 * whole row would throw and silently yield an unanchored message.
-	 */
-	/**
-	 * A reply to a message posted inside a thread answers in that thread. The turn's
-	 * triggering message is either the thread's root (which starts the thread) or one
-	 * of its replies; only a reply carries a root, so an agent answering a top-level
-	 * message still posts to the main timeline. Best-effort: a lookup failure posts
-	 * the reply top-level rather than losing it.
-	 */
-	private async resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
-		if (turnMessageId === null) return null
-		try {
-			const [row] = await this.db
-				.select({ threadRootId: messages.threadRootId })
-				.from(messages)
-				.where(eq(messages.id, turnMessageId))
-				.limit(1)
-			return row?.threadRootId ?? null
-		} catch (err) {
-			logger.warn(`Could not resolve thread for message ${turnMessageId}: ${describeError(err)}`)
-			return null
-		}
+	/** The chat message whose turn produced this output; see resolveTurnMessageId. */
+	private resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
+		return resolveTurnMessageId(this.db, sessionId, logId)
 	}
 
-	private async resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
-		const [row] = await this.db
-			.select({ content: sessionLogs.content })
-			.from(sessionLogs)
-			.where(
-				and(
-					eq(sessionLogs.sessionId, sessionId),
-					lte(sessionLogs.id, logId),
-					eq(sessionLogs.stream, 'stdout'),
-					like(sessionLogs.content, '%maskin_message_id%'),
-				),
-			)
-			.orderBy(desc(sessionLogs.id))
-			.limit(1)
-
-		if (!row) return null
-		const lines = splitRowLines(row.content)
-		for (let i = lines.length - 1; i >= 0; i--) {
-			try {
-				const parsed = JSON.parse((lines[i] ?? '').trim()) as { maskin_message_id?: unknown }
-				if (typeof parsed.maskin_message_id === 'number') return parsed.maskin_message_id
-			} catch {
-				// Not JSON, or a partial — keep walking the row's other lines.
-			}
-		}
-		return null
+	/** The thread the turn's triggering message sits in; see resolveThreadRootId. */
+	private resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
+		return resolveThreadRootId(this.db, turnMessageId)
 	}
 
 	private rememberRetry(retryKey: string, count: number): void {

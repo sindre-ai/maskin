@@ -65,13 +65,15 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 
 @MainActor
 @Suite("LiveVoiceController") struct LiveVoiceControllerTests {
-	private func make(pace: LiveCallPace = .quick) -> (LiveVoiceController, FakeRoom) {
+	/// Most tests start the call in silence; the greeting has its own tests.
+	private func make(pace: LiveCallPace = .quick, greeting: String? = nil) -> (LiveVoiceController, FakeRoom) {
 		let room = FakeRoom()
 		// A long beat: the tests tick by hand; a private defaults suite so the stored pace is untouched.
 		let defaults = UserDefaults(suiteName: "live-voice-\(UUID().uuidString)")!
 		return (
 			LiveVoiceController(
-				ports: room.ports, tickInterval: .seconds(3600), defaults: defaults, pace: pace), room
+				ports: room.ports, tickInterval: .seconds(3600), defaults: defaults, pace: pace,
+				greeting: greeting), room
 		)
 	}
 
@@ -82,6 +84,44 @@ private func settle() async { for _ in 0..<20 { await Task.yield() } }
 		await settle()
 		#expect(live.isActive && live.phase == .listening)
 		#expect(room.starts == 1 && room.listening)
+	}
+
+	@Test("the call opens with a spoken greeting that is never sent to the chat")
+	func greets() async {
+		let (live, room) = make(greeting: LiveVoiceController.defaultGreeting)
+		live.begin(existing: [])
+		await settle()
+		#expect(room.spoken.map(\.text) == [LiveVoiceController.defaultGreeting])
+		#expect(room.sent.isEmpty && live.turns.isEmpty)
+		#expect(live.phase == .speaking)
+		// The reader finishing hands the turn back to you.
+		room.speakingID = nil
+		live.tick()
+		#expect(live.phase == .listening)
+		#expect(room.spoken.count == 1)
+	}
+
+	@Test("the greeting is also spoken when the call starts muted")
+	func greetsWhenMuted() async {
+		let (live, room) = make(greeting: LiveVoiceController.defaultGreeting)
+		live.toggleMute()
+		live.begin(existing: [])
+		await settle()
+		#expect(live.isMuted)
+		#expect(room.spoken.count == 1)
+	}
+
+	@Test("talking over the greeting cuts it off and becomes your turn")
+	func bargeInOnGreeting() async {
+		let (live, room) = make(greeting: LiveVoiceController.defaultGreeting)
+		live.begin(existing: [])
+		await settle()
+		room.hear("what is blocked right now")
+		#expect(live.phase == .listening)
+		#expect(room.stoppedSpeaking == 1)
+		room.advance(3)
+		live.tick()
+		#expect(room.sent == ["what is blocked right now"])
 	}
 
 	@Test("a spoken sentence is sent after the pause, and the microphone stays on")

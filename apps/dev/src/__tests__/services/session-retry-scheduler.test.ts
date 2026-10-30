@@ -25,10 +25,6 @@ vi.mock('../../lib/logger', () => ({
 	},
 }))
 
-vi.mock('../../config/chat-resume', () => ({
-	CHAT_RESUME_INTERIM_MESSAGE_ENABLED: true,
-}))
-
 import { startSession } from '../../services/session-lifecycle'
 
 interface FakeUpdateBuilder {
@@ -116,6 +112,8 @@ describe('SessionRetryScheduler', () => {
 		const call = vi.mocked(startSession).mock.calls[0][0]
 		expect(call.retryOf).toBe('session-00000000-0000-0000-0000-000000000001')
 		expect(call.attemptNumber).toBe(2)
+		// Workspace-restore source: the retry starts from the failed session's /agent files
+		expect(call.parentSessionId).toBe('session-00000000-0000-0000-0000-000000000001')
 		expect(call.callerKind).toBe('internal')
 
 		// CAS-clear retry_at + link retried_session_id both happened
@@ -124,6 +122,19 @@ describe('SessionRetryScheduler', () => {
 
 		// telemetry event emitted
 		expect(inserts.some((r) => r.action === 'session_retry_scheduled')).toBe(true)
+	})
+
+	it('hands the rerun to whoever handed the original work over', async () => {
+		const { db } = fakeDb([
+			buildDueRow({ spawnedBySessionId: 'session-sender', spawnedByMessageId: 17903 }),
+		])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		const call = vi.mocked(startSession).mock.calls[0][0]
+		expect(call.spawnedBySessionId).toBe('session-sender')
+		expect(call.spawnedByMessageId).toBe(17903)
 	})
 
 	it('caps at MAX_RETRY_ATTEMPTS and emits session_retry_capped', async () => {
@@ -150,7 +161,7 @@ describe('SessionRetryScheduler', () => {
 		expect(startSession).not.toHaveBeenCalled()
 	})
 
-	it('emits chat_resume_interim_posted when the session had a conversationId', async () => {
+	it('reruns a chat session into the same conversation, without a second notice', async () => {
 		const { db, inserts } = fakeDb([
 			buildDueRow({ conversationId: 'conv-00000000-0000-0000-0000-000000000001' }),
 		])
@@ -158,17 +169,10 @@ describe('SessionRetryScheduler', () => {
 
 		await scheduler.tick(NOW)
 
-		expect(inserts.some((r) => r.action === 'chat_resume_interim_posted')).toBe(true)
-	})
-
-	it('does not emit chat_resume_interim_posted for a triggered (non-chat) session', async () => {
-		const { db, inserts } = fakeDb([
-			buildDueRow({ triggerId: 'trig-00000000-0000-0000-0000-000000000001' }),
-		])
-		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
-
-		await scheduler.tick(NOW)
-
+		expect(vi.mocked(startSession).mock.calls[0][0].conversationId).toBe(
+			'conv-00000000-0000-0000-0000-000000000001',
+		)
+		// The notice is posted when the limit is hit (settleSession), not when the retry fires.
 		expect(inserts.some((r) => r.action === 'chat_resume_interim_posted')).toBe(false)
 	})
 

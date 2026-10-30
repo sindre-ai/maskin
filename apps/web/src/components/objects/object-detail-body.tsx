@@ -1,3 +1,4 @@
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -40,21 +41,33 @@ export function ObjectDetailBody({
 				<MarkdownContent
 					content={object.content ?? ''}
 					size="doc"
-					className="max-w-[75ch]"
+					// Trailing ! so the cap beats the editor prose class, which sets max-w-none.
+					className="max-w-[75ch]!"
 					editable={Boolean(onContentChange)}
 					onChange={onContentChange}
 					editorLabel="Description"
+					preserveSource
+					surface="description"
+					objectId={object.id}
+					// A read-only body (no commit handler) draws its links as chips; the live editor does not.
+					linkedCards={onContentChange ? undefined : outsideChatLinkedCards(workspaceId, 'chips')}
 				/>
 			) : null}
 
-			{fold && <DocumentFold fold={fold} />}
+			{fold && <DocumentFold fold={fold} workspaceId={workspaceId} />}
 
 			{evidence.length > 0 && <ObjectEvidenceBlock evidence={evidence} />}
 		</div>
 	)
 }
 
-function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
+function DocumentFold({
+	fold,
+	workspaceId,
+}: {
+	fold: { title: string; markdown: string }
+	workspaceId: string
+}) {
 	const [open, setOpen] = useState(false)
 
 	return (
@@ -70,7 +83,10 @@ function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
 			</CollapsibleTrigger>
 			<CollapsibleContent>
 				<div className="mt-3">
-					<MarkdownContent content={fold.markdown} />
+					<MarkdownContent
+						content={fold.markdown}
+						linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+					/>
 				</div>
 			</CollapsibleContent>
 		</Collapsible>

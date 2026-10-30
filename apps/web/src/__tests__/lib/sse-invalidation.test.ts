@@ -132,6 +132,20 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refreshes a draft card when it is approved or sent, whatever its object type', () => {
+		for (const action of ['approved', 'delivered']) {
+			const qc = createMockQueryClient()
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'content',
+				entity_id: entityId,
+				action,
+			} as never)
+			expect(qc.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: queryKeys.objects.detail(entityId),
+			})
+		}
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
@@ -381,7 +395,7 @@ describe('invalidateFromSSE session batching', () => {
 		const qc = new QueryClient()
 		const keys = {
 			list: queryKeys.sessions.all(workspaceId),
-			paged: [...queryKeys.sessions.all(workspaceId), 'paged'],
+			stats: queryKeys.sessions.stats(workspaceId),
 			detail: queryKeys.sessions.detail('sess-1'),
 			logs: queryKeys.sessions.logs('sess-1'),
 			byActor: queryKeys.sessions.byActor(workspaceId, 'actor-1'),
@@ -437,7 +451,7 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.byConversation)).toBe(true)
 		// The coalesced lists and billing wait / are skipped.
 		expect(invalidated(keys.list)).toBe(false)
-		expect(invalidated(keys.paged)).toBe(false)
+		expect(invalidated(keys.stats)).toBe(false)
 		expect(invalidated(keys.billing)).toBe(false)
 	})
 
@@ -453,15 +467,15 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(otherLogs)).toBe(false)
 	})
 
-	it('coalesces the paged full-history list on a longer window so a burst cannot restart its walk', () => {
+	it('coalesces the per-agent stats on a longer window so a burst cannot refetch them per event', () => {
 		const { qc, keys, invalidated } = seededClient()
 		for (let i = 0; i < 25; i++) {
 			invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
 		}
 		vi.advanceTimersByTime(5_000)
-		expect(invalidated(keys.paged)).toBe(false)
+		expect(invalidated(keys.stats)).toBe(false)
 		vi.advanceTimersByTime(25_000)
-		expect(invalidated(keys.paged)).toBe(true)
+		expect(invalidated(keys.stats)).toBe(true)
 	})
 
 	it.each(['session_credit_debited', 'session_budget_stopped', 'session_stopped'])(

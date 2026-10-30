@@ -5,7 +5,7 @@ import SwiftUI
 /// Keys & MCP are reached from the profile sheet (`ProfileMenuItem`), not from here.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -90,6 +90,14 @@ struct SettingsServices {
 		#endif
 		return IntegrationsStore(
 			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
+	}
+
+	func keychainStore() -> KeychainStore {
+		let workspaceID = workspaceId ?? ""
+		let source = APIKeychainSource(
+			client: environment.client, workspaceID: workspaceID, baseURL: environment.baseURL,
+			clientSource: environment.clientSource, credentials: environment.auth.credentialsProvider)
+		return KeychainStore(api: source, currentActorID: actorId, canManageWorkspace: role.canManage)
 	}
 
 	func apiKeyStore() -> APIKeyStore {

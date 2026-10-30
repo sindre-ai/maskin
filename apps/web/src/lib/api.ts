@@ -6,11 +6,14 @@ import type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileUploadSession,
 	FromSuggestedStep,
 	ListLoopsResponse,
 	LoopSummary,
 	NeededTool,
+	ObjectFacetsResponse,
 	SafeMetadata,
+	SearchResponse,
 	SendRoundInput,
 	SendRoundResponse,
 	SuggestedStep,
@@ -39,7 +42,7 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
+import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -95,10 +98,12 @@ type RequestOptions = {
 	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
 	 *  requires it back to prove the same browser started the flow. */
 	credentials?: RequestCredentials
+	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
+	signal?: AbortSignal
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId, credentials } = opts
+	const { method = 'GET', body, headers = {}, workspaceId, credentials, signal } = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -128,6 +133,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			headers: reqHeaders,
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
+			...(signal ? { signal } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -281,11 +287,161 @@ function uploadFileWithProgress(
 }
 
 // Objects
+// ── Custom extensions ─────────────────────────────────────────────────────
+
+export type ExtensionStatus = 'active' | 'disabled' | 'draft'
+
+export interface ExtensionResponse {
+	id: string
+	workspaceId: string
+	slug: string
+	name: string
+	status: ExtensionStatus
+	mcpConfig: unknown | null
+	webhookConfig: ExtensionWebhookConfig | null
+	webhookToken: string | null
+	webhookUrl: string | null
+	/** True when a signing secret is stored. The secret itself is never returned. */
+	hasSigningSecret: boolean
+	/** True when an MCP API key is stored. The key itself is never returned. */
+	hasMcpKey: boolean
+	toolGrants: ExtensionToolGrants
+	mcpLastError: string | null
+	createdBy: string | null
+	createdAt: string
+	updatedAt: string
+	/** Most recent committed delivery in the last 14 days. */
+	lastDeliveryAt: string | null
+	committedDeliveries: number
+}
+
+export type ExtensionToolEffect = 'allow' | 'deny'
+
+/** Plain effect, or the object form that carries an expiry (not enforced yet). */
+export type ExtensionToolGrant =
+	| ExtensionToolEffect
+	| { effect: ExtensionToolEffect; expires_at: string | null; grant_id: string }
+
+/** agentId -> toolName -> grant. An agent with no entry is denied every tool. */
+export type ExtensionToolGrants = Record<string, Record<string, ExtensionToolGrant>>
+
+export interface ExtensionTool {
+	name: string
+	kind: 'read' | 'write'
+	description?: string
+}
+
+export interface ExtensionGrants {
+	toolGrants: ExtensionToolGrants
+	tools: ExtensionTool[]
+}
+
+export interface ExtensionAttempted {
+	windowDays: number
+	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
+}
+
+export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
+
+export type LiteralOrPath = { literal: string } | { path: string }
+
+/** The stdio server V1 runs: npx mcp-remote <url>, key passed as an Authorization header. */
+export interface ExtensionMcpConfig {
+	envKey: string
+	server:
+		| { type: 'stdio'; command: string; args: string[]; envFromCredential?: string }
+		| { type: 'http'; url: string }
+	autoInject: boolean
+	credentialProvider: string
+	tools: ExtensionTool[]
+}
+
+export type ExtensionMcpProbeResult =
+	| { ok: true; tools: ExtensionTool[] }
+	| {
+			ok: false
+			reason: 'rejected' | 'unreachable' | 'invalid' | 'blocked'
+			message: string
+	  }
+
+export interface ExtensionWebhookConfig {
+	signatureScheme: ExtensionSignatureScheme
+	signatureHeader: string
+	signaturePrefix?: string
+	timestampHeader?: string
+	timestampBodyTemplate?: string
+	maxAgeSeconds?: number
+	secretSource?: 'env' | 'credential'
+	eventMap: {
+		externalIdPath: string
+		entityType: LiteralOrPath
+		action: LiteralOrPath
+		dataPath?: string
+	}
+	rateLimit?: { perMinute: number }
+}
+
+export interface VendorRecipe {
+	slug: string
+	displayName: string
+	mcpConfig?: ExtensionMcpConfig
+	webhookConfig?: Partial<ExtensionWebhookConfig>
+	docsUrl: string
+}
+
+export interface CreateExtensionInput {
+	slug: string
+	name: string
+	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+	mcp_api_key?: string
+}
+
+export interface UpdateExtensionInput {
+	name?: string
+	status?: ExtensionStatus
+	mcp_config?: ExtensionMcpConfig | null
+	webhook_config?: ExtensionWebhookConfig | null
+	signing_secret?: string
+	mcp_api_key?: string
+}
+
+export interface ExtensionDeliveries {
+	windowDays: number
+	committed: number
+	deliveries: { id: string; externalId: string; receivedAt: string; processedAt: string }[]
+}
+
+export type ExtensionSampleResult =
+	| {
+			ok: true
+			event: { externalId: string; entityType: string; action: string; data: unknown }
+	  }
+	| { ok: false; field: string; message: string }
+
 export const api = {
+	// The unified search endpoint: all five sources, true counts, AND matching.
+	search: {
+		query: (
+			workspaceId: string,
+			params: Record<string, string>,
+			opts?: { signal?: AbortSignal },
+		) => {
+			const qs = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : ''
+			return request<SearchResponse>(`/search${qs}`, { workspaceId, signal: opts?.signal })
+		},
+	},
 	objects: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<ObjectResponse[]>(`/objects${qs}`, { workspaceId })
+		},
+		// Exact totals under the list's filters — tab counts, group headers, filter chips.
+		facets: (workspaceId: string, params: Record<string, string>) => {
+			const qs = `?${new URLSearchParams(params)}`
+			return request<ObjectFacetsResponse>(`/objects/facets${qs}`, { workspaceId })
 		},
 		board: (workspaceId: string, params: Record<string, string>) => {
 			const qs = `?${new URLSearchParams(params)}`
@@ -302,10 +458,12 @@ export const api = {
 			request<ObjectResponse>(`/objects/${id}`, { method: 'PATCH', body: data }),
 		// A person's yes to sending a drafted object exactly as it reads. Humans only; the
 		// hash is the preview's `content_hash`, so a draft that changed since is refused.
-		approve: (id: string, contentHash?: string) =>
+		// From a chat card, `chat` names the chat and its agent, and the server tells that
+		// agent to send.
+		approve: (id: string, contentHash?: string, chat?: ChatCardRef) =>
 			request<{ approval_id: number; preview: ObjectPreview }>(`/objects/${id}/approval`, {
 				method: 'POST',
-				body: contentHash ? { content_hash: contentHash } : {},
+				body: { ...(contentHash ? { content_hash: contentHash } : {}), ...(chat ? { chat } : {}) },
 			}),
 		verify: (id: string, verified: boolean) =>
 			request<ObjectResponse>(`/objects/${id}/verification`, {
@@ -642,6 +800,17 @@ export const api = {
 				`/integrations/${id}/allow-from-chat`,
 				{ method: 'POST', body: { sessionId, scope }, workspaceId },
 			),
+		/** Allow the agent whose session asked in a chat to use a connected integration, and restart it. */
+		allowAccess: (
+			id: string,
+			workspaceId: string,
+			sessionId: string,
+			level: 'read' | 'read_write',
+		) =>
+			request<{ actorId: string; changed: boolean; relaunch: 'stopped' | 'failed' }>(
+				`/integrations/${id}/allow-access`,
+				{ method: 'POST', body: { sessionId, level }, workspaceId },
+			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
 				method: 'DELETE',
@@ -672,7 +841,12 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			provider: string,
-			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
+			body?: {
+				api_key?: string
+				receive_subdomain?: string
+				install_new_org?: boolean
+				origin?: string
+			},
 		) =>
 			request<{
 				install_url?: string
@@ -722,6 +896,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		disconnectGoogle: (
+			workspaceId: string,
+			body: { email: string; scope: 'drive' | 'drive-meet' | 'google' },
+		) =>
+			request<{ disconnected: { id: string; provider: string }[] }>(
+				'/integrations/google/disconnect',
+				{ method: 'POST', body, workspaceId },
+			),
 		githubLinkable: (workspaceId: string) =>
 			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
 		githubLink: (workspaceId: string, installationId: string) =>
@@ -756,6 +938,13 @@ export const api = {
 			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
 				workspaceId,
 			}),
+		driveWatches: (workspaceId: string) =>
+			request<DriveWatch[]>('/integrations/google-drive/watched-folders', { workspaceId }),
+		stopDriveWatch: (workspaceId: string, folderId: string) =>
+			request<{ ok: true; folderId: string }>(
+				`/integrations/google-drive/watched-folders/${encodeURIComponent(folderId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
 	},
 
 	notifications: {
@@ -813,6 +1002,18 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		continue: (id: string, content: string, workspaceId: string) =>
+			request<{ session_id: string }>(`/sessions/${id}/continue`, {
+				method: 'POST',
+				body: { content },
+				workspaceId,
+			}),
+		/** Opens a session as a chat: makes its conversation the first time, then returns it. */
+		chat: (id: string, workspaceId: string) =>
+			request<{ conversation_id: string; created: boolean }>(`/sessions/${id}/chat`, {
+				method: 'POST',
+				workspaceId,
+			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
 		pause: (id: string, workspaceId: string) =>
@@ -826,6 +1027,7 @@ export const api = {
 			const qs = new URLSearchParams(params).toString()
 			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
 		},
+		stats: (workspaceId: string) => request<SessionStatsRow[]>('/sessions/stats', { workspaceId }),
 	},
 
 	events: {
@@ -1113,6 +1315,13 @@ export const api = {
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
 	},
 
+	transcriptions: {
+		// Chat dictation: base64 WAV in, text out. Billed to the operator account,
+		// so the workspace header is required (a read-only viewer is refused).
+		create: (workspaceId: string, body: { audio: string; language?: string }) =>
+			request<{ text: string }>('/transcriptions', { method: 'POST', body, workspaceId }),
+	},
+
 	voiceSessions: {
 		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
 		// credential comes back: the connection to the vendor is made by the
@@ -1168,6 +1377,65 @@ export const api = {
 				`/user-display-settings/${encodeURIComponent(objectType)}`,
 				{ method: 'PUT', body: { settings }, workspaceId },
 			),
+	},
+
+	extensions: {
+		list: (workspaceId: string) => request<ExtensionResponse[]>('/extensions', { workspaceId }),
+		get: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateExtensionInput) =>
+			request<ExtensionResponse>('/extensions', { method: 'POST', body: data, workspaceId }),
+		update: (workspaceId: string, id: string, data: UpdateExtensionInput) =>
+			request<ExtensionResponse>(`/extensions/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		recipes: (workspaceId: string) =>
+			request<VendorRecipe[]>('/extensions/recipes', { workspaceId }),
+		probeMcp: (workspaceId: string, data: { server_url: string; api_key?: string }) =>
+			request<ExtensionMcpProbeResult>('/extensions/mcp/probe', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		generateSecret: (workspaceId: string) =>
+			request<{ secret: string }>('/extensions/generate-secret', { method: 'POST', workspaceId }),
+		regenerateToken: (workspaceId: string, id: string) =>
+			request<ExtensionResponse>(`/extensions/${id}/regenerate-token`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		deliveries: (workspaceId: string, id: string) =>
+			request<ExtensionDeliveries>(`/extensions/${id}/deliveries`, { workspaceId }),
+		sample: (
+			workspaceId: string,
+			id: string,
+			data: { payload: string; webhook_config?: ExtensionWebhookConfig },
+		) =>
+			request<ExtensionSampleResult>(`/extensions/${id}/sample`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		setAgentGrant: (
+			workspaceId: string,
+			id: string,
+			agentId: string,
+			tools?: Record<string, ExtensionToolEffect>,
+		) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'PUT',
+				body: tools ? { tools } : {},
+				workspaceId,
+			}),
+		revokeAgentGrant: (workspaceId: string, id: string, agentId: string) =>
+			request<ExtensionGrants>(`/extensions/${id}/grants/${agentId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		attempted: (workspaceId: string, id: string) =>
+			request<ExtensionAttempted>(`/extensions/${id}/attempted`, { workspaceId }),
 	},
 
 	workspaceSkills: {
@@ -1321,6 +1589,20 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		// Threads the caller started or replied in, across their conversations.
+		replyThreads: (workspaceId: string, params?: { limit?: number }) => {
+			const qs = params?.limit ? `?limit=${params.limit}` : ''
+			return request<ReplyThreadListResponse>(`/conversations/threads${qs}`, { workspaceId })
+		},
+		markThreadRead: (id: string, workspaceId: string, rootId: number, lastReadMessageId: number) =>
+			request<{ last_read_message_id: number }>(
+				`/conversations/${id}/messages/${rootId}/thread/read`,
+				{
+					method: 'PUT',
+					body: { last_read_message_id: lastReadMessageId },
+					workspaceId,
+				},
+			),
 	},
 
 	files: {
@@ -1348,6 +1630,25 @@ export const api = {
 			data: CreateFileInput,
 			opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 		) => uploadFileWithProgress(workspaceId, data, opts),
+		startUpload: (
+			workspaceId: string,
+			data: { name: string; mime_type: string; size_bytes: number; description?: string | null },
+		) => request<FileUploadSession>('/files/uploads', { method: 'POST', body: data, workspaceId }),
+		completeUpload: (
+			workspaceId: string,
+			uploadId: string,
+			parts: { part_number: number; etag: string }[],
+		) =>
+			request<FileDetail>(`/files/uploads/${uploadId}/complete`, {
+				method: 'POST',
+				body: { parts },
+				workspaceId,
+			}),
+		abortUpload: (workspaceId: string, uploadId: string) =>
+			request<{ aborted: boolean }>(`/files/uploads/${uploadId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
 		update: (workspaceId: string, id: string, data: UpdateFileInput) =>
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
@@ -1700,6 +2001,14 @@ export interface UpdateObjectInput {
 	status?: string
 	metadata?: SafeMetadata
 	driver?: string | null
+	/** A status change made from a chat card: the server tells the agent behind it. */
+	chat?: ChatCardRef
+}
+
+/** The chat a card sits in and the agent whose message holds it. */
+export interface ChatCardRef {
+	conversation_id: string
+	agent_id: string
 }
 
 export interface BulkUpdateObjectsInput {
@@ -1971,6 +2280,8 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Scopes the install's token response carried. Names only, never the token. */
+	grantedScopes?: string[]
 	/** Keychain: where the credential came from. Never the value. */
 	source?: string
 	/** Keychain: for source chat_capture, the session the key was pasted into. */
@@ -2052,6 +2363,21 @@ export interface ChatCaptureResponse {
 	undoUrl: string | null
 	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
 	relaunch: 'stopped' | 'failed'
+}
+
+/** One watched Drive folder, as the Folder watches section lists it. Optional
+ *  fields are null when the watch has no stored value for them. */
+export interface DriveWatch {
+	folderId: string
+	name: string
+	path: string | null
+	addedAt: string | null
+	lastFiredAt: string | null
+	integrationId: string
+	/** Google account (email) of the Drive connection the watch lives on. */
+	account: string | null
+	/** Enabled triggers whose filter names this folder; empty when none do. */
+	triggers: Array<{ id: string; name: string }>
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
@@ -2237,6 +2563,12 @@ export interface FileDetail extends FileListItem {
 	encoding: 'base64' | 'utf8'
 	url: string
 	annotations: FileAnnotation[]
+	/** sha256 of the stored bytes, echoed as if_match so a save cannot overwrite a newer version. */
+	contentHash?: string | null
+	/** True for files too large to inline: `content` is empty, read the bytes from `downloadUrl`. */
+	contentOmitted?: boolean
+	/** Short-lived storage URL for the bytes of a file with `contentOmitted`. Expires; refetch the file for a fresh one. */
+	downloadUrl?: string
 }
 
 export interface CreateFileInput {
@@ -2254,6 +2586,8 @@ export interface UpdateFileInput {
 	content?: string
 	encoding?: 'base64' | 'utf8'
 	annotations?: FileAnnotation[]
+	/** The contentHash the caller loaded; a mismatch is refused with 409 and nothing is written. */
+	if_match?: string
 }
 
 // Conversation entity fields are camelCase (Drizzle column names passed
@@ -2346,6 +2680,8 @@ export interface MessageFinalOutput {
 	truncated?: boolean
 	/** Reply was recovered from the turn's log because `result` came back blank. */
 	recovered?: boolean
+	/** Copied in from a background run when it was opened as a chat; its activity is in that run's log. */
+	backfilled?: boolean
 	/**
 	 * How a failed turn was read: 'transient' means the model API blipped and
 	 * the turn was replayed, 'permanent' means no replay would have helped.
@@ -2385,6 +2721,8 @@ export interface MessageQuestion {
 /** An agent's request to connect an integration, surfaced into chat as a Connect card. */
 export interface MessageIntegrationConnect {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	provider: string
 }
 
@@ -2407,6 +2745,8 @@ export interface CustomMcpServerResponse {
 /** An agent's request for a credential, surfaced into chat as a Keychain card. */
 export interface MessageKeychainRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
@@ -2448,16 +2788,57 @@ export interface AgentAccessView {
 
 export interface MessageKeychainAccessRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	integration_id: string
 	credential_name: string
 	kind: 'api_key' | 'login'
 	hint?: string
 }
 
+/** An agent asking for more access to an integration that is connected, surfaced as a card. */
+export interface MessageIntegrationAccessRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	integration_id: string
+	provider: string
+	display_name: string
+	level: 'read' | 'read_write'
+	reason?: string
+}
+
+/** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
+export interface MessageMcpServerRequest {
+	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
+	name: string
+	hint?: string
+	type?: 'stdio' | 'http'
+	command?: string
+	args?: string[]
+	url?: string
+	/** Values the agent may know (not secret): a region, or a Keychain reference. */
+	env?: Record<string, string>
+	headers?: Record<string, string>
+	/** Names the person types the value for in the card. */
+	secret_env?: string[]
+	secret_headers?: string[]
+}
+
 /** An agent asking the person to act on its own computer (the card opens it). */
 export interface MessageComputerRequest {
 	session_id: string
+	/** The asker is a helper another agent started: answer its session, not the chat. */
+	reply_to_session?: boolean
 	task: string
+}
+
+/** Which card a message answers, and how. */
+export interface MessageCardAnswer {
+	message_id: number
+	outcome: 'declined' | 'done'
 }
 
 /** Which options the human picked, posted back on their reply message. */
@@ -2497,9 +2878,17 @@ export interface MessageMetadata {
 	keychain_request?: MessageKeychainRequest
 	/** Backend-owned: an agent's request to use an existing credential, rendered as a card. */
 	keychain_access_request?: MessageKeychainAccessRequest
+	/** Backend-owned: an agent's request for access to a connected integration, rendered as a card. */
+	integration_access_request?: MessageIntegrationAccessRequest
+	/** Backend-owned: an agent's request to add a tool (MCP) server, rendered as a card. */
+	mcp_server_request?: MessageMcpServerRequest
 	computer_request?: MessageComputerRequest
 	/** Backend-owned: a helper's result handed to its sender; hidden from the chat. */
 	helper_return?: string
+	/** Client-supplied: marks this message as the person's answer to the card in message `message_id`. */
+	card_answer?: MessageCardAnswer
+	/** Client-supplied: a nudge to the agent from a card button; sent to the agent, not drawn in the chat. */
+	hidden_from_chat?: true
 	/** Backend-owned: an agent intro's first-step buttons, written once with the intro. */
 	suggested_steps?: SuggestedStep[]
 	/** Backend-owned: the providers an agent intro says the job needs, in the creator's order. */
@@ -2528,6 +2917,39 @@ export interface MessageResponse {
 	 * and for callers that are not participants of the conversation.
 	 */
 	spawned_sessions?: SpawnedSession[]
+	/** The root this message replies under; null or absent on a top-level message. */
+	threadRootId?: number | null
+	/** A reply that was also sent to the main timeline. */
+	threadAlsoInChannel?: boolean
+	/** Reply summary on a top-level message that has replies; null when it has none. */
+	thread?: ReplyThreadSummary | null
+}
+
+export interface ReplyThreadParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
+}
+
+export interface ReplyThreadSummary {
+	replyCount: number
+	lastReplyId: number
+	lastReplyAt: string | null
+	/** Replies by others newer than the caller's thread read cursor. */
+	unreadCount: number
+	participants: ReplyThreadParticipant[]
+}
+
+export interface ReplyThreadListItem {
+	conversationId: string
+	conversationTitle: string
+	root: MessageResponse
+	thread: ReplyThreadSummary
+	lastReply: MessageResponse | null
+}
+
+export interface ReplyThreadListResponse {
+	threads: ReplyThreadListItem[]
 }
 
 /**
@@ -2551,6 +2973,8 @@ export interface SpawnedSession {
 	depends_on_session_ids: string[]
 	/** What the session is waiting on the person for; null when it is not waiting. */
 	awaiting: { message_id: number; question: MessageQuestion } | null
+	/** The session this one carries on (a follow-up to a helper that had ended). */
+	continues_session_id?: string | null
 }
 
 /**
@@ -2600,6 +3024,10 @@ export interface PostMessageInput {
 	content: string
 	metadata?: MessageMetadata
 	session_id?: string
+	/** Post as a reply under this top-level message. */
+	thread_root_id?: number
+	/** With thread_root_id: also show the reply in the main timeline. */
+	also_in_channel?: boolean
 }
 
 export interface SessionConfigInput {
@@ -2620,6 +3048,8 @@ export interface CreateSessionInput {
 	config?: SessionConfigInput
 	auto_start?: boolean
 	entry_agent_role?: string
+	/** The trigger this run is for, so it keeps the trigger's name as its title. */
+	trigger_id?: string
 }
 
 export interface SessionResponse {
@@ -2656,6 +3086,7 @@ export interface SessionInputBody {
 	content: string
 	attachments?: SessionInputAttachment[]
 	question_answer?: MessageQuestionAnswer
+	card_answer?: MessageCardAnswer
 }
 
 export interface SessionLogResponse {

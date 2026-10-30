@@ -1,6 +1,12 @@
 import { type AgentAccess, canRead, canWrite } from './agent-access'
 import { accessDeniedMessage, allows, unavailableNote } from './tool-gate'
-import { type ToolAnnotationsLike, type ToolKind, classifyTool } from './tool-kinds'
+import {
+	type ToolAnnotationsLike,
+	type ToolKind,
+	classifyCall,
+	classifyTool,
+	isCommandGated,
+} from './tool-kinds'
 
 /**
  * Pure parts of the MCP gateway (routes/integrations-gateway.ts): which providers go
@@ -128,27 +134,46 @@ export function denialResult(id: JsonRpcId | undefined, text: string) {
 export interface GatewayDecision {
 	allowed: boolean
 	kind: ToolKind
+	/** For PostHog exec: the inner tool of a call, so a refusal and its event can name it. */
+	innerTool?: string
 	message?: string
 }
+
+const COMMAND_GATED_HINT =
+	'Read access runs one query or lookup command per call; create, update and delete commands, chained commands and --confirm are refused.'
+const COMMAND_GATED_LIST_NOTE =
+	'Read access: query and lookup commands run; create, update and delete commands are refused.'
 
 export function decideToolCall(input: {
 	provider: string
 	providerLabel: string
 	toolName: string
+	/** The tools/call arguments. Only read for a tool whose verdict depends on them. */
+	args?: unknown
 	access: AgentAccess
 	annotations?: ToolAnnotationsLike | null
 }): GatewayDecision {
-	const kind = classifyTool(input.provider, input.toolName, input.annotations)
-	if (allows(input.access, kind)) return { allowed: true, kind }
+	const { kind, innerTool } = classifyCall(
+		input.provider,
+		input.toolName,
+		input.args,
+		input.annotations,
+	)
+	if (allows(input.access, kind)) return { allowed: true, kind, innerTool }
+	const named = innerTool ? `${input.toolName} (${innerTool})` : input.toolName
+	const message = accessDeniedMessage({
+		providerLabel: input.providerLabel,
+		toolName: named,
+		kind,
+		access: input.access,
+	})
 	return {
 		allowed: false,
 		kind,
-		message: accessDeniedMessage({
-			providerLabel: input.providerLabel,
-			toolName: input.toolName,
-			kind,
-			access: input.access,
-		}),
+		innerTool,
+		message: isCommandGated(input.provider, input.toolName)
+			? `${message} ${COMMAND_GATED_HINT}`
+			: message,
 	}
 }
 
@@ -159,6 +184,40 @@ interface ListedTool {
 	description?: string
 	annotations?: ToolAnnotationsLike & Record<string, unknown>
 	[k: string]: unknown
+}
+
+/**
+ * What a provider's own tool description leaves out, added to the end of it. Google's
+ * hosted Gmail tool only saves a draft, and agents read "create_draft" as sending.
+ */
+const TOOL_DESCRIPTION_NOTES: Record<string, Record<string, string>> = {
+	gmail: {
+		create_draft:
+			'This only saves a draft in Gmail. It does not send anything. To send an email, use the gmail_send_email tool after a person has approved it, and say "sent" only once that returns a message id.',
+	},
+}
+
+/**
+ * A tool whose verdict depends on the call (PostHog exec). It lists as usable to anyone who
+ * can read, since some of its commands are reads; readOnlyHint stays false because it can
+ * write; a read-only agent is told which commands run. No access still shows it unavailable.
+ */
+function annotateCommandGatedTool(
+	tool: ListedTool,
+	ctx: { providerLabel: string; access: AgentAccess },
+): ListedTool {
+	const description = tool.description ?? ''
+	const annotations = { ...tool.annotations, readOnlyHint: false }
+	let note = ''
+	if (!canRead(ctx.access)) note = unavailableNote(ctx.providerLabel, 'write', ctx.access)
+	else if (!canWrite(ctx.access)) note = COMMAND_GATED_LIST_NOTE
+	return {
+		...tool,
+		annotations,
+		description: canRead(ctx.access)
+			? `${description} ${note}`.trim()
+			: `${note} ${description}`.trim(),
+	}
 }
 
 /**
@@ -173,9 +232,12 @@ export function annotateToolsList(
 	const upstreamAnnotations = new Map<string, ToolAnnotationsLike>()
 	const tools = (result.tools ?? []).map((tool) => {
 		if (tool.annotations) upstreamAnnotations.set(tool.name, tool.annotations)
+		if (isCommandGated(ctx.provider, tool.name)) return annotateCommandGatedTool(tool, ctx)
 		const kind = classifyTool(ctx.provider, tool.name, tool.annotations)
 		const usable = kind === 'read' ? canRead(ctx.access) : canWrite(ctx.access)
-		const description = tool.description ?? ''
+		const note = TOOL_DESCRIPTION_NOTES[ctx.provider]?.[tool.name]
+		const upstream = tool.description ?? ''
+		const description = note ? `${upstream} ${note}`.trim() : upstream
 		return {
 			...tool,
 			annotations: { ...tool.annotations, readOnlyHint: kind === 'read' },

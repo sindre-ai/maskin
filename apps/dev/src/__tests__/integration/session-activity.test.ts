@@ -78,7 +78,7 @@ describe('GET /api/sessions/:id/activity (Integration)', () => {
 		})
 		expect(body.turns[0]?.steps[0]).toMatchObject({
 			kind: 'tool_use',
-			label: 'Using Read',
+			label: 'Read',
 			detail: '/x.ts',
 			status: 'completed',
 		})

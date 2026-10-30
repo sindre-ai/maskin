@@ -17,8 +17,34 @@ final class LiveCallCenter {
 	private(set) var isStarting = false
 	/// Why a call could not start, shown once.
 	var problem: String?
-	/// The conversation whose thread is on screen right now, so the pill stays out of its way.
+	/// The conversation whose thread is on screen right now, so a request to start a call can tell
+	/// whether to open the thread first.
 	var visibleConversationID: String?
+
+	/// How many call panels (the dock, or the bar it minimises to) each conversation has on
+	/// screen. Counted, not a single flag: SwiftUI can create a thread's panel for a new screen
+	/// before the old one has gone, and the old one disappearing must not hide the new one.
+	private(set) var panelsOnScreen: [String: Int] = [:]
+
+	func panelAppeared(for conversationID: String) {
+		panelsOnScreen[conversationID, default: 0] += 1
+	}
+
+	func panelDisappeared(for conversationID: String) {
+		let remaining = (panelsOnScreen[conversationID] ?? 0) - 1
+		panelsOnScreen[conversationID] = remaining > 0 ? remaining : nil
+	}
+
+	func isPanelOnScreen(for conversationID: String) -> Bool {
+		(panelsOnScreen[conversationID] ?? 0) > 0
+	}
+
+	/// The pill is for every screen where the call's own panel is not. Never both at once: the
+	/// panel in the thread is either the dock or, minimised, the bar, and that bar is the pill.
+	var showsPill: Bool {
+		guard let current else { return false }
+		return !isPanelOnScreen(for: current.chat.conversationID)
+	}
 
 	/// Opens a conversation's thread (set by the shell: selects the Chats tab and requests it).
 	@ObservationIgnored var openConversation: (String) -> Void = { _ in }
@@ -45,7 +71,7 @@ final class LiveCallCenter {
 		Task {
 			defer { isStarting = false }
 			do {
-				let (id, lead, kind, navigate) = try await resolve(request, environment: environment)
+				let (id, lead, kind, navigate, origin) = try await resolve(request, environment: environment)
 				guard let chat = BriefingChat.chatStore(conversationID: id, environment: environment) else {
 					throw BriefingChat.Failure(message: "Choose a workspace first.")
 				}
@@ -53,7 +79,9 @@ final class LiveCallCenter {
 				await chat.start()
 				let session = LiveMeetingSession(
 					kind: kind, chat: chat, lead: lead, makePorts: LiveMeetingSession.devicePorts,
-					realtime: Self.realtimeCall(with: lead, environment: environment))
+					realtime: Self.realtimeCall(
+						with: lead, conversationID: id, environment: environment))
+				session.origin = origin
 				current = session
 				session.begin()
 				startTicker()
@@ -79,10 +107,12 @@ final class LiveCallCenter {
 
 	/// The OpenAI Realtime call with the lead agent. Nil when the lead isn't an agent; the call
 	/// then runs as a dictated conversation.
-	private static func realtimeCall(with lead: ChatParticipant, environment: AppEnvironment) -> RealtimeVoiceCall? {
+	private static func realtimeCall(
+		with lead: ChatParticipant, conversationID: String?, environment: AppEnvironment
+	) -> RealtimeVoiceCall? {
 		guard lead.kind == .agent else { return nil }
 		return RealtimeVoiceCall(
-			agentID: lead.id, agentName: lead.name,
+			agentID: lead.id, agentName: lead.name, conversationID: conversationID,
 			calls: URLSessionVoiceCalls(
 				baseURL: environment.baseURL, clientSource: environment.clientSource,
 				credentials: environment.auth.credentialsProvider),
@@ -91,16 +121,16 @@ final class LiveCallCenter {
 
 	private func resolve(
 		_ request: LiveMeetingRequest, environment: AppEnvironment
-	) async throws -> (String, ChatParticipant, LiveMeetingKind, navigate: Bool) {
+	) async throws -> (String, ChatParticipant, LiveMeetingKind, navigate: Bool, origin: LiveCallOrigin) {
 		switch request {
-		case .thread(let chat, let lead): return (chat.conversationID, lead, .adHoc, false)
-		case .conversation(let id, let lead): return (id, lead, .adHoc, false)
+		case .thread(let chat, let lead): return (chat.conversationID, lead, .adHoc, false, .thread)
+		case .conversation(let id, let lead): return (id, lead, .adHoc, false, .ownThread)
 		case .chiefOfStaff:
 			let (id, lead) = try await BriefingChat.resolve(environment: environment, oneToOne: true)
-			return (id, lead, .adHoc, true)
+			return (id, lead, .adHoc, true, .ownThread)
 		case .dailyBriefing:
 			let (id, lead) = try await BriefingChat.resolve(environment: environment, oneToOne: false)
-			return (id, lead, .dailyBriefing, true)
+			return (id, lead, .dailyBriefing, true, .ownThread)
 		}
 	}
 

@@ -63,6 +63,24 @@ vi.mock('../../lib/crypto', () => ({
 	decrypt: vi.fn().mockReturnValue('decrypted'),
 }))
 
+// A launch mints a session key (an insert) and revokes the session's older ones (an update), and
+// every settle revokes again. These tests queue insert and update results by position, so the
+// two helpers are stubbed to keep those queues as written; their own queries are covered in
+// packages/auth and against real Postgres.
+const { mockIssueApiKey, mockRevokeSessionKeys } = vi.hoisted(() => ({
+	mockIssueApiKey: vi.fn(async (_db: unknown, _input: unknown) => ({
+		key: 'ank_minted_session_key',
+		keyHash: 'hash_of_minted_session_key',
+	})),
+	mockRevokeSessionKeys: vi.fn(async (_db: unknown, _sessionId: string, _except?: string) => []),
+}))
+
+vi.mock('@maskin/auth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@maskin/auth')>()),
+	issueApiKey: mockIssueApiKey,
+	revokeSessionKeys: mockRevokeSessionKeys,
+}))
+
 // The launch reads the agent's integration access with a query of its own. These tests queue
 // db.select() results by position, so the lookup is stubbed here and covered against real
 // Postgres in integration/agent-access-launch.test.ts.
@@ -101,11 +119,17 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Helper close-out only; covered in integration/helper-limit-retry.test.ts.
+	classifyClaudeAuthFailureText: () => null,
 	// Same call the real helper makes for an exit with no final result message,
 	// so the assertions below keep reading the tail + option the classifier got.
 	// The helper's own rule is covered in lib/credit-classifier.test.ts.
 	classifySessionExit: (tail: string, exitCode: number) =>
 		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
+	// The 401 close-out report is not under test here; its rule is covered in
+	// lib/credit-classifier.test.ts.
+	endsInClaudeAuthDeath: () => false,
+	isClaudeAuthDeathText: () => false,
 }))
 
 import { execFile } from 'node:child_process'
@@ -817,7 +841,7 @@ describe('SessionManager', () => {
 			expect(configWrites[0]?.config.run_goal).toContain('Saved earlier.')
 		})
 
-		it('refuses to launch when the agent has no apiKey', async () => {
+		it('launches an agent that has no stored apiKey on a key minted for the session', async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
@@ -826,7 +850,7 @@ describe('SessionManager', () => {
 			})
 			const agent = {
 				id: session.actorId,
-				name: 'Orphaned Agent',
+				name: 'Keyless Agent',
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
@@ -846,15 +870,66 @@ describe('SessionManager', () => {
 				failures: [],
 			})
 
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			expect(mockIssueApiKey).toHaveBeenCalledTimes(1)
+			expect(mockIssueApiKey).toHaveBeenCalledWith(expect.anything(), {
+				actorId: agent.id,
+				kind: 'session',
+				sessionId: session.id,
+			})
+			// Older keys of this session go, the one just minted stays.
+			expect(mockRevokeSessionKeys).toHaveBeenCalledWith(
+				expect.anything(),
+				session.id,
+				'hash_of_minted_session_key',
+			)
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(createArgs.env.MASKIN_API_KEY).toBe('ank_minted_session_key')
+		})
+
+		it('does not launch when the session key cannot be minted', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				actionPrompt: 'Do the thing',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				name: 'Keyless Agent',
+				type: 'agent',
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+			mockIssueApiKey.mockRejectedValueOnce(new Error('api_keys insert failed'))
+
 			mockResults.selectQueue = [
 				[session], // startSession: load session
 				[workspace], // hasCapacity: workspace lookup
 				[{ count: 0 }], // hasCapacity: running count
-				[agent], // launchContainer: agent lookup (apiKey is null)
+				[agent], // launchContainer: agent lookup
 				[workspace], // launchContainer: workspace lookup (llm keys)
 			]
 
-			await expect(manager.startSession(session.id)).rejects.toThrow(/apiKey is null/)
+			await expect(manager.startSession(session.id)).rejects.toThrow(/api_keys insert failed/)
 			expect(mockContainerManager.create).not.toHaveBeenCalled()
 		})
 
@@ -1030,7 +1105,7 @@ describe('SessionManager', () => {
 			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
-		it('omits ANTHROPIC_MODEL when the agent has no model preference', async () => {
+		it('defaults ANTHROPIC_MODEL to Sonnet when the agent has no model preference', async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
@@ -1074,7 +1149,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBeUndefined()
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
 		it('forwards agent llmConfig.model as ANTHROPIC_MODEL on the Claude OAuth route', async () => {
@@ -1696,6 +1771,134 @@ describe('SessionManager', () => {
 					env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai' },
 				})
 			})
+
+			describe('MASKIN_GITHUB_MCP_REFRESH host switch', () => {
+				const supervisedArgs = [
+					'-c',
+					'if [ -f /github-mcp-supervisor.cjs ]; then exec node /github-mcp-supervisor.cjs "$@"; fi; exec github-mcp-server "$@"',
+					'github-mcp-server',
+					...officialSpec.args,
+				]
+
+				afterEach(() => {
+					vi.unstubAllEnvs()
+				})
+
+				async function launchTwoInstalls() {
+					const wsId = randomUUID()
+					const integrationA = buildIntegration({
+						workspaceId: wsId,
+						provider: 'github',
+						externalId: 'install-aaa',
+						config: { owner_login: 'sindre-ai' },
+					})
+					const integrationB = buildIntegration({
+						workspaceId: wsId,
+						provider: 'github',
+						externalId: 'install-bbb',
+						config: { owner_login: 'vaerksted-ai' },
+					})
+					const fixtures = buildLaunchFixtures([integrationA, integrationB])
+					fixtures.session.workspaceId = wsId
+					fixtures.workspace.id = wsId
+					vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+					mockGetValidToken
+						.mockResolvedValueOnce('ghs_token_sindre_ai')
+						.mockResolvedValueOnce('ghs_token_vaerksted_ai')
+					setupLaunchMocks(fixtures)
+					await manager.startSession(fixtures.session.id)
+					const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+						env: Record<string, string>
+					}
+					const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+						mcpServers: Record<string, unknown>
+					}
+					return { integrationA, integrationB, servers: parsed.mcpServers, fixtures }
+				}
+
+				it.each([
+					['unset', undefined],
+					['empty', ''],
+					['"0"', '0'],
+					['"false"', 'false'],
+				])('keeps the entries byte-identical to today when the switch is %s', async (_, value) => {
+					vi.stubEnv('MASKIN_GITHUB_MCP_REFRESH', value as unknown as string)
+					const { servers } = await launchTwoInstalls()
+					expect(JSON.stringify(servers['github-sindre-ai'])).toBe(
+						JSON.stringify({
+							type: 'stdio',
+							command: officialSpec.command,
+							args: officialSpec.args,
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai' },
+						}),
+					)
+					expect(JSON.stringify(servers['github-vaerksted-ai'])).toBe(
+						JSON.stringify({
+							type: 'stdio',
+							command: officialSpec.command,
+							args: officialSpec.args,
+							env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_vaerksted_ai' },
+						}),
+					)
+				})
+
+				it("runs each install's entry through the guarded supervisor with its own integration id", async () => {
+					vi.stubEnv('MASKIN_GITHUB_MCP_REFRESH', '1')
+					const { integrationA, integrationB, servers } = await launchTwoInstalls()
+					expect(servers['github-sindre-ai']).toEqual({
+						type: 'stdio',
+						command: 'sh',
+						args: supervisedArgs,
+						env: {
+							GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
+							GITHUB_MCP_INTEGRATION_ID: integrationA.id,
+							MASKIN_API_URL: '${MASKIN_API_URL}',
+							MASKIN_API_KEY: '${MASKIN_API_KEY}',
+							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+						},
+					})
+					expect(servers['github-vaerksted-ai']).toEqual({
+						type: 'stdio',
+						command: 'sh',
+						args: supervisedArgs,
+						env: {
+							GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_vaerksted_ai',
+							GITHUB_MCP_INTEGRATION_ID: integrationB.id,
+							MASKIN_API_URL: '${MASKIN_API_URL}',
+							MASKIN_API_KEY: '${MASKIN_API_KEY}',
+							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+						},
+					})
+					// The agent's own key stays out of the session's MCP config.
+					const serialized = JSON.stringify(servers)
+					expect(serialized).not.toContain('ank_test_agent_key')
+				})
+
+				it('registers both installs with the log classifier unchanged when the switch is on', async () => {
+					vi.stubEnv('MASKIN_GITHUB_MCP_REFRESH', '1')
+					const { sessionGithubLogClassifier } = await import(
+						'../../lib/integrations/providers/github/log-classifier'
+					)
+					const register = vi.spyOn(sessionGithubLogClassifier, 'registerSession')
+					try {
+						const { integrationA, integrationB, fixtures } = await launchTwoInstalls()
+						// mcp__github-<owner>__ tool names resolve through ownerLoginLower, so the
+						// mapping to each install is the same as with the switch off.
+						expect(register).toHaveBeenCalledWith(fixtures.session.id, [
+							expect.objectContaining({
+								ownerLoginLower: 'sindre-ai',
+								installationId: integrationA.externalId,
+							}),
+							expect.objectContaining({
+								ownerLoginLower: 'vaerksted-ai',
+								installationId: integrationB.externalId,
+							}),
+						])
+					} finally {
+						register.mockRestore()
+					}
+				})
+			})
 		})
 
 		it('sets GITHUB_REPO alongside GITHUB_INTEGRATION_ID when a scoped bet carries metadata.repo', async () => {
@@ -1735,6 +1938,8 @@ describe('SessionManager', () => {
 				[fixtures.workspace],
 				[fixtures.workspace],
 				fixtures.integrationRows,
+				// buildExtensionMcpServers: no extensions in this workspace
+				[],
 				// buildKeychainEnv: no bring-your-own keys in this workspace
 				[],
 				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly
@@ -2751,6 +2956,96 @@ describe('SessionManager', () => {
 			expect(slackBody.text).not.toContain(healthyIntegration.externalId)
 			expect(slackBody.text).toContain('github-vaerksted-ai')
 		})
+
+		it('still probes both owners and gates the failing one when the entries run through the supervisor', async () => {
+			vi.stubEnv('MASKIN_GITHUB_MCP_REFRESH', '1')
+			try {
+				const wsId = randomUUID()
+				const healthyIntegration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					externalId: 'install-healthy-org',
+					config: { owner_login: 'sindre-ai' },
+				})
+				const brokenIntegration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'github',
+					externalId: 'install-broken-org',
+					config: { owner_login: 'vaerksted-ai' },
+				})
+				const slackIntegration = buildIntegration({
+					workspaceId: wsId,
+					provider: 'slack',
+					externalId: 'T-supervised',
+				})
+				const fixtures = launchFixtures({
+					integrationRows: [healthyIntegration, brokenIntegration, slackIntegration],
+				})
+				fixtures.session.workspaceId = wsId
+				fixtures.workspace.id = wsId
+
+				vi.mocked(getProvider).mockImplementation(
+					(provider: string) =>
+						(provider === 'slack' ? slackProviderConfig : githubProviderConfig) as never,
+				)
+				mockGetValidToken
+					.mockResolvedValueOnce('ghs_token_sindre_ai')
+					.mockResolvedValueOnce('ghs_token_vaerksted_ai')
+					.mockResolvedValueOnce('xoxb-supervised-bot')
+
+				const probedTokens = new Set<string>()
+				vi.stubGlobal(
+					'fetch',
+					vi.fn(async (url: string | URL, init?: RequestInit) => {
+						const u = url.toString()
+						const auth = (init?.headers as Record<string, string> | undefined)?.Authorization
+						if (u === 'https://api.github.com/installation/repositories?per_page=1') {
+							if (auth) probedTokens.add(auth)
+							if (auth === 'Bearer ghs_token_vaerksted_ai')
+								return jsonRes({ repositories: [{ full_name: 'vaerksted-ai/x' }] })
+							return jsonRes({ repositories: [{ full_name: 'sindre-ai/maskin' }] })
+						}
+						if (u === 'https://api.github.com/repos/sindre-ai/maskin/git/blobs')
+							return jsonRes({ sha: 'abc123' }, 201)
+						if (u === 'https://api.github.com/repos/vaerksted-ai/x/git/blobs')
+							return new Response('Resource not accessible by integration', { status: 403 })
+						if (u === 'https://slack.com/api/chat.postMessage') return jsonRes({ ok: true })
+						throw new Error(`unexpected fetch: ${u}`)
+					}),
+				)
+
+				loadLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				// Preflight read the launch token from both supervised entries.
+				expect(probedTokens).toEqual(
+					new Set(['Bearer ghs_token_sindre_ai', 'Bearer ghs_token_vaerksted_ai']),
+				)
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const mcp = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { command?: string; env?: Record<string, string> }>
+				}
+				expect(mcp.mcpServers['github-sindre-ai']?.command).toBe('sh')
+				expect(mcp.mcpServers['github-sindre-ai']?.env?.GITHUB_MCP_INTEGRATION_ID).toBe(
+					healthyIntegration.id,
+				)
+				expect(mcp.mcpServers['github-vaerksted-ai']).toBeUndefined()
+
+				const fetchMock = vi.mocked(fetch)
+				const slackPost = fetchMock.mock.calls.find(
+					(args) => args[0]?.toString() === 'https://slack.com/api/chat.postMessage',
+				)
+				const slackBody = JSON.parse((slackPost?.[1]?.body as string) ?? '{}') as { text: string }
+				// installationIdByMcpName still names the broken org's installation.
+				expect(slackBody.text).toContain(brokenIntegration.externalId)
+				expect(slackBody.text).not.toContain(healthyIntegration.externalId)
+				expect(slackBody.text).toContain('github-vaerksted-ai')
+			} finally {
+				vi.unstubAllEnvs()
+			}
+		})
 	})
 
 	describe('stopSession()', () => {
@@ -2951,8 +3246,9 @@ describe('SessionManager', () => {
 
 	describe('markRemoteSessionComplete()', () => {
 		// Mock-DB choreography for these tests. Select order inside the method:
-		// 1) the stdout read, 2) (only when usage parses) the route/model lookup,
-		// 3) the open-row check, then settleSession's own SELECT, the re-read after
+		// 1) the stdout read, 2) the resume-marker and result-row reads of
+		// sumSegmentResultUsage, 3) (only when usage parses) the route/model lookup,
+		// 4) the open-row check, then settleSession's own SELECT, the re-read after
 		// settling and hasOtherActiveSessions. Tests queue the first and leave the
 		// rest to the static `mockResults.select` default, a still-running row.
 		// Updates: (only when usage parses) the usage columns, then the CAS inside
@@ -2960,9 +3256,9 @@ describe('SessionManager', () => {
 		const settleFlips = (session: { id: string }) => [{ id: session.id }]
 
 		it('no-ops without writing an event when the session is already terminal', async () => {
-			// 1st select: the stdout read (empty). 2nd: the open-row check finds a
-			// terminal status. 3rd: the lookup that enriches the dropped-signal log.
-			mockResults.selectQueue = [[], [{ status: 'completed' }], [{ status: 'completed' }]]
+			// 1st select: the stdout read (empty). 2nd and 3rd: the usage sum (empty). 4th: the
+			// open-row check finds a terminal status. 5th: the lookup that enriches the dropped-signal log.
+			mockResults.selectQueue = [[], [], [], [{ status: 'completed' }], [{ status: 'completed' }]]
 			const initialInsertCount = calls.inserts.length
 
 			await manager.markRemoteSessionComplete('some-session-id', 1)
@@ -2977,7 +3273,7 @@ describe('SessionManager', () => {
 		// visible from app logs alone.
 		it('logs a warning with the dropped exit code and current session state when the session is already terminal', async () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
-			mockResults.selectQueue = [[], [{ status: 'completed' }], [session]]
+			mockResults.selectQueue = [[], [], [], [], [{ status: 'completed' }], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -3035,10 +3331,12 @@ describe('SessionManager', () => {
 			// update() call.
 			mockResults.select = [session]
 			mockResults.selectQueue = [[]]
-			// 1st call (the stdout read) is fine; the open-row check throws on the
-			// 1st and 2nd attempts, and the 3rd (final, within CAS_UPDATE_RETRIES)
+			// The first 3 calls (the stdout read and the usage sum's two reads) are fine;
+			// the open-row check throws on the 1st and 2nd attempts, and the 3rd (final, within CAS_UPDATE_RETRIES)
 			// goes through.
 			mockResults.selectErrorQueue = [
+				undefined,
+				undefined,
 				undefined,
 				new Error('connection reset'),
 				new Error('connection reset'),
@@ -3056,6 +3354,8 @@ describe('SessionManager', () => {
 		it('gives up and no-ops after exhausting retries when the fallback lookup also finds no session', async () => {
 			mockResults.selectQueue = [[]]
 			mockResults.selectErrorQueue = [
+				undefined,
+				undefined,
 				undefined,
 				new Error('connection reset'),
 				new Error('connection reset'),
@@ -3084,7 +3384,10 @@ describe('SessionManager', () => {
 		it('gives up and returns false when the fallback lookup after the retries also throws', async () => {
 			mockResults.selectQueue = [[]]
 			mockResults.selectErrorQueue = [
-				undefined,
+				undefined, // stdout chunks
+				undefined, // usage watermark
+				undefined, // resume marker
+				undefined, // result rows
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
@@ -3129,7 +3432,7 @@ describe('SessionManager', () => {
 					},
 				}),
 			}
-			mockResults.selectQueue = [[resultLogRow]]
+			mockResults.selectQueue = [[resultLogRow], [], [resultLogRow]]
 			mockResults.select = [session]
 			// 1st update: the usage columns. 2nd: the CAS inside settleSession.
 			mockResults.updateQueue = [[], settleFlips(session)]
@@ -3300,6 +3603,24 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 			expect(storageProvider.put).not.toHaveBeenCalled()
 			// Should resolve (not throw) so the auto-pause loop doesn't keep retrying
+		})
+
+		it('refuses to pause a session on an agent server and leaves it running', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'remote-sandbox',
+				agentServerId: 'agent-server-1',
+			})
+			mockResults.select = [session]
+			// inspect default mock returns { running: false }: local Docker knows nothing of it
+
+			await expect(manager.pauseSession(session.id)).rejects.toThrow('runs on an agent server')
+
+			// Not marked failed, no snapshot work, no status write at all
+			expect(calls.updates).toEqual([])
+			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
+			expect(mockContainerManager.copyFrom).not.toHaveBeenCalled()
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 		})
 
 		it('marks session failed when container vanishes mid-pause', async () => {
@@ -4504,7 +4825,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4532,7 +4855,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4561,7 +4886,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[otherSession], // hasOtherActiveSessions: agent still has live work
@@ -4613,7 +4940,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4656,7 +4985,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -4696,7 +5025,7 @@ describe('SessionManager', () => {
 				stdoutTail: 'Tool result: {"error":"billing_error: connection refused"}',
 			})
 
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -4731,7 +5060,7 @@ describe('SessionManager', () => {
 				stdoutTail: "You've hit your limit · resets 3:20pm (UTC)",
 			})
 
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -4795,7 +5124,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -4909,7 +5240,9 @@ describe('SessionManager', () => {
 				const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
-					[], // extractSessionUsage fallback
+					[], // accumulateSessionUsage: usage watermark
+					[], // sumUncountedResultUsage: resume marker
+					[], // sumUncountedResultUsage: result rows
 					[], // sumAssistantUsage fallback
 					[session], // settleSession's own SELECT of the row
 					[], // hasOtherActiveSessions
@@ -5058,7 +5391,9 @@ describe('SessionManager', () => {
 			}
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5150,7 +5485,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5205,7 +5542,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 
 			await (
 				manager as unknown as {
@@ -5240,7 +5577,7 @@ describe('SessionManager', () => {
 			)
 
 			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			// 143 = SIGTERM, the exit code stopSession()'s container kill produces —
@@ -5300,7 +5637,7 @@ describe('SessionManager', () => {
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
 			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
-			mockResults.selectQueue = [[session], [], [], [session]]
+			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
 			await (
@@ -5339,7 +5676,9 @@ describe('SessionManager', () => {
 			internals.activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]

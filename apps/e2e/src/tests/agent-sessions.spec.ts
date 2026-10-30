@@ -57,7 +57,7 @@ test.describe('Agent detail — Sessions section', () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			const section = page.getByRole('region', { name: 'Sessions' })
+			const section = page.getByRole('region', { name: 'Sessions', exact: true })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 
 			// The section note says what you can do here (mockup 2427), not a count.
@@ -101,7 +101,7 @@ test.describe('Agent detail — Sessions section', () => {
 			])
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
-			const section = page.getByRole('region', { name: 'Sessions' })
+			const section = page.getByRole('region', { name: 'Sessions', exact: true })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 
 			// Active runs sort first, then newest-first — so the oldest two sit
@@ -113,12 +113,6 @@ test.describe('Agent detail — Sessions section', () => {
 			await expect(section.getByText('Run three')).toBeHidden()
 			// Re-expand: the paused session is one of the two below the cap.
 			await section.getByRole('button', { name: 'Show all 7' }).click()
-
-			// Below `md` the row controls live inside the expanded panel, so the
-			// running session has to be opened to reach them on a phone.
-			if (vp.width < 768) {
-				await section.getByRole('button', { name: 'View details for Hold the queue' }).click()
-			}
 
 			const pause = section.getByRole('button', { name: 'Pause', exact: true }).first()
 			const resume = section.getByRole('button', { name: 'Resume', exact: true }).first()
@@ -137,11 +131,7 @@ test.describe('Agent detail — Sessions section', () => {
 			await pause.click()
 			await paused
 
-			// The paused session offers Resume instead (it has a snapshot to
-			// restore from); on a phone it sits in that row's expanded panel.
-			if (vp.width < 768) {
-				await section.getByRole('button', { name: 'View details for Ready to resume' }).click()
-			}
+			// The paused session offers Resume instead (it has a snapshot to restore from).
 			await expect(resume).toBeVisible()
 			const resumed = page.waitForRequest(
 				(r) => r.url().includes('/sessions/sess-hold/resume') && r.method() === 'POST',

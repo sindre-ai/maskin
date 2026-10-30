@@ -8,7 +8,11 @@ import {
 	detectSuspiciousFilterEntries,
 	trackTriggerConfigSuspicious,
 } from '../lib/analytics/trigger-matcher-events'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import {
@@ -34,6 +38,29 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+// The model route is stamped on the session at dispatch (from the target agent
+// and workspace settings), never read from the trigger. The config schemas
+// strip unknown keys, so without this check a caller who sends one of these
+// gets a 200 and the field silently vanishes. Read from the raw request body:
+// by the time the handler runs, `c.req.valid('json')` has already dropped them.
+const MODEL_ROUTE_CONFIG_KEYS = ['llm_route', 'llm_oauth_slot'] as const
+
+async function findModelRouteKeyInConfig(c: {
+	req: { json: () => Promise<unknown> }
+}): Promise<string | undefined> {
+	const raw = (await c.req.json()) as { config?: unknown } | null
+	const config = raw?.config
+	if (typeof config !== 'object' || config === null) return undefined
+	return MODEL_ROUTE_CONFIG_KEYS.find((key) => key in config)
+}
+
+function modelRouteConfigError(key: string) {
+	return createApiError(
+		'VALIDATION_ERROR',
+		`config.${key} is not a trigger setting: the model route is resolved at dispatch from the target agent and workspace settings`,
+	)
+}
 
 /**
  * Kick off the Slack trigger setup service after the DB commit — never inside
@@ -144,6 +171,9 @@ app.openapi(createTriggerRoute, async (c) => {
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = c.req.valid('json')
+
+	const modelRouteKey = await findModelRouteKeyInConfig(c)
+	if (modelRouteKey) return c.json(modelRouteConfigError(modelRouteKey), 400)
 
 	// Validate cron expression eagerly so users get immediate feedback
 	if (body.type === 'cron') {
@@ -264,8 +294,8 @@ app.openapi(listTriggersRoute, (async (c) => {
 
 	const orderBy = cursorOn
 		? query.order === 'asc'
-			? [asc(triggers.createdAt), asc(triggers.id)]
-			: [desc(triggers.createdAt), asc(triggers.id)]
+			? [asc(msCreatedAt(triggers.createdAt)), asc(triggers.id)]
+			: [desc(msCreatedAt(triggers.createdAt)), asc(triggers.id)]
 		: []
 
 	const skipOffset = useKeysetSeek(query)
@@ -335,6 +365,9 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	if (!trigger || !(await isWorkspaceWriter(db, actorId, trigger.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
+
+	const modelRouteKey = await findModelRouteKeyInConfig(c)
+	if (modelRouteKey) return c.json(modelRouteConfigError(modelRouteKey), 400)
 
 	// Validate config against the effective post-update type — the type in the
 	// body if changing it, otherwise the stale DB value — so a config-only PATCH

@@ -12,7 +12,11 @@ import {
 import AdmZip from 'adm-zip'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -229,11 +233,11 @@ app.openapi(listWorkspaceSkillsRoute, (async (c) => {
 	const rows = await (cursorOn
 		? query.order === 'asc'
 			? baseSelect
-					.orderBy(asc(workspaceSkills.createdAt), asc(workspaceSkills.id))
+					.orderBy(asc(msCreatedAt(workspaceSkills.createdAt)), asc(workspaceSkills.id))
 					.limit(effectiveLimit ?? 100)
 					.offset(effectiveOffset ?? 0)
 			: baseSelect
-					.orderBy(desc(workspaceSkills.createdAt), asc(workspaceSkills.id))
+					.orderBy(desc(msCreatedAt(workspaceSkills.createdAt)), asc(workspaceSkills.id))
 					.limit(effectiveLimit ?? 100)
 					.offset(effectiveOffset ?? 0)
 		: effectiveLimit !== undefined

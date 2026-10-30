@@ -182,6 +182,35 @@ describe('annotateToolsList', () => {
 		expect(tools.every((t) => !t.description.includes('Unavailable'))).toBe(true)
 	})
 
+	it('says on Gmail create_draft that it only drafts and names the tool that sends', () => {
+		const gmail = {
+			tools: [
+				{ name: 'create_draft', description: 'Creates a draft email.' },
+				{ name: 'search_threads', description: 'Searches threads.' },
+			],
+		}
+		for (const access of ['read_write', 'read'] as const) {
+			const { result: out } = annotateToolsList(gmail, {
+				provider: 'gmail',
+				providerLabel: 'Gmail',
+				access,
+			})
+			const tools = (out as { tools: Array<{ description: string }> }).tools
+			expect(tools[0].description).toContain('Creates a draft email.')
+			expect(tools[0].description).toContain('does not send anything')
+			expect(tools[0].description).toContain('gmail_send_email')
+			expect(tools[1].description).toBe('Searches threads.')
+		}
+	})
+
+	it('leaves a same-named tool on another provider alone', () => {
+		const { result: out } = annotateToolsList(
+			{ tools: [{ name: 'create_draft', description: 'Drafts.' }] },
+			{ provider: 'linear', providerLabel: 'Linear', access: 'read_write' },
+		)
+		expect((out as { tools: Array<{ description: string }> }).tools[0].description).toBe('Drafts.')
+	})
+
 	it('hands back what the server itself said, to classify later calls with', () => {
 		const { upstreamAnnotations } = annotateToolsList(result, {
 			provider: 'linear',
@@ -221,5 +250,48 @@ describe('buildUpstreamHeaders', () => {
 			),
 		).toEqual({ Authorization: 'Bearer tok-1' })
 		expect(buildUpstreamHeaders(undefined, 'LINEAR_TOKEN', 'tok-1')).toEqual({})
+	})
+})
+
+describe('PostHog exec in the gateway decisions', () => {
+	const base = { provider: 'posthog', providerLabel: 'PostHog', toolName: 'exec' }
+	const args = (command: string) => ({ command })
+
+	it('lets a Read agent run a query and refuses a write, naming the inner tool', () => {
+		const read = decideToolCall({ ...base, args: args('call query-trends {}'), access: 'read' })
+		expect(read).toMatchObject({ allowed: true, kind: 'read', innerTool: 'query-trends' })
+
+		const denied = decideToolCall({
+			...base,
+			args: args('call dashboard-create {"name":"x"}'),
+			access: 'read',
+		})
+		expect(denied.allowed).toBe(false)
+		expect(denied.innerTool).toBe('dashboard-create')
+		expect(denied.message).toContain('exec (dashboard-create) needs write access to PostHog')
+		expect(denied.message).not.toContain('"name"')
+	})
+
+	it('lets Read & write do the write and refuses even a read at no access', () => {
+		const write = args('call dashboard-create {}')
+		expect(decideToolCall({ ...base, args: write, access: 'read_write' }).allowed).toBe(true)
+		expect(decideToolCall({ ...base, args: args('help'), access: 'none' }).allowed).toBe(false)
+	})
+
+	it('lists exec as usable to a Read agent with the added line, and unavailable at no access', () => {
+		type Listed = { tools: Array<{ description: string; annotations: { readOnlyHint: boolean } }> }
+		const result = { tools: [{ name: 'exec', description: 'Run a command.' }] }
+		const list = (access: 'none' | 'read' | 'read_write') =>
+			(
+				annotateToolsList(result, { provider: 'posthog', providerLabel: 'PostHog', access })
+					.result as Listed
+			).tools[0]
+
+		expect(list('read').description).toBe(
+			'Run a command. Read access: query and lookup commands run; create, update and delete commands are refused.',
+		)
+		expect(list('read').annotations.readOnlyHint).toBe(false)
+		expect(list('none').description).toContain('[Unavailable: you have no access to PostHog.]')
+		expect(list('read_write').description).toBe('Run a command.')
 	})
 })

@@ -50,7 +50,7 @@ extension WidgetSnapshotLoader {
 	/// The loader the extension uses: shared-group Keychain session, own-container cache, real API.
 	public static func live(baseURL: URL) -> WidgetSnapshotLoader {
 		WidgetSnapshotLoader(
-			secrets: KeychainSecretStore(), cache: FileWidgetSnapshotCache(),
+			secrets: KeychainSecretStore(readOnly: true), cache: FileWidgetSnapshotCache(),
 			makeSource: { session, flag in
 				APIWidgetDataSource.make(baseURL: baseURL, session: session, flag: flag)
 			})

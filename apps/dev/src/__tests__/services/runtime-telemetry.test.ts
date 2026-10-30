@@ -304,4 +304,63 @@ describe('RuntimeTelemetry', () => {
 			expect(capture).toHaveBeenCalledTimes(2)
 		})
 	})
+
+	describe('runtime_session_ended daily cap', () => {
+		const ended = (sessionId: string) => ({
+			sessionId,
+			endReason: 'failed' as const,
+			durationMs: 1,
+		})
+
+		it('stops sending once the day is full, even for new session ids', () => {
+			vi.useFakeTimers()
+			vi.setSystemTime(new Date('2026-10-26T10:00:00Z'))
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDailyCap: 3 })
+
+			for (let i = 0; i < 100; i++) telemetry.recordSessionEnded(ended(`sess-${i}`))
+
+			expect(capture).toHaveBeenCalledTimes(3)
+		})
+
+		it('starts counting again on the next UTC day', () => {
+			vi.useFakeTimers()
+			vi.setSystemTime(new Date('2026-10-26T23:59:00Z'))
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDailyCap: 2 })
+
+			for (let i = 0; i < 5; i++) telemetry.recordSessionEnded(ended(`day1-${i}`))
+			vi.setSystemTime(new Date('2026-10-27T00:01:00Z'))
+			for (let i = 0; i < 5; i++) telemetry.recordSessionEnded(ended(`day2-${i}`))
+
+			expect(capture).toHaveBeenCalledTimes(4)
+		})
+
+		it('does not cap other events', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDailyCap: 1 })
+
+			telemetry.recordSessionEnded(ended('sess-a'))
+			telemetry.recordSessionEnded(ended('sess-b'))
+			telemetry.recordCrossSessionCheck({
+				sessionId: 'sess-b',
+				agentServerUrl: 'local-docker',
+				hostIsolationOk: true,
+			})
+
+			expect(capture.mock.calls.map(([p]) => p.event)).toEqual([
+				'runtime_session_ended',
+				'runtime_cross_session_check',
+			])
+		})
+
+		it('sends every call when the cap is 0', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDailyCap: 0 })
+
+			for (let i = 0; i < 10; i++) telemetry.recordSessionEnded(ended(`sess-${i}`))
+
+			expect(capture).toHaveBeenCalledTimes(10)
+		})
+	})
 })

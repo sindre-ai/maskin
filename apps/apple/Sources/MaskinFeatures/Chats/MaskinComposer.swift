@@ -420,7 +420,10 @@ struct MaskinComposer: View {
 
 	#if os(iOS)
 	fileprivate func pasteImage() {
-		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else { return }
+		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
+			model.notice = "Couldn't read an image from the clipboard."
+			return
+		}
 		addFiles([.image(data)])
 	}
 
@@ -438,7 +441,7 @@ struct MaskinComposer: View {
 		dictationBase = model.text
 		trayOpen = false
 		Task {
-			await dictation.start(continuous: true) { model.text = DictationText.merge(base: dictationBase, transcript: $0) }
+			await dictation.start(continuous: true, backend: true) { model.text = DictationText.merge(base: dictationBase, transcript: $0) }
 			if case .unavailable(let message) = dictation.state {
 				voiceProblem = message
 				dictation.clearError()
@@ -453,6 +456,16 @@ struct MaskinComposer: View {
 
 	private func finishDictation() {
 		#if os(iOS)
+		// Through the server the last phrase is still being transcribed: keep the dictation bar up
+		// until its text is in, so the keyboard doesn't take over mid-word.
+		if dictation.usesBackend {
+			Task {
+				await dictation.finish()
+				dictating = false
+				focused = true
+			}
+			return
+		}
 		dictation.stop()
 		#endif
 		dictating = false

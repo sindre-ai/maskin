@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, files, notifications, objects, readState, sessions } from '@maskin/db/schema'
-import { FOR_YOU_KIND } from '@maskin/shared'
+import { FOR_YOU_KIND, slimForYouItems } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
@@ -12,7 +12,7 @@ type Env = { Variables: { db: Database; actorId: string; actorType: string } }
 
 const { default: forYouRoutes } = await import('../../routes/for-you')
 
-function appAs(actorId: string) {
+function appAs(actorId: string, actorType = 'human') {
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
@@ -31,7 +31,7 @@ function appAs(actorId: string) {
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', actorId)
-		c.set('actorType', 'human')
+		c.set('actorType', actorType)
 		await next()
 	})
 	app.route('/api/for-you', forYouRoutes)
@@ -276,6 +276,82 @@ describe('GET /api/for-you', () => {
 				lastReadEventId: readId,
 			})
 			expect(await list()).toEqual([])
+		})
+
+		describe('a card whose drafts have all been dealt with', () => {
+			async function draftTask(status: string) {
+				return insertObject(db, workspaceId, humanId, { type: 'task', status, content: 'Hej' })
+			}
+			const withDrafts = (ids: string[]) => ({
+				...DECISION,
+				drafts: ids.map((object_id, i) => ({ id: `d${i}`, object_id, label: `Reply ${i}` })),
+			})
+
+			it('drops once every draft task is done or discarded', async () => {
+				const sent = await draftTask('done')
+				const skipped = await draftTask('discarded')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				await decisionComment(obj.id, { decision: withDrafts([sent.id, skipped.id]) })
+				expect(await list()).toEqual([])
+			})
+
+			it('drops a card with a single draft once its task is done', async () => {
+				const sent = await draftTask('done')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				await decisionComment(obj.id, {
+					decision: { ...DECISION, draft: { object_id: sent.id, label: 'Email to Hans' } },
+				})
+				expect(await list()).toEqual([])
+			})
+
+			it('keeps the card while one draft task is still open', async () => {
+				const sent = await draftTask('done')
+				const waiting = await draftTask('in_review')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				await decisionComment(obj.id, { decision: withDrafts([sent.id, waiting.id]) })
+				expect(await list()).toHaveLength(1)
+			})
+
+			it('keeps a card that has a draft with no task behind it', async () => {
+				const sent = await draftTask('done')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				await decisionComment(obj.id, {
+					decision: {
+						...DECISION,
+						drafts: [
+							{ object_id: sent.id, label: 'Sent one' },
+							{ body: 'Hi', label: 'Text only' },
+						],
+					},
+				})
+				expect(await list()).toHaveLength(1)
+			})
+
+			it('drops a curated item whose source card has finished drafts', async () => {
+				const sent = await draftTask('done')
+				const obj = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				const sourceId = await decisionComment(obj.id, {
+					decision: withDrafts([sent.id]),
+					mentions: [agentId],
+				})
+				await item({}, { source_comment_id: sourceId })
+				expect(await list()).toEqual([])
+			})
 		})
 
 		it('lists a curated item first and does not repeat its object as a decision card', async () => {
@@ -549,6 +625,108 @@ describe('GET /api/for-you', () => {
 			})
 			expect(draft?.file).toBeUndefined()
 			expect(draft?.body).toBe('The page is attached.')
+		})
+	})
+
+	describe('what the list_for_you tool reads from the same route', () => {
+		async function listAs(actorId: string, type: string, forActorId?: string) {
+			const qs = forActorId ? `?for_actor_id=${forActorId}` : ''
+			return appAs(actorId, type).request(
+				jsonGet(`/api/for-you${qs}`, { 'X-Workspace-Id': workspaceId }),
+			)
+		}
+
+		it('gives the same cards in the same order as the web, with every hidden case left out', async () => {
+			const open = (status = 'active') =>
+				insertObject(db, workspaceId, humanId, { type: 'bet', status })
+
+			// Hidden: answered, read, ended session, closed object, only_while_status moved on.
+			const answered = await open()
+			const answeredSource = await comment(answered.id, agentId)
+			await item(
+				{ objectId: answered.id },
+				{ source_comment_id: answeredSource, headline: 'answered' },
+			)
+			await comment(answered.id, humanId)
+
+			const read = await open()
+			const readSource = await comment(read.id, agentId)
+			await item({ objectId: read.id }, { source_comment_id: readSource, headline: 'read' })
+			await db.insert(readState).values({
+				workspaceId,
+				actorId: humanId,
+				entityType: 'object',
+				entityId: read.id,
+				lastReadEventId: readSource,
+			})
+
+			const ended = await insertSession(db, workspaceId, agentId, humanId, { status: 'completed' })
+			await item({ sessionId: ended.id }, { headline: 'ended session' })
+
+			const closed = await open('completed')
+			await item({ objectId: closed.id }, { headline: 'closed object' })
+
+			const moved = await open('active')
+			await item({ objectId: moved.id }, { headline: 'moved on', only_while_status: ['proposed'] })
+
+			// Shown: a card due at a set time, a card with no object, and a decision card.
+			const due = await open('proposed')
+			const live = await item(
+				{ objectId: due.id },
+				{
+					rank: 1,
+					headline: 'Flip the bet to active',
+					only_while_status: ['proposed'],
+					due_at: '2026-10-26T08:00:00Z',
+				},
+			)
+			const noObject = await item({}, { rank: 2, headline: 'Daily budget' })
+			const task = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
+			await decisionComment(task.id)
+
+			const res = await listAs(humanId, 'human')
+			expect(res.status).toBe(200)
+			const { items } = (await res.json()) as {
+				items: Array<{ notification_id: string | null; headline: string; due_at: string | null }>
+			}
+			expect(items.map((i) => i.headline)).toEqual([
+				'Flip the bet to active',
+				'Daily budget',
+				'Send the note to Hans?',
+			])
+			expect(items.map((i) => i.notification_id)).toEqual([live.id, noObject.id, null])
+			expect(items[0].due_at).toBe('2026-10-26T08:00:00.000Z')
+			expect(items[1].due_at).toBeNull()
+
+			const slim = slimForYouItems(items as never, 10)
+			expect(slim.total).toBe(3)
+			expect(slim.items.map((c) => c.headline)).toEqual(items.map((i) => i.headline))
+			expect(slim.items.map((c) => c.notification_id)).toEqual(items.map((i) => i.notification_id))
+			expect(slim.items[0]).toMatchObject({ title: due.title, due_at: '2026-10-26T08:00:00.000Z' })
+			expect(slim.items[1]).toMatchObject({ object_id: null, title: null })
+		})
+
+		it("lets an agent read a member's list and returns the same cards as that member sees", async () => {
+			await item({}, { headline: 'Approve the launch' })
+			const own = await (await listAs(humanId, 'human')).json()
+			const res = await listAs(agentId, 'agent', humanId)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toEqual(own)
+		})
+
+		it('lets a person ask for their own list by id', async () => {
+			expect((await listAs(humanId, 'human', humanId)).status).toBe(200)
+		})
+
+		it("refuses a person who asks for someone else's list", async () => {
+			const res = await listAs(humanId, 'human', agentId)
+			expect(res.status).toBe(403)
+		})
+
+		it('answers 404 when an agent asks for an actor that is not a member', async () => {
+			const stranger = await insertActor(db, {})
+			const res = await listAs(agentId, 'agent', stranger.id)
+			expect(res.status).toBe(404)
 		})
 	})
 })

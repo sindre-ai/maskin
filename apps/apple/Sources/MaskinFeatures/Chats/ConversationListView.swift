@@ -27,6 +27,10 @@ struct ConversationListView: View {
 	var onSuggestion: (String) -> Void = { _ in }
 	/// Opens the Threads screen; nil hides its chip (previews and snapshots).
 	var onThreads: (() -> Void)?
+	/// Where the filter chips sit; the bottom placements draw them outside this list.
+	var pillPlacement: TeamPillPlacement = .top
+	/// The shell's bottom pill, told how many are unread and when row selection is running.
+	var pill: TeamPillModel?
 
 	@State private var picking = SelectionModel()
 	@State private var undoOffer: UndoOffer?
@@ -61,7 +65,7 @@ struct ConversationListView: View {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
-			if store.displayOptions.showsFilterChips, !picking.isActive {
+			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
 				TeamFilterChips(
 					chip: $store.chip, unreadCount: layout.unreadCount,
 					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
@@ -167,6 +171,15 @@ struct ConversationListView: View {
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
 		.undoToast($undoOffer)
+		.safeAreaInset(edge: .bottom, spacing: MaskinSpace.s4) {
+			if pillPlacement == .floating, store.displayOptions.showsFilterChips, !picking.isActive {
+				TeamFloatingPill(
+					chip: $store.chip, unreadCount: layout.unreadCount,
+					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
+			}
+		}
+		.onChange(of: layout.unreadCount, initial: true) { _, count in pill?.unreadCount = count }
+		.onChange(of: picking.isActive, initial: true) { _, active in pill?.isSelecting = active }
 		.teamRowMenu($menuTarget)
 		.confirmationDialog(
 			deleteTarget.map { $0.conversationIDs.count > 1 ? "Delete \($0.conversationIDs.count) conversations with \($0.title)?" : "Delete this conversation?" } ?? "",
@@ -494,7 +507,7 @@ struct TeamConversationRow: View {
 					.fontWeight(conversation.isUnread ? .bold : .semibold)
 					.foregroundStyle(MaskinColor.ink)
 					.lineLimit(1)
-				Text(preview).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				preview.maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 			Spacer(minLength: MaskinSpace.s3)
 			VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
@@ -511,11 +524,11 @@ struct TeamConversationRow: View {
 		.accessibilityElement(children: .combine)
 	}
 
-	private var preview: String {
-		if let draft, !draft.isEmpty { return "Draft: \(draft)" }
-		let text = conversation.snippet.map(ChatPreviewText.plain) ?? ""
-		guard !text.isEmpty else { return ConversationRowStatus.noMessages }
-		if let who = conversation.snippetActorName, !who.isEmpty { return "\(who): \(text)" }
-		return text
+	private var preview: Text {
+		if let draft, !draft.isEmpty { return Text(verbatim: "Draft: \(draft)") }
+		let pieces = conversation.snippet.map(ChatPreviewText.linePieces) ?? []
+		guard !pieces.isEmpty else { return Text(ConversationRowStatus.noMessages) }
+		let lead = conversation.snippetActorName.flatMap { who in who.isEmpty ? nil : "\(who): " }
+		return ChatPreviewLine.text("", pieces: (lead.map { [ChatPreviewText.Piece($0)] } ?? []) + pieces)
 	}
 }

@@ -85,6 +85,34 @@ const fieldNamesSchema = degradeTo(
 	[],
 )
 
+// Protocol-era labels for the 2026-07-28 / SDK v2 migration bet. Fixed label
+// sets, never a raw header value: the producer (`classifyMcpEra` in apps/dev)
+// maps whatever the client declared onto one of these. The version list is
+// static here because this package cannot import the MCP SDK; a test in
+// apps/dev fails if it ever drifts from the SDK's supported-versions constant.
+export const MCP_ERAS = ['legacy', 'modern'] as const
+export const MCP_PROTOCOL_VERSION_LABELS = [
+	'2025-11-25',
+	'2025-06-18',
+	'2025-03-26',
+	'2024-11-05',
+	'2024-10-07',
+	'2026-07-28',
+	'other',
+	'none',
+] as const
+
+export type McpEra = (typeof MCP_ERAS)[number]
+export type McpProtocolVersionLabel = (typeof MCP_PROTOCOL_VERSION_LABELS)[number]
+
+// Optional AND degrade-don't-reject, like `arg_keys`: an unexpected value must
+// cost the label, never the whole row. An older MCP build sends neither field.
+const mcpEraSchema = degradeTo(z.enum(MCP_ERAS).optional(), undefined)
+const mcpProtocolVersionSchema = degradeTo(
+	z.enum(MCP_PROTOCOL_VERSION_LABELS).optional(),
+	undefined,
+)
+
 export const recordMcpToolCallSchema = z.object({
 	event_type: z.literal('tool_call'),
 	tool_name: toolNameSchema,
@@ -114,6 +142,8 @@ export const recordMcpToolCallSchema = z.object({
 	// rows, keeping them out of the per-session metric they would otherwise
 	// distort. See the `sessionId` comment in `routes/telemetry.ts`.
 	session_source: z.enum(['maskin-session', 'process', 'unknown']).optional(),
+	mcp_era: mcpEraSchema,
+	mcp_protocol_version: mcpProtocolVersionSchema,
 })
 
 export const recordMcpMutationSchema = z.object({
@@ -177,6 +207,8 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	// array — both arrive as nulls and empty lists. Optional, and absent on an
 	// older MCP server build, which is the same thing as "no fault reported".
 	shape_error: z.boolean().optional(),
+	mcp_era: mcpEraSchema,
+	mcp_protocol_version: mcpProtocolVersionSchema,
 	// Which shape of answer the tool gave (list_actors: `slim` default row, `full`
 	// when connected triggers/loops were requested). Fixed values only: a bad
 	// value costs the property, not the event.
@@ -223,6 +255,8 @@ export const recordMcpErrorSchema = z.object({
 	session_id: sessionIdSchema,
 	agent_actor_id: z.string().min(1).max(128).optional(),
 	requested_shape: z.record(z.string(), z.string()).default({}),
+	mcp_era: mcpEraSchema,
+	mcp_protocol_version: mcpProtocolVersionSchema,
 })
 
 // Old-name use for the MCP tool-surface bet: one event per call that reached a

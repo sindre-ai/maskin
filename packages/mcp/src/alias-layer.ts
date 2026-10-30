@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { type AliasRow, DEFAULT_WORKSPACE_TOOLS, aliasRowsFor } from './aliases.js'
+import { type AliasRow, aliasRowsFor } from './aliases.js'
 
 export interface AppliedRename {
 	/** Dotted path of the old spelling, array indexes dropped. */
@@ -62,7 +62,7 @@ function applyRow(
 export function normaliseArgs(
 	tool: string,
 	raw: unknown,
-	opts: { defaultWorkspaceId?: string; rows?: readonly AliasRow[] } = {},
+	opts: { rows?: readonly AliasRow[] } = {},
 ): NormaliseResult {
 	const result: NormaliseResult = { args: raw, renames: [], bothSent: false }
 	if (!isPlainObject(raw)) return result
@@ -84,22 +84,13 @@ export function normaliseArgs(
 		if (hits.bothSent) result.bothSent = true
 	}
 
-	if (
-		DEFAULT_WORKSPACE_TOOLS.has(tool) &&
-		opts.defaultWorkspaceId &&
-		isPlainObject(args) &&
-		args.workspace_id === undefined
-	) {
-		args = { ...args, workspace_id: opts.defaultWorkspaceId }
-	}
-
 	result.args = args
 	return result
 }
 
 /** True when a tool needs the normalise step at all. */
 export function needsNormalise(tool: string): boolean {
-	return aliasRowsFor(tool).length > 0 || DEFAULT_WORKSPACE_TOOLS.has(tool)
+	return aliasRowsFor(tool).length > 0
 }
 
 /**

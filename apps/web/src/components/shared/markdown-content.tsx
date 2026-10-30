@@ -1,32 +1,55 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
-import { Textarea } from '@/components/ui/textarea'
+import { EditorBanner } from '@/components/shared/editor-banner'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
+import { captureEditorParseError, editorTelemetry } from '@/lib/editor-events'
 import {
+	type GithubTarget,
 	type HastNode,
 	LINKED_CARDS_TAG,
 	type LinkedTarget,
+	type SettingsTarget,
 	type StandaloneCard,
+	githubTargetOf,
 	placeLinkedCards,
+	settingsTargetOf,
+	targetOfHref,
 } from '@/lib/linked-objects'
-import { splitMarkdownMarkers } from '@/lib/markdown-markers'
-import { remarkPlugins } from '@maskin/markdown/plugins'
 import {
-	Children,
+	type ComponentOverridesContext,
+	MarkdownRenderer,
+	type MentionActor,
+	type RenderCodeBlockArgs,
+	type RenderImageArgs,
+} from '@maskin/markdown/react'
+import type {
+	MarkdownParseErrorInfo,
+	SavedInfo,
+	ShortcutInfo,
+	ToolbarActionInfo,
+} from '@maskin/markdown/react/editor'
+import {
 	Fragment,
-	type ReactElement,
 	type ReactNode,
-	isValidElement,
+	Suspense,
+	lazy,
 	useCallback,
 	useEffect,
-	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
 } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
-import { MentionedText } from './mentioned-text'
+import type { Components } from 'react-markdown'
+
+// Dynamic-imported so Tiptap never bundles into a read-only route — read paths
+// (feeds, notifications, marketing) never touch this chunk. The Vite chunk-
+// name CI assertion (`apps/web/scripts/assert-editor-chunk.mjs`) enforces the
+// split at build time. See tech spec §12 rabbit hole #6.
+const MarkdownEditor = lazy(() =>
+	import('@/components/shared/document-markdown-editor').then((m) => ({
+		default: m.DocumentMarkdownEditor,
+	})),
+)
 
 const UUID_RE_SRC = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const FILE_VIEWER_PATH_RE = new RegExp(`^/(${UUID_RE_SRC})/files/(${UUID_RE_SRC})/?$`, 'i')
@@ -96,283 +119,60 @@ function FileViewerImage({
 	return <img src={`data:${data.mimeType};base64,${b64}`} alt={alt ?? ''} title={title} />
 }
 
-function wrapWithMentions(
-	children: ReactNode,
-	actors: ActorListItem[],
-	onMentionClick?: (actor: ActorListItem) => void,
-): ReactNode {
-	if (typeof children === 'string') {
-		return <MentionedText content={children} actors={actors} onMentionClick={onMentionClick} />
+// An <img src> pointing at a maskin file viewer URL (/<workspaceId>/files/<fileId>)
+// loads an HTML viewer page as bytes and renders as broken. Swap it for a
+// component that fetches the file and inlines its bytes as a data-URI — mirrors
+// apps/web/src/components/files/file-body.tsx's inline-image path. Injected into
+// the package renderer because useFile is an app data hook.
+function renderMarkdownImage({ src, alt, title }: RenderImageArgs) {
+	const parsed = parseFileViewerUrl(src)
+	if (!parsed) return undefined
+	return (
+		<FileViewerImage
+			workspaceId={parsed.workspaceId}
+			fileId={parsed.fileId}
+			alt={alt}
+			title={title}
+		/>
+	)
+}
+
+// Fenced chart blocks render as inline visuals; injected for the same reason.
+function renderChartBlock({ language, source }: RenderCodeBlockArgs) {
+	if (language && isVisualLanguage(language)) {
+		return <CommentVisual language={language} source={source} />
 	}
-	if (Array.isArray(children)) {
-		const mentionProps = { actors, onMentionClick }
-		return children.map((child, idx) =>
-			typeof child === 'string' ? (
-				// biome-ignore lint/suspicious/noArrayIndexKey: children come from a deterministic markdown AST; order is stable across renders
-				<MentionedText key={`m-${idx}`} content={child} {...mentionProps} />
-			) : (
-				child
-			),
-		)
-	}
-	return children
+	return undefined
 }
 
 /**
- * Extracts the language hint (e.g. "chart") from the `language-X` className
- * react-markdown puts on the inner `<code>` of a fenced block.
- */
-function readCodeLanguage(child: ReactNode): string | undefined {
-	if (!isValidElement(child)) return undefined
-	const childEl = child as ReactElement<{ className?: string }>
-	const className = childEl.props?.className
-	if (typeof className !== 'string') return undefined
-	const match = className.match(/language-([\w-]+)/)
-	return match?.[1]
-}
-
-function readCodeSource(child: ReactNode): string {
-	if (!isValidElement(child)) return ''
-	const childEl = child as ReactElement<{ children?: ReactNode }>
-	const inner = childEl.props?.children
-	if (typeof inner === 'string') return inner
-	if (Array.isArray(inner)) return inner.filter((c): c is string => typeof c === 'string').join('')
-	return ''
-}
-
-/**
- * Toggle a markdown marker around `[start, end)` — `**` for bold, `_` for
- * italic, backtick for code. Wrapping an already-wrapped range unwraps it, so
- * the same shortcut is its own undo (mockup 8493–8506).
- */
-export function toggleMarkdownMarker(
-	value: string,
-	rawStart: number,
-	rawEnd: number,
-	marker: string,
-): { value: string; start: number; end: number } {
-	// Markdown will not emphasise a run padded with spaces — `**word **` renders
-	// as literal asterisks — and a double-click or a drag routinely picks up the
-	// trailing space. Wrap the words, leave the padding outside.
-	let start = rawStart
-	let end = rawEnd
-	while (start < end && /\s/.test(value[start] ?? '')) start += 1
-	while (end > start && /\s/.test(value[end - 1] ?? '')) end -= 1
-	if (start === end) return { value, start: rawStart, end: rawEnd }
-
-	const before = value.slice(Math.max(0, start - marker.length), start)
-	const after = value.slice(end, end + marker.length)
-	if (before === marker && after === marker) {
-		return {
-			value:
-				value.slice(0, start - marker.length) +
-				value.slice(start, end) +
-				value.slice(end + marker.length),
-			start: start - marker.length,
-			end: end - marker.length,
-		}
-	}
-	return {
-		value: value.slice(0, start) + marker + value.slice(start, end) + marker + value.slice(end),
-		start: start + marker.length,
-		end: end + marker.length,
-	}
-}
-
-/**
- * Where a click in the *rendered* prose lands in the *markdown source*.
- *
- * `nodeText` is the text node the click hit; finding it in the source and
- * adding the offset within it puts the caret under the pointer. Inline markup
- * (`**bold**`, links) shifts the answer by the marker characters, so this is a
- * near-miss rather than an exact map — still far better than the alternative,
- * which is every click landing at character 0. Returns null when the run can't
- * be located, and the caller falls back to the end of the document.
- */
-export function caretOffsetInSource(
-	source: string,
-	nodeText: string,
-	offsetInNode: number,
-): number | null {
-	const probe = nodeText.trim()
-	if (probe.length === 0) return null
-	const at = source.indexOf(probe)
-	if (at < 0) return null
-	// The rendered node may carry leading whitespace the source doesn't.
-	const lead = nodeText.length - nodeText.trimStart().length
-	const within = Math.max(0, Math.min(offsetInNode - lead, probe.length))
-	return at + within
-}
-
-/**
- * Source offset for one end of a DOM range. Only a text node can be mapped —
- * an offset into an element is a child index, not a character position.
- */
-function offsetOfRangeEnd(source: string, node: Node, offset: number): number | null {
-	if (node.nodeType !== Node.TEXT_NODE) return null
-	return caretOffsetInSource(source, node.textContent ?? '', offset)
-}
-
-/** Reads the caret position under a point, across both browser spellings. */
-function caretOffsetAtPoint(x: number, y: number, source: string): number | null {
-	const doc = document as Document & {
-		caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
-		caretRangeFromPoint?: (x: number, y: number) => Range | null
-	}
-	let node: Node | null = null
-	let offset = 0
-	if (typeof doc.caretPositionFromPoint === 'function') {
-		const pos = doc.caretPositionFromPoint(x, y)
-		if (pos) {
-			node = pos.offsetNode
-			offset = pos.offset
-		}
-	} else if (typeof doc.caretRangeFromPoint === 'function') {
-		const range = doc.caretRangeFromPoint(x, y)
-		if (range) {
-			node = range.startContainer
-			offset = range.startOffset
-		}
-	}
-	if (!node || node.nodeType !== Node.TEXT_NODE) return null
-	return caretOffsetInSource(source, node.textContent ?? '', offset)
-}
-
-/**
- * One line of a markdown list: indent, marker, the space after it, an optional
- * task checkbox, then the item's own text.
- */
-const LIST_LINE = /^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\]\s+)?(.*)$/
-/** What one Tab step is worth. Two spaces — the nesting width remark reads. */
-const INDENT = '  '
-
-/** A rewritten textarea value plus where the selection should sit after it. */
-export interface EditorEdit {
-	value: string
-	start: number
-	end: number
-}
-
-/** The lines the selection touches, as a [start, end) slice of `value`. */
-function touchedLines(value: string, start: number, end: number): [number, number] {
-	const from = value.lastIndexOf('\n', start - 1) + 1
-	const nextBreak = value.indexOf('\n', end)
-	return [from, nextBreak === -1 ? value.length : nextBreak]
-}
-
-/**
- * Enter inside a list carries the marker down to the next line, and Enter on an
- * item that was left empty ends the list instead of laying down another marker
- * — the two behaviours every markdown editor has and a bare textarea doesn't.
- *
- * Returns null when the caret isn't in a list, so Enter falls through to the
- * browser's own newline.
- */
-export function continueListOnEnter(value: string, start: number, end: number): EditorEdit | null {
-	// A selection replaces its own range; only a collapsed caret continues.
-	if (start !== end) return null
-	const [lineStart, lineEnd] = touchedLines(value, start, start)
-	const match = LIST_LINE.exec(value.slice(lineStart, lineEnd))
-	if (!match) return null
-	const indent = match[1] ?? ''
-	const marker = match[2] ?? ''
-	const spacing = match[3] ?? ''
-	const checkbox = match[4]
-	const body = match[5] ?? ''
-
-	if (body.trim().length === 0) {
-		// Drop the marker and leave the caret on the now-blank line.
-		return {
-			value: value.slice(0, lineStart) + value.slice(start),
-			start: lineStart,
-			end: lineStart,
-		}
-	}
-
-	const ordered = /^(\d+)([.)])$/.exec(marker)
-	const nextMarker = ordered ? `${Number(ordered[1]) + 1}${ordered[2]}` : marker
-	const inserted = `\n${indent}${nextMarker}${spacing}${checkbox ? '[ ] ' : ''}`
-	const caret = start + inserted.length
-	return { value: value.slice(0, start) + inserted + value.slice(start), start: caret, end: caret }
-}
-
-/**
- * True where Tab means "indent" rather than "leave this field": inside a list
- * item, or across a selection that spans lines. Everywhere else Tab keeps
- * moving focus, so the editor never becomes a keyboard trap.
- */
-export function isIndentContext(value: string, start: number, end: number): boolean {
-	if (value.slice(start, end).includes('\n')) return true
-	const [lineStart, lineEnd] = touchedLines(value, start, start)
-	return LIST_LINE.test(value.slice(lineStart, lineEnd))
-}
-
-/** Shifts every line the selection touches one step in or out. */
-export function shiftIndent(
-	value: string,
-	start: number,
-	end: number,
-	outdent: boolean,
-): EditorEdit {
-	const [blockStart, blockEnd] = touchedLines(value, start, end)
-	let firstDelta = 0
-	let totalDelta = 0
-	const shifted = value
-		.slice(blockStart, blockEnd)
-		.split('\n')
-		.map((line, index) => {
-			if (outdent) {
-				const removed = /^(?:\t| {1,2})/.exec(line)?.[0] ?? ''
-				if (index === 0) firstDelta = -removed.length
-				totalDelta -= removed.length
-				return line.slice(removed.length)
-			}
-			// A blank line gets no indent — that would only leave trailing spaces.
-			if (line.length === 0) return line
-			if (index === 0) firstDelta = INDENT.length
-			totalDelta += INDENT.length
-			return INDENT + line
-		})
-		.join('\n')
-
-	return {
-		value: value.slice(0, blockStart) + shifted + value.slice(blockEnd),
-		start: Math.max(blockStart, start + firstDelta),
-		end: Math.max(blockStart, end + totalDelta),
-	}
-}
-
-/**
- * Maps a character offset in the draft onto a position in the overlay's text
- * nodes. The overlay renders exactly the draft, so the two share an offset
- * space — which is what lets a textarea selection, which has no geometry of
- * its own, borrow the overlay's.
- */
-function locateOffset(root: HTMLElement, target: number): { node: Node; offset: number } | null {
-	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-	let seen = 0
-	let node = walker.nextNode()
-	while (node) {
-		const length = node.textContent?.length ?? 0
-		if (seen + length >= target) return { node, offset: target - seen }
-		seen += length
-		node = walker.nextNode()
-	}
-	return null
-}
-
-/**
- * Where a message's links to objects and files turn into cards. A link that stands alone in its
- * paragraph or list item is replaced by its card in place; any other link's card goes under the
- * text, and an id drawn in place is never drawn again there.
+ * Where a message's links to objects and files turn into cards and chips. A link that stands
+ * alone on its line, or alone in a list item, is replaced by its card in place. Any other link to
+ * an object is a chip where it stands; a draft or file linked in a sentence gets its card under
+ * the text. An id drawn in place is never drawn again.
  */
 export interface LinkedCardsOptions {
 	workspaceId: string
+	/** Whether the workspace is enterprise: only then is a link to the Keys settings page a chip. */
+	enterprise?: boolean
+	/**
+	 * `full` (chat, comments): a link alone on its line is a card, a link in a sentence a chip.
+	 * `chips` (For You cards, the brief drawer, object bodies): every link is a chip, a card
+	 * inside a card being a box in a box. Defaults to `full`.
+	 */
+	mode?: 'full' | 'chips'
+	/**
+	 * Chat only: drafts get their approval card and files their preview card. Outside chat pass
+	 * `false`: a draft or file link stays the plain link it was before. Defaults to `true`.
+	 */
+	draftsAndFiles?: boolean
 	/** The chat the message is in and the agent that wrote it; they let a card tell that agent. */
 	conversationId?: string
 	agentId?: string
-	/** Ids whose card an earlier message in the chat already shows: their links stay links. */
+	/** Ids whose card another message in the chat holds: their links here are chips. */
 	skipIds?: ReadonlySet<string>
+	/** Ids of drafts edited since an earlier message showed them: their card carries an Updated tag. */
+	updatedIds?: ReadonlySet<string>
 	/**
 	 * Draws the card for a link, or `fallback` when it deserves none. Passed in rather than
 	 * imported because the cards render markdown themselves. Keep its identity stable.
@@ -380,13 +180,54 @@ export interface LinkedCardsOptions {
 	renderCard: (
 		target: LinkedTarget,
 		fallback: ReactNode,
-		context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+		context: {
+			workspaceId: string
+			conversationId?: string
+			agentId?: string
+			label?: string
+			inList?: boolean
+			/** The card goes under the sentence that links it: only a draft is drawn, never a reference. */
+			after?: boolean
+			/** A draft edited since an earlier message showed it: the card says so. */
+			updated?: boolean
+			/** False outside chat: a draft keeps its plain link, no approval card. */
+			draftsAndFiles?: boolean
+		},
 	) => ReactNode
+	/**
+	 * Draws a link to an object that is not replaced by a card as a chip, or `fallback` (the
+	 * original link) while it cannot. Keep its identity stable.
+	 */
+	renderChip?: (
+		target: LinkedTarget,
+		fallback: ReactNode,
+		context: {
+			workspaceId: string
+			/** A draft's card is drawn under the sentence, so its link stays plain; false: it is a chip. */
+			cardFollows?: boolean
+		},
+	) => ReactNode
+	/**
+	 * Draws a link to a GitHub pull request or issue as a chip built from the address alone, in a
+	 * sentence or alone on a line. Without it such a link stays a plain link. Keep its identity stable.
+	 */
+	renderGithubChip?: (target: GithubTarget, href: string) => ReactNode
+	/**
+	 * Draws a link to a settings page of this workspace as a chip built from the address alone, in a
+	 * sentence or alone on a line. Without it such a link stays a plain link. Keep its identity stable.
+	 */
+	renderSettingsChip?: (target: SettingsTarget, context: { workspaceId: string }) => ReactNode
 }
 
 // Decides where every linked card goes (see `placeLinkedCards`) before the tree is rendered.
-function placeCardsPlugin(skipIds: ReadonlySet<string> | undefined) {
-	return () => (tree: HastNode) => placeLinkedCards(tree, skipIds)
+function placeCardsPlugin(
+	skipIds: ReadonlySet<string> | undefined,
+	workspaceId: string | undefined,
+	chipsOnly: boolean,
+	draftsAndFiles: boolean,
+) {
+	return () => (tree: HastNode) =>
+		placeLinkedCards(tree, skipIds, workspaceId, { chipsOnly, draftsAndFiles })
 }
 
 // A list item holding a card gives up its bullet (a numbered one keeps its number, so the
@@ -394,41 +235,15 @@ function placeCardsPlugin(skipIds: ReadonlySet<string> | undefined) {
 const CARD_ITEM_CLASS =
 	'[ul>&]:has-[>[data-linked-card]]:list-none [ul>&]:has-[>[data-linked-card]]:before:hidden'
 
-/** ⌘B / ⌘I / ⌘E — the three the mockup binds. */
-const SHORTCUT_MARKERS: Record<string, string> = { b: '**', i: '_', e: '`' }
-
-interface SelectionToolbarState {
-	x: number
-	y: number
-	text: string
-	// Where the selection sits in the markdown *source*. Null when the range
-	// couldn't be mapped, and the marker falls back to a first-match search.
-	start: number | null
-	end: number | null
-}
-
-export function MarkdownContent({
-	content,
-	onChange,
-	editable = false,
-	className,
-	size = 'sm',
-	disallowedElements,
-	mentionActors,
-	onMentionClick,
-	renderVisuals = false,
-	editorLabel,
-	linkedCards: linkedCardsOption,
-}: {
+type MarkdownContentProps = {
 	content: string
-	// May return a promise. If it rejects, the editor is reopened with the
-	// user's draft intact: a failed save must never discard typed text.
+	// May return a promise; it is called on blur with the editor's markdown.
 	onChange?: (value: string) => unknown
 	editable?: boolean
 	className?: string
 	/** `doc` is the v2 document scale a detail page's body renders at (mockup
 	 *  1105–1122): a 15px lead paragraph, 12.5px bold micro-headings, 14px/1.65
-	 *  running copy, and em-dash list markers. */
+	 *  running copy, and em-dash list markers. Read-only rendering only. */
 	size?: 'sm' | 'xs' | 'doc'
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
@@ -439,7 +254,7 @@ export function MarkdownContent({
 	 * unaffected — only ActivityComment opts in.
 	 */
 	renderVisuals?: boolean
-	/** Accessible name for the editing field — it has no visible label. */
+	/** Accessible name for the editing field. */
 	editorLabel?: string
 	/**
 	 * Opt-in, for chat messages: links to drafts and previewable files become cards, in place
@@ -447,607 +262,354 @@ export function MarkdownContent({
 	 * the markdown renders exactly as before.
 	 */
 	linkedCards?: LinkedCardsOptions
-}) {
-	const [editing, setEditing] = useState(false)
+	/**
+	 * Editor only. Treat `content` as stored text to protect: a save rewrites
+	 * only the blocks the person touched, and text the editor cannot hold safely
+	 * opens read-only.
+	 */
+	preserveSource?: boolean
+	/** Editor only. Surface name carried on the editor events. */
+	surface?: string
+	objectId?: string
+}
+
+function RenderedMarkdownContent({
+	content,
+	className,
+	size = 'sm',
+	disallowedElements,
+	mentionActors,
+	onMentionClick,
+	renderVisuals = false,
+	linkedCards: linkedCardsOption,
+}: Omit<
+	MarkdownContentProps,
+	'onChange' | 'editable' | 'editorLabel' | 'preserveSource' | 'surface' | 'objectId'
+>) {
 	// Keyed on the values, not the object: a caller passing a fresh literal each render must not
 	// change the component map, or every card in the message would remount.
 	const cardsWorkspaceId = linkedCardsOption?.workspaceId
+	const cardsEnterprise = linkedCardsOption?.enterprise
 	const cardsConversationId = linkedCardsOption?.conversationId
 	const cardsAgentId = linkedCardsOption?.agentId
 	const cardsRenderer = linkedCardsOption?.renderCard
+	const chipRenderer = linkedCardsOption?.renderChip
+	const githubChipRenderer = linkedCardsOption?.renderGithubChip
+	const settingsChipRenderer = linkedCardsOption?.renderSettingsChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
+	const chipsOnly = linkedCardsOption?.mode === 'chips'
+	const draftsAndFiles = linkedCardsOption?.draftsAndFiles !== false
+	// By value, like the rest: a fresh set with the same ids must not remount the cards.
+	const cardsUpdatedKey = linkedCardsOption?.updatedIds
+		? [...linkedCardsOption.updatedIds].sort().join(',')
+		: ''
 	const linkedCards = useMemo<LinkedCardsOptions | undefined>(
 		() =>
 			cardsWorkspaceId && cardsRenderer
 				? {
 						workspaceId: cardsWorkspaceId,
+						enterprise: cardsEnterprise,
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
+						updatedIds: cardsUpdatedKey ? new Set(cardsUpdatedKey.split(',')) : undefined,
+						mode: chipsOnly ? 'chips' : 'full',
+						draftsAndFiles,
 						renderCard: cardsRenderer,
+						renderChip: chipRenderer,
+						renderGithubChip: githubChipRenderer,
+						renderSettingsChip: settingsChipRenderer,
 					}
 				: undefined,
-		[cardsWorkspaceId, cardsConversationId, cardsAgentId, cardsRenderer],
+		[
+			chipsOnly,
+			draftsAndFiles,
+			cardsWorkspaceId,
+			cardsEnterprise,
+			cardsConversationId,
+			cardsAgentId,
+			cardsRenderer,
+			chipRenderer,
+			cardsUpdatedKey,
+			githubChipRenderer,
+			settingsChipRenderer,
+		],
 	)
-	const [draft, setDraft] = useState(content)
-	const containerRef = useRef<HTMLDivElement>(null)
-	const textareaRef = useRef<HTMLTextAreaElement>(null)
-	// Selection an in-progress edit (list continuation, indent, ⌘B) asked for,
-	// applied by a layout effect once the new value is on screen.
-	const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null)
-	// Source offset the caret should take when the editor mounts — set from the
-	// click that opened it. Null means "end of the document".
-	const pendingCaretRef = useRef<number | null>(null)
-	// Height of the rendered prose view at the moment edit mode is entered.
-	// Used as a floor so the box doesn't shrink when headings/lists collapse to plain text.
-	const [lockedHeight, setLockedHeight] = useState<number | undefined>(undefined)
-	// Floating B / I / <> over a highlighted run in the editor (mockup 1030–1035).
-	const [selectionToolbar, setSelectionToolbar] = useState<SelectionToolbarState | null>(null)
-	const docOverlayRef = useRef<HTMLDivElement>(null)
-
-	const handleBlur = useCallback(() => {
-		setEditing(false)
-		if (draft === content) return
-		const result = onChange?.(draft)
-		if (result && typeof (result as Promise<unknown>).then === 'function') {
-			// The save is optimistic and rolls back silently on failure. Reopen the
-			// editor with the draft still in it so a rejected write cannot destroy a
-			// long rewrite the user can no longer reach.
-			void (result as Promise<unknown>).catch(() => {
-				setDraft(draft)
-				setEditing(true)
-			})
-		}
-	}, [draft, content, onChange])
-
-	const startEditing = (initialDraft: string, caret: number | null = null) => {
-		if (containerRef.current) {
-			setLockedHeight(containerRef.current.offsetHeight)
-		}
-		pendingCaretRef.current = caret
-		setDraft(initialDraft)
-		setEditing(true)
-	}
-
-	// The toolbar belongs to the editor: it rises on a highlight inside the
-	// field and nowhere else. The textarea has no selection geometry, so the
-	// rect comes from the overlay behind it — same metrics, same coordinates.
-	const handleEditorSelect = useCallback(() => {
-		const ta = textareaRef.current
-		const overlay = docOverlayRef.current
-		if (!ta || !overlay) return
-		const { selectionStart: start, selectionEnd: end } = ta
-		if (start === end) {
-			setSelectionToolbar(null)
-			return
-		}
-		const from = locateOffset(overlay, start)
-		const to = locateOffset(overlay, end)
-		if (!from || !to) {
-			setSelectionToolbar(null)
-			return
-		}
-		const range = document.createRange()
-		range.setStart(from.node, from.offset)
-		range.setEnd(to.node, to.offset)
-		const rect = range.getBoundingClientRect()
-		if (!rect.width && !rect.height) {
-			setSelectionToolbar(null)
-			return
-		}
-		setSelectionToolbar({
-			x: (rect.left + rect.right) / 2,
-			y: rect.top - 8,
-			text: ta.value.slice(start, end),
-			start,
-			end,
-		})
-	}, [])
-
-	const applyMarkerToSelection = useCallback(
-		(marker: string) => {
-			const active = selectionToolbar
-			setSelectionToolbar(null)
-			const ta = textareaRef.current
-			// `?? ` not `||` — a selection at offset 0 is a real range.
-			if (!active || !ta || active.start === null || active.end === null) return
-			const next = toggleMarkdownMarker(ta.value, active.start, active.end, marker)
-			setDraft(next.value)
-			// Keep the words selected so a second press toggles them back off.
-			requestAnimationFrame(() => {
-				ta.focus()
-				ta.setSelectionRange(next.start, next.end)
-			})
-		},
-		[selectionToolbar],
-	)
-
-	const adjustHeight = useCallback(() => {
-		const ta = textareaRef.current
-		if (!ta) return
-		ta.style.height = 'auto'
-		const scrollHeight = ta.scrollHeight
-		const min = lockedHeight ?? 0
-		ta.style.height = `${Math.max(scrollHeight, min)}px`
-	}, [lockedHeight])
-
-	// Rewrites the field and asks for a caret position once React has committed
-	// the new value. Deliberately *not* a requestAnimationFrame callback: a
-	// frame can be delayed past the next keystroke, which restores a stale caret
-	// mid-word and scatters the characters. The layout effect below runs before
-	// paint and before any further input, so the caret can't arrive late.
-	const applyEdit = useCallback((edit: EditorEdit) => {
-		pendingSelectionRef.current = { start: edit.start, end: edit.end }
-		setDraft(edit.value)
-	}, [])
-
-	const handleEditorKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (e.key === 'Escape') {
-				setEditing(false)
-				setDraft(content)
-				return
-			}
-			const el = e.currentTarget
-			// Tab is claimed only where it means indentation — see isIndentContext.
-			if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-				if (!isIndentContext(el.value, el.selectionStart, el.selectionEnd)) return
-				e.preventDefault()
-				applyEdit(shiftIndent(el.value, el.selectionStart, el.selectionEnd, e.shiftKey))
-				return
-			}
-			if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-				const edit = continueListOnEnter(el.value, el.selectionStart, el.selectionEnd)
-				if (!edit) return
-				e.preventDefault()
-				applyEdit(edit)
-				return
-			}
-			if (!(e.metaKey || e.ctrlKey)) return
-			// ⌘⏎ commits, mirroring Escape's revert — otherwise the only way out
-			// of a full-page editor is to find something else to click.
-			if (e.key === 'Enter') {
-				e.preventDefault()
-				e.currentTarget.blur()
-				return
-			}
-			// AltGr is Ctrl+Alt on Windows/Linux, so `AltGr+E` (`€` on the Nordic,
-			// German, Polish and Turkish layouts) arrives here with `ctrlKey` set.
-			// Without this the character never lands and the selection gets wrapped
-			// in backticks instead. Same guard as the panel chords in
-			// `ui/sidebar.tsx` and `objects/object-detail-shell.tsx`.
-			if (e.altKey) return
-			const marker = SHORTCUT_MARKERS[e.key.toLowerCase()]
-			if (!marker) return
-			e.preventDefault()
-			applyEdit(toggleMarkdownMarker(el.value, el.selectionStart, el.selectionEnd, marker))
-		},
-		[content, applyEdit],
-	)
-
-	useLayoutEffect(() => {
-		if (!editing) return
-		adjustHeight()
-		const ta = textareaRef.current
-		if (!ta || document.activeElement === ta) return
-		ta.focus()
-		const end = ta.value.length
-		ta.setSelectionRange(end, end)
-	}, [editing, adjustHeight])
-
-	// Runs after every commit; a no-op unless an edit left a caret request.
-	useLayoutEffect(() => {
-		const pending = pendingSelectionRef.current
-		if (!pending) return
-		pendingSelectionRef.current = null
-		const ta = textareaRef.current
-		if (!ta) return
-		ta.setSelectionRange(pending.start, pending.end)
-		adjustHeight()
-	})
-
-	// Focus is taken here rather than with `autoFocus` so the caret can land
-	// where the click did. Keyed on `editing` alone: re-running on a height
-	// change would yank the caret back mid-typing.
-	useLayoutEffect(() => {
-		if (!editing) return
-		const ta = textareaRef.current
-		if (!ta) return
-		ta.focus()
-		const caret = Math.min(pendingCaretRef.current ?? ta.value.length, ta.value.length)
-		ta.setSelectionRange(caret, caret)
-		pendingCaretRef.current = null
-	}, [editing])
-
-	// The toolbar is pinned to viewport coordinates captured at selection time,
-	// so it detaches from its text the moment anything scrolls. Dismiss instead
-	// of leaving it floating over unrelated content.
-	useEffect(() => {
-		if (!selectionToolbar) return
-		const dismiss = () => setSelectionToolbar(null)
-		window.addEventListener('scroll', dismiss, true)
-		window.addEventListener('resize', dismiss)
-		return () => {
-			window.removeEventListener('scroll', dismiss, true)
-			window.removeEventListener('resize', dismiss)
-		}
-	}, [selectionToolbar])
-
-	const components = useMemo<Components>(() => {
-		// Inline code spans that contain a bare URL render as a clickable link instead
-		// of styled monospace — agents commonly write URLs in backticks and the
-		// remark-breaks + remark-gfm combination doesn't always autolink them.
-		const code: Components['code'] = ({ children, className }) => {
-			if (!className) {
-				const text = typeof children === 'string' ? children.trim() : ''
-				if (!text.includes('\n') && /^https?:\/\/\S+$/.test(text)) {
-					return (
-						<a href={text} target="_blank" rel="noopener noreferrer">
-							{text}
-						</a>
-					)
-				}
-			}
-			return <code className={className}>{children}</code>
-		}
-
-		// When renderVisuals is on, override <pre> (not just <code>) so the
-		// dispatched visual replaces the whole block — react-markdown wraps fenced
-		// blocks as <pre><code class="language-X">…</code></pre> and a <div>
-		// child inside <pre> is invalid HTML.
-		const pre: Components['pre'] = ({ children, ...rest }) => {
-			if (renderVisuals) {
-				const first = Children.toArray(children).find((c) => isValidElement(c)) as
-					| ReactElement
-					| undefined
-				const lang = readCodeLanguage(first)
-				if (lang && isVisualLanguage(lang)) {
-					return <CommentVisual language={lang} source={readCodeSource(first)} />
-				}
-			}
-			return <pre {...rest}>{children}</pre>
-		}
-
-		// `overflow-x-auto` on a `<table>` doesn't clamp the way it does on a
-		// block box — the table layout algorithm still computes its intrinsic
-		// width from cell content and can exceed the containing block. An outer
-		// block-level scroll wrapper is the reliable pattern for wide tables.
-		const table: Components['table'] = ({ children, ...rest }) => (
-			<div className="my-2 max-w-full overflow-x-auto">
-				<table {...rest}>{children}</table>
-			</div>
-		)
-
-		// `<img src>` to a maskin file viewer URL (`/<workspaceId>/files/<fileId>`)
-		// loads an HTML viewer page as bytes and renders as broken. Swap it for a
-		// component that fetches the file and inlines its bytes as a data-URI —
-		// mirrors `apps/web/src/components/files/file-body.tsx`'s inline-image path.
-		const img: Components['img'] = ({ src, alt, title }) => {
-			const parsed = parseFileViewerUrl(typeof src === 'string' ? src : undefined)
-			if (parsed) {
-				return (
-					<FileViewerImage
-						workspaceId={parsed.workspaceId}
-						fileId={parsed.fileId}
-						alt={alt}
-						title={title}
-					/>
-				)
-			}
-			return <img src={src} alt={alt ?? ''} title={title} />
-		}
-
-		// Markdown links open in a new tab so a click never navigates the app away
-		// from the page you are on — mirrors the inline-code-URL path above. Hash
-		// and relative links keep default behaviour so in-page anchors still work.
-		const link =
-			(wrapChildren?: (children: ReactNode) => ReactNode): Components['a'] =>
-			({ children, href, ...rest }) => {
-				const external = typeof href === 'string' && /^https?:\/\//.test(href)
-				return (
-					<a
-						{...rest}
-						href={href}
-						{...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-					>
-						{wrapChildren ? wrapChildren(children) : children}
-					</a>
-				)
-			}
-
-		// With linkedCards on, a paragraph or list item that is only a link to a draft or a
-		// previewable file renders as its card; the original element is what shows until the
-		// card is known to qualify, so a link never vanishes.
+	// With linkedCards on, a paragraph or list item that is only a link renders as its card, and
+	// any other link to an object as a chip; the original element is what shows until the card or
+	// chip is known to apply, so a link never vanishes.
+	const getComponentOverrides = useMemo(() => {
+		if (!linkedCards) return undefined
 		const withCard = (node: unknown, original: ReactNode, bare: ReactNode): ReactNode => {
 			const card = (node as HastNode | undefined)?.data?.linkedCard as StandaloneCard | undefined
-			if (!linkedCards || !card) return original
+			if (!card) return original
 			return linkedCards.renderCard(card.target, card.bare ? bare : original, {
 				...linkedCards,
 				label: card.label ?? undefined,
+				inList: card.inList,
+				updated: linkedCards.updatedIds?.has(card.target.id),
 			})
 		}
-		const trailing: Components | Record<string, unknown> = linkedCards
-			? {
-					[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {
-						const list = (key: string) =>
-							String(node?.properties?.[key] ?? '')
-								.split(',')
-								.filter(Boolean)
-						return (
-							<>
-								{list('objects').map((id) => (
-									<Fragment key={`object:${id}`}>
-										{linkedCards.renderCard({ kind: 'object', id }, null, linkedCards)}
-									</Fragment>
-								))}
-								{list('files').map((id) => (
-									<Fragment key={`file:${id}`}>
-										{linkedCards.renderCard({ kind: 'file', id }, null, linkedCards)}
-									</Fragment>
-								))}
-							</>
-						)
-					},
-				}
-			: {}
-
-		if (!mentionActors) {
-			if (!linkedCards) return { code, img, pre, table, a: link() }
-			return {
-				code,
-				img,
-				pre,
-				table,
-				a: link(),
-				p: ({ node, children }) => withCard(node, <p>{children}</p>, children),
-				li: ({ children }) => <li className={CARD_ITEM_CLASS}>{children}</li>,
-				...trailing,
-			} as Components
-		}
-		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
-		return {
-			code,
-			img,
-			pre,
-			table,
-			p: ({ node, children }) => withCard(node, <p>{wrap(children)}</p>, wrap(children)),
-			li: ({ children }) => (
-				<li className={linkedCards ? CARD_ITEM_CLASS : undefined}>{wrap(children)}</li>
-			),
-			em: ({ children }) => <em>{wrap(children)}</em>,
-			strong: ({ children }) => <strong>{wrap(children)}</strong>,
-			blockquote: ({ children }) => <blockquote>{wrap(children)}</blockquote>,
-			del: ({ children }) => <del>{wrap(children)}</del>,
-			a: link(wrap),
-			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
-			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
-			...trailing,
-		} as Components
-	}, [mentionActors, onMentionClick, renderVisuals, linkedCards])
-
+		return ({ wrap }: ComponentOverridesContext) =>
+			({
+				p: ({ node, children }: { node?: HastNode; children?: ReactNode }) =>
+					withCard(node, <p>{wrap(children)}</p>, wrap(children)),
+				li: ({ children }: { children?: ReactNode }) => (
+					<li className={CARD_ITEM_CLASS}>{wrap(children)}</li>
+				),
+				a: ({
+					node,
+					href,
+					children,
+					...rest
+				}: { node?: HastNode; href?: string; children?: ReactNode } & Record<string, unknown>) => {
+					const github = githubTargetOf(href)
+					if (github && linkedCards.renderGithubChip && href) {
+						return linkedCards.renderGithubChip(github, href)
+					}
+					const settings = linkedCards.renderSettingsChip
+						? settingsTargetOf(href, linkedCards.workspaceId, linkedCards.enterprise)
+						: null
+					if (settings && linkedCards.renderSettingsChip) {
+						return linkedCards.renderSettingsChip(settings, linkedCards)
+					}
+					// Same as the renderer's own link: an address on the web opens in a new tab.
+					const external = typeof href === 'string' && /^https?:\/\//.test(href)
+					const link = (
+						<a
+							{...rest}
+							href={href}
+							{...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+						>
+							{wrap(children)}
+						</a>
+					)
+					const target = node?.data?.linkedChip ? targetOfHref(href) : null
+					return target && linkedCards.renderChip
+						? linkedCards.renderChip(target, link, {
+								...linkedCards,
+								// Outside chat no approval card follows a draft: its link stays plain.
+								cardFollows: draftsAndFiles ? node?.data?.cardFollows !== false : true,
+							})
+						: link
+				},
+				[LINKED_CARDS_TAG]: ({ node }: { node?: HastNode }) => {
+					const list = (key: string) =>
+						String(node?.properties?.[key] ?? '')
+							.split(',')
+							.filter(Boolean)
+					return (
+						<>
+							{list('objects').map((id) => (
+								<Fragment key={`object:${id}`}>
+									{linkedCards.renderCard({ kind: 'object', id }, null, {
+										...linkedCards,
+										after: true,
+										updated: linkedCards.updatedIds?.has(id),
+									})}
+								</Fragment>
+							))}
+							{list('files').map((id) => (
+								<Fragment key={`file:${id}`}>
+									{linkedCards.renderCard({ kind: 'file', id }, null, linkedCards)}
+								</Fragment>
+							))}
+						</>
+					)
+				},
+			}) as unknown as Components
+	}, [linkedCards, draftsAndFiles])
 	const rehypePlugins = useMemo(
-		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds)] : undefined),
-		[linkedCards, cardsSkipIds],
+		() =>
+			linkedCards
+				? [placeCardsPlugin(cardsSkipIds, cardsWorkspaceId, chipsOnly, draftsAndFiles)]
+				: undefined,
+		[linkedCards, cardsSkipIds, cardsWorkspaceId, chipsOnly, draftsAndFiles],
 	)
 
-	if (editable && editing) {
-		const isDoc = size === 'doc'
-		// The primitive sets `md:text-sm` and a focus ring. At the document scale
-		// both have to go, or the copy shrinks a pixel and a stray ring appears
-		// the moment you click in — the field has to *be* the view, exactly.
-		const field = (
-			<Textarea
-				ref={textareaRef}
-				aria-label={editorLabel}
-				className={cn(
-					'w-full resize-none overflow-hidden border-none font-sans outline-none focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0',
-					isDoc
-						? 'relative min-h-0 rounded-[9px] bg-transparent px-2 py-1 text-[15px] text-transparent caret-foreground md:text-[15px]'
-						: 'bg-transparent p-0 text-sm text-muted-foreground',
-				)}
-				style={{ minHeight: lockedHeight, lineHeight: isDoc ? '1.65' : '1.7142857' }}
-				value={draft}
-				onChange={(e) => {
-					setDraft(e.target.value)
-					adjustHeight()
-				}}
-				onKeyDown={handleEditorKeyDown}
-				onSelect={isDoc ? handleEditorSelect : undefined}
-				onBlur={(e) => {
-					// A toolbar press blurs the field; its own mousedown re-focuses, so
-					// only a blur to somewhere else should commit and dismiss.
-					if (e.relatedTarget?.closest('[data-selection-toolbar]')) return
-					setSelectionToolbar(null)
-					handleBlur()
-				}}
+	return (
+		<div className={className}>
+			<MarkdownRenderer
+				content={content}
+				size={size}
+				disallowedElements={disallowedElements}
+				mentionActors={mentionActors as MentionActor[] | undefined}
+				onMentionClick={onMentionClick as ((actor: MentionActor) => void) | undefined}
+				renderVisuals={renderVisuals}
+				renderCodeBlock={renderChartBlock}
+				renderImage={renderMarkdownImage}
+				rehypePlugins={rehypePlugins as unknown as never[] | undefined}
+				getComponentOverrides={getComponentOverrides}
 			/>
-		)
+		</div>
+	)
+}
 
-		if (!isDoc) return field
-
+/**
+ * Thin adapter over the split @maskin/markdown/react package (bet 666e3c4a).
+ *
+ * - editable=false: MarkdownRenderer (react-markdown, 0 KB added on read
+ *   routes), reached through RenderedMarkdownContent.
+ * - editable=true: MarkdownEditor from the dynamic-imported Tiptap chunk.
+ *
+ * Blur-emit save semantics: onChange(markdown) fires only on blur (tech spec §9).
+ */
+export function MarkdownContent({
+	editable,
+	onChange,
+	editorLabel,
+	preserveSource,
+	surface,
+	objectId,
+	...renderProps
+}: MarkdownContentProps) {
+	if (editable) {
 		return (
-			<div className="-ml-2 flex w-[calc(100%+8px)] max-w-[75ch] flex-col">
-				{/* Fixed over the highlighted run. The buttons act on mousedown so
-				    the browser never clears the selection first, and the field's
-				    blur handler ignores a blur that lands on them. */}
-				{selectionToolbar && (
-					<div
-						data-selection-toolbar=""
-						className="fixed z-[60] flex -translate-x-1/2 -translate-y-full gap-0.5 rounded-[9px] bg-primary p-[3px] shadow-lg"
-						style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
-					>
-						{(
-							[
-								{ marker: '**', label: 'Bold', glyph: 'B', className: 'font-extrabold' },
-								{ marker: '_', label: 'Italic', glyph: 'I', className: 'font-semibold italic' },
-								{
-									marker: '`',
-									label: 'Code',
-									glyph: '<>',
-									className: 'font-mono text-[11px] font-semibold',
-								},
-							] as const
-						).map((action) => (
-							<button
-								key={action.label}
-								type="button"
-								title={action.label}
-								aria-label={action.label}
-								onMouseDown={(e) => {
-									e.preventDefault()
-									applyMarkerToSelection(action.marker)
-								}}
-								className={cn(
-									'grid size-[26px] place-items-center rounded-[7px] text-[12.5px] text-primary-foreground transition-colors hover:bg-secondary-foreground/25',
-									action.className,
-								)}
-							>
-								{action.glyph}
-							</button>
-						))}
-					</div>
-				)}
-
-				{/* What you read is the overlay; the textarea over it is transparent
-				    but for its caret. Same font, size, leading, padding and wrapping,
-				    so every glyph lands in the same place — which is what lets the
-				    delimiters recede without the caret drifting off the text. */}
-				<div className="relative rounded-[9px] bg-muted/60">
-					<div
-						ref={docOverlayRef}
-						aria-hidden="true"
-						className="pointer-events-none absolute inset-0 whitespace-pre-wrap break-words px-2 py-1 text-[15px] leading-[1.65] text-foreground"
-					>
-						{splitMarkdownMarkers(draft).map((segment, index) => (
-							<span
-								// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-								key={index}
-								className={cn(segment.isMarker && 'text-border-strong')}
-							>
-								{segment.text}
-							</span>
-						))}
-						{/* Keeps the overlay's height in step when the draft ends in a newline. */}
-						{draft.endsWith('\n') && '\u200b'}
-					</div>
-					{field}
-				</div>
-				<p className="mt-1.5 px-2 text-[10.5px] text-muted-foreground">
-					<kbd className="font-mono">Esc</kbd> to cancel · <kbd className="font-mono">⌘↵</kbd> to
-					save · <kbd className="font-mono">⌘B</kbd> <kbd className="font-mono">⌘I</kbd>{' '}
-					<kbd className="font-mono">⌘E</kbd> to format
-				</p>
-			</div>
-		)
-	}
-
-	if (editable && !content) {
-		return (
-			<Textarea
-				aria-label={editorLabel}
-				className={`${className ?? ''} w-full min-h-[60px] text-sm text-muted-foreground`}
-				placeholder="Click to add content..."
-				onFocus={() => startEditing('')}
-				readOnly
+			<EditorAdapter
+				content={renderProps.content}
+				onChange={onChange}
+				className={renderProps.className}
+				editorLabel={editorLabel}
+				disallowedElements={renderProps.disallowedElements}
+				preserveSource={preserveSource}
+				surface={surface}
+				objectId={objectId}
 			/>
 		)
 	}
+
+	return <RenderedMarkdownContent {...renderProps} />
+}
+
+export const READ_ONLY_DESCRIPTION_BANNER =
+	"This description is read-only here. Editing it could change parts you didn't touch."
+
+// Same wording as the file editor's refused-rewrite banner, for a description.
+export const REFUSED_DESCRIPTION_BANNER =
+	"Part of this description can't be written back without losing something, so that part was left as it was. Your other changes are saved."
+
+// Dynamic-imported Tiptap surface. Blur-emit is delegated to the
+// editor itself (spec §9). While the chunk is fetching, render the raw
+// markdown so nothing flashes empty. `surface` / `objectId` ride on the editor
+// events; the object description and create form pass them.
+function EditorAdapter({
+	content,
+	onChange,
+	className,
+	editorLabel,
+	disallowedElements,
+	preserveSource,
+	surface,
+	objectId,
+}: {
+	content: string
+	onChange?: (value: string) => unknown
+	className?: string
+	editorLabel?: string
+	disallowedElements?: string[]
+	preserveSource?: boolean
+	surface?: string
+	objectId?: string
+}) {
+	const [readOnly, setReadOnly] = useState(false)
+	const [rewriteRefused, setRewriteRefused] = useState(false)
+	// The editor reads `value` once, at mount. With preserveSource it also builds
+	// its block map from that text, so a change that did not come from this editor
+	// (an agent edit landing over SSE) has to remount it, or the next blur would
+	// save the old text over the new. Our own save echoing back, and a change
+	// while the person is mid-edit, leave it alone.
+	const dirtyRef = useRef(false)
+	const settledTextRef = useRef(content)
+	const [editorKey, setEditorKey] = useState(0)
+	useEffect(() => {
+		if (!preserveSource) return
+		if (content === settledTextRef.current || dirtyRef.current) return
+		settledTextRef.current = content
+		setEditorKey((key) => key + 1)
+	}, [content, preserveSource])
+
+	const handleChange = useCallback(
+		(markdown: string) => {
+			dirtyRef.current = false
+			// A save that comes out identical to what is stored (every rewrite was
+			// refused, or the edit was undone) is not sent: it would only stamp an
+			// edit on the object that nobody made.
+			if (preserveSource && markdown === settledTextRef.current) return
+			settledTextRef.current = markdown
+			onChange?.(markdown)
+		},
+		[onChange, preserveSource],
+	)
+
+	const handleEdit = useCallback(() => {
+		dirtyRef.current = true
+	}, [])
+
+	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
+		captureEditorParseError(info)
+		if (info.reason === 'read_only_fallback') setReadOnly(true)
+		if (info.reason === 'loss_check') setRewriteRefused(true)
+	}, [])
+
+	const handleToolbarAction = useCallback((info: ToolbarActionInfo) => {
+		editorTelemetry(info).emitToolbarAction({ action: info.action })
+	}, [])
+
+	const handleShortcutUsed = useCallback((info: ShortcutInfo) => {
+		editorTelemetry(info).emitShortcut({ shortcut: info.shortcut })
+	}, [])
+
+	const handleSaved = useCallback((info: SavedInfo) => {
+		editorTelemetry(info).emitSaved({
+			contentLength: info.contentLength,
+			saveTrigger: info.saveTrigger,
+		})
+	}, [])
+
+	const disallowedNodes = useMemo(() => {
+		if (!disallowedElements) return undefined
+		const nodes: Array<'heading' | 'table' | 'taskList' | 'codeBlock'> = []
+		if (disallowedElements.some((el) => /^h[1-6]$/.test(el))) nodes.push('heading')
+		if (disallowedElements.includes('table')) nodes.push('table')
+		return nodes.length > 0 ? nodes : undefined
+	}, [disallowedElements])
 
 	return (
 		<>
-			{/* Fixed to the selection, above it (mockup 1030–1035). The buttons act
-			    on mousedown so the browser never clears the selection first. */}
-			{selectionToolbar && (
-				<div
-					className="fixed z-[60] flex -translate-x-1/2 -translate-y-full gap-0.5 rounded-[9px] bg-primary p-[3px] shadow-lg"
-					style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
-				>
-					{(
-						[
-							{ marker: '**', label: 'Bold', glyph: 'B', className: 'font-extrabold' },
-							{ marker: '_', label: 'Italic', glyph: 'I', className: 'font-semibold italic' },
-							{
-								marker: '`',
-								label: 'Code',
-								glyph: '<>',
-								className: 'font-mono text-[11px] font-semibold',
-							},
-						] as const
-					).map((action) => (
-						<button
-							key={action.label}
-							type="button"
-							title={action.label}
-							aria-label={action.label}
-							onMouseDown={(e) => {
-								e.preventDefault()
-								applyMarkerToSelection(action.marker)
-							}}
-							className={cn(
-								'grid size-[26px] place-items-center rounded-[7px] text-[12.5px] text-primary-foreground transition-colors hover:bg-secondary-foreground/25',
-								action.className,
-							)}
-						>
-							{action.glyph}
-						</button>
-					))}
-				</div>
+			{readOnly && surface === 'description' && (
+				<EditorBanner tone="info" className="mb-3">
+					{READ_ONLY_DESCRIPTION_BANNER}
+				</EditorBanner>
 			)}
-			<div
-				ref={containerRef}
-				className={cn(
-					className,
-					// The doc view sits on the editor's own plate and measure, so the
-					// swap into edit mode moves nothing (mockup 1027–1037).
-					size === 'doc' &&
-						editable &&
-						'-ml-2 w-[calc(100%+8px)] max-w-[75ch] cursor-text rounded-[9px] px-2 py-1 transition-colors hover:bg-muted/60',
-				)}
-				onClick={(e) => {
-					if (!editable) return
-					// Links, task checkboxes and any other control in the body have to
-					// keep working — swallowing their click into the editor makes the
-					// rendered document unusable as a document.
-					if (
-						(e.target as HTMLElement).closest(
-							'a,button,input,select,textarea,summary,[role="button"]',
-						)
-					) {
-						return
-					}
-					// Selecting text must not drop you into the editor and lose it.
-					if (String(window.getSelection() ?? '').trim()) return
-					startEditing(content, caretOffsetAtPoint(e.clientX, e.clientY, content))
-				}}
-				onKeyDown={(e) => {
-					if (editable && (e.key === 'Enter' || e.key === ' ')) startEditing(content)
-				}}
-				tabIndex={editable ? 0 : undefined}
+			{rewriteRefused && surface === 'description' && (
+				<EditorBanner tone="danger" heading="Couldn't save your changes" className="mb-3">
+					{REFUSED_DESCRIPTION_BANNER}
+				</EditorBanner>
+			)}
+			<Suspense
+				fallback={
+					<div className={className}>
+						<MarkdownRenderer content={content} />
+					</div>
+				}
 			>
-				<div
-					className={cn(
-						'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none',
-						'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full',
-						size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
-						size === 'doc' && [
-							'[&_p]:text-[15px] [&_p]:leading-[1.65] [&_p]:text-foreground [&_p]:mb-2 [&_p]:mt-0',
-							'[&_h1]:text-[13px] [&_h2]:text-[13px] [&_h3]:text-[13px] [&_h4]:text-[13px]',
-							'[&_:is(h1,h2,h3,h4)]:font-bold [&_:is(h1,h2,h3,h4)]:tracking-[-0.01em] [&_:is(h1,h2,h3,h4)]:mb-1 [&_:is(h1,h2,h3,h4)]:mt-3.5',
-							'[&_li]:text-sm [&_li]:leading-[1.6] [&_li]:text-foreground [&_li]:my-0',
-							"[&_ul]:list-none [&_ul]:pl-0 [&_ul]:my-0 [&_ul]:mb-2.5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-[5px] [&_ul>li]:relative [&_ul>li]:pl-[22px] [&_ul>li]:before:absolute [&_ul>li]:before:left-0 [&_ul>li]:before:text-border-strong [&_ul>li]:before:content-['—']",
-						],
-					)}
-				>
-					<ReactMarkdown
-						remarkPlugins={remarkPlugins as unknown as never[]}
-						disallowedElements={disallowedElements}
-						unwrapDisallowed={Boolean(disallowedElements && disallowedElements.length > 0)}
-						rehypePlugins={rehypePlugins as unknown as never[] | undefined}
-						components={components}
-					>
-						{content}
-					</ReactMarkdown>
-				</div>
-			</div>
+				<MarkdownEditor
+					key={editorKey}
+					value={content}
+					onChange={handleChange}
+					onEdit={handleEdit}
+					variant="document"
+					className={className}
+					ariaLabel={editorLabel}
+					disallowedNodes={disallowedNodes}
+					onParseError={handleParseError}
+					onToolbarAction={handleToolbarAction}
+					onShortcutUsed={handleShortcutUsed}
+					onSaved={handleSaved}
+					preserveSource={preserveSource}
+					surface={surface}
+					objectId={objectId}
+				/>
+			</Suspense>
 		</>
 	)
 }

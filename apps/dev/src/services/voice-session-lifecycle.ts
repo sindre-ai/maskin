@@ -14,9 +14,6 @@ import { captureVoiceException } from '../lib/sentry-voice'
  * voice_session_ended event cannot drift between paths.
  */
 
-/** Crash floor from the tech spec §Error handling. Pricing Strategist owns the real number. */
-export const VOICE_DAILY_MINUTE_CAP = 60
-
 const LIVE_STATUSES = ['pending', 'active'] as const
 
 /** Which row status each terminal reason lands in (tech spec §Session lifecycle). */
@@ -30,40 +27,29 @@ const STATUS_FOR_REASON: Record<VoiceEndedReason, 'ended' | 'timed_out' | 'error
 
 // ── Live counters ────────────────────────────────────────────────────
 
-interface LiveCounters {
-	inputAudioMs: number
-	outputAudioMs: number
-	turnCount: number
-	toolCallsCount: number
-}
-
-// In-process on purpose: the server socket, the hangup route and the sweeper
-// all run in this one server process, and voice_sessions has no columns for
-// turn / tool-call counts. After a restart a session ends with zeroes here and
-// falls back to whatever the client reported on hangup.
-const liveCounters = new Map<string, LiveCounters>()
-
-function countersFor(sessionId: string): LiveCounters {
-	let counters = liveCounters.get(sessionId)
-	if (!counters) {
-		counters = { inputAudioMs: 0, outputAudioMs: 0, turnCount: 0, toolCallsCount: 0 }
-		liveCounters.set(sessionId, counters)
-	}
-	return counters
-}
-
-export function recordVoiceTurn(
+// Written to the voice_sessions row as the call runs, not held in memory, so a
+// server restart mid-call does not zero them. Only rows still pending / active
+// are touched: a late event after the call ended is dropped.
+export async function recordVoiceTurn(
+	db: Database,
 	sessionId: string,
 	turn: { userAudioMs: number; agentAudioMs: number },
-): void {
-	const counters = countersFor(sessionId)
-	counters.turnCount += 1
-	counters.inputAudioMs += turn.userAudioMs
-	counters.outputAudioMs += turn.agentAudioMs
+): Promise<void> {
+	await db
+		.update(voiceSessions)
+		.set({
+			turnCount: sql`${voiceSessions.turnCount} + 1`,
+			inputAudioMs: sql`${voiceSessions.inputAudioMs} + ${Math.max(0, Math.round(turn.userAudioMs))}`,
+			outputAudioMs: sql`${voiceSessions.outputAudioMs} + ${Math.max(0, Math.round(turn.agentAudioMs))}`,
+		})
+		.where(and(eq(voiceSessions.id, sessionId), inArray(voiceSessions.status, [...LIVE_STATUSES])))
 }
 
-export function recordVoiceToolCall(sessionId: string): void {
-	countersFor(sessionId).toolCallsCount += 1
+export async function recordVoiceToolCall(db: Database, sessionId: string): Promise<void> {
+	await db
+		.update(voiceSessions)
+		.set({ toolCallsCount: sql`${voiceSessions.toolCallsCount} + 1` })
+		.where(and(eq(voiceSessions.id, sessionId), inArray(voiceSessions.status, [...LIVE_STATUSES])))
 }
 
 // ── Vendor teardown ──────────────────────────────────────────────────
@@ -79,6 +65,39 @@ export type CloseVendorSessionFn = (session: {
 	voiceSessionId: string
 	vendorSessionId: string | null
 }) => Promise<void>
+
+/**
+ * Writes the call's closing receipt into its chat and returns the counts the voice_session_ended
+ * event carries. routes/voice-sessions.ts wires this to postClosingReceipt (services/voice-receipt.ts).
+ * It runs here, in the one place every call ends, so a hangup that reaches the route and a socket
+ * that drops in the channel leave the same receipt, once. The default posts nothing, for callers
+ * (tests, scripts) that load this module without the route. Failures are logged, never thrown.
+ */
+export interface EndedReceiptCounts {
+	cardsCleared: number
+	writesHeld: number
+	writesDone: number
+	posted: boolean
+}
+
+export type EndedReceiptFn = (
+	db: Database,
+	ended: typeof voiceSessions.$inferSelect,
+	info: { reason: VoiceEndedReason },
+) => Promise<EndedReceiptCounts>
+
+const NO_RECEIPT: EndedReceiptCounts = {
+	cardsCleared: 0,
+	writesHeld: 0,
+	writesDone: 0,
+	posted: false,
+}
+
+let endedReceiptFn: EndedReceiptFn = async () => NO_RECEIPT
+
+export function setEndedReceiptFn(fn: EndedReceiptFn | null): void {
+	endedReceiptFn = fn ?? (async () => NO_RECEIPT)
+}
 
 let closeVendorSessionFn: CloseVendorSessionFn = async (session) => {
 	logger.debug('Voice vendor session closed (no teardown wired)', {
@@ -96,7 +115,7 @@ export function setCloseVendorSessionFn(fn: CloseVendorSessionFn | null): void {
 export interface EndVoiceSessionInput {
 	id: string
 	reason: VoiceEndedReason
-	/** Audio seconds the client measured. Used when larger than what the event channel recorded. */
+	/** Audio seconds the client measured. Only a fallback, used when the event channel recorded no audio for that direction. */
 	reportedInputAudioSeconds?: number
 	reportedOutputAudioSeconds?: number
 	vendorErrorCode?: string
@@ -115,7 +134,11 @@ export async function endVoiceSession(
 	input: EndVoiceSessionInput,
 ): Promise<VoiceSessionEnded | null> {
 	const [live] = await db
-		.select({ startedAt: voiceSessions.startedAt })
+		.select({
+			startedAt: voiceSessions.startedAt,
+			inputAudioMs: voiceSessions.inputAudioMs,
+			outputAudioMs: voiceSessions.outputAudioMs,
+		})
 		.from(voiceSessions)
 		.where(and(eq(voiceSessions.id, input.id), inArray(voiceSessions.status, [...LIVE_STATUSES])))
 		.limit(1)
@@ -123,23 +146,16 @@ export async function endVoiceSession(
 
 	const now = new Date()
 	const elapsedSeconds = Math.max(0, Math.floor((now.getTime() - live.startedAt.getTime()) / 1000))
-	const counters = liveCounters.get(input.id)
-	// Neither side can have carried more audio than the call lasted, so a
-	// client-reported figure is clamped to the wall clock.
-	const inputAudioSeconds = Math.min(
-		elapsedSeconds,
-		Math.max(
-			Math.round((counters?.inputAudioMs ?? 0) / 1000),
-			input.reportedInputAudioSeconds ?? 0,
-		),
-	)
-	const outputAudioSeconds = Math.min(
-		elapsedSeconds,
-		Math.max(
-			Math.round((counters?.outputAudioMs ?? 0) / 1000),
-			input.reportedOutputAudioSeconds ?? 0,
-		),
-	)
+	// Neither side can have carried more audio than the call lasted, so the
+	// figure is clamped to the wall clock. What the server recorded wins; the
+	// client report is used only for a direction with nothing recorded.
+	const audioSeconds = (recordedMs: number, reported: number | undefined) =>
+		Math.min(
+			elapsedSeconds,
+			recordedMs > 0 ? Math.round(recordedMs / 1000) : Math.max(0, reported ?? 0),
+		)
+	const inputAudioSeconds = audioSeconds(live.inputAudioMs, input.reportedInputAudioSeconds)
+	const outputAudioSeconds = audioSeconds(live.outputAudioMs, input.reportedOutputAudioSeconds)
 	const totalCostUsd = computeVoiceCostUsd(inputAudioSeconds, outputAudioSeconds)
 
 	const [ended] = await db
@@ -156,8 +172,6 @@ export async function endVoiceSession(
 		.returning()
 	if (!ended) return null
 
-	liveCounters.delete(input.id)
-
 	await closeVendorSessionFn({
 		voiceSessionId: ended.id,
 		vendorSessionId: ended.vendorSessionId,
@@ -169,14 +183,26 @@ export async function endVoiceSession(
 		captureVoiceException(ended.id, err)
 	})
 
+	// After the vendor side is closed, so no new write can land, and before the event, so the
+	// event carries the same counts as the receipt.
+	const receipt = await endedReceiptFn(db, ended, { reason: input.reason }).catch((err) => {
+		logger.warn('Voice closing receipt failed', {
+			voice_session_id: ended.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		captureVoiceException(ended.id, err)
+		return NO_RECEIPT
+	})
+
 	await emitEnded(db, ended, {
+		receipt,
 		reason: input.reason,
 		durationMs: now.getTime() - ended.startedAt.getTime(),
 		inputAudioSeconds,
 		outputAudioSeconds,
 		totalCostUsd,
-		toolCallsCount: counters?.toolCallsCount ?? 0,
-		turnCount: counters?.turnCount ?? 0,
+		toolCallsCount: ended.toolCallsCount,
+		turnCount: ended.turnCount,
 	})
 	return ended
 }
@@ -185,6 +211,7 @@ async function emitEnded(
 	db: Database,
 	session: VoiceSessionEnded,
 	stats: {
+		receipt: EndedReceiptCounts
 		reason: VoiceEndedReason
 		durationMs: number
 		inputAudioSeconds: number
@@ -215,6 +242,10 @@ async function emitEnded(
 			total_cost_usd: stats.totalCostUsd,
 			tool_calls_count: stats.toolCallsCount,
 			turn_count: stats.turnCount,
+			cards_cleared: stats.receipt.cardsCleared,
+			writes_held: stats.receipt.writesHeld,
+			writes_done: stats.receipt.writesDone,
+			receipt_posted: stats.receipt.posted,
 		})
 	} catch (err) {
 		// Analytics must never undo a call that has already been closed.
@@ -223,41 +254,4 @@ async function emitEnded(
 			error: err instanceof Error ? err.message : String(err),
 		})
 	}
-}
-
-// ── Daily minute cap ─────────────────────────────────────────────────
-
-function startOfUtcDay(now: Date): Date {
-	return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-}
-
-/**
- * Minutes of voice a workspace has used since 00:00 UTC. Wall-clock call
- * duration (a live call counts up to now), because that is what the cap is
- * protecting: spend on the operator's vendor key.
- */
-export async function getVoiceMinutesUsedToday(
-	db: Database,
-	workspaceId: string,
-	now: Date = new Date(),
-): Promise<number> {
-	const [row] = await db
-		.select({
-			seconds: sql<string>`coalesce(sum(extract(epoch from (coalesce(${voiceSessions.endedAt}, now()) - ${voiceSessions.startedAt}))), 0)`,
-		})
-		.from(voiceSessions)
-		.where(
-			and(
-				eq(voiceSessions.workspaceId, workspaceId),
-				sql`${voiceSessions.startedAt} >= ${startOfUtcDay(now).toISOString()}::timestamptz`,
-			),
-		)
-	const seconds = Number(row?.seconds ?? 0)
-	return Number.isFinite(seconds) ? seconds / 60 : 0
-}
-
-/** Seconds until the daily window resets (next 00:00 UTC), at least 1. */
-export function secondsUntilVoiceCapResets(now: Date = new Date()): number {
-	const next = startOfUtcDay(now).getTime() + 24 * 60 * 60 * 1000
-	return Math.max(1, Math.ceil((next - now.getTime()) / 1000))
 }

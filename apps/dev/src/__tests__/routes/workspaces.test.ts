@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { onTestFinished } from 'vitest'
+import { openSecret } from '../../lib/workspace-secrets'
 import { buildCreateWorkspaceBody, buildWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
@@ -377,7 +379,12 @@ describe('Workspaces Routes', () => {
 				expect(calls.updates[0]).toMatchObject({ name: 'Renamed' })
 			})
 
-			it('lets a human admin change an llm_keys value', async () => {
+			it('lets a human admin change an llm_keys value, stored sealed', async () => {
+				vi.stubEnv(
+					'INTEGRATION_ENCRYPTION_KEY',
+					'1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+				)
+				onTestFinished(() => vi.unstubAllEnvs())
 				const ws = buildByoWorkspace()
 				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 				mockResults.selectQueue = [MEMBER, [ws], HUMAN_ADMIN]
@@ -390,9 +397,10 @@ describe('Workspaces Routes', () => {
 				)
 
 				expect(res.status).toBe(200)
-				expect(calls.updates[0]).toMatchObject({
-					settings: { llm_keys: { anthropic: 'sk-ant-rotated' } },
-				})
+				const stored = (calls.updates[0] as { settings: { llm_keys: { anthropic: string } } })
+					.settings.llm_keys.anthropic
+				expect(stored).not.toContain('sk-ant-rotated')
+				expect(openSecret(stored)).toBe('sk-ant-rotated')
 			})
 
 			it('lets a plain member pin files (a member-level settings key)', async () => {

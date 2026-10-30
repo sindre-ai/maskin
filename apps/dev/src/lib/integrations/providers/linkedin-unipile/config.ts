@@ -89,12 +89,12 @@ export const config: ProviderConfig = {
 	// What agents can draft here for a person to read, edit and approve. The send tools are
 	// served per identity, so each is prefixed `linkedin-{account}-{identity}__`; `sendTool`
 	// names the verb. Limits mirror operations.ts (8000-character messages, 3000-character
-	// posts, the 200-character invite note).
+	// posts, the 300-character invite note).
 	deliverables: [
 		{
 			kind: 'linkedin_message',
 			label: 'LinkedIn message',
-			// `reply` with the object's id sends the approved text; see send-object.ts.
+			// `reply` or `send_message` with the object's id sends the approved text; see send-object.ts.
 			sendTool: 'reply',
 			// Mirrors the limit in operations.ts.
 			bodyMaxLength: 8000,
@@ -111,14 +111,36 @@ export const config: ProviderConfig = {
 				{ key: 'thread_id', label: 'Conversation', type: 'text', slot: 'hidden' },
 				// The message being answered, shown above the draft so it is read in context.
 				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
+				// A first message has no conversation yet: the person it goes to, by LinkedIn id.
+				// Shown, not hidden, so it is part of what an approval is bound to.
+				{ key: 'recipient_provider_id', label: 'LinkedIn id', type: 'text' },
+				// The one workspace file (PDF, PNG or JPEG) sent with the message. Shown for the
+				// same reason: swapping the file withdraws the approval.
+				{ key: 'attachment_file_id', label: 'Attachment', type: 'text' },
 			],
 		},
 		{
 			kind: 'linkedin_connection_request',
 			label: 'LinkedIn connection request',
 			sendTool: 'send_connection_request',
-			bodyMaxLength: 200,
+			bodyMaxLength: 300,
 			fields: [{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' }],
+		},
+		{
+			kind: 'linkedin_inmail',
+			label: 'LinkedIn InMail',
+			sendTool: 'send_inmail',
+			// Classic InMail takes no subject (Unipile only takes one for Sales Navigator and
+			// Recruiter), and the limit is the one LinkedIn gives a classic InMail.
+			bodyMaxLength: 1900,
+			fields: [
+				{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' },
+				// The id the send goes to. A detail line, not hidden, so it is part of what a person
+				// approves: hidden fields are not hashed, and an edited recipient must withdraw the approval.
+				{ key: 'recipient_provider_id', label: 'LinkedIn id', type: 'text', required: true },
+				// One approved workspace file; a detail line too, so it is hashed into the approval.
+				{ key: 'attachment_file_id', label: 'Attachment', type: 'text' },
+			],
 		},
 		{
 			kind: 'linkedin_post',

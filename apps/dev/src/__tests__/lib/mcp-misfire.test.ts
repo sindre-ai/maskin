@@ -107,7 +107,6 @@ describe('recordMcpMisfire', () => {
 	})
 
 	it('skips the DB write when db is undefined (still fans out to PostHog)', async () => {
-		const { capturePosthogEvent } = await import('../../lib/analytics/posthog')
 		vi.mocked(capturePosthogEvent).mockClear()
 
 		await recordMcpMisfire(undefined, '00000000-0000-0000-0000-000000000001', {
@@ -199,6 +198,19 @@ describe('recordMcpMisfire error_message on a real schema-validation failure', (
 		)
 	})
 
+	it('still classifies a create_objects missing-key error as schema validation, with the key path and no example text in error_message', async () => {
+		const rawMessage = await callToolExpectingValidationError('create_objects', {})
+		// Guard against a vacuous pass: the raw SDK message carries the new text.
+		expect(rawMessage).toContain('Missing required key')
+		const kind = classifyMcpError({ code: -32602, message: rawMessage })
+		expect(kind).toBe('schema_validation_error')
+
+		const redacted = redactErrorMessage(rawMessage)
+		expect(redacted).toContain('workspace_id: invalid_type expected string')
+		expect(redacted).toContain('nodes: invalid_type expected array')
+		expect(redacted).not.toContain('Correct call')
+	})
+
 	it('never lets a failing input value into error_message', async () => {
 		const secret = 'SECRET-ENUM-VALUE-d41d8cd9'
 		const rawMessage = await callToolExpectingValidationError('list_files', { kind: secret })
@@ -258,5 +270,25 @@ describe('redactErrorMessage', () => {
 	it('passes a plain tool-not-found message through unchanged', () => {
 		const msg = 'Tool imaginary_tool not found'
 		expect(redactErrorMessage(msg)).toBe(msg)
+	})
+})
+
+describe('recordMcpMisfire era labels', () => {
+	it('stamps mcp_era and mcp_protocol_version on the PostHog event', async () => {
+		vi.mocked(capturePosthogEvent).mockClear()
+
+		await recordMcpMisfire(undefined, '00000000-0000-0000-0000-000000000001', {
+			kind: 'unknown_param',
+			toolName: 'create_objects',
+			requestedShape: { title: 'string' },
+			sessionId: null,
+			agentActorId: 'actor-3',
+			mcpEra: 'legacy',
+			mcpProtocolVersion: '2025-11-25',
+		})
+		expect(vi.mocked(capturePosthogEvent).mock.calls[0][2]).toMatchObject({
+			mcp_era: 'legacy',
+			mcp_protocol_version: '2025-11-25',
+		})
 	})
 })

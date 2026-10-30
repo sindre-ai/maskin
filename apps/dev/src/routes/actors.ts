@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { evictActor, generateApiKey, hashPassword } from '@maskin/auth'
+import { evictActor, hashPassword, issueApiKey, revokeActorKeys } from '@maskin/auth'
 import type { Database, Transaction } from '@maskin/db'
 import {
 	events,
@@ -35,15 +35,21 @@ import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'driz
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
+import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import {
 	actorListItemSchema,
 	actorResponseSchema,
@@ -65,7 +71,9 @@ import {
 } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import { introduceAgentToRecipient } from '../services/agent-intro'
+import { createIntroScanRunner } from '../services/agent-intro-scan'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { addDefaultHeartbeat } from '../services/default-heartbeat'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
@@ -88,6 +96,11 @@ const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
 
+/** Whether two tools.envFrom values are the same list (a missing value counts as empty). */
+function sameEnvFrom(next: unknown, stored: unknown): boolean {
+	return JSON.stringify(next ?? []) === JSON.stringify(stored ?? [])
+}
+
 /**
  * Event data for an actor mutation. Events are readable by every workspace
  * member (history and SSE return the row unfiltered), so this carries identity
@@ -97,6 +110,11 @@ const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 's
 function actorEventData(actor: { id: string; type: string; name: string; isSystem: boolean }) {
 	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
 }
+
+/** Where the actor's picture is served, or null. `v` changes on every upload so the URL can be cached forever. */
+const actorAvatarUrlSql = sql<
+	string | null
+>`CASE WHEN ${actors.metadata}->>'avatar_version' IS NOT NULL THEN '/api/actors/' || ${actors.id} || '/avatar?v=' || (${actors.metadata}->>'avatar_version') END`
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -294,9 +312,6 @@ app.openapi(createActorRoute, async (c) => {
 		}
 	}
 
-	// Generate API key
-	const { key } = generateApiKey()
-
 	// Hash password if provided
 	const passwordHash = body.password ? await hashPassword(body.password) : undefined
 
@@ -319,7 +334,6 @@ app.openapi(createActorRoute, async (c) => {
 				type: body.type,
 				name: body.name,
 				email: body.email,
-				apiKey: key,
 				passwordHash,
 				description: body.description,
 				systemPrompt: body.system_prompt,
@@ -331,6 +345,16 @@ app.openapi(createActorRoute, async (c) => {
 			.onConflictDoNothing({ target: actors.id })
 			.returning()
 
+	// The key is shown once, in this response; only its hash is stored. Minted in the same
+	// transaction as the actor so a signup never leaves an account that has no key.
+	let key = ''
+	const insertActorWithKey = async (tx: Transaction) => {
+		const [inserted] = await insertActor(tx)
+		if (!inserted) return undefined
+		key = (await issueApiKey(tx, { actorId: inserted.id, kind: 'primary' })).key
+		return inserted
+	}
+
 	let actor: typeof actors.$inferSelect | undefined
 	try {
 		if (memberWorkspaceId && creatorId) {
@@ -339,7 +363,7 @@ app.openapi(createActorRoute, async (c) => {
 			// Actor row, membership row and the audit event commit together or not
 			// at all, so a failure never leaves an agent outside the workspace.
 			actor = await db.transaction(async (tx) => {
-				const [inserted] = await insertActor(tx)
+				const inserted = await insertActorWithKey(tx)
 				if (!inserted) return undefined
 				await tx
 					.insert(workspaceMembers)
@@ -352,10 +376,13 @@ app.openapi(createActorRoute, async (c) => {
 					entityId: inserted.id,
 					data: { role: 'member', added_actor_id: inserted.id },
 				})
+				if (inserted.type === 'agent') {
+					await addDefaultHeartbeat(tx, { workspaceId, actorId: inserted.id })
+				}
 				return inserted
 			})
 		} else {
-			;[actor] = await insertActor(db)
+			actor = await db.transaction((tx) => insertActorWithKey(tx))
 		}
 	} catch (err) {
 		if (isEmailUniqueViolation(err)) {
@@ -397,6 +424,7 @@ app.openapi(createActorRoute, async (c) => {
 	// The new agent says hello to the person it was made for. Fire and forget,
 	// after the commit: the service never throws, so creation is unaffected.
 	if (body.type === 'agent' && creatorId && memberWorkspaceId && creatorType) {
+		const sessionManager = c.get('sessionManager')
 		void introduceAgentToRecipient({
 			db,
 			actor,
@@ -405,6 +433,12 @@ app.openapi(createActorRoute, async (c) => {
 			claimedSessionId: c.get('maskinSessionId'),
 			clientSource,
 			hints: { firstSteps: body.first_steps, neededIntegrations: body.needed_integrations },
+			// The agent looks around the workspace before suggesting first steps. Not in an
+			// E2E stack, where every workspace lacks credentials and the session would only churn.
+			scan:
+				sessionManager && !shouldSkipOnboardingKickoff()
+					? createIntroScanRunner({ db, sessionManager })
+					: undefined,
 		})
 	}
 
@@ -515,6 +549,77 @@ function parseIdsParam(
 	return { ok: true, ids: [...seen] }
 }
 
+const LIST_INCLUDE_VALUES = ['skills'] as const
+const MAX_NAME_FILTER = 128
+const MAX_NAME_PREFIX_FILTER = 64
+
+function parseIncludeParam(raw: string | undefined): { skills: boolean } | null {
+	const wanted = new Set<string>()
+	for (const part of (raw ?? '').split(',')) {
+		const trimmed = part.trim()
+		if (!trimmed) continue
+		if (!(LIST_INCLUDE_VALUES as readonly string[]).includes(trimmed)) return null
+		wanted.add(trimmed)
+	}
+	return { skills: wanted.has('skills') }
+}
+
+/** Escape LIKE wildcards (percent, underscore) and the escape character itself. */
+function escapeLike(value: string): string {
+	return value.replace(/[%_\\]/g, '\\$&')
+}
+
+/**
+ * Skill names for the given agents: valid skills of this workspace, sorted by
+ * name, names only. One query for the whole page. Humans and agents with no
+ * skills get no entry.
+ */
+async function loadSkillNames(
+	db: Database,
+	workspaceId: string,
+	actorIds: string[],
+): Promise<Map<string, string[]>> {
+	const byActor = new Map<string, string[]>()
+	if (actorIds.length === 0) return byActor
+	const rows = await db
+		.select({ actorId: agentSkills.actorId, name: workspaceSkills.name })
+		.from(agentSkills)
+		.innerJoin(workspaceSkills, eq(agentSkills.workspaceSkillId, workspaceSkills.id))
+		.where(
+			and(
+				inArray(agentSkills.actorId, actorIds),
+				eq(workspaceSkills.workspaceId, workspaceId),
+				eq(workspaceSkills.isValid, true),
+			),
+		)
+		.orderBy(asc(workspaceSkills.name))
+	for (const r of rows) {
+		const list = byActor.get(r.actorId)
+		if (list) list.push(r.name)
+		else byActor.set(r.actorId, [r.name])
+	}
+	return byActor
+}
+
+/** Adds a skills array to agent rows that have skills; a no-op unless asked for. */
+async function withSkillNames<T extends { id: string; type: string }>(
+	db: Database,
+	workspaceId: string,
+	rows: T[],
+	wanted: boolean,
+): Promise<Array<T & { skills?: string[] }>> {
+	if (!wanted) return rows
+	const skillsByActor = await loadSkillNames(
+		db,
+		workspaceId,
+		rows.filter((r) => r.type === 'agent').map((r) => r.id),
+	)
+	return rows.map((r) => {
+		const skills = skillsByActor.get(r.id)
+		return skills ? { ...r, skills } : r
+	})
+}
+
 const listActorsQuerySchema = z.object({
 	limit: z.coerce.number().int().min(1).max(100).optional(),
 	offset: z.coerce.number().int().min(0).optional(),
@@ -526,6 +631,21 @@ const listActorsQuerySchema = z.object({
 			example: '00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002',
 		}),
 	order: z.enum(['asc', 'desc']).optional(),
+	include: z
+		.string()
+		.optional()
+		.openapi({
+			description: `Comma-separated extras for a workspace-scoped list. Allowed: ${LIST_INCLUDE_VALUES.join(', ')}. Requires X-Workspace-Id.`,
+			example: 'skills',
+		}),
+	name: z.string().min(1).max(MAX_NAME_FILTER).optional().openapi({
+		description:
+			'Exact actor name, case-insensitive. Requires X-Workspace-Id. Not combinable with name_prefix.',
+	}),
+	name_prefix: z.string().min(1).max(MAX_NAME_PREFIX_FILTER).optional().openapi({
+		description:
+			'Actor name prefix, case-insensitive. Requires X-Workspace-Id. Not combinable with name.',
+	}),
 	// Snapshot-consistent cursor pagination — mirrors `objectQuerySchema`.
 	// Only the workspace-scoped branch honours these; the cross-workspace
 	// branch uses a two-phase distinct query on `(name, id)` that is
@@ -570,6 +690,25 @@ app.openapi(listActorsRoute, (async (c) => {
 	const query = c.req.valid('query')
 	const { limit, offset, ids: idsParam } = query
 
+	const include = parseIncludeParam(query.include)
+	if (!include) {
+		return c.json(
+			createApiError('BAD_REQUEST', `include must be one of: ${LIST_INCLUDE_VALUES.join(', ')}`),
+			400,
+		)
+	}
+	if (query.name !== undefined && query.name_prefix !== undefined) {
+		return c.json(createApiError('BAD_REQUEST', 'Pass name or name_prefix, not both'), 400)
+	}
+	const wantsDirectoryParams =
+		include.skills || query.name !== undefined || query.name_prefix !== undefined
+	if (wantsDirectoryParams && !workspaceId) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'include, name and name_prefix need the X-Workspace-Id header'),
+			400,
+		)
+	}
+
 	const parsed = parseIdsParam(idsParam)
 	if (!parsed.ok) {
 		return c.json(
@@ -591,9 +730,20 @@ app.openapi(listActorsRoute, (async (c) => {
 			{ createdAt: actors.createdAt, id: actors.id },
 			query,
 		)
+		// The name filter goes into both the page query and the total query, so
+		// X-Total-Count is the filtered total.
+		const nameConditions =
+			query.name !== undefined
+				? [sql`lower(${actors.name}) = lower(${query.name})`]
+				: query.name_prefix !== undefined
+					? [
+							sql`lower(${actors.name}) LIKE lower(${`${escapeLike(query.name_prefix)}%`}) ESCAPE '\\'`,
+						]
+					: []
 		const wsWhereParts = [
 			eq(workspaceMembers.workspaceId, workspaceId),
 			...idsCondition,
+			...nameConditions,
 			...cursorConditions,
 		]
 		const wsWhere = wsWhereParts.length > 1 ? and(...wsWhereParts) : wsWhereParts[0]
@@ -611,13 +761,18 @@ app.openapi(listActorsRoute, (async (c) => {
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+					avatar_url: actorAvatarUrlSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 				.where(wsWhere)
 
 			c.header('X-Total-Count', String(members.length))
-			return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+			return c.json(
+				serializeArray(await withSkillNames(db, workspaceId, members, include.skills)) as z.infer<
+					typeof actorListItemSchema
+				>[],
+			)
 		}
 
 		// Under the cursor path the sort switches to (createdAt, id) so the
@@ -626,8 +781,8 @@ app.openapi(listActorsRoute, (async (c) => {
 		const cursorOn = Boolean(query.snapshot_at)
 		const orderBy = cursorOn
 			? query.order === 'asc'
-				? [asc(actors.createdAt), asc(actors.id)]
-				: [desc(actors.createdAt), asc(actors.id)]
+				? [asc(msCreatedAt(actors.createdAt)), asc(actors.id)]
+				: [desc(msCreatedAt(actors.createdAt)), asc(actors.id)]
 			: [asc(actors.name), asc(actors.id)]
 
 		// X-Total-Count reflects the workspace's total under the snapshot upper
@@ -637,6 +792,7 @@ app.openapi(listActorsRoute, (async (c) => {
 		const totalWhereParts = [
 			eq(workspaceMembers.workspaceId, workspaceId),
 			...idsCondition,
+			...nameConditions,
 			...(query.snapshot_at
 				? buildCreatedAtCursorConditions(
 						{ createdAt: actors.createdAt, id: actors.id },
@@ -660,6 +816,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+					avatar_url: actorAvatarUrlSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -675,7 +832,11 @@ app.openapi(listActorsRoute, (async (c) => {
 		])
 
 		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
-		return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+		return c.json(
+			serializeArray(await withSkillNames(db, workspaceId, members, include.skills)) as z.infer<
+				typeof actorListItemSchema
+			>[],
+		)
 	}
 
 	// List actors across all workspaces the authenticated actor belongs to
@@ -886,6 +1047,7 @@ app.openapi(getActorRoute, (async (c) => {
 				updatedAt: actors.updatedAt,
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
 				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+				avatar_url: actorAvatarUrlSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1088,6 +1250,20 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// envFrom names which API-service variables get copied into the agent's
+	// sessions, so only a human admin or owner may change it, even on the actor's
+	// own record. Sending the stored list back unchanged stays open.
+	if (
+		body.tools !== undefined &&
+		!sameEnvFrom(body.tools.envFrom, (existing.tools as { envFrom?: unknown } | null)?.envFrom) &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId, { humanOnly: true }))
+	) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a human workspace admin can change tools.envFrom'),
+			403,
+		)
+	}
+
 	// A default workspace is a personal preference: only the actor itself may set
 	// it, and only to a workspace it belongs to (null clears it).
 	if (body.default_workspace_id !== undefined) {
@@ -1190,6 +1366,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			avatar_url: actorAvatarUrlSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1243,15 +1420,21 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 
 	await assertActorWriterAccess(db, actorId, id, workspaceId, c.get('workspaceRole'))
 
-	const { key } = generateApiKey()
+	// Every live key of the actor stops working, as when there was one shared key; the new
+	// primary key is returned once. Session keys are left alone: an agent rotating its own key
+	// should not be cut off from the container it is running in.
+	const key = await db.transaction(async (tx) => {
+		const [updated] = await tx
+			.update(actors)
+			.set({ updatedAt: new Date() })
+			.where(eq(actors.id, id))
+			.returning({ id: actors.id })
+		if (!updated) return null
+		await revokeActorKeys(tx, id, ['primary', 'login', 'login_ios'])
+		return (await issueApiKey(tx, { actorId: id, kind: 'primary' })).key
+	})
 
-	const [updated] = await db
-		.update(actors)
-		.set({ apiKey: key, updatedAt: new Date() })
-		.where(eq(actors.id, id))
-		.returning({ id: actors.id })
-
-	if (!updated) {
+	if (key === null) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
@@ -1340,8 +1523,10 @@ app.openapi(resetActorRoute, (async (c) => {
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			avatar_url: actorAvatarUrlSql,
 		})
 
 	if (!updated) {
@@ -1654,6 +1839,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		.set({
 			agentState: 'paused',
 			agentStateUpdatedAt: new Date(),
+			metadata: withHumanPauseMarker,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -1815,6 +2001,7 @@ app.openapi(runAgentRoute, (async (c) => {
 		.set({
 			agentState: 'running',
 			agentStateUpdatedAt: new Date(),
+			metadata: withoutHumanPauseMarker,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))

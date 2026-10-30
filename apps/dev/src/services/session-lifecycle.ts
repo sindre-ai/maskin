@@ -17,6 +17,7 @@
  */
 import { and, eq, ne, notInArray, sql } from 'drizzle-orm'
 
+import { revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { objects, sessions } from '@maskin/db'
 import type { SessionResult, SettleSource, TerminalOutcomeKind } from '@maskin/shared'
@@ -30,8 +31,10 @@ import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { assertInWorkspace } from '../lib/workspace-scope'
-import { returnToSender } from './helper-return'
+import { postRetryNotice } from './chat-retry-notice'
+import { returnDeferredHelpers, returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -224,7 +227,7 @@ export async function startSession(
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: input.config,
+		config: withBackgroundDefaults(input),
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
@@ -297,6 +300,22 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+/**
+ * Background work (a trigger, a cron, a plain API call) runs as an interactive session that
+ * ends on its result, like a helper: the person can read it as a chat and write into it, and
+ * once it has ended a message starts a follow-up. A session that belongs to a chat is left as given.
+ */
+function withBackgroundDefaults(input: StartSessionInput): SessionConfig | undefined {
+	const config = input.config
+	const hasChat =
+		!!input.conversationId || !!(config as { conversation?: unknown } | undefined)?.conversation
+	// A session that belongs to a chat sets its own mode (the chat responder makes it interactive,
+	// and at most one such session may be active per chat and agent), so it is left as given.
+	if (hasChat) return config
+	// Everything else is interactive, whatever the caller asked for, and ends on its result.
+	return { ...config, interactive: true, stop_on_result: true }
 }
 
 function readIdempotencyKey(config: SessionConfig | undefined): string | undefined {
@@ -441,11 +460,16 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 
 		// Reached 'running' successfully — clear heartbeat so the reaper's
 		// stale-heartbeat check no longer applies to this row, and stamp the
-		// transition so the wall-timeout cutoff measures 2h from here.
+		// transition so the wall-timeout cutoff measures 2h from here. Only a row
+		// whose status is 'running' really started. A remote dispatch only hands
+		// the row to the dispatch queue (status 'starting', session_state
+		// 'waiting_for_machine') and returns while it waits for an agent-server
+		// slot; stamping 'running' here would let idle-pause fail it as
+		// containerless. The dispatcher stamps 'running' itself once it starts.
 		await db
 			.update(sessions)
 			.set({ sessionState: 'running', stateEnteredAt: new Date(), driverHeartbeatAt: null })
-			.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TERMINAL_STATUSES])))
+			.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'running')))
 			.catch((err) => {
 				logger.warn('_driveToRunning failed to enter running state', {
 					sessionId,
@@ -866,6 +890,7 @@ export async function settleSession(
 			config: sessions.config,
 			triggerId: sessions.triggerId,
 			conversationId: sessions.conversationId,
+			attemptNumber: sessions.attemptNumber,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
 			startedAt: sessions.startedAt,
 			inputTokens: sessions.inputTokens,
@@ -1053,10 +1078,38 @@ export async function settleSession(
 			})
 	}
 
+	// The key minted for this session's container dies with the session (also on a pause: resume
+	// mints a new one). Runs for an already-terminal row too, so a key a late launch minted
+	// after the settle is still closed. Best-effort: the session is already settled, and a key
+	// that survives a failed revoke is cascaded away with the session row.
+	await revokeSessionKeys(deps.db, sessionId).catch((err) => {
+		logger.warn('settleSession: failed to revoke session API keys', {
+			sessionId,
+			error: String(err),
+		})
+	})
+
 	// The eviction inside `recordEvent` runs before the settle transaction
 	// commits, so a usage read landing in between could re-cache the pre-settle
 	// cost. Evict again now that the final cost is visible to every connection.
 	if (flipped) evictBillingUsage(row.workspaceId)
+
+	// A chat session that hit a usage limit and has a retry time gets its notice now, while the
+	// person is looking, not when the retry fires. A session at the attempt cap is not retried
+	// (the scheduler clears retry_at), so promising a retry there would be untrue.
+	if (
+		flipped &&
+		outcome.retryAt &&
+		existing.conversationId &&
+		existing.attemptNumber < MAX_RETRY_ATTEMPTS
+	) {
+		await postRetryNotice(deps.db, {
+			conversationId: existing.conversationId,
+			workspaceId: row.workspaceId,
+			actorId: row.actorId,
+			retryAt: outcome.retryAt,
+		})
+	}
 
 	// Tell the session that started this one how it ended. Fire-and-forget:
 	// returnToSender never throws, and one-shot-claims the row so the other two
@@ -1064,6 +1117,11 @@ export async function settleSession(
 	// A pause is not an ending.
 	if (flipped && outcome.kind !== 'pause') {
 		void returnToSender(deps.db, sessionId, { sessionManager: configuredSessionManager() })
+	}
+	// A sender that finished normally may have missed helpers that failed while it was
+	// busy: tell it now, so it is woken to deal with them.
+	if (flipped && outcome.kind === 'complete') {
+		void returnDeferredHelpers(deps.db, sessionId, { sessionManager: configuredSessionManager() })
 	}
 
 	// Step 4: (Post-commit) stopSandbox best-effort.

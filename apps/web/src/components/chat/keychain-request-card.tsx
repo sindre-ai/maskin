@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
+import { useContinueSession } from '@/hooks/use-sessions'
 import { ApiError, type MessageKeychainRequest, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import {
@@ -29,13 +30,17 @@ interface KeychainRequestCardProps {
 	request: MessageKeychainRequest
 }
 
-/** The env var names an agent reads the credential from; mirrors the session launch. */
-export function keychainEnvNames(kind: 'api_key' | 'login', name: string): string[] {
+/**
+ * How the agent is told to use a credential it was just given; mirrors the session launch.
+ * An API key is in its environment. A login never is: it types the login on its computer
+ * with a reference that Maskin fills in, so it never sees the password.
+ */
+export function keychainUseHint(kind: 'api_key' | 'login', name: string): string {
+	if (kind === 'login') {
+		return `. It's a login, so you never see it: type it on your computer with desktop_type as {{keychain:${name}.username}} and {{keychain:${name}.password}}`
+	}
 	const slug = credentialSlug(name)
-	if (!slug) return []
-	return kind === 'login'
-		? [`KEYCHAIN_BYO_LOGIN_${slug}_USERNAME`, `KEYCHAIN_BYO_LOGIN_${slug}_PASSWORD`]
-		: [`KEYCHAIN_BYO_APIKEY_${slug}`]
+	return slug ? `. It's in your environment as KEYCHAIN_BYO_APIKEY_${slug}` : ''
 }
 
 /**
@@ -45,7 +50,8 @@ export function keychainEnvNames(kind: 'api_key' | 'login', name: string): strin
  * it goes to the vault: the value never passes through the agent or the message. It is
  * saved for the workspace but shared only with the agents in this chat (changeable on
  * the credential's page). Saving stops the agent's idle session and posts a short
- * message, which starts a fresh session that has the credential in its environment.
+ * message, which starts a fresh session that has the credential (an API key in its environment;
+ * a login to type with desktop_type, never to read).
  *
  * A saved credential is matched back to its card from the integration list rather than
  * stored on the message, so a card scrolled back to reads "Saved" instead of offering
@@ -63,6 +69,8 @@ export function KeychainRequestCard({
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const { data: integrations } = useIntegrations(workspaceId)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
+	// A helper is not in this chat and was stopped to take the key, so its follow-up carries on.
+	const continueSession = useContinueSession(workspaceId, conversationId)
 	// The Keychain pages only exist behind this flag, so the link and the pointer would dead-end.
 
 	const agents = useMemo(() => {
@@ -133,11 +141,18 @@ export function KeychainRequestCard({
 				setAgentStillRunning(true)
 				return
 			}
-			const vars = keychainEnvNames(request.kind, displayName)
-			const where = vars.length > 0 ? `. It's in your environment as ${vars.join(' and ')}` : ''
+			const where = keychainUseHint(request.kind, displayName)
+			if (request.reply_to_session) {
+				continueSession.mutate({
+					id: request.session_id,
+					content: `I've saved ${displayName} to the Keychain${where}. Carry on with the work.`,
+				})
+				return
+			}
 			sendMessage.mutate({
 				// Plain text: a person's own message is not rendered as markdown.
-				content: `I've saved ${displayName} to the Keychain${where}. Please carry on.`,
+				content: `I've saved ${displayName} to the Keychain${where}. Reply with one short line to say you have it, then carry on.`,
+				metadata: { hidden_from_chat: true },
 			})
 		} catch (err) {
 			setError(
@@ -176,7 +191,7 @@ export function KeychainRequestCard({
 
 	return (
 		<form
-			className="mt-2 flex flex-col gap-3 rounded-xl border border-brand/40 bg-brand-subtle p-4"
+			className="mt-2 flex flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
 			aria-label={isLogin ? 'Add a login to the Keychain' : 'Add an API key to the Keychain'}
 			onSubmit={(e) => {
 				e.preventDefault()

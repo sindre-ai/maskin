@@ -312,6 +312,37 @@ describe('getIntegrationCredential — two actors, same workspace', () => {
 		expect(result).toBeNull()
 	})
 
+	// Drive's unique index (workspace, actor, provider, external_id) lets two
+	// workspace-scoped rows coexist when the Google accounts differ. Which one
+	// agents read through must not depend on Postgres row order.
+	it('picks the oldest workspace-scoped row when a provider has two', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+
+		// Newer row inserted first, so insertion order cannot explain the result.
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'google-drive',
+			externalId: 'newer@example.com',
+			status: 'active',
+			credentials: 'creds-newer',
+			createdBy,
+			createdAt: new Date('2026-06-01T00:00:00Z'),
+		})
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'google-drive',
+			externalId: 'older@example.com',
+			status: 'active',
+			credentials: 'creds-older',
+			createdBy,
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+		})
+
+		const row = await getIntegrationCredential(db, ws.id, 'google-drive', null)
+		expect(row?.credentials).toBe('creds-older')
+	})
+
 	// The helper must speak the same status vocabulary as the write paths in
 	// routes/integrations.ts, which only ever write 'active' / 'pending' /
 	// 'awaiting_secret' / 'error' / 'revoked'. A helper filtering on a status

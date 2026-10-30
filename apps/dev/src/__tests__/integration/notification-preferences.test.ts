@@ -6,11 +6,13 @@ import {
 	actors,
 	conversationParticipants,
 	conversations,
+	messageThreadReads,
 	messages,
 	notificationPreferences,
 	notifications,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { vi } from 'vitest'
 import { validationFailureHook } from '../../lib/errors'
 import { NotificationPushFanout } from '../../services/notification-push'
 import type { PushChannel, PushMessage } from '../../services/push-types'
@@ -186,7 +188,7 @@ describe('notification_preferences', () => {
 					status: 'pending',
 					metadata: {
 						push_category: 'conversation',
-						push_delay_seconds: 0.05,
+						push_delay_seconds: PUSH_DELAY_SECONDS,
 						conversation_id: conversationId,
 						message_id: messageId,
 						push_collapse_key: `chat:${conversationId}`,
@@ -214,13 +216,17 @@ describe('notification_preferences', () => {
 			entity_id: notificationId,
 			event_id: '1',
 		})
+		// The skip tests change the row after handleEvent returns. The delay has to outlast that write on a
+		// loaded runner, or the timer fires first and the push goes out (seen in CI with 50 ms).
+		const PUSH_DELAY_SECONDS = 0.5
+		const PAST_DELAY_MS = PUSH_DELAY_SECONDS * 1000 + 400
 		const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 		it('sends after the delay while the message is unread, with the collapse key', async () => {
 			const { f, sent } = fanout()
 			await f.handleEvent(ev())
 			expect(sent).toHaveLength(0)
-			await sleep(400)
+			await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5_000 })
 			expect(sent).toHaveLength(1)
 			expect(sent[0]).toMatchObject({
 				collapseKey: `chat:${conversationId}`,
@@ -241,7 +247,7 @@ describe('notification_preferences', () => {
 						eq(conversationParticipants.actorId, actorId),
 					),
 				)
-			await sleep(400)
+			await sleep(PAST_DELAY_MS)
 			expect(sent).toHaveLength(0)
 			f.stop()
 		})
@@ -253,9 +259,87 @@ describe('notification_preferences', () => {
 				.update(notifications)
 				.set({ status: 'seen' })
 				.where(eq(notifications.id, notificationId))
-			await sleep(400)
+			await sleep(PAST_DELAY_MS)
 			expect(sent).toHaveLength(0)
 			f.stop()
+		})
+
+		describe('a thread reply is read in the thread, not in the chat', () => {
+			let replyId: number
+			let rootId: number
+			let threadNotificationId: string
+
+			beforeEach(async () => {
+				// `messageId` (the chat's plain message) doubles as the thread root here.
+				rootId = messageId
+				const source = (await insertActor(db))?.id as string
+				await db.insert(conversationParticipants).values({ conversationId, actorId: source })
+				const [reply] = await db
+					.insert(messages)
+					.values({
+						conversationId,
+						actorId: source,
+						content: 'in the thread',
+						threadRootId: rootId,
+					})
+					.returning()
+				replyId = Number(reply?.id)
+				const [n] = await db
+					.insert(notifications)
+					.values({
+						workspaceId,
+						type: 'good_news',
+						title: 'Reply',
+						sourceActorId: source,
+						targetActorId: actorId,
+						status: 'seen',
+						metadata: {
+							push_category: 'conversation',
+							push_delay_seconds: PUSH_DELAY_SECONDS,
+							push_only: true,
+							conversation_id: conversationId,
+							message_id: replyId,
+							thread_root_id: rootId,
+							push_collapse_key: `chat:${conversationId}:thread:${rootId}`,
+						},
+					})
+					.returning()
+				threadNotificationId = n?.id as string
+			})
+
+			const threadEv = () => ({ ...ev(), entity_id: threadNotificationId })
+
+			it('still sends when the chat was read past the reply but the thread never was', async () => {
+				await db
+					.update(conversationParticipants)
+					.set({ lastReadMessageId: replyId })
+					.where(
+						and(
+							eq(conversationParticipants.conversationId, conversationId),
+							eq(conversationParticipants.actorId, actorId),
+						),
+					)
+				const { f, sent } = fanout()
+				await f.handleEvent(threadEv())
+				await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5_000 })
+				expect(sent[0]).toMatchObject({
+					conversationId,
+					threadRootId: rootId,
+					collapseKey: `chat:${conversationId}:thread:${rootId}`,
+				})
+				f.stop()
+			})
+
+			it('skips once the thread was read up to the reply', async () => {
+				const { f, sent } = fanout()
+				await f.handleEvent(threadEv())
+				await db
+					.insert(messageThreadReads)
+					.values({ actorId, rootMessageId: rootId, lastReadMessageId: replyId })
+				await sleep(PAST_DELAY_MS)
+				expect(sent).toHaveLength(0)
+				f.stop()
+			})
 		})
 
 		it('reads the preferences row: a disabled category never pushes', async () => {
@@ -264,7 +348,7 @@ describe('notification_preferences', () => {
 				.values({ actorId, categories: { conversation: false } })
 			const { f, sent } = fanout()
 			await f.handleEvent(ev())
-			await sleep(400)
+			await sleep(PAST_DELAY_MS)
 			expect(sent).toHaveLength(0)
 			f.stop()
 		})

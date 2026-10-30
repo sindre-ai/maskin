@@ -1,21 +1,47 @@
+import {
+	AgentReferenceCard,
+	AgentReferenceChip,
+	ChatReferenceCard,
+	ChatReferenceChip,
+	GithubReferenceChip,
+	LoopReferenceCard,
+	LoopReferenceChip,
+	ObjectReferenceCard,
+	ObjectReferenceChip,
+	OtherWorkspaceCard,
+	OtherWorkspaceChip,
+	SettingsReferenceChip,
+	TriggerReferenceCard,
+	TriggerReferenceChip,
+} from '@/components/chat/linked-object-reference'
 import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { StatusSelect } from '@/components/objects/property-selects'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { type LinkedCardsOptions, MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
-import { useSendMessage } from '@/hooks/use-conversation'
+import { useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useApproveObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
-import { type LinkedTarget, showsObjectCard } from '@/lib/linked-objects'
+import {
+	type GithubTarget,
+	type LinkedTarget,
+	type SettingsTarget,
+	isOtherWorkspace,
+	showsObjectCard,
+} from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
+
+/** A tap this soon after "Read full draft to approve" opened the text is the same double tap, not a yes. */
+const REVEAL_SETTLE_MS = 500
 
 interface PreviewProps {
 	workspaceId: string
@@ -23,10 +49,12 @@ interface PreviewProps {
 	/** Open straight away instead of contracted (the drawer's working view). */
 	defaultExpanded?: boolean
 	className?: string
-	/** The chat the message is in and the agent that wrote it; together they let a
-	 *  status change tell that agent. Without them the card only previews. */
+	/** The chat the message is in and the agent that wrote it; together they let an approval
+	 *  or a status change tell that agent. Without them the card only previews. */
 	conversationId?: string
 	agentId?: string
+	/** A draft edited since an earlier message showed it: the header says Updated. */
+	updated?: boolean
 }
 
 /** One object drawn as a card: what it says, its status, Approve for a draft. Draws any object that has text; callers decide which objects deserve a card (see `hasPreviewCard`). */
@@ -35,6 +63,7 @@ export function LinkedObjectCard({
 	objectId,
 	conversationId,
 	agentId,
+	updated = false,
 	defaultExpanded = false,
 	className,
 }: PreviewProps) {
@@ -44,10 +73,34 @@ export function LinkedObjectCard({
 	const update = useUpdateObject(workspaceId)
 	const approve = useApproveObject()
 	const linkedPanel = useLinkedPanel()
-	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
-	// Contracted shows the header and title; the text and the next-phase button
-	// appear once the top of the card is clicked.
-	const [expanded, setExpanded] = useState(defaultExpanded)
+	// A draft is always a full card (its text and Approve are what the person came for), so it
+	// starts open. Any other object starts contracted, showing the header and title; the text and
+	// the next-phase button appear once the top of the card is clicked. `toggled` is the person's
+	// own choice and wins once made.
+	const [toggled, setToggled] = useState<boolean | null>(null)
+	const expanded = toggled ?? (defaultExpanded || Boolean(object?.preview))
+	// A long draft shows about 12 lines until the person asks for all of it. `revealedHash` is the
+	// text they opened in full, so a draft that changes underneath them is clamped again.
+	const [revealedHash, setRevealedHash] = useState<string | null>(null)
+	const textRef = useRef<HTMLDivElement>(null)
+	const revealedAt = useRef(0)
+	const [overflowing, setOverflowing] = useState(false)
+	const draftHash = object?.preview?.content_hash
+	const clamped = Boolean(draftHash) && draftHash !== revealedHash
+
+	// Whether the text is taller than the clamp. Measured, not counted, because a wrapped
+	// paragraph is as many lines as it looks. Only meaningful while the clamp is on.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text or the open state changes
+	useLayoutEffect(() => {
+		const el = textRef.current
+		if (!el || !clamped) return
+		const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1)
+		measure()
+		if (typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(measure)
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [clamped, expanded, object?.content])
 
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
@@ -60,62 +113,60 @@ export function LinkedObjectCard({
 			object.type
 		] ?? []
 	const canAct = Boolean(conversationId && agentId)
-	const properties = describeObjectProperties(object.metadata)
+	// Sent with an approval or a status change so the server tells the agent behind the card.
+	// Nothing is posted in the chat: the person did not write a message.
+	const chat =
+		conversationId && agentId ? { conversation_id: conversationId, agent_id: agentId } : undefined
 	// A draft an integration can deliver (an email, a LinkedIn message or post, a Slack message)
 	// has a preview. Its card says what it is, shows where it goes and ends in an approval
 	// instead of the next phase: the person's yes to this exact text, after which the agent is
 	// told to send it. Which objects qualify, and how they are sent, is the integration's own
 	// declaration (`deliverables`), so this card knows nothing of LinkedIn.
 	const preview = object.preview ?? null
+	// Open, the preview block shows who it goes to and what kind of message it is; the line under
+	// the title then leaves those out. Contracted, that block is hidden and the line keeps them.
+	const properties = describeObjectProperties(
+		object.metadata,
+		expanded && preview
+			? {
+					recipients: preview.recipients.flatMap((r) => [r.name, r.address]),
+					label: preview.label,
+				}
+			: undefined,
+	)
 	const delivery = preview?.delivery?.state
 	// What would go out. For most drafts that is the whole text; for one that carries a header
 	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
 	// what the card shows. Such a text is edited on the object page, where the header is.
 	const shown = preview ? preview.body : body
 	const editable = canAct && (!preview || preview.body.trim() === body)
+	// A draft that does not fit the clamp cannot be approved until its full text has been opened.
+	// Its button stays enabled and reads "Read full draft to approve": the first tap opens the
+	// text and sends nothing. Checked in the handler too, so no path approves clamped text.
+	const gated = clamped && overflowing
 	// The phase after this one in the workspace's own order, if there is one.
 	const nextStatus = statuses[statuses.indexOf(object.status) + 1]
 
-	// The agent is always told. The text goes in the message so it can compare it
+	// The agent is always told, by the server, with the text as it stands so it can compare it
 	// with what the task holds now before it sends anything.
 	const moveTo = (status: string) => {
 		if (status === object.status) return
-		update.mutate(
-			{ id: object.id, data: { status } },
-			{
-				onSuccess: () => {
-					if (!conversationId || !agentId) return
-					sendMessage.mutate({
-						content: `Moved "${object.title || 'Untitled'}" to ${statusLabel(status)}. The text as it stands:\n\n${body
-							.split('\n')
-							.map((line) => `> ${line}`)
-							.join('\n')}`,
-						metadata: { mentions: [agentId] },
-					})
-				},
-			},
-		)
+		update.mutate({ id: object.id, data: { status, chat } })
 	}
 
-	// The person's yes to this exact text. The agent is told with the text it can send, the same
-	// way a status change tells it, so it does not have to guess what was approved.
+	// The person's yes to this exact text. The server tells the agent to send it, with the text,
+	// so it does not have to guess what was approved. On a clamped draft the first tap only opens
+	// the full text, and a tap right after it is ignored: on a draft just over the clamp the button
+	// moves down less than its own height, so the second tap of a double tap lands on it again.
 	const approveDraft = () => {
 		if (!preview) return
-		approve.mutate(
-			{ id: object.id, contentHash: preview.content_hash },
-			{
-				onSuccess: () => {
-					if (!conversationId || !agentId) return
-					sendMessage.mutate({
-						content: `Approved "${object.title || 'Untitled'}". Send it exactly as it reads. If the send tool takes an object_id, send it passing object_id ${object.id}: the approved text is read from the object, and an edit made after this needs approving again. It reads:\n\n${shown
-							.split('\n')
-							.map((line) => `> ${line}`)
-							.join('\n')}`,
-						metadata: { mentions: [agentId] },
-					})
-				},
-			},
-		)
+		if (gated) {
+			revealedAt.current = Date.now()
+			setRevealedHash(draftHash ?? null)
+			return
+		}
+		if (Date.now() - revealedAt.current < REVEAL_SETTLE_MS) return
+		approve.mutate({ id: object.id, contentHash: preview.content_hash, chat })
 	}
 
 	return (
@@ -130,7 +181,7 @@ export function LinkedObjectCard({
 			    Open stop the click so they keep doing their own job; the status menu's
 			    dropdown is portalled but still bubbles through React, so it is covered too. */}
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: the chevron button inside is the keyboard path; its click bubbles here */}
-			<div className="cursor-pointer" onClick={() => setExpanded((open) => !open)}>
+			<div className="cursor-pointer" onClick={() => setToggled(!expanded)}>
 				<div
 					className={cn(
 						'flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2',
@@ -142,21 +193,34 @@ export function LinkedObjectCard({
 						<span className="inline-block max-w-full truncate rounded-md bg-secondary px-2 py-1 align-middle font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
 							{preview?.label ?? typeLabel(object.type)}
 						</span>
+						{updated ? (
+							<span
+								data-linked-card-updated=""
+								className="ml-1.5 inline-block rounded-md bg-brand-subtle px-2 py-1 align-middle font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-brand-subtle-foreground"
+							>
+								Updated
+							</span>
+						) : null}
 					</span>
 					{canAct && statuses.length > 0 ? (
-						// On a narrow card the status menu takes a row of its own instead of being cut off.
-						<span
-							className="order-last w-full @sm:order-none @sm:w-auto"
-							onClick={(e) => e.stopPropagation()}
-							onKeyDown={(e) => e.stopPropagation()}
-						>
-							<StatusSelect
-								current={object.status}
-								options={statuses}
-								onChange={moveTo}
-								variant="chip"
-							/>
-						</span>
+						expanded ? (
+							// On a narrow card the status menu takes a row of its own instead of being cut off.
+							<span
+								className="order-last w-full @sm:order-none @sm:w-auto"
+								onClick={(e) => e.stopPropagation()}
+								onKeyDown={(e) => e.stopPropagation()}
+							>
+								<StatusSelect
+									current={object.status}
+									options={statuses}
+									onChange={moveTo}
+									variant="chip"
+								/>
+							</span>
+						) : (
+							// Contracted, the status is a plain chip: the control lives in the full card.
+							<StatusBadge status={object.status} className="shrink-0" />
+						)
 					) : null}
 					{linkedPanel ? (
 						<button
@@ -223,8 +287,11 @@ export function LinkedObjectCard({
 						</div>
 					) : null}
 					{/* Click the text to edit it where it stands; it saves when you click away.
-					    A very long text scrolls inside the card instead of being cut off. */}
-					<div className="max-h-80 overflow-y-auto px-3 pt-2 text-[13.5px]">
+					    A long draft is cut at about 12 lines with Show all, never a scroll box. */}
+					<div
+						ref={textRef}
+						className={cn('px-3 pt-2 text-[13.5px]', clamped && 'max-h-76 overflow-hidden')}
+					>
 						<MarkdownContent
 							content={shown}
 							size="sm"
@@ -235,8 +302,26 @@ export function LinkedObjectCard({
 							}}
 						/>
 					</div>
+					{preview && (gated || (overflowing && !clamped)) ? (
+						<div className="px-3 pt-1">
+							<Button
+								type="button"
+								variant="link"
+								size="sm"
+								className="h-auto px-0 py-1 text-xs"
+								aria-expanded={!gated}
+								onClick={() => {
+									// A different button, so a tap on Approve after it is its own choice.
+									revealedAt.current = 0
+									setRevealedHash(gated ? (draftHash ?? null) : null)
+								}}
+							>
+								{gated ? 'Show all' : 'Show less'}
+							</Button>
+						</div>
+					) : null}
 					{preview ? (
-						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+						<div aria-live="polite" className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
 							{delivery === 'sent' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
@@ -245,7 +330,7 @@ export function LinkedObjectCard({
 							) : delivery === 'approved' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
-									Approved
+									Approved, waiting for send
 								</span>
 							) : (
 								<Button
@@ -256,7 +341,7 @@ export function LinkedObjectCard({
 									}
 									onClick={approveDraft}
 								>
-									Approve and send
+									{gated ? 'Read full draft to approve' : 'Approve draft'}
 									<ArrowRight size={14} aria-hidden />
 								</Button>
 							)}
@@ -293,9 +378,12 @@ export function LinkedObjectCard({
 }
 
 /**
- * A link's card once it is known to deserve one, otherwise `fallback` (the original link or
- * paragraph; nothing for a card that is only ever added). While the object or file is loading,
- * missing, in another workspace or not worth a card, the fallback stays, so a link never vanishes.
+ * A link's card. A draft an integration can deliver gets its approval card; any other object gets
+ * the reference card (what it is, where it stands, who has it), except in a list, where only a
+ * draft is a card. A file is a card once it is known to be previewable. Otherwise `fallback` (the
+ * original link or paragraph; nothing for a card that is only ever added) stays, so a link never
+ * vanishes. A loop, a trigger or a chat is never a draft: it is a reference card on its own line, a chip
+ * (the fallback) in a list, and nothing under a sentence.
  */
 export function LinkedCardOrLink({
 	workspaceId,
@@ -304,6 +392,10 @@ export function LinkedCardOrLink({
 	agentId,
 	fallback = null,
 	label,
+	inList = false,
+	after = false,
+	updated = false,
+	draftsAndFiles = true,
 }: {
 	workspaceId: string
 	target: LinkedTarget
@@ -312,7 +404,55 @@ export function LinkedCardOrLink({
 	fallback?: ReactNode
 	/** Text that led the link ("Draft:"); kept above the card once it replaces the link. */
 	label?: string
+	/** The link stood in a list item. */
+	inList?: boolean
+	/** The card goes under the sentence that links it: only a draft is drawn. */
+	after?: boolean
+	/** A draft edited since an earlier message showed it. */
+	updated?: boolean
+	/** False outside chat: a draft keeps its plain link, with no approval card. */
+	draftsAndFiles?: boolean
 }) {
+	// A link into another workspace is a placeholder, whatever it points at: nothing is fetched,
+	// and only a card on its own line is drawn (in a list it stays the chip, under a sentence nothing).
+	if (isOtherWorkspace(target, workspaceId)) {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return withLabel(
+			label,
+			<OtherWorkspaceCard
+				kind={target.kind}
+				otherWorkspaceId={target.workspaceId}
+				id={target.id}
+			/>,
+		)
+	}
+	if (target.kind === 'agent') {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return (
+			<AgentCardOrLink
+				workspaceId={workspaceId}
+				agentId={target.id}
+				fallback={fallback}
+				label={label}
+			/>
+		)
+	}
+	if (target.kind === 'loop' || target.kind === 'trigger' || target.kind === 'chat') {
+		if (after) return null
+		if (inList) return <>{fallback}</>
+		return withLabel(
+			label,
+			target.kind === 'loop' ? (
+				<LoopReferenceCard workspaceId={workspaceId} loopId={target.id} />
+			) : target.kind === 'trigger' ? (
+				<TriggerReferenceCard workspaceId={workspaceId} triggerId={target.id} />
+			) : (
+				<ChatReferenceCard workspaceId={workspaceId} chatId={target.id} />
+			),
+		)
+	}
 	return target.kind === 'object' ? (
 		<ObjectCardOrLink
 			workspaceId={workspaceId}
@@ -321,15 +461,36 @@ export function LinkedCardOrLink({
 			agentId={agentId}
 			fallback={fallback}
 			label={label}
+			inList={inList}
+			after={after}
+			updated={updated}
+			draftsAndFiles={draftsAndFiles}
 		/>
 	) : (
 		<FileCardOrLink
 			workspaceId={workspaceId}
 			fileId={target.id}
 			fallback={fallback}
-			label={label}
+			label={inList ? label : undefined}
 		/>
 	)
+}
+
+/** An agent's card on its own line; an address that points at a person keeps the original link. */
+function AgentCardOrLink({
+	workspaceId,
+	agentId,
+	fallback,
+	label,
+}: {
+	workspaceId: string
+	agentId: string
+	fallback: ReactNode
+	label?: string
+}) {
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	if (actors?.find((a) => a.id === agentId)?.type === 'human') return <>{fallback}</>
+	return withLabel(label, <AgentReferenceCard workspaceId={workspaceId} agentId={agentId} />)
 }
 
 function withLabel(label: string | undefined, card: ReactNode): ReactNode {
@@ -347,9 +508,108 @@ function withLabel(label: string | undefined, card: ReactNode): ReactNode {
 export function renderLinkedCard(
 	target: LinkedTarget,
 	fallback: ReactNode,
-	context: { workspaceId: string; conversationId?: string; agentId?: string; label?: string },
+	context: {
+		workspaceId: string
+		conversationId?: string
+		agentId?: string
+		label?: string
+		inList?: boolean
+		after?: boolean
+		updated?: boolean
+		draftsAndFiles?: boolean
+	},
 ): ReactNode {
 	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
+}
+
+/**
+ * `MarkdownContent`'s `linkedCards` for a surface that is not chat: comments and thread replies
+ * (`full`: a card on its own line, a chip in a sentence) and For You cards, the brief drawer and
+ * object bodies (`chips`: every link a chip). A draft or file link stays a plain link.
+ */
+export function outsideChatLinkedCards(
+	workspaceId: string,
+	mode: 'full' | 'chips',
+): LinkedCardsOptions {
+	return {
+		workspaceId,
+		mode,
+		draftsAndFiles: false,
+		renderCard: renderLinkedCard,
+		renderChip: renderLinkedChip,
+		renderGithubChip: renderLinkedGithubChip,
+	}
+}
+
+/** `MarkdownContent`'s `linkedCards.renderGithubChip`: a link to a GitHub pull request or issue, as a chip that opens GitHub. */
+export function renderLinkedGithubChip(target: GithubTarget, href: string): ReactNode {
+	return <GithubReferenceChip target={target} href={href} />
+}
+
+/** `MarkdownContent`'s `linkedCards.renderSettingsChip`: a link to a settings page, as a chip wherever it stands. */
+export function renderLinkedSettingsChip(
+	target: SettingsTarget,
+	context: { workspaceId: string },
+): ReactNode {
+	return <SettingsReferenceChip workspaceId={context.workspaceId} target={target} />
+}
+
+/** `MarkdownContent`'s `linkedCards.renderChip`: a link to an object, loop, trigger, agent or chat inside a sentence, a list, a quote or a table. A draft keeps its link; its card goes under the text. */
+export function renderLinkedChip(
+	target: LinkedTarget,
+	fallback: ReactNode,
+	context: { workspaceId: string; cardFollows?: boolean },
+): ReactNode {
+	if (isOtherWorkspace(target, context.workspaceId)) {
+		return (
+			<OtherWorkspaceChip kind={target.kind} otherWorkspaceId={target.workspaceId} id={target.id} />
+		)
+	}
+	switch (target.kind) {
+		case 'object':
+			return (
+				<ObjectReferenceChip
+					workspaceId={context.workspaceId}
+					objectId={target.id}
+					fallback={fallback}
+					cardFollows={context.cardFollows}
+				/>
+			)
+		case 'loop':
+			return (
+				<LoopReferenceChip
+					workspaceId={context.workspaceId}
+					loopId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'trigger':
+			return (
+				<TriggerReferenceChip
+					workspaceId={context.workspaceId}
+					triggerId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'agent':
+			return (
+				<AgentReferenceChip
+					workspaceId={context.workspaceId}
+					agentId={target.id}
+					fallback={fallback}
+				/>
+			)
+		case 'chat':
+			return (
+				<ChatReferenceChip
+					workspaceId={context.workspaceId}
+					chatId={target.id}
+					fallback={fallback}
+				/>
+			)
+		default:
+			return fallback
+	}
 }
 
 function ObjectCardOrLink({
@@ -359,6 +619,10 @@ function ObjectCardOrLink({
 	agentId,
 	fallback,
 	label,
+	inList,
+	after,
+	updated,
+	draftsAndFiles,
 }: {
 	workspaceId: string
 	objectId: string
@@ -366,18 +630,31 @@ function ObjectCardOrLink({
 	agentId?: string
 	fallback: ReactNode
 	label?: string
+	inList: boolean
+	after: boolean
+	updated: boolean
+	draftsAndFiles: boolean
 }) {
 	const { data: object } = useObject(objectId)
-	if (!showsObjectCard(object, workspaceId)) return <>{fallback}</>
-	return withLabel(
-		label,
-		<LinkedObjectCard
-			workspaceId={workspaceId}
-			objectId={objectId}
-			conversationId={conversationId}
-			agentId={agentId}
-		/>,
-	)
+	// Outside chat there is no approval card: a draft stays the link it was.
+	if (!draftsAndFiles && showsObjectCard(object, workspaceId)) return <>{fallback}</>
+	// A draft keeps today's card, and its lead-in only in a list.
+	if (showsObjectCard(object, workspaceId)) {
+		return withLabel(
+			inList ? label : undefined,
+			<LinkedObjectCard
+				workspaceId={workspaceId}
+				objectId={objectId}
+				conversationId={conversationId}
+				agentId={agentId}
+				updated={updated}
+			/>,
+		)
+	}
+	// Under a sentence, and in a list, only a draft is a card; any other link there is a chip.
+	if (after) return null
+	if (inList) return <>{fallback}</>
+	return withLabel(label, <ObjectReferenceCard workspaceId={workspaceId} objectId={objectId} />)
 }
 
 function FileCardOrLink({

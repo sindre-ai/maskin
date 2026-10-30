@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	conversationParticipants,
+	messageThreadReads,
 	notificationPreferences,
 	notifications,
 } from '@maskin/db/schema'
@@ -18,10 +19,12 @@ import {
 	type RecentPush,
 	collapseKeyOf,
 	delaySecondsOf,
+	dueAtOf,
 	evaluatePush,
 	isCriticalCard,
 	isForYouCard,
 	pushCategoryOf,
+	withDeadline,
 } from './push-policy'
 import type { PushChannel, PushDecision, PushMessage } from './push-types'
 
@@ -112,6 +115,9 @@ export class NotificationPushFanout {
 
 		const prefs = await this.loadPrefs(targetActorId)
 		const recentPushes = await this.recentPushes(n, meta, nowMs)
+		// Only a mention needs the decision lookup before the verdict; reuse it for the message.
+		const lookedUp = meta.source === 'comment_mention'
+		const earlyDecision = lookedUp ? await this.findDecision(n) : null
 		const verdict = evaluatePush({
 			notification: {
 				id: n.id,
@@ -120,11 +126,13 @@ export class NotificationPushFanout {
 				targetActorId,
 				createdAt,
 				metadata: meta,
+				objectId: n.objectId,
 			},
 			category,
 			prefs,
 			now,
 			recentPushes,
+			hasDecision: earlyDecision !== null,
 		})
 
 		if (verdict.action === 'skip') {
@@ -157,15 +165,18 @@ export class NotificationPushFanout {
 				collapseKey: verdict.collapseKey,
 			}
 		} else {
-			const decision = await this.findDecision(n)
+			const decision = lookedUp ? earlyDecision : await this.findDecision(n)
 			const badge = await this.pendingCount(targetActorId)
+			const due = category === 'needs_you' ? dueAtOf(meta) : null
+			const body = decision?.ask ?? n.content
 			message = {
 				title: decision?.title ?? n.title,
-				body: decision?.ask ?? n.content,
+				body: due ? withDeadline(body, due, now, prefs.timezone) : body,
 				workspaceId: n.workspaceId,
 				notificationId: n.id,
 				objectId: n.objectId,
 				conversationId,
+				threadRootId: typeof meta.thread_root_id === 'number' ? meta.thread_root_id : null,
 				decision: decision?.push ?? null,
 				interruption: verdict.interruption,
 				badge,
@@ -252,6 +263,21 @@ export class NotificationPushFanout {
 			return false
 		}
 		try {
+			// A thread reply is read in the thread, not in the chat: the chat's cursor
+			// moving past it says nothing about whether this person opened the thread.
+			if (typeof meta.thread_root_id === 'number') {
+				const [thread] = await this.db
+					.select({ lastRead: messageThreadReads.lastReadMessageId })
+					.from(messageThreadReads)
+					.where(
+						and(
+							eq(messageThreadReads.actorId, actorId),
+							eq(messageThreadReads.rootMessageId, meta.thread_root_id),
+						),
+					)
+					.limit(1)
+				return thread != null && Number(thread.lastRead) >= messageId
+			}
 			const [row] = await this.db
 				.select({ lastRead: conversationParticipants.lastReadMessageId })
 				.from(conversationParticipants)
@@ -366,7 +392,7 @@ export class NotificationPushFanout {
 
 	/**
 	 * A `needs_input` notification created by an @mention of the human on an agent's decision
-	 * comment carries no pointer to that comment (the row's metadata is empty), so find it: the
+	 * comment carries no pointer to that comment (its metadata only says `source: comment_mention`), so find it: the
 	 * newest `commented` event on the same object by the same author whose text is the row's
 	 * content, that mentions this target and parses as a decision. Best effort — any failure
 	 * just means a plain push, never a lost one.

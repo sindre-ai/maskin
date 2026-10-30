@@ -127,6 +127,62 @@ import Testing
 		#expect(cards(items).isEmpty)
 	}
 
+	// A voice call posts nothing to the chat; its lines are kept on the call record.
+	private func voiceCall(ended: Bool = false) -> LiveCallRecord {
+		var call = record(ended: ended)
+		call.lines = [
+			LiveCallLine(isYou: true, text: "What is blocked?", at: t0.addingTimeInterval(5)),
+			LiveCallLine(isYou: false, text: "Three bets.", at: t0.addingTimeInterval(9)),
+			LiveCallLine(isYou: true, text: "Who owns them?", at: t0.addingTimeInterval(20)),
+		]
+		return call
+	}
+
+	@Test func aVoiceCallsLinesShowInItsCardFromBothSidesWhileTheCallRuns() {
+		let items = ThreadLayout.items(
+			for: [msg(1, "me", "before", at: -60)], currentActorID: "me", calls: [voiceCall()])
+		let card = cards(items).first
+		#expect(card?.isActive == true)
+		#expect(card?.messages.map(\.content) == ["What is blocked?", "Three bets.", "Who owns them?"])
+		#expect(card?.messages.map { card?.isYou($0) } == [true, false, true])
+		#expect(card?.messages.map(\.actorName) == ["You", "Relay", "You"])
+		#expect(card?.counts == "2 from you · 1 reply")
+		#expect(card?.preview == "You: Who owns them?")
+	}
+
+	@Test func aVoiceCallsLinesStayInTheCardAfterTheCallEnds() {
+		let items = ThreadLayout.items(for: [], currentActorID: "me", calls: [voiceCall(ended: true)])
+		let card = cards(items).first
+		#expect(card?.isActive == false)
+		#expect(card?.messages.count == 3)
+		#expect(card?.counts == "2 from you · 1 reply")
+	}
+
+	@Test func voiceLinesAndChatMessagesInTheCallAreInterleavedInOrder() {
+		let messages = [msg(2, "relay", "Posted from a tool", at: 12)]
+		let items = ThreadLayout.items(for: messages, currentActorID: "me", calls: [voiceCall()])
+		#expect(ids(items).isEmpty)
+		#expect(
+			cards(items).first?.messages.map(\.content)
+				== ["What is blocked?", "Three bets.", "Posted from a tool", "Who owns them?"])
+	}
+
+	@Test func aCallSavedBeforeVoiceCallsKeptLinesStillLoads() throws {
+		let old = Data(
+			#"{"id":"c1","conversationID":"c","leadName":"Relay","guests":[],"startedAt":0,"spoken":["hi"]}"#.utf8)
+		let decoded = try JSONDecoder().decode(LiveCallRecord.self, from: old)
+		#expect(decoded.lines.isEmpty)
+		#expect(decoded.spoken == ["hi"])
+	}
+
+	@Test func theLogKeepsAVoiceCallsLines() {
+		let defaults = UserDefaults(suiteName: "livecall-\(UUID().uuidString)")!
+		let log = LiveCallLog(defaults: defaults)
+		log.save(record(ended: false))
+		log.update("call") { $0.lines.append(LiveCallLine(isYou: false, text: "Hello", at: t0)) }
+		#expect(log.records(for: "c").first?.lines.map(\.text) == ["Hello"])
+	}
+
 	@Test func objectsLinkedInTheCallBecomeChips() {
 		let link = "[Fix the quota guard](https://maskin.io/ws/objects/obj1)"
 		let card = LiveCallCard(
@@ -141,5 +197,30 @@ import Testing
 		log.update("call") { $0.expanded = true }
 		#expect(log.records(for: "c").first?.expanded == true)
 		#expect(log.records(for: "other").isEmpty)
+	}
+
+	@Test func aSaveIsReadBackWithoutDecoding() {
+		let defaults = UserDefaults(suiteName: "livecall-\(UUID().uuidString)")!
+		let log = LiveCallLog(defaults: defaults)
+		log.save(record())
+		let before = log.decodeCount
+		#expect(log.records(for: "c").count == 1)
+		log.update("call") { $0.expanded = true }
+		#expect(log.records(for: "c").first?.expanded == true)
+		#expect(log.decodeCount == before)
+		let other = LiveCallLog(defaults: defaults)
+		#expect(other.records(for: "c").first?.expanded == true)
+	}
+
+	@Test func rereadingTheLogDoesNotDecodeItAgain() {
+		let defaults = UserDefaults(suiteName: "livecall-\(UUID().uuidString)")!
+		let log = LiveCallLog(defaults: defaults)
+		log.save(record())
+		_ = log.records(for: "c")
+		let before = log.decodeCount
+		for _ in 0..<20 { _ = log.records(for: "c") }
+		#expect(log.decodeCount == before)
+		log.update("call") { $0.expanded = true }
+		#expect(log.records(for: "c").first?.expanded == true)
 	}
 }

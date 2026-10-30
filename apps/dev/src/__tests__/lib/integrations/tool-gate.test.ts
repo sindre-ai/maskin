@@ -10,7 +10,7 @@ vi.mock('../../../lib/events/record-event', () => ({
 	recordEvent: (...a: unknown[]) => recordEvent(...(a as [])),
 }))
 
-import { buildAccessPreamble } from '../../../lib/integrations/access-preamble'
+import { MISSING_TOOL_BLOCK, buildAccessPreamble } from '../../../lib/integrations/access-preamble'
 import {
 	type AgentAccess,
 	canRead,
@@ -35,12 +35,45 @@ describe('classifyTool', () => {
 		expect(classifyTool('google-meet', 'google_meet__create_space')).toBe('write')
 	})
 
+	it('classifies the five Drive reads as reads and everything else on Drive as a write', () => {
+		for (const tool of [
+			'search_files',
+			'list_folder',
+			'get_file_bytes',
+			'get_document_structured',
+			'get_sheet_range',
+		]) {
+			expect(classifyTool('google-drive', `google_drive__${tool}`), tool).toBe('read')
+		}
+		for (const tool of ['write_file', 'comment_on_document', 'watch_folder', 'brand_new_tool']) {
+			expect(classifyTool('google-drive', `google_drive__${tool}`), tool).toBe('write')
+		}
+		// No annotation can talk a Drive tool into being a read.
+		expect(classifyTool('google-drive', 'google_drive__write_file', { readOnlyHint: true })).toBe(
+			'write',
+		)
+	})
+
 	it('matches a LinkedIn verb behind its per-identity prefix', () => {
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__get_profile')).toBe('read')
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__publish_post')).toBe('write')
 		expect(classifyTool('linkedin-unipile', 'linkedin-acc-me__send_connection_request')).toBe(
 			'write',
 		)
+	})
+
+	it('classifies the LinkedIn outreach reads as reads and its writes as writes', () => {
+		for (const verb of [
+			'list_sent_invitations',
+			'list_user_posts',
+			'get_company',
+			'get_inmail_balance',
+		]) {
+			expect(classifyTool('linkedin-unipile', `linkedin-acc-me__${verb}`), verb).toBe('read')
+		}
+		for (const verb of ['withdraw_invitation', 'react_to_post', 'send_inmail']) {
+			expect(classifyTool('linkedin-unipile', `linkedin-acc-me__${verb}`), verb).toBe('write')
+		}
 	})
 
 	it('fails closed on a tool nobody classified, even if its name or annotation looks like a read', () => {
@@ -99,6 +132,8 @@ describe('refusal messages', () => {
 		expect(msg).toContain('"Read"')
 		expect(msg).toContain('do not retry')
 		expect(msg).toContain('Settings → Integrations')
+		// In a chat the agent asks with a card, naming the level the call needed.
+		expect(msg).toContain('request_integration_access for Slack with level "read_write"')
 	})
 
 	it('names a missing grant plainly', () => {
@@ -244,11 +279,43 @@ describe('buildAccessPreamble', () => {
 		expect(text.endsWith('\n\n')).toBe(true)
 	})
 
+	it('points an agent with a person to ask at the missing-tool steps, others at Settings', () => {
+		const rows = [row('slack', 'read')]
+		const withPerson = buildAccessPreamble(rows, { personReachable: true })
+		expect(withPerson).toContain('Follow "When a tool or login is missing" below.')
+		expect(withPerson).not.toContain('Settings')
+		const alone = buildAccessPreamble(rows)
+		expect(alone).toContain('a workspace admin can change it under Settings')
+		expect(alone).not.toContain('Tell the person')
+	})
+
+	it('names the card tools in the missing-tool steps', () => {
+		for (const tool of [
+			'list_integrations',
+			'list_keychain_credentials',
+			'list_integration_providers',
+			'request_keychain_access',
+			'request_keychain_credential',
+			'connect_integration',
+			'request_integration_access',
+		]) {
+			expect(MISSING_TOOL_BLOCK).toContain(tool)
+		}
+		expect(MISSING_TOOL_BLOCK.endsWith('\n\n')).toBe(true)
+	})
+
 	it('tells the agent that Gmail still needs a person to approve each email', () => {
 		const text = buildAccessPreamble([row('gmail', 'read_write')])
 		expect(text).toMatch(
 			/- gmail: Read & write \(all tools, but a person has to approve each email before you send it\)/i,
 		)
+	})
+
+	it('tells a Gmail writer to say drafted for a draft and sent only with a message id', () => {
+		const text = buildAccessPreamble([row('gmail', 'read_write')])
+		expect(text).toContain('report "drafted" for a draft')
+		expect(text).toContain('gmail_send_email returns a message id')
+		expect(buildAccessPreamble([row('gmail', 'read')])).not.toContain('drafted')
 	})
 
 	it('folds several accounts of one provider into one line when they differ', () => {

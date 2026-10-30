@@ -1,4 +1,11 @@
-import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
+import type {
+	AgentState,
+	WebhookConfig as ExtensionWebhookConfig,
+	FileAnnotation,
+	McpConfig,
+	SessionResult,
+	ToolGrants,
+} from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -28,7 +35,9 @@ export const actors = pgTable('actors', {
 	type: text('type').notNull(),
 	name: text('name').notNull(),
 	email: text('email').unique(),
-	apiKey: text('api_key').notNull().unique(),
+	// Legacy plaintext column. Nullable and no longer written (migration 0112); keys live
+	// hashed in api_keys. Emptied and dropped by the contract step.
+	apiKey: text('api_key').unique(),
 	passwordHash: text('password_hash'),
 	description: text('description'),
 	systemPrompt: text('system_prompt'),
@@ -264,6 +273,11 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+		// Session self-heal's "does this session already have its completion event?" probe,
+		// answered from the index alone. Built CONCURRENTLY in migration 0114.
+		index('events_session_entity_action_idx')
+			.on(t.entityId, t.action, t.workspaceId)
+			.where(sql`${t.entityType} = 'session'`),
 		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
 		index('events_ws_entity_commented_idx')
 			.on(t.workspaceId, t.entityId, t.id)
@@ -695,6 +709,12 @@ export const sessions = pgTable(
 		cacheCreationInputTokens: bigint('cache_creation_input_tokens', { mode: 'number' }),
 		cacheReadInputTokens: bigint('cache_read_input_tokens', { mode: 'number' }),
 		durationMs: bigint('duration_ms', { mode: 'number' }),
+		// Usage watermark (migration 0113): the newest session_logs.id whose `result`
+		// envelope is already added into the usage columns above, and the CLI's cumulative
+		// cost at that point. Lets a per-turn write and every settle path add only the
+		// results not yet counted, so none of them double-counts.
+		usageCountedLogId: bigint('usage_counted_log_id', { mode: 'number' }),
+		usageCountedCliCost: numeric('usage_counted_cli_cost', { precision: 12, scale: 6 }),
 		currentActivity: text('current_activity'),
 		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
 		// `status` text because reaper + retry-scheduler need to tell
@@ -781,6 +801,69 @@ export const sessions = pgTable(
 	],
 )
 
+// ── API Keys ───────────────────────────────────────────────────────────────
+
+export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session'
+
+/**
+ * Hashed API keys. One actor holds many: a primary key (shown once at creation or rotation),
+ * one per web or iOS login, and one per agent session launch. key_hash is the hex SHA-256 of
+ * the full ank_ token, so a lookup is one indexed equality and a database leak yields no
+ * usable keys. A key authenticates while revoked_at is null and expires_at is null or future.
+ */
+export const apiKeys = pgTable(
+	'api_keys',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		keyHash: text('key_hash').notNull().unique(),
+		last4: text('last4').notNull(),
+		kind: text('kind').$type<ApiKeyKind>().notNull(),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('api_keys_actor_kind_idx').on(t.actorId, t.kind),
+		index('api_keys_session_idx').on(t.sessionId).where(sql`${t.sessionId} IS NOT NULL`),
+		check('api_keys_kind_enum', sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session')`),
+	],
+)
+export type ApiKey = typeof apiKeys.$inferSelect
+
+// ── Comment Responder Claims ───────────────────────────────────────────────
+// One responder session per (comment event, actor). The thread-reply spawn and the
+// CommentDispatcher fallback ladder both claim here before starting a session; the INSERT that
+// wins starts it, the other stands down. See migration 0115.
+export type CommentResponderClaimedBy = 'thread_reply' | 'comment_fallback'
+export const commentResponderClaims = pgTable(
+	'comment_responder_claims',
+	{
+		sourceCommentEventId: bigint('source_comment_event_id', { mode: 'number' })
+			.references(() => events.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		claimedBy: text('claimed_by').$type<CommentResponderClaimedBy>().notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({
+			name: 'comment_responder_claims_pk',
+			columns: [t.sourceCommentEventId, t.actorId],
+		}),
+		check(
+			'comment_responder_claims_claimed_by_enum',
+			sql`${t.claimedBy} IN ('thread_reply', 'comment_fallback')`,
+		),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(
@@ -834,11 +917,19 @@ export const conversations = pgTable(
 		// the workspace. NULL for ordinary chats.
 		subjectType: text('subject_type'),
 		subjectId: uuid('subject_id'),
+		// Marks the one direct message (DM) between two actors: the two actor ids,
+		// lowest first, joined with ':' (directPairKey in services/direct-chat.ts).
+		// NULL for every topical chat, however many people are in it.
+		directPairKey: text('direct_pair_key'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		// One DM per pair of actors in a workspace.
+		uniqueIndex('conversations_direct_pair_uniq')
+			.on(t.workspaceId, t.directPairKey)
+			.where(sql`${t.directPairKey} IS NOT NULL`),
 		// One group chat per subject: asking for it again finds the existing one.
 		uniqueIndex('conversations_subject_uniq')
 			.on(t.workspaceId, t.subjectType, t.subjectId)
@@ -1143,6 +1234,12 @@ export const voiceSessions = pgTable('voice_sessions', {
 	transcriptStorageKey: text('transcript_storage_key'),
 	inputAudioSeconds: integer('input_audio_seconds'),
 	outputAudioSeconds: integer('output_audio_seconds'),
+	// Running totals written as the call goes (each completed turn, each tool
+	// call), so ending a call does not depend on server memory.
+	inputAudioMs: integer('input_audio_ms').notNull().default(0),
+	outputAudioMs: integer('output_audio_ms').notNull().default(0),
+	turnCount: integer('turn_count').notNull().default(0),
+	toolCallsCount: integer('tool_calls_count').notNull().default(0),
 	inputTokens: integer('input_tokens'),
 	outputTokens: integer('output_tokens'),
 	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
@@ -1155,6 +1252,48 @@ export const voiceSessions = pgTable('voice_sessions', {
 
 export type VoiceSession = typeof voiceSessions.$inferSelect
 export type NewVoiceSession = typeof voiceSessions.$inferInsert
+
+// ── Voice tool call log ─────────────────────────────────────────────────────
+//
+// One row per tool call the voice model made during a call: what it asked for
+// (redacted, size-capped), whether it worked, and the first part of what the
+// model was told back. An internal diagnostic log, not an entity: rows are never
+// edited, so there is no events row, and they are swept after 30 days
+// (services/voice-tool-call-log-cleaner.ts). Written best-effort; a missing row
+// never means the call failed.
+export const voiceToolCalls = pgTable(
+	'voice_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		voiceSessionId: uuid('voice_session_id')
+			.notNull()
+			.references(() => voiceSessions.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// The id the realtime model gave the call; ties a row to the transcript.
+		callId: text('call_id'),
+		startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+		toolName: text('tool_name').notNull(),
+		// Redacted and capped; see lib/voice-tool-call-redaction.ts.
+		argsSummary: jsonb('args_summary').$type<unknown>(),
+		success: boolean('success').notNull(),
+		errorCode: text('error_code'),
+		errorMessage: text('error_message'),
+		// Length of the tool's output before voice's cap, and whether the cap cut it.
+		outputChars: integer('output_chars').notNull(),
+		outputTruncated: boolean('output_truncated').notNull().default(false),
+		latencyMs: integer('latency_ms').notNull(),
+		outputPreview: text('output_preview'),
+	},
+	(t) => [
+		index('voice_tool_calls_session_started_idx').on(t.voiceSessionId, t.startedAt),
+		index('voice_tool_calls_started_at_idx').on(t.startedAt),
+	],
+)
+
+export type VoiceToolCall = typeof voiceToolCalls.$inferSelect
+export type NewVoiceToolCall = typeof voiceToolCalls.$inferInsert
 
 // ── Imports ───────────────────────────────────────────────────────────
 
@@ -1384,8 +1523,13 @@ export const files = pgTable(
 		name: text('name').notNull(),
 		description: text('description'),
 		mimeType: text('mime_type').notNull(),
-		sizeBytes: integer('size_bytes').notNull(),
+		// bigint: files can exceed the 2 GiB an integer holds. mode 'number' is exact up to 2^53.
+		sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
 		storageKey: text('storage_key').notNull(),
+		// sha256 (lowercase hex) of the stored bytes. Set on every write; null
+		// only for rows that predate the column, which are hashed from storage
+		// on first read or first save. Echoed by clients as if_match.
+		contentHash: text('content_hash'),
 		// What the file is *for*, when that matters beyond its mime type. `'briefing'`
 		// marks an HTML page written to be read in For you; nothing else is surfaced
 		// there, so a loop's incidental output files stay out of the row. Null for
@@ -1410,6 +1554,131 @@ export const files = pgTable(
 
 export type File = typeof files.$inferSelect
 export type NewFile = typeof files.$inferInsert
+
+// ── File Uploads ────────────────────────────────────────────────────────────
+// An in-flight direct-to-storage upload of a large file. The browser PUTs parts
+// straight to S3 (multipart); this row remembers what the caller declared so
+// that completing the upload can check the stored object against it and only
+// then create the `files` row. `file_id` is the id the file will have.
+export const fileUploads = pgTable(
+	'file_uploads',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		fileId: uuid('file_id').notNull().unique(),
+		name: text('name').notNull(),
+		description: text('description'),
+		kind: text('kind'),
+		mimeType: text('mime_type').notNull(),
+		sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+		storageKey: text('storage_key').notNull(),
+		s3UploadId: text('s3_upload_id').notNull(),
+		partSize: integer('part_size').notNull(),
+		partCount: integer('part_count').notNull(),
+		// pending → completing → completed, or → aborted. Only pending uploads can be
+		// completed; completing means one request is stitching it right now.
+		status: text('status').notNull().default('pending'),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		// When a complete request took the upload. A completing row older than a
+		// complete can take belongs to a request that died.
+		claimedAt: timestamp('claimed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('file_uploads_ws_status_idx').on(t.workspaceId, t.status),
+		index('file_uploads_open_idx')
+			.on(t.expiresAt)
+			.where(sql`${t.status} IN ('pending', 'completing')`),
+		check(
+			'file_uploads_status_check',
+			sql`${t.status} IN ('pending', 'completing', 'completed', 'aborted')`,
+		),
+	],
+)
+
+export type FileUpload = typeof fileUploads.$inferSelect
+export type NewFileUpload = typeof fileUploads.$inferInsert
+
+// ── Extensions ──────────────────────────────────────────────────────────────
+// Workspace-owned custom (bring-your-own) integrations. One row can carry an
+// MCP server config, a webhook config, or both. The slug is the join key to
+// `integrations.provider = 'extension:{slug}'` (the encrypted signing secret /
+// API key) and `webhook_deliveries.provider = 'extension:{slug}'`, so it is
+// immutable after creation. `webhook_token` is the opaque URL segment of
+// POST /api/webhooks/x/:token and is globally unique because the route resolves
+// it before it knows the workspace. See drizzle/0092_extensions.sql.
+
+export const extensions = pgTable(
+	'extensions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		slug: text('slug').notNull(),
+		name: text('name').notNull(),
+		status: text('status').$type<'active' | 'disabled' | 'draft'>().notNull().default('draft'),
+		mcpConfig: jsonb('mcp_config').$type<McpConfig | null>(),
+		webhookConfig: jsonb('webhook_config').$type<ExtensionWebhookConfig | null>(),
+		webhookToken: text('webhook_token'),
+		toolGrants: jsonb('tool_grants').$type<ToolGrants>().notNull().default({}),
+		// Runtime-populated skip reason (e.g. tool cap exceeded) so the UI can
+		// show an inline warning without adding a status value.
+		mcpLastError: text('mcp_last_error'),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('extensions_workspace_slug_uniq').on(t.workspaceId, t.slug),
+		uniqueIndex('extensions_webhook_token_uniq')
+			.on(t.webhookToken)
+			.where(sql`${t.webhookToken} IS NOT NULL`),
+		index('extensions_workspace_status_idx').on(t.workspaceId, t.status),
+	],
+)
+export type Extension = typeof extensions.$inferSelect
+export type NewExtension = typeof extensions.$inferInsert
+
+// ── Blocked tool calls ──────────────────────────────────────────────────────
+// One row per tool call the guard wrapper refused on a custom extension. Rows
+// older than 30 days are dropped by BlockedToolCallsCleaner. session_id is
+// nullable and set null on session delete so the audit row outlives the
+// session. See drizzle/0093_blocked_tool_calls.sql.
+
+export const blockedToolCalls = pgTable(
+	'blocked_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		extensionId: uuid('extension_id')
+			.references(() => extensions.id, { onDelete: 'cascade' })
+			.notNull(),
+		agentId: uuid('agent_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		toolName: text('tool_name').notNull(),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		blockedAt: timestamp('blocked_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('blocked_tool_calls_ext_agent_idx').on(
+			t.extensionId,
+			t.agentId,
+			sql`${t.blockedAt} DESC`,
+		),
+		index('blocked_tool_calls_ws_time_idx').on(t.workspaceId, sql`${t.blockedAt} DESC`),
+	],
+)
+export type BlockedToolCall = typeof blockedToolCalls.$inferSelect
+export type NewBlockedToolCall = typeof blockedToolCalls.$inferInsert
 
 // ── Webhook Deliveries ──────────────────────────────────────────────────────
 // Idempotency ledger for inbound webhook deliveries. Each row claims a single
@@ -1629,6 +1898,60 @@ export const linkedinToolCalls = pgTable(
 		index('linkedin_tool_calls_created_at_idx').on(t.createdAt),
 	],
 )
+
+// ── LinkedIn Actions (permanent action log) ─────────────────────────────────
+// One append-only row per call to any LinkedIn MCP tool, old and new. It is the
+// source for the server-side caps (rolling 24h counts under an advisory lock),
+// the per-person rules, and the outreach measurement join, so unlike
+// `linkedin_tool_calls` above (a 24h duplicate-send guard) it keeps rows 180
+// days. A row is inserted `pending` before the call and moved to its final
+// outcome after it.
+//
+// It carries NO content: no message or post text, no names, no file contents.
+// `target_provider_id` and `ref_id` are opaque provider ids; `data` holds only
+// credits_before / credits_after for InMail. `workspace_id` has no foreign key
+// on purpose (like webhook_deliveries): the log must outlive nothing it does not
+// own, and the workspace purge deletes it explicitly.
+//
+// The unique partial index makes "already withdrawn" / "already liked" a
+// database fact: only one `ok` row can exist per (account, tool, ref_id).
+export const linkedinActions = pgTable(
+	'linkedin_actions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id').notNull(),
+		// The connected account row (integrations.id). Caps key on this.
+		integrationId: uuid('integration_id').notNull(),
+		actorId: uuid('actor_id').notNull(),
+		tool: text('tool').notNull(),
+		// read | write | send
+		kind: text('kind').notNull(),
+		targetProviderId: text('target_provider_id'),
+		refId: text('ref_id'),
+		objectId: uuid('object_id'),
+		approvalId: text('approval_id'),
+		// pending | ok | noop | refused_cap | refused_rule | refused_flag | error
+		outcome: text('outcome').notNull(),
+		errorCode: text('error_code'),
+		data: jsonb('data'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('linkedin_actions_integration_tool_created_idx').on(t.integrationId, t.tool, t.createdAt),
+		index('linkedin_actions_workspace_target_created_idx').on(
+			t.workspaceId,
+			t.targetProviderId,
+			t.createdAt,
+		),
+		uniqueIndex('linkedin_actions_ok_ref_uniq')
+			.on(t.integrationId, t.tool, t.refId)
+			.where(sql`${t.outcome} = 'ok'`),
+		// The nightly purge deletes by age.
+		index('linkedin_actions_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type LinkedinAction = typeof linkedinActions.$inferSelect
 
 // ── User Display Settings ───────────────────────────────────────────────────
 //
@@ -2027,6 +2350,9 @@ export const fileComments = pgTable(
 		// Kept from the pre-refactor annotation-overlay so a CSS-selector-based
 		// pin still round-trips. `'legacy'` is reserved as the migration marker.
 		selector: text('selector'),
+		// Text comments: the quoted passage plus a little context each side, so
+		// the editor can find it again by matching. Null for pin comments.
+		textAnchor: jsonb('text_anchor').$type<{ quote: string; prefix: string; suffix: string }>(),
 		authorId: uuid('author_id')
 			.notNull()
 			.references(() => actors.id),
@@ -2116,6 +2442,10 @@ export const deviceTokens = pgTable(
 		// 'sandbox' | 'production' — selects the APNs host.
 		environment: text('environment').notNull(),
 		appVersion: text('app_version'),
+		// SHA-256 (hex) of the secret the device generated and sent at registration. After sign-out the
+		// phone has no API key; POST /api/devices/unregister takes this secret as its credential. Null
+		// for rows registered by a client that does not send one: those cannot use that route.
+		unregisterSecretHash: text('unregister_secret_hash'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -2339,10 +2669,8 @@ export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInse
 // same event, exactly one INSERT claims — the loser's returning() is empty
 // and the dispatch is skipped.
 //
-// Ships unconditional (NOT gated by trigger_engine_v2 per tech spec §3.4 +
-// §7.3): if this sat behind the flag, a kill-switch flip would re-open the
-// double-fire window the table exists to prevent. The v1 code path simply
-// never writes to this table, so having it live pre-flag is safe.
+// Ships unconditional (tech spec §3.4 + §7.3): the table exists to prevent the
+// double-fire window during a rolling deploy.
 //
 // session_id is diagnostic only. If the UPDATE that stamps it after
 // createSession() fails, the row still guards against double-fire — its
@@ -2380,8 +2708,7 @@ export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert
 // three indexes are partial on replayed_at IS NULL so they only ever cover
 // the pending backlog.
 //
-// The table ships unconditional (additive, nothing reads it with the flag
-// off); only ENQUEUE and REPLAY sit behind trigger_engine_v2.
+// The table ships unconditional (additive).
 
 export const triggerEventQueue = pgTable(
 	'trigger_event_queue',

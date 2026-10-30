@@ -9,6 +9,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFindShortcut } from '@/hooks/use-find-shortcut'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
 import type {
@@ -24,7 +25,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace/')({
 	component: MarketplaceRoute,
@@ -61,6 +62,8 @@ function MarketplaceRoute() {
 	const { workspaceId } = useWorkspace()
 	const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
 	const [query, setQuery] = useState('')
+	const filterInputRef = useRef<HTMLInputElement>(null)
+	useFindShortcut(filterInputRef)
 	const trimmedQuery = query.trim()
 
 	const { data, isLoading, isError, error, refetch } = useMarketplaceLoops()
@@ -194,6 +197,7 @@ function MarketplaceRoute() {
 					/>
 				</div>
 				<Input
+					ref={filterInputRef}
 					type="search"
 					value={query}
 					onChange={(e) => setQuery(e.target.value)}

@@ -133,7 +133,7 @@ test.describe('Agent Keychain card', () => {
 		await expect(form).toHaveCount(0)
 		await expect.poll(() => followUps.length).toBe(1)
 		expect(JSON.stringify(followUps[0])).not.toContain(PASSWORD)
-		expect(JSON.stringify(followUps[0])).toContain('KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD')
+		expect(JSON.stringify(followUps[0])).toContain('{{keychain:e-conomic.password}}')
 	})
 
 	test('an API key card asks for one secret and vaults it as a manual capture', async ({

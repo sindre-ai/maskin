@@ -2,6 +2,7 @@ import { AgentAccessSection } from '@/components/agents/agent-access-section'
 import { AgentComposer } from '@/components/agents/agent-composer'
 import { AgentComputerSection } from '@/components/agents/agent-computer-section'
 import { AgentDetailHeader } from '@/components/agents/agent-detail-header'
+import { AgentExtensionsSection } from '@/components/agents/agent-extensions-section'
 import { AgentInstructionsSection } from '@/components/agents/agent-instructions-section'
 import { AgentLoopsSection } from '@/components/agents/agent-loops-section'
 import { getPortraitStatus } from '@/components/agents/agent-portrait-card'
@@ -140,6 +141,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
 				<AgentAccessSection agent={agent} />
+				<AgentExtensionsSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>
 		</>

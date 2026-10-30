@@ -5,8 +5,13 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import { isActorHumanPaused } from '../lib/agent-pause'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import {
+	claimCommentResponder,
+	releaseCommentResponderClaim,
+} from '../lib/comment-responder-claims'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
@@ -34,7 +39,7 @@ import {
 	isAgentMentionFreeComment,
 	isCommentFallbackDriverEligible,
 } from '../services/trigger-runner'
-import { loadSenderLine } from '../services/workspace-briefing'
+import { commentPromptHeadline } from '../services/workspace-briefing'
 
 type Env = {
 	Variables: {
@@ -792,21 +797,48 @@ async function spawnThreadReplySessions(ctx: {
 		.limit(1)
 	const initiatedFromObjectId = obj ? ctx.objectId : null
 
-	const senderLine = threadReplyAgentIds.length > 0 ? await loadSenderLine(ctx.db, ctx.actorId) : ''
-
 	for (const agentId of threadReplyAgentIds) {
+		// A person's Pause holds against the thread-reply auto-spawn too. The idle watcher's
+		// auto-pause is not a person's, so those agents still wake.
+		if (await isActorHumanPaused(ctx.db, agentId)) {
+			logger.info('Thread-reply auto-spawn held: agent is paused by a person', {
+				source_comment_event_id: ctx.newCommentEventId,
+				actor_id: agentId,
+				object_id: ctx.objectId,
+			})
+			continue
+		}
+		// Claim (comment, agent) before starting: the CommentDispatcher fallback ladder (case 3
+		// Chief of Staff in particular) can pick the same agent for the same comment from the PG
+		// NOTIFY subscriber ~50ms away. The claim row's primary key lets exactly one path start a
+		// session; see lib/comment-responder-claims.ts.
+		const claimed = await claimCommentResponder(ctx.db, {
+			sourceCommentEventId: ctx.newCommentEventId,
+			actorId: agentId,
+			claimedBy: 'thread_reply',
+		})
+		if (!claimed) {
+			logger.info('Thread-reply auto-spawn stood down: another responder holds the claim', {
+				source_comment_event_id: ctx.newCommentEventId,
+				actor_id: agentId,
+				object_id: ctx.objectId,
+			})
+			continue
+		}
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: agentId,
 			callerKind: 'trigger',
 			actionPrompt: buildThreadReplyPrompt({
-				senderLine,
 				objectId: ctx.objectId,
 				commenterActorId: ctx.actorId,
 				content: ctx.newCommentContent,
 				threadRootEventId: ctx.threadRootEventId,
 			}),
 			config: {
+				// Who asked: launch puts the sender line above the prompt, so the stored
+				// prompt (and the session's title) starts with what the work is.
+				sent_by_actor_id: ctx.actorId,
 				thread_reply: {
 					object_id: ctx.objectId,
 					comment_event_id: ctx.newCommentEventId,
@@ -817,19 +849,23 @@ async function spawnThreadReplySessions(ctx: {
 			createdBy: ctx.actorId,
 			initiatedFromObjectId,
 			await: 'none',
-		}).catch((err) =>
+		}).catch((err) => {
 			logger.error('Failed to create thread-reply session', {
 				agentId,
 				objectId: ctx.objectId,
 				threadRootEventId: ctx.threadRootEventId,
 				error: String(err),
-			}),
-		)
+			})
+			return releaseCommentResponderClaim(ctx.db, {
+				sourceCommentEventId: ctx.newCommentEventId,
+				actorId: agentId,
+			})
+		})
 	}
 }
 
 function buildThreadReplyPrompt(ctx: {
-	senderLine: string
+	senderLine?: string
 	objectId: string
 	commenterActorId: string
 	content: string
@@ -837,6 +873,8 @@ function buildThreadReplyPrompt(ctx: {
 }): string {
 	return [
 		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
+		commentPromptHeadline('New reply in a comment thread', ctx.content),
+		'',
 		'A new comment was added to a comment thread you previously participated in. You were NOT @mentioned — you are being notified because you commented or were @mentioned earlier in this thread.',
 		'',
 		'Read the thread context (use the MCP tools to fetch comments on this object) and assess whether a reply from you adds value. If a reply is helpful, post it as a reply in the same thread. If not, take no action — silence is a valid outcome.',

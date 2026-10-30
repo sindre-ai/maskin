@@ -3,6 +3,8 @@
  * agent has been granted access to it (not because someone opened the agent and added it).
  */
 
+import { MASKIN_SESSION_HEADER, MASKIN_SESSION_HEADER_VALUE } from '../mcp-session-header'
+
 /** The entry for one LinkedIn identity, the same shape the agent's Quick Add button writes. */
 export function linkedInIdentityServer(instanceSlug: string): Record<string, unknown> {
 	return {
@@ -11,6 +13,8 @@ export function linkedInIdentityServer(instanceSlug: string): Record<string, unk
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			// Lets the LinkedIn route put the session id on its linkedin_tool_called event.
+			[MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE,
 		},
 	}
 }

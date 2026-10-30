@@ -11,13 +11,16 @@
  * Source precedence (§17.2): 1 authoritative pre-flight → 2 header on the failed
  * request → 4 remote callback → 3 CLI banner tail. See parseSubscriptionLimitReset.
  *
- * Clamp bounds (§17.3): resetAt ∈ [now+60s, now+24h]. Outside → null. This is
+ * Clamp bounds (§17.3): resetAt ∈ [now+60s, now+8d]. Outside → null. This is
  * defence in depth against a bad clock or a hostile input pushing a session's
  * retry either infinitely soon (thrash) or infinitely far (never).
  */
 
+import type { SessionResultFailureReason } from '@maskin/shared'
+
 const MIN_RETRY_MS = 60_000
-const MAX_RETRY_MS = 24 * 60 * 60 * 1000
+// Weekly limits reset up to 7 days out; one day of slack on top.
+const MAX_RETRY_MS = 8 * 24 * 60 * 60 * 1000
 
 export type SubscriptionLimitResetSource =
 	| 'anthropic-ratelimit-unified-reset'
@@ -42,7 +45,7 @@ export interface SubscriptionLimitResetInput {
 
 /**
  * Try the four signals in precedence order (§17.2) and return the first that
- * clamps into [now+60s, now+24h]. Every source that fails to parse or clamps
+ * clamps into [now+60s, now+8d]. Every source that fails to parse or clamps
  * out is skipped; the walk continues.
  */
 export function parseSubscriptionLimitReset(
@@ -173,17 +176,48 @@ export function parseCliResetBanner(stdoutTail: string, nowMs: number = Date.now
 	return parsed === null ? null : new Date(parsed)
 }
 
+/**
+ * The reset time from the CLI's own `rate_limit_event` line, which carries it as
+ * an epoch ("resetsAt") whatever time zone the human-readable banner names. Only
+ * a rejected event counts, and the last one wins. Null when there is none, or
+ * when it falls outside the clamp.
+ */
+export function parseRateLimitEventReset(
+	stdoutTail: string,
+	nowMs: number = Date.now(),
+): Date | null {
+	let resetsAtSeconds: number | null = null
+	for (const line of stdoutTail.split('\n')) {
+		if (!line.includes('rate_limit_event')) continue
+		try {
+			const info = (
+				JSON.parse(line) as { rate_limit_info?: { status?: unknown; resetsAt?: unknown } }
+			).rate_limit_info
+			if (info?.status === 'rejected' && typeof info.resetsAt === 'number') {
+				resetsAtSeconds = info.resetsAt
+			}
+		} catch {
+			// A line cut off at the start of the tail is not JSON; skip it.
+		}
+	}
+	if (resetsAtSeconds === null) return null
+	const clamped = clamp(resetsAtSeconds * 1000, nowMs)
+	return clamped === null ? null : new Date(clamped)
+}
+
 function parseCliBannerTail(tail: string, nowMs: number): number | null {
 	// Two shapes: the "resets <time>" fragment inside the "You've hit your limit"
 	// banner, or a bare "Resets <time>" line. Match either.
-	const bannerMatch = /Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Z]{2,5})\))?(?:$|[.\n])/i.exec(
-		tail,
-	)
+	// The zone is a short code ("UTC") or an IANA name ("Europe/Copenhagen").
+	const bannerMatch =
+		/Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Za-z]+(?:\/[A-Za-z0-9_+-]+)*)\))?(?:$|[."\n])/i.exec(
+			tail,
+		)
 	if (!bannerMatch) return null
 	const rawCapture = bannerMatch[1]
 	if (!rawCapture) return null
 	const raw = rawCapture.trim()
-	const tz = (bannerMatch[2] ?? 'UTC').toUpperCase()
+	const tz = bannerMatch[2] ?? 'UTC'
 
 	const resolved = resolveBannerFragment(raw, tz, nowMs)
 	if (resolved === null) return null
@@ -196,19 +230,61 @@ function parseCliBannerTail(tail: string, nowMs: number): number | null {
  * short forms — so anchor against the current UTC date/week.
  */
 function resolveBannerFragment(fragment: string, tz: string, nowMs: number): number | null {
-	// Only handle UTC anchoring here. A future spec-widening pass can teach the
-	// helper US timezones; for now every non-UTC banner is punted to null so we
-	// don't confidently mis-schedule a retry.
-	if (tz !== 'UTC' && tz !== 'GMT') return null
+	// The anchors below work on UTC fields, so shift `now` into the banner's zone,
+	// anchor there, then shift the result back. The offset is read again at the
+	// result so a reset that lands across a clock change stays right.
+	const nowOffset = tzOffsetMs(tz, nowMs)
+	if (nowOffset === null) return null
+	const wall = anchorFragment(fragment, nowMs + nowOffset)
+	if (wall === null) return null
+	const resultOffset = tzOffsetMs(tz, wall - nowOffset)
+	if (resultOffset === null) return null
+	return wall - resultOffset
+}
 
-	// Try HH:MM(am|pm)? absolute time on today (UTC).
+/**
+ * Milliseconds the zone is ahead of UTC at `atMs`, or null when the name is not
+ * a zone Intl knows (a bare "PST" is not one, and is left unscheduled rather
+ * than guessed).
+ */
+function tzOffsetMs(tz: string, atMs: number): number | null {
+	if (/^(UTC|GMT)$/i.test(tz)) return 0
+	try {
+		const parts = new Intl.DateTimeFormat('en-US', {
+			timeZone: tz,
+			hourCycle: 'h23',
+			year: 'numeric',
+			month: 'numeric',
+			day: 'numeric',
+			hour: 'numeric',
+			minute: 'numeric',
+			second: 'numeric',
+		}).formatToParts(new Date(atMs))
+		const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+		const asUtc = Date.UTC(
+			get('year'),
+			get('month') - 1,
+			get('day'),
+			get('hour'),
+			get('minute'),
+			get('second'),
+		)
+		const offset = asUtc - Math.floor(atMs / 1000) * 1000
+		return Number.isFinite(offset) ? offset : null
+	} catch {
+		return null
+	}
+}
+
+function anchorFragment(fragment: string, nowMs: number): number | null {
+	// Try HH:MM(am|pm)? absolute time today.
 	const timeMatch = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i.exec(fragment)
 	if (timeMatch) {
 		return anchorTimeOfDay(timeMatch, nowMs)
 	}
 
 	// "Jan 3 10am" style — month/day + time
-	const monthMatch = /^([A-Za-z]{3})\s+(\d{1,2})(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/.exec(
+	const monthMatch = /^([A-Za-z]{3})\s+(\d{1,2}),?(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/.exec(
 		fragment,
 	)
 	if (monthMatch) {
@@ -323,4 +399,47 @@ function clamp(candidateMs: number, nowMs: number): number | null {
 	if (candidateMs < min) return null
 	if (candidateMs > max) return null
 	return candidateMs
+}
+
+/**
+ * How many times the retry scheduler starts a session again. Lives here, not in the scheduler,
+ * because the scheduler imports session-lifecycle and settleSession needs the number too.
+ */
+export const MAX_RETRY_ATTEMPTS = 5
+
+const NO_RESET_RETRY_BACKOFF_MS = 30 * 60 * 1000
+// weekly_limit and opus_limit are left out on purpose: 5 attempts 30 minutes apart span 2.5
+// hours and cannot outlast a weekly reset, so a blind retry would only burn attempts.
+const NO_RESET_RETRY_REASONS: ReadonlySet<string> = new Set([
+	'session_limit',
+	'server_rate_limit',
+	'request_rejected_429',
+	'max_plan_rate_limit',
+	'rate_limit_error',
+])
+
+/**
+ * §17.5 companion parser at the completion paths: the Date that settleSession writes to
+ * sessions.retry_at, from the classifier's `reset_at` (ISO-8601, may be null). Shared by
+ * handleCompletion and markRemoteSessionComplete so the two never diverge.
+ *
+ * Null when the failure is not an Anthropic limit (nothing to wait out). When no reset time
+ * parsed, a short-window limit gets a fixed back-off, so the run is tried again within the
+ * scheduler's attempt cap rather than left dead with nobody told. A broken login
+ * (not_logged_in, oauth_revoked), a billing error, or a weekly/Opus limit will not clear in
+ * the back-off window, so those get none.
+ */
+export function pickRetryAt(
+	failureReason: SessionResultFailureReason | null,
+	now: Date = new Date(),
+): Date | null {
+	if (!failureReason) return null
+	if (failureReason.provider !== 'anthropic') return null
+	if (failureReason.reset_at) {
+		const parsed = Date.parse(failureReason.reset_at)
+		if (!Number.isNaN(parsed)) return new Date(parsed)
+	}
+	return NO_RESET_RETRY_REASONS.has(failureReason.reason_code)
+		? new Date(now.getTime() + NO_RESET_RETRY_BACKOFF_MS)
+		: null
 }

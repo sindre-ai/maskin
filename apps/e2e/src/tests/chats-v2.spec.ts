@@ -178,7 +178,7 @@ test.describe('Chats v2 — layout', () => {
 
 		const heights = await Promise.all(
 			[
-				page.getByRole('button', { name: 'Search the workspace' }),
+				page.getByRole('button', { name: 'Search or run a command' }),
 				page.getByRole('button', { name: /^Filter conversations/ }),
 				page.getByRole('button', { name: 'New chat' }).first(),
 			].map(async (l) => (await l.boundingBox())?.height ?? 0),
@@ -266,6 +266,48 @@ test.describe('Chats v2 — new chat zero state', () => {
 
 			// Draft route stays put — nothing has been sent yet.
 			await expect(page).toHaveURL(/\/chats\/new/)
+		})
+	}
+})
+
+test.describe('Chats v2 — new chat recipient list', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`the list only shows while the To field is focused at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const agent = await account.api.createAgentActor(`Recent Agent ${Date.now()}`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			await account.api.createConversation(account.workspaceId, {
+				title: `Recent ${Date.now()}`,
+				participant_actor_ids: [agent.id],
+				initial_message: 'Seed a recent collaborator',
+			})
+
+			await page.goto(`/${account.workspaceId}/chats/new`)
+			await expect(page.getByRole('heading', { name: 'What are we working on?' })).toBeVisible({
+				timeout: 15_000,
+			})
+			const list = page.getByRole('listbox', { name: 'Recent collaborators' })
+			const toField = page.getByLabel('Add recipients')
+			const composer = page.getByLabel('Message this conversation')
+
+			// Closed on load: the list does not crowd the composer.
+			await expect(list).toHaveCount(0)
+
+			await toField.click()
+			await expect(list).toBeVisible({ timeout: 10_000 })
+
+			// Moving to the message box closes it again.
+			await composer.click()
+			await expect(list).toHaveCount(0)
+			await expect(composer).toBeVisible()
+
+			// Typed matches still work, and picking a row is not lost to the blur.
+			await toField.fill(agent.name)
+			await page.getByRole('option', { name: new RegExp(agent.name) }).click()
+			await expect(page.getByRole('button', { name: `Remove ${agent.name}` })).toBeVisible()
 		})
 	}
 })

@@ -73,17 +73,16 @@ test.describe('Chat — drafts a message links to', () => {
 			await expect(thread.getByText('LinkedIn message', { exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
-			await thread.getByText('DM to Merethe Aas').click()
 			await expect(thread.getByText('Merethe Aas', { exact: true }).first()).toBeVisible()
 			await expect(thread.getByText(/Hvad arbejder I med/)).toBeVisible()
 
 			await thread.getByRole('button', { name: 'Approve' }).click()
-			await expect(thread.getByText('Approved', { exact: true })).toBeVisible()
+			await expect(thread.getByText('Approved, waiting for send', { exact: true })).toBeVisible()
 			await expect(thread.getByRole('button', { name: 'Approve' })).toHaveCount(0)
 
 			for (const colorScheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme })
-				await expect(thread.getByText('Approved', { exact: true })).toBeVisible()
+				await expect(thread.getByText('Approved, waiting for send', { exact: true })).toBeVisible()
 			}
 			await assertNoHorizontalOverflow(page, vp.label)
 		})
@@ -150,7 +149,6 @@ test.describe('Chat — drafts a message links to', () => {
 			await expect(thread.getByText('LinkedIn post', { exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
-			await thread.getByText('Post: the handoff problem').click()
 			await expect(thread.getByText('Most agent demos fail on the handoff.')).toBeVisible()
 			// Exact: the card's property line under the title also reads "Scheduled date: …".
 			await expect(thread.getByText('Scheduled', { exact: true })).toBeVisible()

@@ -12,7 +12,6 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { readUnipileEnvelope } from '../../lib/integrations/providers/linkedin-unipile/envelope'
 import {
 	type EventMapRow,
@@ -48,15 +47,12 @@ const ENCRYPTION_KEY = 'a'.repeat(64)
 const ACCOUNT_ID = 'acc_unipile_test_01'
 const OWN_SENDER = 'ACoAAOwnMemberProviderId'
 const OTHER_SENDER = 'ACoAAExampleSenderProviderId'
-const FLAG = 'linkedin-unipile-events'
 
 const ENV_KEYS = [
 	'UNIPILE_WEBHOOK_SECRET',
 	'UNIPILE_BASE_URL',
 	'UNIPILE_API_KEY',
 	'INTEGRATION_ENCRYPTION_KEY',
-	'FF_TESTER_ACTOR_IDS',
-	'FF_TESTER_FEATURES',
 	'POSTHOG_API_KEY',
 ] as const
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
@@ -77,7 +73,6 @@ afterAll(() => {
 		if (ORIGINAL_ENV[key] === undefined) delete process.env[key]
 		else process.env[key] = ORIGINAL_ENV[key]
 	}
-	_resetFeatureFlagConfig()
 	__resetLinkedInMcpRegistryForTests()
 	__setLinkedInWebhookClientForTests(null)
 })
@@ -132,10 +127,6 @@ beforeEach(async () => {
 	workspaceId = ws.id
 	const integration = await insertLinkedInIntegration()
 	integrationId = integration.id
-
-	process.env.FF_TESTER_ACTOR_IDS = ownerActorId
-	process.env.FF_TESTER_FEATURES = FLAG
-	_resetFeatureFlagConfig()
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -392,9 +383,9 @@ describe('POST /webhook: failure after the claim', () => {
 	})
 })
 
-// ── Account resolution and flag ────────────────────────────────────────────
+// ── Account resolution ────────────────────────────────────────────────────
 
-describe('POST /webhook: account resolution and flag', () => {
+describe('POST /webhook: account resolution', () => {
 	it('answers 200 skipped no_active_integration for a revoked integration and writes no row', async () => {
 		await db
 			.update(integrations)
@@ -413,26 +404,7 @@ describe('POST /webhook: account resolution and flag', () => {
 		expect(await res.json()).toEqual({ ok: true, skipped: 'no_active_integration' })
 	})
 
-	it('answers 200 skipped flag_off with no events row and no claim row when the flag is off', async () => {
-		process.env.FF_TESTER_FEATURES = ''
-		_resetFeatureFlagConfig()
-
-		const res = await deliver(messageNew())
-		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true, skipped: 'flag_off' })
-		expect(await messageEvents()).toHaveLength(0)
-		expect(await deliveries()).toHaveLength(0)
-	})
-
-	it('reads the flag on the integration actor, so a different tester does not enable it', async () => {
-		process.env.FF_TESTER_ACTOR_IDS = randomUUID()
-		_resetFeatureFlagConfig()
-
-		const res = await deliver(messageNew())
-		expect(await res.json()).toEqual({ ok: true, skipped: 'flag_off' })
-	})
-
-	it('falls back to created_by for the flag when the integration has no actor_id', async () => {
+	it('falls back to created_by for the actor when the integration has no actor_id', async () => {
 		await db.update(integrations).set({ actorId: null }).where(eq(integrations.id, integrationId))
 
 		const res = await deliver(messageNew())
@@ -452,8 +424,6 @@ describe('POST /webhook: account resolution and flag', () => {
 			actorId: otherOwner.id,
 			createdBy: otherOwner.id,
 		})
-		process.env.FF_TESTER_ACTOR_IDS = `${ownerActorId},${otherOwner.id}`
-		_resetFeatureFlagConfig()
 
 		const res = await deliver(messageNew())
 		expect(await res.json()).toEqual({ ok: true, count: 2 })
@@ -558,16 +528,6 @@ describe('POST /webhook: account events become linkedin.account status_changed r
 		},
 	)
 
-	it('writes nothing and claims nothing when the flag is off', async () => {
-		process.env.FF_TESTER_FEATURES = ''
-		_resetFeatureFlagConfig()
-
-		const res = await deliver(accountEvent('account.status.running'))
-		expect(await res.json()).toEqual({ ok: true, skipped: 'flag_off' })
-		expect(await accountEvents()).toHaveLength(0)
-		expect(await deliveries()).toHaveLength(0)
-	})
-
 	it('writes one event and claim pair per workspace for an account in two workspaces', async () => {
 		const otherOwner = await insertActor(db)
 		const otherWs = await insertWorkspace(db, getTestActorId())
@@ -580,8 +540,6 @@ describe('POST /webhook: account events become linkedin.account status_changed r
 			actorId: otherOwner.id,
 			createdBy: otherOwner.id,
 		})
-		process.env.FF_TESTER_ACTOR_IDS = `${ownerActorId},${otherOwner.id}`
-		_resetFeatureFlagConfig()
 
 		const res = await deliver(accountEvent('account.status.disconnected'))
 		expect(await res.json()).toEqual({ ok: true, count: 2 })
@@ -624,20 +582,6 @@ describe('POST /webhook: account.reconnect commits the event before re-enumerati
 		expect(rows).toHaveLength(1)
 		expect(rows[0]?.data).toMatchObject({ account_status: 'reconnect', envelope_id: 'evt_hang' })
 		expect((await deliveries()).every((c) => c.processedAt !== null)).toBe(true)
-	})
-
-	it('keeps the re-enumeration body unchanged when the flag is off', async () => {
-		process.env.FF_TESTER_FEATURES = ''
-		_resetFeatureFlagConfig()
-
-		const res = await deliver(accountEvent('account.reconnect'))
-		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({
-			ok: true,
-			appliedTo: [{ integrationId, workspaceId, diff: { error: 'MISSING_UNIPILE_ACC_SLUG' } }],
-		})
-		expect(await accountEvents()).toHaveLength(0)
-		expect(await deliveries()).toHaveLength(0)
 	})
 
 	it('answers 503 after re-enumeration when the event cannot be recorded', async () => {

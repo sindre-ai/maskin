@@ -59,7 +59,8 @@ vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [{ label: 'Tasks', value: 'task' }],
 	getAllWebModules: () => [],
 }))
-vi.mock('@/hooks/use-objects', () => ({
+vi.mock('@/hooks/use-objects', async () => ({
+	...(await import('./objects-facets-mock')).facetHookMocks,
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))

@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import {
 	CHAT_REPLY_PUSH_DELAY_SECONDS,
 	notifyAgentQuestion,
+	notifyChatMention,
 	notifyChatReply,
 	previewText,
 } from '../../services/chat-notifications'
@@ -12,6 +13,7 @@ const conv = '00000000-0000-0000-0000-0000000000c1'
 const agent = '00000000-0000-0000-0000-0000000000d1'
 const human1 = '00000000-0000-0000-0000-0000000000a1'
 const human2 = '00000000-0000-0000-0000-0000000000a2'
+const human3 = '00000000-0000-0000-0000-0000000000a3'
 
 type Rows = Array<Record<string, unknown>>
 const notificationRows = (inserts: unknown[]) =>
@@ -137,10 +139,87 @@ describe('notifyChatReply', () => {
 		expect(calls.inserts).toHaveLength(0)
 	})
 
-	it('creates nothing when the author is not an agent', async () => {
-		const { db, calls } = ctx([[{ name: 'Bob', type: 'human' }], [{ actorId: human1 }], []])
+	it('creates nothing for a person writing in a group chat', async () => {
+		const { db, calls } = ctx([
+			[{ name: 'Bob', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: human2, type: 'human', archived: false },
+				{ actorId: agent, type: 'agent', archived: false },
+			],
+		])
 
-		await notifyChatReply(db as Database, reply())
+		await notifyChatReply(db as Database, reply({ authorId: human1, metadata: null }))
+
+		expect(calls.inserts).toHaveLength(0)
+	})
+
+	it('pushes the other person when a person writes in a direct chat between two people', async () => {
+		const { db, calls } = ctx([
+			[{ name: 'Bob', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: human2, type: 'human', archived: false },
+			],
+			[],
+		])
+
+		await notifyChatReply(
+			db as Database,
+			reply({ authorId: human1, content: 'Hey, got a minute?', metadata: null }),
+		)
+
+		const rows = notificationRows(calls.inserts)
+		expect(rows.map((r) => r.targetActorId)).toEqual([human2])
+		expect(rows[0]).toMatchObject({
+			title: 'Bob',
+			content: 'Hey, got a minute?',
+			sourceActorId: human1,
+			type: 'good_news',
+			status: 'seen',
+			metadata: {
+				push_category: 'conversation',
+				push_collapse_key: `chat:${conv}`,
+				push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
+				push_only: true,
+				conversation_id: conv,
+				message_id: 42,
+			},
+		})
+	})
+
+	it('creates nothing in a chat with an agent, or when the other person archived the chat', async () => {
+		const withAgent = ctx([
+			[{ name: 'Bob', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: agent, type: 'agent', archived: false },
+			],
+		])
+		await notifyChatReply(withAgent.db as Database, reply({ authorId: human1, metadata: null }))
+		expect(withAgent.calls.inserts).toHaveLength(0)
+
+		const archived = ctx([
+			[{ name: 'Bob', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: human2, type: 'human', archived: true },
+			],
+		])
+		await notifyChatReply(archived.db as Database, reply({ authorId: human1, metadata: null }))
+		expect(archived.calls.inserts).toHaveLength(0)
+	})
+
+	it('creates nothing when the author is not one of the two people in the chat', async () => {
+		const { db, calls } = ctx([
+			[{ name: 'Cleo', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: human2, type: 'human', archived: false },
+			],
+		])
+
+		await notifyChatReply(db as Database, reply({ authorId: human3, metadata: null }))
 
 		expect(calls.inserts).toHaveLength(0)
 	})
@@ -202,5 +281,66 @@ describe('notifyAgentQuestion', () => {
 		mockResults.insertError = new Error('boom')
 
 		await expect(notifyAgentQuestion(db as Database, args)).resolves.toBeUndefined()
+	})
+})
+
+describe('notifyChatMention', () => {
+	function mention(over: Record<string, unknown> = {}) {
+		return {
+			workspaceId: wsId,
+			authorId: human2,
+			conversationId: conv,
+			messageId: 7,
+			content: 'Can you look at **this**?',
+			kind: 'message' as const,
+			metadata: { mentions: [human1] },
+			sessionId: null,
+			...over,
+		}
+	}
+
+	it('creates an immediate conversation push for the mentioned person, under its own collapse key', async () => {
+		const { db, calls } = ctx([[{ name: 'Sam', type: 'human' }], [{ id: human1 }], []])
+
+		await notifyChatMention(db as Database, mention())
+
+		const [row] = notificationRows(calls.inserts)
+		expect(row).toMatchObject({
+			title: 'Sam mentioned you',
+			content: 'Can you look at this?',
+			targetActorId: human1,
+			sourceActorId: human2,
+			type: 'good_news',
+			status: 'seen',
+			metadata: {
+				push_category: 'conversation',
+				push_collapse_key: `chat-mention:${conv}:7`,
+				push_only: true,
+				conversation_id: conv,
+				message_id: 7,
+			},
+		})
+		expect(row?.metadata).not.toHaveProperty('push_delay_seconds')
+	})
+
+	it.each([
+		['an auto-posted final output', { metadata: { source: 'final_output', mentions: [human1] } }],
+		['a system message', { kind: 'system' }],
+		['a message with no mentions', { metadata: { mentions: [] } }],
+		['a self-mention', { metadata: { mentions: [human2] } }],
+	])('creates nothing for %s', async (_name, over) => {
+		const { db, calls } = ctx([[{ name: 'Sam', type: 'human' }], [{ id: human1 }], []])
+
+		await notifyChatMention(db as Database, mention(over))
+
+		expect(calls.inserts).toHaveLength(0)
+	})
+
+	it('creates nothing when no mentioned id is a workspace-member human', async () => {
+		const { db, calls } = ctx([[{ name: 'Sam', type: 'human' }], [], []])
+
+		await notifyChatMention(db as Database, mention({ metadata: { mentions: [agent] } }))
+
+		expect(calls.inserts).toHaveLength(0)
 	})
 })

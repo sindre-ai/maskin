@@ -50,7 +50,7 @@ export function AgentPortraitCard({
 				aria-label={`Open ${agent.name}`}
 			/>
 
-			<AvatarPortrait name={agent.name} type={agent.type} status={status} />
+			<AvatarPortrait id={agent.id} name={agent.name} type={agent.type} status={status} />
 
 			<div className="relative flex flex-col items-center gap-0.5 min-w-0 w-full pointer-events-none">
 				<span className="text-sm font-semibold text-foreground truncate max-w-full">
@@ -113,10 +113,12 @@ function RunningDuration({ startedAt }: { startedAt: string }) {
 }
 
 function AvatarPortrait({
+	id,
 	name,
 	type,
 	status,
 }: {
+	id: string
 	name: string
 	type: string
 	status: PortraitStatus
@@ -158,7 +160,7 @@ function AvatarPortrait({
 				/>
 			</svg>
 			<div className="absolute inset-0 flex items-center justify-center">
-				<ActorAvatar name={name} type={type} size="md" className="h-12 w-12 text-base" />
+				<ActorAvatar id={id} name={name} type={type} size="md" className="h-12 w-12 text-base" />
 			</div>
 		</div>
 	)

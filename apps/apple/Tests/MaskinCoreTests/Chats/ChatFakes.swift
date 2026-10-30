@@ -237,6 +237,18 @@ actor FakeListAPI: ConversationsAPI {
 		return chatConvo("new", title: title, participants: [chatMe])
 	}
 
+	var createdMetadata: [ChatSendMetadata?] = []
+
+	func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		createdMetadata.append(initialMetadata)
+		return try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			idempotencyKey: idempotencyKey)
+	}
+
 	func updateState(
 		conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?, markUnread: Bool
 	) async throws {
@@ -255,8 +267,14 @@ actor FakeListAPI: ConversationsAPI {
 /// A hub fed by scripted SSE bodies; each open() takes the next body, then holds open.
 actor SSEScript {
 	var bodies: [String]
+	/// How many times the stream has been opened. One more than the number of bodies means every
+	/// body was opened, read to its end, and the hub came back for another.
+	private(set) var opens = 0
 	init(_ bodies: [String]) { self.bodies = bodies }
-	func next() -> String? { bodies.isEmpty ? nil : bodies.removeFirst() }
+	func next() -> String? {
+		opens += 1
+		return bodies.isEmpty ? nil : bodies.removeFirst()
+	}
 }
 
 func conversationFrame(_ id: Int, conversation: String, action: String = "message_posted", entity: String = "conversation") -> String {
@@ -267,7 +285,11 @@ func conversationFrame(_ id: Int, conversation: String, action: String = "messag
 
 @MainActor
 func scriptedHub(_ bodies: [String]) -> EventHub {
-	let script = SSEScript(bodies)
+	scriptedHub(SSEScript(bodies))
+}
+
+@MainActor
+func scriptedHub(_ script: SSEScript) -> EventHub {
 	let client = SSEClient(
 		open: { _ in
 			let body = await script.next()
@@ -281,14 +303,18 @@ func scriptedHub(_ bodies: [String]) -> EventHub {
 	return EventHub(client: client)
 }
 
-/// Poll until `condition` holds (or fail after ~2s).
+/// Poll until `condition` holds (see `PollBudget` for what the bound counts): a passing test
+/// returns the moment the condition holds.
 @MainActor
-func eventually(_ condition: @MainActor () async -> Bool) async -> Bool {
-	for _ in 0..<200 {
+func eventually(
+	timeout: Duration = .seconds(15), _ condition: @MainActor () async -> Bool
+) async -> Bool {
+	var budget = PollBudget(timeout)
+	repeat {
 		if await condition() { return true }
 		try? await Task.sleep(for: .milliseconds(10))
-	}
-	return false
+	} while budget.spend()
+	return await condition()
 }
 
 

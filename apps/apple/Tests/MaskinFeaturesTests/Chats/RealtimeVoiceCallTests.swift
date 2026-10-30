@@ -44,15 +44,17 @@ private actor FakeCalls: VoiceCalling {
 	var offerFailure: VoiceCallFailure?
 	var toolsAvailable = true
 	private(set) var created: [String] = []
+	private(set) var createdFrom: [String?] = []
 	private(set) var offers: [String] = []
 	private(set) var hangups: [Hangup] = []
 
 	func failCreate(_ failure: VoiceCallFailure) { createFailure = failure }
 	func failOffer(_ failure: VoiceCallFailure) { offerFailure = failure }
 
-	func create(agentActorID: String) async throws -> String {
+	func create(agentActorID: String, conversationID: String?) async throws -> String {
 		if let createFailure { throw createFailure }
 		created.append(agentActorID)
+		createdFrom.append(conversationID)
 		return "vs-1"
 	}
 
@@ -75,11 +77,13 @@ private actor FakeCalls: VoiceCalling {
 @Suite("RealtimeVoiceCall") struct RealtimeVoiceCallTests {
 	private func make(
 		calls: FakeCalls = FakeCalls(), transport: FakeTransport = FakeTransport(),
-		reconnectWindow: Duration = .seconds(3600)
+		conversationID: String? = nil, reconnectWindow: Duration = .seconds(3600),
+		recoveryDelays: [Duration] = [.milliseconds(5)]
 	) -> (RealtimeVoiceCall, FakeCalls, FakeTransport) {
 		let call = RealtimeVoiceCall(
-			agentID: "agent-1", agentName: "Chief", calls: calls, makeTransport: { transport },
-			reconnectWindow: reconnectWindow)
+			agentID: "agent-1", agentName: "Chief", conversationID: conversationID, calls: calls,
+			makeTransport: { transport },
+			reconnectWindow: reconnectWindow, recoveryDelays: recoveryDelays)
 		return (call, calls, transport)
 	}
 
@@ -98,6 +102,36 @@ private actor FakeCalls: VoiceCalling {
 		#expect(await calls.offers == ["offer-sdp"])
 		#expect(transport.accepted == ["answer-sdp"])
 		#expect(call.failure == nil)
+	}
+
+	@Test("a call started from a chat reserves the call with that chat's id")
+	func sendsTheChat() async {
+		let (call, calls, _) = make(conversationID: "chat-1")
+		call.begin(existing: [])
+		await settle()
+		#expect(await calls.createdFrom == ["chat-1"])
+	}
+
+	@Test("a call that isn't started from a chat sends no chat id")
+	func sendsNoChat() async {
+		let (call, calls, _) = make()
+		call.begin(existing: [])
+		await settle()
+		#expect(await calls.createdFrom == [nil])
+	}
+
+	@Test("each finished line of the call is handed on, yours and the agent's, but not tool calls")
+	func handsOnFinishedLines() async {
+		let (call, _, transport) = make()
+		var lines: [String] = []
+		call.onLine = { isYou, text in lines.append("\(isYou ? "you" : "agent"): \(text)") }
+		call.begin(existing: [])
+		await settle()
+		func send(_ json: String) { transport.onEvent?(Data(json.utf8)) }
+		send(#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"What is blocked?"}"#)
+		send(#"{"type":"response.function_call_arguments.done","call_id":"c1","name":"list_objects","arguments":"{}"}"#)
+		send(#"{"type":"response.output_audio_transcript.done","transcript":"Three bets."}"#)
+		#expect(lines == ["you: What is blocked?", "agent: Three bets."])
 	}
 
 	@Test("events from the call drive the phase")
@@ -185,6 +219,151 @@ private actor FakeCalls: VoiceCalling {
 		#expect(transport.micEnabled.last == true)
 	}
 
+	@Test("the agent is asked to greet once, also when muted and after an ICE restart")
+	func greetsOnce() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		call.toggleMute()
+		await settle()
+		transport.receive("session.created")
+		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+		transport.onConnection?(.failed)
+		transport.onConnection?(.connected)
+		transport.receive("session.created")
+		#expect(transport.iceRestarts == 1)
+		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+	}
+
+	private func chatMessage(_ id: Int, agent: Bool = false, _ text: String, name: String = "Me") -> ChatMessage {
+		.confirmed(
+			serverID: id, conversationID: "chat-1", actorID: agent ? "agent-1" : "me", actorName: agent ? "Chief" : name,
+			author: agent ? .agent : .human, content: text)
+	}
+
+	/// The text of each conversation item the call has sent, apart from the greeting.
+	private func handedOn(_ transport: FakeTransport) -> [String] {
+		transport.sent.compactMap { json in
+			guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+				object["type"] as? String == "conversation.item.create",
+				let item = object["item"] as? [String: Any], item["role"] as? String == "user",
+				let content = (item["content"] as? [[String: Any]])?.first
+			else { return nil }
+			return content["text"] as? String
+		}
+	}
+
+	@Test("a line typed in the chat during the call is handed to the agent, once, and an agent message is not")
+	func forwardsTypedMessages() async {
+		let (call, _, transport) = make(conversationID: "chat-1")
+		let earlier = chatMessage(1, "from before the call")
+		call.begin(existing: [earlier])
+		await settle()
+		transport.receive("session.created")
+		let typed = chatMessage(2, "The meeting moved to Thursday")
+		let reply = chatMessage(3, agent: true, "Noted.")
+		call.messagesChanged([earlier, typed, reply])
+		call.messagesChanged([earlier, typed, reply])
+		call.messagesChanged([earlier, typed, reply, chatMessage(4, "Also Anna is joining", name: "Anna")])
+		#expect(
+			handedOn(transport) == [
+				"Me typed in the chat during this call: The meeting moved to Thursday",
+				"Anna typed in the chat during this call: Also Anna is joining",
+			])
+		// Handing a line over does not ask the agent to talk over the person.
+		#expect(transport.sent.filter { $0.contains("response.create") } == [RealtimeCallMachine.greetingRequest])
+	}
+
+	@Test("the person's own spoken lines, saved into the chat during the call, are not fed back")
+	func skipsSpokenLines() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		let spoken = ChatMessage.confirmed(
+			serverID: 1, conversationID: "chat-1", actorID: "me", actorName: "Me", author: .human,
+			content: "what I just said aloud", metadata: .object(["source": .string("voice")]))
+		let typed = chatMessage(2, "typed after")
+		call.messagesChanged([spoken])
+		call.messagesChanged([spoken, typed])
+		#expect(handedOn(transport) == ["Me typed in the chat during this call: typed after"])
+	}
+
+	@Test("telling the agent what was chosen adds the note and asks it to carry on")
+	func tellsTheAgent() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		transport.sent.removeAll()
+		call.tell("I chose: Ship on: Ship Friday?")
+		#expect(handedOn(transport) == ["I chose: Ship on: Ship Friday?"])
+		#expect(transport.sent.last == RealtimeCallMachine.responseRequest)
+	}
+
+	@Test("while the agent is speaking only the note is added, not a second response")
+	func tellsWithoutTalkingOver() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		transport.receive("output_audio_buffer.started")
+		#expect(call.phase == .speaking)
+		transport.sent.removeAll()
+		call.tell("I chose: Hold on: Ship?")
+		#expect(handedOn(transport) == ["I chose: Hold on: Ship?"])
+		#expect(!transport.sent.contains(RealtimeCallMachine.responseRequest))
+	}
+
+	@Test("a note told before the connection is open waits for it")
+	func tellWaitsForTheChannel() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		call.tell("I chose: Ship on: Ship?")
+		await settle()
+		#expect(handedOn(transport).isEmpty)
+		transport.receive("session.created")
+		#expect(handedOn(transport) == ["I chose: Ship on: Ship?"])
+	}
+
+	@Test("a line typed before the connection is open waits for it")
+	func queuesUntilOpen() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		call.messagesChanged([chatMessage(1, "typed early")])
+		await settle()
+		#expect(handedOn(transport).isEmpty)
+		transport.receive("session.created")
+		#expect(handedOn(transport) == ["Me typed in the chat during this call: typed early"])
+	}
+
+	@Test("a line that isn't sent yet is handed over when it is, and a failed one never is")
+	func waitsForTheSend() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		var line = chatMessage(1, "typed offline")
+		line.status = .waiting("Offline")
+		var broken = chatMessage(2, "refused")
+		broken.status = .failed("Refused")
+		call.messagesChanged([line, broken])
+		#expect(handedOn(transport).isEmpty)
+		line.status = .sent
+		call.messagesChanged([line, broken])
+		#expect(handedOn(transport) == ["Me typed in the chat during this call: typed offline"])
+	}
+
+	@Test("nothing is handed on once the call has ended")
+	func silentAfterHangup() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.receive("session.created")
+		call.end()
+		call.messagesChanged([chatMessage(1, "the saved transcript")])
+		#expect(handedOn(transport).isEmpty)
+	}
+
 	@Test("tapping to interrupt cancels the response")
 	func interrupts() async {
 		let (call, _, transport) = make()
@@ -196,23 +375,44 @@ private actor FakeCalls: VoiceCalling {
 		#expect(call.phase == .listening)
 	}
 
-	@Test("a dropped connection that does not come back ends the call as a network error")
-	func dropped() async {
-		let (call, calls, transport) = make(reconnectWindow: .milliseconds(30))
+	@Test("a dropped connection that does not come back is closed and a new call is started on the same chat")
+	func droppedStartsANewCall() async {
+		let (call, calls, transport) = make(conversationID: "chat-1", reconnectWindow: .milliseconds(30))
 		call.begin(existing: [])
 		await settle()
 		transport.onConnection?(.failed)
 		#expect(transport.iceRestarts == 1)
-		// Wait for the call to end instead of guessing how long a loaded runner needs.
+		// Wait for the second call instead of guessing how long a loaded runner needs.
 		var polls = 0
 		while polls < 200 {
 			let hungUp = await !calls.hangups.isEmpty
-			if call.failure != nil && hungUp { break }
+			if await calls.created.count == 2 && hungUp { break }
+			try? await Task.sleep(for: .milliseconds(10))
+			polls += 1
+		}
+		#expect(await calls.created.count == 2)
+		#expect(await calls.createdFrom == ["chat-1", "chat-1"])
+		let hangups = await calls.hangups
+		#expect(hangups == [.init(id: "vs-1", reason: .networkError)], "\(hangups)")
+		#expect(call.failure == nil)
+	}
+
+	@Test("a call that cannot be restarted ends as a network error once the tries run out")
+	func recoveryGivesUp() async {
+		let (call, calls, transport) = make(
+			reconnectWindow: .milliseconds(20), recoveryDelays: [.milliseconds(5), .milliseconds(5)])
+		call.begin(existing: [])
+		await settle()
+		await calls.failCreate(.network("offline"))
+		transport.onConnection?(.failed)
+		var polls = 0
+		while polls < 300 {
+			if call.failure != nil { break }
 			try? await Task.sleep(for: .milliseconds(10))
 			polls += 1
 		}
 		#expect(call.failure != nil)
-		#expect(await calls.hangups == [.init(id: "vs-1", reason: .networkError)])
+		#expect(await calls.created.count == 1)
 	}
 
 	@Test("a connection that comes back in time keeps the call")

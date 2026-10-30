@@ -11,7 +11,7 @@ vi.mock('@tanstack/react-router', async () => {
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 
 vi.mock('@/lib/api', () => ({
-	api: { conversations: { list: vi.fn() } },
+	api: { conversations: { list: vi.fn(), replyThreads: vi.fn() } },
 }))
 
 import { ConversationList } from '@/components/chat/conversation-list'
@@ -42,6 +42,8 @@ function buildConversation(
 describe('ConversationList', () => {
 	beforeEach(() => {
 		vi.mocked(api.conversations.list).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
 	})
 
 	it('renders the group rail and closes the list with the end-of-history line when there is no next page', async () => {
@@ -156,5 +158,21 @@ describe('ConversationList', () => {
 		})
 		screen.getByRole('button', { name: /Try again/ }).click()
 		expect(await screen.findByText('Billing retries')).toBeInTheDocument()
+	})
+
+	it('flags a chat whose threads hold unread replies', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a', title: 'Billing retries' })],
+			has_more: false,
+		})
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({
+			threads: [
+				{ conversationId: 'a', thread: { unreadCount: 1 } },
+				{ conversationId: 'a', thread: { unreadCount: 2 } },
+			],
+		} as never)
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('3 unread replies in threads')).toBeInTheDocument()
 	})
 })

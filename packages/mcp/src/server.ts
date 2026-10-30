@@ -11,10 +11,15 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	FOR_YOU_TOOL_DEFAULT_LIMIT,
+	type ForYouItemLike,
+	type McpEra,
+	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
+	slimForYouItems,
 	stripTrailingSlash,
 } from '@maskin/shared'
 import {
@@ -27,7 +32,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
-import { TOOL_ANNOTATIONS } from './annotations.js'
+import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -40,6 +45,7 @@ import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
 	parseApiErrorStatus,
+	reasonFromError,
 	toolErrorResponse,
 } from './read-error.js'
 import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
@@ -102,6 +108,14 @@ export interface McpConfig {
 	telemetrySessionId?: string
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * Protocol era and allowlisted version label for telemetry, next to
+	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
+	 * sets the fallback (legacy, none) because the SDK does not expose the
+	 * negotiated version on the server object. See `TelemetryConfig.mcpEra`.
+	 */
+	telemetryEra?: McpEra
+	telemetryProtocolVersion?: McpProtocolVersionLabel
 	/**
 	 * `events.id` of the comment that dispatched this agent session, when the
 	 * session was triggered by a comment. `create_comment` uses it as the
@@ -186,6 +200,14 @@ function buildListContentText(fullPayload: unknown): string {
 	return JSON.stringify(fullPayload)
 }
 
+const CHAT_SNIPPET_MAX_LENGTH = 200
+
+/** A chat message can run to thousands of characters; a list row only needs the opening. */
+function truncateSnippet(text: string | null): string | null {
+	if (text === null || text.length <= CHAT_SNIPPET_MAX_LENGTH) return text
+	return `${text.slice(0, CHAT_SNIPPET_MAX_LENGTH - 1)}…`
+}
+
 /**
  * One line telling the agent which listed integrations are not live and how to
  * get them reconnected, or null when every row is active. `pending` rows are an
@@ -214,6 +236,7 @@ const CARD_METADATA_KEYS: Record<string, string | null> = {
 	integration_connect: 'connect_integration',
 	keychain_request: 'request_keychain_credential',
 	keychain_access_request: 'request_keychain_access',
+	mcp_server_request: 'add_mcp_server',
 	computer_request: 'show_computer',
 	question: 'ask_user_question',
 	needed_tools: null,
@@ -895,15 +918,17 @@ async function assertLoopTypesValid(
 	config: McpConfig,
 	input: {
 		closedStatuses?: Record<string, string[]>
+		closedWhen?: Record<string, string[]>
 		steps?: LoopStepInput[]
 	},
 	workspaceId?: string,
 ): Promise<void> {
 	const closedEntries = Object.entries(input.closedStatuses ?? {})
+	const closedWhenTypes = Object.keys(input.closedWhen ?? {})
 	const stepTypes = (input.steps ?? [])
 		.map((s) => ('object_type' in s.when ? s.when.object_type : undefined))
 		.filter((t): t is string => typeof t === 'string')
-	if (closedEntries.length === 0 && stepTypes.length === 0) return
+	if (closedEntries.length === 0 && closedWhenTypes.length === 0 && stepTypes.length === 0) return
 
 	const wsId = workspaceId ?? config.defaultWorkspaceId
 	if (!wsId) return // downstream calls raise the standard no-workspace hint
@@ -922,6 +947,14 @@ async function assertLoopTypesValid(
 		if (bad.length > 0) {
 			throw new Error(
 				`closed_statuses for type '${type}' references unknown status(es): ${bad.join(', ')}. Valid statuses for '${type}': ${valid.join(', ')}.`,
+			)
+		}
+	}
+
+	for (const type of closedWhenTypes) {
+		if (!knownTypes.includes(type)) {
+			throw new Error(
+				`closed_when references unknown object type '${type}'. Known types: ${knownTypes.join(', ')}. Call get_workspace_schema to see the workspace's types.`,
 			)
 		}
 	}
@@ -1143,12 +1176,91 @@ async function enrichSessionActorName<T extends SessionRow>(
 	return session
 }
 
-// A waiting create_session checks every few seconds until the session ends. The
-// limit is kept short enough to finish before MCP clients give up on the tool
-// call, so the notify_on_complete fallback below is actually reachable. A session
-// still running at the limit is left running and reported as not settled.
+/** A session row as the tools return it: with the agent's name and a link to it. */
+async function presentSession(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	row: SessionRow,
+): Promise<SessionRow> {
+	const enriched = await enrichSessionActorName(config, workspaceId, row)
+	return workspaceId
+		? (addUrl(enriched as Record<string, unknown>, config, workspaceId, {
+				kind: 'session',
+				id: enriched.id,
+				actorId: (enriched as { actorId?: string }).actorId,
+			}) as SessionRow)
+		: enriched
+}
+
+/** Failure of a tool call when the session is not in a state the tool works on. */
+function sessionStateError(status: string, id: string): Error {
+	if (status === 'running') {
+		return new Error(
+			`Session ${id} is still running, so there is nothing to resume. Talk to it with send_session_message, or wait for it with get_session (wait: true).`,
+		)
+	}
+	return new Error(
+		`Session ${id} is ${status}, which is not something to resume or continue yet. Check it with get_session (wait: true to hold until it is done) and try again once it is paused or has ended.`,
+	)
+}
+
+/** A running interactive session accepts a message; anything else says why not. */
+async function sendSessionInput(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	id: string,
+	content: string,
+): Promise<void> {
+	try {
+		await apiCall(
+			config,
+			'POST',
+			`/api/sessions/${id}/input`,
+			{ content },
+			{
+				workspaceId,
+			},
+		)
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		throw new Error(
+			/not running/i.test(message)
+				? `${message}. A session that is paused or has ended is carried on with resume_session, which also takes a message.`
+				: message,
+		)
+	}
+}
+
+const ENDED_SESSION_STATUSES = ['completed', 'failed', 'timeout', 'user_stopped']
+// Told to an ended session when the caller gives no message of their own.
+const DEFAULT_CONTINUE_MESSAGE =
+	'Please carry on where you left off and finish the work you were doing.'
+const RESUME_RUNNING_WAIT_MS = 120_000
+const RESUME_RUNNING_POLL_MS = 2_000
+
+/** After resuming a paused session, wait for it to be running before it can take a message. */
+async function waitUntilSessionRunning(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	id: string,
+): Promise<boolean> {
+	const deadline = Date.now() + RESUME_RUNNING_WAIT_MS
+	while (Date.now() < deadline) {
+		const row = (await apiCall(config, 'GET', `/api/sessions/${id}`, undefined, {
+			workspaceId,
+		})) as { status: string }
+		if (row.status === 'running') return true
+		if (ENDED_SESSION_STATUSES.includes(row.status)) return false
+		await new Promise((resolve) => setTimeout(resolve, RESUME_RUNNING_POLL_MS))
+	}
+	return false
+}
+
+// A waiting call checks every few seconds until the session ends. There is no time
+// limit: the wait ends when the session ends, when it stops moving on its own
+// (waiting for input, paused) or when the status checks keep failing. Sessions have
+// their own timeout, so none runs forever.
 const WAIT_POLL_MS = 5_000
-const WAIT_LIMIT_MS = 660_000
 
 // Short helpers finish quickly, so the first checks stay at WAIT_POLL_MS; a wait that is
 // still going backs off so a long one is not ~130 requests against the API.
@@ -1163,12 +1275,42 @@ function waitPollDelayMs(attempt: number): number {
 const MAX_POLL_FAILURES = 5
 
 /**
- * The `wait: true` path of `create_session`: start the session, poll until it
- * reaches a terminal state (or the wait runs out), and return `{ session, logs }`.
+ * What the caller reads when a handover did not start. A chat agent that only sees a
+ * bare API error tends to tell the person it handed the work over anyway.
+ */
+function sessionNotStartedResult(
+	config: McpConfig,
+	toolName: 'create_session' | 'create_sub_chat',
+	workspaceId: string | undefined,
+	err: unknown,
+) {
+	const reason = err instanceof Error ? err.message : String(err)
+	console.error(`${toolName}: could not start the session`, err)
+	return {
+		_meta: meta(toolName, config, workspaceId),
+		isError: true,
+		content: [
+			{
+				type: 'text' as const,
+				text: `Not started: ${reason}. Nothing was handed over. Tell the person in the same reply that the handover failed and why. Do not say the work was handed over or is in progress.`,
+			},
+		],
+	}
+}
+
+/** Added to a started session so the caller has something real to quote to the person. */
+function handoffNote(session: { id: string; status?: string }) {
+	return `Started: session ${session.id} is ${session.status ?? 'pending'}. When you tell the person you handed this over, quote this session id or its url, and say it is queued if it has not started running yet. Without one of them, do not say it was handed over.`
+}
+
+/**
+ * The `wait: true` path of `create_session`: start the session, then wait for it to
+ * reach a terminal state and return `{ session, logs }`.
  */
 async function createSessionAndWait(
 	config: McpConfig,
 	args: z.infer<typeof tools.create_session.inputSchema>,
+	toolName: 'create_session' | 'create_sub_chat' = 'create_session',
 ) {
 	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
 	// ignored, and it is never true on this create call (registered below instead).
@@ -1184,19 +1326,52 @@ async function createSessionAndWait(
 	// returns the result inline, so it is only registered (below) if the wait runs
 	// out. False, not omitted, because an omitted value defaults on for a helper
 	// started from a chat, and the waiting caller would get the result twice.
-	const session = (await apiCall(
-		config,
-		'POST',
-		'/api/sessions',
-		{ ...createBody, notify_on_complete: false },
-		wsOpts,
-	)) as {
-		id: string
-		status: string
+	let session: { id: string; status: string }
+	try {
+		session = (await apiCall(
+			config,
+			'POST',
+			'/api/sessions',
+			{ ...createBody, notify_on_complete: false },
+			wsOpts,
+		)) as { id: string; status: string }
+	} catch (err) {
+		return sessionNotStartedResult(config, toolName, workspace_id, err)
 	}
 
+	return waitForSessionResult(config, {
+		toolName,
+		workspaceId: workspace_id,
+		session,
+		registerReturn: true,
+	})
+}
+
+/**
+ * Polls a session until it ends (or stops moving) and returns `{ session, logs, settled }`.
+ * Shared by every tool that takes `wait`. `registerReturn` is for the one caller that
+ * started the session itself: when the wait stops with the session still going, it asks
+ * for the session's result to be sent back to that caller later.
+ */
+async function waitForSessionResult(
+	config: McpConfig,
+	opts: {
+		toolName:
+			| 'create_session'
+			| 'create_sub_chat'
+			| 'get_session'
+			| 'resume_session'
+			| 'send_session_message'
+		workspaceId: string | undefined
+		session: { id: string; status: string }
+		registerReturn?: boolean
+		/** The session was just read, so judge that reading before the first sleep. */
+		judgeFirst?: boolean
+	},
+) {
+	const { toolName, workspaceId: workspace_id, session, registerReturn = false } = opts
+	const wsOpts = { workspaceId: workspace_id }
 	let sessionId = session.id
-	const deadline = Date.now() + WAIT_LIMIT_MS
 	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped']
 	// §17.6: when a session hits a subscription limit its terminal report
 	// carries retried_session_id — the id of the retry the scheduler
@@ -1210,32 +1385,35 @@ async function createSessionAndWait(
 	// 2. Poll until terminal, following retried_session_id redirects
 	let current = session as typeof session & { retriedSessionId?: string | null }
 	let settled = false
-	let stoppedBecause: 'waiting_for_input' | undefined
+	let stoppedBecause: 'waiting_for_input' | 'paused' | undefined
 	let pollFailures = 0
 	let pollError: string | undefined
 	let pollAttempt = 0
-	while (Date.now() < deadline) {
-		const delay = Math.min(waitPollDelayMs(pollAttempt++), deadline - Date.now())
-		await new Promise((resolve) => setTimeout(resolve, delay))
-		try {
-			current = (await apiCall(
-				config,
-				'GET',
-				`/api/sessions/${sessionId}`,
-				undefined,
-				wsOpts,
-			)) as typeof current
-			pollFailures = 0
-		} catch (err) {
-			pollFailures += 1
-			pollError = err instanceof Error ? err.message : String(err)
-			if (pollFailures >= MAX_POLL_FAILURES) {
-				console.error(`create_session: gave up polling session ${sessionId}`, err)
-				break
+	let judgeNow = opts.judgeFirst ?? false
+	while (true) {
+		if (!judgeNow) {
+			await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(pollAttempt++)))
+			try {
+				current = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${sessionId}`,
+					undefined,
+					wsOpts,
+				)) as typeof current
+				pollFailures = 0
+			} catch (err) {
+				pollFailures += 1
+				pollError = err instanceof Error ? err.message : String(err)
+				if (pollFailures >= MAX_POLL_FAILURES) {
+					console.error(`${toolName}: gave up polling session ${sessionId}`, err)
+					break
+				}
+				continue
 			}
-			continue
+			pollError = undefined
 		}
-		pollError = undefined
+		judgeNow = false
 		if (terminalStatuses.includes(current.status)) {
 			const retryId = current.retriedSessionId
 			if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
@@ -1246,18 +1424,19 @@ async function createSessionAndWait(
 			settled = true
 			break
 		}
-		// A session parked on waiting_for_input will not progress until someone
-		// answers it, so polling on would only burn the whole wait. Stop early but
-		// leave settled false: the session is not finished.
-		if (current.status === 'waiting_for_input') {
-			stoppedBecause = 'waiting_for_input'
+		// A session parked on waiting_for_input, or paused, will not progress until
+		// someone acts on it, and with no time limit polling on would never end. Stop
+		// early but leave settled false: the session is not finished.
+		if (current.status === 'waiting_for_input' || current.status === 'paused') {
+			stoppedBecause = current.status
 			break
 		}
 	}
 
-	// The wait ended with the helper still going (it ran out, or it stopped on
-	// waiting_for_input): ask for its result to be sent back later. Never on the
-	// settled path, where the caller gets it inline.
+	// The wait ended with the helper still going (it stopped on waiting_for_input or
+	// paused, or the status checks kept failing): ask for its result to be sent back
+	// later. Never on the settled path, where the caller gets it inline, and only for
+	// the caller that started the session.
 	// If the helper ended in the gap, the PATCH sends the return itself.
 	// The server says what became of it: 'registered' (still running, it will
 	// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
@@ -1265,7 +1444,7 @@ async function createSessionAndWait(
 	let notifyOnComplete:
 		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
 		| undefined
-	if (!settled) {
+	if (!settled && registerReturn) {
 		try {
 			const patched = (await apiCall(
 				config,
@@ -1282,7 +1461,7 @@ async function createSessionAndWait(
 				...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
 			}
 		} catch (err) {
-			console.error('create_session: could not register notify_on_complete', err)
+			console.error(`${toolName}: could not register notify_on_complete`, err)
 			notifyOnComplete = {
 				state: 'failed',
 				reason: err instanceof Error ? err.message : String(err),
@@ -1308,7 +1487,9 @@ async function createSessionAndWait(
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
 			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. Session id: ${sessionId}. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
-			: undefined
+			: stoppedBecause === 'paused'
+				? `The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session. Session id: ${sessionId}.`
+				: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
 	const currentWithUrl = wsId
@@ -1327,7 +1508,7 @@ async function createSessionAndWait(
 			: currentWithUrl
 
 	return {
-		_meta: meta('create_session', config, workspace_id),
+		_meta: meta(toolName, config, workspace_id),
 		content: [
 			{
 				type: 'text' as const,
@@ -1353,6 +1534,169 @@ async function createSessionAndWait(
 			},
 		],
 	}
+}
+
+// ─── Chats: agent status and waiting for replies ──────────────────────────
+
+/** A chat's session as the sessions list returns it (verbose rows). */
+interface ChatSessionRow {
+	id: string
+	actorId: string
+	status: string
+	updatedAt?: string
+}
+
+type ChatAgentStatus = 'starting' | 'running' | 'waiting_for_input' | 'paused' | 'not_running'
+
+/**
+ * What an agent is doing in a chat, from its session. `running` means it has a live
+ * session: it is either working on a turn or ready for the next message. The session
+ * does not say which, so read get_chat_activity for the detail.
+ */
+function chatAgentStatus(status: string | undefined): ChatAgentStatus {
+	if (status === 'pending' || status === 'starting' || status === 'snapshotting') return 'starting'
+	if (status === 'running') return 'running'
+	if (status === 'waiting_for_input') return 'waiting_for_input'
+	if (status === 'paused') return 'paused'
+	return 'not_running'
+}
+
+/** Every session in a chat, newest first. A failed lookup is an empty list, never an error. */
+async function fetchChatSessions(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	conversationId: string,
+): Promise<ChatSessionRow[]> {
+	try {
+		const rows = await apiCall(
+			config,
+			'GET',
+			`/api/sessions?conversation_id=${conversationId}&verbose=true&limit=50`,
+			undefined,
+			{ workspaceId },
+		)
+		return Array.isArray(rows) ? (rows as ChatSessionRow[]) : []
+	} catch {
+		return []
+	}
+}
+
+/** The newest session of each agent. `rows` must already be newest first. */
+function latestSessionByActor(rows: ChatSessionRow[]): Map<string, ChatSessionRow> {
+	const latest = new Map<string, ChatSessionRow>()
+	for (const row of rows) {
+		if (row.actorId && !latest.has(row.actorId)) latest.set(row.actorId, row)
+	}
+	return latest
+}
+
+// A chat reply can take a long time, but not forever: a wait that has not been answered by
+// then returns what it has, with settled false.
+const CHAT_WAIT_MAX_MS = 30 * 60_000
+// Polls to let a woken agent's session appear before "it has no live session" counts.
+const CHAT_WAIT_GRACE_POLLS = 3
+// Consecutive polls with no live session after which an agent is given up on.
+const CHAT_WAIT_IDLE_POLLS = 3
+
+interface ChatReplyMessage {
+	id: number
+	actorId: string
+	actorName?: string
+	actorType?: string
+	content: string
+	metadata?: { source?: string } | null
+	createdAt?: string
+}
+
+/**
+ * Holds until each awaited agent has finished its reply to the message at
+ * `afterMessageId`. An agent has finished when its closing message for the turn
+ * arrives (the one the platform posts at the end of a turn; interim notes do not
+ * count), or when it has no live session any more, so a failed run does not hold the
+ * caller for the full wait.
+ */
+async function waitForChatReplies(
+	config: McpConfig,
+	opts: {
+		workspaceId: string | undefined
+		conversationId: string
+		afterMessageId: number
+		awaitedActorIds: string[]
+	},
+) {
+	const wsOpts = { workspaceId: opts.workspaceId }
+	const pending = new Set(opts.awaitedActorIds)
+	const seen = new Map<number, ChatReplyMessage>()
+	const idlePolls = new Map<string, number>()
+	const unanswered = new Set<string>()
+	const deadline = Date.now() + CHAT_WAIT_MAX_MS
+	let attempt = 0
+	let pollFailures = 0
+	let pollError: string | undefined
+
+	while (pending.size > 0 && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(attempt)))
+		attempt += 1
+		try {
+			const page = (await apiCall(
+				config,
+				'GET',
+				`/api/conversations/${opts.conversationId}/messages?after_id=${opts.afterMessageId}&limit=200`,
+				undefined,
+				wsOpts,
+			)) as { messages?: ChatReplyMessage[] }
+			pollFailures = 0
+			pollError = undefined
+			for (const message of page.messages ?? []) {
+				if (!opts.awaitedActorIds.includes(message.actorId)) continue
+				seen.set(message.id, message)
+				if (message.metadata?.source === 'final_output') pending.delete(message.actorId)
+			}
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) break
+			continue
+		}
+		if (pending.size === 0 || attempt <= CHAT_WAIT_GRACE_POLLS) continue
+
+		const latest = latestSessionByActor(
+			await fetchChatSessions(config, opts.workspaceId, opts.conversationId),
+		)
+		for (const actorId of [...pending]) {
+			const live = latest.get(actorId)
+			const hasLiveSession =
+				!!live && !ENDED_SESSION_STATUSES.includes(live.status) && live.status !== 'paused'
+			const idle = hasLiveSession ? 0 : (idlePolls.get(actorId) ?? 0) + 1
+			idlePolls.set(actorId, idle)
+			if (idle >= CHAT_WAIT_IDLE_POLLS) {
+				pending.delete(actorId)
+				unanswered.add(actorId)
+			}
+		}
+	}
+	for (const actorId of pending) unanswered.add(actorId)
+
+	const replies = [...seen.values()].sort((a, b) => a.id - b.id)
+	return {
+		settled: unanswered.size === 0,
+		replies,
+		...(unanswered.size > 0
+			? {
+					unanswered_actor_ids: [...unanswered],
+					message:
+						'Some agents did not finish a reply: they have no live session, or the wait ran out. Read the chat with list_conversation_messages, or see what they did with get_chat_activity.',
+				}
+			: {}),
+		...(pollError ? { poll_error: pollError } : {}),
+	}
+}
+
+/** A participant as the conversation route returns it. */
+interface ChatParticipant {
+	actorId: string
+	actorName: string
+	actorType: string
 }
 
 /**
@@ -1585,6 +1929,40 @@ function extractWorkspaceId(args: unknown): string | undefined {
 }
 
 /**
+ * Refuses a write that names a workspace other than the one the agent session
+ * is running in. The model's own workspace_id wins over the session's default
+ * in every handler, so without this an agent whose key reaches several
+ * workspaces can write to any of them by passing the id.
+ *
+ * Applies only when the call belongs to a session (over HTTP the
+ * X-Maskin-Session-Id header, on stdio the container's SESSION_ID) and a
+ * default workspace is known, so human-driven use outside a session is
+ * untouched. A write is anything not in READ_ONLY_TOOLS, so a new tool is
+ * covered until someone marks it read-only; reads keep taking any workspace
+ * the key reaches. create_workspace is exempt: it has no session workspace to
+ * stay inside. Throws rather than rewriting the id so the model sees its error.
+ */
+function assertWriteStaysInSessionWorkspace(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+): void {
+	if (READ_ONLY_TOOLS.has(toolName) || toolName === 'create_workspace') return
+	const sessionWorkspaceId = config.defaultWorkspaceId
+	if (!sessionWorkspaceId) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	const requested = extractWorkspaceId(args)
+	if (requested === undefined || requested === sessionWorkspaceId) return
+	throw new Error(
+		`${toolName} was called with workspace_id ${requested}, but this session runs in workspace ${sessionWorkspaceId}. Agents can only write to the workspace they run in. Omit workspace_id or pass ${sessionWorkspaceId}.`,
+	)
+}
+
+/**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
  * count one mutation event per call when at least one inner item explicitly
@@ -1690,7 +2068,8 @@ export interface HeroCardObject {
 	tools?: Record<string, unknown> | null
 	llmProvider?: string | null
 	llmConfig?: Record<string, unknown> | null
-	skills?: Array<{ id: string; name: string }> | null
+	// get_actor carries id + name pairs; a list_actors row carries names only.
+	skills?: Array<{ id: string; name: string }> | string[] | null
 	// Full detail fields — populated by list_triggers
 	actionPrompt?: string | null
 	config?: Record<string, unknown> | null
@@ -1715,6 +2094,36 @@ export interface HeroCardPayload {
 }
 
 const HERO_CARD_UI_PAGE_SIZE = 25
+
+/**
+ * Max `relationships` and `connected_objects` rows get_objects returns per
+ * object. The graph endpoint returns every edge, so a hub object with hundreds
+ * of edges produced a 600k+ character result no client could read. Callers
+ * page the rest with list_relationships({ object_id }).
+ */
+export const GET_OBJECTS_EDGE_CAP = 100
+
+/**
+ * Cap one graph block at GET_OBJECTS_EDGE_CAP rows. When rows are dropped the
+ * second element tells the caller the real total and where to page the rest;
+ * it is null when everything fit, so small objects keep their exact shape.
+ */
+function capGraphBlock(
+	rows: unknown,
+	block: 'relationships' | 'connected_objects',
+	objectId: string,
+): [unknown, Record<string, unknown> | null] {
+	if (!Array.isArray(rows) || rows.length <= GET_OBJECTS_EDGE_CAP) return [rows, null]
+	return [
+		rows.slice(0, GET_OBJECTS_EDGE_CAP),
+		{
+			returned: GET_OBJECTS_EDGE_CAP,
+			total: rows.length,
+			truncated: true,
+			hint: `Showing the first ${GET_OBJECTS_EDGE_CAP} of ${rows.length}. Call list_relationships with object_id ${objectId} to page the rest${block === 'connected_objects' ? ', then get_objects on the endpoint ids you need' : ''}.`,
+		},
+	]
+}
 
 interface RawObject {
 	id: string
@@ -1977,7 +2386,8 @@ interface RawActor {
 	tools?: Record<string, unknown> | null
 	llm_provider?: string | null
 	llm_config?: Record<string, unknown> | null
-	skills?: Array<{ id: string; name: string }> | null
+	// get_actor returns id + name pairs; the workspace list returns names only.
+	skills?: Array<{ id: string; name: string }> | string[] | null
 }
 
 // create_actor/update_actor accept a single `llm_config: { provider, ... }`
@@ -2524,6 +2934,8 @@ export function createMcpServer(config: McpConfig) {
 		workspaceId: config.defaultWorkspaceId,
 		sessionId: config.telemetrySessionId,
 		sessionSource: config.telemetrySessionSource,
+		mcpEra: config.telemetryEra,
+		mcpProtocolVersion: config.telemetryProtocolVersion,
 	}
 
 	// Telemetry-instrumented tool registration. Wraps the upstream
@@ -2549,9 +2961,7 @@ export function createMcpServer(config: McpConfig) {
 				? {
 						...baseDefinition,
 						inputSchema: wrapInputSchema(baseDefinition.inputSchema, (raw) => {
-							const normalised = normaliseArgs(name, raw, {
-								defaultWorkspaceId: config.defaultWorkspaceId,
-							})
+							const normalised = normaliseArgs(name, raw)
 							// One event per call that used at least one old name. Here, not in
 							// the handler, so it fires before validation and a call that then
 							// fails validation is still counted. Fire and forget; key names
@@ -2578,6 +2988,7 @@ export function createMcpServer(config: McpConfig) {
 			const start = Date.now()
 			let response: unknown
 			try {
+				assertWriteStaysInSessionWorkspace(config, name, args)
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
@@ -2969,10 +3380,22 @@ export function createMcpServer(config: McpConfig) {
 					}
 					const extras: Record<string, unknown> = {}
 					if (includeSet.has('relationships') && graph && 'relationships' in graph) {
-						extras.relationships = graph.relationships
+						const [rows, page] = capGraphBlock(
+							graph.relationships,
+							'relationships',
+							withUrl.id as string,
+						)
+						extras.relationships = rows
+						if (page) extras.relationships_page = page
 					}
 					if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
-						extras.connected_objects = graph.connected_objects
+						const [rows, page] = capGraphBlock(
+							graph.connected_objects,
+							'connected_objects',
+							withUrl.id as string,
+						)
+						extras.connected_objects = rows
+						if (page) extras.connected_objects_page = page
 					}
 					if (includeSet.has('events') && graph && 'events' in graph) {
 						extras.events = graph.events
@@ -3958,7 +4381,29 @@ export function createMcpServer(config: McpConfig) {
 			// would re-fetch the identical first page forever. Fall back to
 			// plain offset pagination — matching this tool's pre-cursor
 			// behavior — whenever `workspace_id` is omitted.
-			const workspaceScoped = Boolean(args.workspace_id)
+			//
+			// A name filter only exists on the workspace-scoped path, so a call that
+			// passes one without a workspace_id falls back to the default workspace
+			// instead of silently taking the unfiltered cross-workspace branch.
+			if (args.name !== undefined && args.name_prefix !== undefined) {
+				return {
+					_meta: meta('list_actors', config, args.workspace_id),
+					isError: true,
+					content: [{ type: 'text' as const, text: 'Pass name or name_prefix, not both' }],
+				}
+			}
+			const nameFilterRequested = args.name !== undefined || args.name_prefix !== undefined
+			const scopeWorkspaceId =
+				args.workspace_id ??
+				(nameFilterRequested ? config.defaultWorkspaceId || undefined : undefined)
+			if (nameFilterRequested && !scopeWorkspaceId) {
+				return {
+					_meta: meta('list_actors', config, args.workspace_id),
+					isError: true,
+					content: [{ type: 'text' as const, text: 'name and name_prefix need a workspace_id' }],
+				}
+			}
+			const workspaceScoped = Boolean(scopeWorkspaceId)
 			const pagination = resolveListPagination({
 				limit: args.limit,
 				cursor: workspaceScoped ? args.cursor : undefined,
@@ -3970,6 +4415,10 @@ export function createMcpServer(config: McpConfig) {
 			const fetchCap = workspaceScoped ? pagination.limit + 1 : pagination.limit
 			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
 			if (workspaceScoped) {
+				// Skill names ride on every workspace-scoped row.
+				params.set('include', 'skills')
+				if (args.name !== undefined) params.set('name', args.name)
+				if (args.name_prefix !== undefined) params.set('name_prefix', args.name_prefix)
 				params.set('snapshot_at', pagination.snapshotAt)
 				params.set('order', pagination.order)
 				if (pagination.cursor) {
@@ -3982,7 +4431,7 @@ export function createMcpServer(config: McpConfig) {
 				'GET',
 				`/api/actors?${params}`,
 				undefined,
-				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
+				scopeWorkspaceId ? { workspaceId: scopeWorkspaceId } : { skipWorkspace: true },
 			)
 			const rawRows = Array.isArray(data) ? (data as RawActor[]) : []
 			// Trim the sentinel + seed next_cursor from the last-visible row's
@@ -3999,7 +4448,7 @@ export function createMcpServer(config: McpConfig) {
 			// from addUrl(), which needs a workspace id. Compute them here and
 			// fold them into each hero object so structuredContent is the sole
 			// carrier of the response (no separate `content` text channel).
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const wsId = scopeWorkspaceId ?? config.defaultWorkspaceId
 			const enriched =
 				wsId && Array.isArray(trimmedData)
 					? (trimmedData as Array<Record<string, unknown>>).map((a) =>
@@ -4020,12 +4469,16 @@ export function createMcpServer(config: McpConfig) {
 			const wantLoops = workspaceScoped && include.includes('loops')
 			const actorLinks =
 				wantTriggers || wantLoops
-					? await resolveActorLinks(config, args.workspace_id as string)
+					? await resolveActorLinks(config, scopeWorkspaceId as string)
 					: null
 			const heroObjects = rows.map((a, idx) => {
 				let obj = buildActorHeroCardObject(a)
 				const url = pickUrl(enrichedRows[idx])
 				if (url) obj = { ...obj, url }
+				// Names only; the API leaves the key out for humans and for agents with none.
+				if (workspaceScoped && Array.isArray(a.skills) && a.skills.length > 0) {
+					obj = { ...obj, skills: a.skills as string[] }
+				}
 				if (actorLinks) {
 					const connectedTriggers = wantTriggers ? actorLinks.triggersByActor.get(a.id) : undefined
 					const connectedLoops = wantLoops ? actorLinks.loopsByActor.get(a.id) : undefined
@@ -4061,12 +4514,7 @@ export function createMcpServer(config: McpConfig) {
 				// Read by the registerAppTool wrapper for the size event; a symbol
 				// never serializes onto the wire.
 				[TELEMETRY_VIEW]: view,
-				_meta: uiMeta(
-					'list_actors',
-					config,
-					args.workspace_id,
-					pickCollectionResourceUri(heroCard),
-				),
+				_meta: uiMeta('list_actors', config, scopeWorkspaceId, pickCollectionResourceUri(heroCard)),
 				structuredContent: {
 					heroCard,
 					...(nextCursor
@@ -4778,31 +5226,49 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
 			const params = new URLSearchParams()
-			params.set('limit', String(pagination.limit + 1))
+			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+			// there is no room for it, so a full page is probed with a one-row call.
+			params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
 			if (pagination.cursor) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
 				params.set('cursor_id', pagination.cursor.k.id)
 			}
-			const qs = params.toString()
-			const raw = (await apiCall(
-				config,
-				'GET',
-				`/api/workspaces/${wsId}/skills${qs ? `?${qs}` : ''}`,
-				undefined,
-				{ workspaceId: wsId },
-			)) as Array<{
+			const skillsPath = `/api/workspaces/${wsId}/skills`
+			type SkillListRow = {
 				id: string
 				name: string
 				description?: string | null
 				isValid?: boolean
 				createdAt?: string | null
-			}>
+			}
+			let raw = (await apiCall(config, 'GET', `${skillsPath}?${params}`, undefined, {
+				workspaceId: wsId,
+			})) as SkillListRow[]
+			const lastRaw = raw[raw.length - 1]
+			if (
+				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
+				lastRaw?.createdAt &&
+				raw.length === pagination.limit
+			) {
+				const probeParams = new URLSearchParams(params)
+				probeParams.set('limit', '1')
+				probeParams.set('cursor_created_at', lastRaw.createdAt)
+				probeParams.set('cursor_id', lastRaw.id)
+				const probe = (await apiCall(config, 'GET', `${skillsPath}?${probeParams}`, undefined, {
+					workspaceId: wsId,
+				})) as SkillListRow[]
+				raw = [...raw, ...probe]
+			}
 			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
-			const result = trimmed as typeof raw
+			const result = trimmed as SkillListRow[]
 			return {
 				_meta: meta(
 					'list_workspace_skills',
@@ -4818,11 +5284,23 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					skills: result,
 					page: {
-						limit: result.length,
+						limit: pagination.limit,
 						returned: result.length,
 						...(nextCursor ? { next_cursor: nextCursor } : {}),
 					},
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+				// If the token cap trims this page, the walk resumes after the last row
+				// that actually ships instead of ending at the pre-trim page.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const row = lastShipped as SkillListRow
+					return row.createdAt
+						? encodeCursor({
+								s: pagination.snapshotAt,
+								o: pagination.order,
+								k: { sortValue: row.createdAt, id: row.id },
+							})
+						: null
 				},
 			}
 		},
@@ -5082,6 +5560,7 @@ export function createMcpServer(config: McpConfig) {
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
+			if (args.if_match !== undefined) body.if_match = args.if_match
 			const result = await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
 				workspaceId: wsId,
 			})
@@ -5233,16 +5712,103 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const result = await apiCall(
+			const result = (await apiCall(
 				config,
 				'GET',
 				`/api/conversations/${args.conversation_id}`,
 				undefined,
 				{ workspaceId: args.workspace_id },
-			)
+			)) as { participants?: Array<ChatParticipant & { status?: ChatAgentStatus }> }
+			// Say who is busy, so an agent does not @mention one that is not running.
+			if (Array.isArray(result.participants)) {
+				const latest = latestSessionByActor(
+					await fetchChatSessions(config, args.workspace_id, args.conversation_id),
+				)
+				for (const p of result.participants) {
+					if (p.actorType === 'agent') p.status = chatAgentStatus(latest.get(p.actorId)?.status)
+				}
+			}
 			return {
 				_meta: meta('get_conversation', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_chats',
+		{
+			description: tools.list_chats.description,
+			inputSchema: tools.list_chats.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
+			// The route pages by offset, so the position travels in the cursor as n.
+			const offset = pagination.cursor?.n ?? 0
+			const params = new URLSearchParams()
+			params.set('sort', 'activity')
+			params.set('limit', String(pagination.limit))
+			params.set('offset', String(offset))
+			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.has_human) params.set('has_human', 'true')
+			if (args.subject_type && args.subject_id) {
+				params.set('subject_type', args.subject_type)
+				params.set('subject_id', args.subject_id)
+			}
+			const raw = (await apiCall(config, 'GET', `/api/conversations?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as {
+				conversations: Array<{
+					id: string
+					title: string
+					lastMessageAt: string | null
+					unread_count: number
+					snippet: string | null
+					snippet_actor_id: string | null
+					snippet_actor_name: string | null
+					snippet_is_caller: boolean
+					participants: Array<{ actorName: string; actorType: string }>
+				}>
+				has_more: boolean
+			}
+			const chats = raw.conversations.map((c) => ({
+				id: c.id,
+				title: c.title,
+				participants: c.participants.map((p) => ({ name: p.actorName, type: p.actorType })),
+				last_message_at: c.lastMessageAt,
+				last_message: c.snippet_actor_id
+					? {
+							from: c.snippet_actor_name,
+							is_you: c.snippet_is_caller,
+							snippet: truncateSnippet(c.snippet),
+						}
+					: null,
+				unread_count: c.unread_count,
+			}))
+			const last = raw.conversations[raw.conversations.length - 1]
+			const nextOffset = offset + chats.length
+			const nextCursor =
+				raw.has_more && last?.lastMessageAt && nextOffset <= CURSOR_MAX_OFFSET
+					? encodeCursor({
+							s: pagination.snapshotAt,
+							o: pagination.order,
+							k: { sortValue: last.lastMessageAt, id: last.id },
+							n: nextOffset,
+						})
+					: null
+			return {
+				_meta: meta('list_chats', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(chats) }],
+				structuredContent: {
+					chats,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -5259,6 +5825,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.before_id) params.set('before_id', String(args.before_id))
 			if (args.after_id) params.set('after_id', String(args.after_id))
+			if (args.thread_root_id) params.set('thread_root_id', String(args.thread_root_id))
 			params.set('limit', String(args.limit))
 			const result = await apiCall(
 				config,
@@ -5287,7 +5854,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, conversation_id, mention_names, ...body } = args
+			const { workspace_id, conversation_id, mention_names, wait, sub_chat_session_id, ...body } =
+				args
 			rejectCardMetadata(body.metadata)
 			// Names are friendlier than UUIDs, and a mistyped UUID silently mentions
 			// nobody. Resolve against the live participant list and report misses.
@@ -5318,24 +5886,340 @@ export function createMcpServer(config: McpConfig) {
 			// config.maskinSessionId carries the caller's id and wins. Undefined
 			// outside an agent session (e.g. a human testing the MCP server
 			// locally), in which case the field is simply omitted.
+			// A sub-chat hangs from a message of this chat. Replying in that message's thread is
+			// what sends the words to its agent, so the message is looked up from the sub-chat.
+			let threadRootId = body.thread_root_id
+			if (sub_chat_session_id && threadRootId === undefined) {
+				const subChat = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${sub_chat_session_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { spawnedByMessageId?: number | null }
+				if (typeof subChat.spawnedByMessageId !== 'number') {
+					throw new Error(
+						`Sub-chat ${sub_chat_session_id} is not attached to a message in a chat yet, so there is no thread to reply in. Talk to it with send_session_message instead.`,
+					)
+				}
+				threadRootId = subChat.spawnedByMessageId
+			}
 			const result = await apiCall(
 				config,
 				'POST',
 				`/api/conversations/${conversation_id}/messages`,
-				{ ...body, session_id: config.maskinSessionId ?? process.env.SESSION_ID },
+				{
+					...body,
+					thread_root_id: threadRootId,
+					session_id: config.maskinSessionId ?? process.env.SESSION_ID,
+				},
 				{ workspaceId: workspace_id },
 			)
 			const withMentionReport =
 				unresolvedMentions.length > 0
 					? { ...(result as Record<string, unknown>), unresolved_mentions: unresolvedMentions }
 					: result
+
+			// Hold for the answer: the agents @mentioned, or every other agent in the chat.
+			let waited: Awaited<ReturnType<typeof waitForChatReplies>> | { note: string } | undefined
+			const posted = result as { id?: number; actorId?: string }
+			if (wait && typeof posted.id === 'number') {
+				// Read after posting: an @mentioned agent has joined the chat by now.
+				const conversation = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${conversation_id}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { participants?: ChatParticipant[] }
+				const mentioned = new Set(body.metadata?.mentions ?? [])
+				const agents = (conversation.participants ?? []).filter(
+					(p) => p.actorType === 'agent' && p.actorId !== posted.actorId,
+				)
+				const awaited = (
+					mentioned.size > 0 ? agents.filter((p) => mentioned.has(p.actorId)) : agents
+				).map((p) => p.actorId)
+				waited =
+					awaited.length > 0
+						? await waitForChatReplies(config, {
+								workspaceId: workspace_id,
+								conversationId: conversation_id,
+								afterMessageId: posted.id,
+								awaitedActorIds: awaited,
+							})
+						: { note: 'There is no agent in this chat to wait for, so nothing was waited on.' }
+			}
 			return {
 				_meta: meta(
 					'post_conversation_message',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(withMentionReport, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							waited
+								? { ...(withMentionReport as Record<string, unknown>), wait: waited }
+								: withMentionReport,
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'create_chat',
+		{
+			description: tools.create_chat.description,
+			inputSchema: tools.create_chat.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const {
+				workspace_id,
+				title,
+				participant_actor_ids,
+				first_message,
+				subject_type,
+				subject_id,
+				topical,
+				wait,
+			} = args
+			if ((subject_type === undefined) !== (subject_id === undefined)) {
+				throw new Error('subject_type and subject_id go together: give both or neither.')
+			}
+			// One other actor and no subject is the direct message with them, unless a
+			// separate topical chat was asked for. The API gets or creates it.
+			const direct = participant_actor_ids.length === 1 && subject_id === undefined && !topical
+			const wsOpts = { workspaceId: workspace_id }
+			const conversation = (await apiCall(
+				config,
+				'POST',
+				'/api/conversations',
+				{
+					title,
+					participant_actor_ids,
+					...(direct ? { direct: true } : {}),
+					...(subject_type && subject_id
+						? { subject: { type: subject_type, id: subject_id } }
+						: {}),
+				},
+				wsOpts,
+			)) as { id: string; participants?: ChatParticipant[] }
+
+			// The first message is its own call, so the agents can be @mentioned by id: the
+			// mention is what wakes them, and the create call does not know who is an agent.
+			let firstMessage: unknown
+			let waitResult: Awaited<ReturnType<typeof waitForChatReplies>> | undefined
+			if (first_message) {
+				const requested = new Set(participant_actor_ids)
+				const agentIds = (conversation.participants ?? [])
+					.filter((p) => p.actorType === 'agent' && requested.has(p.actorId))
+					.map((p) => p.actorId)
+				firstMessage = await apiCall(
+					config,
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: first_message,
+						...(agentIds.length > 0 ? { metadata: { mentions: agentIds } } : {}),
+						session_id: config.maskinSessionId ?? process.env.SESSION_ID,
+					},
+					wsOpts,
+				)
+				const posted = firstMessage as { id?: number; actorId?: string }
+				if (wait && typeof posted.id === 'number') {
+					waitResult = await waitForChatReplies(config, {
+						workspaceId: workspace_id,
+						conversationId: conversation.id,
+						afterMessageId: posted.id,
+						awaitedActorIds: agentIds.filter((id) => id !== posted.actorId),
+					})
+				}
+			}
+			return {
+				_meta: meta('create_chat', config, workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({
+							conversation,
+							...(firstMessage ? { first_message: firstMessage } : {}),
+							...(waitResult ? { wait: waitResult } : {}),
+						}),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_chat_participant',
+		{
+			description: tools.add_chat_participant.description,
+			inputSchema: tools.add_chat_participant.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const participants = await apiCall(
+				config,
+				'POST',
+				`/api/conversations/${args.conversation_id}/participants`,
+				{ actor_ids: args.actor_ids },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('add_chat_participant', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify({ participants }) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'remove_chat_participant',
+		{
+			description: tools.remove_chat_participant.description,
+			inputSchema: tools.remove_chat_participant.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			// The route answers 204 with no body, so there is nothing to parse.
+			await apiFetch(
+				config,
+				'DELETE',
+				`/api/conversations/${args.conversation_id}/participants/${args.actor_id}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('remove_chat_participant', config, args.workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({ removed: true, actor_id: args.actor_id }),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_chat_activity',
+		{
+			description: tools.get_chat_activity.description,
+			inputSchema: tools.get_chat_activity.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, conversation_id, actor_id, session_id, limit_turns } = args
+			if (!conversation_id && !session_id) {
+				throw new Error('Give a conversation_id (and optionally an actor_id), or a session_id.')
+			}
+			const wsOpts = { workspaceId: workspace_id }
+			let targets: ChatSessionRow[]
+			if (session_id) {
+				const row = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${session_id}`,
+					undefined,
+					wsOpts,
+				)) as Partial<ChatSessionRow>
+				targets = [{ id: session_id, actorId: row.actorId ?? '', status: row.status ?? '' }]
+			} else {
+				const latest = latestSessionByActor(
+					await fetchChatSessions(config, workspace_id, conversation_id as string),
+				)
+				targets = [...latest.values()].filter((s) => !actor_id || s.actorId === actor_id)
+			}
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const names = wsId ? await fetchActorNameMap(config, wsId) : {}
+			const agents = await Promise.all(
+				targets.map(async (s) => {
+					const base = {
+						actor_id: s.actorId,
+						actor_name: names[s.actorId] ?? null,
+						session_id: s.id,
+						status: chatAgentStatus(s.status),
+					}
+					try {
+						const activity = await apiCall(
+							config,
+							'GET',
+							`/api/sessions/${s.id}/activity?limit_turns=${limit_turns ?? 3}`,
+							undefined,
+							wsOpts,
+						)
+						return { ...base, activity }
+					} catch (err) {
+						return { ...base, error: err instanceof Error ? err.message : String(err) }
+					}
+				}),
+			)
+			const payload = { agents }
+			return {
+				_meta: meta('get_chat_activity', config, workspace_id),
+				// Same full payload on both channels (see known-pitfalls.md).
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+				structuredContent: payload,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'stop_chat_agent',
+		{
+			description: tools.stop_chat_agent.description,
+			inputSchema: tools.stop_chat_agent.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, conversation_id, actor_id, session_id } = args
+			const wsOpts = { workspaceId: workspace_id }
+			let sessionIds: string[]
+			if (session_id) {
+				sessionIds = [session_id]
+			} else if (conversation_id && actor_id) {
+				const rows = await fetchChatSessions(config, workspace_id, conversation_id)
+				sessionIds = rows
+					.filter((s) => s.actorId === actor_id && !ENDED_SESSION_STATUSES.includes(s.status))
+					.map((s) => s.id)
+			} else {
+				throw new Error('Give a conversation_id and an actor_id, or a session_id.')
+			}
+			if (sessionIds.length === 0) {
+				return {
+					_meta: meta('stop_chat_agent', config, workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({
+								stopped: false,
+								note: 'That agent has nothing running in this chat, so there is nothing to stop.',
+							}),
+						},
+					],
+				}
+			}
+			const stopped: string[] = []
+			for (const id of sessionIds) {
+				await apiCall(config, 'POST', `/api/sessions/${id}/stop`, undefined, wsOpts)
+				stopped.push(id)
+			}
+			return {
+				_meta: meta('stop_chat_agent', config, workspace_id),
+				content: [
+					{ type: 'text' as const, text: JSON.stringify({ stopped: true, session_ids: stopped }) },
+				],
 			}
 		},
 	)
@@ -5554,7 +6438,9 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				closed_when,
 				tags,
+				targets,
 			} = args
 			const stepList = (args.steps ?? []) as LoopStepInput[]
 			const existingTriggerIds = args.trigger_ids ?? []
@@ -5574,7 +6460,7 @@ export function createMcpServer(config: McpConfig) {
 				),
 				assertLoopTypesValid(
 					config,
-					{ closedStatuses: closed_statuses, steps: stepList },
+					{ closedStatuses: closed_statuses, closedWhen: closed_when, steps: stepList },
 					workspace_id,
 				),
 			])
@@ -5609,7 +6495,9 @@ export function createMcpServer(config: McpConfig) {
 				if (entry_condition !== undefined) metadata.entry_condition = entry_condition
 				if (close_condition !== undefined) metadata.close_condition = close_condition
 				if (closed_statuses !== undefined) metadata.closed_statuses = closed_statuses
+				if (closed_when !== undefined) metadata.closed_when = closed_when
 				if (tags !== undefined) metadata.tags = tags
+				if (targets !== undefined) metadata.targets = targets
 
 				const node: Record<string, unknown> = {
 					$id: 'loop',
@@ -5721,7 +6609,9 @@ export function createMcpServer(config: McpConfig) {
 				entry_condition,
 				close_condition,
 				closed_statuses,
+				closed_when,
 				tags,
+				targets,
 				add_steps,
 				add_trigger_ids,
 				remove_trigger_ids,
@@ -5763,7 +6653,11 @@ export function createMcpServer(config: McpConfig) {
 					),
 					assertLoopTypesValid(
 						config,
-						{ closedStatuses: closed_statuses, steps: add_steps as LoopStepInput[] | undefined },
+						{
+							closedStatuses: closed_statuses,
+							closedWhen: closed_when,
+							steps: add_steps as LoopStepInput[] | undefined,
+						},
 						workspace_id,
 					),
 				])
@@ -5812,7 +6706,9 @@ export function createMcpServer(config: McpConfig) {
 					if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
 					if (close_condition !== undefined) metadataPatch.close_condition = close_condition
 					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
+					if (closed_when !== undefined) metadataPatch.closed_when = closed_when
 					if (tags !== undefined) metadataPatch.tags = tags
+					if (targets !== undefined) metadataPatch.targets = targets
 
 					const body: Record<string, unknown> = {}
 					if (name !== undefined) body.title = name
@@ -6180,6 +7076,32 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'list_for_you',
+		{
+			description: tools.list_for_you.description,
+			inputSchema: tools.list_for_you.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams({ for_actor_id: args.actor_id })
+			const result = (await apiCall(config, 'GET', `/api/for-you?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as { items?: ForYouItemLike[] }
+			const payload = slimForYouItems(
+				Array.isArray(result?.items) ? result.items : [],
+				args.limit ?? FOR_YOU_TOOL_DEFAULT_LIMIT,
+				args.offset ?? 0,
+			)
+			return {
+				_meta: meta('list_for_you', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+				structuredContent: payload,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_notifications',
 		{
 			description: tools.list_notifications.description,
@@ -6350,41 +7272,55 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Sessions ─────────────────────────────────────────────
-	registerAppTool(
-		server,
-		'create_session',
-		{
-			description: tools.create_session.description,
-			inputSchema: tools.create_session.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
-		},
-		async (args) => {
-			if (args.wait) return createSessionAndWait(config, args)
+	// create_sub_chat is the new name for create_session: one handler, two names, so
+	// prompts that still say create_session keep working.
+	for (const toolName of ['create_sub_chat', 'create_session'] as const) {
+		registerAppTool(
+			server,
+			toolName,
+			{
+				description: tools[toolName].description,
+				inputSchema: tools[toolName].inputSchema.shape,
+				_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+			},
+			async (args) => {
+				if (args.wait) return createSessionAndWait(config, args, toolName)
 
-			// `wait` never goes to the create route. The result is always sent back to
-			// the caller, with no opt-out: not waiting means not holding the call open,
-			// not never finding out how it went.
-			const { workspace_id, wait, ...rest } = args
-			const createBody = { ...rest, notify_on_complete: true }
+				// `wait` never goes to the create route. The result is always sent back to
+				// the caller, with no opt-out: not waiting means not holding the call open,
+				// not never finding out how it went.
+				const { workspace_id, wait, ...rest } = args
+				const createBody = { ...rest, notify_on_complete: true }
 
-			const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
-				workspaceId: workspace_id,
-			})) as SessionRow
-			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const enriched = await enrichSessionActorName(config, wsId, result)
-			const withUrl = wsId
-				? addUrl(enriched as Record<string, unknown>, config, wsId, {
-						kind: 'session',
-						id: enriched.id,
-						actorId: (enriched as { actorId?: string }).actorId,
-					})
-				: enriched
-			return {
-				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
-			}
-		},
-	)
+				let result: SessionRow
+				try {
+					result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
+						workspaceId: workspace_id,
+					})) as SessionRow
+				} catch (err) {
+					return sessionNotStartedResult(config, toolName, workspace_id, err)
+				}
+				const wsId = workspace_id ?? config.defaultWorkspaceId
+				const enriched = await enrichSessionActorName(config, wsId, result)
+				const withUrl = wsId
+					? addUrl(enriched as Record<string, unknown>, config, wsId, {
+							kind: 'session',
+							id: enriched.id,
+							actorId: (enriched as { actorId?: string }).actorId,
+						})
+					: enriched
+				return {
+					_meta: meta(toolName, config, (args as { workspace_id?: string }).workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ ...withUrl, handoff: handoffNote(enriched) }),
+						},
+					],
+				}
+			},
+		)
+	}
 
 	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
 	// through the same wrapper as a real tool, so it gets the same tool_call row,
@@ -6645,6 +7581,21 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			if (args.wait) {
+				const current = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${args.id}`,
+					undefined,
+					wsOpts,
+				)) as { id: string; status: string }
+				return waitForSessionResult(config, {
+					toolName: 'get_session',
+					workspaceId: args.workspace_id,
+					session: current,
+					judgeFirst: true,
+				})
+			}
 			const params = new URLSearchParams()
 			if (args.include_logs) {
 				params.set('include_logs', 'true')
@@ -6807,21 +7758,139 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'POST', `/api/sessions/${args.id}/resume`, undefined, {
-				workspaceId: args.workspace_id,
-			})) as SessionRow
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const enriched = await enrichSessionActorName(config, wsId, result)
-			const withUrl = wsId
-				? addUrl(enriched as Record<string, unknown>, config, wsId, {
-						kind: 'session',
-						id: enriched.id,
-						actorId: (enriched as { actorId?: string }).actorId,
+			const { workspace_id, id, message, wait } = args
+			const wsOpts = { workspaceId: workspace_id }
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const reply = (body: unknown) => ({
+				_meta: meta('resume_session', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(body) }],
+			})
+
+			// One tool for every way a session can be not running: look at where it is and
+			// take the matching route. A paused session is restored from its snapshot; one
+			// that has ended gets a follow-up session in the same thread.
+			const before = (await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${id}`,
+				undefined,
+				wsOpts,
+			)) as SessionRow & { status: string }
+
+			if (before.status === 'paused') {
+				const resumed = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${id}/resume`,
+					undefined,
+					wsOpts,
+				)) as SessionRow
+				let messageNote: { message_delivered: false; message_note: string } | undefined
+				if (message) {
+					if (await waitUntilSessionRunning(config, workspace_id, id)) {
+						await sendSessionInput(config, workspace_id, id, message)
+					} else {
+						messageNote = {
+							message_delivered: false,
+							message_note: `The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is. Session id: ${id}.`,
+						}
+					}
+				}
+				if (wait) {
+					return waitForSessionResult(config, {
+						toolName: 'resume_session',
+						workspaceId: workspace_id,
+						session: { id, status: resumed.status as string },
 					})
-				: enriched
+				}
+				return reply({ ...(await presentSession(config, wsId, resumed)), ...messageNote })
+			}
+
+			if (ENDED_SESSION_STATUSES.includes(before.status)) {
+				const { session_id: followUpId } = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${id}/continue`,
+					{ content: message ?? DEFAULT_CONTINUE_MESSAGE },
+					wsOpts,
+				)) as { session_id: string }
+				if (wait) {
+					return waitForSessionResult(config, {
+						toolName: 'resume_session',
+						workspaceId: workspace_id,
+						session: { id: followUpId, status: 'pending' },
+					})
+				}
+				const followUp = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions/${followUpId}`,
+					undefined,
+					wsOpts,
+				)) as SessionRow
+				return reply({
+					...(await presentSession(config, wsId, followUp)),
+					continued_from_session_id: id,
+				})
+			}
+
+			throw sessionStateError(before.status, id)
+		},
+	)
+
+	registerAppTool(
+		server,
+		'send_session_message',
+		{
+			description: tools.send_session_message.description,
+			inputSchema: tools.send_session_message.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, id, content, wait } = args
+			const wsOpts = { workspaceId: workspace_id }
+
+			// Waiting only makes sense for a session that ends after its reply (a helper
+			// started from a chat). One that stays open never finishes, so with no time
+			// limit waiting on it would never return: deliver the message and say so.
+			let waitable = false
+			let session: { id: string; status: string } | undefined
+			if (wait) {
+				const row = (await apiCall(config, 'GET', `/api/sessions/${id}`, undefined, wsOpts)) as {
+					id: string
+					status: string
+					config?: { stop_on_result?: unknown } | null
+				}
+				session = row
+				waitable = row.config?.stop_on_result === true
+			}
+
+			await sendSessionInput(config, workspace_id, id, content)
+
+			if (wait && waitable && session) {
+				return waitForSessionResult(config, {
+					toolName: 'send_session_message',
+					workspaceId: workspace_id,
+					session,
+				})
+			}
 			return {
-				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+				_meta: meta('send_session_message', config, workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify({
+							delivered: true,
+							session_id: id,
+							...(wait
+								? {
+										waited: false,
+										note: 'This session stays open after replying, so there is nothing to wait for. Read its reply with get_session_activity.',
+									}
+								: {}),
+						}),
+					},
+				],
 			}
 		},
 	)
@@ -7028,7 +8097,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it in your environment.`,
+						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it. ${args.kind === 'login' ? 'A login is never in your environment: type it on your computer with desktop_type, using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.' : 'It is in your environment as KEYCHAIN_BYO_APIKEY_<NAME>.'}`,
 					},
 				],
 			}
@@ -7119,7 +8188,7 @@ export function createMcpServer(config: McpConfig) {
 						content: [
 							{
 								type: 'text' as const,
-								text: `You already have access to ${args.credential_name}. It is in your environment; if it is missing, you were started before it was shared, so ask the user to send you a new message.`,
+								text: `You already have access to ${args.credential_name}. An API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}. If it does not work, you were started before it was shared, so ask the user to send you a new message.`,
 							},
 						],
 					}
@@ -7143,7 +8212,144 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it: an API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.`,
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'request_integration_access',
+		{
+			description: tools.request_integration_access.description,
+			inputSchema: tools.request_integration_access.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat; the person allows it there, which sets the same per-agent access
+			// as Settings → Integrations. The agent can never widen its own access from here.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'request_integration_access',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply which integration and what level you need; a workspace admin can set it under Settings → Integrations.',
+				)
+			}
+			try {
+				const res = (await apiCall(
+					config,
+					'POST',
+					`/api/sessions/${sessionId}/integration-access-card`,
+					{
+						integration_id: args.integration_id,
+						level: args.level,
+						...(args.reason ? { reason: args.reason } : {}),
+					},
+					{ workspaceId: args.workspace_id },
+				)) as { already_granted?: boolean }
+				if (res.already_granted) {
+					return {
+						_meta: toolMeta,
+						content: [
+							{
+								type: 'text' as const,
+								text: 'You already have that access to this integration. If a call was refused, you were started before it was allowed, so ask the user to send you a new message.',
+							},
+						],
+					}
+				}
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply which integration and what level you need; a workspace admin can set it under Settings → Integrations.',
+					)
+				}
+				if (status === 404) {
+					return fail(
+						'No connected integration with that id. Call list_integrations for the ids, or connect_integration if it is not connected yet.',
+					)
+				}
+				if (status === 400) {
+					return fail(
+						'That integration cannot be asked for this way. For a saved key or login use list_keychain_credentials and request_keychain_access. A tool server that runs inside you cannot be limited to reading: ask for read_write.',
+					)
+				}
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card asking for that access is now in the chat. The user decides there. End your turn now without a closing message. If they allow it you are restarted with the new access.',
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_mcp_server',
+		{
+			description: tools.add_mcp_server.description,
+			inputSchema: tools.add_mcp_server.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat with the server's details; the person adds it there (secrets typed
+			// into the card, never through the model), which saves it, gives it to the agent that
+			// asked and restarts that session. The agent can never add a server or widen its own
+			// access from here.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'add_mcp_server',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
+				)
+			}
+			const { workspace_id: workspaceId, ...card } = args
+			try {
+				await apiCall(config, 'POST', `/api/sessions/${sessionId}/mcp-server-card`, card, {
+					workspaceId,
+				})
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
+					)
+				}
+				if (status === 400) return fail(reasonFromError(err, 'invalid_param'))
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card to add that server is now in the chat, with its details filled in. The user checks it, types any key it needs and presses Add. End your turn now without a closing message. If they add it you are restarted with the server attached.',
 					},
 				],
 			}
@@ -8257,6 +9463,30 @@ ${claudeCredsBlock}`,
 
 	registerAppTool(
 		server,
+		'desktop_put_file',
+		{
+			description: tools.desktop_put_file.description,
+			inputSchema: tools.desktop_put_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/put-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_put_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'desktop_expose_port',
 		{
 			description: tools.desktop_expose_port.description,
@@ -8359,6 +9589,8 @@ async function main() {
 		defaultWorkspaceId: process.env.DEFAULT_WORKSPACE_ID || process.env.WORKSPACE_ID || '',
 		transport: 'stdio',
 		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+		telemetryEra: 'legacy',
+		telemetryProtocolVersion: 'none',
 	}
 
 	const server = createMcpServer(config)

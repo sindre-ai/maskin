@@ -145,6 +145,8 @@ app.openapi(recordRoute, (async (c) => {
 				// so its User-Agent says nothing about Claude Code or Cursor.
 				client: 'other',
 				actorType: normalizeActorType(c.get('actorType')),
+				mcpEra: body.mcp_era,
+				mcpProtocolVersion: body.mcp_protocol_version,
 			}).catch((err) => logger.warn('mcp trace fan-out failed', { error: String(err) }))
 		}
 	} else if (body.event_type === 'mutation') {
@@ -167,6 +169,24 @@ app.openapi(recordRoute, (async (c) => {
 			requestedShape: body.requested_shape,
 			sessionId: body.session_id ?? null,
 			agentActorId: body.agent_actor_id ?? null,
+			mcpEra: body.mcp_era,
+			mcpProtocolVersion: body.mcp_protocol_version,
+		})
+	} else if (body.event_type === 'alias_use') {
+		// Old-name use. Awaited, unlike the misfire branch: Postgres is the source
+		// of truth for the removal check (PostHog has been dark since 4 Oct), so
+		// the row is written before the sink is answered. `recordMcpAliasUse`
+		// never throws. The actor is the authenticated caller's, never a payload
+		// field — the schema has no slot for one, so it cannot be spoofed.
+		await recordMcpAliasUse(db, workspaceId, {
+			toolName: body.tool_name,
+			sessionId: body.session_id ?? null,
+			transport: body.transport ?? null,
+			renames: body.renames,
+			bothSent: body.both_sent,
+			droppedKeys: body.dropped_keys ?? [],
+			toolAlias: body.tool_alias ?? null,
+			agentActorId: actorId,
 		})
 	} else if (body.event_type === 'alias_use') {
 		// Old-name use. Awaited, unlike the misfire branch: Postgres is the source
@@ -238,6 +258,8 @@ app.openapi(recordRoute, (async (c) => {
 			total_bytes: body.content_bytes + body.structured_content_bytes,
 			total_tokens: body.content_tokens + body.structured_content_tokens,
 			workspace_id: workspaceId,
+			mcp_era: body.mcp_era,
+			mcp_protocol_version: body.mcp_protocol_version,
 		})
 	}
 

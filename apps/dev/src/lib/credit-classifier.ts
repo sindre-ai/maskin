@@ -5,7 +5,7 @@ import {
 	parseResultLine,
 } from '@maskin/shared'
 
-import { parseCliResetBanner } from './subscription-limit-reset'
+import { parseCliResetBanner, parseRateLimitEventReset } from './subscription-limit-reset'
 
 const CLI_BANNERS: ReadonlyArray<{
 	match: string
@@ -100,15 +100,21 @@ export function classifyCreditExhaustion(
 	// tail we see, so the reset-at parity cells succeed even when the classifier
 	// hits a banner (source 3 in §17.2). Best-effort — null when the fragment
 	// doesn't match or falls outside the [now+60s, now+24h] clamp.
-	const bannerResetAt = parseCliResetBanner(tail)?.toISOString() ?? null
-	// §7.5: when the banner parsed, stamp source + confidence on the failure
-	// reason so the retry-scheduler can carry them onto the session_retry_scheduled
-	// audit event. The CLI banner is the ONLY parse source that reaches this
-	// classifier — Anthropic response headers land in the failover companion at
-	// claude-failover.ts and never see this code path — so the source is
-	// always 'cli-banner' + 'advisory' when the banner matched.
+	// The CLI's rate_limit_event carries the reset as an epoch, so it wins over the
+	// banner text, whose time zone we may not be able to read.
+	const eventResetAt = parseRateLimitEventReset(tail)?.toISOString() ?? null
+	const bannerResetAt = eventResetAt ?? parseCliResetBanner(tail)?.toISOString() ?? null
+	// §7.5: when a reset parsed, stamp source + confidence on the failure reason so
+	// the retry-scheduler can carry them onto the session_retry_scheduled audit
+	// event. Anthropic response headers land in the failover companion at
+	// claude-failover.ts and never see this code path, so the source is always the
+	// CLI's output: advisory for the banner, authoritative for the event's epoch.
 	const resetStamp: Pick<SessionResultFailureReason, 'reset_source' | 'reset_confidence'> =
-		bannerResetAt !== null ? { reset_source: 'cli-banner', reset_confidence: 'advisory' } : {}
+		eventResetAt !== null
+			? { reset_source: 'cli-banner', reset_confidence: 'authoritative' }
+			: bannerResetAt !== null
+				? { reset_source: 'cli-banner', reset_confidence: 'advisory' }
+				: {}
 
 	for (const banner of CLI_BANNERS) {
 		if (tail.includes(banner.match)) {
@@ -268,5 +274,84 @@ export function classifySessionExit(
 				: null
 		}
 	}
-	return classifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 })
+	return (
+		(exitCode !== 0 ? classifyClaudeAuthFailure(tail) : null) ??
+		classifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 })
+	)
+}
+
+/**
+ * What the Claude Code CLI writes as the final result when the model API
+ * answered 401 and the CLI could not renew its login ("Failed to authenticate:
+ * OAuth session expired and could not be refreshed"). It is not one of
+ * CLI_BANNERS on purpose: classifying it would feed the failover path, which
+ * must not move a healthy slot over a login that simply expired in a container.
+ */
+const CLI_AUTH_DEATH_PREFIX = 'Failed to authenticate'
+
+/** True when a session's final error text is the CLI giving up on a 401. */
+export function isClaudeAuthDeathText(text: string): boolean {
+	return text.trimStart().startsWith(CLI_AUTH_DEATH_PREFIX)
+}
+
+/**
+ * True when the tail's final stream-json result is an error that opens with the
+ * CLI's authentication failure. Only the final result is read, so the same
+ * words in a tool's output (an agent reading these logs) do not count.
+ */
+export function endsInClaudeAuthDeath(tail: string): boolean {
+	const result = findFinalResult(tail)
+	return result?.isError === true && isClaudeAuthDeathText(result.text)
+}
+
+const CLI_AUTH_FAILURES: ReadonlyArray<{
+	prefix: string
+	reasonCode: FailureReasonCode
+	humanMessage: string
+}> = [
+	{
+		prefix: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+		reasonCode: 'oauth_expired',
+		humanMessage:
+			'Claude login expired and could not be refreshed — reconnect your Claude subscription',
+	},
+	{
+		prefix: 'Invalid API key',
+		reasonCode: 'invalid_api_key',
+		humanMessage: 'Claude API key was rejected — reconnect your Claude subscription or API key',
+	},
+]
+
+/**
+ * Names the two final errors the CLI ends on when its credential is dead.
+ * Only the final error result is read, so the same words in a tool's output do
+ * not count. These codes are left out of the failover list in session-manager.ts
+ * and carry no reset time, so the failure is stored with a reason but never
+ * moves a slot and never schedules a retry.
+ */
+export function classifyClaudeAuthFailure(tail: string): SessionResultFailureReason | null {
+	const result = findFinalResult(tail)
+	if (result?.isError !== true) return null
+	return classifyClaudeAuthFailureText(result.text)
+}
+
+/**
+ * Same rule on a final error text that is already isolated, which is what the
+ * helper close-out has (it never sees a stdout tail). The caller must only pass
+ * the text of an error result.
+ */
+export function classifyClaudeAuthFailureText(
+	errorText: string,
+): SessionResultFailureReason | null {
+	const text = errorText.trimStart()
+	const failure = CLI_AUTH_FAILURES.find((f) => text.startsWith(f.prefix))
+	if (!failure) return null
+	return {
+		provider: 'anthropic',
+		reason_code: failure.reasonCode,
+		human_message: failure.humanMessage,
+		http_status: 401,
+		reset_at: null,
+		verbatim_output: text.slice(0, 300),
+	}
 }

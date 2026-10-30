@@ -38,8 +38,11 @@ protocol RealtimeTransport: AnyObject {
 @MainActor
 @Observable
 final class RealtimeVoiceCall: LiveVoiceDriving {
-	/// How long a dropped connection gets to come back before the call is ended.
-	static let reconnectWindow: Duration = .seconds(15)
+	/// How long a dropped connection gets to come back by itself before a new call is started.
+	static let reconnectWindow: Duration = .seconds(30)
+	/// How long to wait before each try at a new call once the old one is lost, which also bounds how
+	/// many tries there are. A cell handover or a tunnel is usually over within this.
+	static let recoveryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(6), .seconds(10), .seconds(15)]
 
 	private(set) var machine = RealtimeCallMachine()
 	private(set) var failure: String?
@@ -51,13 +54,18 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	var agentWords: String? { machine.lastAgentWords }
 
 	@ObservationIgnored var onFallBack: (@MainActor () -> Void)?
+	/// Called with each finished line of the call, yours or the agent's, as it is transcribed, so
+	/// the thread can keep it (the call itself posts nothing to the chat).
+	@ObservationIgnored var onLine: (@MainActor (_ isYou: Bool, _ text: String) -> Void)?
 
 	@ObservationIgnored private let agentID: String
 	@ObservationIgnored private let agentName: String
+	@ObservationIgnored private let conversationID: String?
 	@ObservationIgnored private let calls: any VoiceCalling
 	@ObservationIgnored private let makeTransport: @MainActor () -> (any RealtimeTransport)?
 	@ObservationIgnored private let now: @MainActor () -> Date
 	@ObservationIgnored private let reconnectWindow: Duration
+	@ObservationIgnored private let recoveryDelays: [Duration]
 
 	@ObservationIgnored private var transport: (any RealtimeTransport)?
 	@ObservationIgnored private var voiceSessionID: String?
@@ -65,27 +73,45 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	@ObservationIgnored private var startTask: Task<Void, Never>?
 	@ObservationIgnored private var reconnectTask: Task<Void, Never>?
 	@ObservationIgnored private var restartedIce = false
+	/// A call that was lost and whose hangup may not have reached the server, which would keep the
+	/// person's one live-call slot taken and make the next call a 409.
+	@ObservationIgnored private var lostSession: (id: String, input: Int, output: Int)?
+	/// Messages already in the thread when the call began, or already looked at.
+	@ObservationIgnored private var knownMessageIDs: Set<String> = []
+	/// The data channel is open once the edge's first event has arrived.
+	@ObservationIgnored private var channelOpen = false
+	/// Typed lines waiting for the data channel to open.
+	@ObservationIgnored private var queuedChatItems: [String] = []
 
+	/// `conversationID` is the chat the call is started from; the server gives the agent its recent
+	/// messages. Nil when the call isn't tied to a chat.
 	init(
-		agentID: String, agentName: String, calls: any VoiceCalling,
+		agentID: String, agentName: String, conversationID: String? = nil, calls: any VoiceCalling,
 		makeTransport: @escaping @MainActor () -> (any RealtimeTransport)?,
 		now: @escaping @MainActor () -> Date = { Date() },
-		reconnectWindow: Duration = RealtimeVoiceCall.reconnectWindow
+		reconnectWindow: Duration = RealtimeVoiceCall.reconnectWindow,
+		recoveryDelays: [Duration] = RealtimeVoiceCall.recoveryDelays
 	) {
 		self.agentID = agentID
 		self.agentName = agentName
+		self.conversationID = conversationID
 		self.calls = calls
 		self.makeTransport = makeTransport
 		self.now = now
 		self.reconnectWindow = reconnectWindow
+		self.recoveryDelays = recoveryDelays
 	}
 
 	// MARK: LiveVoiceDriving
 
-	/// Start the call. Messages already in the thread don't matter: the conversation is by voice.
+	/// Start the call. The thread's earlier messages aren't sent from here: the server reads them
+	/// from `conversationID` and hands them to the agent.
 	func begin(existing: [ChatMessage]) {
 		guard !isActive else { return }
 		isActive = true
+		knownMessageIDs = Set(existing.map(\.id))
+		channelOpen = false
+		queuedChatItems = []
 		failure = nil
 		startTask = Task { [weak self] in await self?.connect() }
 	}
@@ -105,25 +131,59 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	/// Stop the agent talking and listen at once.
 	func interrupt() { run(machine.interrupted(at: now())) }
 
-	/// The conversation is by voice; chat messages are not part of it.
-	func messagesChanged(_ messages: [ChatMessage]) {}
+	/// The conversation is by voice, but a line typed in the chat during the call (yours, or another
+	/// person's in a group chat) is handed to the agent as a conversation item. The server saves the
+	/// call's own spoken lines into the thread as the call runs (marked as voice), so those and agent
+	/// messages are skipped: nothing the call said comes back to it.
+	func messagesChanged(_ messages: [ChatMessage]) {
+		guard isActive else { return }
+		for message in messages where !knownMessageIDs.contains(message.id) {
+			// A line that hasn't reached the thread yet is looked at again when it has.
+			if message.isFailed { continue }
+			if case .waiting = message.status { continue }
+			knownMessageIDs.insert(message.id)
+			guard message.author != .agent, !message.isVoiceTranscript, message.showsInTimeline, !message.isSystem,
+				!message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+			else { continue }
+			let item = RealtimeCallMachine.chatMessageItem(from: message.actorName, text: message.content)
+			if channelOpen { transport?.send(item) } else { queuedChatItems.append(item) }
+		}
+	}
+
+	/// Tell the agent something the person did mid-call (a tap in the dock) and have it carry on.
+	/// While the agent is speaking only the note is added: a second response then would be refused
+	/// as "already active", and the agent sees the note on its next turn. Waits for the data channel
+	/// like a typed line does.
+	func tell(_ text: String) {
+		guard isActive else { return }
+		var events = [RealtimeCallMachine.userNoteItem(text)]
+		if machine.phase != .speaking { events.append(RealtimeCallMachine.responseRequest) }
+		if channelOpen {
+			for event in events { transport?.send(event) }
+		} else {
+			queuedChatItems += events
+		}
+	}
 
 	// MARK: Connecting
 
-	private func connect() async {
+	/// Sets up one call. While `recovering`, a failure that may be the network still being down returns
+	/// false so the caller tries again; otherwise a failure ends the call. True means it is over or up.
+	@discardableResult
+	private func connect(recovering: Bool = false) async -> Bool {
 		guard let transport = makeTransport() else {
 			fallBack()
-			return
+			return true
 		}
 		self.transport = transport
 		do {
-			let id = try await calls.create(agentActorID: agentID)
+			let id = try await calls.create(agentActorID: agentID, conversationID: conversationID)
 			voiceSessionID = id
 			// Ended while the slot was being reserved: give it straight back.
 			guard isActive else {
 				transport.close()
 				release(reason: .userHangup)
-				return
+				return true
 			}
 			let sdp = try await transport.makeOffer(
 				onEvent: { [weak self] data in self?.received(data) },
@@ -133,26 +193,41 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 			guard isActive else {
 				transport.close()
 				release(reason: .userHangup)
-				return
+				return true
 			}
 			let answer = try await calls.offer(voiceSessionID: id, sdp: sdp)
 			machine.toolsAvailable = answer.toolsAvailable
 			try await transport.accept(answer: answer.sdp)
 			transport.setMicEnabled(!isMuted)
+			return true
+		} catch RealtimeTransportError.microphoneDenied {
+			stop(because: "Allow Microphone access in Settings to talk with \(agentName).")
+		} catch is CancellationError {
+			transport.close()
 		} catch let error as VoiceCallFailure {
+			if recovering, !error.shouldFallBack { return retryLater(transport) }
 			if error.shouldFallBack, voiceSessionID == nil {
 				fallBack()
 			} else {
 				stop(because: error.message)
 			}
-		} catch RealtimeTransportError.microphoneDenied {
-			stop(because: "Allow Microphone access in Settings to talk with \(agentName).")
-		} catch is CancellationError {
-			transport.close()
-			return
 		} catch {
+			if recovering { return retryLater(transport) }
 			stop(because: "Couldn't connect the call. Try again.")
 		}
+		return true
+	}
+
+	/// This try at a new call failed and the network may simply still be down: give back what it took
+	/// (the slot it reserved, the microphone) and say the caller should try again.
+	private func retryLater(_ transport: any RealtimeTransport) -> Bool {
+		transport.close()
+		self.transport = nil
+		if let id = voiceSessionID {
+			voiceSessionID = nil
+			lostSession = (id, 0, 0)
+		}
+		return false
 	}
 
 	/// Nothing was reserved (or it has been released): hand over to the dictation call.
@@ -175,7 +250,16 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 
 	private func received(_ data: Data) {
 		guard isActive, let event = RealtimeEvent.parse(data) else { return }
+		let seen = machine.lines.count
 		run(machine.handle(event, at: now()))
+		for line in machine.lines.dropFirst(seen) where line.kind != .tool {
+			onLine?(line.kind == .user, line.text)
+		}
+		if !channelOpen {
+			channelOpen = true
+			for item in queuedChatItems { transport?.send(item) }
+			queuedChatItems = []
+		}
 	}
 
 	private func run(_ commands: [RealtimeCallMachine.Command]) {
@@ -204,8 +288,45 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 			reconnectTask = Task { [weak self] in
 				try? await Task.sleep(for: window)
 				guard !Task.isCancelled else { return }
-				self?.stop(because: "The connection dropped and could not be restored.")
+				self?.recoverLostCall()
 			}
+		}
+	}
+
+	/// The connection did not come back by itself. The person is still there, so rather than ending
+	/// the call, close this one and start a new call on the same chat (the server hands the agent the
+	/// chat's recent messages, including this call's lines), trying again for a while.
+	private func recoverLostCall() {
+		guard isActive else { return }
+		startTask?.cancel()
+		release(reason: .networkError)
+		channelOpen = false
+		startTask = Task { [weak self] in await self?.recover() }
+	}
+
+	private func recover() async {
+		for delay in recoveryDelays {
+			try? await Task.sleep(for: delay)
+			guard isActive, !Task.isCancelled else { return }
+			await freeLostSlot()
+			guard isActive, !Task.isCancelled else { return }
+			if await connect(recovering: true) { return }
+		}
+		await freeLostSlot()
+		stop(because: "The connection dropped and could not be restored.")
+	}
+
+	/// Says the lost call is over, until the server has heard it, so the next call is not refused.
+	private func freeLostSlot() async {
+		guard let lost = lostSession else { return }
+		do {
+			// The receipt it returns is not needed; only that the server heard it.
+			_ = try await calls.hangup(
+				voiceSessionID: lost.id, reason: .networkError, inputAudioSeconds: lost.input,
+				outputAudioSeconds: lost.output)
+			lostSession = nil
+		} catch {
+			// Still offline: it is said again before the next try.
 		}
 	}
 
@@ -226,10 +347,18 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		transport = nil
 		guard let id else { return }
 		let calls = calls
-		Task {
+		Task { [weak self] in
 			// A hangup that fails must not trap anyone: the server's idle sweeper closes the call anyway.
-			_ = try? await calls.hangup(
-				voiceSessionID: id, reason: reason, inputAudioSeconds: input, outputAudioSeconds: output)
+			let done: Bool
+			do {
+				_ = try await calls.hangup(
+					voiceSessionID: id, reason: reason, inputAudioSeconds: input, outputAudioSeconds: output)
+				done = true
+			} catch {
+				done = false
+			}
+			// A lost call whose hangup did not land is said again before the next call is made.
+			if !done, reason == .networkError { self?.lostSession = (id, input, output) }
 		}
 	}
 }

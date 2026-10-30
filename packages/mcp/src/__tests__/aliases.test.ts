@@ -2,11 +2,10 @@ import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-sc
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { normaliseArgs } from '../alias-layer'
-import { ALIASES, DEFAULT_WORKSPACE_TOOLS } from '../aliases'
+import { ALIASES } from '../aliases'
 import { tools } from '../tools'
 import {
 	type AliasHarness,
-	DEFAULT_WORKSPACE_ID,
 	ROW_SCENARIOS,
 	isValidationError,
 	startAliasHarness,
@@ -122,40 +121,6 @@ describe('normaliseArgs', () => {
 	it('passes arguments that are not an object through untouched', () => {
 		expect(normaliseArgs('get_objects', undefined).args).toBeUndefined()
 		expect(normaliseArgs('get_objects', 'x').args).toBe('x')
-	})
-
-	describe('default workspace', () => {
-		it.each([...DEFAULT_WORKSPACE_TOOLS])(
-			'fills workspace_id on %s when it is left out',
-			(tool) => {
-				const result = normaliseArgs(tool, {}, { defaultWorkspaceId: DEFAULT_WORKSPACE_ID })
-				expect(result.args).toEqual({ workspace_id: DEFAULT_WORKSPACE_ID })
-				// A relaxation, not an alias: it is never reported as a rename.
-				expect(result.renames).toEqual([])
-			},
-		)
-
-		it('keeps a workspace_id the caller sent', () => {
-			const result = normaliseArgs(
-				'list_objects',
-				{ workspace_id: U1 },
-				{ defaultWorkspaceId: DEFAULT_WORKSPACE_ID },
-			)
-			expect(result.args).toEqual({ workspace_id: U1 })
-		})
-
-		it('does nothing when the connection has no default workspace', () => {
-			expect(normaliseArgs('list_objects', {}, { defaultWorkspaceId: '' }).args).toEqual({})
-		})
-
-		it('does not touch tools outside the three', () => {
-			const result = normaliseArgs(
-				'create_session',
-				{},
-				{ defaultWorkspaceId: DEFAULT_WORKSPACE_ID },
-			)
-			expect(result.args).toEqual({})
-		})
 	})
 })
 
@@ -317,25 +282,6 @@ describe('through the real SDK path', () => {
 	it('a required field still has to be there', async () => {
 		expect(isValidationError(await harness.call('get_objects', {}))).toBe(true)
 	})
-
-	it('workspace_id: falls back to the default on create_objects and list_objects', async () => {
-		const created = await harness.call('create_objects', {
-			nodes: [{ $id: 'a', type: 'task', status: 'todo', title: 'A task' }],
-		})
-		expect(isValidationError(created)).toBe(false)
-		expect(created.requests.every((r) => r.workspace === DEFAULT_WORKSPACE_ID)).toBe(true)
-		expect(isValidationError(await harness.call('list_objects', {}))).toBe(false)
-	})
-
-	it('workspace_id: falls back to the default on create_loop', async () => {
-		const outcome = await harness.call('create_loop', {
-			name: 'A loop',
-			steps: [{ name: 'Step', agent_id: U1, prompt: 'Go', when: { cron: '0 9 * * *' } }],
-		})
-		// The call fails further in (the agent does not exist). It must get past
-		// argument validation without a workspace_id.
-		expect(isValidationError(outcome)).toBe(false)
-	})
 })
 
 describe('tools/list', () => {
@@ -350,7 +296,7 @@ describe('tools/list', () => {
 
 	it('advertises exactly the canonical schema for every wrapped tool', async () => {
 		const listed = new Map((await harness.listTools()).map((t) => [t.name, t.inputSchema]))
-		const wrapped = new Set([...ALIASES.map((r) => r.tool), ...DEFAULT_WORKSPACE_TOOLS])
+		const wrapped = new Set(ALIASES.map((r) => r.tool))
 		expect(wrapped.size).toBeGreaterThan(0)
 		for (const name of wrapped) {
 			const canonical = tools[name as keyof typeof tools]
@@ -360,14 +306,6 @@ describe('tools/list', () => {
 				pipeStrategy: 'input',
 			})
 			expect(listed.get(name), name).toEqual(expected)
-		}
-	})
-
-	it('keeps workspace_id required where it is required today', async () => {
-		const listed = new Map((await harness.listTools()).map((t) => [t.name, t.inputSchema]))
-		for (const name of DEFAULT_WORKSPACE_TOOLS) {
-			const schema = listed.get(name) as { required?: string[] }
-			expect(schema.required, name).toContain('workspace_id')
 		}
 	})
 })

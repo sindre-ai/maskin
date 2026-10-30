@@ -18,6 +18,8 @@ final class LiveMeetingSession {
 	/// server won't take the call) the dictation loop.
 	private(set) var voice: any LiveVoiceDriving
 
+	/// Whether the call began in a thread that already existed or made its own; the header's sub line differs.
+	var origin: LiveCallOrigin = .thread
 	private(set) var guests: [ChatParticipant] = []
 	private(set) var startedAt: Date?
 	private(set) var endedAt: Date?
@@ -30,6 +32,13 @@ final class LiveMeetingSession {
 	var showsCaptions = true
 	/// Loudspeaker (true) or earpiece.
 	private(set) var usesSpeaker = true
+	/// What was said in a voice call, as it was transcribed. Observed, so the thread's card follows it.
+	private(set) var lines: [LiveCallLine] = []
+
+	/// Answers given from the dock's "Deciding now" card, newest last. Also kept in the call's record,
+	/// which is what the thread draws its DECIDED row from until the server's own row arrives; this
+	/// copy is observed, so the thread redraws on a new answer.
+	private(set) var decisions: [LiveCallDecision] = []
 
 	@ObservationIgnored private let now: () -> Date
 	@ObservationIgnored let dictation: LiveVoiceController
@@ -70,9 +79,18 @@ final class LiveMeetingSession {
 		if let realtime {
 			voice = realtime
 			realtime.onFallBack = { [weak self] in self?.useDictation() }
+			realtime.onLine = { [weak self] isYou, text in self?.keep(isYou: isYou, text: text) }
 		} else {
 			voice = dictation
 		}
+	}
+
+	/// A finished line of a voice call goes to the call's record on this device: the call posts nothing
+	/// to the chat, so this is what the card shows during the call and after it.
+	private func keep(isYou: Bool, text: String) {
+		let line = LiveCallLine(isYou: isYou, text: text, at: now())
+		lines.append(line)
+		if let id = callRef.id { log.update(id) { $0.lines.append(line) } }
 	}
 
 	/// The server can't take a voice call for this person: carry on as a dictated conversation.
@@ -89,6 +107,24 @@ final class LiveMeetingSession {
 	var hasPendingWords: Bool { isDictating && dictation.phase != .speaking && dictation.machine.pendingText != nil }
 
 	func sendNow() { dictation.sendNow() }
+
+	/// Note a dock answer for the thread's DECIDED row.
+	func recordDecision(label: String, question: String) {
+		let decision = LiveCallDecision(at: now(), question: question, choice: label)
+		decisions.append(decision)
+		if let id = callRef.id { log.update(id) { $0.decisions.append(decision) } }
+	}
+
+	/// Tell the agent on the call what the person just did in the dock, so it carries on. The
+	/// Realtime call takes it as a spoken-turn note; the dictation call, which lives in the chat,
+	/// gets it as a message from the person.
+	func tellAgent(_ text: String) {
+		if let realtime = voice as? RealtimeVoiceCall {
+			realtime.tell(text)
+		} else {
+			_ = chat.send(text)
+		}
+	}
 
 	var isLive: Bool { startedAt != nil && endedAt == nil }
 

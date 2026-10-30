@@ -131,7 +131,7 @@ function makeFakeDb(
 								if (ctx.sorted && name === 'session_dispatch_attempts') {
 									out = (out as DispatchRow[])
 										.slice()
-										.sort((a, b) => a.nextAttemptAt.getTime() - b.nextAttemptAt.getTime())
+										.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
 								}
 								const limited = out.slice(0, n)
 								const promise: Promise<unknown> & {
@@ -204,6 +204,15 @@ function makeFakeDb(
 }
 
 /**
+ * settleSession revokes the session's API keys after its terminal write. That query runs against
+ * the api_keys table, which the schema and drizzle stubs below don't model, so it is stubbed out
+ * here; its own behaviour is covered in packages/auth.
+ */
+vi.mock('@maskin/auth', () => ({
+	revokeSessionKeys: vi.fn(async () => []),
+}))
+
+/**
  * Replace drizzle's opaque predicate types with a `__pred` function the fake
  * DB can evaluate against rows in memory. Real drizzle ignores the body — only
  * the fake reads `__pred`.
@@ -212,8 +221,9 @@ vi.mock('drizzle-orm', async () => {
 	const eq = (col: { __name: string }, v: unknown) => ({
 		__pred: (r: Record<string, unknown>) => r[col.__name] === v,
 	})
-	const and = (...preds: { __pred: (r: Record<string, unknown>) => boolean }[]) => ({
-		__pred: (r: Record<string, unknown>) => preds.every((p) => p.__pred(r)),
+	// Like drizzle's `and`, skips an `undefined` condition.
+	const and = (...preds: ({ __pred: (r: Record<string, unknown>) => boolean } | undefined)[]) => ({
+		__pred: (r: Record<string, unknown>) => preds.every((p) => !p || p.__pred(r)),
 	})
 	const lte = (col: { __name: string }, v: Date) => ({
 		__pred: (r: Record<string, unknown>) =>
@@ -262,6 +272,7 @@ vi.mock('@maskin/db/schema', () => {
 			status: col('status'),
 			nextAttemptAt: col('nextAttemptAt'),
 			lastError: col('lastError'),
+			createdAt: col('createdAt'),
 		},
 		sessions: {
 			_: { name: 'sessions' },
@@ -574,6 +585,28 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 				workspaceId: 'ws-nocreds',
 				reasonCode: 'not_logged_in',
 			}),
+		)
+	})
+
+	it('passes noCredentialsConfigured through to onPermanentFailure', async () => {
+		const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
+		const session = aSessionRow({ workspaceId: 'ws-empty' })
+		const { db } = makeFakeDb({ dispatchRows: [row], sessionRows: [session] })
+		const onPermanentFailure = vi.fn()
+		const queue = makeQueue(
+			db,
+			async () => ({
+				kind: 'permanent_failure',
+				error: 'nothing configured',
+				noCredentialsConfigured: true,
+			}),
+			{ onPermanentFailure },
+		)
+
+		await queue.tick()
+
+		expect(onPermanentFailure).toHaveBeenCalledWith(
+			expect.objectContaining({ workspaceId: 'ws-empty', noCredentialsConfigured: true }),
 		)
 	})
 

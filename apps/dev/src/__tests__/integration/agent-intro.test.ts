@@ -29,6 +29,14 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: vi.fn().mockResolvedValue(undefined),
 }))
 
+// The routes build a real scan runner (a background session as the new agent). These
+// tests drive the one-message intro through the routes, so no runner is built; the scanned
+// two-message flow passes its own `scan` to introduceAgentToRecipient below.
+vi.mock('../../services/agent-intro-scan', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/agent-intro-scan')>()
+	return { ...actual, createIntroScanRunner: vi.fn(() => undefined) }
+})
+
 // Wraps the real postToDirectChat so one test can make the insert fail.
 vi.mock('../../services/direct-chat', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../services/direct-chat')>()
@@ -40,6 +48,7 @@ const { default: conversationsRoutes } = await import('../../routes/conversation
 const { capturePosthogEvent } = await import('../../lib/analytics/posthog')
 const directChat = await import('../../services/direct-chat')
 const { introduceAgentToRecipient } = await import('../../services/agent-intro')
+const { directPairKey } = directChat
 
 const captured = vi.mocked(capturePosthogEvent)
 const postToDirectChat = vi.mocked(directChat.postToDirectChat)
@@ -142,7 +151,8 @@ function createAgent(
 	)
 }
 
-async function introChatsFor(agentId: string) {
+/** Every chat the agent is in: its DM exists before the intro is written. */
+async function directChatsFor(agentId: string) {
 	return db
 		.select({ conversation: conversations })
 		.from(conversations)
@@ -151,6 +161,21 @@ async function introChatsFor(agentId: string) {
 			eq(conversationParticipants.conversationId, conversations.id),
 		)
 		.where(eq(conversationParticipants.actorId, agentId))
+}
+
+/** The chats where the agent has said something, which is where its intro landed. */
+async function introChatsFor(agentId: string) {
+	return db
+		.select({ conversation: conversations })
+		.from(conversations)
+		.innerJoin(messages, eq(messages.conversationId, conversations.id))
+		.where(eq(messages.actorId, agentId))
+		.groupBy(conversations.id)
+}
+
+/** Messages an agent has written anywhere: its intro, when one was sent. */
+async function messagesBy(agentId: string) {
+	return db.select({ id: messages.id }).from(messages).where(eq(messages.actorId, agentId))
 }
 
 async function participantIds(conversationId: string) {
@@ -187,7 +212,7 @@ beforeEach(() => {
 })
 
 describe('Agent intro — human creator (POST /api/actors)', () => {
-	it('opens one Meet chat with the creator, an intro from the agent, and unread 1', async () => {
+	it('opens one 1-1 titled with the agent name, an intro from the agent, and unread 1', async () => {
 		const { ws, human, key } = await setup()
 		const name = `Scout ${randomUUID()}`
 
@@ -201,8 +226,9 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 		})
 		expect(chats).toHaveLength(1)
 		const chat = chats?.[0]?.conversation
-		expect(chat?.title).toBe(`Meet ${name}`)
+		expect(chat?.title).toBe(name)
 		expect(chat?.titleAutoState).toBe('none')
+		expect(chat?.directPairKey).toBe(directPairKey(human.id, created.id))
 		expect(chat?.createdBy).toBe(human.id)
 		expect(await participantIds(chat?.id as string)).toEqual([human.id, created.id].sort())
 
@@ -214,9 +240,7 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 		expect(msgs[0]?.actorId).toBe(created.id)
 		expect(msgs[0]?.metadata).toMatchObject({ delivery: { kind: 'agent_intro', version: 1 } })
 		expect(msgs[0]?.content).toContain(`I'm ${name}`)
-		expect(msgs[0]?.content).toContain(
-			"I'll reply here. Only things that need your decision go to For You.",
-		)
+		expect(msgs[0]?.content).not.toContain('go to For You')
 
 		// What the chat list shows the person.
 		const list = await createConversationsAppAs(human.id).request(
@@ -282,8 +306,43 @@ describe('Agent intro — human creator (POST /api/actors)', () => {
 			return calls.length > 0 ? calls : undefined
 		})
 		expect(failed?.[0]?.[2]).toMatchObject({ agent_id: created.id, stage: 'insert' })
-		// The transaction rolled back, so no half-made chat is left behind.
-		expect(await introChatsFor(created.id)).toHaveLength(0)
+		// The intro's transaction rolled back with no message, but the DM was made first.
+		const chats = await directChatsFor(created.id)
+		expect(chats).toHaveLength(1)
+		expect(chats[0]?.conversation.directPairKey).not.toBeNull()
+		expect(await messagesBy(created.id)).toHaveLength(0)
+	})
+
+	it('posts into the 1-1 the person already has with the agent and creates no second chat', async () => {
+		const { ws, human } = await setup()
+		const agent = await insertMember(ws.id, { type: 'agent', name: `Existing ${randomUUID()}` })
+		const existing = await insertConversation(db, ws.id, human.id, {
+			directPairKey: directPairKey(human.id, agent.id),
+		})
+		await db.insert(conversationParticipants).values([
+			{ conversationId: existing.id, actorId: human.id, addedBy: human.id },
+			{ conversationId: existing.id, actorId: agent.id, addedBy: human.id },
+		])
+
+		await introduceAgentToRecipient({
+			db,
+			actor: agent,
+			workspaceId: ws.id,
+			creator: { id: human.id, type: 'human' },
+			claimedSessionId: undefined,
+			clientSource: undefined,
+		})
+
+		const inWorkspace = await db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(eq(conversations.workspaceId, ws.id))
+		expect(inWorkspace.map((c) => c.id)).toEqual([existing.id])
+		const msgs = await db.select().from(messages).where(eq(messages.conversationId, existing.id))
+		expect(msgs).toHaveLength(1)
+		expect(msgs[0]?.actorId).toBe(agent.id)
+		expect(msgs[0]?.metadata).toMatchObject({ delivery: { kind: 'agent_intro', version: 1 } })
+		expect(capturesOf('agent_intro_sent')[0]?.[2]).toMatchObject({ conversation_id: existing.id })
 	})
 
 	it('makes one chat when two hook calls race for the same agent', async () => {
@@ -323,7 +382,7 @@ describe('Agent intro — agent creator (Chief of Staff style)', () => {
 		})
 		expect(chats).toHaveLength(1)
 		const chat = chats?.[0]?.conversation
-		expect(chat?.title).toBe(`Meet ${name}`)
+		expect(chat?.title).toBe(name)
 		expect(await participantIds(chat?.id as string)).toEqual([human.id, created.id].sort())
 
 		const [msg] = await db
@@ -480,9 +539,12 @@ describe('Agent intro — agent creator (Chief of Staff style)', () => {
 		const secondId = ((await secondRes.json()) as { id: string }).id
 		await waitFor(async () => ((await introChatsFor(secondId)).length > 0 ? true : undefined))
 
-		const delivered = await Promise.all(firstIds.map((id) => introChatsFor(id)))
-		expect(delivered.filter((rows) => rows.length === 1)).toHaveLength(5)
-		expect(delivered[5]).toHaveLength(0)
+		// Every agent has its DM with the person; the sixth intro is the one the cap held back.
+		const chats = await Promise.all(firstIds.map((id) => directChatsFor(id)))
+		expect(chats.every((rows) => rows.length === 1)).toBe(true)
+		const intros = await Promise.all(firstIds.map((id) => messagesBy(id)))
+		expect(intros.filter((rows) => rows.length === 1)).toHaveLength(5)
+		expect(intros[5]).toHaveLength(0)
 		expect(capturesOf('agent_intro_skipped').map((c) => c[2]?.reason)).toEqual(['rate_cap'])
 		expect(await introChatsFor(secondId)).toHaveLength(1)
 	})
@@ -552,7 +614,7 @@ describe('Agent intro — render', () => {
 		const text = await introTextFor(ws, `NoKey ${randomUUID()}`, bearer(key))
 
 		expect(text).toContain("I can't run yet. Connect your Claude subscription or API key")
-		expect(text).toContain("I'll reply here. Only things that need your decision go to For You.")
+		expect(text).not.toContain('go to For You')
 	})
 })
 
@@ -810,5 +872,133 @@ describe('Agent intro — hints from the creator', () => {
 
 		expect(withHints.status).toBe(201)
 		expect(withTools.status).toBe(403)
+	})
+})
+
+describe('Agent intro — scanned first steps', () => {
+	async function setupWithKey() {
+		const ctx = await setup()
+		await db
+			.update(workspaces)
+			.set({ settings: { llm_keys: { anthropic: 'sk-ant-test' } } })
+			.where(eq(workspaces.id, ctx.ws.id))
+		const agent = await insertMember(ctx.ws.id, { type: 'agent', name: `Scanner ${randomUUID()}` })
+		return {
+			...ctx,
+			agent,
+			args: {
+				db,
+				actor: agent,
+				workspaceId: ctx.ws.id,
+				creator: { id: ctx.human.id, type: 'human' },
+				claimedSessionId: undefined,
+				clientSource: undefined,
+			},
+		}
+	}
+
+	async function chatMessages(agentId: string) {
+		const [chat] = await introChatsFor(agentId)
+		return db
+			.select()
+			.from(messages)
+			.where(eq(messages.conversationId, chat?.conversation.id as string))
+			.orderBy(messages.id)
+	}
+
+	it('greets at once with no buttons, then posts the steps the scan found', async () => {
+		const { agent, args } = await setupWithKey()
+		const scan = vi.fn().mockResolvedValue({
+			steps: [
+				{ label: 'Triage my Linear backlog', prompt: 'Triage my Linear backlog', action: 'send' },
+				{ label: 'Draft a Gmail reply', prompt: 'Draft a Gmail reply to: ', action: 'fill' },
+			],
+			neededIntegrations: ['linear'],
+		})
+
+		await introduceAgentToRecipient({ ...args, scan })
+
+		const [hello, followUp] = await chatMessages(agent.id)
+		expect(scan).toHaveBeenCalledOnce()
+		expect(hello?.content).toContain('look through your workspace')
+		expect(hello?.metadata).toEqual({ delivery: { kind: 'agent_intro', version: 1 } })
+		expect(followUp?.content).toContain('1. Triage my Linear backlog\n2. Draft a Gmail reply')
+		expect(followUp?.metadata).toMatchObject({
+			delivery: { kind: 'agent_intro_steps', version: 1 },
+			suggested_steps: [
+				{ label: 'Triage my Linear backlog', action: 'send' },
+				{ label: 'Draft a Gmail reply', action: 'fill' },
+				{ label: 'What can you help me with?', action: 'send' },
+			],
+			needed_tools: [{ provider: 'linear' }],
+		})
+		expect(capturesOf('agent_intro_followup_sent')[0]?.[2]).toMatchObject({ variant: 'scanned' })
+	})
+
+	it('falls back to the generic steps when the scan finds nothing', async () => {
+		const { agent, args } = await setupWithKey()
+
+		await introduceAgentToRecipient({ ...args, scan: vi.fn().mockResolvedValue(null) })
+
+		const [, followUp] = await chatMessages(agent.id)
+		expect(followUp?.content).toContain('1. What can you help me with?\n2. Give me a first task')
+		expect(capturesOf('agent_intro_followup_sent')[0]?.[2]).toMatchObject({
+			variant: 'generic_fallback',
+		})
+	})
+
+	it('falls back to the generic steps when the scan throws', async () => {
+		const { agent, args } = await setupWithKey()
+
+		await introduceAgentToRecipient({ ...args, scan: vi.fn().mockRejectedValue(new Error('boom')) })
+
+		const [, followUp] = await chatMessages(agent.id)
+		expect(followUp?.content).toContain('What can you help me with?')
+	})
+
+	it('does not scan a workspace that cannot run an agent', async () => {
+		const { ws, human } = await setup()
+		const agent = await insertMember(ws.id, { type: 'agent', name: `NoKey ${randomUUID()}` })
+		const scan = vi.fn()
+
+		await introduceAgentToRecipient({
+			db,
+			actor: agent,
+			workspaceId: ws.id,
+			creator: { id: human.id, type: 'human' },
+			claimedSessionId: undefined,
+			clientSource: undefined,
+			scan,
+		})
+
+		const [chat] = await introChatsFor(agent.id)
+		const posted = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.conversationId, chat?.conversation.id as string))
+		expect(scan).not.toHaveBeenCalled()
+		expect(posted).toHaveLength(1)
+		expect(posted[0]?.content).toContain('Connect your Claude subscription')
+	})
+
+	it('posts no steps when the person has already written in the chat', async () => {
+		const { agent, human, args } = await setupWithKey()
+		const scan = vi.fn().mockImplementation(async () => {
+			const [chat] = await introChatsFor(agent.id)
+			await db.insert(messages).values({
+				conversationId: chat?.conversation.id as string,
+				workspaceId: args.workspaceId,
+				actorId: human.id,
+				content: 'Hi, can you start on the Q3 report?',
+			})
+			return null
+		})
+
+		await introduceAgentToRecipient({ ...args, scan })
+
+		expect(await chatMessages(agent.id)).toHaveLength(2)
+		expect(capturesOf('agent_intro_followup_skipped')[0]?.[2]).toMatchObject({
+			reason: 'person_replied',
+		})
 	})
 })

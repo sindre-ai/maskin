@@ -11,7 +11,7 @@ const config = {
 }
 
 describe('createVoiceToolkit', () => {
-	it('exposes exactly the tools an MCP client gets from tools/list', async () => {
+	it('exposes the tools an MCP client gets from tools/list, minus the app-only ones', async () => {
 		const server = createMcpServer(config)
 		const client = new Client({ name: 'chat', version: '0' })
 		const [a, b] = InMemoryTransport.createLinkedPair()
@@ -20,8 +20,24 @@ describe('createVoiceToolkit', () => {
 
 		const { tools } = await createVoiceToolkit(config)
 
-		expect(tools.map((t) => t.name).sort()).toEqual(chat.tools.map((t) => t.name).sort())
+		const appOnly = chat.tools.filter((t) => {
+			const visibility = (t._meta?.ui as { visibility?: string[] } | undefined)?.visibility
+			return Array.isArray(visibility) && !visibility.includes('model')
+		})
+		expect(appOnly.map((t) => t.name)).toContain('approve_object_draft')
+		expect(tools.map((t) => t.name).sort()).toEqual(
+			chat.tools
+				.filter((t) => !appOnly.includes(t))
+				.map((t) => t.name)
+				.sort(),
+		)
 		expect(tools.length).toBeGreaterThan(8)
+	})
+
+	it('does not offer approve_object_draft, which only a person can complete', async () => {
+		const { tools } = await createVoiceToolkit(config)
+		expect(tools.map((t) => t.name)).not.toContain('approve_object_draft')
+		expect(tools.map((t) => t.name)).toContain('gmail_send_email')
 	})
 
 	it('hands the model the real schemas, including list_objects pagination', async () => {
@@ -48,6 +64,9 @@ describe('createVoiceToolkit — agent MCP servers', () => {
 			const mcp = new McpServer({ name: 'fake-gmail', version: '0' })
 			mcp.tool('send email', 'Send an email', { to: z.string() }, async ({ to }) => ({
 				content: [{ type: 'text', text: `sent to ${to}` }],
+			}))
+			mcp.tool('read inbox', 'Read the inbox', {}, { readOnlyHint: true }, async () => ({
+				content: [{ type: 'text', text: 'empty' }],
 			}))
 			const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
 			res.on('close', () => transport.close())
@@ -80,6 +99,20 @@ describe('createVoiceToolkit — agent MCP servers', () => {
 			)) as { content: Array<{ text: string }> }
 			expect(result.content[0]?.text).toBe('sent to a@b.c')
 			expect(ext.seenAuth).toContain('Bearer tok')
+			await toolkit.close()
+		} finally {
+			ext.stop()
+		}
+	})
+
+	it('counts a platform read and an agent-server tool that declares readOnlyHint as reads, nothing else', async () => {
+		const ext = await startExternalServer()
+		try {
+			const toolkit = await createVoiceToolkit(config, { gmail: { url: ext.url } })
+			expect(toolkit.readOnlyTools.has('list_objects')).toBe(true)
+			expect(toolkit.readOnlyTools.has('gmail__read_inbox')).toBe(true)
+			expect(toolkit.readOnlyTools.has('gmail__send_email')).toBe(false)
+			expect(toolkit.readOnlyTools.has('create_comment')).toBe(false)
 			await toolkit.close()
 		} finally {
 			ext.stop()

@@ -163,7 +163,7 @@ public struct ObjectsSchema: Sendable, Equatable {
 		displayNames: ["insight": "Insight", "bet": "Bet", "task": "Task"],
 		statuses: [
 			"insight": ["new", "processing", "clustered", "scored", "parked", "discarded"],
-			"bet": ["signal", "define", "active", "live", "succeeded", "failed", "paused", "archived"],
+			"bet": ["opportunity", "define", "active", "live", "succeeded", "failed", "paused", "archived"],
 			"task": ["backlog", "todo", "in_progress", "in_review", "validated", "done", "discarded"],
 		])
 

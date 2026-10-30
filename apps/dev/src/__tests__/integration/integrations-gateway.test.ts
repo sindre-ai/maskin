@@ -340,3 +340,204 @@ describe('POST /api/integrations/:provider/gateway (Integration)', () => {
 		expect(sent.get('x-workspace-id')).toBeNull()
 	})
 })
+
+const POSTHOG_UPSTREAM = 'https://mcp.posthog.com/mcp'
+
+async function setupPosthog() {
+	const human = getTestActorId()
+	const ws = await insertWorkspace(db, human)
+	const reader = await insertActor(db, { type: 'agent' })
+	const writer = await insertActor(db, { type: 'agent' })
+	await db.insert(workspaceMembers).values([
+		{ workspaceId: ws.id, actorId: reader.id, role: 'member' },
+		{ workspaceId: ws.id, actorId: writer.id, role: 'member' },
+	])
+	const [posthog] = await db
+		.insert(integrations)
+		.values({
+			workspaceId: ws.id,
+			provider: 'posthog',
+			status: 'active',
+			credentials: encrypt(JSON.stringify({ accessToken: 'fake-posthog-key-0123456789' })),
+			createdBy: human,
+		})
+		.returning()
+	await insertAgentGrant(db, {
+		workspaceId: ws.id,
+		integrationId: posthog.id,
+		actorId: writer.id,
+		access: 'read_write',
+	})
+	return { ws, reader, writer, posthog }
+}
+
+const execCall = (command: unknown, id = 1) => ({
+	jsonrpc: '2.0',
+	id,
+	method: 'tools/call',
+	params: { name: 'exec', arguments: { command } },
+})
+
+const postPosthog = (app: ReturnType<typeof appFor>, workspaceId: string, body: unknown) =>
+	post(app, workspaceId, body, 'posthog')
+
+const isError = async (res: Response) =>
+	((await res.json()) as { result: { isError?: boolean } }).result.isError === true
+
+const sentBody = () => (fetchMock.mock.calls[0][1] as RequestInit).body as string
+
+describe('PostHog exec through the gateway (Integration)', () => {
+	it.each([
+		['a query command', 'call query-trends {}'],
+		['a schema lookup', 'call read-data-schema {"kind":"events"}'],
+		[
+			'execute-sql, which is in the curated read set despite its name',
+			'call execute-sql {"query":"SELECT 1"}',
+		],
+		['a discovery command', 'schema events'],
+	])('forwards %s from a Read agent', async (_label, command) => {
+		const s = await setupPosthog()
+		const res = await postPosthog(appFor(s.reader.id), s.ws.id, execCall(command))
+
+		expect(await isError(res)).toBe(false)
+		expect(fetchMock).toHaveBeenCalledOnce()
+		expect(fetchMock.mock.calls[0][0]).toBe(POSTHOG_UPSTREAM)
+	})
+
+	it('refuses a create command, sends nothing upstream, and records the inner tool but not the input', async () => {
+		const s = await setupPosthog()
+		const command = 'call dashboard-create {"name":"private-name-123"}'
+		const res = await postPosthog(appFor(s.reader.id), s.ws.id, execCall(command, 9))
+
+		const body = (await res.json()) as {
+			id: number
+			result: { isError: boolean; content: Array<{ text: string }> }
+		}
+		expect(body.id).toBe(9)
+		expect(body.result.isError).toBe(true)
+		expect(body.result.content[0].text).toContain('exec (dashboard-create) needs write access')
+		expect(body.result.content[0].text).not.toContain('private-name-123')
+		expect(fetchMock).not.toHaveBeenCalled()
+
+		const denied = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, s.posthog.id), eq(events.action, 'agent_access_denied')))
+		expect(denied).toHaveLength(1)
+		expect(denied[0].data).toMatchObject({
+			provider: 'posthog',
+			tool: 'exec',
+			kind: 'write',
+			access: 'read',
+			command_tool: 'dashboard-create',
+		})
+		expect(JSON.stringify(denied[0].data)).not.toContain('private-name-123')
+	})
+
+	it.each([
+		['an update command', 'call feature-flag-update {}'],
+		['--confirm', 'call --confirm anything {}'],
+		['a two-line command', 'call query-trends {}\ncall dashboard-create {}'],
+		['an unknown first token', 'run query-trends {}'],
+		['a missing command', undefined],
+		['a command that is not a string', 7],
+		['a chain with ;', 'call query-trends {} ; call dashboard-create {}'],
+		['a chain with &&', 'call query-trends {} && call dashboard-create {}'],
+		['a chain with |', 'call query-trends {} | call dashboard-create {}'],
+		['a second JSON value', 'call query-trends {} {}'],
+		['a flag after the name', 'call query-trends --json {}'],
+		['a discovery command with a tail', 'help ; call dashboard-create {}'],
+	])('refuses %s and sends nothing upstream', async (_label, command) => {
+		const s = await setupPosthog()
+		const res = await postPosthog(appFor(s.reader.id), s.ws.id, execCall(command))
+		expect(await isError(res)).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('judges a repeated key by its last value, and forwards the message it judged', async () => {
+		const s = await setupPosthog()
+		const app = appFor(s.reader.id)
+		const head =
+			'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exec","arguments":'
+
+		// First read, last write: judged a write, nothing is forwarded.
+		const writeLast = `${head}{"command":"call query-trends {}","command":"call dashboard-create {}"}}}`
+		expect(await isError(await postPosthog(app, s.ws.id, writeLast))).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+
+		// First write, last read: judged a read, and the write never reaches PostHog.
+		const readLast = `${head}{"command":"call dashboard-create {}","command":"call query-trends {}"}}}`
+		expect(await isError(await postPosthog(app, s.ws.id, readLast))).toBe(false)
+		expect(fetchMock).toHaveBeenCalledOnce()
+		const upstream = sentBody()
+		expect(upstream).toBe(JSON.stringify(JSON.parse(readLast)))
+		expect(upstream).not.toContain('dashboard-create')
+	})
+
+	it('does not give the exec rule to another name, and leaves other messages byte for byte', async () => {
+		const s = await setupPosthog()
+		const body = execCall('call query-trends {}')
+		body.params.name = 'exec2'
+		expect(await isError(await postPosthog(appFor(s.reader.id), s.ws.id, body))).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+
+		// Odd spacing and a repeated key: any re-serialization would change this text.
+		const odd =
+			'{ "jsonrpc" : "2.0",  "id": 1, "method":"tools/call", "params":{"name":"list_things","name":"list_things","arguments":{}} }'
+		await postPosthog(appFor(s.writer.id), s.ws.id, odd)
+		expect(sentBody()).toBe(odd)
+	})
+
+	it('sends the original text byte for byte on Linear, even for a tool called exec', async () => {
+		const s = await setup()
+		const odd =
+			'{ "jsonrpc":"2.0",  "id":1,"method":"tools/call","params":{"name":"exec","arguments":{"command":"a"}} }'
+		await post(appFor(s.writer.id), s.ws.id, odd)
+		expect(sentBody()).toBe(odd)
+
+		fetchMock.mockClear()
+		expect(await isError(await post(appFor(s.reader.id), s.ws.id, odd))).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('lets a Read & write agent run a write command and refuses everything at no access', async () => {
+		const s = await setupPosthog()
+		const write = execCall('call dashboard-create {"name":"x"}')
+		expect(await isError(await postPosthog(appFor(s.writer.id), s.ws.id, write))).toBe(false)
+		expect(fetchMock).toHaveBeenCalledOnce()
+
+		fetchMock.mockClear()
+		await db
+			.update(integrations)
+			.set({ defaultAgentAccess: 'none' })
+			.where(eq(integrations.id, s.posthog.id))
+		const read = execCall('call query-trends {}')
+		expect(await isError(await postPosthog(appFor(s.reader.id), s.ws.id, read))).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('lists exec as usable to a Read agent and not read-only', async () => {
+		const s = await setupPosthog()
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					result: { tools: [{ name: 'exec', description: 'Run a command.' }] },
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		const res = await postPosthog(appFor(s.reader.id), s.ws.id, {
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/list',
+		})
+		const out = (await res.json()) as {
+			result: { tools: Array<{ description: string; annotations: { readOnlyHint: boolean } }> }
+		}
+		expect(out.result.tools[0].description).not.toContain('Unavailable')
+		expect(out.result.tools[0].description).toContain('Read access: query and lookup commands run')
+		expect(out.result.tools[0].annotations.readOnlyHint).toBe(false)
+	})
+})
