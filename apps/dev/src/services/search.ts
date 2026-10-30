@@ -53,6 +53,12 @@ export interface SearchSource {
 	 */
 	statusPairs: (ctx: SearchContext) => SQL
 	/**
+	 * A boolean over a candidate row (aliased `s`): true when the row passes the
+	 * participants filter. A source without it never passes once a participant is
+	 * picked. It is a flag, not a WHERE, so the relaxed counts can still ignore it.
+	 */
+	participantsOk?: (participants: string[]) => SQL
+	/**
 	 * The rows have no status of their own (people). Any status filter hides them,
 	 * and they stay out of the status counts, so a chip never counts rows that
 	 * disappear when it is picked.
@@ -97,6 +103,17 @@ export const SEARCH_SOURCES: SearchSource[] = [
 				LIMIT 1
 			) lm ON true
 			WHERE c.workspace_id = ${workspaceId}`,
+		// The chat must hold every picked actor (still a member, not left).
+		participantsOk: (participants) =>
+			sql.join(
+				participants.map(
+					(actorId) => sql`EXISTS (
+						SELECT 1 FROM conversation_participants cpf
+						WHERE cpf.conversation_id = s.id AND cpf.actor_id = ${actorId} AND cpf.left_at IS NULL
+					)`,
+				),
+				sql` AND `,
+			),
 	},
 	{
 		key: 'loops',
@@ -223,6 +240,8 @@ interface AggregateRow {
 	type: string
 	status: string
 	in_window: boolean
+	/** False when the row misses the participants filter; always true with none picked. */
+	p_ok: boolean
 	n: number
 }
 
@@ -246,7 +265,7 @@ interface SourceResult {
 	statusCounts: Record<StatusGroupKey, number>
 	/** Text match with every filter dropped (archive rule kept). */
 	withoutFilters: number
-	/** Text match plus selected types (archive rule kept). */
+	/** Text match plus selected types and participants (archive rule kept). */
 	withoutStatuses: number
 	knownTypes: string[]
 	/** Title hits with a typo, found by the second pass. Empty when it did not run. */
@@ -293,22 +312,31 @@ function filterRules(query: SearchQuery, source: SearchSource) {
 
 type FilterRules = ReturnType<typeof filterRules>
 
+/** True for a candidate row (aliased `s`) that passes the participants filter; true for all with none picked. */
+function participantsCondition(query: SearchQuery, source: SearchSource): SQL {
+	const participants = query.participants ?? []
+	if (participants.length === 0) return sql`true`
+	// With a participant picked, a source that cannot filter by one never matches.
+	return source.participantsOk ? source.participantsOk(participants) : sql`false`
+}
+
 /** Adds `n` rows of one (type, status, window) cell to the counts of a source. */
 function tally(
 	result: SourceResult,
 	rules: FilterRules,
-	row: { type: string; status: string; in_window: boolean; n: number },
+	row: { type: string; status: string; in_window: boolean; p_ok: boolean; n: number },
 ) {
 	const { archivedHidden, typeOk, statusOk, cutoff, statusless } = rules
 	const group = getStatusGroup(row.type, row.status)
 	const hidden = archivedHidden(row.status)
 
+	// The "search everything" count ignores the participants along with every other filter.
+	if (row.status !== ARCHIVED) result.withoutFilters += row.n
+	if (!row.p_ok) return
+
 	if (!hidden) result.typeCounts.set(row.type, (result.typeCounts.get(row.type) ?? 0) + row.n)
 	if (typeOk(row.type) && !statusless) result.statusCounts[group] += row.n
-	if (row.status !== ARCHIVED) {
-		result.withoutFilters += row.n
-		if (typeOk(row.type)) result.withoutStatuses += row.n
-	}
+	if (row.status !== ARCHIVED && typeOk(row.type)) result.withoutStatuses += row.n
 	if (!hidden && typeOk(row.type) && statusOk(group) && (!cutoff || row.in_window)) {
 		result.total += row.n
 	}
@@ -342,6 +370,7 @@ async function runSource(
 	}
 
 	const match = matchCondition(tokens)
+	const participantsOk = participantsCondition(query, source)
 	const inWindow = cutoff ? sql`coalesce(x.updated_at > ${cutoff}::timestamptz, false)` : sql`true`
 	const pairList = sql.join(
 		passingPairs.map(({ type, status }) => sql`(${type}::text, ${status}::text)`),
@@ -350,7 +379,7 @@ async function runSource(
 	const topFilter =
 		passingPairs.length === 0
 			? sql`false`
-			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window`
+			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window AND m.p_ok`
 	const ordering = orderBy(query.sort)
 
 	// One scan. x computes the per-word hit flags once per row (OFFSET 0 keeps the
@@ -359,21 +388,22 @@ async function runSource(
 	const [raw] = await rowsOf<{ aggregate: unknown; top_rows: unknown }>(
 		executor,
 		sql`WITH x AS (
-				SELECT s.id, s.type, s.title, s.sub, left(s.body, 160) AS snippet, s.status, s.updated_at
+				SELECT s.id, s.type, s.title, s.sub, left(s.body, 160) AS snippet, s.status, s.updated_at,
+					(${participantsOk}) AS p_ok
 					${flagColumns(tokens)}
 				FROM (${source.candidates(ctx)}) s
 				OFFSET 0
 			),
 			m AS (
-				SELECT x.id, x.type, x.title, x.sub, x.snippet, x.status, x.updated_at,
+				SELECT x.id, x.type, x.title, x.sub, x.snippet, x.status, x.updated_at, x.p_ok,
 					${scoreExpression(tokens)} AS score,
 					${inWindow} AS in_window
 				FROM x
 				WHERE ${match}
 			),
 			counted AS (
-				SELECT m.type, m.status, m.in_window, count(*)::int AS n
-				FROM m GROUP BY 1, 2, 3 LIMIT ${MAX_AGGREGATE_ROWS}
+				SELECT m.type, m.status, m.in_window, m.p_ok, count(*)::int AS n
+				FROM m GROUP BY 1, 2, 3, 4 LIMIT ${MAX_AGGREGATE_ROWS}
 			),
 			picked AS (
 				SELECT m.id, m.type, m.title, m.sub, m.snippet, m.status,
@@ -449,16 +479,17 @@ async function runTypoPass(
 	const rules = filterRules(query, source)
 	const { truncated, hits } = await db.transaction(async (tx) => {
 		await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(SOURCE_TIMEOUT_MS))}`)
-		const candidates = await rowsOf<RawRow>(
+		const candidates = await rowsOf<RawRow & { p_ok: boolean }>(
 			tx,
 			sql`SELECT s.id, s.type, s.title, s.sub, left(s.body, 160) AS snippet, s.status,
-					to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso
+					to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso,
+					(${participantsCondition(query, source)}) AS p_ok
 				FROM (${source.candidates(ctx)}) s
 				WHERE s.title <> ''
 				ORDER BY s.updated_at DESC NULLS LAST, s.id
 				LIMIT ${TYPO_CANDIDATE_CAP + 1}`,
 		)
-		const fuzzy: Array<{ raw: RawRow; distance: number }> = []
+		const fuzzy: Array<{ raw: RawRow & { p_ok: boolean }; distance: number }> = []
 		for (const raw of candidates.slice(0, TYPO_CANDIDATE_CAP)) {
 			const distance = titleTypoDistance(tokens, raw.title)
 			if (distance !== null) fuzzy.push({ raw, distance })
@@ -492,9 +523,16 @@ async function runTypoPass(
 		const inWindow = rules.cutoff
 			? raw.updated_iso !== null && new Date(raw.updated_iso) > new Date(rules.cutoff)
 			: true
-		tally(result, rules, { type: raw.type, status: raw.status, in_window: inWindow, n: 1 })
+		tally(result, rules, {
+			type: raw.type,
+			status: raw.status,
+			in_window: inWindow,
+			p_ok: raw.p_ok,
+			n: 1,
+		})
 		const group = getStatusGroup(raw.type, raw.status)
 		if (
+			!raw.p_ok ||
 			rules.archivedHidden(raw.status) ||
 			!rules.typeOk(raw.type) ||
 			!rules.statusOk(group) ||

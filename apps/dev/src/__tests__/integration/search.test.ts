@@ -12,7 +12,7 @@ import {
 	triggers,
 } from '@maskin/db/schema'
 import type { SearchQuery, SearchResponse } from '@maskin/shared'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import {
 	buildObject,
@@ -191,6 +191,89 @@ describe('GET /api/search against real Postgres', () => {
 		expect((await search({ q: 'quarterly' })).total).toBe(0)
 		const [row] = (await search({ q: 'budget' })).results
 		expect(row?.snippet).toBe('please review the budget')
+	})
+
+	describe('participants filter', () => {
+		let thirdId: string
+
+		beforeEach(async () => {
+			thirdId = (await insertActor(db, { name: 'Third Person' })).id
+			await seedChat('pf with other', [actorId, otherUserId])
+			await seedChat('pf with both', [actorId, otherUserId, thirdId])
+			await seedChat('pf alone', [actorId])
+			await seedChat('pf private', [otherUserId, thirdId])
+			await seedObjects('bet', 'active', 1, () => 'pf bet')
+		})
+
+		it('keeps only chats the picked actor is in, and drops the other sources', async () => {
+			const res = await search({ q: 'pf', participants: [otherUserId] })
+			expect(res.results.map((r) => r.title).sort()).toEqual(['pf with both', 'pf with other'])
+			expect(res.results.every((r) => r.group === 'chats')).toBe(true)
+			expect(res.total).toBe(2)
+			expect(res.facets.types.chat).toBe(2)
+			expect(res.facets.types.bet ?? 0).toBe(0)
+		})
+
+		it('needs every picked actor to be in the chat', async () => {
+			const res = await search({ q: 'pf', participants: [otherUserId, thirdId] })
+			expect(res.results.map((r) => r.title)).toEqual(['pf with both'])
+		})
+
+		it('works with no words at all', async () => {
+			const res = await search({ participants: [thirdId] })
+			expect(res.results.map((r) => r.title)).toEqual(['pf with both'])
+		})
+
+		it('does not count an actor who left the chat', async () => {
+			const chat = await seedChat('pf left', [actorId, otherUserId])
+			await db
+				.update(conversationParticipants)
+				.set({ leftAt: new Date() })
+				.where(
+					and(
+						eq(conversationParticipants.conversationId, chat.id),
+						eq(conversationParticipants.actorId, otherUserId),
+					),
+				)
+			const res = await search({ q: 'pf left', participants: [otherUserId] })
+			expect(res.total).toBe(0)
+		})
+
+		it('never shows a chat the caller is not in, even with the actor picked', async () => {
+			const res = await search({ q: 'pf private', participants: [thirdId] })
+			expect(res.total).toBe(0)
+		})
+
+		it('applies to the second pass for typos too', async () => {
+			await seedChat('Roadmapping sync', [actorId, otherUserId])
+			await seedChat('Roadmapping solo', [actorId])
+			await seedObjects('task', 'todo', 1, () => 'Roadmapping task')
+
+			const res = await search({ q: 'roadmaping', participants: [otherUserId] })
+
+			expect(res.results.map((r) => r.title)).toEqual(['Roadmapping sync'])
+			expect(res.total).toBe(1)
+			expect(res.facets.types.task ?? 0).toBe(0)
+			// Without the participant, all three typo hits count.
+			expect(res.relaxed?.withoutFilters).toBe(3)
+		})
+
+		it('leaves people out, since a person has no chat', async () => {
+			const zelda = await insertActor(db, { name: 'Zelda Quill', email: 'zelda@omega.test' })
+			await ensureWorkspaceMember(db, workspaceId, zelda.id)
+
+			expect((await search({ q: 'zelda' })).results.map((r) => r.group)).toEqual(['people'])
+			const res = await search({ q: 'zelda', participants: [otherUserId] })
+			expect(res.total).toBe(0)
+			expect(res.results).toEqual([])
+		})
+
+		it('lets the search-everything counts ignore the participant', async () => {
+			const res = await search({ q: 'pf', participants: [thirdId] })
+			expect(res.total).toBe(1)
+			// 3 chats the caller is in, plus the bet. The status-only widening keeps the participant.
+			expect(res.relaxed).toEqual({ withoutFilters: 4, withoutStatuses: 1 })
+		})
 	})
 
 	it('cuts snippets to 160 characters', async () => {
@@ -733,6 +816,22 @@ describe('GET /api/search against real Postgres', () => {
 				jsonGet('/api/search?q=anything', { 'X-Workspace-Id': workspaceId }),
 			)
 			expect(res.status).toBe(401)
+		})
+
+		it('takes participants as a comma list of actor ids', async () => {
+			await seedChat('hotel chat', [actorId, otherUserId])
+			const res = await createApp().request(
+				jsonGet(`/api/search?q=hotel&participants=${otherUserId}`, auth(workspaceId)),
+			)
+			expect(res.status).toBe(200)
+			expect(((await res.json()) as SearchResponse).total).toBe(1)
+		})
+
+		it('returns 400 for a participant that is not an actor id', async () => {
+			const res = await createApp().request(
+				jsonGet('/api/search?participants=not-an-id', auth(workspaceId)),
+			)
+			expect(res.status).toBe(400)
 		})
 
 		it('returns 400 for an invalid status group', async () => {
