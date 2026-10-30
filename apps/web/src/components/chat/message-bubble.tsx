@@ -3,6 +3,10 @@ import {
 	renderLinkedChip,
 	renderLinkedGithubChip,
 } from '@/components/chat/linked-object-preview'
+import {
+	OtherWorkspaceLink,
+	useOtherWorkspaceLabel,
+} from '@/components/chat/linked-object-reference'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -13,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFiles } from '@/hooks/use-files'
+import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObject } from '@/hooks/use-objects'
 import { useTrigger } from '@/hooks/use-triggers'
@@ -33,6 +38,7 @@ import {
 	CircleDot,
 	Copy,
 	GitPullRequest,
+	Globe,
 	Link2,
 	MessageSquareReply,
 	Pencil,
@@ -602,6 +608,7 @@ const OWN_CHIP_CLASS =
  * A link to an object, file, loop or trigger in your own message, drawn inline where it was typed
  * as a chip with the thing's name (cut at 30 characters; the full name is the tooltip). Until the
  * name is known the chip says what kind of thing it is, so the link never reads as an address.
+ * A link into another workspace is a dashed globe chip naming the kind and that workspace instead.
  */
 function OwnLinkChip({
 	workspaceId,
@@ -609,19 +616,30 @@ function OwnLinkChip({
 }: {
 	workspaceId: string
 	segment:
-		| { kind: 'loop'; id: string }
-		| { kind: 'trigger'; id: string }
-		| { kind: 'agent'; id: string }
-		| { kind: 'object' | 'file'; id: string }
+		| { kind: 'loop'; id: string; otherWorkspaceId?: string }
+		| { kind: 'trigger'; id: string; otherWorkspaceId?: string }
+		| { kind: 'agent'; id: string; otherWorkspaceId?: string }
+		| { kind: 'chat'; id: string; otherWorkspaceId?: string }
+		| { kind: 'object' | 'file'; id: string; otherWorkspaceId?: string }
 		| { kind: 'github'; href: string; target: GithubTarget }
 }) {
 	if (segment.kind === 'github') {
 		return <OwnGithubChip href={segment.href} target={segment.target} />
 	}
+	if (segment.otherWorkspaceId && segment.kind !== 'file') {
+		return (
+			<OwnOtherWorkspaceChip
+				kind={segment.kind}
+				otherWorkspaceId={segment.otherWorkspaceId}
+				id={segment.id}
+			/>
+		)
+	}
 	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'trigger')
 		return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'agent') return <OwnAgentChip workspaceId={workspaceId} id={segment.id} />
+	if (segment.kind === 'chat') return <OwnChatChip workspaceId={workspaceId} id={segment.id} />
 	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
 }
 
@@ -640,6 +658,31 @@ function OwnGithubChip({ href, target }: { href: string; target: GithubTarget })
 			<span className="truncate">{githubChipText(target)}</span>
 			<ArrowUpRight size={12} aria-hidden className="shrink-0" />
 		</a>
+	)
+}
+
+function OwnOtherWorkspaceChip({
+	kind,
+	otherWorkspaceId,
+	id,
+}: {
+	kind: 'object' | 'loop' | 'trigger' | 'agent' | 'chat'
+	otherWorkspaceId: string
+	id: string
+}) {
+	const label = useOtherWorkspaceLabel(kind, otherWorkspaceId)
+	return (
+		<OtherWorkspaceLink
+			kind={kind}
+			otherWorkspaceId={otherWorkspaceId}
+			id={id}
+			label={label}
+			newTab
+			className={cn(OWN_CHIP_CLASS, 'border border-dashed border-primary-foreground/40 italic')}
+		>
+			<Globe size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{label}</span>
+		</OtherWorkspaceLink>
 	)
 }
 
@@ -703,6 +746,24 @@ function OwnAgentChip({ workspaceId, id }: { workspaceId: string; id: string }) 
 		>
 			<Link2 size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{name ? chipTitle(name) : 'Agent'}</span>
+		</Link>
+	)
+}
+
+function OwnChatChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const chat = useLinkedChat(workspaceId, id)
+	const name = chat?.title.trim()
+	return (
+		<Link
+			to="/$workspaceId/chats/$conversationId"
+			params={{ workspaceId, conversationId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Chat'}</span>
 		</Link>
 	)
 }

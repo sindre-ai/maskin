@@ -14,6 +14,18 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 
+vi.mock('@/hooks/use-linked-chat', () => ({
+	useLinkedChat: (_ws: string, id: string) => ({
+		id,
+		title: 'Launch plan',
+		pinned: false,
+		archived: false,
+		updatedAt: null,
+		participants: [],
+		lastMessage: null,
+	}),
+}))
+
 const objectState = vi.hoisted(() => ({ title: 'Retry window' }))
 
 vi.mock('@/hooks/use-objects', () => ({
@@ -169,6 +181,34 @@ describe('MessageBubble', () => {
 		expect(pullChip).toHaveAttribute('target', '_blank')
 		expect(screen.getByRole('link', { name: 'Issue maskin #12, opens GitHub' })).toBeInTheDocument()
 		expect(container.querySelector('.bg-primary')).toContainElement(pullChip)
+	})
+
+	it('draws a link to a chat in your own message inline, as a chip with its title', () => {
+		const id = '3ecab143-9e98-4474-9e52-779a55d95952'
+		const address = `https://maskin.io/ws-1/chats/${id}`
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `see ${address}`,
+			}),
+		)
+		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		const chip = screen.getByRole('link', { name: 'Launch plan' })
+		expect(container.querySelector('.bg-primary')).toContainElement(chip)
+	})
+
+	it('draws a chat link alone on its line as a chat card, and one in a sentence as a chip', () => {
+		const id = '3ecab143-9e98-4474-9e52-779a55d95952'
+		const { container } = renderBubble(
+			buildMessage({
+				content: `Where we talked:\n\n[the thread](/ws-1/chats/${id})\n\nAnd [that chat](/ws-1/chats/4aee24db-5d54-476a-8399-9586516e7de1) too.`,
+			}),
+		)
+		expect(container.querySelectorAll('[data-linked-card]')).toHaveLength(1)
+		expect(screen.getByText('Chat', { selector: '.eyebrow' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Chat: Launch plan' })).toBeInTheDocument()
 	})
 
 	it('cuts the title in a chip at 30 characters', () => {
