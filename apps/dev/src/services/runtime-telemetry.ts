@@ -323,6 +323,8 @@ export class RuntimeTelemetry {
 					// billing and degrades queries precisely as session count scales,
 					// the thing this bet is built to do.
 					$process_person_profile: false,
+					surface: 'backend',
+					actor_type: 'system',
 				},
 			})
 		} catch (err) {
