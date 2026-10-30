@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { __resetPosthogEventBudgetForTesting } from '../../../lib/analytics/event-budget'
 import {
 	__resetPosthogPrivacyForTesting,
 	capturePosthogEvent,
@@ -29,6 +30,7 @@ describe('capturePosthogEvent', () => {
 	let fetchMock: ReturnType<typeof vi.fn>
 
 	beforeEach(() => {
+		__resetPosthogEventBudgetForTesting()
 		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
 		vi.stubGlobal('fetch', fetchMock)
 		configurePosthogPrivacy(fakeDb({}).db)
@@ -211,6 +213,33 @@ describe('capturePosthogEvent workspace privacy', () => {
 		await capturePosthogEvent('stripe_tax_id_verified', 'cus_1', { session_id: 's1' })
 		expect(select).not.toHaveBeenCalled()
 		expect(fetchMock).toHaveBeenCalledOnce()
+	})
+
+	describe('event budget', () => {
+		beforeEach(() => {
+			vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		})
+
+		it('stamps sample_rate on a sampled event and sends nothing when the draw misses', async () => {
+			const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+			await capturePosthogEvent('mcp_handshake', 'actor-1', { client: 'claude' })
+			expect(fetchMock).toHaveBeenCalledOnce()
+			const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+			expect(body.properties).toMatchObject({ client: 'claude', sample_rate: 0.1 })
+
+			random.mockReturnValue(0.99)
+			await capturePosthogEvent('mcp_handshake', 'actor-1', { client: 'claude' })
+			expect(fetchMock).toHaveBeenCalledOnce()
+			random.mockRestore()
+		})
+
+		it('stops sending an event name once it reaches its daily cap', async () => {
+			vi.stubEnv('POSTHOG_EVENT_DAILY_CAP', '2')
+			vi.spyOn(logger, 'warn').mockImplementation(() => {})
+			for (let i = 0; i < 4; i++) await capturePosthogEvent('file_saved', 'actor-1', {})
+			await capturePosthogEvent('agent_session_completed', 'actor-1', {})
+			expect(fetchMock).toHaveBeenCalledTimes(3)
+		})
 	})
 })
 
