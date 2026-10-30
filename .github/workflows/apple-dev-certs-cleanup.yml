@@ -1,0 +1,141 @@
+name: Apple development certificates cleanup (one-off)
+
+# Manual run only. Apple stops issuing signing profiles once the account holds its maximum
+# number of certificates, and every ios-testflight.yml run on a fresh Mac mints a new
+# development certificate. This job clears them through the App Store Connect API, using the
+# same key secrets as ios-testflight.yml, so no Apple login or 2FA code is needed.
+#
+#   mode=list    prints every certificate (type, name, expiry) and changes nothing.
+#   mode=revoke  revokes only development-type certificates. It refuses to run unless
+#                expected_dev_count equals the number of development certificates found, and
+#                stops if any certificate has a type other than development or distribution.
+#                Distribution certificates and App Store profiles are never touched.
+#
+# The key and the token are never printed. Remove this file once the TestFlight build is green.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'list = read only, revoke = revoke development certificates'
+        type: choice
+        options: [list, revoke]
+        default: list
+      expected_dev_count:
+        description: 'revoke only: number of development certificates seen in the list run'
+        type: string
+        default: ''
+
+jobs:
+  certs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      MODE: ${{ inputs.mode }}
+      EXPECTED_DEV_COUNT: ${{ inputs.expected_dev_count }}
+    steps:
+      - name: List or revoke development certificates
+        run: |
+          set -euo pipefail
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::error::ASC_KEY_ID, ASC_ISSUER_ID or ASC_KEY_P8 is not set."
+            exit 1
+          fi
+          node --input-type=module <<'EOF'
+          import { createPrivateKey, sign } from 'node:crypto';
+
+          const { ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, MODE, EXPECTED_DEV_COUNT } = process.env;
+          const API = 'https://api.appstoreconnect.apple.com';
+          const DEV_TYPES = new Set(['DEVELOPMENT', 'IOS_DEVELOPMENT', 'MAC_APP_DEVELOPMENT']);
+          const DIST_TYPES = new Set(['DISTRIBUTION', 'IOS_DISTRIBUTION']);
+
+          const b64url = (v) => Buffer.from(v).toString('base64url');
+          const now = Math.floor(Date.now() / 1000);
+          const signingInput =
+            b64url(JSON.stringify({ alg: 'ES256', kid: ASC_KEY_ID, typ: 'JWT' })) + '.' +
+            b64url(JSON.stringify({ iss: ASC_ISSUER_ID, iat: now, exp: now + 600, aud: 'appstoreconnect-v1' }));
+          const signature = sign('sha256', Buffer.from(signingInput), {
+            key: createPrivateKey(ASC_KEY_P8),
+            dsaEncoding: 'ieee-p1363',
+          });
+          const token = signingInput + '.' + b64url(signature);
+
+          async function asc(method, path) {
+            const res = await fetch(API + path, {
+              method,
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const text = await res.text();
+            if (!res.ok) {
+              console.error(`::error::${method} ${path} -> ${res.status}: ${text}`);
+              process.exit(1);
+            }
+            return text ? JSON.parse(text) : {};
+          }
+
+          async function listCerts() {
+            const all = [];
+            let path = '/v1/certificates?limit=200&fields[certificates]=name,displayName,certificateType,platform,expirationDate';
+            while (path) {
+              const page = await asc('GET', path);
+              all.push(...page.data);
+              path = page.links && page.links.next ? page.links.next.replace(API, '') : null;
+            }
+            return all;
+          }
+
+          function print(certs) {
+            const rows = certs
+              .map((c) => ({
+                id: c.id,
+                type: c.attributes.certificateType,
+                name: c.attributes.displayName || c.attributes.name,
+                expires: (c.attributes.expirationDate || '').slice(0, 10),
+              }))
+              .sort((a, b) => a.type.localeCompare(b.type) || a.expires.localeCompare(b.expires));
+            for (const r of rows) {
+              console.log(`${r.type.padEnd(22)} expires ${r.expires} (created about a year earlier)  ${r.name}  [${r.id}]`);
+            }
+          }
+
+          const certs = await listCerts();
+          const dev = certs.filter((c) => DEV_TYPES.has(c.attributes.certificateType));
+          const dist = certs.filter((c) => DIST_TYPES.has(c.attributes.certificateType));
+          const other = certs.filter((c) => !DEV_TYPES.has(c.attributes.certificateType) && !DIST_TYPES.has(c.attributes.certificateType));
+          console.log(`Certificates on the account: ${certs.length} (development ${dev.length}, distribution ${dist.length}, other ${other.length}).`);
+          print(certs);
+
+          if (MODE === 'list') {
+            console.log('List mode: nothing was changed.');
+            process.exit(0);
+          }
+          if (MODE !== 'revoke') {
+            console.error(`::error::Unknown mode ${MODE}.`);
+            process.exit(1);
+          }
+          if (other.length > 0) {
+            console.error(`::error::${other.length} certificate(s) are neither development nor distribution. Stopping without changes.`);
+            process.exit(1);
+          }
+          if (EXPECTED_DEV_COUNT !== String(dev.length)) {
+            console.error(`::error::expected_dev_count is "${EXPECTED_DEV_COUNT}" but ${dev.length} development certificates exist. Stopping without changes.`);
+            process.exit(1);
+          }
+
+          console.log(`Count before: ${certs.length} total, ${dev.length} development.`);
+          for (const c of dev) {
+            await asc('DELETE', `/v1/certificates/${c.id}`);
+            console.log(`Revoked ${c.attributes.certificateType} ${c.id}`);
+          }
+          const after = await listCerts();
+          const devAfter = after.filter((c) => DEV_TYPES.has(c.attributes.certificateType));
+          const distAfter = after.filter((c) => DIST_TYPES.has(c.attributes.certificateType));
+          console.log(`Count after: ${after.length} total, ${devAfter.length} development, ${distAfter.length} distribution (was ${dist.length}).`);
+          if (distAfter.length !== dist.length) {
+            console.error('::error::Distribution certificate count changed.');
+            process.exit(1);
+          }
+          EOF
