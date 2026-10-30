@@ -18,7 +18,7 @@ import {
 import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
-import type { SessionManager } from './session-manager'
+import { type SessionManager, matchThread } from './session-manager'
 import { loadActiveSessionsNote } from './spawned-sessions'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
@@ -629,6 +629,13 @@ function wakeReasonForRule(
 }
 
 /**
+ * Every turn this responder delivers goes to the agent's main-chat session (null thread).
+ * Thread sessions are not spawned yet, so the lookups, the buffer and the seed clean-up
+ * below all pass this; it is the one place the thread comes from.
+ */
+const MAIN_CHAT_THREAD = null
+
+/**
  * Hands one turn to an agent in a conversation: written into its running session, buffered
  * while that session boots, or seeding a fresh session when there is none. `messageId` is
  * the chat message the turn answers; the agent's reply is anchored after it.
@@ -681,7 +688,11 @@ export async function deliverTurnToAgent(params: {
 		},
 	}
 
-	const existing = await sessionManager.findConversationSessionAnyActive(conversationId, agentId)
+	const existing = await sessionManager.findConversationSessionAnyActive(
+		conversationId,
+		agentId,
+		MAIN_CHAT_THREAD,
+	)
 	if (existing && existing.status !== 'running') {
 		// The agent's session is still booting (pending/starting/queued) —
 		// its stdin isn't attached yet, so a writeInput would fail and a
@@ -697,7 +708,11 @@ export async function deliverTurnToAgent(params: {
 		// Close the race: the session may have reached `running` (and
 		// already drained) between the lookup above and the buffer insert —
 		// nothing would ever drain this row, so re-check and drain now.
-		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
+		const nowRunning = await sessionManager.findActiveConversationSession(
+			conversationId,
+			agentId,
+			MAIN_CHAT_THREAD,
+		)
 		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
 		return 'buffered_for_booting_session'
 	}
@@ -824,6 +839,7 @@ async function spawnOrJoinConversationSession(params: {
 					and(
 						eq(conversationPendingTurns.conversationId, conversationId),
 						eq(conversationPendingTurns.actorId, agentId),
+						matchThread(conversationPendingTurns.threadRootId, MAIN_CHAT_THREAD),
 						lte(conversationPendingTurns.messageId, messageId),
 					),
 				)
@@ -862,7 +878,11 @@ async function spawnOrJoinConversationSession(params: {
 		},
 	}
 
-	const winner = await sessionManager.findConversationSessionAnyActive(conversationId, agentId)
+	const winner = await sessionManager.findConversationSessionAnyActive(
+		conversationId,
+		agentId,
+		MAIN_CHAT_THREAD,
+	)
 	if (!winner) {
 		// The race winner already died between rejecting our insert and this
 		// lookup — vanishingly rare. The next message spawns a fresh session
@@ -876,7 +896,11 @@ async function spawnOrJoinConversationSession(params: {
 	if (winner.status !== 'running') {
 		// Winner is still booting — same buffer-and-recheck as the primary path.
 		await bufferPendingTurn(db, { conversationId, agentId, messageId, payload: turnPayload })
-		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
+		const nowRunning = await sessionManager.findActiveConversationSession(
+			conversationId,
+			agentId,
+			MAIN_CHAT_THREAD,
+		)
 		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
 		return 'joined_race_winner'
 	}
@@ -934,6 +958,7 @@ async function bufferPendingTurn(
 				conversationId: params.conversationId,
 				actorId: params.agentId,
 				messageId: params.messageId,
+				threadRootId: MAIN_CHAT_THREAD,
 				payload: params.payload,
 			})
 			// Upsert, not DO NOTHING: an edit re-buffers the same
@@ -962,7 +987,13 @@ async function bufferPendingTurn(
 	}
 }
 
-/** Walks err.cause chain for the sessions_conversation_actor_active_uniq unique violation (23505). */
+/** The two unique indexes that reject a second live session for the same chat and agent (the second adds the thread). */
+const SESSION_RACE_CONSTRAINTS = [
+	'sessions_conversation_actor_active_uniq',
+	'sessions_conversation_actor_thread_active_uniq',
+] as const
+
+/** Walks err.cause chain for a unique violation (23505) on either session index in SESSION_RACE_CONSTRAINTS. */
 function isConversationSessionRaceViolation(err: unknown): boolean {
 	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
 		const e = cur as {
@@ -974,11 +1005,9 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 		}
 		if (e.code === '23505') {
 			const name = e.constraint_name ?? e.constraint
-			if (name === 'sessions_conversation_actor_active_uniq') return true
-			if (
-				typeof e.message === 'string' &&
-				e.message.includes('sessions_conversation_actor_active_uniq')
-			)
+			if (SESSION_RACE_CONSTRAINTS.some((c) => c === name)) return true
+			const message = e.message
+			if (typeof message === 'string' && SESSION_RACE_CONSTRAINTS.some((c) => message.includes(c)))
 				return true
 		}
 		cur = e.cause

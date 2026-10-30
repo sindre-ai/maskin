@@ -65,6 +65,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { resolveChatIdleCloseMs } from '../config/session-idle'
 import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
@@ -551,6 +552,14 @@ function classifyExit(args: {
 	return args.failureReason.reason_code === 'plan_cap_exceeded' ? 'plan_cap' : 'credit_exhaustion'
 }
 
+/**
+ * Matches a chat thread on a column holding a thread root id. A null thread is the main
+ * chat, stored as NULL, so it needs IS NULL: `= NULL` never matches.
+ */
+export function matchThread(column: AnyPgColumn, threadRootId: number | null): SQL {
+	return threadRootId === null ? isNull(column) : eq(column, threadRootId)
+}
+
 export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
@@ -914,9 +923,11 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Find a currently-usable interactive session for a (conversation, agent)
-	 * pair — i.e. one that can accept a writeInput() call right now. Fast-path
+	 * pair and thread — i.e. one that can accept a writeInput() call right now. A null
+	 * thread is the main chat; a thread root id is that thread's own session. Fast-path
 	 * optimization for the conversation responder; the DB's
-	 * sessions_conversation_actor_active_uniq partial unique index is the
+	 * sessions_conversation_actor_active_uniq and
+	 * sessions_conversation_actor_thread_active_uniq partial unique indexes are the
 	 * authoritative guard against double-spawn, this just avoids an
 	 * unnecessary createSession attempt in the common case. Only matches
 	 * `running` (not `pending`/`starting`) since writeInput needs a live
@@ -925,6 +936,7 @@ export class SessionManager extends EventEmitter {
 	async findActiveConversationSession(
 		conversationId: string,
 		actorId: string,
+		threadRootId: number | null = null,
 	): Promise<typeof sessions.$inferSelect | null> {
 		const [row] = await this.db
 			.select()
@@ -933,6 +945,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.conversationId, conversationId),
 					eq(sessions.actorId, actorId),
+					matchThread(sessions.threadRootId, threadRootId),
 					eq(sessions.interactive, true),
 					eq(sessions.status, 'running'),
 				),
@@ -950,6 +963,7 @@ export class SessionManager extends EventEmitter {
 	async findConversationSessionAnyActive(
 		conversationId: string,
 		actorId: string,
+		threadRootId: number | null = null,
 	): Promise<typeof sessions.$inferSelect | null> {
 		const [row] = await this.db
 			.select()
@@ -958,6 +972,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.conversationId, conversationId),
 					eq(sessions.actorId, actorId),
+					matchThread(sessions.threadRootId, threadRootId),
 					eq(sessions.interactive, true),
 					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
 				),
@@ -968,7 +983,9 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Delivers every turn buffered in conversation_pending_turns for this
-	 * session's (conversation, agent) pair — messages that arrived while the
+	 * session's (conversation, agent, thread) — the thread is read from the
+	 * session row (null = main chat), so a session never drains another
+	 * thread's turns. Messages that arrived while the
 	 * session was still booting. Rows are claimed atomically with
 	 * DELETE ... RETURNING so a concurrent drain (post-boot hook racing the
 	 * responder's own re-check) can't double-deliver a turn. A turn whose
@@ -983,6 +1000,7 @@ export class SessionManager extends EventEmitter {
 				interactive: sessions.interactive,
 				conversationId: sessions.conversationId,
 				actorId: sessions.actorId,
+				threadRootId: sessions.threadRootId,
 			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
@@ -995,6 +1013,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(conversationPendingTurns.conversationId, session.conversationId),
 					eq(conversationPendingTurns.actorId, session.actorId),
+					matchThread(conversationPendingTurns.threadRootId, session.threadRootId),
 				),
 			)
 			.returning()
@@ -1031,6 +1050,7 @@ export class SessionManager extends EventEmitter {
 							conversationId: t.conversationId,
 							actorId: t.actorId,
 							messageId: t.messageId,
+							threadRootId: t.threadRootId,
 							payload: t.payload,
 						})),
 					)
