@@ -42922,6 +42922,19 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 8000
+									},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"mentions": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"maxItems": 50
+											}
+										}
 									}
 								},
 								"required": [
