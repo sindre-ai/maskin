@@ -746,3 +746,107 @@ describe('MarkdownContent linkedCards: links into another workspace', () => {
 		expect(screen.queryByTestId('other-chip')).not.toBeInTheDocument()
 	})
 })
+
+describe('MarkdownContent linkedCards outside chat', () => {
+	const C = 'e1591bb2-7dc8-4fb0-b6fe-6e6e6e06a8e2'
+	const draw = (
+		content: string,
+		options: { mode?: 'full' | 'chips'; draftsAndFiles?: boolean } = {},
+	) =>
+		render(
+			<MarkdownContent
+				content={content}
+				size="sm"
+				linkedCards={{ workspaceId: WS, renderCard, renderChip, ...options }}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+	beforeEach(() => {
+		qualifying = new Set()
+	})
+
+	it('chips: a link alone on its line is a chip in the paragraph, never a card', () => {
+		draw(`Look at this.\n\n[Plan](${objectUrl(A)})\n\n- [Loop](${loopUrl(LOOP)})`, {
+			mode: 'chips',
+			draftsAndFiles: false,
+		})
+		expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		const chips = screen.getAllByTestId('chip')
+		expect(chips.map((c) => c.getAttribute('data-id'))).toEqual([A, LOOP])
+		expect(chips[0].closest('p')).not.toBeNull()
+		expect(screen.getByText('Plan')).toBeInTheDocument()
+	})
+
+	it('chips: agents, triggers and an object in a sentence are chips too', () => {
+		draw(`[a](${agentUrl(AGENT)}) asked [b](${triggerUrl(TRIGGER)}) about [c](${objectUrl(B)}).`, {
+			mode: 'chips',
+			draftsAndFiles: false,
+		})
+		expect(screen.getAllByTestId('chip').map((c) => c.getAttribute('data-id'))).toEqual([
+			AGENT,
+			TRIGGER,
+			B,
+		])
+	})
+
+	it('chips: a file link stays a plain link and no card is added under a sentence', () => {
+		draw(`Here is [the file](${fileUrl(FILE)}) and [a draft](${objectUrl(C)}).`, {
+			mode: 'chips',
+			draftsAndFiles: false,
+		})
+		expect(screen.getByRole('link', { name: 'the file' })).toBeInTheDocument()
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+	})
+
+	it('chips: a draft link stays plain because no approval card follows it outside chat', () => {
+		qualifying = new Set([C])
+		draw(`[a draft](${objectUrl(C)}) is ready.`, { mode: 'chips', draftsAndFiles: false })
+		// The chip renderer is told a card follows, which for a draft means "keep the link".
+		expect(screen.queryByTestId('chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'a draft' })).toBeInTheDocument()
+	})
+
+	it('full without drafts and files: a link alone on its line is a card, a file stays a link', () => {
+		draw(
+			`[Plan](${objectUrl(A)})\n\n[the file](${fileUrl(FILE)})\n\nSee [b](${objectUrl(B)}) too.`,
+			{
+				mode: 'full',
+				draftsAndFiles: false,
+			},
+		)
+		expect(screen.getByTestId('reference')).toHaveTextContent(A)
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'the file' })).toBeInTheDocument()
+		expect(screen.getByTestId('chip')).toHaveAttribute('data-id', B)
+	})
+
+	it('full is the default mode and chat behaviour is unchanged', () => {
+		qualifying = new Set([A])
+		draw(`[a draft](${objectUrl(A)})\n\n[file](${fileUrl(FILE)})`)
+		expect(screen.getByTestId('card')).toHaveTextContent(`object:${A}`)
+	})
+
+	it('chips: the lookup cap is per rendered body, ten links', () => {
+		const ids = Array.from(
+			{ length: 12 },
+			(_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+		)
+		draw(ids.map((id) => `[o${id.slice(-2)}](${objectUrl(id)})`).join(' '), {
+			mode: 'chips',
+			draftsAndFiles: false,
+		})
+		expect(screen.getAllByTestId('chip')).toHaveLength(10)
+	})
+
+	it('full: each body gets its own three cards', () => {
+		const body = (ids: string[]) => ids.map((id) => `[x](${objectUrl(id)})`).join('\n\n')
+		const four = [A, B, C, 'f2602cc3-8ed9-4ac1-87af-7f7f7f17b9f3']
+		const first = draw(body(four), { mode: 'full', draftsAndFiles: false })
+		expect(screen.getAllByTestId('reference')).toHaveLength(3)
+		first.unmount()
+		draw(body(four), { mode: 'full', draftsAndFiles: false })
+		expect(screen.getAllByTestId('reference')).toHaveLength(3)
+	})
+})

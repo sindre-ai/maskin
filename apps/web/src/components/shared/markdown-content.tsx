@@ -155,6 +155,17 @@ export interface LinkedCardsOptions {
 	workspaceId: string
 	/** Whether the workspace is enterprise: only then is a link to the Keys settings page a chip. */
 	enterprise?: boolean
+	/**
+	 * `full` (chat, comments): a link alone on its line is a card, a link in a sentence a chip.
+	 * `chips` (For You cards, the brief drawer, object bodies): every link is a chip, a card
+	 * inside a card being a box in a box. Defaults to `full`.
+	 */
+	mode?: 'full' | 'chips'
+	/**
+	 * Chat only: drafts get their approval card and files their preview card. Outside chat pass
+	 * `false`: a draft or file link stays the plain link it was before. Defaults to `true`.
+	 */
+	draftsAndFiles?: boolean
 	/** The chat the message is in and the agent that wrote it; they let a card tell that agent. */
 	conversationId?: string
 	agentId?: string
@@ -179,6 +190,8 @@ export interface LinkedCardsOptions {
 			after?: boolean
 			/** A draft edited since an earlier message showed it: the card says so. */
 			updated?: boolean
+			/** False outside chat: a draft keeps its plain link, no approval card. */
+			draftsAndFiles?: boolean
 		},
 	) => ReactNode
 	/**
@@ -210,8 +223,11 @@ export interface LinkedCardsOptions {
 function placeCardsPlugin(
 	skipIds: ReadonlySet<string> | undefined,
 	workspaceId: string | undefined,
+	chipsOnly: boolean,
+	draftsAndFiles: boolean,
 ) {
-	return () => (tree: HastNode) => placeLinkedCards(tree, skipIds, workspaceId)
+	return () => (tree: HastNode) =>
+		placeLinkedCards(tree, skipIds, workspaceId, { chipsOnly, draftsAndFiles })
 }
 
 // A list item holding a card gives up its bullet (a numbered one keeps its number, so the
@@ -281,6 +297,8 @@ function RenderedMarkdownContent({
 	const githubChipRenderer = linkedCardsOption?.renderGithubChip
 	const settingsChipRenderer = linkedCardsOption?.renderSettingsChip
 	const cardsSkipIds = linkedCardsOption?.skipIds
+	const chipsOnly = linkedCardsOption?.mode === 'chips'
+	const draftsAndFiles = linkedCardsOption?.draftsAndFiles !== false
 	// By value, like the rest: a fresh set with the same ids must not remount the cards.
 	const cardsUpdatedKey = linkedCardsOption?.updatedIds
 		? [...linkedCardsOption.updatedIds].sort().join(',')
@@ -294,6 +312,8 @@ function RenderedMarkdownContent({
 						conversationId: cardsConversationId,
 						agentId: cardsAgentId,
 						updatedIds: cardsUpdatedKey ? new Set(cardsUpdatedKey.split(',')) : undefined,
+						mode: chipsOnly ? 'chips' : 'full',
+						draftsAndFiles,
 						renderCard: cardsRenderer,
 						renderChip: chipRenderer,
 						renderGithubChip: githubChipRenderer,
@@ -301,6 +321,8 @@ function RenderedMarkdownContent({
 					}
 				: undefined,
 		[
+			chipsOnly,
+			draftsAndFiles,
 			cardsWorkspaceId,
 			cardsEnterprise,
 			cardsConversationId,
@@ -365,7 +387,8 @@ function RenderedMarkdownContent({
 					return target && linkedCards.renderChip
 						? linkedCards.renderChip(target, link, {
 								...linkedCards,
-								cardFollows: node?.data?.cardFollows !== false,
+								// Outside chat no approval card follows a draft: its link stays plain.
+								cardFollows: draftsAndFiles ? node?.data?.cardFollows !== false : true,
 							})
 						: link
 				},
@@ -396,8 +419,11 @@ function RenderedMarkdownContent({
 			}) as unknown as Components
 	}, [linkedCards])
 	const rehypePlugins = useMemo(
-		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds, cardsWorkspaceId)] : undefined),
-		[linkedCards, cardsSkipIds, cardsWorkspaceId],
+		() =>
+			linkedCards
+				? [placeCardsPlugin(cardsSkipIds, cardsWorkspaceId, chipsOnly, draftsAndFiles)]
+				: undefined,
+		[linkedCards, cardsSkipIds, cardsWorkspaceId, chipsOnly, draftsAndFiles],
 	)
 
 	return (

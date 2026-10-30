@@ -1,4 +1,5 @@
 import { Composer } from '@/components/chat/chat'
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -245,7 +246,10 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 
 							{readMode && (
 								<div className="mt-3.5">
-									<MarkdownContent content={body} />
+									<MarkdownContent
+										content={body}
+										linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+									/>
 								</div>
 							)}
 
