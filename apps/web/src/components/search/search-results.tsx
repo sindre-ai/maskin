@@ -12,11 +12,19 @@ export const GROUP_LABEL: Record<SearchSourceGroup, string> = {
 	chats: 'Chats',
 	loops: 'Loops',
 	agents: 'Agents',
+	people: 'People',
 	objects: 'Objects',
 	automations: 'Automations',
 }
 
-const GROUP_ORDER: SearchSourceGroup[] = ['chats', 'loops', 'agents', 'objects', 'automations']
+const GROUP_ORDER: SearchSourceGroup[] = [
+	'chats',
+	'loops',
+	'agents',
+	'people',
+	'objects',
+	'automations',
+]
 
 const GROUP_GLYPH: Partial<Record<SearchSourceGroup, typeof MessageSquare>> = {
 	chats: MessageSquare,
@@ -69,6 +77,16 @@ export function RowIcon({
 			/>
 		)
 	}
+	if (row.group === 'people') {
+		return (
+			<ActorAvatar
+				id={row.id}
+				name={row.title}
+				type="human"
+				className="mt-px size-[22px] shrink-0 text-[9px]"
+			/>
+		)
+	}
 	return Glyph ? (
 		<span
 			aria-hidden="true"
@@ -104,13 +122,15 @@ function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 						{highlightText(rowTitle(row), query)}
 						{sub ? <span className="font-normal text-muted-foreground"> — {sub}</span> : null}
 					</span>
-					<span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-						<span
-							aria-hidden="true"
-							className={cn('size-1.5 shrink-0 rounded-full', statusDotClass(row.statusGroup))}
-						/>
-						{statusLabel(row.status)}
-					</span>
+					{row.group === 'people' ? null : (
+						<span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+							<span
+								aria-hidden="true"
+								className={cn('size-1.5 shrink-0 rounded-full', statusDotClass(row.statusGroup))}
+							/>
+							{statusLabel(row.status)}
+						</span>
+					)}
 				</span>
 				{row.group === 'chats' && row.snippet ? (
 					<span className="truncate text-xs leading-normal text-muted-foreground">
