@@ -2219,6 +2219,19 @@ export const tools = {
 				),
 		}),
 	},
+	resend_send_email: {
+		description:
+			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Resend\'s own send tools are not available to you: this is the only way an email goes out, and nothing is sent until a person has approved that exact email. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same approval.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z
+				.string()
+				.uuid()
+				.describe(
+					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now, if a person approved it.',
+				),
+		}),
+	},
 	approve_object_draft: {
 		description:
 			'A person approves a drafted object (an email, a LinkedIn message) exactly as it reads. Called by the Approve button in the preview card, never by an agent: the server refuses any caller that is not a person, and this tool is hidden from the model.',

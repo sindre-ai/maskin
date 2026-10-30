@@ -7531,6 +7531,44 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'resend_send_email',
+		{
+			description: tools.resend_send_email.description,
+			inputSchema: tools.resend_send_email.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('resend_send_email', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const sent = (await apiCall(
+					config,
+					'POST',
+					'/api/integrations/resend/send',
+					{ object_id: args.object_id },
+					{ workspaceId: args.workspace_id },
+				)) as { email_id: string; from: string }
+				return reply(
+					`Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
+				)
+			} catch (err) {
+				// The server words every refusal for the agent (what happened, what to do next),
+				// so pass it on as a result instead of a thrown error.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not sent. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_sessions',
 		{
 			description: tools.list_sessions.description,

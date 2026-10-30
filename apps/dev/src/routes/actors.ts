@@ -47,6 +47,7 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
+import { mailboxTakenBy, normalizeMailbox } from '../lib/integrations/providers/resend/mailbox'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
@@ -1264,6 +1265,43 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// The mailbox is the sender address of every email the agent sends, so an agent must not be
+	// able to set its own or another's: only a human admin or owner, on an agent, and never an
+	// address another actor already holds.
+	let mailbox: string | null | undefined
+	if (body.mailbox !== undefined) {
+		if (existing.type !== 'agent') {
+			return c.json(createApiError('BAD_REQUEST', 'Only an agent has a mailbox'), 400)
+		}
+		if (!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId, { humanOnly: true }))) {
+			return c.json(
+				createApiError('FORBIDDEN', 'Only a human workspace admin can set an agent mailbox'),
+				403,
+			)
+		}
+		if (body.mailbox === null) {
+			mailbox = null
+		} else {
+			mailbox = normalizeMailbox(body.mailbox)
+			if (!mailbox) {
+				return c.json(
+					createApiError('BAD_REQUEST', 'The mailbox must be one plain email address', [
+						{ field: 'mailbox', message: 'Use an address like name@example.com' },
+					]),
+					400,
+				)
+			}
+			if (await mailboxTakenBy(db, mailbox, id)) {
+				return c.json(
+					createApiError('CONFLICT', 'Another agent already uses that mailbox', [
+						{ field: 'mailbox', message: 'Already in use' },
+					]),
+					409,
+				)
+			}
+		}
+	}
+
 	// A default workspace is a personal preference: only the actor itself may set
 	// it, and only to a workspace it belongs to (null clears it).
 	if (body.default_workspace_id !== undefined) {
@@ -1345,6 +1383,12 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(llmConfig !== undefined && { llmConfig }),
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
+			}),
+			...(mailbox !== undefined && {
+				metadata:
+					mailbox === null
+						? sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'mailbox'`
+						: sql`coalesce(${actors.metadata}, '{}'::jsonb) || ${JSON.stringify({ mailbox })}::jsonb`,
 			}),
 			updatedAt: new Date(),
 		})
