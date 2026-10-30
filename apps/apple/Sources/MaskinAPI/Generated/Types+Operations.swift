@@ -10793,6 +10793,8 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/llm_config`.
                     public var llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/mailbox`.
+                    public var mailbox: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/default_workspace_id`.
                     public var default_workspace_id: Swift.String?
                     /// Creates a new `jsonPayload`.
@@ -10806,6 +10808,7 @@ public enum Operations {
                     ///   - memory:
                     ///   - llm_provider:
                     ///   - llm_config:
+                    ///   - mailbox:
                     ///   - default_workspace_id:
                     public init(
                         name: Swift.String? = nil,
@@ -10816,6 +10819,7 @@ public enum Operations {
                         memory: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.memoryPayload? = nil,
                         llm_provider: Swift.String? = nil,
                         llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil,
+                        mailbox: Swift.String? = nil,
                         default_workspace_id: Swift.String? = nil
                     ) {
                         self.name = name
@@ -10826,6 +10830,7 @@ public enum Operations {
                         self.memory = memory
                         self.llm_provider = llm_provider
                         self.llm_config = llm_config
+                        self.mailbox = mailbox
                         self.default_workspace_id = default_workspace_id
                     }
                     public enum CodingKeys: String, CodingKey {
@@ -10837,6 +10842,7 @@ public enum Operations {
                         case memory
                         case llm_provider
                         case llm_config
+                        case mailbox
                         case default_workspace_id
                     }
                 }
