@@ -23,12 +23,14 @@ import { readUnipileEnvelope } from '../../lib/integrations/providers/linkedin-u
 import {
 	__setLinkedInClientForTests,
 	listLinkedInMessages,
+	replyToLinkedInThread,
 } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import { __resetSenderCachesForTests } from '../../lib/integrations/providers/linkedin-unipile/sender-resolution'
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import { __setLinkedInWebhookClientForTests } from '../../lib/integrations/providers/linkedin-unipile/webhook'
 import { logger } from '../../lib/logger'
 import { insertObject, insertWorkspace } from '../factories'
+import { operationResponse } from '../linkedin-operations'
 import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 
 /**
@@ -51,7 +53,6 @@ const OWN_PROVIDER_ID = ownSendFixture.payload.sender_id
 const SENDER_PROVIDER_ID = messageNewFixture.payload.sender_id
 const CHAT_ID = messageNewFixture.payload.chat_id
 const INBOUND_MESSAGE_ID = messageNewFixture.payload.id
-const REPLY_PATH = '/api/integrations/linkedin-unipile/reply'
 
 // The slug getProfile returns for the fixture sender, and the slug the fixture
 // relation.new carries. The two contacts below are stored with these in their urls.
@@ -217,12 +218,9 @@ function replay(fixture: object, overrides: Record<string, unknown> = {}) {
 	return post(JSON.stringify({ ...fixture, ...overrides }))
 }
 
+/** The reply operation, called directly: there is no route that sends a reply with the caller's text. */
 function postReply(body: Record<string, unknown>) {
-	return app.request(REPLY_PATH, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': workspaceId },
-		body: JSON.stringify(body),
-	})
+	return operationResponse(() => replyToLinkedInThread({ db, actorId, workspaceId }, body))
 }
 
 async function workspaceEvents() {

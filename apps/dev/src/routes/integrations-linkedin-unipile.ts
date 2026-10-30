@@ -33,11 +33,8 @@ import {
 	commentOnLinkedInPost,
 	getLinkedInPostEngagement,
 	listLinkedInConversations,
-	publishLinkedInPost,
 	readLinkedInPostComments,
 	replyToLinkedInComment,
-	replyToLinkedInThread,
-	sendLinkedInMessage,
 } from '../lib/integrations/providers/linkedin-unipile/operations'
 import {
 	buildLinkedInClientForWebhook,
@@ -69,11 +66,12 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
  *                                middleware (see app-factory.ts's callback
  *                                allowlist regex).
  *
- * Message verbs (v2 messaging), which the MCP tools in packages/mcp/src/server.ts
- * proxy to:
- *   - POST /send-message       — POST /v2/{account_id}/inboxes/{inbox_id}/chats/send
- *   - POST /reply              — POST /v2/{account_id}/chats/{chat_id}/messages/send
+ * Message verbs (v2 messaging):
  *   - GET  /list-conversations — GET  /v2/{account_id}/chats
+ *
+ * There is no HTTP route that sends a message, a reply or a post. Those go out
+ * only through the MCP tools, from a draft a person approved (send-object.ts).
+ * A route that took the text from the caller would be a way round that approval.
  *
  * The verbs share one shape: fetch the actor-scoped credential the connect
  * flow above landed (via `getIntegrationCredential`, on the actor_id column
@@ -804,7 +802,7 @@ async function nativeTargetFromState(
 	const target = nativeReturnOf(resolved.row)
 	return target ? { target, row: resolved.row } : undefined
 }
-// ── Message verbs (send-message / reply / list-conversations) ─────────────
+// ── Message verbs (list-conversations) ────────────────────────────────────
 //
 // The decision logic — credential lookup, error classification, retry policy,
 // idempotency dedup, response normalisation — lives in
@@ -914,50 +912,6 @@ app.get('/identities', async (c) => {
 	return c.json(identities)
 })
 
-// ── POST /api/integrations/linkedin-unipile/send-message ─────────────
-
-app.post('/send-message', async (c) => {
-	assertWorkspaceWriterRole(c.get('workspaceRole'))
-	const workspaceId = readWorkspaceIdHeader(c.req)
-	if (!workspaceId) {
-		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
-	}
-	let body: { recipient_urn?: unknown; body?: unknown; idempotency_key?: unknown }
-	try {
-		body = await c.req.json()
-	} catch {
-		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
-	}
-	const actorId = c.get('actorId')
-	try {
-		return c.json(await sendLinkedInMessage({ db: c.get('db'), actorId, workspaceId }, body))
-	} catch (err) {
-		return handleTerminalError(err, 'send-message', actorId)
-	}
-})
-
-// ── POST /api/integrations/linkedin-unipile/reply ────────────────────
-
-app.post('/reply', async (c) => {
-	assertWorkspaceWriterRole(c.get('workspaceRole'))
-	const workspaceId = readWorkspaceIdHeader(c.req)
-	if (!workspaceId) {
-		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
-	}
-	let body: { thread_id?: unknown; body?: unknown; idempotency_key?: unknown }
-	try {
-		body = await c.req.json()
-	} catch {
-		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
-	}
-	const actorId = c.get('actorId')
-	try {
-		return c.json(await replyToLinkedInThread({ db: c.get('db'), actorId, workspaceId }, body))
-	} catch (err) {
-		return handleTerminalError(err, 'reply', actorId)
-	}
-})
-
 // ── GET /api/integrations/linkedin-unipile/list-conversations ────────
 
 app.get('/list-conversations', async (c) => {
@@ -1003,22 +957,6 @@ async function readJsonBody<T = Record<string, unknown>>(
 		}
 	}
 }
-
-app.post('/publish-post', async (c) => {
-	assertWorkspaceWriterRole(c.get('workspaceRole'))
-	const workspaceId = readWorkspaceIdHeader(c.req)
-	if (!workspaceId) {
-		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
-	}
-	const parsed = await readJsonBody(c)
-	if (!parsed.ok) return parsed.response
-	const actorId = c.get('actorId')
-	try {
-		return c.json(await publishLinkedInPost({ db: c.get('db'), actorId, workspaceId }, parsed.body))
-	} catch (err) {
-		return handleTerminalError(err, 'publish-post', actorId)
-	}
-})
 
 app.post('/comment-on-post', async (c) => {
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
