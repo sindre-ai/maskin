@@ -35,7 +35,31 @@ services:
       dockerfile: apps/dev/Dockerfile
       args:
         VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
-    command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+    # TEMPORARY: the node one-liner is the A2 and A11 egress probe. It runs once
+    # from this container (same network and firewall path as the app), prints
+    # PROBE START to PROBE END to the app log, then the app starts as usual.
+    # Remove it once the result is posted on the staging task.
+    command:
+      - sh
+      - -c
+      - |
+        node -e "
+        const net=require('net'),dns=require('dns'),fs=require('fs');
+        const tcp=(h)=>new Promise(r=>{const s=net.connect({host:h,port:80});s.setTimeout(5000);s.on('connect',()=>{s.destroy();r('CONNECTED')});s.on('timeout',()=>{s.destroy();r('no-connect (timeout)')});s.on('error',e=>r('no-connect ('+e.code+')'))});
+        let gw='unknown';
+        try{const l=fs.readFileSync('/proc/net/route','utf8').split('\n').slice(1).find(x=>x.split('\t')[1]==='00000000');if(l){const h=l.split('\t')[2];gw=[6,4,2,0].map(i=>parseInt(h.substr(i,2),16)).join('.')}}catch(e){}
+        const hosts=['169.254.169.254','10.0.0.1','172.17.0.1','192.168.0.1'];
+        if(gw!=='unknown'&&!hosts.includes(gw))hosts.push(gw);
+        (async()=>{
+        console.log('PROBE START '+new Date().toISOString()+' gateway='+gw);
+        const a2=dns.promises.lookup('claude.ai').then(x=>'A2 dns claude.ai: '+x.address,e=>'A2 dns claude.ai: FAIL '+e.code);
+        const a2h=fetch('https://claude.ai/oauth/mcp-oauth-client-metadata',{signal:AbortSignal.timeout(5000)}).then(r=>'A2 metadata http: '+r.status,e=>'A2 metadata http: fetch-failed '+((e.cause&&e.cause.code)||e.name));
+        const a11=hosts.map(h=>tcp(h).then(x=>'A11 '+h+':80 '+x));
+        (await Promise.all([a2,a2h,...a11])).forEach(x=>console.log(x));
+        console.log('PROBE END');
+        })();
+        "
+        node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js
     healthcheck:
       test:
         [
@@ -73,25 +97,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-  # TEMPORARY egress probe for assumed surfaces A2 and A11. Same compose network
-  # as the app. Prints once, then sleeps so the output stays readable in the
-  # container logs. Remove this service once the result is posted on the task.
-  egress-probe:
-    image: curlimages/curl:8.10.1
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        echo "PROBE START $$(date -u +%FT%TZ)"
-        echo "A2 dns claude.ai: $$(getent hosts claude.ai | head -1 || echo FAIL)"
-        echo "A2 metadata http: $$(curl -s -o /dev/null -m 5 -w '%{http_code}' https://claude.ai/oauth/mcp-oauth-client-metadata || echo curl-failed)"
-        GW=$$(ip route | awk '/default/ {print $$3}')
-        for h in 169.254.169.254 10.0.0.1 172.17.0.1 192.168.0.1 $$GW; do
-          if curl -s -o /dev/null -m 5 "http://$$h/" ; then echo "A11 $$h CONNECTED"; else echo "A11 $$h failed rc=$$? (expected)"; fi
-        done
-        echo "PROBE END"
-        sleep 7200
 
 volumes:
   pgdata:
