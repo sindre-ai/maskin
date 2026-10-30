@@ -1388,9 +1388,9 @@ describe('SessionManager', () => {
 		// Foundational task for the session-cost accounting bet: every maskin_plan
 		// session must land with `sessions.model_name` non-null (the OpenRouter
 		// model that actually ran) and `sessions.config.llm_route = 'maskin_plan'`
-		// so the follow-on local cost resolver has the fields it needs. claude_oauth
-		// dispatches leave `model_name` null — Claude Code's own `total_cost_usd`
-		// stays ground truth there.
+		// so the follow-on local cost resolver has the fields it needs. Every other
+		// route stamps `model_name` too (the model is a record, not a guess), while
+		// Claude Code's own `total_cost_usd` stays the cost ground truth there.
 
 		const savedEnv: Record<string, string | undefined> = {}
 		const trackedEnvKeys = [
@@ -1464,12 +1464,10 @@ describe('SessionManager', () => {
 			expect(routeUpdate?.config?.llm_route).toBe('maskin_plan')
 		})
 
-		it('does NOT write model_name on a non-maskin_plan route (leaves the column null for claude_oauth / BYO paths)', async () => {
+		it('stamps model_name and model source on a non-maskin_plan route too', async () => {
 			// A workspace-anthropic-key path resolves to LLM_ROUTE_API_KEY, not
-			// maskin_plan. The dispatch write path must still stamp
-			// config.llm_route so quota queries can find the session, but must
-			// leave sessions.model_name null — Claude Code's `total_cost_usd`
-			// is ground truth for every non-maskin_plan route.
+			// maskin_plan. The model that will run is recorded on the session all the
+			// same; its cost stays priced by Claude Code's `total_cost_usd`.
 			const session = buildSession({ status: 'pending', interactive: false, config: {} })
 			const agent = testAgent(session.actorId)
 			const workspace = {
@@ -1490,21 +1488,56 @@ describe('SessionManager', () => {
 				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
 			)
 
-			// No update ever carries a modelName on this route.
-			for (const u of calls.updates) {
-				if (typeof u === 'object' && u !== null && 'modelName' in u) {
-					expect((u as { modelName?: unknown }).modelName).toBeUndefined()
-				}
-			}
-			// But config.llm_route IS stamped — that path is unchanged from before.
 			const routeUpdate = calls.updates.find(
-				(u): u is { config?: { llm_route?: string } } =>
+				(
+					u,
+				): u is {
+					config?: { llm_route?: string; llm_model_source?: string }
+					modelName?: string
+				} =>
 					typeof u === 'object' &&
 					u !== null &&
 					'config' in u &&
 					typeof (u as { config?: { llm_route?: unknown } }).config?.llm_route === 'string',
 			)
 			expect(routeUpdate?.config?.llm_route).toBe('workspace_api_key')
+			// The agent names no model, so the tier default ran.
+			expect(routeUpdate?.modelName).toBe('claude-sonnet-5-5')
+			expect(routeUpdate?.config?.llm_model_source).toBe('tier')
+		})
+
+		it('keeps a resumed session on the model it started on, whatever the agent says now', async () => {
+			// First launch stamped the funded default; the agent has since been set to
+			// another funded-route model. The resume must not switch.
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				config: { llm_route: 'maskin_plan', llm_model_source: 'tier' },
+				modelName: 'deepseek/deepseek-v4-flash',
+			})
+			const agent = {
+				...testAgent(session.actorId),
+				llmConfig: { model: 'claude-sonnet-5-5' },
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: false,
+				billingOwnerId: null,
+				settings: { billing: { plan: 'pro', hard_cap_usd_cents: 1000, period_start: 0 } },
+			}
+
+			mockResults.selectQueue = [[agent], [workspace], [], []]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			expect(spec.env.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
+			for (const u of calls.updates) {
+				if (typeof u === 'object' && u !== null && 'modelName' in u) {
+					expect((u as { modelName?: unknown }).modelName).toBeUndefined()
+				}
+			}
 		})
 	})
 
@@ -5917,6 +5950,27 @@ describe('SessionManager', () => {
 })
 
 describe('mergeLaunchRouteConfig()', () => {
+	it('records where the model came from, and is a no-op once it is recorded', () => {
+		expect(
+			mergeLaunchRouteConfig(
+				{ llm_route: 'maskin_plan' },
+				'maskin_plan',
+				undefined,
+				undefined,
+				'agent',
+			),
+		).toMatchObject({ llm_route: 'maskin_plan', llm_model_source: 'agent' })
+		expect(
+			mergeLaunchRouteConfig(
+				{ llm_route: 'maskin_plan', llm_model_source: 'agent' },
+				'maskin_plan',
+				undefined,
+				undefined,
+				'agent',
+			),
+		).toBeNull()
+	})
+
 	it('returns null when the route and oauth slot are unchanged', () => {
 		expect(
 			mergeLaunchRouteConfig(
