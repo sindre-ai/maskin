@@ -68,6 +68,22 @@ export function registerWorkspaceProperties(props: WorkspaceSuperProperties): vo
 	}
 }
 
+// Ties every event from this browser to one `workspace` group, so per-workspace
+// funnels and retention read off a single group instead of the workspace_id
+// super property. Only the id and created date go up: the workspace name is
+// never sent, so the anonymise setting needs no branch here. Call it after
+// setCapturingEnabled so an opted-out workspace sends nothing.
+export function setWorkspaceGroup(workspaceId: string, createdAt?: string | null): void {
+	if (!initialized) return
+	try {
+		const properties: Record<string, string> = { workspace_id: workspaceId }
+		if (createdAt) properties.created_at = createdAt
+		posthog.group('workspace', workspaceId, properties)
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
 // Mirrors the Privacy & data toggle. When users turn share-usage off we
 // route through PostHog's opt_out so the queued events never leave the
 // browser; turning it back on flushes the standard opt_in path.

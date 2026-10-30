@@ -5920,6 +5920,11 @@ ${cont.continues_prompt}
 			const skillsAttached =
 				typeof staging?.manifest_skills === 'number' ? staging.manifest_skills : undefined
 			const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : undefined
+			// The row may predate settle (no completedAt yet), so fall back to now.
+			const startedAt = session.startedAt ?? session.createdAt
+			const durationMs = startedAt
+				? Math.max(0, (session.completedAt ?? new Date()).getTime() - startedAt.getTime())
+				: undefined
 			await trackAgentSessionCompletedWithSkills({
 				workspaceId: session.workspaceId,
 				sessionId: session.id,
@@ -5927,6 +5932,7 @@ ${cont.continues_prompt}
 				outcome,
 				skillsAttached,
 				skillsStaged,
+				durationMs,
 			})
 		} catch (err) {
 			// Never propagate — completion path must not be blocked by analytics.
