@@ -1,3 +1,5 @@
+import type { SessionStatsRow } from '@maskin/shared'
+
 export type AgentStatus = 'working' | 'idle' | 'failed'
 
 interface SessionLike {
@@ -55,6 +57,14 @@ export function deriveAgentStatus(
 	return 'idle'
 }
 
+/** Status for an agent with no session in the recent list, from its server-side stats. */
+export function deriveAgentStatusFromStats(stats: SessionStatsRow | undefined): AgentStatus {
+	if (!stats) return 'idle'
+	if (stats.active > 0) return 'working'
+	if (stats.latest_status === 'failed' || stats.latest_status === 'timeout') return 'failed'
+	return 'idle'
+}
+
 export function getLatestSession<T extends SessionLike>(
 	agentId: string,
 	sessionsByAgent: Map<string, T[]>,
@@ -103,6 +113,15 @@ export function summarizeAgentSessions(
 		}
 	}
 	return stats
+}
+
+export function statsToCounts(stats: SessionStatsRow | undefined): AgentSessionStats {
+	return {
+		total: stats?.total ?? 0,
+		active: stats?.active ?? 0,
+		totalCostUsd: stats?.total_cost_usd ?? 0,
+		last30dCostUsd: stats?.last_30d_cost_usd ?? 0,
+	}
 }
 
 /**

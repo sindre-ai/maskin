@@ -145,11 +145,25 @@ jobs:
         # in serial: 657 tests, 0 failures, ~23 s). Serial is deterministic and still fast.
         run: swift test --no-parallel
         env:
+          # The chat card tests write a PNG of every card state here (open, folded, loading,
+          # deleted, in a message, in your own message; light and dark, normal and largest text);
+          # the step below uploads them for the design check.
+          CHATS_SNAPSHOT_DIR: ${{ runner.temp }}/chats-snapshots
           # The For you view tests write a PNG of every new view here (normal and largest text size,
           # light and dark); the step below uploads them for the design check.
           FORYOU_SNAPSHOT_DIR: ${{ runner.temp }}/foryou-snapshots
 
       # always(): a failing test should not hide the images that did render.
+      - name: Upload chat card snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chats-snapshots
+          path: ${{ runner.temp }}/chats-snapshots
+          if-no-files-found: warn
+          overwrite: true  # a re-run of the job replaces the images of the first try
+          retention-days: 14
+
       - name: Upload For you snapshots
         if: always()
         uses: actions/upload-artifact@v4

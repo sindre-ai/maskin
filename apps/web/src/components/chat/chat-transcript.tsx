@@ -218,7 +218,7 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 
 function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean }) {
 	const [open, setOpen] = useState(false)
-	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
+	const label = 'Thinking'
 	const body = redacted
 		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text

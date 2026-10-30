@@ -2,7 +2,12 @@ import {
 	renderLinkedCard,
 	renderLinkedChip,
 	renderLinkedGithubChip,
+	renderLinkedSettingsChip,
 } from '@/components/chat/linked-object-preview'
+import {
+	OtherWorkspaceLink,
+	useOtherWorkspaceLabel,
+} from '@/components/chat/linked-object-reference'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -12,7 +17,9 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
+import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObject } from '@/hooks/use-objects'
 import { useTrigger } from '@/hooks/use-triggers'
@@ -21,10 +28,13 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	type GithubTarget,
+	type SettingsTarget,
 	githubChipName,
 	githubChipText,
+	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
+import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
@@ -33,10 +43,12 @@ import {
 	CircleDot,
 	Copy,
 	GitPullRequest,
+	Globe,
 	Link2,
 	MessageSquareReply,
 	Pencil,
 	RotateCcw,
+	Settings as SettingsIcon,
 } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -48,6 +60,7 @@ import { IntegrationConnectCard } from './integration-connect-card'
 import { KeychainAccessRequestCard } from './keychain-access-request-card'
 import { KeychainRequestCard } from './keychain-request-card'
 import { McpServerRequestCard } from './mcp-server-request-card'
+import { type MessageAttachmentItem, MessageAttachments } from './message-attachments'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -108,6 +121,7 @@ export function MessageBubble({
 	onReplyInThread,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
+	const enterprise = useIsEnterpriseWorkspace()
 	const isOwn = message.actorId === actor?.id
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
@@ -128,6 +142,8 @@ export function MessageBubble({
 	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
+	// The one read of this flag: files and images lift out of the text bubble when it is on.
+	const attachmentsLifted = useFeatureFlag('chat-attachments-lifted')
 	const attachments = message.metadata?.attachments ?? []
 	// Resolve the file record for each attachment so the bubble renders the real
 	// filename — the metadata `name` is best-effort and older / MCP-posted
@@ -157,16 +173,35 @@ export function MessageBubble({
 					.join('\n')
 			: message.content
 	const ownSegments = useMemo(
-		() => (isOwn ? splitOwnLinks(shownContent, workspaceId) : []),
-		[isOwn, shownContent, workspaceId],
+		() => (isOwn ? splitOwnLinks(shownContent, workspaceId, enterprise) : []),
+		[isOwn, shownContent, workspaceId, enterprise],
 	)
 
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
 	}
 
+	const liftedAttachments =
+		attachmentsLifted && attachments.length > 0 ? (
+			<MessageAttachments
+				workspaceId={workspaceId}
+				align={isOwn ? 'end' : 'start'}
+				items={attachments.map((f): MessageAttachmentItem => {
+					const resolved = filesById.get(f.file_id)
+					return {
+						id: f.file_id,
+						name: resolved?.name ?? f.name ?? 'Attachment',
+						sizeBytes: resolved?.sizeBytes ?? f.size_bytes ?? 0,
+						mimeType: resolved?.mimeType ?? f.mime_type,
+						// The file list has loaded and this file is not in it: it was deleted.
+						status: attachedFiles && !resolved ? 'gone' : undefined,
+					}
+				})}
+			/>
+		) : null
+
 	const fileList =
-		attachments.length > 0 ? (
+		!attachmentsLifted && attachments.length > 0 ? (
 			<ul className="flex flex-col gap-1" aria-label="Attached files">
 				{attachments.map((f) => {
 					const resolved = filesById.get(f.file_id)
@@ -188,6 +223,8 @@ export function MessageBubble({
 		) : null
 
 	if (isOwn) {
+		// A message that is only attachments has no bubble.
+		const hasPlate = !attachmentsLifted || editing || message.content.length > 0
 		const startEditing = () => {
 			setDraft(message.content)
 			setEditing(true)
@@ -199,7 +236,14 @@ export function MessageBubble({
 			editMessage.mutate({ messageId: message.id, content })
 		}
 		return (
-			<div className={cn('flex flex-col items-end gap-1.5', editing && 'w-full')}>
+			<div
+				className={cn(
+					'flex flex-col items-end',
+					// Lifted attachments stack 4px above the text bubble.
+					attachmentsLifted ? 'gap-1' : 'gap-1.5',
+					editing && 'w-full',
+				)}
+			>
 				{hasContext ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
 						<span className="eyebrow shrink-0">YOU ATTACHED</span>
@@ -217,70 +261,75 @@ export function MessageBubble({
 						/>
 					</div>
 				) : null}
-				{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
+				{liftedAttachments}
+				{hasPlate ? (
+					<>
+						{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
 				    (`pr-2`) and owns the absolute placement, so the bar sits flush
 				    against the bubble and stays inside the box that measures overflow. */}
-				<div
-					className={cn(
-						'relative max-w-[min(560px,80%)]',
-						spawnInfo && 'pr-2',
-						editing && 'w-full',
-					)}
-				>
-					{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
-					<div className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
-						{fileList}
-						{editing ? (
-							<div className="flex flex-col gap-2">
-								<Textarea
-									value={draft}
-									onChange={(e) => setDraft(e.target.value)}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' && !e.shiftKey) {
-											e.preventDefault()
-											saveEdit()
-										}
-										if (e.key === 'Escape') {
-											e.preventDefault()
-											setEditing(false)
-										}
-									}}
-									aria-label="Edit message"
-									autoFocus
-									className="bg-background text-foreground"
-								/>
-								<div className="flex justify-end gap-2">
-									<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-										Cancel
-									</Button>
-									<Button size="sm" onClick={saveEdit}>
-										Save
-									</Button>
-								</div>
-							</div>
-						) : message.content.length > 0 ? (
-							// `break-words` is load-bearing next to the column's `min-w-0`:
-							// `min-w-0` bounds the box, this bounds the ink. Without it an
-							// unbroken token (a long URL) raises this span's min-content and
-							// paints past the bubble's `max-w` cap, out to the viewport edge.
-							<span className="whitespace-pre-wrap text-balance break-words">
-								{ownSegments.map((segment, index) =>
-									segment.kind === 'text' ? (
-										// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-										<Fragment key={index}>{segment.text}</Fragment>
-									) : (
-										<OwnLinkChip
-											// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
-											key={index}
-											workspaceId={workspaceId}
-											segment={segment}
+						<div
+							className={cn(
+								'relative max-w-[min(560px,80%)]',
+								spawnInfo && 'pr-2',
+								editing && 'w-full',
+							)}
+						>
+							{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
+							<div className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
+								{fileList}
+								{editing ? (
+									<div className="flex flex-col gap-2">
+										<Textarea
+											value={draft}
+											onChange={(e) => setDraft(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === 'Enter' && !e.shiftKey) {
+													e.preventDefault()
+													saveEdit()
+												}
+												if (e.key === 'Escape') {
+													e.preventDefault()
+													setEditing(false)
+												}
+											}}
+											aria-label="Edit message"
+											autoFocus
+											className="bg-background text-foreground"
 										/>
-									),
-								)}
-							</span>
-						) : null}
-					</div>
-				</div>
+										<div className="flex justify-end gap-2">
+											<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+												Cancel
+											</Button>
+											<Button size="sm" onClick={saveEdit}>
+												Save
+											</Button>
+										</div>
+									</div>
+								) : message.content.length > 0 ? (
+									// `break-words` is load-bearing next to the column's `min-w-0`:
+									// `min-w-0` bounds the box, this bounds the ink. Without it an
+									// unbroken token (a long URL) raises this span's min-content and
+									// paints past the bubble's `max-w` cap, out to the viewport edge.
+									<span className="whitespace-pre-wrap text-balance break-words">
+										{ownSegments.map((segment, index) =>
+											segment.kind === 'text' ? (
+												// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
+												<Fragment key={index}>{segment.text}</Fragment>
+											) : (
+												<OwnLinkChip
+													// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+													key={index}
+													workspaceId={workspaceId}
+													segment={segment}
+												/>
+											),
+										)}
+									</span>
+								) : null}
+							</div>
+						</div>
+					</>
+				) : null}
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
 				{/* The actions sit permanently in the timestamp row rather than
 				    revealing on hover — a touch viewport has no hover, and the
@@ -378,7 +427,9 @@ export function MessageBubble({
 					{isVoice ? <VoiceMessageMetaTag /> : null}
 				</div>
 				{activity ? <div className="mt-0.5">{activity}</div> : null}
-				{fileList ? <div className="mt-1.5">{fileList}</div> : null}
+				{(liftedAttachments ?? fileList) ? (
+					<div className="mt-1.5">{liftedAttachments ?? fileList}</div>
+				) : null}
 				{message.content.length > 0 ? (
 					<div className="mt-1 text-[13.5px] leading-[1.6]">
 						{/* `renderVisuals` turns a ```chart fenced block into the bounded
@@ -395,6 +446,7 @@ export function MessageBubble({
 							renderVisuals
 							linkedCards={{
 								workspaceId,
+								enterprise,
 								conversationId: message.conversationId,
 								agentId: message.actorId,
 								skipIds: shownLinkedObjectIds,
@@ -402,6 +454,7 @@ export function MessageBubble({
 								renderCard: renderLinkedCard,
 								renderChip: renderLinkedChip,
 								renderGithubChip: renderLinkedGithubChip,
+								renderSettingsChip: renderLinkedSettingsChip,
 							}}
 						/>
 					</div>
@@ -602,6 +655,7 @@ const OWN_CHIP_CLASS =
  * A link to an object, file, loop or trigger in your own message, drawn inline where it was typed
  * as a chip with the thing's name (cut at 30 characters; the full name is the tooltip). Until the
  * name is known the chip says what kind of thing it is, so the link never reads as an address.
+ * A link into another workspace is a dashed globe chip naming the kind and that workspace instead.
  */
 function OwnLinkChip({
 	workspaceId,
@@ -609,19 +663,34 @@ function OwnLinkChip({
 }: {
 	workspaceId: string
 	segment:
-		| { kind: 'loop'; id: string }
-		| { kind: 'trigger'; id: string }
-		| { kind: 'agent'; id: string }
-		| { kind: 'object' | 'file'; id: string }
+		| { kind: 'loop'; id: string; otherWorkspaceId?: string }
+		| { kind: 'trigger'; id: string; otherWorkspaceId?: string }
+		| { kind: 'agent'; id: string; otherWorkspaceId?: string }
+		| { kind: 'chat'; id: string; otherWorkspaceId?: string }
+		| { kind: 'object' | 'file'; id: string; otherWorkspaceId?: string }
 		| { kind: 'github'; href: string; target: GithubTarget }
+		| { kind: 'settings'; target: SettingsTarget }
 }) {
 	if (segment.kind === 'github') {
 		return <OwnGithubChip href={segment.href} target={segment.target} />
+	}
+	if (segment.kind === 'settings') {
+		return <OwnSettingsChip workspaceId={workspaceId} target={segment.target} />
+	}
+	if (segment.otherWorkspaceId && segment.kind !== 'file') {
+		return (
+			<OwnOtherWorkspaceChip
+				kind={segment.kind}
+				otherWorkspaceId={segment.otherWorkspaceId}
+				id={segment.id}
+			/>
+		)
 	}
 	if (segment.kind === 'loop') return <OwnLoopChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'trigger')
 		return <OwnTriggerChip workspaceId={workspaceId} id={segment.id} />
 	if (segment.kind === 'agent') return <OwnAgentChip workspaceId={workspaceId} id={segment.id} />
+	if (segment.kind === 'chat') return <OwnChatChip workspaceId={workspaceId} id={segment.id} />
 	return <OwnObjectOrFileChip workspaceId={workspaceId} segment={segment} />
 }
 
@@ -640,6 +709,54 @@ function OwnGithubChip({ href, target }: { href: string; target: GithubTarget })
 			<span className="truncate">{githubChipText(target)}</span>
 			<ArrowUpRight size={12} aria-hidden className="shrink-0" />
 		</a>
+	)
+}
+
+/** A settings page in your own message: a gear and "Settings: {section}", opening the page in a new tab. Nothing is fetched. */
+function OwnSettingsChip({
+	workspaceId,
+	target,
+}: {
+	workspaceId: string
+	target: SettingsTarget
+}) {
+	const text = settingsChipText(target)
+	return (
+		<a
+			href={`/${workspaceId}/settings${target.path ? `/${target.path}` : ''}`}
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label={text}
+			className={OWN_CHIP_CLASS}
+		>
+			<SettingsIcon size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{text}</span>
+		</a>
+	)
+}
+
+function OwnOtherWorkspaceChip({
+	kind,
+	otherWorkspaceId,
+	id,
+}: {
+	kind: 'object' | 'loop' | 'trigger' | 'agent' | 'chat'
+	otherWorkspaceId: string
+	id: string
+}) {
+	const label = useOtherWorkspaceLabel(kind, otherWorkspaceId)
+	return (
+		<OtherWorkspaceLink
+			kind={kind}
+			otherWorkspaceId={otherWorkspaceId}
+			id={id}
+			label={label}
+			newTab
+			className={cn(OWN_CHIP_CLASS, 'border border-dashed border-primary-foreground/40 italic')}
+		>
+			<Globe size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{label}</span>
+		</OtherWorkspaceLink>
 	)
 }
 
@@ -703,6 +820,24 @@ function OwnAgentChip({ workspaceId, id }: { workspaceId: string; id: string }) 
 		>
 			<Link2 size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{name ? chipTitle(name) : 'Agent'}</span>
+		</Link>
+	)
+}
+
+function OwnChatChip({ workspaceId, id }: { workspaceId: string; id: string }) {
+	const chat = useLinkedChat(workspaceId, id)
+	const name = chat?.title.trim()
+	return (
+		<Link
+			to="/$workspaceId/chats/$conversationId"
+			params={{ workspaceId, conversationId: id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={name}
+			className={OWN_CHIP_CLASS}
+		>
+			<Link2 size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{name ? chipTitle(name) : 'Chat'}</span>
 		</Link>
 	)
 }

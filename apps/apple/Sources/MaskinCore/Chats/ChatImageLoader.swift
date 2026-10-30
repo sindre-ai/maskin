@@ -52,17 +52,21 @@ public actor ChatImageLoader {
 		if let hit = memory.get(fileID) { return hit }
 		if let running = inFlight[fileID] { return await running.value }
 		let fetch = fetch
+		let memory = memory
 		let task = Task<DecodedImage?, Never> {
 			guard let data = try? await fetch(fileID) else { return nil }
 			// Decode off the actor's executor: ImageIO work on a large photo is not instant.
-			return await Task.detached(priority: .userInitiated) {
+			let image = await Task.detached(priority: .userInitiated) {
 				FileImageDecoder.thumbnail(data, maxPixel: Self.thumbnailPixels)
 			}.value
+			// Keep it before the task finishes: rows that shared this request get their answer
+			// when it ends, and `cachedImage` must already see the thumbnail by then.
+			if let image { memory.set(image, for: fileID) }
+			return image
 		}
 		inFlight[fileID] = task
 		let result = await task.value
 		inFlight[fileID] = nil
-		if let result { memory.set(result, for: fileID) }
 		return result
 	}
 }

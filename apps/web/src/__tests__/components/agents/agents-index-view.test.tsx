@@ -1,4 +1,5 @@
 import { AgentsIndexView } from '@/components/agents/agents-index-view'
+import type { SessionStatsRow } from '@maskin/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -95,13 +96,14 @@ const brianRunningSession = () =>
 function mount(
 	agents: ReturnType<typeof buildActorListItem>[],
 	sessions: ReturnType<typeof buildSessionResponse>[],
+	stats?: SessionStatsRow[],
 ) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	})
 	render(
 		<QueryClientProvider client={queryClient}>
-			<AgentsIndexView workspaceId="ws-1" agents={agents} sessions={sessions} />
+			<AgentsIndexView workspaceId="ws-1" agents={agents} sessions={sessions} stats={stats} />
 		</QueryClientProvider>,
 	)
 }
@@ -215,6 +217,49 @@ describe('AgentsIndexView', () => {
 			expect(within(row).getByText('1 active')).toBeInTheDocument()
 			expect(within(row).getByText('$11.75')).toBeInTheDocument()
 			expect(within(row).getByText('$1.50 · 30d')).toBeInTheDocument()
+		})
+
+		it('reads counts and cost from the stats, not from the recent sessions', () => {
+			mount(
+				[agentBrian()],
+				[buildSessionResponse({ id: 'a', actorId: 'agent-brian', status: 'running' })],
+				[
+					{
+						actor_id: 'agent-brian',
+						total: 59_500,
+						active: 1,
+						total_cost_usd: 1234.5,
+						last_30d_cost_usd: 99.25,
+						latest_status: 'running',
+						latest_session_at: '2026-10-29T07:00:00.000Z',
+					},
+				],
+			)
+			const row = screen.getByRole('link').closest('li') as HTMLElement
+			expect(within(row).getByText('59500 sessions')).toBeInTheDocument()
+			expect(within(row).getByText('1 active')).toBeInTheDocument()
+			expect(within(row).getByText('$1,234.50')).toBeInTheDocument()
+			expect(within(row).getByText('$99.25 · 30d')).toBeInTheDocument()
+		})
+
+		it('puts an agent with no recent session under Failed when its latest run in the stats failed', () => {
+			mount(
+				[agentBrian()],
+				[],
+				[
+					{
+						actor_id: 'agent-brian',
+						total: 7,
+						active: 0,
+						total_cost_usd: 0,
+						last_30d_cost_usd: 0,
+						latest_status: 'failed',
+						latest_session_at: '2026-09-01T07:00:00.000Z',
+					},
+				],
+			)
+			const failed = screen.getByRole('heading', { name: /failed/i })
+			expect(failed.closest('div')).toHaveTextContent('1')
 		})
 	})
 

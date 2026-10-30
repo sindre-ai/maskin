@@ -105,7 +105,7 @@ enum AttachmentLoading {
 			try data.write(to: url)
 			defer { try? FileManager.default.removeItem(at: url) }
 			guard let result = ImageDownsampler.prepare(fileAt: url) else {
-				throw ChatAttachmentError("That image can't be attached.")
+				throw ChatAttachmentError("Couldn't read that image (\(data.count) bytes).")
 			}
 			let base = (name as NSString).deletingPathExtension
 			return PreparedChatFile(

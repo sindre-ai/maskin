@@ -216,6 +216,8 @@ describe('POST /api/integrations/byo-login', () => {
 		['a password with a line break', { password: 'abc\ndef' }],
 		['a username with surrounding whitespace', { username: ' someone ' }],
 		['a missing username', { username: undefined }],
+		['an empty email', { email: '' }],
+		['an email with surrounding whitespace', { email: ' me@work.test ' }],
 	])('refuses %s with a 400 that never repeats the value', async (_label, override) => {
 		const human = getTestActorId()
 		const ws = await insertWorkspace(db, human)

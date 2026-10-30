@@ -150,6 +150,12 @@ export const messageQuestionSchema = z.object({
 	 * this chat: the answer goes to that session's input, not to the chat's agents.
 	 */
 	reply_to_session: z.boolean().optional(),
+	/**
+	 * Where the ask route put this question: the asking session's own chat, the chat a helper
+	 * was started from, or the asking agent's master chat with the person. Backend-owned;
+	 * the delivery readout is one query on this field.
+	 */
+	routed_to: z.enum(['session_chat', 'helper_chat', 'master']).optional(),
 })
 
 /**
@@ -467,6 +473,10 @@ export const createConversationSchema = z.object({
 	subject: conversationSubjectSchema.optional(),
 	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
 	participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
+	// Open the direct message (DM) with the one other participant instead of a new
+	// topical chat: the pair's existing DM is returned (200), or created once (201,
+	// titled with `title`). Leave it out for a new topical chat, which is always created.
+	direct: z.boolean().optional(),
 	initial_message: z.string().min(1).max(MESSAGE_MAX_LENGTH).optional(),
 	// Structured context (objects/notifications picked via the composer) for the
 	// initial message — mirrors postMessageSchema's metadata so a brand-new
@@ -517,6 +527,10 @@ export const postMessageSchema = z.object({
 	thread_root_id: z.number().int().positive().optional(),
 	// With thread_root_id: also show the reply in the main timeline.
 	also_in_channel: z.boolean().optional(),
+	// An agent posting mid-turn lands in the thread of the message that started the turn when
+	// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
+	// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+	top_level: z.boolean().optional(),
 })
 
 export const editMessageSchema = z.object({

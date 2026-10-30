@@ -5,6 +5,7 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
+import { isActorHumanPaused } from '../lib/agent-pause'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import {
@@ -797,6 +798,16 @@ async function spawnThreadReplySessions(ctx: {
 	const initiatedFromObjectId = obj ? ctx.objectId : null
 
 	for (const agentId of threadReplyAgentIds) {
+		// A person's Pause holds against the thread-reply auto-spawn too. The idle watcher's
+		// auto-pause is not a person's, so those agents still wake.
+		if (await isActorHumanPaused(ctx.db, agentId)) {
+			logger.info('Thread-reply auto-spawn held: agent is paused by a person', {
+				source_comment_event_id: ctx.newCommentEventId,
+				actor_id: agentId,
+				object_id: ctx.objectId,
+			})
+			continue
+		}
 		// Claim (comment, agent) before starting: the CommentDispatcher fallback ladder (case 3
 		// Chief of Staff in particular) can pick the same agent for the same comment from the PG
 		// NOTIFY subscriber ~50ms away. The claim row's primary key lets exactly one path start a

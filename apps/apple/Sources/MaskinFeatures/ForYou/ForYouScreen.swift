@@ -52,6 +52,7 @@ public struct ForYouScreen: View {
 			actions: ShellActions(live: true)
 		)
 		.task(id: environment.workspaceId) {
+			Perf.event("foryou.screen.task")
 			async let feed: Void = runtime.store.load()
 			async let stories: Void = appRuntime.storiesStore()?.loadCompletely() ?? ()
 			async let names: Void = loadTypeNames()

@@ -86,6 +86,7 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import {
+	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	classifySessionExit,
 	endsInClaudeAuthDeath,
@@ -192,6 +193,7 @@ import {
 	hasMaskinMcpEntry,
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
+import { pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
@@ -242,10 +244,23 @@ import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
 
-/** Failure reasons for a session whose container is gone / was never assigned. */
-const CONTAINER_LOST_MESSAGE = 'Container disappeared before pause could complete'
+/**
+ * Technical reasons for a session whose container is gone / was never
+ * assigned. These go to the system log and `result.error` only; users see
+ * CONTAINER_LOST_FAILURE_REASON.human_message instead.
+ */
+const CONTAINER_LOST_MESSAGE = 'Container no longer running'
 const NO_CONTAINER_ASSIGNED_MESSAGE =
 	'No container was ever assigned to this session — it was marked running but never started'
+
+const CONTAINER_LOST_FAILURE_REASON: SessionResultFailureReason = {
+	provider: 'local-docker',
+	reason_code: 'container_lost',
+	human_message: 'This session stopped unexpectedly. Send another message to start a new one.',
+	http_status: null,
+	reset_at: null,
+	verbatim_output: null,
+}
 
 /**
  * Guards the MCP health check's partial-line buffer against a stdout stream
@@ -519,26 +534,6 @@ export interface SessionLogEvent extends LogChunk {
 export type SessionTurnEvent =
 	| { sessionId: string; phase: 'started' }
 	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
-
-/**
- * §17.5 companion parser at the two completion paths: convert the classifier's
- * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
- * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
- * and markRemoteSessionComplete apply the same logic — no divergence class from
- * .claude/rules/known-pitfalls.md "The Remote Completion Path Skipped ...".
- *
- * Returns null when the reason isn't credit-exhaustion-shaped (won't retry via
- * scheduler, no reset_at to persist) or when reset_at parsing didn't produce a
- * value in the [now+60s, now+24h] clamp band (§17.3, §17.7).
- */
-function pickRetryAt(failureReason: SessionResultFailureReason | null): Date | null {
-	if (!failureReason) return null
-	if (failureReason.provider !== 'anthropic') return null
-	if (!failureReason.reset_at) return null
-	const parsed = Date.parse(failureReason.reset_at)
-	if (Number.isNaN(parsed)) return null
-	return new Date(parsed)
-}
 
 /**
  * The settle classification for a sandbox exit seen by handleCompletion or
@@ -1793,6 +1788,13 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in running state`)
 		}
 
+		// A remote session's sandbox lives on the agent-server, so the local Docker
+		// check below would always call it gone and mark a live session failed.
+		// Snapshot and resume are local-only: refuse, and leave the session running.
+		if (session.agentServerId) {
+			throw new Error(`Session ${sessionId} runs on an agent server and cannot be paused`)
+		}
+
 		// Self-heal: if the container disappeared (stopped or removed externally),
 		// the session can never be snapshotted. Mark it failed and exit so the
 		// auto-pause loop stops retrying every minute.
@@ -1931,6 +1933,7 @@ export class SessionManager extends EventEmitter {
 				source: 'reaper',
 				reason,
 				exitCode: 0,
+				failureReason: CONTAINER_LOST_FAILURE_REASON,
 			},
 			this.buildSettleDeps({ skipStop: true, skipPush: true }),
 		)
@@ -4946,9 +4949,12 @@ ${cont.continues_prompt}
 		// its result text. Read it the way the two exit paths do, so the retry
 		// scheduler can rerun the helper once the allowance is back. Banners only:
 		// this is the helper's final error text, not a whole stdout tail, so the
-		// looser substring signals have nothing to add.
+		// looser substring signals have nothing to add. A dead login or rejected API
+		// key is named first: it has no reset time, so it is stored with its reason
+		// but pickRetryAt returns null and nothing is retried or failed over.
 		const limitReason = outcome.isError
-			? classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false })
+			? (classifyClaudeAuthFailureText(outcome.text) ??
+				classifyCreditExhaustion(outcome.text, { includeAmbiguousSignals: false }))
 			: null
 		const scheduledRetryAt = pickRetryAt(limitReason)
 

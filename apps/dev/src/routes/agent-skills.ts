@@ -37,6 +37,18 @@ async function requireWorkspaceMember(db: Database, workspaceId: string, actorId
 	return member ?? null
 }
 
+// The skill name becomes part of a storage key, so every route that takes one
+// must validate it, not only PUT.
+function invalidSkillNameError() {
+	return createApiError('VALIDATION_ERROR', 'Invalid skill name', [
+		{
+			field: 'skillName',
+			message: 'Use lowercase letters, numbers, and hyphens only',
+			expected: 'pattern: /^[a-z0-9][a-z0-9-]*$/',
+		},
+	])
+}
+
 // -- Response schemas --
 
 const skillListItemSchema = z.object({
@@ -142,6 +154,10 @@ const getSkillRoute = createRoute({
 			content: { 'application/json': { schema: skillDetailSchema } },
 			description: 'Skill details',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid skill name',
+		},
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Not a workspace member',
@@ -163,6 +179,10 @@ app.openapi(getSkillRoute, (async (c) => {
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	if (!skillNameSchema.safeParse(skillName).success) {
+		return c.json(invalidSkillNameError(), 400)
 	}
 
 	try {
@@ -235,18 +255,8 @@ app.openapi(saveSkillRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	const nameResult = skillNameSchema.safeParse(skillName)
-	if (!nameResult.success) {
-		return c.json(
-			createApiError('VALIDATION_ERROR', 'Invalid skill name', [
-				{
-					field: 'skillName',
-					message: 'Use lowercase letters, numbers, and hyphens only',
-					expected: 'pattern: /^[a-z0-9][a-z0-9-]*$/',
-				},
-			]),
-			400,
-		)
+	if (!skillNameSchema.safeParse(skillName).success) {
+		return c.json(invalidSkillNameError(), 400)
 	}
 
 	const body: SaveSkillInput = c.req.valid('json')
@@ -293,6 +303,10 @@ const deleteSkillRoute = createRoute({
 			content: { 'application/json': { schema: z.object({ ok: z.boolean() }) } },
 			description: 'Skill deleted',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid skill name',
+		},
 		403: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Not a workspace member',
@@ -311,6 +325,10 @@ app.openapi(deleteSkillRoute, (async (c) => {
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	if (!skillNameSchema.safeParse(skillName).success) {
+		return c.json(invalidSkillNameError(), 400)
 	}
 
 	await storage.deleteFile(actorId, workspaceId, 'skills', `${skillName}/SKILL.md`)

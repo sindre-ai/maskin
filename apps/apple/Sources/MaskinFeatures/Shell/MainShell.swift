@@ -51,7 +51,10 @@ public struct MainShell: View {
 				liveCalls.present(request, environment: environment)
 			}
 		)
-		.task(id: environment.workspaceId) { await badges.start(environment: environment) }
+		.task(id: environment.workspaceId) {
+			Perf.event("shell.task")
+			await badges.start(environment: environment)
+		}
 		// Profile pictures: loaded per workspace and again on return to the app, so one set on the web shows.
 		.environment(\.actorPictures, ActorPictures { [pictures] in pictures.url(for: $0) })
 		.task(id: environment.workspaceId) { await pictures.load(environment: environment) }
@@ -170,7 +173,7 @@ private struct AdaptiveTabs: View {
 				.presentationDetents([.medium, .large])
 				.environment(\.shellShowsAvatar, false)
 		}
-		.keepTabBarExpanded()
+		.modifier(TeamFoldingTabBar(runtime: runtime))
 	}
 }
 
@@ -285,19 +288,6 @@ extension ShellTab {
 		case .chats: return .make(count: badges.unreadChats)
 		default: return .none
 		}
-	}
-}
-
-extension View {
-	/// iOS 26: the tab bar stays expanded, every tab visible, however far the content scrolls.
-	/// No-op elsewhere.
-	fileprivate func keepTabBarExpanded() -> some View {
-		#if os(iOS)
-			if #available(iOS 26, *) {
-				return AnyView(tabBarMinimizeBehavior(.never))
-			}
-		#endif
-		return AnyView(self)
 	}
 }
 

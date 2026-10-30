@@ -263,13 +263,12 @@ struct ObjectDetailSnapshotTests {
 	}
 }
 
-/// Polls until `condition` holds or the timeout passes.
+/// Polls until `condition` holds or the budget (see `PollBudget`) is spent.
 private func waitUntil(timeout: Duration = .seconds(10), _ condition: @MainActor () -> Bool) async throws {
-	let clock = ContinuousClock()
-	let deadline = clock.now + timeout
-	while clock.now < deadline {
+	var budget = PollBudget(timeout)
+	repeat {
 		if await condition() { return }
 		try await Task.sleep(for: .milliseconds(20))
-	}
+	} while budget.spend()
 	Issue.record("timed out waiting")
 }

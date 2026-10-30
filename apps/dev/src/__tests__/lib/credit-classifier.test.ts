@@ -412,7 +412,37 @@ describe('Claude auth death', () => {
 		expect(endsInClaudeAuthDeath('')).toBe(false)
 	})
 
-	it('is not a failover banner, so a dead login never moves a healthy slot', () => {
-		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 1)).toBeNull()
+	it('gives an expired login its own auth-class code, with no reset time so it is never retried', () => {
+		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 1)).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'oauth_expired',
+			http_status: 401,
+			reset_at: null,
+		})
+	})
+
+	it('gives a rejected API key its own code', () => {
+		const tail = `working...\n${resultLine('Invalid API key · Fix external API key', true)}\n`
+		expect(classifySessionExit(tail, 1)).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'invalid_api_key',
+			http_status: 401,
+			reset_at: null,
+		})
+	})
+
+	it('leaves other authentication failures unclassified', () => {
+		const other = 'Failed to authenticate. API Error: 401 {"type":"error"}'
+		expect(classifySessionExit(`${resultLine(other, true)}\n`, 1)).toBeNull()
+	})
+
+	it('ignores the messages in tool output, a successful result, or a clean exit', () => {
+		const quoted = JSON.stringify({
+			type: 'user',
+			message: { content: [{ type: 'tool_result', content: DEAD }] },
+		})
+		const clean = `${quoted}\n${resultLine('Invalid API key', false)}\n`
+		expect(classifySessionExit(clean, 1)).toBeNull()
+		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 0)).toBeNull()
 	})
 })

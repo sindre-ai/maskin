@@ -410,6 +410,26 @@ describe('launcher with words and pills', () => {
 		])
 	})
 
+	it('offers an @ menu, and Cmd+Enter hands the participant pill to the search page', async () => {
+		localStorage.setItem('ff:search-chat-participant-filter', 'on')
+		const PM = '00000000-0000-4000-8000-0000000000a1'
+		actorsRef.current = [{ id: PM, name: 'Product Marketing', type: 'agent', isSystem: false }]
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), '@prod')
+		await user.click(await screen.findByRole('option', { name: /Product Marketing/ }))
+		expect(
+			await screen.findByRole('button', { name: 'Remove filter: @Product Marketing' }),
+		).toBeInTheDocument()
+		await user.keyboard('{Control>}{Enter}{/Control}')
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/search',
+			params: { workspaceId: 'ws-1' },
+			search: { participants: PM },
+		})
+	})
+
 	it('Enter on the Search row hands over too', async () => {
 		const user = userEvent.setup()
 		renderLauncher()

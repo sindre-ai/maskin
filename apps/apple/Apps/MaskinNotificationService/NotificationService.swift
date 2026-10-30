@@ -96,7 +96,7 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
 	private func registerCategory(
 		for plan: NotificationActionPlan, done: @escaping @Sendable () -> Void
 	) {
-		let category = Self.category(for: plan)
+		let category = PushCategories.category(for: plan)
 		let center = UNUserNotificationCenter.current()
 		center.getDeliveredNotifications { delivered in
 			center.getNotificationCategories { existing in
@@ -104,11 +104,8 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
 				// category the app registered, and only the dynamic ones whose notification is
 				// still on screen (an old one's buttons are useless once it is gone).
 				let live = Set(delivered.map(\.request.content.categoryIdentifier))
-				var merged = existing.filter {
-					!$0.identifier.hasPrefix(PushDecisionPayload.categoryPrefix) || live.contains($0.identifier)
-				}
-				merged.remove(category)
-				merged.insert(category)
+				// The fixed fallback is ensured too, so it exists before the app ever launched.
+				let merged = PushCategories.merged(existing: existing, live: live, adding: category)
 				center.setNotificationCategories(merged)
 				// Read the set back: that round trip is what guarantees the registration landed
 				// before iOS renders the notification and looks its category up.
@@ -145,37 +142,5 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
 				completion(nil)
 			}
 		}.resume()
-	}
-
-	static func category(for plan: NotificationActionPlan) -> UNNotificationCategory {
-		let actions: [UNNotificationAction] = plan.actions.map { action in
-			var options: UNNotificationActionOptions = []
-			if action.requiresAuthentication { options.insert(.authenticationRequired) }
-			if action.isDestructive { options.insert(.destructive) }
-			switch action.kind {
-			case .option:
-				return UNNotificationAction(identifier: action.identifier, title: action.title, options: options)
-			case .later:
-				// Runs in the background and sends nothing: it only hides the card until later.
-				return UNNotificationAction(
-					identifier: action.identifier, title: action.title, options: options,
-					icon: UNNotificationActionIcon(systemImageName: "clock"))
-			case .reply:
-				return UNTextInputNotificationAction(
-					identifier: action.identifier, title: action.title, options: options,
-					icon: UNNotificationActionIcon(systemImageName: "arrowshape.turn.up.left"),
-					textInputButtonTitle: "Send", textInputPlaceholder: "Reply")
-			case .open:
-				// Opens the app: Open, and a "Review" button for an option that needs a confirmation.
-				// Plain options, Later and Reply run in the background.
-				options.insert(.foreground)
-				return UNNotificationAction(
-					identifier: action.identifier, title: action.title, options: options,
-					icon: UNNotificationActionIcon(systemImageName: "arrow.up.forward.app"))
-			}
-		}
-		return UNNotificationCategory(
-			identifier: plan.categoryIdentifier, actions: actions, intentIdentifiers: [],
-			hiddenPreviewsBodyPlaceholder: "Maskin needs a decision", options: [])
 	}
 }

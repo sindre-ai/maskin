@@ -28,6 +28,15 @@ describe('buildVocabulary', () => {
 		}
 	})
 
+	it('labels the person scope People without claiming typed words from contact', () => {
+		const withContact = buildVocabulary([{ key: 'contact', label: 'Contact', plural: 'People' }])
+		expect(pillLabel(withContact, 'type', 'person')).toBe('People')
+		expect(withContact.typeWords.get('people')).toBe('contact')
+		expect(withContact.typeWords.has('person')).toBe(true)
+		expect(withContact.typeWords.get('person')).toBe('contact')
+		expect(buildVocabulary([]).typeWords.has('person')).toBe(false)
+	})
+
 	it('has no owner words', () => {
 		for (const w of ['owner', 'mine', 'assignee']) expect(vocab.typeWords.has(w)).toBe(false)
 	})

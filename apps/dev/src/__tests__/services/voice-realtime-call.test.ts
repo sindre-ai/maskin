@@ -39,6 +39,8 @@ const {
 	resolveRealtimeVoice,
 } = await import('../../services/voice-realtime-call')
 
+const { VOICE_GREETING_INSTRUCTION } = await import('../../services/voice-instructions')
+
 const WORKSPACE = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 const HUMAN = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
 const AGENT = '4a8d2f3b-ac5e-4032-9d7f-6b1e8c02f553'
@@ -57,6 +59,7 @@ function fakeSocket() {
 	let handlers: RealtimeSocketHandlers | null = null
 	let url = ''
 	let opens = 0
+	let greeting: Array<Record<string, unknown>> | null = null
 	const openSocket: OpenRealtimeSocketFn = (u, _key, h) => {
 		url = u
 		opens += 1
@@ -73,7 +76,14 @@ function fakeSocket() {
 		get opens() {
 			return opens
 		},
-		open: () => handlers?.onOpen(),
+		get greeting() {
+			return greeting
+		},
+		// The greeting the first attach sends is split off, so tests count only what they cause.
+		open: () => {
+			handlers?.onOpen()
+			if (greeting === null) greeting = sent.splice(0)
+		},
 		emit: (evt: Record<string, unknown>) => handlers?.onMessage(JSON.stringify(evt)),
 		drop: () => handlers?.onClose(),
 	}
@@ -121,6 +131,24 @@ describe('realtimeSocketUrl', () => {
 })
 
 describe('attachVoiceCall', () => {
+	it('asks the model to greet the caller once the socket first opens', async () => {
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+		expect(socket.greeting).toEqual([
+			{
+				type: 'conversation.item.create',
+				item: {
+					type: 'message',
+					role: 'system',
+					content: [{ type: 'input_text', text: VOICE_GREETING_INSTRUCTION }],
+				},
+			},
+			{ type: 'response.create' },
+		])
+	})
+
 	it('resolves true once the socket opens and connects to the call id', async () => {
 		const socket = fakeSocket()
 		const attached = attach(socket)
