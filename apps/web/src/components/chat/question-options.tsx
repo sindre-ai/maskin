@@ -161,8 +161,8 @@ export function QuestionOptions({
 					</fieldset>
 				)
 			})}
-			<ViewerTooltip className="flex">
-				<div className="flex flex-wrap items-center gap-2">
+			<div className="flex flex-wrap items-center gap-2">
+				<ViewerTooltip className="inline-flex items-center gap-2">
 					<Button
 						type="button"
 						size="sm"
@@ -186,9 +186,10 @@ export function QuestionOptions({
 							or type your reply
 						</Button>
 					)}
-					{trailingAction ? <div className="ml-auto">{trailingAction}</div> : null}
-				</div>
-			</ViewerTooltip>
+				</ViewerTooltip>
+				{/* Read-only (opens the thread), so it stays usable for viewers. */}
+				{trailingAction ? <div className="ml-auto">{trailingAction}</div> : null}
+			</div>
 			{typing ? (
 				<div className="flex items-end gap-2">
 					<Textarea
