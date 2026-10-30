@@ -73,8 +73,8 @@ test.describe('Chat — your own message carries the object card', () => {
 			await expect(again.locator('[data-linked-card]')).toHaveCount(0)
 			await expect(again.getByRole('link', { name: /^Bet, Active: Own card bet/ })).toBeVisible()
 
-			// An object that is gone reads Deleted object.
-			await expect(message('An old one').getByText('Deleted object')).toBeVisible()
+			// An object that is gone reads This object was deleted.
+			await expect(message('An old one').getByText('This object was deleted')).toBeVisible()
 
 			// A lone card fills the column up to 460px (about 343px on a phone, not a 68vw sliver). The 8px
 			// gutter for the session marker bar sits inside that box, so a card with the bar is 452px.
