@@ -64,6 +64,7 @@ import {
 	type ThreadReplyDelivery,
 	routeThreadReplyToSubSession,
 } from '../services/thread-reply-routing'
+import { resolveThreadRootId, resolveTurnMessageId } from '../services/turn-origin'
 
 type Env = {
 	Variables: {
@@ -1299,6 +1300,21 @@ app.openapi(postMessageRoute, (async (c) => {
 		.where(eq(actors.id, callerId))
 		.limit(1)
 
+	// An agent posting mid-turn answers where the human is talking: in the thread of the message
+	// that started the turn, as the end-of-turn reply does. Only for the agent's own session in
+	// this chat (a verified sessionId), so humans and other callers post exactly as before.
+	// An explicit thread_root_id wins, top_level opts out.
+	let turnThreadRootId: number | null = null
+	if (
+		sessionId &&
+		body.thread_root_id === undefined &&
+		body.top_level !== true &&
+		callerType === 'agent'
+	) {
+		const turnMessageId = await resolveTurnMessageId(db, sessionId)
+		turnThreadRootId = await resolveThreadRootId(db, turnMessageId, id)
+	}
+
 	// A thread reply must hang off a top-level message of this same conversation:
 	// threads are one level deep, so a reply to a reply is rejected rather than
 	// silently re-rooted.
@@ -1332,7 +1348,7 @@ app.openapi(postMessageRoute, (async (c) => {
 		content: body.content,
 		metadata,
 		sessionId,
-		threadRootId: body.thread_root_id ?? null,
+		threadRootId: body.thread_root_id ?? turnThreadRootId,
 		threadAlsoInChannel: body.thread_root_id !== undefined && body.also_in_channel === true,
 	})
 	if (!created) throw new Error('Failed to create message')

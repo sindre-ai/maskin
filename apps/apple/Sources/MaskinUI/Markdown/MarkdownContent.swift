@@ -160,6 +160,7 @@ private struct MarkdownBlockView: View {
 	@Environment(\.markdownStyle) private var style
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	@Environment(\.markdownStandaloneLink) private var standaloneLink
+	@Environment(\.markdownCards) private var cards
 	@Environment(\.markdownOnInverse) private var onInverse
 
 	private var primary: Color { onInverse ? MaskinSurface.onInverse : MaskinColor.ink }
@@ -182,11 +183,16 @@ private struct MarkdownBlockView: View {
 				.accessibilityAddTraits(.isHeader)
 		case .paragraph(let text):
 			if let link = MarkdownStandaloneLink.match(text), linkInfo?(link.url) != nil {
-				// A paragraph that is only an internal link reads as a card, not an underlined address.
-				switch standaloneLink?(link.url, link.title) ?? .simple {
-				case .card(let card): card
-				case .simple: MarkdownLinkCard(url: link.url, title: link.title)
-				case .inline: paragraph(text)
+				if cards {
+					// A paragraph that is only an internal link reads as a card, not an underlined address.
+					switch standaloneLink?(link.url, link.title) ?? .simple {
+					case .card(let card): card
+					case .simple: MarkdownLinkCard(url: link.url, title: link.title)
+					case .inline: paragraph(text)
+					}
+				} else {
+					// Cards are off here (a card inside a card is a box in a box): the link is a chip.
+					paragraph(MarkdownStandaloneLink.chipMarkdown(for: text) ?? text)
 				}
 			} else {
 				paragraph(text)
