@@ -30,7 +30,10 @@ function fakeHost(overrides: Partial<LinkChipHost> = {}) {
 		open: vi.fn(),
 		...overrides,
 	}
-	return { host, mounted, unmounted }
+	// The editor may build a chip element more than once while it starts up; the live ones are the
+	// ones it has not since given back.
+	const live = () => mounted.filter((m) => !unmounted.includes(m.container))
+	return { host, mounted, unmounted, live }
 }
 
 function open(markdown: string, host: LinkChipHost | null) {
@@ -68,11 +71,11 @@ describe('linkRuns', () => {
 
 describe('link chips', () => {
 	it('draws a chip for each recognised link and hides that link text', () => {
-		const { host, mounted } = fakeHost()
+		const { host, live } = fakeHost()
 		const { editor, destroy } = open(DOC, host)
 		expect(chips(editor)).toHaveLength(2)
-		expect(mounted.map((m) => m.href)).toEqual([A, B])
-		expect(mounted.map((m) => m.text)).toEqual(['the plan', 'bold and more'])
+		expect(live().map((m) => m.href)).toEqual([A, B])
+		expect(live().map((m) => m.text)).toEqual(['the plan', 'bold and more'])
 		expect(hidden(editor).join('')).toBe('the planbold and more')
 		destroy()
 	})
@@ -145,12 +148,13 @@ describe('link chips', () => {
 	})
 
 	it('draws nothing without a host, and removes the chips when the host is taken away', () => {
-		const { host, mounted, unmounted } = fakeHost()
+		const { host, live } = fakeHost()
 		const { editor, destroy } = open(DOC, host)
 		expect(chips(editor)).toHaveLength(2)
+		expect(live()).toHaveLength(2)
 		setLinkChips(editor.view, null)
 		expect(chips(editor)).toHaveLength(0)
-		expect(unmounted).toEqual(mounted.map((m) => m.container))
+		expect(live()).toHaveLength(0)
 		expect(editor.view.dom.querySelector(`a[href="${A}"]`)?.textContent).toBe('the plan')
 		destroy()
 	})
@@ -183,10 +187,10 @@ describe('link chips', () => {
 	})
 
 	it('opens a clicked chip in a new tab and cancels the press, so the cursor does not move', () => {
-		const { host, mounted } = fakeHost()
+		const { host, live } = fakeHost()
 		const { editor, destroy } = open(DOC, host)
 		const before = editor.state.selection.from
-		const chip = mounted[0].container
+		const chip = live()[0].container
 		const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
 		chip.dispatchEvent(press)
 		expect(press.defaultPrevented).toBe(true)
