@@ -62,7 +62,7 @@ struct LinkedTargetsTests {
 	@Test("an id in prose, a link elsewhere or an image is not a target")
 	func notTargets() {
 		#expect(LinkedTarget.extract(from: "The id is \(one) and see https://example.com/page").isEmpty)
-		#expect(LinkedTarget.parse(href: "https://maskin.io/\(ws)/loops/\(one)") == nil)
+		#expect(LinkedTarget.parse(href: "https://maskin.io/\(ws)/loops/\(one)")?.kind == .loop)
 		#expect(LinkedTarget.parse(href: "maskin://\(ws)/files/\(file)")?.kind == .file)
 	}
 

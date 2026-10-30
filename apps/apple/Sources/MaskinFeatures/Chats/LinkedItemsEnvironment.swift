@@ -30,11 +30,16 @@ enum LinkedItemStores {
 		let remote = APIObjectsRemote(
 			client: environment.client, credentials: credentials, baseURL: environment.baseURL,
 			clientSource: environment.clientSource)
+		// Loops and triggers come from the same lists the Flows and Triggers screens read.
+		let loops = APILoopsSource(client: environment.client, workspaceID: workspaceId)
+		let triggers = APITriggersSource(client: environment.client, workspaceID: workspaceId)
 		let store = LinkedItemStore(
 			objects: remote,
 			files: APIFilesRemote(client: environment.client, credentials: credentials),
 			actors: { try await remote.actors() },
 			places: APILinkedPlacesRemote(client: environment.client, workspaceID: workspaceId),
+			loops: { try await loops.loops() },
+			triggers: { try await triggers.listPage() },
 			workspaceID: { [weak environment] in environment?.workspaceId })
 		cache[key] = store
 		return store
@@ -46,6 +51,11 @@ extension View {
 	func linkedItems(_ runtime: AppRuntime?) -> some View {
 		environment(\.linkedItems, runtime.flatMap { LinkedItemStores.store(for: $0.environment) })
 	}
+}
+
+extension EnvironmentValues {
+	/// The card sits inside a message bubble, where its summary is one line (stand-alone it is two).
+	@Entry var linkedInBubble: Bool = false
 }
 
 extension EnvironmentValues {
@@ -68,6 +78,8 @@ struct LinkedOpener: DynamicProperty {
 		switch target.kind {
 		case .object: runtime?.openObject(target.uuid)
 		case .file: runtime?.openFile(target.uuid)
+		case .loop: runtime?.openLoop(target.uuid)
+		case .trigger: runtime?.openTrigger(target.uuid)
 		case .agent: runtime?.openAgent(target.uuid)
 		case .chat: runtime?.openChat(target.uuid)
 		}
@@ -82,6 +94,8 @@ struct LinkedOpener: DynamicProperty {
 			switch target.kind {
 			case .object: runtime?.openObject(target.uuid)
 			case .file: runtime?.openFile(target.uuid)
+			case .loop: runtime?.openLoop(target.uuid)
+			case .trigger: runtime?.openTrigger(target.uuid)
 			case .agent: runtime?.openAgent(target.uuid)
 			case .chat: runtime?.openChat(target.uuid)
 			}
