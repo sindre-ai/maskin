@@ -7,6 +7,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // storage. Accept and reject are covered by the unit tests until the decide
 // endpoints land on the bet branch.
 
+// Changes land in blocks 2 and 4. The block on each side of a change is context, so
+// the last block is the one run of untouched blocks.
 const TEXT = [
 	'# Launch plan',
 	'',
@@ -15,6 +17,10 @@ const TEXT = [
 	'Owners are still being decided.',
 	'',
 	'Budget is capped at ten thousand euros.',
+	'',
+	'Questions go to the project channel.',
+	'',
+	'Notes are kept in the shared folder.',
 	'',
 ].join('\n')
 
