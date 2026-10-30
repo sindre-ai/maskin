@@ -259,9 +259,13 @@ describe('GET /api/search against real Postgres', () => {
 		})
 
 		it('leaves people out, since a person has no chat', async () => {
-			const res = await search({ q: 'Third', participants: [otherUserId] })
-			expect(res.results.some((r) => r.group === 'people')).toBe(false)
+			const zelda = await insertActor(db, { name: 'Zelda Quill', email: 'zelda@omega.test' })
+			await ensureWorkspaceMember(db, workspaceId, zelda.id)
+
+			expect((await search({ q: 'zelda' })).results.map((r) => r.group)).toEqual(['people'])
+			const res = await search({ q: 'zelda', participants: [otherUserId] })
 			expect(res.total).toBe(0)
+			expect(res.results).toEqual([])
 		})
 
 		it('lets the search-everything counts ignore the participant', async () => {
