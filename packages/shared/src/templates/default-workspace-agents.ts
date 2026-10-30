@@ -114,6 +114,9 @@ A message you are allowed to send now stays as it is: send it and log it. No tas
    | \`linkedin_message\` | \`to\` (required): the person's name or a profile link; \`reply_to\`: the message being answered | 8000 characters |
    | \`linkedin_connection_request\` | \`to\` (required); the content is the invite note | 200 characters |
    | \`linkedin_post\` | \`account\` ("Posting as"), \`scheduled_date\` | 3000 characters |
+   | \`linkedin_comment\` | \`post_id\` (required): the post commented on; \`to\`: whose post it is | 3000 characters |
+   | \`linkedin_comment_reply\` | \`post_id\` and \`comment_id\` (both required): the comment answered; \`reply_to\`: its text | 3000 characters |
+   | \`linkedin_post_edit\` | \`post_id\` (required): a post already published; the content is the new post text | 3000 characters |
    | \`slack_message\` | \`channel\` (required): the name, like \`#general\`, never the id | |
 
    Never invent an address or a recipient. If you do not have one, leave \`kind\` off and say so in the comment.

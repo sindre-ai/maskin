@@ -7,9 +7,14 @@ import { loadApprovedAttachment } from './attachment'
 import { LinkedInIntegrationError } from './errors'
 import { assertInmailSendable, readCreditsAfter, startInmailChat } from './inmail-send'
 import {
+	type CommentResult,
+	type EditPostResult,
 	type LinkedInOperationContext,
 	type PublishPostResult,
+	commentOnLinkedInPost,
+	editLinkedInPost,
 	publishLinkedInPost,
+	replyToLinkedInComment,
 	replyToLinkedInThread,
 	sendLinkedInConnectionRequest,
 	sendLinkedInMessage,
@@ -360,4 +365,120 @@ export async function publishApprovedLinkedInPost(
 		data: { content_hash: preview.content_hash, post_id: published.post_id },
 	})
 	return { ...published, object: { id: object.id, ...outcome } }
+}
+
+/**
+ * Posts the comment an object holds, exactly as a person approved it: the text is the
+ * object's text and the post is `post_id` on the object, never taken from the caller. Refused
+ * until a person approved this exact content (an edit to the text or the post withdraws it),
+ * and once it has gone.
+ */
+export async function commentOnApprovedLinkedInPost(
+	ctx: LinkedInOperationContext,
+	input: {
+		object_id: string
+		onResolved?: (resolved: { approvalId: string }) => void
+	},
+): Promise<CommentResult & { replayed: boolean; object: { id: string } & SendClosure }> {
+	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
+		kind: 'linkedin_comment',
+		notIt: 'That object is not a LinkedIn comment.',
+	})
+	const postId = optionalString(filed.post_id)
+	if (!postId) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'A post is required: file post_id on the object.',
+		)
+	}
+	input.onResolved?.({ approvalId: String(approval.id) })
+
+	const posted = await commentOnLinkedInPost(ctx, { post_id: postId, text: preview.body })
+	const outcome = await recordSendOutcome(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		target: { id: object.id, type: object.type, status: object.status },
+		provider: 'linkedin-unipile',
+		data: { content_hash: preview.content_hash, post_id: postId, comment_id: posted.comment_id },
+	})
+	return { ...posted, object: { id: object.id, ...outcome } }
+}
+
+/**
+ * Replies to the comment an object names, exactly as a person approved it: the text is the
+ * object's text and the comment answered is `comment_id` on the object, never taken from the
+ * caller. `post_id` is filed too, so the card says which post the exchange is on and an edit
+ * to it withdraws the approval. Refused until a person approved this exact content, and once
+ * it has gone.
+ */
+export async function replyToApprovedLinkedInComment(
+	ctx: LinkedInOperationContext,
+	input: {
+		object_id: string
+		onResolved?: (resolved: { approvalId: string }) => void
+	},
+): Promise<CommentResult & { replayed: boolean; object: { id: string } & SendClosure }> {
+	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
+		kind: 'linkedin_comment_reply',
+		notIt: 'That object is not a LinkedIn comment reply.',
+	})
+	const commentId = optionalString(filed.comment_id)
+	if (!commentId || !optionalString(filed.post_id)) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'A post and a comment are required: file post_id and comment_id on the object.',
+		)
+	}
+	input.onResolved?.({ approvalId: String(approval.id) })
+
+	const posted = await replyToLinkedInComment(ctx, { comment_id: commentId, text: preview.body })
+	const outcome = await recordSendOutcome(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		target: { id: object.id, type: object.type, status: object.status },
+		provider: 'linkedin-unipile',
+		data: {
+			content_hash: preview.content_hash,
+			comment_id: commentId,
+			reply_id: posted.comment_id,
+		},
+	})
+	return { ...posted, object: { id: object.id, ...outcome } }
+}
+
+/**
+ * Edits the post an object names to the text it holds, exactly as a person approved it: the
+ * new text is the object's text and the post is `post_id` on the object, never taken from the
+ * caller. Only the text changes: who may comment is not part of a held edit. Refused until a
+ * person approved this exact content, and once it has gone.
+ */
+export async function editApprovedLinkedInPost(
+	ctx: LinkedInOperationContext,
+	input: {
+		object_id: string
+		onResolved?: (resolved: { approvalId: string }) => void
+	},
+): Promise<EditPostResult & { replayed: boolean; object: { id: string } & SendClosure }> {
+	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
+		kind: 'linkedin_post_edit',
+		notIt: 'That object is not a LinkedIn post edit.',
+	})
+	const postId = optionalString(filed.post_id)
+	if (!postId) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'A post is required: file post_id on the object.',
+		)
+	}
+	input.onResolved?.({ approvalId: String(approval.id) })
+
+	const edited = await editLinkedInPost(ctx, { post_id: postId, text: preview.body })
+	const outcome = await recordSendOutcome(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		target: { id: object.id, type: object.type, status: object.status },
+		provider: 'linkedin-unipile',
+		data: { content_hash: preview.content_hash, post_id: postId, edited_at: edited.edited_at },
+	})
+	return { ...edited, object: { id: object.id, ...outcome } }
 }

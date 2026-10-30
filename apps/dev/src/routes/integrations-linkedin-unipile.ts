@@ -30,11 +30,9 @@ import { getEventMapRow } from '../lib/integrations/providers/linkedin-unipile/e
 import { ingestUnipileEnvelope } from '../lib/integrations/providers/linkedin-unipile/ingest'
 import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import {
-	commentOnLinkedInPost,
 	getLinkedInPostEngagement,
 	listLinkedInConversations,
 	readLinkedInPostComments,
-	replyToLinkedInComment,
 } from '../lib/integrations/providers/linkedin-unipile/operations'
 import {
 	buildLinkedInClientForWebhook,
@@ -69,7 +67,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
  * Message verbs (v2 messaging):
  *   - GET  /list-conversations — GET  /v2/{account_id}/chats
  *
- * There is no HTTP route that sends a message, a reply or a post. Those go out
+ * There is no HTTP route that sends a message, a reply, a post, a comment or a post edit. Those go out
  * only through the MCP tools, from a draft a person approved (send-object.ts).
  * A route that took the text from the caller would be a way round that approval.
  *
@@ -941,58 +939,9 @@ app.get('/list-conversations', async (c) => {
 })
 
 // ── Content / community verbs (Task 7b) ─────────────────────────────────
-// Same shape as the message-verb routes: workspace-id header + JSON parse +
-// operation call + terminal-error mapping. Every mutating verb here dedups on
-// the content-hash `linkedin_tool_calls` ledger inside the operation.
-
-async function readJsonBody<T = Record<string, unknown>>(
-	c: Context<Env>,
-): Promise<{ ok: true; body: T } | { ok: false; response: Response }> {
-	try {
-		return { ok: true, body: (await c.req.json()) as T }
-	} catch {
-		return {
-			ok: false,
-			response: c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400),
-		}
-	}
-}
-
-app.post('/comment-on-post', async (c) => {
-	assertWorkspaceWriterRole(c.get('workspaceRole'))
-	const workspaceId = readWorkspaceIdHeader(c.req)
-	if (!workspaceId) {
-		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
-	}
-	const parsed = await readJsonBody(c)
-	if (!parsed.ok) return parsed.response
-	const actorId = c.get('actorId')
-	try {
-		return c.json(
-			await commentOnLinkedInPost({ db: c.get('db'), actorId, workspaceId }, parsed.body),
-		)
-	} catch (err) {
-		return handleTerminalError(err, 'comment-on-post', actorId)
-	}
-})
-
-app.post('/reply-to-comment', async (c) => {
-	assertWorkspaceWriterRole(c.get('workspaceRole'))
-	const workspaceId = readWorkspaceIdHeader(c.req)
-	if (!workspaceId) {
-		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
-	}
-	const parsed = await readJsonBody(c)
-	if (!parsed.ok) return parsed.response
-	const actorId = c.get('actorId')
-	try {
-		return c.json(
-			await replyToLinkedInComment({ db: c.get('db'), actorId, workspaceId }, parsed.body),
-		)
-	} catch (err) {
-		return handleTerminalError(err, 'reply-to-comment', actorId)
-	}
-})
+// Same shape as the message-verb routes: workspace-id header + operation call +
+// terminal-error mapping. Reads only: commenting, replying to a comment and editing
+// a post go out through the MCP tools, from a draft a person approved.
 
 app.get('/read-post-comments', async (c) => {
 	const workspaceId = readWorkspaceIdHeader(c.req)

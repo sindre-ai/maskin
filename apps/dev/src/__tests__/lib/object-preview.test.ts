@@ -415,10 +415,13 @@ describe('deliverables declarations, matching', () => {
 				.sort(),
 		).toEqual([
 			'email',
+			'linkedin_comment',
+			'linkedin_comment_reply',
 			'linkedin_connection_request',
 			'linkedin_inmail',
 			'linkedin_message',
 			'linkedin_post',
+			'linkedin_post_edit',
 			'slack_message',
 		])
 	})

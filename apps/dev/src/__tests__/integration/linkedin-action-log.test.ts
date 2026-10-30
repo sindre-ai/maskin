@@ -315,6 +315,24 @@ describe('every LinkedIn tool call is logged once', () => {
 		expect(sendMessage).not.toHaveBeenCalled()
 	})
 
+	it.each(['comment_on_post', 'reply_to_comment', 'edit_post'])(
+		'logs %s with no draft as refused by rule, with nothing sent',
+		async (tool) => {
+			const { client } = stubClient()
+			__setLinkedInClientForTests(() => client)
+			const { cfg, mcp, integrationId } = await connect()
+
+			const result = await mcp.callTool({
+				name: toolName(cfg, tool),
+				arguments: { post_id: 'urn:li:activity:1', comment_id: 'c-1', text: 'Nice' },
+			})
+
+			expect(result.isError).toBe(true)
+			const [row] = await rowsFor(integrationId)
+			expect(row).toMatchObject({ tool, outcome: 'refused_rule', errorCode: 'INVALID_INPUT' })
+		},
+	)
+
 	it('fires one linkedin_tool_called event per call with exactly the allowed properties', async () => {
 		const { client } = stubClient()
 		__setLinkedInClientForTests(() => client)

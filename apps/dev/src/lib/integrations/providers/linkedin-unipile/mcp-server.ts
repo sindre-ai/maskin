@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { deletePostInputShape, editPostInputShape } from '@maskin/mcp'
+import { deletePostInputShape } from '@maskin/mcp'
 import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '@maskin/mcp/linkedin'
 import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
 import type { StorageProvider } from '@maskin/storage'
@@ -25,9 +25,7 @@ import {
 } from './invitation-withdrawal'
 import {
 	ATTACHMENTS_REFUSED_MESSAGE,
-	commentOnLinkedInPost,
 	deleteLinkedInPost,
-	editLinkedInPost,
 	getLinkedInInmailBalance,
 	getLinkedInPostEngagement,
 	getLinkedInProfile,
@@ -36,7 +34,6 @@ import {
 	listLinkedInMessages,
 	listLinkedInSentInvitations,
 	readLinkedInPostComments,
-	replyToLinkedInComment,
 	searchLinkedInPeople,
 	withdrawLinkedInInvitation,
 } from './operations'
@@ -44,7 +41,10 @@ import { POST_ID_DESCRIPTION } from './post-id'
 import { getLinkedInCompany, listLinkedInUserPosts, reactToLinkedInPost } from './posts-operations'
 import { PROFILE_VIEW_CAP, type PostsToolDeps, REACT_TO_POST_CAP } from './posts-tools'
 import {
+	commentOnApprovedLinkedInPost,
+	editApprovedLinkedInPost,
 	publishApprovedLinkedInPost,
+	replyToApprovedLinkedInComment,
 	sendApprovedLinkedInConnectionRequest,
 	sendApprovedLinkedInObject,
 } from './send-object'
@@ -145,6 +145,20 @@ function heldForApproval(what: string, kind: string): LinkedInActionRefusal {
 		'INVALID_INPUT',
 		`${what} is held for a person. Put the draft on a task or object (kind ${kind}), ask a person to approve it from the card, then call this again with only object_id. Nothing was sent.`,
 	)
+}
+
+/**
+ * Refuses a call that passes anything but `object_id`: what is sent is what a person approved
+ * on the object, so a field next to it that would change the send is an error, not ignored.
+ */
+function refuseExtraFields(args: Record<string, unknown>, what: string): void {
+	const extra = Object.keys(args).filter((key) => key !== 'object_id')
+	if (extra.length > 0) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			`Do not pass ${extra.join(', ')} with object_id: ${what}`,
+		)
+	}
 }
 
 /**
@@ -289,20 +303,26 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'comment_on_post'),
 			{
-				description: scopedDescription('Post a top-level comment on a LinkedIn post', cfg),
-				inputSchema: {
-					post_id: z.string().min(1),
-					text: z.string().min(1).max(3000),
-				},
+				description: scopedDescription(
+					'Post a top-level LinkedIn comment a person approved. Pass only object_id: the task or object that holds a linkedin_comment draft (the comment is its text, the post is its post_id). The comment and post are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been posted. post_id and text are not used, and a call without object_id is refused',
+					cfg,
+				),
+				// Passthrough so a call that still sends text or a post id reaches the handler and is
+				// refused by name, instead of the fields being dropped.
+				inputSchema: z.object({ object_id: sendObjectIdSchema }).passthrough(),
 			},
 			async (args) => {
 				try {
-					return jsonResult(
-						await logged('comment_on_post', 'write', undefined, async (rec) => {
-							const result = await commentOnLinkedInPost(opCtx, args)
-							return learned(rec, result, { refId: result.comment_id })
-						}),
-					)
+					return await logged('comment_on_post', 'write', undefined, async (rec) => {
+						if (!args.object_id) throw heldForApproval('A comment', 'linkedin_comment')
+						rec.set({ objectId: args.object_id })
+						refuseExtraFields(args, 'the comment and the post are the approved ones on the object.')
+						const posted = await commentOnApprovedLinkedInPost(opCtx, {
+							object_id: args.object_id,
+							onResolved: (resolved) => rec.set(resolved),
+						})
+						return jsonResult(learned(rec, posted, { refId: posted.comment_id }))
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'comment_on_post'), err)
 				}
@@ -314,20 +334,27 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'reply_to_comment'),
 			{
-				description: scopedDescription('Reply to an existing LinkedIn comment', cfg),
-				inputSchema: {
-					comment_id: z.string().min(1),
-					text: z.string().min(1).max(3000),
-				},
+				description: scopedDescription(
+					'Reply to an existing LinkedIn comment, with a reply a person approved. Pass only object_id: the task or object that holds a linkedin_comment_reply draft (the reply is its text; the post is its post_id and the comment answered is its comment_id; reply_to holds the comment text, shown above the draft). The reply and the comment answered are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been posted. comment_id and text are not used, and a call without object_id is refused',
+					cfg,
+				),
+				inputSchema: z.object({ object_id: sendObjectIdSchema }).passthrough(),
 			},
 			async (args) => {
 				try {
-					return jsonResult(
-						await logged('reply_to_comment', 'write', undefined, async (rec) => {
-							const result = await replyToLinkedInComment(opCtx, args)
-							return learned(rec, result, { refId: result.comment_id })
-						}),
-					)
+					return await logged('reply_to_comment', 'write', undefined, async (rec) => {
+						if (!args.object_id) throw heldForApproval('A comment reply', 'linkedin_comment_reply')
+						rec.set({ objectId: args.object_id })
+						refuseExtraFields(
+							args,
+							'the reply and the comment answered are the approved ones on the object.',
+						)
+						const posted = await replyToApprovedLinkedInComment(opCtx, {
+							object_id: args.object_id,
+							onResolved: (resolved) => rec.set(resolved),
+						})
+						return jsonResult(learned(rec, posted, { refId: posted.comment_id }))
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'reply_to_comment'), err)
 				}
@@ -340,18 +367,28 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'edit_post'),
 			{
 				description: scopedDescription(
-					'Edit the text or commenting permissions of a LinkedIn post this identity already published. Does NOT accept attachments — LinkedIn v2 only allows text + can_comment on edit (attachments are frozen at publish time). Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn shows an "edited" marker on the post after this call. Two identical edits of the same post_id within 24h dedup on the linkedin_tool_calls ledger keyed on (actor_id, tool_name, target_id).',
+					'Edit the text of a LinkedIn post this identity already published, to a text a person approved. Pass only object_id: the task or object that holds a linkedin_post_edit draft (the new post text is its text, the post is its post_id). The text and post are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been applied. post_id, text and can_comment are not used (who may comment cannot be changed here), and a call without object_id is refused. Does NOT accept attachments: LinkedIn only allows a text edit (attachments are frozen at publish time). Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn shows an "edited" marker on the post after this call',
 					cfg,
 				),
-				inputSchema: editPostInputShape,
+				inputSchema: z.object({ object_id: sendObjectIdSchema }).passthrough(),
 			},
 			async (args) => {
 				try {
 					// No ref id: the same post can be edited many times and each edit is a real action,
 					// so it must not collide on the one-ok-row-per-ref index.
-					return jsonResult(
-						await logged('edit_post', 'write', undefined, () => editLinkedInPost(opCtx, args)),
-					)
+					return await logged('edit_post', 'write', undefined, async (rec) => {
+						if (!args.object_id) throw heldForApproval('A post edit', 'linkedin_post_edit')
+						rec.set({ objectId: args.object_id })
+						refuseExtraFields(
+							args,
+							'the new text and the post are the approved ones on the object.',
+						)
+						const edited = await editApprovedLinkedInPost(opCtx, {
+							object_id: args.object_id,
+							onResolved: (resolved) => rec.set(resolved),
+						})
+						return jsonResult(learned(rec, edited, {}))
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'edit_post'), err)
 				}
