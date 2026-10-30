@@ -116,13 +116,13 @@ describe('LoopFlow', () => {
 		).toBeInTheDocument()
 	})
 
-	it('groups an event trigger with no from_status under "Comes in"', async () => {
+	it('groups an event trigger under "Event-based"', async () => {
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt: 'Normalises the Slack event into the shared source',
+				name: 'Normalises the Slack event into the shared source',
 				config: {},
 			}),
 		]
@@ -136,19 +136,20 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		expect(await screen.findByText('Comes in')).toBeInTheDocument()
+		expect(await screen.findByText('Triggers')).toBeInTheDocument()
+		expect(screen.getByText('Event-based')).toBeInTheDocument()
 		expect(
 			screen.getByText('Normalises the Slack event into the shared source'),
 		).toBeInTheDocument()
 	})
 
-	it('places a cron trigger under "Runs alongside"', async () => {
+	it('places a cron trigger under "Routines"', async () => {
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
 				targetActorId: 'compass',
 				type: 'cron',
-				actionPrompt: 'Sweeps stuck insights nightly',
+				name: 'Sweeps stuck insights nightly',
 				config: { expression: '0 2 * * *' },
 			}),
 		]
@@ -162,17 +163,17 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		expect(await screen.findByText('Runs alongside')).toBeInTheDocument()
+		expect(await screen.findByText('Routines')).toBeInTheDocument()
 		expect(screen.getByText('Sweeps stuck insights nightly')).toBeInTheDocument()
 	})
 
-	it('places an event trigger with a recognised from_status right after that stage', async () => {
+	it('shows the stages above the Triggers section, even for an event trigger with a from_status', async () => {
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
 				targetActorId: 'compass',
 				type: 'event',
-				actionPrompt: 'Writes the generalisable version',
+				name: 'Writes the generalisable version',
 				config: { entity_type: 'object', action: 'updated', from_status: 'clustered' },
 			}),
 		]
@@ -186,12 +187,12 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		// This one is settled synchronously (columns are computed from props,
-		// not an async board fetch), but the relationship-derived cards below
-		// need an await, so wait for one of those first for a stable assertion.
-		await screen.findByText('Slack images do not render inline')
+		const card = await screen.findByText('Slack images do not render inline')
+		const heading = screen.getByText('Triggers')
+		expect(card.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(screen.getByText('Writes the generalisable version')).toBeInTheDocument()
 		expect(screen.queryByText('Comes in')).not.toBeInTheDocument()
+		expect(screen.queryByText('Runs alongside')).not.toBeInTheDocument()
 	})
 
 	it('renders a cycle card with companions for an object that has relationships', async () => {
@@ -221,14 +222,14 @@ describe('LoopFlow', () => {
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt: 'Relay step',
+				name: 'Relay step',
 				config: {},
 			}),
 			buildTriggerResponse({
 				id: 't2',
 				targetActorId: 'compass',
 				type: 'event',
-				actionPrompt: 'Compass step',
+				name: 'Compass step',
 				config: {},
 			}),
 		]
@@ -268,8 +269,7 @@ describe('LoopFlow', () => {
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt:
-					'A very long step description that must wrap cleanly instead of spilling past the container on a narrow mobile viewport https://example.com/a/extremely/long/unbroken/url/that/should/never/force/horizontal/overflow',
+				name: 'A very long step description that must wrap cleanly instead of spilling past the container on a narrow mobile viewport https://example.com/a/extremely/long/unbroken/url/that/should/never/force/horizontal/overflow',
 				config: {},
 			}),
 		]
@@ -328,7 +328,7 @@ describe('LoopFlow', () => {
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt: 'A step asking for input',
+				name: 'A step asking for input',
 				config: {},
 			}),
 		]

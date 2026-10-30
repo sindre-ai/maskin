@@ -67,19 +67,6 @@ function buildStageColumns(
 	}))
 }
 
-/** Event triggers with an explicit `from_status` that matches a known stage
- * are placed right after that stage instead of in "Comes in" — mirrors the
- * reference design's mid-flow step rows (e.g. "Quill writes the
- * generalisable version" sitting right after the clustered stage). Cron/
- * reminder triggers and event triggers with no (or unrecognised)
- * `from_status` fall back to "Comes in" / "Runs alongside". */
-function triggerFromStatus(trigger: TriggerResponse): string | null {
-	if (trigger.type !== 'event') return null
-	const config = trigger.config as { from_status?: unknown } | null
-	const fromStatus = config?.from_status
-	return typeof fromStatus === 'string' && fromStatus.length > 0 ? fromStatus : null
-}
-
 function formatDuration(ms: number | null | undefined): string | null {
 	if (!ms || ms <= 0 || !Number.isFinite(ms)) return null
 	const days = Math.round(ms / (24 * 60 * 60 * 1000))
@@ -228,25 +215,13 @@ export function LoopFlow({
 		if (companions.length > 0) companionsByPrimaryId.set(obj.id, companions)
 	})
 
-	const cronTriggers = triggers.filter((t) => t.type === 'cron')
-	const gapTriggersByStatus = new Map<string, TriggerResponse[]>()
-	const comesInTriggers: TriggerResponse[] = []
-	for (const t of triggers) {
-		if (t.type === 'cron') continue
-		const fromStatus = triggerFromStatus(t)
-		if (fromStatus && columns.some((c) => c.value === fromStatus)) {
-			const list = gapTriggersByStatus.get(fromStatus) ?? []
-			list.push(t)
-			gapTriggersByStatus.set(fromStatus, list)
-		} else {
-			comesInTriggers.push(t)
-		}
-	}
+	const routineTriggers = triggers.filter((t) => t.type === 'cron')
+	const eventTriggers = triggers.filter((t) => t.type !== 'cron')
 
 	const distinctAgentIds = Array.from(new Set(triggers.map((t) => t.targetActorId)))
 	const matchesFilter = (t: TriggerResponse) => !agentFilter || t.targetActorId === agentFilter
-	const shownComesIn = comesInTriggers.filter(matchesFilter)
-	const shownAlongside = cronTriggers.filter(matchesFilter)
+	const shownRoutines = routineTriggers.filter(matchesFilter)
+	const shownEvents = eventTriggers.filter(matchesFilter)
 
 	const hasTriggers = triggers.length > 0
 	const hasStages = columns.some((c) => c.total > 0)
@@ -254,16 +229,7 @@ export function LoopFlow({
 
 	// A pill filter that matches nothing renders the mockup's own line rather
 	// than an empty card (mockup 1943–1945).
-	const shownGapTriggerCount = columns.reduce(
-		(sum, column) =>
-			sum + (gapTriggersByStatus.get(column.value) ?? []).filter(matchesFilter).length,
-		0,
-	)
-	const flowEmpty =
-		agentFilter !== null &&
-		shownComesIn.length === 0 &&
-		shownAlongside.length === 0 &&
-		shownGapTriggerCount === 0
+	const flowEmpty = agentFilter !== null && shownRoutines.length === 0 && shownEvents.length === 0
 
 	const asksYou = loop?.pill === 'waiting_on_you'
 
@@ -329,32 +295,9 @@ export function LoopFlow({
 			)}
 
 			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4 shadow-sm">
-				{shownComesIn.length > 0 && (
-					<div>
-						<div className="flex items-baseline gap-2 mb-2">
-							<span className="eyebrow">Comes in</span>
-							<span className="text-[10.5px] text-muted-foreground/70">
-								how work reaches the loop
-							</span>
-						</div>
-						<div className="flex flex-col gap-2.5">
-							{shownComesIn.map((t) => (
-								<StepRow
-									key={t.id}
-									workspaceId={workspaceId}
-									trigger={t}
-									agent={actorsById.get(t.targetActorId)}
-									asksYou={asksYou}
-								/>
-							))}
-						</div>
-					</div>
-				)}
-
 				{columns.map((column) => {
 					const colors = getStatusColor(column.value)
 					const cardObjects = column.objects.filter((o) => companionsByPrimaryId.has(o.id))
-					const gapTriggers = (gapTriggersByStatus.get(column.value) ?? []).filter(matchesFilter)
 					return (
 						<div key={column.value}>
 							<div className="flex items-center gap-2">
@@ -384,19 +327,6 @@ export function LoopFlow({
 									))}
 								</div>
 							)}
-							{gapTriggers.length > 0 && (
-								<div className="flex flex-col gap-2.5 mt-2 ml-4">
-									{gapTriggers.map((t) => (
-										<StepRow
-											key={t.id}
-											workspaceId={workspaceId}
-											trigger={t}
-											agent={actorsById.get(t.targetActorId)}
-											asksYou={asksYou}
-										/>
-									))}
-								</div>
-							)}
 						</div>
 					)
 				})}
@@ -407,25 +337,41 @@ export function LoopFlow({
 					</p>
 				)}
 
-				{shownAlongside.length > 0 && (
-					<div>
-						<div className="flex items-baseline gap-2 mb-2">
-							<span className="eyebrow">Runs alongside</span>
-							<span className="text-[10.5px] text-muted-foreground/70">
-								schedules and safety nets
-							</span>
-						</div>
-						<div className="flex flex-col gap-2.5">
-							{shownAlongside.map((t) => (
-								<StepRow
-									key={t.id}
-									workspaceId={workspaceId}
-									trigger={t}
-									agent={actorsById.get(t.targetActorId)}
-									asksYou={asksYou}
-								/>
-							))}
-						</div>
+				{(shownRoutines.length > 0 || shownEvents.length > 0) && (
+					<div className="flex flex-col gap-3">
+						<span className="text-sm font-semibold text-foreground">Triggers</span>
+						{shownRoutines.length > 0 && (
+							<div>
+								<div className="eyebrow mb-2">Routines</div>
+								<div className="flex flex-col gap-2.5">
+									{shownRoutines.map((t) => (
+										<StepRow
+											key={t.id}
+											workspaceId={workspaceId}
+											trigger={t}
+											agent={actorsById.get(t.targetActorId)}
+											asksYou={asksYou}
+										/>
+									))}
+								</div>
+							</div>
+						)}
+						{shownEvents.length > 0 && (
+							<div>
+								<div className="eyebrow mb-2">Event-based</div>
+								<div className="flex flex-col gap-2.5">
+									{shownEvents.map((t) => (
+										<StepRow
+											key={t.id}
+											workspaceId={workspaceId}
+											trigger={t}
+											agent={actorsById.get(t.targetActorId)}
+											asksYou={asksYou}
+										/>
+									))}
+								</div>
+							</div>
+						)}
 					</div>
 				)}
 			</div>
