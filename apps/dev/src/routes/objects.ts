@@ -2658,6 +2658,10 @@ const migrateObjectTypeRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not a human workspace admin or owner',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace not found',
@@ -2671,6 +2675,19 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	// Retyping or deleting every object of a type is a workspace-wide change, so
+	// it is limited to human admins and owners (the extension removal dialog is
+	// the only caller, and removing an extension is already admin-only).
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only a workspace admin or owner can migrate or delete all objects of a type',
+			),
+			403,
+		)
+	}
 
 	const [workspace] = await db
 		.select()
