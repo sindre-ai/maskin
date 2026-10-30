@@ -627,7 +627,7 @@ describe('MessageBubble — own bubble fits its text', () => {
 		)
 		const column = columnOf(container)
 		expect(column?.style.width).toBe('160px')
-		expect(column).toContainElement(screen.getByLabelText('Attached image'))
+		expect(column).toContainElement(screen.getByLabelText('Attached files'))
 	})
 
 	it('leaves the full width while the message is being edited', () => {
