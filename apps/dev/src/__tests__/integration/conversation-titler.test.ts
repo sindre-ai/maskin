@@ -1,8 +1,8 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
-	actors,
 	events,
+	actors,
 	conversationParticipants,
 	conversations,
 	messages,
