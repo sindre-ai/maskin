@@ -19,6 +19,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
+import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObject } from '@/hooks/use-objects'
@@ -96,6 +97,9 @@ interface MessageBubbleProps {
 	/** Opens the reply thread under this message. Without it the bubble has no Reply action. */
 	onReplyInThread?: () => void
 }
+
+// With attachments, the fitted own bubble stays this wide so 'ok' does not make a tiny thumbnail.
+const MIN_FIT_WIDTH = 160
 
 // Same raw-button pattern as Copy, but padded to a 32px target on phones and wherever any
 // coarse pointer exists (an iPad with a trackpad reports a fine primary pointer).
@@ -177,6 +181,15 @@ export function MessageBubble({
 		[isOwn, shownContent, workspaceId, enterprise],
 	)
 
+	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
+	// attachments take the same width. Editing, and a message with no text, keep the full layout.
+	const fitText = isOwn && !editing && message.content.length > 0
+	const { columnRef, plateRef, textRef } = useFitTextWidth({
+		enabled: fitText,
+		minWidth: attachments.length > 0 ? MIN_FIT_WIDTH : 0,
+		contentKey: shownContent,
+	})
+
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
 	}
@@ -186,6 +199,7 @@ export function MessageBubble({
 			<MessageAttachments
 				workspaceId={workspaceId}
 				align={isOwn ? 'end' : 'start'}
+				fill={fitText}
 				items={attachments.map((f): MessageAttachmentItem => {
 					const resolved = filesById.get(f.file_id)
 					return {
@@ -261,75 +275,92 @@ export function MessageBubble({
 						/>
 					</div>
 				) : null}
-				{liftedAttachments}
-				{hasPlate ? (
-					<>
-						{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
+				{/* While fitting, the attachments and the bubble share one column, which gets the width of
+				    the text. Otherwise the column adds no box of its own. */}
+				<div
+					ref={columnRef}
+					className={cn(
+						fitText ? 'flex max-w-[min(560px,80%)] flex-col items-end gap-1' : 'contents',
+					)}
+				>
+					{fitText && liftedAttachments ? (
+						<div className={cn('w-full', spawnInfo && 'pr-2')}>{liftedAttachments}</div>
+					) : (
+						liftedAttachments
+					)}
+					{hasPlate ? (
+						<>
+							{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
 				    (`pr-2`) and owns the absolute placement, so the bar sits flush
 				    against the bubble and stays inside the box that measures overflow. */}
-						<div
-							className={cn(
-								'relative max-w-[min(560px,80%)]',
-								spawnInfo && 'pr-2',
-								editing && 'w-full',
-							)}
-						>
-							{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
-							<div className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
-								{fileList}
-								{editing ? (
-									<div className="flex flex-col gap-2">
-										<Textarea
-											value={draft}
-											onChange={(e) => setDraft(e.target.value)}
-											onKeyDown={(e) => {
-												if (e.key === 'Enter' && !e.shiftKey) {
-													e.preventDefault()
-													saveEdit()
-												}
-												if (e.key === 'Escape') {
-													e.preventDefault()
-													setEditing(false)
-												}
-											}}
-											aria-label="Edit message"
-											autoFocus
-											className="bg-background text-foreground"
-										/>
-										<div className="flex justify-end gap-2">
-											<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-												Cancel
-											</Button>
-											<Button size="sm" onClick={saveEdit}>
-												Save
-											</Button>
+							<div
+								className={cn(
+									// While fitting, the column above carries the width cap.
+									fitText ? 'relative w-full' : 'relative max-w-[min(560px,80%)]',
+									spawnInfo && 'pr-2',
+									editing && 'w-full',
+								)}
+							>
+								{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
+								<div
+									ref={plateRef}
+									className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground"
+								>
+									{fileList}
+									{editing ? (
+										<div className="flex flex-col gap-2">
+											<Textarea
+												value={draft}
+												onChange={(e) => setDraft(e.target.value)}
+												onKeyDown={(e) => {
+													if (e.key === 'Enter' && !e.shiftKey) {
+														e.preventDefault()
+														saveEdit()
+													}
+													if (e.key === 'Escape') {
+														e.preventDefault()
+														setEditing(false)
+													}
+												}}
+												aria-label="Edit message"
+												autoFocus
+												className="bg-background text-foreground"
+											/>
+											<div className="flex justify-end gap-2">
+												<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+													Cancel
+												</Button>
+												<Button size="sm" onClick={saveEdit}>
+													Save
+												</Button>
+											</div>
 										</div>
-									</div>
-								) : message.content.length > 0 ? (
-									// `break-words` is load-bearing next to the column's `min-w-0`:
-									// `min-w-0` bounds the box, this bounds the ink. Without it an
-									// unbroken token (a long URL) raises this span's min-content and
-									// paints past the bubble's `max-w` cap, out to the viewport edge.
-									<span className="whitespace-pre-wrap text-balance break-words">
-										{ownSegments.map((segment, index) =>
-											segment.kind === 'text' ? (
-												// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-												<Fragment key={index}>{segment.text}</Fragment>
-											) : (
-												<OwnLinkChip
-													// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
-													key={index}
-													workspaceId={workspaceId}
-													segment={segment}
-												/>
-											),
-										)}
-									</span>
-								) : null}
+									) : message.content.length > 0 ? (
+										// `break-words` is load-bearing next to the column's `min-w-0`:
+										// `min-w-0` bounds the box, this bounds the ink. Without it an
+										// unbroken token (a long URL) raises this span's min-content and
+										// paints past the bubble's `max-w` cap, out to the viewport edge.
+										<span ref={textRef} className="whitespace-pre-wrap text-balance break-words">
+											{ownSegments.map((segment, index) =>
+												segment.kind === 'text' ? (
+													// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
+													<Fragment key={index}>{segment.text}</Fragment>
+												) : (
+													<OwnLinkChip
+														// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+														key={index}
+														workspaceId={workspaceId}
+														segment={segment}
+													/>
+												),
+											)}
+										</span>
+									) : null}
+								</div>
 							</div>
-						</div>
-					</>
-				) : null}
+						</>
+					) : null}
+				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
 				{/* The actions sit permanently in the timestamp row rather than
 				    revealing on hover — a touch viewport has no hover, and the
