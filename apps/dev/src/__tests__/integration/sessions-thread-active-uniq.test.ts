@@ -36,7 +36,8 @@ describe('thread_root_id on sessions and conversation_pending_turns', () => {
 	let workspaceId: string
 	let ownerId: string
 
-	beforeAll(async () => {
+	// The shared setup truncates workspaces before every test, so each test makes its own.
+	beforeEach(async () => {
 		ownerId = getTestActorId()
 		workspaceId = (await insertWorkspace(db, ownerId)).id
 	})
