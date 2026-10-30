@@ -338,7 +338,7 @@ describe('sessions route through a saved key', () => {
 		const res = await app.request(jsonGet('/api/workspaces'))
 		expect(res.status).toBe(200)
 		const listed = (await res.json()).find((w: { id: string }) => w.id === ws.id)
-		expect(listed.settings.llm_keys.anthropic).toBeUndefined()
+		expect(listed.settings.llm_keys).toBeUndefined()
 		expect(listed.llm_configured.anthropic).toBe(true)
 	})
 
