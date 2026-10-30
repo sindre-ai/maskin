@@ -47,10 +47,13 @@ export function MessageAttachments({
 	workspaceId,
 	items,
 	align,
+	fill = false,
 }: {
 	workspaceId: string
 	items: MessageAttachmentItem[]
 	align: 'start' | 'end'
+	/** Images and files take the width of the box they sit in, instead of their own fixed sizes. */
+	fill?: boolean
 }) {
 	const images = items.filter(isImageItem)
 	const files = items.filter((item) => !isImageItem(item))
@@ -59,7 +62,9 @@ export function MessageAttachments({
 		<div
 			className={cn('flex w-full flex-col gap-1', align === 'end' ? 'items-end' : 'items-start')}
 		>
-			{images.length > 0 ? <ImageBlock workspaceId={workspaceId} images={images} /> : null}
+			{images.length > 0 ? (
+				<ImageBlock workspaceId={workspaceId} images={images} fill={fill} />
+			) : null}
 			{files.length > 0 ? (
 				<ul className="m-0 flex w-full list-none flex-col gap-1 p-0" aria-label="Attached files">
 					{files.map((file) => (
@@ -67,7 +72,7 @@ export function MessageAttachments({
 							key={file.id ?? file.name}
 							className={cn('flex w-full', align === 'end' ? 'justify-end' : 'justify-start')}
 						>
-							<FileCard workspaceId={workspaceId} file={file} />
+							<FileCard workspaceId={workspaceId} file={file} fill={fill} />
 						</li>
 					))}
 				</ul>
@@ -91,6 +96,12 @@ const SINGLE_SHAPE_CLASS: Record<SingleShape, string> = {
 	square: 'aspect-square w-[260px] max-w-[75%]',
 }
 
+const SINGLE_SHAPE_RATIO: Record<SingleShape, string> = {
+	landscape: 'aspect-[4/3] w-full',
+	portrait: 'aspect-[3/4] w-full',
+	square: 'aspect-square w-full',
+}
+
 function shapeOf(ratio: number): SingleShape {
 	if (ratio >= 1.15) return 'landscape'
 	if (ratio <= 0.87) return 'portrait'
@@ -100,9 +111,11 @@ function shapeOf(ratio: number): SingleShape {
 function ImageBlock({
 	workspaceId,
 	images,
+	fill,
 }: {
 	workspaceId: string
 	images: MessageAttachmentItem[]
+	fill: boolean
 }) {
 	const [shape, setShape] = useState<SingleShape>('landscape')
 	const [viewerIndex, setViewerIndex] = useState<number | null>(null)
@@ -139,11 +152,14 @@ function ImageBlock({
 		</li>
 	)
 
+	// Filled, the block is as wide as its box and keeps each layout's shape.
+	const width = fill ? 'w-full' : 'w-80 max-w-[80%]'
 	let layout: string
-	if (images.length === 1) layout = cn('grid-cols-1', SINGLE_SHAPE_CLASS[shape])
-	else if (images.length === 2) layout = 'aspect-[2/1] w-80 max-w-[80%] grid-cols-2'
-	else if (images.length === 3) layout = 'aspect-[4/3] w-80 max-w-[80%] grid-cols-2 grid-rows-2'
-	else layout = 'aspect-square w-80 max-w-[80%] grid-cols-2 grid-rows-2'
+	if (images.length === 1)
+		layout = cn('grid-cols-1', fill ? SINGLE_SHAPE_RATIO[shape] : SINGLE_SHAPE_CLASS[shape])
+	else if (images.length === 2) layout = `aspect-[2/1] ${width} grid-cols-2`
+	else if (images.length === 3) layout = `aspect-[4/3] ${width} grid-cols-2 grid-rows-2`
+	else layout = `aspect-square ${width} grid-cols-2 grid-rows-2`
 
 	return (
 		<>
@@ -349,7 +365,7 @@ export function fileKindOf(name: string, mimeType?: string): FileKind {
 }
 
 const CARD_CLASS =
-	'group relative flex w-80 max-w-[92%] items-center gap-3 rounded-lg border bg-card p-2.5 pr-3 text-card-foreground transition-colors'
+	'group relative flex items-center gap-3 rounded-lg border bg-card p-2.5 pr-3 text-card-foreground transition-colors'
 
 // A PDF would show its first page here, but the API serves no page preview; every file gets the
 // type tile until it does.
@@ -367,17 +383,20 @@ function FileLead({ kind }: { kind: FileKind }) {
 function FileCard({
 	workspaceId,
 	file,
+	fill,
 }: {
 	workspaceId: string
 	file: MessageAttachmentItem
+	fill: boolean
 }) {
+	const cardClass = cn(CARD_CLASS, fill ? 'w-full' : 'w-80 max-w-[92%]')
 	const kind = fileKindOf(file.name, file.mimeType)
 	const lead = <FileLead kind={kind} />
 
 	if (file.status === 'uploading') {
 		const percent = Math.round(file.progress ?? 0)
 		return (
-			<div className={cn(CARD_CLASS, 'border-border')}>
+			<div className={cn(cardClass, 'border-border')}>
 				{lead}
 				<span className="min-w-0 flex-1">
 					<span className="block truncate text-[13px] font-semibold text-foreground">
@@ -407,7 +426,7 @@ function FileCard({
 
 	if (file.status === 'failed') {
 		return (
-			<div className={cn(CARD_CLASS, 'border-error')}>
+			<div className={cn(cardClass, 'border-error')}>
 				{lead}
 				<span className="min-w-0 flex-1">
 					<span className="block truncate text-[13px] font-semibold text-foreground">
@@ -428,7 +447,7 @@ function FileCard({
 
 	if (file.status === 'gone' || !file.id) {
 		return (
-			<div className={cn(CARD_CLASS, 'border-border-subtle opacity-80')}>
+			<div className={cn(cardClass, 'border-border-subtle opacity-80')}>
 				{lead}
 				<span className="min-w-0 flex-1">
 					<span className="block truncate text-[13px] font-semibold text-muted-foreground line-through">
@@ -444,7 +463,7 @@ function FileCard({
 
 	const id = file.id
 	return (
-		<div className={cn(CARD_CLASS, 'border-border hover:border-border-strong hover:bg-secondary')}>
+		<div className={cn(cardClass, 'border-border hover:border-border-strong hover:bg-secondary')}>
 			<Link
 				to="/$workspaceId/files/$fileId"
 				params={{ workspaceId, fileId: id }}
