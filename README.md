@@ -117,7 +117,8 @@ maskin/
 │           └── helpers/        # API test helpers
 ├── scripts/
 │   ├── dev.sh                  # Dev startup script (bash/macOS/Linux)
-│   └── dev.mjs                 # Dev startup script (Windows cmd/PowerShell)
+│   ├── dev.mjs                 # Dev startup script (Windows cmd/PowerShell)
+│   └── openrouter-conformance.mjs  # Tool-use + reply-language check of a model on the funded OpenRouter route (spends credit; see header)
 ├── packages/
 │   ├── db/                     # Drizzle ORM schema + migrations
 │   ├── auth/                   # API key auth (keys stored as issued; hashing planned)
