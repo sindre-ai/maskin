@@ -43,33 +43,10 @@ export interface FailureReason {
 	verbatim_output: string | null
 }
 
-// Sessions that ended before the CLI auth failures got reason codes carry only
-// the error text. These are the classifier's prefixes (credit-classifier.ts,
-// CLI_AUTH_FAILURES); matching them here is display-only, nothing is written back.
-const CODELESS_AUTH_FAILURES = [
-	{
-		prefix: 'Failed to authenticate: OAuth session expired and could not be refreshed',
-		reason_code: 'oauth_expired',
-	},
-	{ prefix: 'Invalid API key', reason_code: 'invalid_api_key' },
-]
-
 export function parseFailureReason(result: Record<string, unknown> | null): FailureReason | null {
 	if (!result) return null
 	const fr = result.failure_reason
-	if (!fr || typeof fr !== 'object') {
-		const text = typeof result.error === 'string' ? result.error : ''
-		const match = CODELESS_AUTH_FAILURES.find((f) => text.trimStart().startsWith(f.prefix))
-		if (!match) return null
-		return {
-			provider: 'anthropic',
-			reason_code: match.reason_code,
-			human_message: text,
-			http_status: null,
-			reset_at: null,
-			verbatim_output: text,
-		}
-	}
+	if (!fr || typeof fr !== 'object') return null
 	const obj = fr as Record<string, unknown>
 	if (typeof obj.provider !== 'string' || typeof obj.reason_code !== 'string') return null
 	return {

@@ -96,17 +96,13 @@ afterEach(() => {
 })
 
 describe('parseFailureReason', () => {
-	it.each([
-		['Failed to authenticate: OAuth session expired and could not be refreshed', 'oauth_expired'],
-		['Invalid API key · Fix external API key', 'invalid_api_key'],
-	])('reads a code from the error text when a session has no failure_reason: %s', (error, code) => {
-		const parsed = parseFailureReason({ exit_code: 1, error })
-		expect(parsed?.reason_code).toBe(code)
-		expect(parsed?.verbatim_output).toBe(error)
-	})
-
-	it('returns null for other error text without failure_reason', () => {
-		expect(parseFailureReason({ exit_code: 1, error: 'Process crashed' })).toBeNull()
+	it('returns null for old sessions that only have error text', () => {
+		expect(
+			parseFailureReason({
+				exit_code: 1,
+				error: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+			}),
+		).toBeNull()
 	})
 
 	it('returns null for null result', () => {
