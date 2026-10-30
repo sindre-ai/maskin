@@ -97,10 +97,7 @@ test.describe('Objects list — v2 control row', () => {
 			await expect(page.getByText('Reset all')).toBeVisible()
 		})
 
-		test(`the list rests flat, with no state groups, at ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
+		test(`the list rests flat, with no state groups, at ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			await account.api.createObject(account.workspaceId, {
