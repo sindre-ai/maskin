@@ -19,7 +19,7 @@ import {
 	PRO_HARD_CAP_DEFAULT_USD_CENTS,
 	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
 } from '../../lib/billing-defaults'
-import { preflightLlmCredentials } from '../../lib/llm-routing'
+import { type PinnedModel, preflightLlmCredentials } from '../../lib/llm-routing'
 import {
 	LEGACY_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_AGENT,
@@ -1535,5 +1535,190 @@ describe('MASKIN_FALLBACK_ZDR gate', () => {
 		})
 		expect(creds?.provider).toBe('anthropic')
 		expect(creds).not.toHaveProperty('providerPrefs')
+	})
+})
+
+describe('resolveLlmRoute model choice', () => {
+	const oauthRow = () =>
+		claudeOAuthWorkspaceRow({
+			encryptedAccessToken: 'oauth-access',
+			encryptedRefreshToken: 'oauth-refresh',
+			expiresAt: Date.now() + 60 * 60 * 1000,
+			scopes: ['read'],
+			subscriptionType: 'pro',
+		})
+
+	function subscriptionParams(agent: { model?: string | null }, pinned?: PinnedModel) {
+		return {
+			db: dbWithFallbackUsage([], oauthRow()),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: emptySettings(),
+			enterprise: true,
+			agent,
+			pinned,
+		}
+	}
+
+	function fundedParams(agent: { model?: string | null }, pinned?: PinnedModel) {
+		const settings = emptySettings()
+		settings.billing = { plan: 'pro' }
+		return {
+			db: dbWithSessionUsage([]),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: settings,
+			enterprise: false,
+			agent,
+			pinned,
+		}
+	}
+
+	beforeEach(() => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+	})
+
+	describe('subscription route', () => {
+		it('runs a catalog model the agent names, with its own small model and effort', async () => {
+			const result = await resolveLlmRoute(subscriptionParams({ model: 'claude-opus-5-5' }))
+			expect(result?.route).toBe(LLM_ROUTE_OAUTH)
+			expect(result?.envVars).toMatchObject({
+				ANTHROPIC_MODEL: 'claude-opus-5-5',
+				ANTHROPIC_SMALL_FAST_MODEL: 'claude-haiku-4-5-20251001',
+				MASKIN_CLAUDE_EFFORT: 'high',
+			})
+			expect(result).toMatchObject({ modelName: 'claude-opus-5-5', modelSource: 'agent' })
+		})
+
+		it('runs the Standard tier when the agent names no model', async () => {
+			const result = await resolveLlmRoute(subscriptionParams({}))
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
+			expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBe('high')
+			expect(result).toMatchObject({ modelName: 'claude-sonnet-5-5', modelSource: 'tier' })
+		})
+
+		it('says tier, not agent, when the agent value cannot run here', async () => {
+			// A funded-route model and a stale value are both unrunnable on the subscription route.
+			for (const model of ['deepseek/deepseek-v4.1-flash', 'some-old-model']) {
+				const result = await resolveLlmRoute(subscriptionParams({ model }))
+				expect(result).toMatchObject({ modelName: 'claude-sonnet-5-5', modelSource: 'tier' })
+				expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
+			}
+		})
+
+		it('sets no effort for a model whose entry sets none, so the CLI default applies', async () => {
+			const result = await resolveLlmRoute(
+				subscriptionParams({ model: 'claude-haiku-4-5-20251001' }),
+			)
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-haiku-4-5-20251001')
+			expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBeUndefined()
+		})
+
+		it('keeps a resumed session on the model it started on', async () => {
+			const result = await resolveLlmRoute(
+				subscriptionParams(
+					{ model: 'claude-sonnet-5-5' },
+					{ model: 'claude-opus-5-5', source: 'agent' },
+				),
+			)
+			expect(result).toMatchObject({ modelName: 'claude-opus-5-5', modelSource: 'agent' })
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-opus-5-5')
+		})
+	})
+
+	describe('funded route', () => {
+		it('runs the Standard tier, with its small model and effort set together', async () => {
+			const result = await resolveLlmRoute(fundedParams({}))
+			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
+			expect(result?.envVars).toMatchObject({
+				ANTHROPIC_MODEL: 'deepseek/deepseek-v4.1-flash',
+				ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4.1-flash',
+				MASKIN_CLAUDE_EFFORT: 'low',
+				MAX_THINKING_TOKENS: '0',
+			})
+			expect(result).toMatchObject({
+				modelName: 'deepseek/deepseek-v4.1-flash',
+				modelSource: 'tier',
+			})
+		})
+
+		it('says tier, not agent, when the agent names a model this route cannot run', async () => {
+			// A Claude subscription model is not served by Maskin's OpenRouter account.
+			const result = await resolveLlmRoute(fundedParams({ model: 'claude-sonnet-5-5' }))
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4.1-flash')
+			expect(result).toMatchObject({ modelSource: 'tier' })
+		})
+
+		it('says agent when the agent names the funded model itself', async () => {
+			const result = await resolveLlmRoute(fundedParams({ model: 'deepseek/deepseek-v4.1-flash' }))
+			expect(result).toMatchObject({
+				modelName: 'deepseek/deepseek-v4.1-flash',
+				modelSource: 'agent',
+			})
+		})
+
+		it('keeps a resumed session on the model it started on', async () => {
+			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash-0731'
+			const result = await resolveLlmRoute(
+				fundedParams({}, { model: 'deepseek/deepseek-v4-flash-0731', source: 'tier' }),
+			)
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731')
+			// A pin the route can no longer run is dropped, not obeyed.
+			const dropped = await resolveLlmRoute(
+				fundedParams({}, { model: 'claude-opus-5-5', source: 'agent' }),
+			)
+			expect(dropped?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731')
+		})
+
+		it('keeps the provider allow list for the default model only', async () => {
+			process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'digitalocean,gmicloud'
+			const result = await resolveLlmRoute(fundedParams({}))
+			expect(JSON.parse(result?.envVars.MASKIN_PROVIDER_PREFS ?? '{}')).toEqual({
+				only: ['digitalocean', 'gmicloud'],
+			})
+		})
+	})
+
+	it('never reaches the funded route for an enterprise workspace, whatever model the agent names', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'pro' }
+		const result = await resolveLlmRoute({
+			db: dbWithSessionUsage([]),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: settings,
+			enterprise: true,
+			agent: { model: 'deepseek/deepseek-v4.1-flash' },
+		})
+		expect(result).toBeNull()
+	})
+
+	it('reports the model that runs on the own-key routes too', async () => {
+		const agentKey = await resolveLlmRoute({
+			db: dbWithFallbackUsage([]),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: emptySettings(),
+			enterprise: true,
+			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-opus-5-5' },
+		})
+		expect(agentKey).toMatchObject({ modelName: 'claude-opus-5-5', modelSource: 'agent' })
+
+		const custom = emptySettings()
+		custom.custom_llm = {
+			enabled: true,
+			base_url: 'https://example.com',
+			api_key: 'sk-cust',
+			model: 'custom-model',
+		}
+		const customResult = await resolveLlmRoute({
+			db: dbWithFallbackUsage([]),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: custom,
+			enterprise: true,
+			agent: {},
+		})
+		expect(customResult).toMatchObject({ modelName: 'custom-model', modelSource: 'workspace' })
 	})
 })

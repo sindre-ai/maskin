@@ -70,6 +70,7 @@ import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
+	trackSessionLaunchModel,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
@@ -161,11 +162,12 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
-	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
 	type LlmRoute,
+	type ModelSource,
+	type PinnedModel,
 	PlanCapExceededError,
 	canUseCreditBalance,
 	ceilCents,
@@ -487,6 +489,9 @@ export function resolveActorSecretEnv(
  * decided by its slot's position in the chain (see
  * `maybeRetryClaudeOAuthOnNextSlot`), not by its presence.
  *
+ * `modelSource` records whether the model came from the agent's own setting or
+ * the tier default, so a resume and the completion event can say so.
+ *
  * `nextOauthExpiresAt` is the access-token expiry of a launch whose container
  * got no refresh token. It is stamped when given and cleared when not, so a
  * retry that inherits the previous config never carries a stale expiry onto a
@@ -497,10 +502,12 @@ export function mergeLaunchRouteConfig(
 	routeTaken: LlmRoute,
 	nextOauthSlot: string | undefined,
 	nextOauthExpiresAt?: number,
+	modelSource?: ModelSource,
 ): Record<string, unknown> | null {
 	const needsUpdate =
 		existingConfig.llm_route !== routeTaken ||
 		(nextOauthSlot && existingConfig.llm_oauth_slot !== nextOauthSlot) ||
+		(modelSource && existingConfig.llm_model_source !== modelSource) ||
 		existingConfig[SESSION_OAUTH_EXPIRES_AT_KEY] !== nextOauthExpiresAt
 	if (!needsUpdate) return null
 
@@ -508,6 +515,7 @@ export function mergeLaunchRouteConfig(
 		...existingConfig,
 		llm_route: routeTaken,
 		...(nextOauthSlot ? { llm_oauth_slot: nextOauthSlot } : {}),
+		...(modelSource ? { llm_model_source: modelSource } : {}),
 	}
 	if (nextOauthExpiresAt === undefined) {
 		delete updatedConfig[SESSION_OAUTH_EXPIRES_AT_KEY]
@@ -2525,6 +2533,21 @@ ${cont.continues_prompt}
 		let oauthSlotTaken: string | undefined
 		let oauthExpiresAtTaken: number | undefined
 		let routeModelName: string | undefined
+		let routeModelSource: ModelSource | undefined
+		// A launch that already has a stamped model is a resume (or relaunch): it
+		// stays on the model it started on, whatever the agent says now.
+		const startedModelSource = (session.config as Record<string, unknown> | null)?.llm_model_source
+		const pinnedModel: PinnedModel | null = session.modelName
+			? {
+					model: session.modelName,
+					source:
+						startedModelSource === 'agent' ||
+						startedModelSource === 'tier' ||
+						startedModelSource === 'workspace'
+							? startedModelSource
+							: 'agent',
+				}
+			: null
 		try {
 			const resolved = await resolveLlmRoute({
 				db: this.db,
@@ -2532,6 +2555,7 @@ ${cont.continues_prompt}
 				actorId: session.actorId,
 				wsSettings,
 				enterprise,
+				pinned: pinnedModel,
 				agent: {
 					provider: agent.llmProvider,
 					apiKey: (llmConfig.api_key as string | undefined) ?? null,
@@ -2542,12 +2566,8 @@ ${cont.continues_prompt}
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
 				oauthExpiresAtTaken = resolved.oauthExpiresAt
-				// maskin_plan names its model on the result; a BYO endpoint's model is
-				// the ANTHROPIC_MODEL it was configured with.
-				routeModelName =
-					resolved.route === LLM_ROUTE_CUSTOM
-						? resolved.envVars.ANTHROPIC_MODEL
-						: resolved.modelName
+				routeModelName = resolved.modelName
+				routeModelSource = resolved.modelSource
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -2616,12 +2636,11 @@ ${cont.continues_prompt}
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
-		// On the maskin_plan and workspace_custom routes we ALSO stamp
-		// `sessions.model_name` with the model that will actually run: the local
-		// cost resolver keys OpenRouter's pricing table on that value, and without
-		// it every non-Anthropic session reads as an Opus-priced number.
-		// claude_oauth and the API-key routes leave `model_name` null on purpose —
-		// Claude Code's own `total_cost_usd` stays ground truth for those.
+		// On every route we ALSO stamp `sessions.model_name` with the model that
+		// will actually run, so the model on a session is a record and not a guess.
+		// The local cost resolver keys OpenRouter's pricing table on that value for
+		// maskin_plan and workspace_custom; claude_oauth and the API-key routes
+		// stay priced by Claude Code's own `total_cost_usd`, whatever is stamped.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
 			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
@@ -2630,13 +2649,10 @@ ${cont.continues_prompt}
 				routeTaken,
 				nextOauthSlot,
 				routeTaken === LLM_ROUTE_OAUTH ? oauthExpiresAtTaken : undefined,
+				routeModelSource,
 			)
 			const modelNameToPersist =
-				(routeTaken === LLM_ROUTE_MASKIN_PLAN || routeTaken === LLM_ROUTE_CUSTOM) &&
-				routeModelName &&
-				routeModelName !== session.modelName
-					? routeModelName
-					: undefined
+				routeModelName && routeModelName !== session.modelName ? routeModelName : undefined
 			if (updatedConfig || modelNameToPersist !== undefined) {
 				const patch: Partial<typeof sessions.$inferInsert> = {}
 				if (updatedConfig) patch.config = updatedConfig
@@ -2648,6 +2664,23 @@ ${cont.continues_prompt}
 				if (modelNameToPersist !== undefined) {
 					;(session as { modelName: string | null }).modelName = modelNameToPersist
 				}
+			}
+			// A launch with no model stamped yet is the session's first. A resume
+			// stays on its model and is not counted as a new start.
+			if (!pinnedModel) {
+				void trackSessionLaunchModel({
+					workspaceId: session.workspaceId,
+					sessionId: session.id,
+					agentId: agent.id,
+					model: routeModelName ?? null,
+					modelSource: routeModelSource ?? null,
+					route: routeTaken,
+					triggerId: session.triggerId,
+					triggerType:
+						typeof (session.config as Record<string, unknown> | null)?.trigger_type === 'string'
+							? ((session.config as Record<string, unknown>).trigger_type as string)
+							: null,
+				})
 			}
 		}
 
@@ -5927,6 +5960,11 @@ ${cont.continues_prompt}
 				outcome,
 				skillsAttached,
 				skillsStaged,
+				modelProps: {
+					model: session.modelName ?? null,
+					modelSource: typeof config.llm_model_source === 'string' ? config.llm_model_source : null,
+					route: typeof config.llm_route === 'string' ? config.llm_route : null,
+				},
 			})
 		} catch (err) {
 			// Never propagate — completion path must not be blocked by analytics.

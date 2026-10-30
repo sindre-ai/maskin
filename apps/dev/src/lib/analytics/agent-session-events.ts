@@ -148,6 +148,64 @@ export async function trackSessionSkillLoadFailed(p: {
 }
 
 /**
+ * Which model ran, and why: `model` is the one the session launched on,
+ * `model_source` says whether it came from the agent's own setting, the tier
+ * default or workspace config, and `route` is the LLM route that serves it.
+ * These three ride on `agent_session_started`, `trigger_fired` (for a
+ * trigger-dispatched session) and `agent_session_completed`, and `model`
+ * equals the `$ai_model` on the session's generation event.
+ */
+export interface SessionModelProps {
+	model: string | null
+	modelSource: string | null
+	route: string | null
+}
+
+/**
+ * Dev-side `agent_session_started` and, for a trigger-dispatched session,
+ * `trigger_fired`, fired once when a session first launches with its model
+ * resolved. A resume keeps the model it started on and does not fire again.
+ * The web app emits events of the same names from the browser; `emitted_from`
+ * tells the two apart, as on `agent_session_completed`.
+ *
+ * Best-effort — analytics can never block a launch.
+ */
+export async function trackSessionLaunchModel(
+	p: SessionModelProps & {
+		workspaceId: string
+		sessionId: string
+		agentId: string
+		triggerId?: string | null
+		triggerType?: string | null
+	},
+): Promise<void> {
+	try {
+		const base = {
+			workspace_id: p.workspaceId,
+			session_id: p.sessionId,
+			agent_id: p.agentId,
+			model: p.model,
+			model_source: p.modelSource,
+			route: p.route,
+			emitted_from: 'dev_backend',
+		}
+		await capturePosthogEvent('agent_session_started', p.agentId, base)
+		if (p.triggerId) {
+			await capturePosthogEvent('trigger_fired', p.agentId, {
+				...base,
+				trigger_id: p.triggerId,
+				trigger_type: p.triggerType ?? null,
+			})
+		}
+	} catch (err) {
+		logger.warn('Failed to emit agent_session_started (dev-side)', {
+			sessionId: p.sessionId,
+			error: String(err),
+		})
+	}
+}
+
+/**
  * G1 completion signal — dev-side companion to the frontend-emitted
  * `agent_session_completed` PostHog event. Fires from
  * `session-manager`'s terminal paths (local `handleCompletion` and remote
@@ -169,6 +227,7 @@ export async function trackAgentSessionCompletedWithSkills(p: {
 	outcome: 'completed' | 'failed' | 'timeout'
 	skillsAttached?: number
 	skillsStaged?: number
+	modelProps?: SessionModelProps
 }): Promise<void> {
 	try {
 		await capturePosthogEvent('agent_session_completed', p.agentId, {
@@ -178,6 +237,9 @@ export async function trackAgentSessionCompletedWithSkills(p: {
 			outcome: p.outcome,
 			skills_attached: p.skillsAttached,
 			skills_staged: p.skillsStaged,
+			model: p.modelProps?.model ?? null,
+			model_source: p.modelProps?.modelSource ?? null,
+			route: p.modelProps?.route ?? null,
 			// Distinguishes the dev-side emission from the frontend one at query
 			// time. PostHog treats absent properties as null; setting this on the
 			// dev-side path lets a query filter to a single source when needed.

@@ -769,6 +769,7 @@ export async function emitCompletion(
 		config: Record<string, unknown> | null
 		triggerId: string | null
 		startedAt: Date | null
+		modelName?: string | null
 	},
 	outcome: SettleOutcome,
 	totals: EmitCompletionUsageTotals,
@@ -802,6 +803,9 @@ export async function emitCompletion(
 		cost_usd: totals.costUsd,
 		skills_attached: skillsAttached,
 		skills_staged: skillsStaged,
+		model: session.modelName ?? null,
+		model_source: typeof config.llm_model_source === 'string' ? config.llm_model_source : null,
+		route: typeof config.llm_route === 'string' ? config.llm_route : null,
 	}).catch((err) => {
 		logger.warn('Failed agent_session_completed PostHog emit', {
 			sessionId: session.id,

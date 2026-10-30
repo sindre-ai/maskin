@@ -254,6 +254,53 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 		expect(row.llmConfig).toEqual({ model: 'changed-model' })
 	})
 
+	it('PATCH refuses a model the workspace cannot run, and leaves the stored one alone', async () => {
+		const app = createApp()
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId(), 'admin')
+
+		// A Claude model needs a connected subscription; this workspace is not enterprise.
+		const res = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/actors/${agent.id}`,
+				{ llm_config: { model: 'claude-opus-5-5' } },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain('deepseek/deepseek-v4.1-flash')
+		expect((await readAgent(agent.id)).llmConfig).toEqual({ model: 'original-model' })
+	})
+
+	it('PATCH accepts a catalog model the workspace can run, and an unchanged stored value', async () => {
+		const app = createApp()
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId(), 'admin')
+
+		const changed = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/actors/${agent.id}`,
+				{ llm_config: { model: 'deepseek/deepseek-v4.1-flash' } },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+		expect(changed.status).toBe(200)
+		expect((await readAgent(agent.id)).llmConfig).toEqual({ model: 'deepseek/deepseek-v4.1-flash' })
+
+		// Sending the stored value back is not judged again.
+		const unchanged = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/actors/${agent.id}`,
+				{ llm_config: { model: 'deepseek/deepseek-v4.1-flash' } },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+		expect(unchanged.status).toBe(200)
+	})
+
 	it('PATCH refuses when the caller is admin in one workspace and only a member in the one the agent is in', async () => {
 		const app = createApp()
 		const otherOwner = await insertActor(db, { type: 'human', name: 'Other Owner' })
