@@ -70,9 +70,14 @@ vi.mock('@/hooks/use-objects', () => ({
 
 const retryMutate = vi.fn()
 vi.mock('@/hooks/use-conversation', () => ({
-	useEditMessage: () => ({ mutate: vi.fn(), isPending: false }),
+	useConversation: () => ({ data: { participants: [] } }),
+	useEditMessage: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
 	useRetryMessage: () => ({ mutate: retryMutate, isPending: false }),
 	useSendMessage: () => ({ mutate: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
 }))
 
 vi.mock('@/hooks/use-object-type-label', () => ({
