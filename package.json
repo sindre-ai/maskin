@@ -3,6 +3,7 @@
 	"private": true,
 	"license": "Apache-2.0",
 	"scripts": {
+		"prepare": "node -e \"try{require('child_process').execFileSync('git',['config','core.hooksPath','.githooks'],{stdio:'ignore'})}catch{}\"",
 		"dev": "bash scripts/dev.sh",
 		"dev:win": "node scripts/dev.mjs",
 		"dev:external": "bash scripts/dev-external.sh",
