@@ -33,6 +33,7 @@ function AddCredentialPage() {
 	const [name, setName] = useState('')
 	const [secret, setSecret] = useState('')
 	const [username, setUsername] = useState('')
+	const [email, setEmail] = useState('')
 	const [password, setPassword] = useState('')
 	const [error, setError] = useState<string | null>(null)
 	const isLogin = kind === 'login'
@@ -53,6 +54,7 @@ function AddCredentialPage() {
 					displayName: name.trim(),
 					username: username.trim(),
 					password,
+					...(email.trim() ? { email: email.trim() } : {}),
 				})
 			} else {
 				await createKey.mutateAsync({ displayName: name.trim(), rawSecret: secret })
@@ -114,7 +116,7 @@ function AddCredentialPage() {
 				{isLogin ? (
 					<>
 						<div className="space-y-1.5">
-							<Label htmlFor="keychain-username">Username or email</Label>
+							<Label htmlFor="keychain-username">Username</Label>
 							<Input
 								id="keychain-username"
 								value={username}
@@ -123,6 +125,20 @@ function AddCredentialPage() {
 								spellCheck={false}
 								required
 							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="keychain-email">Email (optional)</Label>
+							<Input
+								id="keychain-email"
+								inputMode="email"
+								value={email}
+								onChange={(e) => setEmail(e.target.value)}
+								autoComplete="off"
+								spellCheck={false}
+							/>
+							<p className="text-xs text-muted-foreground">
+								For a service that asks for both a username and an email.
+							</p>
 						</div>
 						<div className="space-y-1.5">
 							<Label htmlFor="keychain-password">Password</Label>

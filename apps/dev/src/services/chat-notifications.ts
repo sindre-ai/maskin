@@ -91,9 +91,10 @@ export async function humanParticipants(
 
 /**
  * The other person in a direct chat: a conversation with exactly two active
- * participants, both human. Null for a group chat, a chat with an agent in it, or
- * when the other person has archived it. A group chat stays quiet at the top level
- * (people there are reached by @mention); a direct chat has one person to reach.
+ * participants, both human, one of them the author. Null for a group chat, a chat
+ * with an agent in it, a chat the author is not in, or when the other person has
+ * archived it. A group chat stays quiet at the top level (people there are reached
+ * by @mention); a direct chat has one person to reach.
  */
 export async function directChatPeer(
 	db: Db,
@@ -115,6 +116,7 @@ export async function directChatPeer(
 			),
 		)
 	if (rows.length !== 2) return null
+	if (!rows.some((r) => r.actorId === authorId)) return null
 	const peer = rows.find((r) => r.actorId !== authorId)
 	if (!peer || peer.type !== 'human' || peer.archived) return null
 	return peer.actorId

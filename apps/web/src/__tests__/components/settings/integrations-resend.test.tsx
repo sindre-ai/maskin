@@ -112,7 +112,7 @@ describe('IntegrationsPage — resend', () => {
 		mockUseProviders.mockReset()
 	})
 
-	it('shows the Resend provider card AND surfaces a Resume affordance for awaiting_secret rows', () => {
+	it('shows the Resend provider card AND surfaces a Finish setup affordance for awaiting_secret rows', () => {
 		mockUseProviders.mockReturnValue({ data: [RESEND_PROVIDER], isLoading: false })
 		mockUseIntegrations.mockReturnValue({
 			data: [AWAITING_SECRET_RESEND_ROW],
@@ -126,7 +126,7 @@ describe('IntegrationsPage — resend', () => {
 		)
 
 		expect(screen.getByText('Resend')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /resume connect/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /finish setup/i })).toBeInTheDocument()
 		expect(screen.getByText(/mail\.example\.com/)).toBeInTheDocument()
 	})
 })

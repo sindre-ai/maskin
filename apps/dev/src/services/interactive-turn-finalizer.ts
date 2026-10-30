@@ -15,6 +15,7 @@ import {
 } from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
+import { resolveThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
 
 /**
  * Posts an agent's end-of-turn output into the chat it is talking in.
@@ -37,17 +38,6 @@ import { insertConversationMessage } from './conversation-messages'
 
 const describeError = (err: unknown): string =>
 	err instanceof Error ? err.stack || err.message : String(err)
-
-/**
- * Every complete line in one session_logs row.
- *
- * splitLines drops the trailing partial, which for a stored row is the last
- * envelope when the chunk did not end on a newline — so terminate the row
- * first. A row is only ever a whole number of envelopes by the time it is
- * persisted; the cross-chunk partial is reassembled live by onStdout.
- */
-const splitRowLines = (content: string): string[] =>
-	splitLines(content.endsWith('\n') ? content : `${content}\n`).lines
 
 /** Guards against a stream that never emits a newline eating memory. */
 const MAX_BUFFERED_PARTIAL_BYTES = 256 * 1024
@@ -1912,66 +1902,14 @@ export class InteractiveTurnFinalizer {
 		return rows.length < RECOVERY_SCAN_LIMIT ? { kind: 'empty' } : { kind: 'unknown' }
 	}
 
-	/**
-	 * Which chat message's turn produced this output.
-	 *
-	 * writeInput tags each user turn's persisted envelope with
-	 * `maskin_message_id`; the nearest such envelope before this result is the
-	 * turn that is now closing. Null is fine — a seeded first turn may carry no
-	 * message id, and the frontend anchors those by position instead.
-	 *
-	 * Split into lines for the same reason recoverTurnText does: the tagged
-	 * envelope can share a Docker chunk with its neighbours, and parsing the
-	 * whole row would throw and silently yield an unanchored message.
-	 */
-	/**
-	 * A reply to a message posted inside a thread answers in that thread. The turn's
-	 * triggering message is either the thread's root (which starts the thread) or one
-	 * of its replies; only a reply carries a root, so an agent answering a top-level
-	 * message still posts to the main timeline. Best-effort: a lookup failure posts
-	 * the reply top-level rather than losing it.
-	 */
-	private async resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
-		if (turnMessageId === null) return null
-		try {
-			const [row] = await this.db
-				.select({ threadRootId: messages.threadRootId })
-				.from(messages)
-				.where(eq(messages.id, turnMessageId))
-				.limit(1)
-			return row?.threadRootId ?? null
-		} catch (err) {
-			logger.warn(`Could not resolve thread for message ${turnMessageId}: ${describeError(err)}`)
-			return null
-		}
+	/** The chat message whose turn produced this output; see resolveTurnMessageId. */
+	private resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
+		return resolveTurnMessageId(this.db, sessionId, logId)
 	}
 
-	private async resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
-		const [row] = await this.db
-			.select({ content: sessionLogs.content })
-			.from(sessionLogs)
-			.where(
-				and(
-					eq(sessionLogs.sessionId, sessionId),
-					lte(sessionLogs.id, logId),
-					eq(sessionLogs.stream, 'stdout'),
-					like(sessionLogs.content, '%maskin_message_id%'),
-				),
-			)
-			.orderBy(desc(sessionLogs.id))
-			.limit(1)
-
-		if (!row) return null
-		const lines = splitRowLines(row.content)
-		for (let i = lines.length - 1; i >= 0; i--) {
-			try {
-				const parsed = JSON.parse((lines[i] ?? '').trim()) as { maskin_message_id?: unknown }
-				if (typeof parsed.maskin_message_id === 'number') return parsed.maskin_message_id
-			} catch {
-				// Not JSON, or a partial — keep walking the row's other lines.
-			}
-		}
-		return null
+	/** The thread the turn's triggering message sits in; see resolveThreadRootId. */
+	private resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
+		return resolveThreadRootId(this.db, turnMessageId)
 	}
 
 	private rememberRetry(retryKey: string, count: number): void {

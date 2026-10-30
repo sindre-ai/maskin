@@ -1,7 +1,11 @@
 import { events, agentServers, sessionLogs, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
-import { capturePosthogEvent } from '../../lib/analytics/posthog'
+import {
+	__resetPosthogPrivacyForTesting,
+	capturePosthogEvent,
+	configurePosthogPrivacy,
+} from '../../lib/analytics/posthog'
 import { logger } from '../../lib/logger'
 import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
 import { _driveToRunning, configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -1259,6 +1263,8 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 
 		const originalKey = process.env.POSTHOG_API_KEY
 		process.env.POSTHOG_API_KEY = 'phc_test'
+		// The workspace's privacy setting gates every send, so the capture needs the lookup wired.
+		configurePosthogPrivacy(db)
 		let captureCalls = 0
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
 			captureCalls++
@@ -1271,6 +1277,7 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			// no-op
 		} finally {
 			fetchSpy.mockRestore()
+			__resetPosthogPrivacyForTesting()
 			if (originalKey === undefined) Reflect.deleteProperty(process.env, 'POSTHOG_API_KEY')
 			else process.env.POSTHOG_API_KEY = originalKey
 			await manager.stop()

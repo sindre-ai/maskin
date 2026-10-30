@@ -97,7 +97,8 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
 		expect(registeredNames).toContain('create_session')
-		expect(registeredNames).not.toContain('run_agent')
+		// Restored as a listed, deprecated alias of create_session (see tool-aliases.ts).
+		expect(registeredNames).toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
@@ -8101,6 +8102,30 @@ describe('X-Maskin-Session-Id source', () => {
 		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
 		expect(sent.thread_root_id).toBe(42)
 		expect(sent.also_in_channel).toBe(true)
+	})
+
+	// The opt-out from the server-side thread default: the schema must keep it and the handler must send it.
+	it('post_conversation_message accepts top_level in its schema and sends it to the API', async () => {
+		const input = {
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'for the whole chat',
+			top_level: true,
+		}
+		expect(tools.post_conversation_message.inputSchema.parse(input).top_level).toBe(true)
+
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler(input)
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.top_level).toBe(true)
+		expect(sent.thread_root_id).toBeUndefined()
 	})
 
 	it('list_conversation_messages passes thread_root_id as a query param', async () => {

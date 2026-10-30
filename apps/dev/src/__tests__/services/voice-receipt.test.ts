@@ -338,6 +338,12 @@ describe('receipt numbers', () => {
 		expect(words).not.toContain(A.slice(0, 8))
 	})
 
+	it('leaves the card sentences out when told the call had nothing to do with cards', () => {
+		const n = buildReceiptNumbers([], undefined, 'user_hangup')
+		const words = numbersInWords(n, { rank1: null, first: null }, { cards: false })
+		expect(words).toBe('No sends. Call ended by hangup.')
+	})
+
 	it('never prints a card id when the cards are unknown', () => {
 		expect(numbersInWords(buildReceiptNumbers([], undefined, 'user_hangup'))).toContain(
 			'The top card at the start of the call is not known.',

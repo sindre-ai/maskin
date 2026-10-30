@@ -59,10 +59,12 @@ export type IntroduceArgs = {
 }
 
 /**
- * Posts the "Meet {name}" intro into a 1-1 between the new agent and the
- * person it was made for: the creator when a person made it, otherwise the
- * person behind the creating agent's session. Template only, no model call, and
- * it never wakes a session (postToDirectChat does not call evaluateAndRespond).
+ * Posts the intro into the 1-1 between the new agent and the person it was made
+ * for: the creator when a person made it, otherwise the person behind the
+ * creating agent's session. An existing 1-1 is reused; when there is none, the
+ * one created is the plain direct message, titled with the agent's name like any
+ * other 1-1. Template only, no model call, and it never wakes a session
+ * (postToDirectChat does not call evaluateAndRespond).
  *
  * Fire and forget from POST /api/actors. It never throws: a failure is logged
  * and captured as agent_intro_failed so agent creation is unaffected.

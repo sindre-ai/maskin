@@ -150,6 +150,12 @@ export const messageQuestionSchema = z.object({
 	 * this chat: the answer goes to that session's input, not to the chat's agents.
 	 */
 	reply_to_session: z.boolean().optional(),
+	/**
+	 * Where the ask route put this question: the asking session's own chat, the chat a helper
+	 * was started from, or the asking agent's master chat with the person. Backend-owned;
+	 * the delivery readout is one query on this field.
+	 */
+	routed_to: z.enum(['session_chat', 'helper_chat', 'master']).optional(),
 })
 
 /**
@@ -521,6 +527,10 @@ export const postMessageSchema = z.object({
 	thread_root_id: z.number().int().positive().optional(),
 	// With thread_root_id: also show the reply in the main timeline.
 	also_in_channel: z.boolean().optional(),
+	// An agent posting mid-turn lands in the thread of the message that started the turn when
+	// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
+	// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+	top_level: z.boolean().optional(),
 })
 
 export const editMessageSchema = z.object({

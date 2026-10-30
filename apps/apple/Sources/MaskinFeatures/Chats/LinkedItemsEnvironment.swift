@@ -81,6 +81,21 @@ struct LinkedOpener: DynamicProperty {
 		case .trigger: runtime?.openTrigger(target.uuid)
 		}
 	}
+
+	/// Closes the sheet the caller is in, waits for it to finish, then opens the target: the shell
+	/// presents from above everything and cannot while a sheet is up.
+	static func openAfterClosing(_ target: LinkedTarget, close: () -> Void, runtime: AppRuntime?) {
+		close()
+		Task {
+			try? await Task.sleep(for: .milliseconds(450))
+			switch target.kind {
+			case .object: runtime?.openObject(target.uuid)
+			case .file: runtime?.openFile(target.uuid)
+			case .loop: runtime?.openLoop(target.uuid)
+			case .trigger: runtime?.openTrigger(target.uuid)
+			}
+		}
+	}
 }
 
 extension LinkedItemStores {

@@ -123,7 +123,7 @@ export function EmptyResults({
 					]
 						.filter(Boolean)
 						.join(' ') ||
-					'Search looks across chats, loops, agents, objects and automations. Try a shorter word.'
+					'Search looks across chats, loops, agents, people, objects and automations. Try a shorter word.'
 				}
 				action={
 					<div className="flex flex-col items-center gap-3">
