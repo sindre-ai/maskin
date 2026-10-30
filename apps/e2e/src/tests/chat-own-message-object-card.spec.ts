@@ -61,7 +61,7 @@ test.describe('Chat — your own message carries the object card', () => {
 			const lone = alone.locator('[data-linked-card]')
 			await expect(lone).toBeVisible()
 			await expect(alone.locator('.bg-primary')).toHaveCount(0)
-			await expect(lone).toHaveAttribute('target', '_blank')
+			await expect(lone.locator('a')).toHaveAttribute('target', '_blank')
 
 			// A link in a sentence is a chip, and the same object again is a chip too.
 			const sentence = message('Quick look at')

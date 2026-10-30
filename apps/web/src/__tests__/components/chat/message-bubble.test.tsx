@@ -200,7 +200,7 @@ describe('MessageBubble', () => {
 			expect(plate).toContainElement(card as HTMLElement)
 			expect(plate?.textContent).toContain('is this done?')
 			expect(card).toHaveTextContent('Retry window')
-			expect(card).toHaveAttribute('target', '_blank')
+			expect(card?.querySelector('a')).toHaveAttribute('target', '_blank')
 			expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
 		})
 
@@ -222,7 +222,7 @@ describe('MessageBubble', () => {
 				const { container } = renderBubble(
 					buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content }),
 				)
-				return container.querySelector('[data-linked-card]')?.closest('.relative') ?? null
+				return container.querySelector('[data-linked-card]')?.parentElement?.closest('.relative') ?? null
 			}
 			expect(holder(`is this done?\n${address}`)).toHaveClass('w-[min(520px,88%)]')
 			cleanup()
