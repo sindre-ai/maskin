@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
@@ -59,6 +60,7 @@ import { IntegrationConnectCard } from './integration-connect-card'
 import { KeychainAccessRequestCard } from './keychain-access-request-card'
 import { KeychainRequestCard } from './keychain-request-card'
 import { McpServerRequestCard } from './mcp-server-request-card'
+import { type MessageAttachmentItem, MessageAttachments } from './message-attachments'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -140,6 +142,8 @@ export function MessageBubble({
 	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
+	// The one read of this flag: files and images lift out of the text bubble when it is on.
+	const attachmentsLifted = useFeatureFlag('chat-attachments-lifted')
 	const attachments = message.metadata?.attachments ?? []
 	// Resolve the file record for each attachment so the bubble renders the real
 	// filename — the metadata `name` is best-effort and older / MCP-posted
@@ -177,8 +181,27 @@ export function MessageBubble({
 		return <MessageDivider label={message.content} />
 	}
 
+	const liftedAttachments =
+		attachmentsLifted && attachments.length > 0 ? (
+			<MessageAttachments
+				workspaceId={workspaceId}
+				align={isOwn ? 'end' : 'start'}
+				items={attachments.map((f): MessageAttachmentItem => {
+					const resolved = filesById.get(f.file_id)
+					return {
+						id: f.file_id,
+						name: resolved?.name ?? f.name ?? 'Attachment',
+						sizeBytes: resolved?.sizeBytes ?? f.size_bytes ?? 0,
+						mimeType: resolved?.mimeType ?? f.mime_type,
+						// The file list has loaded and this file is not in it: it was deleted.
+						status: attachedFiles && !resolved ? 'gone' : undefined,
+					}
+				})}
+			/>
+		) : null
+
 	const fileList =
-		attachments.length > 0 ? (
+		!attachmentsLifted && attachments.length > 0 ? (
 			<ul className="flex flex-col gap-1" aria-label="Attached files">
 				{attachments.map((f) => {
 					const resolved = filesById.get(f.file_id)
@@ -200,6 +223,8 @@ export function MessageBubble({
 		) : null
 
 	if (isOwn) {
+		// A message that is only attachments has no bubble.
+		const hasPlate = !attachmentsLifted || editing || message.content.length > 0
 		const startEditing = () => {
 			setDraft(message.content)
 			setEditing(true)
@@ -211,7 +236,14 @@ export function MessageBubble({
 			editMessage.mutate({ messageId: message.id, content })
 		}
 		return (
-			<div className={cn('flex flex-col items-end gap-1.5', editing && 'w-full')}>
+			<div
+				className={cn(
+					'flex flex-col items-end',
+					// Lifted attachments stack 4px above the text bubble.
+					attachmentsLifted ? 'gap-1' : 'gap-1.5',
+					editing && 'w-full',
+				)}
+			>
 				{hasContext ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
 						<span className="eyebrow shrink-0">YOU ATTACHED</span>
@@ -229,70 +261,75 @@ export function MessageBubble({
 						/>
 					</div>
 				) : null}
-				{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
+				{liftedAttachments}
+				{hasPlate ? (
+					<>
+						{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
 				    (`pr-2`) and owns the absolute placement, so the bar sits flush
 				    against the bubble and stays inside the box that measures overflow. */}
-				<div
-					className={cn(
-						'relative max-w-[min(560px,80%)]',
-						spawnInfo && 'pr-2',
-						editing && 'w-full',
-					)}
-				>
-					{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
-					<div className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
-						{fileList}
-						{editing ? (
-							<div className="flex flex-col gap-2">
-								<Textarea
-									value={draft}
-									onChange={(e) => setDraft(e.target.value)}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' && !e.shiftKey) {
-											e.preventDefault()
-											saveEdit()
-										}
-										if (e.key === 'Escape') {
-											e.preventDefault()
-											setEditing(false)
-										}
-									}}
-									aria-label="Edit message"
-									autoFocus
-									className="bg-background text-foreground"
-								/>
-								<div className="flex justify-end gap-2">
-									<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-										Cancel
-									</Button>
-									<Button size="sm" onClick={saveEdit}>
-										Save
-									</Button>
-								</div>
-							</div>
-						) : message.content.length > 0 ? (
-							// `break-words` is load-bearing next to the column's `min-w-0`:
-							// `min-w-0` bounds the box, this bounds the ink. Without it an
-							// unbroken token (a long URL) raises this span's min-content and
-							// paints past the bubble's `max-w` cap, out to the viewport edge.
-							<span className="whitespace-pre-wrap text-balance break-words">
-								{ownSegments.map((segment, index) =>
-									segment.kind === 'text' ? (
-										// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-										<Fragment key={index}>{segment.text}</Fragment>
-									) : (
-										<OwnLinkChip
-											// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
-											key={index}
-											workspaceId={workspaceId}
-											segment={segment}
+						<div
+							className={cn(
+								'relative max-w-[min(560px,80%)]',
+								spawnInfo && 'pr-2',
+								editing && 'w-full',
+							)}
+						>
+							{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
+							<div className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
+								{fileList}
+								{editing ? (
+									<div className="flex flex-col gap-2">
+										<Textarea
+											value={draft}
+											onChange={(e) => setDraft(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === 'Enter' && !e.shiftKey) {
+													e.preventDefault()
+													saveEdit()
+												}
+												if (e.key === 'Escape') {
+													e.preventDefault()
+													setEditing(false)
+												}
+											}}
+											aria-label="Edit message"
+											autoFocus
+											className="bg-background text-foreground"
 										/>
-									),
-								)}
-							</span>
-						) : null}
-					</div>
-				</div>
+										<div className="flex justify-end gap-2">
+											<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+												Cancel
+											</Button>
+											<Button size="sm" onClick={saveEdit}>
+												Save
+											</Button>
+										</div>
+									</div>
+								) : message.content.length > 0 ? (
+									// `break-words` is load-bearing next to the column's `min-w-0`:
+									// `min-w-0` bounds the box, this bounds the ink. Without it an
+									// unbroken token (a long URL) raises this span's min-content and
+									// paints past the bubble's `max-w` cap, out to the viewport edge.
+									<span className="whitespace-pre-wrap text-balance break-words">
+										{ownSegments.map((segment, index) =>
+											segment.kind === 'text' ? (
+												// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
+												<Fragment key={index}>{segment.text}</Fragment>
+											) : (
+												<OwnLinkChip
+													// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+													key={index}
+													workspaceId={workspaceId}
+													segment={segment}
+												/>
+											),
+										)}
+									</span>
+								) : null}
+							</div>
+						</div>
+					</>
+				) : null}
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
 				{/* The actions sit permanently in the timestamp row rather than
 				    revealing on hover — a touch viewport has no hover, and the
@@ -390,7 +427,9 @@ export function MessageBubble({
 					{isVoice ? <VoiceMessageMetaTag /> : null}
 				</div>
 				{activity ? <div className="mt-0.5">{activity}</div> : null}
-				{fileList ? <div className="mt-1.5">{fileList}</div> : null}
+				{(liftedAttachments ?? fileList) ? (
+					<div className="mt-1.5">{liftedAttachments ?? fileList}</div>
+				) : null}
 				{message.content.length > 0 ? (
 					<div className="mt-1 text-[13.5px] leading-[1.6]">
 						{/* `renderVisuals` turns a ```chart fenced block into the bounded

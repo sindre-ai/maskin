@@ -63,6 +63,14 @@ export const FLAGS = {
 	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
 	 */
 	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
+	/**
+	 * Web chat: images and files on a message sit outside the text bubble (images as their own
+	 * rounded blocks, files as cards), and only the text keeps a bubble. Read once, in
+	 * `apps/web/src/components/chat/message-bubble.tsx`. Off keeps the files inside the bubble as
+	 * before. Visual only, per actor; no data or API change. Retire (drop the old branch and this
+	 * entry) once it is on for everyone.
+	 */
+	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
