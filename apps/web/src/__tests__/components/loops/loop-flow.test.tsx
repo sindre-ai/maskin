@@ -2,22 +2,12 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/api', () => ({
-	api: {
-		relationships: {
-			list: vi.fn(),
-		},
-	},
-}))
-
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return mockTanStackRouter()
 })
 
 import { LoopFlow } from '@/components/loops/loop-flow'
-import type { RelationshipResponse } from '@/lib/api'
-import { api } from '@/lib/api'
 import {
 	buildActorListItem,
 	buildLoopSummary,
@@ -69,30 +59,9 @@ function wrapper() {
 	})
 }
 
-function relationshipsFor(objectId: string): RelationshipResponse[] {
-	if (objectId === 'i-clustered') {
-		return [
-			{
-				id: 'rel-1',
-				sourceType: 'object',
-				sourceId: 'i-clustered',
-				targetType: 'object',
-				targetId: 'bet-1',
-				type: 'informs',
-				createdBy: 'actor-1',
-				createdAt: null,
-			},
-		]
-	}
-	return []
-}
-
 describe('LoopFlow', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		vi.mocked(api.relationships.list).mockImplementation((_workspaceId, params) =>
-			Promise.resolve(relationshipsFor(params?.object_id ?? '')),
-		)
 	})
 
 	it('renders trigger and agent counts in the section header', async () => {
@@ -187,35 +156,25 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		const card = await screen.findByText('Slack images do not render inline')
+		const stage = await screen.findByText('clustered')
 		const heading = screen.getByText('Triggers')
-		expect(card.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(stage.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(screen.getByText('Writes the generalisable version')).toBeInTheDocument()
 		expect(screen.queryByText('Comes in')).not.toBeInTheDocument()
 		expect(screen.queryByText('Runs alongside')).not.toBeInTheDocument()
 	})
 
-	it('renders a cycle card with companions for an object that has relationships', async () => {
+	it('shows each stage with its count and no object cards', async () => {
 		render(<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />, {
 			wrapper: wrapper(),
 		})
 
-		expect(await screen.findByText('Slack images do not render inline')).toBeInTheDocument()
-		expect(screen.getByText('Inline attachments')).toBeInTheDocument()
+		expect(await screen.findByText('clustered')).toBeInTheDocument()
+		expect(screen.queryByText('Slack images do not render inline')).not.toBeInTheDocument()
+		expect(screen.queryByText('Inline attachments')).not.toBeInTheDocument()
 	})
 
-	it('does not render a card for an object with no relationships, only its stage count', async () => {
-		render(<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />, {
-			wrapper: wrapper(),
-		})
-
-		await screen.findByText('Slack images do not render inline')
-		expect(screen.queryByText('New insight')).not.toBeInTheDocument()
-		expect(screen.queryByText('Setup confusion drives churn')).not.toBeInTheDocument()
-		expect(screen.getAllByText('new')).toHaveLength(1)
-	})
-
-	it('filters step rows by agent without hiding stage cards', async () => {
+	it('filters step rows by agent without hiding stages', async () => {
 		const user = userEvent.setup()
 		const triggers = [
 			buildTriggerResponse({
@@ -250,8 +209,8 @@ describe('LoopFlow', () => {
 
 		expect(screen.queryByText('Relay step')).not.toBeInTheDocument()
 		expect(screen.getByText('Compass step')).toBeInTheDocument()
-		// Stage cards are unaffected by the agent filter.
-		expect(await screen.findByText('Slack images do not render inline')).toBeInTheDocument()
+		// Stages are unaffected by the agent filter.
+		expect(await screen.findByText('clustered')).toBeInTheDocument()
 	})
 
 	it('renders nothing when there are no triggers and no child objects', () => {

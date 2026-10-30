@@ -1,19 +1,10 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { TypeBadge } from '@/components/shared/type-badge'
 import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
-import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
-import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useQueries } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-
-// Relationship lookups are one request per object shown in the pipeline
-// board (no bulk-by-many-ids endpoint exists yet) — capped so a very active
-// loop can't fan out into a request storm.
-const MAX_COMPANION_LOOKUPS = 30
 
 interface StageColumn {
 	value: string
@@ -127,43 +118,6 @@ function StepRow({
 	)
 }
 
-function CycleCard({
-	workspaceId,
-	primary,
-	companions,
-}: {
-	workspaceId: string
-	primary: ObjectResponse
-	companions: ObjectResponse[]
-}) {
-	return (
-		<div className="border border-border rounded-lg bg-background p-2.5">
-			<Link
-				to="/$workspaceId/objects/$objectId"
-				params={{ workspaceId, objectId: primary.id }}
-				className="text-[12px] font-semibold text-foreground truncate hover:underline"
-			>
-				{primary.title ?? 'Untitled'}
-			</Link>
-			<div className="flex flex-wrap gap-1.5 mt-2">
-				{companions.map((obj) => (
-					<Link
-						key={obj.id}
-						to="/$workspaceId/objects/$objectId"
-						params={{ workspaceId, objectId: obj.id }}
-						className="flex items-center gap-1.5 rounded-md border border-border bg-card px-1.5 py-1 hover:border-foreground/30 transition-colors min-w-0"
-					>
-						<TypeBadge type={obj.type} />
-						<span className="text-[11px] font-medium text-foreground truncate max-w-[160px]">
-							{obj.title ?? 'Untitled'}
-						</span>
-					</Link>
-				))}
-			</div>
-		</div>
-	)
-}
-
 export function LoopFlow({
 	workspaceId,
 	triggers,
@@ -180,7 +134,6 @@ export function LoopFlow({
 	const [agentFilter, setAgentFilter] = useState<string | null>(null)
 	const { workspace } = useWorkspace()
 	const actorsById = new Map((actors ?? []).map((a) => [a.id, a]))
-	const childrenById = new Map(childObjects.map((c) => [c.id, c]))
 
 	const primaryType = primaryChildType(childObjects)
 	const primaryObjects = primaryType ? childObjects.filter((o) => o.type === primaryType) : []
@@ -188,32 +141,6 @@ export function LoopFlow({
 		(workspace.settings as { statuses?: Record<string, string[]> }).statuses?.[primaryType ?? ''] ??
 		[]
 	const columns = primaryType ? buildStageColumns(primaryObjects, configuredStatuses) : []
-
-	// One relationship lookup per primary object — merged below into a
-	// "companions" list (any loop child directly linked to it, any type).
-	const lookupTargets = primaryObjects.slice(0, MAX_COMPANION_LOOKUPS)
-	const relationshipQueries = useQueries({
-		queries: lookupTargets.map((obj) => ({
-			queryKey: queryKeys.relationships.byObject(workspaceId, obj.id),
-			queryFn: () => api.relationships.list(workspaceId, { object_id: obj.id }),
-		})),
-	})
-	const companionsByPrimaryId = new Map<string, ObjectResponse[]>()
-	lookupTargets.forEach((obj, i) => {
-		const rels = relationshipQueries[i]?.data ?? []
-		const seen = new Set<string>()
-		const companions: ObjectResponse[] = []
-		for (const rel of rels) {
-			const otherId = rel.sourceId === obj.id ? rel.targetId : rel.sourceId
-			if (otherId === obj.id || seen.has(otherId)) continue
-			const other = childrenById.get(otherId)
-			if (other) {
-				companions.push(other)
-				seen.add(otherId)
-			}
-		}
-		if (companions.length > 0) companionsByPrimaryId.set(obj.id, companions)
-	})
 
 	const routineTriggers = triggers.filter((t) => t.type === 'cron')
 	const eventTriggers = triggers.filter((t) => t.type !== 'cron')
@@ -297,7 +224,6 @@ export function LoopFlow({
 			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4 shadow-sm">
 				{columns.map((column) => {
 					const colors = getStatusColor(column.value)
-					const cardObjects = column.objects.filter((o) => companionsByPrimaryId.has(o.id))
 					return (
 						<div key={column.value}>
 							<div className="flex items-center gap-2">
@@ -315,18 +241,6 @@ export function LoopFlow({
 									{column.total}
 								</span>
 							</div>
-							{cardObjects.length > 0 && (
-								<div className="flex flex-col gap-2 mt-2 ml-4">
-									{cardObjects.map((obj) => (
-										<CycleCard
-											key={obj.id}
-											workspaceId={workspaceId}
-											primary={obj}
-											companions={companionsByPrimaryId.get(obj.id) ?? []}
-										/>
-									))}
-								</div>
-							)}
 						</div>
 					)
 				})}
