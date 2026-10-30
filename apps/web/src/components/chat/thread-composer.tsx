@@ -10,6 +10,7 @@ import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
+	type ChatSelectionAction,
 	type ChatSelectionFile,
 	EMPTY_CHAT_SELECTION,
 	chatSelectionReducer,
@@ -102,6 +103,18 @@ export function ThreadComposer({
 		if (replyRootId === undefined || !recipientId) return
 		dispatch({ type: 'add_agent', agent: { id: recipientId, name: recipientName } })
 	}, [replyRootId, recipientId, recipientName])
+
+	// Chips coming and going in the input add and remove tagged ids. Removing a chip must not drop
+	// the recipient the reply is addressed to, when the reply tagged that same agent: the send
+	// clears the input, which removes every chip id. The recipient pill's own remove button goes
+	// through onRemoveAgent, not through here.
+	const handleSelectionAction = useCallback(
+		(action: ChatSelectionAction) => {
+			if (action.type === 'remove_agent' && action.id === recipientId) return
+			dispatch(action)
+		},
+		[recipientId],
+	)
 
 	const handleSend = useCallback(
 		async (content: string, extras?: { files: ChatSelectionFile[] }) => {
@@ -228,7 +241,7 @@ export function ThreadComposer({
 			surface="sheet"
 			placeholder={placeholder}
 			selection={selection}
-			onDispatchSelection={dispatch}
+			onDispatchSelection={handleSelectionAction}
 			conversationParticipantIds={participantIds}
 			onRemoveAgent={(id) => dispatch({ type: 'remove_agent', id })}
 			onRemoveObject={(id) => dispatch({ type: 'remove_object', id })}
