@@ -632,9 +632,10 @@ describe('MessageBubble — own bubble fits its text', () => {
 
 	it('leaves the full width while the message is being edited', () => {
 		const { container } = renderBubble(own({ content: 'a long line' }))
-		expect(columnOf(container)).not.toBeNull()
+		expect(columnOf(container)?.style.width).toBe(`${WIDEST_LINE}px`)
 		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
-		expect(columnOf(container)).toBeNull()
+		// Leaving the fit clears the width but keeps an empty style attribute behind.
+		expect(columnOf(container)?.style.width ?? '').toBe('')
 	})
 
 	it('does not fit a message from someone else', () => {
