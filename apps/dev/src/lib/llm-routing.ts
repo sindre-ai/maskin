@@ -1169,7 +1169,12 @@ export function preflightLlmCredentials(params: {
 	}
 
 	// 5. Maskin plan.
-	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise) !== null)
+	if (
+		buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise, {
+			agentModel: undefined,
+			pinned: undefined,
+		}) !== null
+	)
 		return null
 
 	// The enterprise wording deliberately does not mention the stored plan: an

@@ -162,7 +162,6 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
-	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
