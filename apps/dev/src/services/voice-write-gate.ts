@@ -273,6 +273,7 @@ export function isNo(text: string): boolean {
 const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	// Sends outside the workspace
 	'gmail_send_email',
+	'resend_send_email',
 	'approve_object_draft',
 	'post_conversation_message',
 	'create_notification',
