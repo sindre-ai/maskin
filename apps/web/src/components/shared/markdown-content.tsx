@@ -417,7 +417,7 @@ function RenderedMarkdownContent({
 					)
 				},
 			}) as unknown as Components
-	}, [linkedCards])
+	}, [linkedCards, draftsAndFiles])
 	const rehypePlugins = useMemo(
 		() =>
 			linkedCards
