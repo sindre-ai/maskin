@@ -44,6 +44,8 @@ export interface MarkdownRendererProps {
 	unwrapDisallowed?: boolean
 	mentionActors?: MentionActor[]
 	onMentionClick?: (actor: MentionActor) => void
+	/** Ids the author tagged; those mentions draw as the brand chip. See MentionedText. */
+	taggedActorIds?: string[]
 	/**
 	 * When true, fenced blocks are handed to `renderCodeBlock`. Defaults to
 	 * false so read paths that don't opt in stay on the plain `<pre>` path.
@@ -94,12 +96,13 @@ function wrapWithMentions(
 	children: ReactNode,
 	actors: MentionActor[],
 	onMentionClick?: (actor: MentionActor) => void,
+	taggedActorIds?: string[],
 ): ReactNode {
+	const mentionProps = { actors, onMentionClick, taggedActorIds }
 	if (typeof children === 'string') {
-		return <MentionedText content={children} actors={actors} onMentionClick={onMentionClick} />
+		return <MentionedText content={children} {...mentionProps} />
 	}
 	if (Array.isArray(children)) {
-		const mentionProps = { actors, onMentionClick }
 		return children.map((child, idx) =>
 			typeof child === 'string' ? (
 				// biome-ignore lint/suspicious/noArrayIndexKey: children come from a deterministic markdown AST; order is stable across renders
@@ -137,6 +140,7 @@ export function MarkdownRenderer({
 	unwrapDisallowed,
 	mentionActors,
 	onMentionClick,
+	taggedActorIds,
 	renderVisuals = false,
 	renderCodeBlock,
 	renderImage,
@@ -217,7 +221,9 @@ export function MarkdownRenderer({
 			}
 
 		const wrap = (children: ReactNode) =>
-			mentionActors ? wrapWithMentions(children, mentionActors, onMentionClick) : children
+			mentionActors
+				? wrapWithMentions(children, mentionActors, onMentionClick, taggedActorIds)
+				: children
 		const overrides = getComponentOverrides?.({ wrap })
 		if (!mentionActors) return { code, img, pre, table, a: link(), ...overrides }
 		return {
@@ -239,6 +245,7 @@ export function MarkdownRenderer({
 	}, [
 		mentionActors,
 		onMentionClick,
+		taggedActorIds,
 		renderVisuals,
 		renderCodeBlock,
 		renderImage,

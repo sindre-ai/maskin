@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn'
 import { hasDecision, legacyChipsOf } from '@/lib/comment-decision'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Reply } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
@@ -26,6 +26,12 @@ function readReferencedObjectIds(event: EventResponse): string[] {
 	const refs = metadata?.refs
 	if (!Array.isArray(refs)) return []
 	return refs.filter((id): id is string => typeof id === 'string' && id.length > 0)
+}
+
+/** Actor ids the author tagged through the picker, stored on the comment as `mentions`. */
+function readTaggedActorIds(mentions: unknown): string[] | undefined {
+	if (!Array.isArray(mentions)) return undefined
+	return mentions.filter((id): id is string => typeof id === 'string')
 }
 
 interface ActivityCommentProps {
@@ -109,6 +115,10 @@ function CommentRow({
 	const isAgent = actor?.type === 'agent'
 	const referencedObjectIds = readReferencedObjectIds(event)
 	const legacyChips = legacyChipsOf(event)
+	// Memoised on the stored list: a fresh array each render would rebuild the markdown
+	// component map and remount everything in the message.
+	const storedMentions = event.data?.mentions
+	const taggedActorIds = useMemo(() => readTaggedActorIds(storedMentions), [storedMentions])
 
 	const avatarClass = isBubble
 		? 'size-[30px] border-[3px] border-background text-[11px]'
@@ -225,6 +235,7 @@ function CommentRow({
 						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
 						mentionActors={actors}
 						onMentionClick={handleMentionClick}
+						taggedActorIds={taggedActorIds}
 						size="sm"
 						className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
 						renderVisuals
