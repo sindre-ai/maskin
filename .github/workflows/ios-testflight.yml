@@ -95,6 +95,12 @@ jobs:
           printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
           chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
 
+      # The certificate clean-up script needs Node; the Mac image does not guarantee it.
+      - uses: actions/setup-node@v6
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          node-version: 20
+
       - name: Record the development certificates before the archive
         id: certs_before
         if: steps.gate.outputs.enabled == 'true'
