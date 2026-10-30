@@ -48,6 +48,7 @@ import {
 import { serialize } from '../lib/serialize'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { reportChatReply } from '../services/chat-reply-tracking'
+import { shareReplyDigest } from '../services/chat-session-context'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
@@ -1370,6 +1371,13 @@ app.openapi(postMessageRoute, (async (c) => {
 			replyThreadRootId: body.thread_root_id ?? turnThreadRootId,
 			originMessageId: turnMessageId,
 			source: 'post',
+		})
+		shareReplyDigest(db, {
+			conversationId: id,
+			agentId: callerId,
+			sessionId,
+			sessionThreadRootId,
+			content: body.content,
 		})
 	}
 
