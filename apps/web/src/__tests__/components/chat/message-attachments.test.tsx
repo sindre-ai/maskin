@@ -185,6 +185,20 @@ describe('ImageViewer', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Close viewer' }))
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 	})
+
+	it.each([
+		['Escape', () => fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })],
+		[
+			'the close button',
+			() => fireEvent.click(screen.getByRole('button', { name: 'Close viewer' })),
+		],
+	])('hands focus back to the tile that opened it when closed with %s', async (_, close) => {
+		renderAttachments([image(1), image(2)])
+		const tile = screen.getByRole('button', { name: 'Image 2, photo-2.png, open' })
+		fireEvent.click(tile)
+		close()
+		await waitFor(() => expect(tile).toHaveFocus())
+	})
 })
 
 describe('MessageAttachments files', () => {
@@ -192,6 +206,9 @@ describe('MessageAttachments files', () => {
 		renderAttachments([file()])
 		const card = screen.getByRole('link', { name: 'Open Q3-pipeline-review.pdf' })
 		expect(card).toBeInTheDocument()
+		// Spec: 10px radius on the card and its link overlay, not the 14px of the image block.
+		expect(card.className).toContain('rounded-lg')
+		expect(card.parentElement?.className).toContain('rounded-lg')
 		expect(screen.getByText('PDF')).toBeInTheDocument()
 		expect(screen.getByText('PDF · 2.4 MB')).toBeInTheDocument()
 		expect(screen.queryByText(/page/i)).not.toBeInTheDocument()

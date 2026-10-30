@@ -18,7 +18,7 @@ import {
 	RotateCcw,
 	X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 /** One file on a message, as the chat draws it. `status` is only set while a send is in flight or has failed. */
 export interface MessageAttachmentItem {
@@ -106,6 +106,8 @@ function ImageBlock({
 }) {
 	const [shape, setShape] = useState<SingleShape>('landscape')
 	const [viewerIndex, setViewerIndex] = useState<number | null>(null)
+	// The tile that opened the viewer, so focus can go back to it on close.
+	const openerRef = useRef<HTMLElement | null>(null)
 
 	// Only a saved image can be opened; a tile still uploading or failed sits out of the viewer.
 	const viewable: ViewerImage[] = []
@@ -126,9 +128,11 @@ function ImageBlock({
 				item={images[i]}
 				position={i + 1}
 				moreCount={i === 3 && more > 0 ? more : 0}
-				onOpen={() => {
+				onOpen={(opener) => {
 					const at = viewerPosition.get(i)
-					if (at !== undefined) setViewerIndex(at)
+					if (at === undefined) return
+					openerRef.current = opener
+					setViewerIndex(at)
 				}}
 				onRatio={images.length === 1 ? (ratio) => setShape(shapeOf(ratio)) : undefined}
 			/>
@@ -155,6 +159,7 @@ function ImageBlock({
 				workspaceId={workspaceId}
 				images={viewable}
 				index={viewerIndex}
+				returnFocusRef={openerRef}
 				onIndexChange={setViewerIndex}
 				onClose={() => setViewerIndex(null)}
 			/>
@@ -175,7 +180,7 @@ function ImageTile({
 	position: number
 	/** On the fourth tile of a longer set: how many more images the viewer holds. */
 	moreCount: number
-	onOpen: () => void
+	onOpen: (opener: HTMLElement) => void
 	/** Reports the picture's own shape so a single image can take it. */
 	onRatio?: (ratio: number) => void
 }) {
@@ -263,7 +268,7 @@ function ImageTile({
 			/>
 			<button
 				type="button"
-				onClick={onOpen}
+				onClick={(e) => onOpen(e.currentTarget)}
 				aria-label={`Image ${position}, ${item.name}, open`}
 				className="absolute inset-0 focus-visible:outline-none"
 			/>
@@ -344,7 +349,7 @@ export function fileKindOf(name: string, mimeType?: string): FileKind {
 }
 
 const CARD_CLASS =
-	'group relative flex w-80 max-w-[92%] items-center gap-3 rounded-xl border bg-card p-2.5 pr-3 text-card-foreground transition-colors'
+	'group relative flex w-80 max-w-[92%] items-center gap-3 rounded-lg border bg-card p-2.5 pr-3 text-card-foreground transition-colors'
 
 // A PDF would show its first page here, but the API serves no page preview; every file gets the
 // type tile until it does.
@@ -446,7 +451,7 @@ function FileCard({
 				target="_blank"
 				rel="noopener noreferrer"
 				aria-label={`Open ${file.name}`}
-				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			/>
 			{lead}
 			<span className="min-w-0 flex-1">

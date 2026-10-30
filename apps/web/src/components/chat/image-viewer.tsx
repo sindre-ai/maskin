@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn'
 import { downloadFile } from '@/lib/file-utils'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { ChevronLeft, ChevronRight, Download, ImageOff, X } from 'lucide-react'
+import type { RefObject } from 'react'
 import { toast } from 'sonner'
 
 export interface ViewerImage {
@@ -38,6 +39,7 @@ export function ImageViewer({
 	workspaceId,
 	images,
 	index,
+	returnFocusRef,
 	onIndexChange,
 	onClose,
 }: {
@@ -45,6 +47,8 @@ export function ImageViewer({
 	images: ViewerImage[]
 	/** The image shown; null keeps the viewer closed. */
 	index: number | null
+	/** The element to focus when the viewer closes. The viewer has no trigger of its own to hand focus back to. */
+	returnFocusRef?: RefObject<HTMLElement | null>
 	onIndexChange: (index: number) => void
 	onClose: () => void
 }) {
@@ -62,6 +66,11 @@ export function ImageViewer({
 				<DialogOverlay className="bg-background/95" />
 				<DialogPrimitive.Content
 					aria-describedby={undefined}
+					onCloseAutoFocus={(e) => {
+						if (!returnFocusRef?.current) return
+						e.preventDefault()
+						returnFocusRef.current.focus()
+					}}
 					onKeyDown={(e) => {
 						if (!many) return
 						if (e.key === 'ArrowLeft') {
