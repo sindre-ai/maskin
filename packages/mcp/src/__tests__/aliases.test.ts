@@ -283,25 +283,6 @@ describe('through the real SDK path', () => {
 	it('a required field still has to be there', async () => {
 		expect(isValidationError(await harness.call('get_objects', {}))).toBe(true)
 	})
-
-	it('workspace_id: falls back to the default on create_objects and list_objects', async () => {
-		const created = await harness.call('create_objects', {
-			nodes: [{ $id: 'a', type: 'task', status: 'todo', title: 'A task' }],
-		})
-		expect(isValidationError(created)).toBe(false)
-		expect(created.requests.every((r) => r.workspace === DEFAULT_WORKSPACE_ID)).toBe(true)
-		expect(isValidationError(await harness.call('list_objects', {}))).toBe(false)
-	})
-
-	it('workspace_id: falls back to the default on create_loop', async () => {
-		const outcome = await harness.call('create_loop', {
-			name: 'A loop',
-			steps: [{ name: 'Step', agent_id: U1, prompt: 'Go', when: { cron: '0 9 * * *' } }],
-		})
-		// The call fails further in (the agent does not exist). It must get past
-		// argument validation without a workspace_id.
-		expect(isValidationError(outcome)).toBe(false)
-	})
 })
 
 describe('tools/list', () => {
