@@ -120,11 +120,19 @@ export const VOICE_CALL_CONDUCT = `How to run this call:
 - Keep a short running tally of what was decided, and give it when they ask what is left or when the call winds down.`
 
 /**
+ * "We need X" said on a call is a request for the product, not a limit to work around. Filing it is
+ * an ordinary workspace change, so the write gate lets it run at once. Its own constant, apart from
+ * VOICE_CALL_CONDUCT, so edits to the conduct bullets do not collide with it.
+ */
+export const VOICE_REQUEST_RULE =
+	'Requests: when the caller says the product lacks something, or says we need something, that is a request and not a limit. Look in the records you can read first. Then file it at once with create_objects as an insight with status new and a title that starts with [Gap], and say in a few words that you filed it. Do not offer workarounds unless they ask for one. If you cannot tell whether it is a request, ask one short question.'
+
+/**
  * Sent as a system message when the call connects, so the agent speaks first. A system item
  * rather than per-response instructions, which would replace the whole briefing for that turn.
  */
 export const VOICE_GREETING_INSTRUCTION =
-	'The call has just connected. Greet the person by first name in one short sentence, in their language, and stop. Do not call any tool, and do not start on any topic until they answer.'
+	'The call has just connected. Greet the person by first name, in their language, and in the same breath ask what they want to cover. Keep it to one or two short sentences. Do not call any tool until they answer.'
 
 /** Which language the agent speaks. The model hears the raw audio, so this is about the reply, not the transcript. */
 export const VOICE_LANGUAGE_RULE =
@@ -159,6 +167,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): string {
 		`\n\n${VOICE_DRAFT_RULE}`,
 		`\n\n${VOICE_DECISION_RULE}`,
 		`\n\n${VOICE_CALL_CONDUCT}`,
+		`\n\n${VOICE_REQUEST_RULE}`,
 		`\n\n${VOICE_LANGUAGE_RULE}`,
 		`\n\n${VOICE_FOR_YOU_RULE}`,
 		...capVoiceSkills(input.skills, { voiceSessionId: input.voiceSessionId }).map(

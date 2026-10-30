@@ -29,6 +29,7 @@ import { CommentDispatcher } from '../../services/trigger-runner'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 const { default: conversationsRoutes } = await import('../../routes/conversations')
+const { default: eventsRoutes } = await import('../../routes/events')
 
 type Env = {
 	Variables: { db: Database; actorId: string; actorType: string; sessionManager: unknown }
@@ -457,6 +458,58 @@ describe('A person-paused agent', () => {
 			await autoPause(cos.id)
 
 			await commentOn(null)
+
+			expect(sessionStarts(sm)).toBe(1)
+		})
+	})
+
+	describe('on the thread-reply auto-spawn', () => {
+		const eventsApp = () => createIntegrationApp({ path: '/api/events', module: eventsRoutes })
+
+		/** The agent has posted in a thread; a person then replies to it with no @mention. */
+		async function personRepliesInThreadOf(agentId: string) {
+			const object = await insertObject(db, workspaceId, ownerId, { type: 'task', title: 'look' })
+			const [root] = await db
+				.insert(events)
+				.values({
+					workspaceId,
+					actorId: agentId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: object.id,
+					data: { content: 'my take on this' },
+				})
+				.returning({ id: events.id })
+			const res = await eventsApp().request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: object.id, content: 'thanks, one more thing', parent_event_id: root.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			// The spawn is fire-and-forget after the comment is stored.
+			await new Promise((r) => setTimeout(r, 500))
+		}
+
+		it('starts no session and writes no turn for an agent a person paused', async () => {
+			const bot = await agent('Bot')
+			await pauseRoute(bot.id)
+
+			await personRepliesInThreadOf(bot.id)
+
+			expect(turnsDelivered(sm)).toBe(0)
+		})
+
+		it('still starts a session for an agent only the idle watcher paused', async () => {
+			const bot = await agent('Bot')
+			await db
+				.update(actors)
+				.set({ agentState: 'paused', agentStateUpdatedAt: new Date() })
+				.where(eq(actors.id, bot.id))
+
+			await personRepliesInThreadOf(bot.id)
 
 			expect(sessionStarts(sm)).toBe(1)
 		})

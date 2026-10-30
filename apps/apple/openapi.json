@@ -38650,6 +38650,9 @@
 										},
 										"maxItems": 50
 									},
+									"direct": {
+										"type": "boolean"
+									},
 									"initial_message": {
 										"type": "string",
 										"minLength": 1,
@@ -39362,7 +39365,7 @@
 				},
 				"responses": {
 					"200": {
-						"description": "The existing chat for this subject; new participants were added to it",
+						"description": "The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -42394,6 +42397,9 @@
 									},
 									"also_in_channel": {
 										"type": "boolean"
+									},
+									"top_level": {
+										"type": "boolean"
 									}
 								},
 								"required": [
@@ -43494,7 +43500,7 @@
 				"tags": [
 					"Search"
 				],
-				"summary": "Search chats, loops, agents, objects and automations together",
+				"summary": "Search chats, loops, agents, people, objects and automations together",
 				"description": "Every typed word must match (AND). Counts and facets cover the full result set; `results` is capped at `limit`. A source that fails is listed in `partial` and the rest still answer. Chats are limited to the caller's own conversations.",
 				"parameters": [
 					{
@@ -43607,6 +43613,7 @@
 															"chats",
 															"loops",
 															"agents",
+															"people",
 															"objects",
 															"automations"
 														]
@@ -43745,6 +43752,7 @@
 													"chats",
 													"loops",
 													"agents",
+													"people",
 													"objects",
 													"automations"
 												]
