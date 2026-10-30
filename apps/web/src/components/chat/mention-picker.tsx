@@ -60,6 +60,10 @@ export interface MentionPickerProps {
 	onSelect: (actor: MentionPickerActor & { kind: 'agent' | 'human' }) => void
 	/** External anchor (pinned to the caret) — desktop only. */
 	anchor?: ReactNode
+	/** When the caller routes arrow keys itself (the tag input), it owns the highlighted row so
+	 *  the picker shows it. Without these the picker keeps its own, moved by the mouse. */
+	highlightIndex?: number
+	onHighlightChange?: (index: number) => void
 }
 
 interface Section {
@@ -77,6 +81,8 @@ export function MentionPicker({
 	selfActorId,
 	onSelect,
 	anchor,
+	highlightIndex: controlledIndex,
+	onHighlightChange,
 }: MentionPickerProps) {
 	const isMobile = useIsMobile()
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)
@@ -100,13 +106,15 @@ export function MentionPicker({
 	)
 
 	const flatRows = useMemo(() => sections.flatMap((s) => s.rows), [sections])
-	const [highlightIndex, setHighlightIndex] = useState(0)
+	const [ownIndex, setOwnIndex] = useState(0)
+	const highlightIndex = controlledIndex ?? ownIndex
+	const setHighlightIndex = onHighlightChange ?? setOwnIndex
 
 	// Reset the highlight to the first row every time the flat list changes so
 	// the arrow-key state never lands on a stale row (or, worse, past the end).
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the length is what drives the reset, not the identity of the rows array.
 	useEffect(() => {
-		setHighlightIndex(0)
+		setOwnIndex(0)
 	}, [flatRows.length])
 
 	const listboxRef = useRef<HTMLUListElement | null>(null)

@@ -13,10 +13,8 @@ import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
-import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useConversation, useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
@@ -35,6 +33,7 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
+import { splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
@@ -51,9 +50,10 @@ import {
 	RotateCcw,
 	Settings as SettingsIcon,
 } from 'lucide-react'
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
+import { EditMessageCard } from './edit-message-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationAccessRequestCard } from './integration-access-request-card'
@@ -65,6 +65,7 @@ import { type MessageAttachmentItem, MessageAttachments } from './message-attach
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
+import { TagChip } from './tag-chip'
 import { useThreadsPane } from './threads-context'
 import { VoiceMessageMetaTag } from './voice-call-boundary'
 
@@ -143,8 +144,19 @@ export function MessageBubble({
 	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
 	const canReply = !!onReplyInThread && message.id > 0 && message.kind === 'message'
 	const [editing, setEditing] = useState(false)
-	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
+	const { data: conversation } = useConversation(message.conversationId, workspaceId)
+	const conversationParticipantIds = useMemo(
+		() => (conversation?.participants ?? []).map((p) => p.actorId),
+		[conversation],
+	)
+	// Focus goes back to the pencil once the edit card closes, whether it saved or not.
+	const pencilRef = useRef<HTMLButtonElement | null>(null)
+	const wasEditing = useRef(false)
+	useEffect(() => {
+		if (wasEditing.current && !editing) pencilRef.current?.focus()
+		wasEditing.current = editing
+	}, [editing])
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	// The one read of this flag: files and images lift out of the text bubble when it is on.
 	const attachmentsLifted = useFeatureFlag('chat-attachments-lifted')
@@ -180,6 +192,31 @@ export function MessageBubble({
 		() => (isOwn ? splitOwnLinks(shownContent, workspaceId, enterprise) : []),
 		[isOwn, shownContent, workspaceId, enterprise],
 	)
+
+	// Tags in your own words are drawn as chips where they stand: each tagged id claims its
+	// "@Name" in the text. Ids with no place in the text (messages sent before tags lived in the
+	// text) stay in the "You mentioned" row.
+	const tagActors = useMemo(
+		() => (workspaceActors ?? []).filter((a) => !a.isSystem),
+		[workspaceActors],
+	)
+	const tagLabelOf = useMemo(() => {
+		const byId = new Map(tagActors.map((a) => [a.id, a]))
+		return (id: string) => {
+			const found = byId.get(id)
+			return found ? tagLabel(found, tagActors) : null
+		}
+	}, [tagActors])
+	const { ownParts, untaggedMentions } = useMemo(() => {
+		let remaining = mentions
+		const parts = ownSegments.map((segment) => {
+			if (segment.kind !== 'text' || remaining.length === 0) return segment
+			const split = splitTextByTags(segment.text, remaining, tagLabelOf)
+			remaining = split.unmatchedIds
+			return { kind: 'tagged' as const, parts: split.segments }
+		})
+		return { ownParts: parts, untaggedMentions: remaining }
+	}, [ownSegments, mentions, tagLabelOf])
 
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
 	// attachments take the same width. Editing, and a message with no text, keep the full layout.
@@ -240,14 +277,14 @@ export function MessageBubble({
 		// A message that is only attachments has no bubble.
 		const hasPlate = !attachmentsLifted || editing || message.content.length > 0
 		const startEditing = () => {
-			setDraft(message.content)
+			editMessage.reset()
 			setEditing(true)
 		}
-		const saveEdit = () => {
-			const content = draft.trim()
-			setEditing(false)
-			if (content.length === 0 || content === message.content) return
-			editMessage.mutate({ messageId: message.id, content })
+		const saveEdit = ({ text, ids }: { text: string; ids: string[] }) => {
+			editMessage.mutate(
+				{ messageId: message.id, content: text.trim(), mentions: ids },
+				{ onSuccess: () => setEditing(false) },
+			)
 		}
 		return (
 			<div
@@ -264,11 +301,11 @@ export function MessageBubble({
 						<OwnContextChips objects={contextObjects} notifications={contextNotifications} />
 					</div>
 				) : null}
-				{hasMentions ? (
+				{untaggedMentions.length > 0 && !editing ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
 						<span className="eyebrow shrink-0">You mentioned</span>
 						<MentionPills
-							mentions={mentions}
+							mentions={untaggedMentions}
 							workspaceId={workspaceId}
 							actorLookup={actorLookup}
 							selfActorId={actor?.id ?? null}
@@ -295,8 +332,13 @@ export function MessageBubble({
 				    against the bubble and stays inside the box that measures overflow. */}
 							<div
 								className={cn(
-									// While fitting, the column above carries the width cap.
-									fitText ? 'relative w-full' : 'relative max-w-[min(560px,80%)]',
+									// While fitting, the column above carries the width cap. The edit card takes the
+									// row, up to the bubble's own cap, so its buttons always fit.
+									fitText
+										? 'relative w-full'
+										: editing
+											? 'relative max-w-[560px]'
+											: 'relative max-w-[min(560px,80%)]',
 									spawnInfo && 'pr-2',
 									editing && 'w-full',
 								)}
@@ -308,41 +350,51 @@ export function MessageBubble({
 								>
 									{fileList}
 									{editing ? (
-										<div className="flex flex-col gap-2">
-											<Textarea
-												value={draft}
-												onChange={(e) => setDraft(e.target.value)}
-												onKeyDown={(e) => {
-													if (e.key === 'Enter' && !e.shiftKey) {
-														e.preventDefault()
-														saveEdit()
-													}
-													if (e.key === 'Escape') {
-														e.preventDefault()
-														setEditing(false)
-													}
-												}}
-												aria-label="Edit message"
-												autoFocus
-												className="bg-background text-foreground"
-											/>
-											<div className="flex justify-end gap-2">
-												<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-													Cancel
-												</Button>
-												<Button size="sm" onClick={saveEdit}>
-													Save
-												</Button>
-											</div>
-										</div>
+										<EditMessageCard
+											workspaceId={workspaceId}
+											conversationParticipantIds={conversationParticipantIds}
+											selfActorId={actor?.id ?? null}
+											content={message.content}
+											mentions={mentions}
+											labelOf={tagLabelOf}
+											agentName={(id) => {
+												const found = actorLookup.get(id)
+												return found?.type === 'agent' ? found.name : null
+											}}
+											saving={editMessage.isPending}
+											failed={editMessage.isError}
+											onSave={saveEdit}
+											onCancel={() => setEditing(false)}
+										/>
 									) : message.content.length > 0 ? (
 										// `break-words` is load-bearing next to the column's `min-w-0`:
 										// `min-w-0` bounds the box, this bounds the ink. Without it an
 										// unbroken token (a long URL) raises this span's min-content and
 										// paints past the bubble's `max-w` cap, out to the viewport edge.
 										<span ref={textRef} className="whitespace-pre-wrap text-balance break-words">
-											{ownSegments.map((segment, index) =>
-												segment.kind === 'text' ? (
+											{ownParts.map((segment, index) =>
+												segment.kind === 'tagged' ? (
+													// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
+													<Fragment key={index}>
+														{segment.parts.map((part, partIndex) =>
+															part.kind === 'text' ? (
+																// biome-ignore lint/suspicious/noArrayIndexKey: positional by construction
+																<Fragment key={partIndex}>{part.text}</Fragment>
+															) : (
+																<TagChip
+																	// biome-ignore lint/suspicious/noArrayIndexKey: the same person can be tagged twice
+																	key={partIndex}
+																	workspaceId={workspaceId}
+																	id={part.id}
+																	label={part.label}
+																	surface="plate"
+																	isSelf={part.id === actor?.id}
+																	linkable={actorLookup.get(part.id)?.type === 'agent'}
+																/>
+															),
+														)}
+													</Fragment>
+												) : segment.kind === 'text' ? (
 													// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
 													<Fragment key={index}>{segment.text}</Fragment>
 												) : (
@@ -366,6 +418,7 @@ export function MessageBubble({
 				    revealing on hover — a touch viewport has no hover, and the
 				    ship gate asserts plain visibility at 375px. */}
 				<div className="flex items-center gap-1">
+					{editing ? <span className="text-[10px] text-muted-foreground">Editing ·</span> : null}
 					{message.editedAt ? (
 						<span className="text-[10px] text-muted-foreground">(edited)</span>
 					) : null}
@@ -398,6 +451,7 @@ export function MessageBubble({
 					{canAct && !editing ? (
 						<>
 							<button
+								ref={pencilRef}
 								type="button"
 								onClick={startEditing}
 								aria-label="Edit message"
