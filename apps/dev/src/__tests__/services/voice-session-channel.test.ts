@@ -321,6 +321,30 @@ describe('voice channel — tool proxy', () => {
 		expect(output.endsWith('[truncated]')).toBe(true)
 	})
 
+	it('cuts an oversized list by whole rows and says how many were left out', async () => {
+		// The call that missed a live Slack row asked list_integrations for 100 rows. A plain slice
+		// at 20,000 characters left half a row, invalid JSON and no sign that rows were missing.
+		const rows = Array.from({ length: 100 }, (_, i) => ({ id: `row-${i}`, note: 'x'.repeat(400) }))
+		const invoke = vi
+			.fn()
+			.mockResolvedValue(
+				textResult(JSON.stringify({ page: { has_more: false }, integrations: rows })),
+			)
+		const { sent, toolCall } = setup(invoke)
+		await toolCall('list_integrations', { limit: 100 })
+		const output = lastResult(sent).event.item.output
+
+		expect(output.length).toBeLessThanOrEqual(20_000)
+		const parsed = JSON.parse(output) as {
+			voice_truncated: { omitted: number; of: number }
+			page: { has_more: boolean }
+			integrations: unknown[]
+		}
+		expect(parsed.voice_truncated.of).toBe(100)
+		expect(parsed.voice_truncated.omitted).toBe(100 - parsed.integrations.length)
+		expect(parsed.page.has_more).toBe(true)
+	})
+
 	it('fires voice_tool_call once per invocation with the spec properties, success and refusal', async () => {
 		const invoke = vi
 			.fn()
