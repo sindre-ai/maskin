@@ -1,0 +1,146 @@
+name: iOS certificate cleanup
+
+# One-off, manual only (nothing runs on push). Clears the Apple "maximum number of
+# certificates" cap that stops the iOS TestFlight archive.
+#
+# mode=list    read only: prints every certificate on the account with id, type, name, platform
+#              and expiry. Apple does not expose a creation date; a certificate is valid for one
+#              year, so created is shown as expiry minus one year (approximate).
+# mode=revoke  revokes development certificates only (IOS_DEVELOPMENT, DEVELOPMENT,
+#              MAC_APP_DEVELOPMENT). Distribution certificates are never touched. If any
+#              certificate type outside the known development and distribution types shows up,
+#              nothing is revoked and the run fails. Prints the count before and after.
+#
+# Uses the same App Store Connect secrets as ios-testflight.yml. The key is never printed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: list (read only) or revoke (development certificates only)
+        type: choice
+        options: [list, revoke]
+        default: list
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-cert-cleanup
+  cancel-in-progress: false
+
+jobs:
+  certificates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      MODE: ${{ inputs.mode }}
+    steps:
+      - name: Install JWT libraries
+        run: pip install --quiet pyjwt cryptography
+
+      - name: List and revoke
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.error, urllib.request
+          from datetime import datetime
+
+          import jwt
+
+          key_id = os.environ["ASC_KEY_ID"]
+          issuer = os.environ["ASC_ISSUER_ID"]
+          private_key = os.environ["ASC_KEY_P8"]
+          mode = os.environ.get("MODE", "list")
+          if not (key_id and issuer and private_key):
+              sys.exit("Apple signing secrets are not set.")
+
+          DEVELOPMENT = {"IOS_DEVELOPMENT", "DEVELOPMENT", "MAC_APP_DEVELOPMENT"}
+          DISTRIBUTION = {"IOS_DISTRIBUTION", "DISTRIBUTION"}
+          BASE = "https://api.appstoreconnect.apple.com"
+
+
+          def call(method, url):
+              now = int(time.time())
+              token = jwt.encode(
+                  {"iss": issuer, "iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"},
+                  private_key,
+                  algorithm="ES256",
+                  headers={"kid": key_id, "typ": "JWT"},
+              )
+              req = urllib.request.Request(url, method=method, headers={"Authorization": f"Bearer {token}"})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      body = resp.read()
+                      return json.loads(body) if body else {}
+              except urllib.error.HTTPError as e:
+                  sys.exit(f"Apple returned HTTP {e.code} on {method} {url}: {e.read().decode()[:500]}")
+
+
+          def list_certificates():
+              url = (
+                  f"{BASE}/v1/certificates?limit=200"
+                  "&fields%5Bcertificates%5D=certificateType,displayName,name,platform,expirationDate,serialNumber"
+              )
+              out = []
+              while url:
+                  page = call("GET", url)
+                  out.extend(page.get("data", []))
+                  url = page.get("links", {}).get("next")
+              return out
+
+
+          def created(expiry):
+              try:
+                  d = datetime.fromisoformat((expiry or "").replace("Z", "+00:00"))
+                  return d.replace(year=d.year - 1).strftime("%Y-%m-%d")
+              except ValueError:
+                  return "unknown"
+
+
+          def show(certs, title):
+              print(f"\n{title}: {len(certs)} certificates")
+              counts = {}
+              for c in certs:
+                  t = c["attributes"].get("certificateType", "?")
+                  counts[t] = counts.get(t, 0) + 1
+              print("by type:", json.dumps(counts, sort_keys=True))
+              print("id | type | name | displayName | platform | serial | expires | created (approx)")
+              for c in sorted(certs, key=lambda c: (c["attributes"].get("certificateType", ""), c["attributes"].get("expirationDate", ""))):
+                  a = c["attributes"]
+                  exp = a.get("expirationDate") or ""
+                  print(" | ".join([c["id"], a.get("certificateType", "?"), a.get("name") or "", a.get("displayName") or "",
+                                    a.get("platform") or "", a.get("serialNumber") or "", exp[:10], created(exp)]))
+
+
+          before = list_certificates()
+          show(before, "Before")
+
+          types = {c["attributes"].get("certificateType") for c in before}
+          unexpected = sorted(t for t in types if t not in DEVELOPMENT | DISTRIBUTION)
+          if unexpected:
+              print(f"\nSTOP: unexpected certificate types on the account: {unexpected}. Nothing was revoked.")
+              sys.exit(1)
+
+          if mode != "revoke":
+              print("\nmode=list: nothing was changed.")
+              sys.exit(0)
+
+          targets = [c for c in before if c["attributes"].get("certificateType") in DEVELOPMENT]
+          dist_before = sorted(c["id"] for c in before if c["attributes"].get("certificateType") in DISTRIBUTION)
+          print(f"\nRevoking {len(targets)} development certificates. Distribution certificates left alone: {len(dist_before)}.")
+          for c in targets:
+              call("DELETE", f"{BASE}/v1/certificates/{c['id']}")
+              print("revoked", c["id"], c["attributes"].get("certificateType"))
+
+          after = list_certificates()
+          show(after, "After")
+          print(f"\nCount before: {len(before)}, after: {len(after)}, revoked: {len(targets)}")
+          dist_after = sorted(c["id"] for c in after if c["attributes"].get("certificateType") in DISTRIBUTION)
+          left = [c for c in after if c["attributes"].get("certificateType") in DEVELOPMENT]
+          if dist_after != dist_before or left:
+              print("CHECK FAILED: distribution set changed or development certificates remain.")
+              sys.exit(1)
+          PY
