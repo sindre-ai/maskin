@@ -151,7 +151,7 @@ describe('link chips', () => {
 		setLinkChips(editor.view, null)
 		expect(chips(editor)).toHaveLength(0)
 		expect(unmounted).toEqual(mounted.map((m) => m.container))
-		expect(editor.view.dom.querySelector('a[href="' + A + '"]')?.textContent).toBe('the plan')
+		expect(editor.view.dom.querySelector(`a[href="${A}"]`)?.textContent).toBe('the plan')
 		destroy()
 	})
 
