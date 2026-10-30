@@ -84,6 +84,12 @@ export async function evaluateAndRespond(ctx: {
 		 */
 		isEdit?: boolean
 		/**
+		 * An edit that sent its tagged ids: in a group chat only these ids count as tagged, so
+		 * ids the message already carried wake nobody again and an empty list wakes nobody.
+		 * A direct chat answers as it always did.
+		 */
+		wakeOnlyIds?: string[]
+		/**
 		 * Restrict the run to this one agent — set by "Redo this response",
 		 * where re-running every participant would post duplicate replies from
 		 * agents whose answers the user didn't ask to regenerate.
@@ -234,6 +240,10 @@ export async function evaluateAndRespond(ctx: {
 		attachments?: Array<{ file_id: string; name?: string; mime_type?: string }>
 	} | null
 	const mentioned = new Set(metadata?.mentions ?? [])
+	// An edit that sent its tagged ids wakes only the new ones in a group chat, through the same
+	// wake rule as a new message from the editor. Nothing new to wake: nothing to route.
+	const wakeMentions = options?.wakeOnlyIds && emitsRoutingEvent ? options.wakeOnlyIds : undefined
+	if (wakeMentions?.length === 0) return undefined
 	// The composer sends attached objects/notifications/files as structured
 	// metadata (rendered as chips in the UI) rather than inlined into
 	// `content` — rebuild a compact context block here so the agent's prompt
@@ -265,7 +275,7 @@ export async function evaluateAndRespond(ctx: {
 			messageId,
 			message,
 			messageForPrompt,
-			mentions: [...mentioned],
+			mentions: wakeMentions ?? [...mentioned],
 			candidates,
 			participantCount,
 			trigger,

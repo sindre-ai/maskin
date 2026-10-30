@@ -538,6 +538,9 @@ export const editMessageSchema = z.object({
 		.string()
 		.min(1, 'Message cannot be empty')
 		.max(MESSAGE_MAX_LENGTH, `Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`),
+	// The tagged ids after the edit. Omitted: the stored ids stay as they are. Sent: they replace
+	// the stored ids, and only ids that were not stored before wake anyone.
+	metadata: z.object({ mentions: messageMetadataSchema.shape.mentions }).optional(),
 })
 
 export const messageQuerySchema = z.object({

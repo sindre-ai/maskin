@@ -2994,6 +2994,8 @@ export interface SessionStateChangedPayload {
 
 export interface EditMessageInput {
 	content: string
+	/** Tagged ids after the edit. Left out: the message keeps the ids it has. */
+	metadata?: { mentions: string[] }
 }
 
 export interface MessagesListResponse {
