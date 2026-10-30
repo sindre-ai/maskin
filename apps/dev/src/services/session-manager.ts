@@ -831,6 +831,14 @@ export class SessionManager extends EventEmitter {
 		// "resume conversation from scratch" flow).
 		const conversationMessageId =
 			(config.conversation as { message_id?: number } | undefined)?.message_id ?? null
+		// The thread this chat session answers in; null for the main-chat session. Only a chat
+		// session has one, and only a real message id counts.
+		const rawThreadRootId = (config.conversation as { thread_root_id?: unknown } | undefined)
+			?.thread_root_id
+		const threadRootId =
+			conversationId && typeof rawThreadRootId === 'number' && Number.isSafeInteger(rawThreadRootId)
+				? rawThreadRootId
+				: null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -873,6 +881,7 @@ export class SessionManager extends EventEmitter {
 				config,
 				interactive,
 				conversationId,
+				threadRootId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
 				spawnedBySessionId: params.spawnedBySessionId ?? null,
@@ -2159,12 +2168,33 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * How many thread sessions (a session with a thread, not the main-chat one) this agent has
+	 * live in this chat, counting those still on their way up.
+	 */
+	async countActiveThreadSessions(conversationId: string, actorId: string): Promise<number> {
+		const [row] = await this.db
+			.select({ count: countFn() })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, conversationId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					isNotNull(sessions.threadRootId),
+					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
+				),
+			)
+		return Number(row?.count ?? 0)
+	}
+
+	/**
 	 * Separate aggregate cap for chat sessions (see the isChatSession bypass in
 	 * startSession()) — they don't compete with max_concurrent_sessions, but
 	 * still need a ceiling so a workspace with many active conversations can't
-	 * spawn unbounded concurrent containers.
+	 * spawn unbounded concurrent containers. Public so the conversation responder can
+	 * check it before it starts a thread session, which must fall back instead of queueing.
 	 */
-	private async hasChatCapacity(workspaceId: string): Promise<boolean> {
+	async hasChatCapacity(workspaceId: string): Promise<boolean> {
 		const [workspace] = await this.db
 			.select()
 			.from(workspaces)
