@@ -34,7 +34,8 @@ vi.mock('@/components/chat/linked-object-preview', () => ({
 }))
 
 // Your own bubble draws its links itself; keep that out of the way of what this test reads.
-vi.mock('@/components/chat/linked-object-reference', () => ({
+vi.mock('@/components/chat/linked-object-reference', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/components/chat/linked-object-reference')>()),
 	ObjectReferenceCard: ({ objectId }: { objectId: string }): ReactNode => (
 		<p>{`Own card for ${objectId}`}</p>
 	),

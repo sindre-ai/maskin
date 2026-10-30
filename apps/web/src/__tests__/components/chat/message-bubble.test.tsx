@@ -222,7 +222,9 @@ describe('MessageBubble', () => {
 				const { container } = renderBubble(
 					buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content }),
 				)
-				return container.querySelector('[data-linked-card]')?.parentElement?.closest('.relative') ?? null
+				return (
+					container.querySelector('[data-linked-card]')?.parentElement?.closest('.relative') ?? null
+				)
 			}
 			expect(holder(`is this done?\n${address}`)).toHaveClass('w-[min(520px,88%)]')
 			cleanup()
