@@ -1712,6 +1712,7 @@ export const tools = {
 			'3. Then what needs a person now, if anything. Cut anything that does not change a decision.',
 			'Build rules: one self-contained HTML file (create_file, mime_type text/html), no network calls, light math in the page is fine, an empty state and an error state for every number, readable in light and dark. Test every query with query_data before pinning.',
 			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>"), which returns a promise. Only declared names are answered; the page can read data, never write it.',
+			'Live: every query runs against the database each time, so numbers are current without anyone rewriting the page. While the page is open it reloads itself when a change to the objects it queries changes one of its numbers, so query once at start and do not poll or add refresh code. Use moving date bounds ("now-7d", "today-30d") in sources, never fixed dates, and group_by "created_at.day" for per-day series, so a pinned view stays correct over time.',
 			'Skeleton:',
 			'<h1 id="outcome">Outcome in one plain sentence</h1>',
 			'<p id="headline">Loading</p>',
@@ -1732,7 +1733,7 @@ export const tools = {
 	},
 	query_data: {
 		description:
-			'Read-only totals over objects, computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type or a metadata field. `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Returns `{ groups: [{ key, count, value }], total: { count, value }, rows_truncated, groups_truncated }`; with no `group_by`, read `total`. At most 10000 rows are scanned and 50 groups returned; a flag says when a cap was hit. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It never returns object rows; use list_objects for those.',
+			'Read-only totals over objects, computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, rows_truncated, groups_truncated }`; with no `group_by`, read `total`. At most 10000 rows are scanned and 50 groups returned; a flag says when a cap was hit. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It never returns object rows; use list_objects for those.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...dataQuerySpecSchema.shape,

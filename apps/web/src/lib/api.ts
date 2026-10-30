@@ -699,6 +699,11 @@ export const api = {
 			request<DataQueryResult>(`/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
 				workspaceId,
 			}),
+		nextChange: (workspaceId: string, spec: DataQuerySpec) =>
+			request<{ in_ms: number | null }>(
+				`/data/next-change?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				{ workspaceId },
+			),
 	},
 
 	triggers: {

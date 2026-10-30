@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	type DataQueryRow,
 	buildDataQuerySql,
+	buildNextChangeSql,
 	default as dataQueryRoutes,
 	shapeDataQueryResult,
 } from '../../routes/data-query'
@@ -105,7 +106,104 @@ describe('buildDataQuerySql', () => {
 	})
 })
 
+describe('buildDataQuerySql moving dates and time buckets', () => {
+	it('computes a rolling bound from the database clock instead of binding a date', () => {
+		const { sql, params } = dialect.sqlToQuery(
+			buildDataQuerySql(
+				WORKSPACE_ID,
+				specOf({ type: 'insight', filters: { created_after: 'now-14d' } }),
+			),
+		)
+		expect(sql).toContain('now()')
+		expect(sql).toContain('make_interval(days =>')
+		expect(params).toContain(14)
+		expect(params).not.toContain('now-14d')
+	})
+
+	it('starts "today" at midnight in the given timezone', () => {
+		const { sql, params } = dialect.sqlToQuery(
+			buildDataQuerySql(
+				WORKSPACE_ID,
+				specOf({
+					type: 'insight',
+					timezone: 'Europe/Oslo',
+					filters: { created_after: 'today-7d' },
+				}),
+			),
+		)
+		expect(sql).toContain("date_trunc('day', now() AT TIME ZONE")
+		expect(params).toContain('Europe/Oslo')
+	})
+
+	it('still binds a fixed ISO date', () => {
+		const iso = '2026-10-23T00:00:00.000Z'
+		const { params } = dialect.sqlToQuery(
+			buildDataQuerySql(WORKSPACE_ID, specOf({ type: 'insight', filters: { created_after: iso } })),
+		)
+		expect(params).toContain(iso)
+	})
+
+	it('groups by a day bucket in the timezone and orders newest first for the cap', () => {
+		const { sql, params } = dialect.sqlToQuery(
+			buildDataQuerySql(
+				WORKSPACE_ID,
+				specOf({ type: 'insight', group_by: 'created_at.day', timezone: 'Europe/Oslo' }),
+			),
+		)
+		expect(sql).toContain('date_trunc($')
+		expect(sql).toContain('ORDER BY g.k DESC')
+		expect(params).toEqual(expect.arrayContaining(['day', 'Europe/Oslo', 'YYYY-MM-DD']))
+	})
+
+	it('rejects a bad bound, bucket or timezone at the boundary', () => {
+		const bad = [
+			{ type: 'task', filters: { created_after: 'yesterday' } },
+			{ type: 'task', filters: { created_after: 'today-3h' } },
+			{ type: 'task', group_by: 'created_at.year' },
+			{ type: 'task', group_by: 'created_at.day', timezone: 'Mars/Base' },
+		]
+		for (const input of bad) {
+			expect(dataQuerySpecSchema.safeParse(input).success).toBe(false)
+		}
+	})
+})
+
+describe('buildNextChangeSql', () => {
+	const next = (input: Record<string, unknown>) =>
+		dialect.sqlToQuery(buildNextChangeSql(WORKSPACE_ID, specOf(input))).sql
+
+	it('has nothing to wait for when the query uses no moving dates', () => {
+		expect(next({ type: 'task', filters: { status: 'done' } })).toBe('SELECT NULL::bigint AS in_ms')
+	})
+
+	it('waits for the oldest matching object to leave a rolling window', () => {
+		const sql = next({ type: 'insight', filters: { created_after: 'now-7d' } })
+		expect(sql).toContain('min(o.created_at)')
+		expect(sql).toContain('make_interval(days =>')
+		expect(sql).toContain('- now()')
+	})
+
+	it('wakes at midnight for a day chart and at the hour for an hourly one', () => {
+		expect(next({ type: 'insight', group_by: 'created_at.day' })).toContain("interval '1 day'")
+		expect(next({ type: 'insight', group_by: 'created_at.hour' })).toContain("interval '1 hour'")
+	})
+
+	it('wakes at midnight for a today bound', () => {
+		expect(next({ type: 'task', filters: { created_after: 'today-7d' } })).toContain(
+			"interval '1 day'",
+		)
+	})
+})
+
 describe('shapeDataQueryResult', () => {
+	it('returns time buckets oldest first', () => {
+		const result = shapeDataQueryResult(
+			[row({ key: '2026-10-30' }), row({ key: '2026-10-29' })],
+			specOf({ type: 'insight', group_by: 'created_at.day' }),
+		)
+		expect(result.groups.map((g) => g.key)).toEqual(['2026-10-29', '2026-10-30'])
+	})
+
 	it('returns an empty total when nothing matched', () => {
 		expect(shapeDataQueryResult([], specOf({ type: 'task' }))).toEqual({
 			groups: [],

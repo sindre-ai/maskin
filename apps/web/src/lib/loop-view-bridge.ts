@@ -24,6 +24,27 @@ export interface BridgeHost {
 	onQueryError: (message: string) => void
 }
 
+/**
+ * Which declared sources a live event can change, by key. A source counts objects of one
+ * type, so only an event about that type matters; a loop-scoped source also depends on
+ * the in_loop edges, which arrive as relationship events. A `null` event (events may have
+ * been missed) affects every source.
+ */
+export function sourcesAffectedBy(
+	event: { entity_type: string } | null,
+	sources: ReadonlyMap<string, DataQuerySpec>,
+): Set<string> {
+	const affected = new Set<string>()
+	for (const spec of sources.values()) {
+		const hit =
+			event === null ||
+			event.entity_type === spec.type ||
+			(spec.scope !== 'workspace' && event.entity_type === 'relationship')
+		if (hit) affected.add(JSON.stringify(spec))
+	}
+	return affected
+}
+
 export async function handleBridgeMessage(
 	host: BridgeHost,
 	event: { source: unknown; data: unknown },

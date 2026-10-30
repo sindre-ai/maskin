@@ -25,7 +25,54 @@ const metadataField = () =>
 		.max(64)
 		.regex(SAFE_METADATA_FIELD_NAME_RE, 'Metadata field names are letters, digits and underscores')
 
-const GROUP_BY_RE = /^(status|type|metadata\.[a-zA-Z][a-zA-Z0-9_]*)$/
+export const DATA_QUERY_TIME_UNITS = ['hour', 'day', 'week', 'month'] as const
+export type DataQueryTimeUnit = (typeof DATA_QUERY_TIME_UNITS)[number]
+
+const GROUP_BY_RE =
+	/^(status|type|metadata\.[a-zA-Z][a-zA-Z0-9_]*|(created_at|updated_at)\.(hour|day|week|month))$/
+
+/**
+ * A date bound that moves with the clock: `now`, `now-<N><unit>` (a rolling window, e.g.
+ * `now-7d`) or `today`, `today-<N><unit>` (midnight today in the query's timezone, so
+ * `today-7d` is a seven-calendar-day window). Units: h, d, w, mo (`today` takes d, w, mo).
+ * It is resolved by the database each time the query runs, so a view declaring it is
+ * always current without anyone rewriting it.
+ */
+const RELATIVE_BOUND_RE = /^(now|today)(?:-(\d{1,4})(h|d|w|mo))?$/
+
+export type RelativeBound = { base: 'now' | 'today'; amount: number; unit: 'h' | 'd' | 'w' | 'mo' }
+
+/** Parses a relative bound; null when the value is not one (e.g. an ISO datetime). */
+export function parseRelativeBound(value: string): RelativeBound | null {
+	const m = RELATIVE_BOUND_RE.exec(value)
+	if (!m) return null
+	const base = m[1] as RelativeBound['base']
+	const unit = (m[3] ?? 'd') as RelativeBound['unit']
+	if (base === 'today' && unit === 'h') return null
+	return { base, amount: m[2] ? Number(m[2]) : 0, unit }
+}
+
+// A function for the same $ref reason as metadataField above.
+const dateBound = () =>
+	z
+		.union([
+			z.string().datetime(),
+			z
+				.string()
+				.refine((v) => parseRelativeBound(v) !== null, 'Use an ISO datetime or now-7d / today-30d'),
+		])
+		.describe(
+			'A fixed ISO datetime, or a moving bound re-evaluated on every run: "now", "now-24h", "now-7d", "now-4w", "now-3mo" (rolling) or "today", "today-7d", "today-1mo" (from midnight today in `timezone`).',
+		)
+
+const isValidTimeZone = (tz: string) => {
+	try {
+		new Intl.DateTimeFormat('en', { timeZone: tz })
+		return true
+	} catch {
+		return false
+	}
+}
 
 export const dataQueryFiltersSchema = z
 	.object({
@@ -40,10 +87,10 @@ export const dataQueryFiltersSchema = z
 			})
 			.optional()
 			.describe('Exact-match filters on metadata fields, e.g. { "priority": "P1" }.'),
-		created_after: z.string().datetime().optional(),
-		created_before: z.string().datetime().optional(),
-		updated_after: z.string().datetime().optional(),
-		updated_before: z.string().datetime().optional(),
+		created_after: dateBound().optional(),
+		created_before: dateBound().optional(),
+		updated_after: dateBound().optional(),
+		updated_before: dateBound().optional(),
 	})
 	.strict()
 
@@ -63,9 +110,22 @@ export const dataQuerySpecSchema = z
 		group_by: z
 			.string()
 			.max(80)
-			.regex(GROUP_BY_RE, 'group_by is "status", "type" or "metadata.<field>"')
+			.regex(
+				GROUP_BY_RE,
+				'group_by is "status", "type", "metadata.<field>" or "created_at|updated_at.<hour|day|week|month>"',
+			)
 			.optional()
-			.describe('"status", "type" or "metadata.<field>". Omit for one overall total.'),
+			.describe(
+				'"status", "type", "metadata.<field>", or a time bucket "created_at.day" (also updated_at; hour, day, week, month). Time buckets come back oldest first with keys like "2026-10-30", only for buckets that have rows (fill the empty ones in the page). Omit for one overall total.',
+			),
+		timezone: z
+			.string()
+			.max(64)
+			.refine(isValidTimeZone, 'timezone must be an IANA name such as "Europe/Oslo"')
+			.optional()
+			.describe(
+				'IANA timezone for time buckets and "today" bounds, e.g. "Europe/Oslo". Defaults to UTC.',
+			),
 		aggregate: z
 			.object({
 				op: z.enum(['count', 'sum', 'avg']),
