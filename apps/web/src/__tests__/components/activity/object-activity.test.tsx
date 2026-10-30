@@ -8,6 +8,10 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
 }))
 
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
+}))
+
 vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
@@ -82,9 +86,7 @@ describe('ObjectActivity', () => {
 
 	it('shows comment input', () => {
 		render(<ObjectActivity workspaceId="ws-1" object={object} events={[]} />)
-		expect(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-		).toBeInTheDocument()
+		expect(screen.getByRole('textbox', { name: 'Comment' })).toBeInTheDocument()
 	})
 
 	it('renders a phase divider for each status the object has been in', () => {
