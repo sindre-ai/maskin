@@ -215,7 +215,7 @@ describe('buildObjectPreview, other channels', () => {
 			content: 'Hi',
 			metadata: { kind: 'linkedin_connection_request' },
 		})
-		expect(preview?.missing).toEqual(['To'])
+		expect(preview?.missing).toEqual(['To', 'LinkedIn id'])
 	})
 
 	it('warns when a connection note is over the 300 character invite limit', () => {

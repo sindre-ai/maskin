@@ -6,7 +6,6 @@ import type { StorageProvider } from '@maskin/storage'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { logger } from '../../../logger'
-import { SendTargetError, assertSendable, recordSendOutcome } from '../../../send-closure'
 import {
 	type ActionFields,
 	type ActionLogContext,
@@ -36,19 +35,19 @@ import {
 	listLinkedInConversations,
 	listLinkedInMessages,
 	listLinkedInSentInvitations,
-	publishLinkedInPost,
 	readLinkedInPostComments,
 	replyToLinkedInComment,
-	replyToLinkedInThread,
 	searchLinkedInPeople,
-	sendLinkedInConnectionRequest,
-	sendLinkedInMessage,
 	withdrawLinkedInInvitation,
 } from './operations'
 import { POST_ID_DESCRIPTION } from './post-id'
 import { getLinkedInCompany, listLinkedInUserPosts, reactToLinkedInPost } from './posts-operations'
 import { PROFILE_VIEW_CAP, type PostsToolDeps, REACT_TO_POST_CAP } from './posts-tools'
-import { sendApprovedLinkedInObject } from './send-object'
+import {
+	publishApprovedLinkedInPost,
+	sendApprovedLinkedInConnectionRequest,
+	sendApprovedLinkedInObject,
+} from './send-object'
 
 /**
  * In-process MCP server for the LinkedIn (LinkedIn-backed) provider, served
@@ -127,49 +126,25 @@ function jsonResult(payload: unknown) {
 	return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
 }
 
-/** What a caller gets for passing the removed raw `attachments` to publish_post. */
-const PUBLISH_ATTACHMENTS_REFUSED_MESSAGE =
-	'publish_post does not take raw attachments. Pass attachment_file_ids instead: workspace file ids of PNG or JPEG files, which the server reads. Nothing was posted.'
-
 const sendObjectIdSchema = z
 	.string()
 	.uuid()
 	.optional()
 	.describe(
-		'The task or draft this send carries out. Once LinkedIn accepts the message, the server records the send on it and moves a task to done, so do not update it yourself. Refused, with nothing sent, if that object was already sent.',
+		'The task or draft this send carries out. Required: a call without it is refused. Once LinkedIn accepts it, the server records the send on the object and moves a task to done, so do not update it yourself. Refused, with nothing sent, until a person has approved the object, again after any edit, and once it was sent.',
 	)
 
 /**
- * Runs a send and, when the caller named the object it carries out, ends that object with
- * the send: the object is checked before anything goes out (it exists, it was not sent
- * before) and the send is recorded on it afterwards. Without `object_id` the send behaves
- * exactly as before.
+ * What a caller gets for a send, post or invitation with no `object_id`. Everything LinkedIn
+ * sends in a person's name goes out as text a person approved on a card, so there is no
+ * direct path.
  */
-async function sendForObject<T extends object>(
-	ctx: LinkedInMcpContext,
-	objectId: string | undefined,
-	send: () => Promise<T>,
-	eventData: (sent: T) => Record<string, unknown>,
-) {
-	if (!objectId) return jsonResult(await send())
-	let target: Awaited<ReturnType<typeof assertSendable>>
-	try {
-		target = await assertSendable(ctx.db, { workspaceId: ctx.workspaceId, objectId })
-	} catch (err) {
-		if (err instanceof SendTargetError) {
-			throw new LinkedInIntegrationError('INVALID_INPUT', err.message)
-		}
-		throw err
-	}
-	const sent = await send()
-	const outcome = await recordSendOutcome(ctx.db, {
-		workspaceId: ctx.workspaceId,
-		actorId: ctx.actorId,
-		target,
-		provider: 'linkedin',
-		data: eventData(sent),
-	})
-	return jsonResult({ ...sent, object: { id: target.id, ...outcome } })
+function heldForApproval(what: string, kind: string): LinkedInActionRefusal {
+	return new LinkedInActionRefusal(
+		'refused_rule',
+		'INVALID_INPUT',
+		`${what} is held for a person. Put the draft on a task or object (kind ${kind}), ask a person to approve it from the card, then call this again with only object_id. Nothing was sent.`,
+	)
 }
 
 /**
@@ -252,49 +227,32 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'publish_post'),
 			{
-				description: scopedDescription('Publish a LinkedIn post', cfg),
-				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
-				// is refused by name, instead of the field being dropped and the post going out text-only.
-				inputSchema: z
-					.object({
-						text: z
-							.string()
-							.min(1)
-							.max(3000)
-							.describe('Post body. Max 3000 chars — LinkedIn hard limit.'),
-						attachment_file_ids: z
-							.array(z.string().uuid())
-							.max(9)
-							.optional()
-							.describe(
-								'Optional images for the post: workspace file ids of PNG or JPEG files (max 10 MB each, up to 9, shown as a carousel). The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG or JPEG, or over 10 MB fails with nothing posted. Video and documents are not supported.',
-							),
-						can_read: z
-							.string()
-							.optional()
-							.describe('Post visibility, e.g. "connections", "public".'),
-						can_comment: z
-							.string()
-							.optional()
-							.describe('Who can comment, e.g. "connections", "anyone", "none".'),
-						quoted_post_id: z.string().optional().describe('Post id to quote-share.'),
-					})
-					.passthrough(),
+				description: scopedDescription(
+					'Publish a LinkedIn post a person approved. Pass only object_id: the task or object that holds a linkedin_post draft (the post text and, optionally, attachment_file_ids: workspace file ids of PNG or JPEG files, up to 9, separated by commas). The text and images posted are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been posted. The server reads the files; never send file bytes. Video and documents are not supported',
+					cfg,
+				),
+				// Passthrough so a call that still sends text, images or other fields reaches the handler
+				// and is refused by name, instead of the fields being dropped.
+				inputSchema: z.object({ object_id: sendObjectIdSchema }).passthrough(),
 			},
 			async (args) => {
 				try {
-					return jsonResult(
-						await logged('publish_post', 'write', undefined, async (rec) => {
-							if ((args as { attachments?: unknown }).attachments !== undefined) {
-								throw new LinkedInIntegrationError(
-									'INVALID_INPUT',
-									PUBLISH_ATTACHMENTS_REFUSED_MESSAGE,
-								)
-							}
-							const result = await publishLinkedInPost(opCtx, args)
-							return learned(rec, result, { refId: result.post_id })
-						}),
-					)
+					return await logged('publish_post', 'write', undefined, async (rec) => {
+						if (!args.object_id) throw heldForApproval('A post', 'linkedin_post')
+						rec.set({ objectId: args.object_id })
+						const extra = Object.keys(args).filter((key) => key !== 'object_id')
+						if (extra.length > 0) {
+							throw new LinkedInIntegrationError(
+								'INVALID_INPUT',
+								`Do not pass ${extra.join(', ')} with object_id: the text and images posted are the approved ones on the object.`,
+							)
+						}
+						const published = await publishApprovedLinkedInPost(opCtx, {
+							object_id: args.object_id,
+							onResolved: (resolved) => rec.set(resolved),
+						})
+						return jsonResult(learned(rec, published, { refId: published.post_id }))
+					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'publish_post'), err)
 				}
@@ -455,7 +413,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'send_message'),
 			{
 				description: scopedDescription(
-					'Send a LinkedIn direct message. To send a draft a person approved on its card, pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. The recipient (recipient_provider_id) and an optional file (attachment_file_id) are filed on the object, and a message with a thread_id on the object goes into that conversation. Then recipient_urn, body and idempotency_key are not used. Without object_id, pass recipient_urn, body and idempotency_key; plain text only, this tool takes no attachments',
+					'Send a LinkedIn direct message a person approved. Pass only object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. The recipient (recipient_provider_id) and an optional file (attachment_file_id) are filed on the object, and a message with a thread_id on the object goes into that conversation. recipient_urn, body and idempotency_key are not used, and a call without object_id is refused',
 					cfg,
 				),
 				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
@@ -475,21 +433,18 @@ export function registerLinkedInMcpInstance(
 						if ((args as { attachments?: unknown }).attachments !== undefined) {
 							throw new LinkedInIntegrationError('INVALID_INPUT', ATTACHMENTS_REFUSED_MESSAGE)
 						}
-						if (args.object_id) {
-							rec.set({ objectId: args.object_id })
-							if (args.body !== undefined || args.recipient_urn !== undefined) {
-								throw new LinkedInIntegrationError(
-									'INVALID_INPUT',
-									'Do not pass body or recipient_urn with object_id: the text and the recipient sent are the ones on the approved object.',
-								)
-							}
-							const sent = await sendApprovedLinkedInObject(opCtx, {
-								object_id: args.object_id,
-								onResolved: (resolved) => rec.set(resolved),
-							})
-							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+						if (!args.object_id) throw heldForApproval('A message', 'linkedin_message')
+						rec.set({ objectId: args.object_id })
+						if (args.body !== undefined || args.recipient_urn !== undefined) {
+							throw new LinkedInIntegrationError(
+								'INVALID_INPUT',
+								'Do not pass body or recipient_urn with object_id: the text and the recipient sent are the ones on the approved object.',
+							)
 						}
-						const sent = await sendLinkedInMessage(opCtx, args)
+						const sent = await sendApprovedLinkedInObject(opCtx, {
+							object_id: args.object_id,
+							onResolved: (resolved) => rec.set(resolved),
+						})
 						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 					})
 				} catch (err) {
@@ -504,7 +459,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'reply'),
 			{
 				description: scopedDescription(
-					'Reply in an existing LinkedIn conversation thread. To send a draft a person approved on its card, pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. Then thread_id is optional when the object has metadata.thread_id, and body and idempotency_key are not used. Without object_id, pass thread_id, body and idempotency_key',
+					'Reply in an existing LinkedIn conversation thread with a draft a person approved. Pass object_id (the task or object that holds the draft): the text sent is the approved text read from the object, and it is refused until a person has approved it. thread_id is optional when the object has metadata.thread_id. body, in_reply_to_message_id and idempotency_key are not used, and a call without object_id is refused',
 					cfg,
 				),
 				inputSchema: {
@@ -531,22 +486,19 @@ export function registerLinkedInMcpInstance(
 			async (args) => {
 				try {
 					return await logged('reply', 'send', undefined, async (rec) => {
-						if (args.object_id) {
-							rec.set({ objectId: args.object_id })
-							if (args.body !== undefined) {
-								throw new LinkedInIntegrationError(
-									'INVALID_INPUT',
-									'Do not pass body with object_id: the text sent is the approved text on the object.',
-								)
-							}
-							const sent = await sendApprovedLinkedInObject(opCtx, {
-								object_id: args.object_id,
-								thread_id: args.thread_id,
-								onResolved: (resolved) => rec.set(resolved),
-							})
-							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
+						if (!args.object_id) throw heldForApproval('A reply', 'linkedin_message')
+						rec.set({ objectId: args.object_id })
+						if (args.body !== undefined) {
+							throw new LinkedInIntegrationError(
+								'INVALID_INPUT',
+								'Do not pass body with object_id: the text sent is the approved text on the object.',
+							)
 						}
-						const sent = await replyToLinkedInThread(opCtx, args)
+						const sent = await sendApprovedLinkedInObject(opCtx, {
+							object_id: args.object_id,
+							thread_id: args.thread_id,
+							onResolved: (resolved) => rec.set(resolved),
+						})
 						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 					})
 				} catch (err) {
@@ -719,41 +671,51 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'send_connection_request'),
 			{
-				description: scopedDescription('Send a LinkedIn connection invitation', cfg),
+				description: scopedDescription(
+					'Send a LinkedIn connection invitation a person approved. Pass only object_id: the task or object that holds a linkedin_connection_request draft (the note is its text, the person is its recipient_provider_id). The note and person are the ones a person approved on the card, read from the object; it is refused until a person has approved it, again after any edit, and once it has been sent. user_id and message are not used, and a call without object_id is refused',
+					cfg,
+				),
 				inputSchema: {
-					user_id: z.string().min(1),
-					message: z.string().optional(),
 					object_id: sendObjectIdSchema,
+					user_id: z.string().min(1).optional(),
+					message: z.string().optional(),
 				},
 			},
 			async (args) => {
 				try {
-					return await logged('send_connection_request', 'send', args.user_id, async (rec) => {
+					return await logged('send_connection_request', 'send', undefined, async (rec) => {
+						if (!args.object_id) {
+							throw heldForApproval('An invitation', 'linkedin_connection_request')
+						}
 						rec.set({ objectId: args.object_id })
-						// LinkedIn blocks a new invite to someone whose invite was withdrawn, and the
-						// sweep that withdraws is automated, so the rule is enforced here, not in prompts.
-						const withdrawnAt = await findRecentWithdrawalOfPerson(
-							ctx.db,
-							cfg.integrationId,
-							args.user_id.trim(),
-							new Date(),
-						)
-						if (withdrawnAt) {
-							throw new LinkedInActionRefusal(
-								'refused_rule',
+						if (args.user_id !== undefined || args.message !== undefined) {
+							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
-								`This account withdrew its invitation to this person on ${withdrawnAt.toISOString()}. LinkedIn blocks a new invitation to the same person for up to ${REINVITE_LOCK_DAYS} days after a withdrawal, so nothing was sent. Invite again after ${addDays(withdrawnAt, REINVITE_LOCK_DAYS).toISOString()}.`,
+								'Do not pass user_id or message with object_id: the person and the note sent are the ones on the approved object.',
 							)
 						}
-						return sendForObject(
-							ctx,
-							args.object_id,
-							async () => {
-								const sent = await sendLinkedInConnectionRequest(opCtx, args)
-								return learned(rec, sent, { refId: sent.invitation_id })
+						const sent = await sendApprovedLinkedInConnectionRequest(opCtx, {
+							object_id: args.object_id,
+							onResolved: (resolved) => rec.set(resolved),
+							// LinkedIn blocks a new invite to someone whose invite was withdrawn, and the
+							// sweep that withdraws is automated, so the rule is enforced here, not in prompts.
+							beforeSend: async (recipient) => {
+								const withdrawnAt = await findRecentWithdrawalOfPerson(
+									ctx.db,
+									cfg.integrationId,
+									recipient,
+									new Date(),
+								)
+								if (withdrawnAt) {
+									throw new LinkedInActionRefusal(
+										'refused_rule',
+										'INVALID_INPUT',
+										`This account withdrew its invitation to this person on ${withdrawnAt.toISOString()}. LinkedIn blocks a new invitation to the same person for up to ${REINVITE_LOCK_DAYS} days after a withdrawal, so nothing was sent. Invite again after ${addDays(withdrawnAt, REINVITE_LOCK_DAYS).toISOString()}.`,
+									)
+								}
 							},
-							(sent) => ({ invitation_id: sent.invitation_id, sent_at: sent.sent_at }),
-						)
+						})
+						return jsonResult(learned(rec, sent, { refId: sent.invitation_id }))
 					})
 				} catch (err) {
 					return toolError(toolName(cfg, 'send_connection_request'), err)

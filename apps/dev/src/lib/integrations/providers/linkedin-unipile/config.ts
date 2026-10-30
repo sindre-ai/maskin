@@ -124,7 +124,13 @@ export const config: ProviderConfig = {
 			label: 'LinkedIn connection request',
 			sendTool: 'send_connection_request',
 			bodyMaxLength: 300,
-			fields: [{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' }],
+			fields: [
+				{ key: 'to', label: 'To', type: 'recipients', required: true, role: 'to' },
+				// The id the invitation goes to. A detail line, not hidden, so it is part of what a
+				// person approves: hidden fields are not hashed, and an edited recipient must withdraw
+				// the approval.
+				{ key: 'recipient_provider_id', label: 'LinkedIn id', type: 'text', required: true },
+			],
 		},
 		{
 			kind: 'linkedin_inmail',
@@ -155,6 +161,9 @@ export const config: ProviderConfig = {
 			fields: [
 				{ key: 'account', label: 'Posting as', type: 'text' },
 				{ key: 'scheduled_date', label: 'Scheduled', type: 'text' },
+				// The images posted: workspace file ids of PNG or JPEG files, separated by commas.
+				// A detail line too, so swapping an image withdraws the approval.
+				{ key: 'attachment_file_ids', label: 'Images', type: 'text' },
 			],
 		},
 	],

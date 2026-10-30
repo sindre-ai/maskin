@@ -1,4 +1,4 @@
-import { objects } from '@maskin/db/schema'
+import { files, objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { findCurrentApproval, withDeliveryState } from '../../../object-delivery'
 import { buildObjectPreview } from '../../../object-preview'
@@ -8,7 +8,10 @@ import { LinkedInIntegrationError } from './errors'
 import { assertInmailSendable, readCreditsAfter, startInmailChat } from './inmail-send'
 import {
 	type LinkedInOperationContext,
+	type PublishPostResult,
+	publishLinkedInPost,
 	replyToLinkedInThread,
+	sendLinkedInConnectionRequest,
 	sendLinkedInMessage,
 } from './operations'
 
@@ -201,4 +204,160 @@ export async function sendApprovedLinkedInObject(
 
 function optionalString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+/**
+ * The object a held send carries out, once it is known to be a complete draft of the wanted
+ * kind that a person approved and that has not gone yet. The same checks and the same
+ * messages as `sendApprovedLinkedInObject`, for the sends that are not messages.
+ */
+async function loadApprovedDraft(
+	ctx: LinkedInOperationContext,
+	objectId: string,
+	want: { kind: string; notIt: string },
+) {
+	const [object] = await ctx.db
+		.select()
+		.from(objects)
+		.where(and(eq(objects.id, objectId), eq(objects.workspaceId, ctx.workspaceId)))
+		.limit(1)
+	if (!object) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', 'That object does not exist here.')
+	}
+	const preview = buildObjectPreview(object)
+	if (preview?.kind !== want.kind) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', want.notIt)
+	}
+	if (preview.missing.length > 0) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			`The draft is not complete. Missing: ${preview.missing.join(', ')}.`,
+		)
+	}
+	const state = (await withDeliveryState(ctx.db, ctx.workspaceId, object.id, preview)).delivery
+		?.state
+	if (state === 'sent') {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'This text has already been sent. Do not send it again.',
+		)
+	}
+	const approval = await findCurrentApproval(
+		ctx.db,
+		ctx.workspaceId,
+		object.id,
+		preview.content_hash,
+	)
+	if (!approval) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'No person has approved this text. Do not send. Ask them to approve it from the card (an edit needs approving again), then call this again.',
+		)
+	}
+	return { object, preview, approval, filed: (object.metadata ?? {}) as Record<string, unknown> }
+}
+
+/**
+ * Sends the connection invitation an object holds, exactly as a person approved it: the
+ * person is `recipient_provider_id` on the object and the note is its text, never taken from
+ * the caller. Refused until a person approved this exact content, and once it has gone.
+ *
+ * `beforeSend` runs after the draft is approved and before the invitation goes out, with the
+ * person it is for: the re-invite lock after a withdrawal is checked there.
+ */
+export async function sendApprovedLinkedInConnectionRequest(
+	ctx: LinkedInOperationContext,
+	input: {
+		object_id: string
+		onResolved?: (resolved: { targetProviderId: string; approvalId: string }) => void
+		beforeSend?: (targetProviderId: string) => Promise<void>
+	},
+): Promise<{
+	status: 'sent'
+	sent_at: string
+	invitation_id?: string
+	object: { id: string } & SendClosure
+}> {
+	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
+		kind: 'linkedin_connection_request',
+		notIt: 'That object is not a LinkedIn connection request.',
+	})
+	const recipient = optionalString(filed.recipient_provider_id)
+	if (!recipient) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'A recipient is required: file recipient_provider_id on the object.',
+		)
+	}
+	input.onResolved?.({ targetProviderId: recipient, approvalId: String(approval.id) })
+	await input.beforeSend?.(recipient)
+
+	const sent = await sendLinkedInConnectionRequest(ctx, {
+		user_id: recipient,
+		message: preview.body,
+	})
+	const outcome = await recordSendOutcome(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		target: { id: object.id, type: object.type, status: object.status },
+		provider: 'linkedin-unipile',
+		data: {
+			content_hash: preview.content_hash,
+			invitation_id: sent.invitation_id,
+			sent_at: sent.sent_at,
+		},
+	})
+	return { ...sent, object: { id: object.id, ...outcome } }
+}
+
+/**
+ * Publishes the post an object holds, exactly as a person approved it: the text is the post
+ * body on the object and the images are the files listed in its `attachment_file_ids`, never
+ * taken from the caller. Refused until a person approved this exact content, and once it has
+ * gone. An image file saved again after the approval is refused, since an approval covers the
+ * file id and not what the file holds.
+ */
+export async function publishApprovedLinkedInPost(
+	ctx: LinkedInOperationContext,
+	input: {
+		object_id: string
+		onResolved?: (resolved: { approvalId: string }) => void
+	},
+): Promise<PublishPostResult & { replayed: boolean; object: { id: string } & SendClosure }> {
+	const { object, preview, approval, filed } = await loadApprovedDraft(ctx, input.object_id, {
+		kind: 'linkedin_post',
+		notIt: 'That object is not a LinkedIn post.',
+	})
+	const fileIds = (optionalString(filed.attachment_file_ids) ?? '')
+		.split(/[\s,]+/)
+		.filter((id) => id.length > 0)
+	for (const fileId of fileIds) {
+		const [file] = await ctx.db
+			.select({ updatedAt: files.updatedAt })
+			.from(files)
+			.where(and(eq(files.id, fileId), eq(files.workspaceId, ctx.workspaceId)))
+			.limit(1)
+		// A file that is not here fails in the post itself, with its id. An approval with no
+		// time cannot show the file is unchanged, so it does not pass.
+		if (file && (!approval.createdAt || file.updatedAt.getTime() > approval.createdAt.getTime())) {
+			throw new LinkedInIntegrationError(
+				'INVALID_INPUT',
+				`File ${fileId} changed after it was approved. Ask a person to approve it again.`,
+			)
+		}
+	}
+	input.onResolved?.({ approvalId: String(approval.id) })
+
+	const published = await publishLinkedInPost(ctx, {
+		text: preview.body,
+		...(fileIds.length > 0 ? { attachment_file_ids: fileIds } : {}),
+	})
+	const outcome = await recordSendOutcome(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		target: { id: object.id, type: object.type, status: object.status },
+		provider: 'linkedin-unipile',
+		data: { content_hash: preview.content_hash, post_id: published.post_id },
+	})
+	return { ...published, object: { id: object.id, ...outcome } }
 }
