@@ -13,9 +13,10 @@ import {
 	extractCloudflareRayId,
 	isProviderBlockPage,
 } from '../lib/turn-error-classifier'
+import { reportChatReply } from './chat-reply-tracking'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
-import { resolveThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
+import { resolveReplyThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
 
 /**
  * Posts an agent's end-of-turn output into the chat it is talking in.
@@ -1122,7 +1123,10 @@ export class InteractiveTurnFinalizer {
 		const truncated = text.length > MESSAGE_MAX_LENGTH
 		const content = truncated ? text.slice(0, MESSAGE_MAX_LENGTH) : text
 		const turnMessageId = await this.resolveTurnMessageId(sessionId, logId)
-		const threadRootId = await this.resolveThreadRootId(turnMessageId)
+		const { sessionThreadRootId, threadRootId } = await resolveReplyThreadRootId(this.db, {
+			sessionId,
+			turnMessageId,
+		})
 
 		const created = await insertConversationMessage(this.db, {
 			conversationId,
@@ -1172,6 +1176,15 @@ export class InteractiveTurnFinalizer {
 			)
 			return
 		}
+		reportChatReply(this.db, {
+			workspaceId: gate.workspaceId,
+			conversationId,
+			agentId: gate.actorId,
+			sessionThreadRootId,
+			replyThreadRootId: threadRootId,
+			originMessageId: turnMessageId,
+			source: 'final_output',
+		})
 		const failed =
 			result.isError || 'error_kind' in extraMetadata || 'pseudo_tool_calls' in extraMetadata
 		this.turnFinished(sessionId, failed ? 'failed' : 'done')
@@ -1541,10 +1554,17 @@ export class InteractiveTurnFinalizer {
 		emptyCompletion?: EmptyCompletionMetadata,
 	): Promise<void> {
 		try {
+			// A thread session's notice belongs in its thread too. No turn-origin guess here: a
+			// session with no thread posts the notice top-level, as before.
+			const { sessionThreadRootId } = await resolveReplyThreadRootId(this.db, {
+				sessionId,
+				turnMessageId: null,
+			})
 			const created = await insertConversationMessage(this.db, {
 				conversationId,
 				workspaceId: gate.workspaceId,
 				actorId: gate.actorId,
+				threadRootId: sessionThreadRootId,
 				content,
 				metadata: {
 					source: 'final_output',
@@ -1905,11 +1925,6 @@ export class InteractiveTurnFinalizer {
 	/** The chat message whose turn produced this output; see resolveTurnMessageId. */
 	private resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
 		return resolveTurnMessageId(this.db, sessionId, logId)
-	}
-
-	/** The thread the turn's triggering message sits in; see resolveThreadRootId. */
-	private resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
-		return resolveThreadRootId(this.db, turnMessageId)
 	}
 
 	private rememberRetry(retryKey: string, count: number): void {
