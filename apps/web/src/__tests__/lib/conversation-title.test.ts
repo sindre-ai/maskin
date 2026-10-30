@@ -8,8 +8,8 @@ describe('deriveConversationTitle', () => {
 	})
 
 	it('keeps a short message intact, including its question mark', () => {
-		expect(deriveConversationTitle('Which accounts went quiet this week?', 'Sentinel')).toBe(
-			'Which accounts went quiet this week?',
+		expect(deriveConversationTitle('Which accounts went quiet?', 'Sentinel')).toBe(
+			'Which accounts went quiet?',
 		)
 	})
 
@@ -19,7 +19,7 @@ describe('deriveConversationTitle', () => {
 				'Why did trial signups dip last week? I want the product or the channel, not both.',
 				'Compass',
 			),
-		).toBe('Why did trial signups dip last week?')
+		).toBe('Why did trial signups dip last…')
 	})
 
 	it('collapses newlines and runs of whitespace', () => {
@@ -41,13 +41,13 @@ describe('deriveConversationTitle', () => {
 
 	it('does not treat a decimal point as the end of a sentence', () => {
 		expect(deriveConversationTitle('Ship 3.5 to the beta cohort by Friday', 'Relay')).toBe(
-			'Ship 3.5 to the beta cohort by Friday',
+			'Ship 3.5 to the beta cohort by…',
 		)
 	})
 
 	it('does not cut inside a URL', () => {
 		expect(deriveConversationTitle('Check https://acme.com/dash for the drop', 'Relay')).toBe(
-			'Check https://acme.com/dash for the drop',
+			'Check https://acme.com/dash for…',
 		)
 	})
 

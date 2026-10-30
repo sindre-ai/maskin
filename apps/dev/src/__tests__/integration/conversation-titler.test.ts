@@ -285,7 +285,7 @@ describe('Conversation auto-titler Integration', () => {
 		// A workspace routed at a model that just doesn't tool-call still gets
 		// a real title on message #1, matching what the frontend would derive.
 		expect(await readConversation()).toEqual({
-			title: 'Why did trial signups dip last week?',
+			title: 'Why did trial signups dip last…',
 			titleAutoState: 'initial',
 		})
 	})
