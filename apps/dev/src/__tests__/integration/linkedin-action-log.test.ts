@@ -20,7 +20,9 @@ import { CAP_WINDOW_MS } from '../../lib/integrations/providers/linkedin-unipile
 import { registerLinkedInMcpInstance } from '../../lib/integrations/providers/linkedin-unipile/mcp-server'
 import { __setLinkedInClientForTests } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
-import { insertWorkspace } from '../factories'
+import { recordObjectApproval } from '../../lib/object-delivery'
+import { buildObjectPreview } from '../../lib/object-preview'
+import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 /**
@@ -134,6 +136,48 @@ async function connect() {
 	return { cfg, mcp, workspaceId: ws.id, actorId, integrationId: integration.id, logCtx }
 }
 
+/** A draft a person approved, the only way a send goes out. */
+async function approvedDraft(
+	c: Pick<Awaited<ReturnType<typeof connect>>, 'workspaceId' | 'actorId'>,
+	content: string,
+	metadata: Record<string, unknown>,
+) {
+	const object = await insertObject(db, c.workspaceId, c.actorId, {
+		type: 'task',
+		status: 'todo',
+		content,
+		metadata,
+	})
+	const preview = buildObjectPreview(object)
+	if (!preview) throw new Error('not a draft')
+	await recordObjectApproval(db, {
+		workspaceId: c.workspaceId,
+		actorId: c.actorId,
+		objectId: object.id,
+		objectType: object.type,
+		preview,
+		via: 'approval',
+	})
+	return object
+}
+
+const messageDraft = (
+	c: Parameters<typeof approvedDraft>[0],
+	text = 'Hi Liz, loved your talk on governance.',
+) =>
+	approvedDraft(c, text, {
+		kind: 'linkedin_message',
+		to: 'Liz Benison',
+		recipient_provider_id: 'ACoBBB-recipient',
+	})
+
+const inviteDraft = (c: Parameters<typeof approvedDraft>[0]) =>
+	approvedDraft(c, 'Hej from the secret pipeline', {
+		kind: 'linkedin_connection_request',
+		to: 'Someone',
+		recipient_provider_id: 'ACoCCC-invitee',
+	})
+
 async function rowsFor(integrationId: string) {
 	return db.select().from(linkedinActions).where(eq(linkedinActions.integrationId, integrationId))
 }
@@ -142,7 +186,10 @@ describe('every LinkedIn tool call is logged once', () => {
 	it('writes one row per call with the right kind, target, ref and outcome', async () => {
 		const { client } = stubClient()
 		__setLinkedInClientForTests(() => client)
-		const { cfg, mcp, integrationId } = await connect()
+		const c = await connect()
+		const { cfg, mcp, integrationId } = c
+		const message = await messageDraft(c)
+		const invite = await inviteDraft(c)
 
 		await mcp.callTool({
 			name: toolName(cfg, 'get_profile'),
@@ -150,15 +197,11 @@ describe('every LinkedIn tool call is logged once', () => {
 		})
 		await mcp.callTool({
 			name: toolName(cfg, 'send_message'),
-			arguments: {
-				recipient_urn: 'ACoBBB-recipient',
-				body: 'Hi Liz, loved your talk on governance.',
-				idempotency_key: 'k-1',
-			},
+			arguments: { object_id: message.id },
 		})
 		await mcp.callTool({
 			name: toolName(cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoCCC-invitee', message: 'Hej from the secret pipeline' },
+			arguments: { object_id: invite.id },
 		})
 
 		const rows = await rowsFor(integrationId)
@@ -187,7 +230,10 @@ describe('every LinkedIn tool call is logged once', () => {
 	it('never stores message text, post text, names or headlines', async () => {
 		const { client } = stubClient()
 		__setLinkedInClientForTests(() => client)
-		const { cfg, mcp, integrationId } = await connect()
+		const c = await connect()
+		const { cfg, mcp, integrationId } = c
+		const message = await messageDraft(c)
+		const invite = await inviteDraft(c)
 
 		await mcp.callTool({
 			name: toolName(cfg, 'get_profile'),
@@ -195,15 +241,11 @@ describe('every LinkedIn tool call is logged once', () => {
 		})
 		await mcp.callTool({
 			name: toolName(cfg, 'send_message'),
-			arguments: {
-				recipient_urn: 'ACoBBB-recipient',
-				body: 'Hi Liz, loved your talk on governance.',
-				idempotency_key: 'k-1',
-			},
+			arguments: { object_id: message.id },
 		})
 		await mcp.callTool({
 			name: toolName(cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoCCC-invitee', message: 'Hej from the secret pipeline' },
+			arguments: { object_id: invite.id },
 		})
 
 		const stored = JSON.stringify(await rowsFor(integrationId))
@@ -222,11 +264,13 @@ describe('every LinkedIn tool call is logged once', () => {
 		const { client, sendMessage } = stubClient()
 		sendMessage.mockResolvedValueOnce({ status: 400, body: {}, headers: {} })
 		__setLinkedInClientForTests(() => client)
-		const { cfg, mcp, integrationId } = await connect()
+		const c = await connect()
+		const { cfg, mcp, integrationId } = c
+		const message = await messageDraft(c, 'x')
 
 		const result = await mcp.callTool({
 			name: toolName(cfg, 'send_message'),
-			arguments: { recipient_urn: 'ACoBBB-recipient', body: 'x', idempotency_key: 'k-err' },
+			arguments: { object_id: message.id },
 		})
 
 		expect(result.isError).toBe(true)
@@ -239,31 +283,48 @@ describe('every LinkedIn tool call is logged once', () => {
 		expect(row?.refId).toBeNull()
 	})
 
-	it('logs a replayed send as noop instead of a second ok row for the same message', async () => {
-		const { client } = stubClient()
+	it('logs a repeated send of the same draft as an error, never a second ok row', async () => {
+		const { client, sendMessage } = stubClient()
 		__setLinkedInClientForTests(() => client)
-		const { cfg, mcp, integrationId } = await connect()
-		const args = { recipient_urn: 'ACoBBB-recipient', body: 'Hi', idempotency_key: 'k-same' }
+		const c = await connect()
+		const { cfg, mcp, integrationId } = c
+		const message = await messageDraft(c, 'Hi')
+		const args = { object_id: message.id }
 
 		await mcp.callTool({ name: toolName(cfg, 'send_message'), arguments: args })
 		await mcp.callTool({ name: toolName(cfg, 'send_message'), arguments: args })
 
 		const rows = await rowsFor(integrationId)
-		expect(rows.map((r) => r.outcome).sort()).toEqual(['noop', 'ok'])
+		expect(rows.map((r) => r.outcome).sort()).toEqual(['error', 'ok'])
+		expect(sendMessage).toHaveBeenCalledTimes(1)
+	})
+
+	it('logs a send with no draft as refused by rule, with nothing sent', async () => {
+		const { client, sendMessage } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, integrationId } = await connect()
+
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'send_message'),
+			arguments: { recipient_urn: 'ACoBBB-recipient', body: 'Hi', idempotency_key: 'k-direct' },
+		})
+
+		expect(result.isError).toBe(true)
+		const [row] = await rowsFor(integrationId)
+		expect(row).toMatchObject({ tool: 'send_message', outcome: 'refused_rule' })
+		expect(sendMessage).not.toHaveBeenCalled()
 	})
 
 	it('fires one linkedin_tool_called event per call with exactly the allowed properties', async () => {
 		const { client } = stubClient()
 		__setLinkedInClientForTests(() => client)
-		const { cfg, mcp, actorId } = await connect()
+		const c = await connect()
+		const { cfg, mcp, actorId } = c
+		const message = await messageDraft(c)
 
 		await mcp.callTool({
 			name: toolName(cfg, 'send_message'),
-			arguments: {
-				recipient_urn: 'ACoBBB-recipient',
-				body: 'Hi Liz, loved your talk on governance.',
-				idempotency_key: 'k-ev',
-			},
+			arguments: { object_id: message.id },
 		})
 
 		// Other code paths (the credential read) capture their own events through the same mock.

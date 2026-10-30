@@ -48,6 +48,15 @@ function stubClient() {
 		body: { object: 'ChatStarted', message_id: 'msg-1', chat_id: 'chat-1' },
 		headers: {},
 	}))
+	const publishPost = vi.fn(async () => ({
+		status: 200,
+		body: {
+			object: 'PostPublished',
+			post_id: 'urn:li:share:1',
+			published_at: '2026-10-30T10:00:00.000Z',
+		},
+		headers: {},
+	}))
 	const client = {
 		sendConnectionRequest,
 		sendMessage,
@@ -58,7 +67,7 @@ function stubClient() {
 		searchPeople: vi.fn(),
 		getProfile: vi.fn(),
 		getManagedCompanyPages: vi.fn(),
-		publishPost: vi.fn(),
+		publishPost,
 		commentOnPost: vi.fn(),
 		replyToComment: vi.fn(),
 		readPostComments: vi.fn(),
@@ -68,7 +77,7 @@ function stubClient() {
 		editPost: vi.fn(),
 		deletePost: vi.fn(),
 	} as unknown as LinkedInClient
-	return { client, sendConnectionRequest, sendMessage }
+	return { client, sendConnectionRequest, sendMessage, publishPost }
 }
 
 async function connect() {
@@ -127,6 +136,30 @@ async function draft(workspaceId: string, actorId: string) {
 	})
 }
 
+/** A connection invitation to Liz, filed the way an agent drafts one: the note is the text. */
+async function invite(workspaceId: string, actorId: string) {
+	return insertObject(db, workspaceId, actorId, {
+		type: 'task',
+		status: 'todo',
+		content: 'Hej Liz',
+		metadata: {
+			kind: 'linkedin_connection_request',
+			to: 'Liz Benison',
+			recipient_provider_id: 'user-1',
+		},
+	})
+}
+
+/** A post draft: the text sits between the post markers, the way the Copywriter files it. */
+async function postDraft(workspaceId: string, actorId: string) {
+	return insertObject(db, workspaceId, actorId, {
+		type: 'task',
+		status: 'todo',
+		content: 'Header\n--- POST ---\nSun is out\n--- MEDIA ---\nnone',
+		metadata: { kind: 'linkedin_post' },
+	})
+}
+
 async function approve(workspaceId: string, actorId: string, objectId: string) {
 	const [object] = await db.select().from(objects).where(eq(objects.id, objectId))
 	const preview = object && buildObjectPreview(object)
@@ -142,19 +175,23 @@ async function approve(workspaceId: string, actorId: string, objectId: string) {
 }
 
 describe('LinkedIn send tools with object_id', () => {
-	it('closes the task when a connection request is accepted', async () => {
+	it('closes the task when an approved connection request is sent', async () => {
 		const { client, sendConnectionRequest } = stubClient()
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp, workspaceId, actorId } = await connect()
-		const task = await insertObject(db, workspaceId, actorId, { type: 'task', status: 'todo' })
+		const task = await invite(workspaceId, actorId)
+		await approve(workspaceId, actorId, task.id)
 
 		const result = await mcp.callTool({
 			name: toolName(cfg, 'send_connection_request'),
-			arguments: { user_id: 'user-1', message: 'Hej', object_id: task.id },
+			arguments: { object_id: task.id },
 		})
 
 		expect(result.isError).toBeFalsy()
 		expect(sendConnectionRequest).toHaveBeenCalledTimes(1)
+		expect(sendConnectionRequest).toHaveBeenCalledWith(
+			expect.objectContaining({ user_id: 'user-1', message: 'Hej Liz' }),
+		)
 		expect(JSON.parse(textOf(result)).object).toEqual({
 			id: task.id,
 			delivered: true,
@@ -163,12 +200,13 @@ describe('LinkedIn send tools with object_id', () => {
 		expect(await statusOf(task.id)).toBe('done')
 	})
 
-	it('refuses to send the same task twice and does not call LinkedIn the second time', async () => {
+	it('refuses to send the same connection request twice and does not call LinkedIn again', async () => {
 		const { client, sendConnectionRequest } = stubClient()
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp, workspaceId, actorId } = await connect()
-		const task = await insertObject(db, workspaceId, actorId, { type: 'task', status: 'todo' })
-		const args = { user_id: 'user-1', message: 'Hej', object_id: task.id }
+		const task = await invite(workspaceId, actorId)
+		await approve(workspaceId, actorId, task.id)
+		const args = { object_id: task.id }
 
 		await mcp.callTool({ name: toolName(cfg, 'send_connection_request'), arguments: args })
 		const second = await mcp.callTool({
@@ -178,40 +216,146 @@ describe('LinkedIn send tools with object_id', () => {
 
 		expect(second.isError).toBe(true)
 		expect(textOf(second)).toContain('INVALID_INPUT')
-		expect(textOf(second)).toContain('already sent')
+		expect(textOf(second)).toContain('already been sent')
 		expect(sendConnectionRequest).toHaveBeenCalledTimes(1)
 	})
 
-	it('sends nothing when object_id is not an object in the workspace', async () => {
-		const { client, sendConnectionRequest } = stubClient()
-		__setLinkedInClientForTests(() => client)
-		const { cfg, mcp } = await connect()
-
-		const result = await mcp.callTool({
-			name: toolName(cfg, 'send_connection_request'),
-			arguments: { user_id: 'user-1', object_id: '00000000-0000-4000-8000-000000000000' },
-		})
-
-		expect(result.isError).toBe(true)
-		expect(textOf(result)).toContain('Nothing was sent')
-		expect(sendConnectionRequest).not.toHaveBeenCalled()
-	})
-
-	it('behaves as before when object_id is left out', async () => {
+	it('will not send a connection request nobody approved, or one edited after approval', async () => {
 		const { client, sendConnectionRequest } = stubClient()
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp, workspaceId, actorId } = await connect()
-		const task = await insertObject(db, workspaceId, actorId, { type: 'task', status: 'todo' })
+		const task = await invite(workspaceId, actorId)
+		const send = () =>
+			mcp.callTool({
+				name: toolName(cfg, 'send_connection_request'),
+				arguments: { object_id: task.id },
+			})
 
-		const result = await mcp.callTool({
+		const unapproved = await send()
+		await approve(workspaceId, actorId, task.id)
+		await db.update(objects).set({ content: 'Hej Liz, edited' }).where(eq(objects.id, task.id))
+		const afterEdit = await send()
+
+		for (const result of [unapproved, afterEdit]) {
+			expect(result.isError).toBe(true)
+			expect(textOf(result)).toContain('No person has approved')
+		}
+		expect(sendConnectionRequest).not.toHaveBeenCalled()
+		expect(await statusOf(task.id)).toBe('todo')
+	})
+
+	it('refuses a connection request with no object_id, and one that is not a connection request', async () => {
+		const { client, sendConnectionRequest } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const message = await draft(workspaceId, actorId)
+		await approve(workspaceId, actorId, message.id)
+
+		const direct = await mcp.callTool({
 			name: toolName(cfg, 'send_connection_request'),
 			arguments: { user_id: 'user-1', message: 'Hej' },
 		})
+		const wrongKind = await mcp.callTool({
+			name: toolName(cfg, 'send_connection_request'),
+			arguments: { object_id: message.id },
+		})
+		const missing = await mcp.callTool({
+			name: toolName(cfg, 'send_connection_request'),
+			arguments: { object_id: '00000000-0000-4000-8000-000000000000' },
+		})
 
-		expect(result.isError).toBeFalsy()
-		expect(sendConnectionRequest).toHaveBeenCalledTimes(1)
-		expect(JSON.parse(textOf(result)).object).toBeUndefined()
-		expect(await statusOf(task.id)).toBe('todo')
+		expect(textOf(direct)).toContain('held for a person')
+		expect(textOf(wrongKind)).toContain('not a LinkedIn connection request')
+		expect(textOf(missing)).toContain('does not exist')
+		for (const result of [direct, wrongKind, missing]) expect(result.isError).toBe(true)
+		expect(sendConnectionRequest).not.toHaveBeenCalled()
+	})
+
+	it('refuses user_id and message next to object_id', async () => {
+		const { client, sendConnectionRequest } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const task = await invite(workspaceId, actorId)
+		await approve(workspaceId, actorId, task.id)
+
+		const result = await mcp.callTool({
+			name: toolName(cfg, 'send_connection_request'),
+			arguments: { object_id: task.id, user_id: 'user-2', message: 'Something else' },
+		})
+
+		expect(result.isError).toBe(true)
+		expect(textOf(result)).toContain('INVALID_INPUT')
+		expect(sendConnectionRequest).not.toHaveBeenCalled()
+	})
+
+	it('publishes an approved post once, with the approved text, and closes the task', async () => {
+		const { client, publishPost } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const task = await postDraft(workspaceId, actorId)
+		await approve(workspaceId, actorId, task.id)
+		const publish = () =>
+			mcp.callTool({ name: toolName(cfg, 'publish_post'), arguments: { object_id: task.id } })
+
+		const first = await publish()
+		const again = await publish()
+
+		expect(first.isError).toBeFalsy()
+		expect(publishPost).toHaveBeenCalledTimes(1)
+		expect(publishPost).toHaveBeenCalledWith(expect.objectContaining({ text: 'Sun is out' }))
+		expect(JSON.parse(textOf(first)).object).toEqual({
+			id: task.id,
+			delivered: true,
+			task_closed: true,
+		})
+		expect(again.isError).toBe(true)
+		expect(textOf(again)).toContain('already been sent')
+		expect(await statusOf(task.id)).toBe('done')
+	})
+
+	it('will not publish a post nobody approved, or one edited after approval', async () => {
+		const { client, publishPost } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const task = await postDraft(workspaceId, actorId)
+		const publish = () =>
+			mcp.callTool({ name: toolName(cfg, 'publish_post'), arguments: { object_id: task.id } })
+
+		const unapproved = await publish()
+		await approve(workspaceId, actorId, task.id)
+		await db
+			.update(objects)
+			.set({ content: 'Header\n--- POST ---\nSun is out, edited\n--- MEDIA ---\nnone' })
+			.where(eq(objects.id, task.id))
+		const afterEdit = await publish()
+
+		for (const result of [unapproved, afterEdit]) {
+			expect(result.isError).toBe(true)
+			expect(textOf(result)).toContain('No person has approved')
+		}
+		expect(publishPost).not.toHaveBeenCalled()
+	})
+
+	it('refuses a post with no object_id, text next to object_id, and an object that is not a post', async () => {
+		const { client, publishPost } = stubClient()
+		__setLinkedInClientForTests(() => client)
+		const { cfg, mcp, workspaceId, actorId } = await connect()
+		const task = await postDraft(workspaceId, actorId)
+		await approve(workspaceId, actorId, task.id)
+		const message = await draft(workspaceId, actorId)
+		await approve(workspaceId, actorId, message.id)
+		const call = (args: Record<string, unknown>) =>
+			mcp.callTool({ name: toolName(cfg, 'publish_post'), arguments: args })
+
+		const direct = await call({ text: 'Sun is out' })
+		const withText = await call({ object_id: task.id, text: 'Something else' })
+		const wrongKind = await call({ object_id: message.id })
+
+		expect(textOf(direct)).toContain('held for a person')
+		expect(textOf(withText)).toContain('Do not pass text')
+		expect(textOf(wrongKind)).toContain('not a LinkedIn post')
+		for (const result of [direct, withText, wrongKind]) expect(result.isError).toBe(true)
+		expect(publishPost).not.toHaveBeenCalled()
 	})
 
 	it('closes the task when an approved direct message is sent', async () => {
@@ -314,17 +458,27 @@ describe('LinkedIn send tools with object_id', () => {
 		expect(sendMessage).not.toHaveBeenCalled()
 	})
 
-	it('still sends plain text without object_id', async () => {
+	it('refuses a plain send_message and a plain reply with no object_id', async () => {
 		const { client, sendMessage } = stubClient()
+		const reply = client.reply as unknown as ReturnType<typeof vi.fn>
 		__setLinkedInClientForTests(() => client)
 		const { cfg, mcp } = await connect()
 
-		const result = await mcp.callTool({
+		const direct = await mcp.callTool({
 			name: toolName(cfg, 'send_message'),
 			arguments: { recipient_urn: 'ACoAAA1', body: 'Hej', idempotency_key: 'key-plain' },
 		})
+		const directReply = await mcp.callTool({
+			name: toolName(cfg, 'reply'),
+			arguments: { thread_id: 'thread-1', body: 'Hej', in_reply_to_message_id: 'm-1' },
+		})
 
-		expect(result.isError).toBeFalsy()
-		expect(sendMessage).toHaveBeenCalledTimes(1)
+		for (const result of [direct, directReply]) {
+			expect(result.isError).toBe(true)
+			expect(textOf(result)).toContain('INVALID_INPUT')
+			expect(textOf(result)).toContain('held for a person')
+		}
+		expect(sendMessage).not.toHaveBeenCalled()
+		expect(reply).not.toHaveBeenCalled()
 	})
 })
