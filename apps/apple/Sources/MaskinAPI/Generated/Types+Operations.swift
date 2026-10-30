@@ -17006,6 +17006,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured`.
                         public var llm_configured: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_configuredPayload
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints`.
+                        public struct llm_key_hintsPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints/anthropic`.
+                            public var anthropic: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints/openai`.
+                            public var openai: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints/custom_llm`.
+                            public var custom_llm: Swift.String?
+                            /// Creates a new `llm_key_hintsPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.String? = nil,
+                                openai: Swift.String? = nil,
+                                custom_llm: Swift.String? = nil
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints`.
+                        public var llm_key_hints: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_key_hintsPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/enterprise`.
@@ -17031,6 +17062,7 @@ public enum Operations {
                         ///   - name:
                         ///   - settings:
                         ///   - llm_configured:
+                        ///   - llm_key_hints:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -17045,6 +17077,7 @@ public enum Operations {
                             name: Swift.String,
                             settings: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.settingsPayload? = nil,
                             llm_configured: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_configuredPayload,
+                            llm_key_hints: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_key_hintsPayload? = nil,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -17059,6 +17092,7 @@ public enum Operations {
                             self.name = name
                             self.settings = settings
                             self.llm_configured = llm_configured
+                            self.llm_key_hints = llm_key_hints
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -17074,6 +17108,7 @@ public enum Operations {
                             case name
                             case settings
                             case llm_configured
+                            case llm_key_hints
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -18488,6 +18523,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured`.
                         public var llm_configured: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_configuredPayload
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints`.
+                        public struct llm_key_hintsPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints/anthropic`.
+                            public var anthropic: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints/openai`.
+                            public var openai: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints/custom_llm`.
+                            public var custom_llm: Swift.String?
+                            /// Creates a new `llm_key_hintsPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.String? = nil,
+                                openai: Swift.String? = nil,
+                                custom_llm: Swift.String? = nil
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints`.
+                        public var llm_key_hints: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_key_hintsPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/enterprise`.
@@ -18507,6 +18573,7 @@ public enum Operations {
                         ///   - name:
                         ///   - settings:
                         ///   - llm_configured:
+                        ///   - llm_key_hints:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -18518,6 +18585,7 @@ public enum Operations {
                             name: Swift.String,
                             settings: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.settingsPayload? = nil,
                             llm_configured: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_configuredPayload,
+                            llm_key_hints: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_key_hintsPayload? = nil,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -18529,6 +18597,7 @@ public enum Operations {
                             self.name = name
                             self.settings = settings
                             self.llm_configured = llm_configured
+                            self.llm_key_hints = llm_key_hints
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -18541,6 +18610,7 @@ public enum Operations {
                             case name
                             case settings
                             case llm_configured
+                            case llm_key_hints
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -20380,6 +20450,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured`.
                         public var llm_configured: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_configuredPayload
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints`.
+                        public struct llm_key_hintsPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints/anthropic`.
+                            public var anthropic: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints/openai`.
+                            public var openai: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints/custom_llm`.
+                            public var custom_llm: Swift.String?
+                            /// Creates a new `llm_key_hintsPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.String? = nil,
+                                openai: Swift.String? = nil,
+                                custom_llm: Swift.String? = nil
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints`.
+                        public var llm_key_hints: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_key_hintsPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/enterprise`.
@@ -20399,6 +20500,7 @@ public enum Operations {
                         ///   - name:
                         ///   - settings:
                         ///   - llm_configured:
+                        ///   - llm_key_hints:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -20410,6 +20512,7 @@ public enum Operations {
                             name: Swift.String,
                             settings: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.settingsPayload? = nil,
                             llm_configured: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_configuredPayload,
+                            llm_key_hints: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_key_hintsPayload? = nil,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -20421,6 +20524,7 @@ public enum Operations {
                             self.name = name
                             self.settings = settings
                             self.llm_configured = llm_configured
+                            self.llm_key_hints = llm_key_hints
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -20433,6 +20537,7 @@ public enum Operations {
                             case name
                             case settings
                             case llm_configured
+                            case llm_key_hints
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId

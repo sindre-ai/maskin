@@ -14907,6 +14907,34 @@
 												"custom_llm"
 											]
 										},
+										"llm_key_hints": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"openai": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"custom_llm": {
+													"type": [
+														"string",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -15169,6 +15197,34 @@
 													},
 													"custom_llm": {
 														"type": "boolean"
+													}
+												},
+												"required": [
+													"anthropic",
+													"openai",
+													"custom_llm"
+												]
+											},
+											"llm_key_hints": {
+												"type": "object",
+												"properties": {
+													"anthropic": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"openai": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"custom_llm": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
@@ -15916,6 +15972,34 @@
 												"custom_llm"
 											]
 										},
+										"llm_key_hints": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"openai": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"custom_llm": {
+													"type": [
+														"string",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -16207,6 +16291,34 @@
 												},
 												"custom_llm": {
 													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
+										"llm_key_hints": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"openai": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"custom_llm": {
+													"type": [
+														"string",
+														"null"
+													]
 												}
 											},
 											"required": [
@@ -16803,6 +16915,34 @@
 												},
 												"custom_llm": {
 													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
+										"llm_key_hints": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"openai": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"custom_llm": {
+													"type": [
+														"string",
+														"null"
+													]
 												}
 											},
 											"required": [

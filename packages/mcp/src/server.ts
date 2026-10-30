@@ -979,10 +979,20 @@ async function assertLoopTypesValid(
 async function getWorkspace(
 	config: McpConfig,
 	workspaceId: string,
-): Promise<{ id: string; name: string; settings: Record<string, unknown> }> {
+): Promise<{
+	id: string
+	name: string
+	settings: Record<string, unknown>
+	llm_configured?: { anthropic?: boolean; openai?: boolean }
+}> {
 	const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 		skipWorkspace: true,
-	})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+	})) as Array<{
+		id: string
+		name: string
+		settings: Record<string, unknown>
+		llm_configured?: { anthropic?: boolean; openai?: boolean }
+	}>
 	const workspace = workspaces.find((w) => w.id === workspaceId)
 	if (!workspace) throw new Error('Workspace not found')
 	return workspace
@@ -3350,11 +3360,13 @@ export function createMcpServer(config: McpConfig) {
 			// to a single `unknown` check — surfacing "no LLM keys" as certain
 			// when we actually couldn't check would be a false negative.
 			let sharedWorkspaceSettings: Record<string, unknown> | null = null
+			let sharedWorkspaceLlmConfigured: { anthropic?: boolean; openai?: boolean } | undefined
 			let sharedWorkspaceError: unknown = null
 			if (wsId) {
 				try {
 					const workspace = await getWorkspace(config, wsId)
 					sharedWorkspaceSettings = workspace.settings
+					sharedWorkspaceLlmConfigured = workspace.llm_configured
 				} catch (err) {
 					sharedWorkspaceError = err
 				}
@@ -3428,7 +3440,7 @@ export function createMcpServer(config: McpConfig) {
 								content: (withUrl.content as string | undefined) ?? null,
 								driver: (withUrl.driver as string | undefined) ?? null,
 							},
-							readWorkspaceLlmReadiness(sharedWorkspaceSettings),
+							readWorkspaceLlmReadiness(sharedWorkspaceSettings, sharedWorkspaceLlmConfigured),
 							readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
 						)
 					})
