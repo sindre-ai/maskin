@@ -80,6 +80,8 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 	public var updatedAt: Date?
 	/// Text the client-side filter matches against (chats and agents have no server search).
 	public var searchableText: String
+	/// Actor ids of the people and agents in a chat; empty for everything else. The @ filter reads it.
+	public var participantIds: [String]
 
 	public var id: String { "\(kind.rawValue):\(entityId)" }
 
@@ -99,7 +101,7 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 	public init(
 		kind: SearchKind, entityId: String, title: String, subtitle: String = "",
 		snippet: String = "", detail: String? = nil, updatedAt: Date? = nil,
-		searchableText: String? = nil
+		searchableText: String? = nil, participantIds: [String] = []
 	) {
 		self.kind = kind
 		self.entityId = entityId
@@ -109,6 +111,7 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 		self.detail = detail
 		self.updatedAt = updatedAt
 		self.searchableText = searchableText ?? [title, subtitle, snippet].joined(separator: "\n")
+		self.participantIds = participantIds
 	}
 }
 
@@ -141,8 +144,11 @@ public protocol SearchRemote: Sendable {
 	func agents() async throws -> [SearchResult]
 	/// The workspace's flows (loop objects). No `q` parameter, so the store filters by name.
 	func flows() async throws -> [SearchResult]
+	/// Every person and agent in the workspace, for the @ menu.
+	func people() async throws -> [SearchPerson]
 }
 
 extension SearchRemote {
 	public func flows() async throws -> [SearchResult] { [] }
+	public func people() async throws -> [SearchPerson] { [] }
 }
