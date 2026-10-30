@@ -1,4 +1,5 @@
-import type { ProposedChange } from '@maskin/shared'
+import type { fileProposalChanges } from '@maskin/db/schema'
+import type { FileProposalChangeDto, ProposedChange } from '@maskin/shared'
 
 /** Characters of the file kept on each side of old_text, taken when a proposal is submitted. */
 export const PROPOSAL_CONTEXT_CHARS = 40
@@ -95,4 +96,25 @@ export function validateProposedChanges(
 	}
 
 	return { ok: true, resolved }
+}
+
+/** A change row as the API returns it. Only a pending change can be stale; a decided one is settled. */
+export function toChangeDto(
+	ch: typeof fileProposalChanges.$inferSelect,
+	source: string | null,
+): FileProposalChangeDto {
+	return {
+		id: ch.id,
+		ordinal: ch.ordinal,
+		oldText: ch.oldText,
+		newText: ch.newText,
+		reason: ch.reason,
+		contextBefore: ch.contextBefore,
+		contextAfter: ch.contextAfter,
+		status: ch.status as 'pending' | 'accepted' | 'rejected',
+		decidedBy: ch.decidedBy,
+		decidedAt: ch.decidedAt ? ch.decidedAt.toISOString() : null,
+		appliedText: ch.appliedText,
+		stale: ch.status === 'pending' && source !== null && isChangeStale(source, ch.oldText),
+	}
 }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { files } from '@maskin/db/schema'
 import type { FileAnnotation } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
@@ -79,6 +79,17 @@ export interface SaveFileInput {
 	ifMatch?: string
 	/** New bytes, or null for a metadata-only update. */
 	newBytes: Buffer | null
+	/**
+	 * Builds the new bytes from the bytes read under the lock, for a caller whose
+	 * edit depends on what is stored right now (it replaces newBytes). Runs after
+	 * the if_match check. A throw rolls the save back and nothing is written.
+	 */
+	buildBytes?: (current: Buffer, tx: Transaction) => Promise<Buffer>
+	/**
+	 * Runs in the same transaction after the row is updated and before commit.
+	 * A throw rolls back and the old bytes are put back, like a failed commit.
+	 */
+	inTransaction?: (tx: Transaction, row: FileRow) => Promise<void>
 	name?: string
 	description?: string | null
 	kind?: string | null
@@ -145,7 +156,9 @@ export async function saveFile(
 			// The old bytes are needed to restore after a failed commit, and to hash
 			// a row that predates the content_hash column.
 			const needOldBytes =
-				input.newBytes !== null || (input.ifMatch !== undefined && !locked.contentHash)
+				input.newBytes !== null ||
+				input.buildBytes !== undefined ||
+				(input.ifMatch !== undefined && !locked.contentHash)
 			let oldBytes: Buffer | null = null
 			let storedHash = locked.contentHash || null
 			if (needOldBytes) {
@@ -157,10 +170,12 @@ export async function saveFile(
 				throw new FileVersionConflictError(storedHash as string)
 			}
 
+			const newBytes =
+				input.buildBytes && oldBytes ? await input.buildBytes(oldBytes, tx) : input.newBytes
+
 			let contentHash = storedHash
 			let sizeBytes = locked.sizeBytes
-			if (input.newBytes && oldBytes && storedHash) {
-				const newBytes = input.newBytes
+			if (newBytes && oldBytes && storedHash) {
 				await withStorageTimeout(uploadTimeoutMs, (signal) =>
 					storage.put(locked.storageKey, newBytes, { signal }),
 				)
@@ -185,9 +200,11 @@ export async function saveFile(
 				.returning()
 			if (!row) return null
 
+			await input.inTransaction?.(tx, row)
+
 			return {
 				row,
-				contentChanged: input.newBytes !== null && contentHash !== storedHash,
+				contentChanged: newBytes !== null && contentHash !== storedHash,
 			}
 		})
 	} catch (err) {
