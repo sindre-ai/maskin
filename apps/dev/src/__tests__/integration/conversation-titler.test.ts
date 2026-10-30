@@ -231,13 +231,14 @@ describe('Conversation auto-titler Integration', () => {
 			.update(conversations)
 			.set({ title: 'Developer' })
 			.where(eq(conversations.id, conversationId))
-		await postMessages(1, 'the deploy pipeline keeps failing on migrate')
+		// Short enough to stay intact under any title cap.
+		await postMessages(1, 'deploy keeps failing')
 		chat.mockRejectedValue(new Error('provider is down'))
 
 		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
 
 		expect(await readConversation()).toEqual({
-			title: 'the deploy pipeline keeps failing on migrate 0',
+			title: 'deploy keeps failing 0',
 			titleAutoState: 'initial',
 		})
 	})
