@@ -98,11 +98,11 @@ interface MessageBubbleProps {
 	onReplyInThread?: () => void
 }
 
-// Same raw-button pattern as Copy, but padded to a 32px target on phones and wherever any
-// coarse pointer exists (an iPad with a trackpad reports a fine primary pointer).
 // With attachments, the fitted own bubble stays this wide so 'ok' does not make a tiny thumbnail.
 const MIN_FIT_WIDTH = 160
 
+// Same raw-button pattern as Copy, but padded to a 32px target on phones and wherever any
+// coarse pointer exists (an iPad with a trackpad reports a fine primary pointer).
 const REPLY_BUTTON_CLASS =
 	'rounded p-2.5 text-muted-foreground transition-colors hover:text-foreground md:p-1 any-pointer-coarse:p-2.5'
 
