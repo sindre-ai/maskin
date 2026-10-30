@@ -207,8 +207,11 @@ export interface LinkedCardsOptions {
 }
 
 // Decides where every linked card goes (see `placeLinkedCards`) before the tree is rendered.
-function placeCardsPlugin(skipIds: ReadonlySet<string> | undefined) {
-	return () => (tree: HastNode) => placeLinkedCards(tree, skipIds)
+function placeCardsPlugin(
+	skipIds: ReadonlySet<string> | undefined,
+	workspaceId: string | undefined,
+) {
+	return () => (tree: HastNode) => placeLinkedCards(tree, skipIds, workspaceId)
 }
 
 // A list item holding a card gives up its bullet (a numbered one keeps its number, so the
@@ -393,8 +396,8 @@ function RenderedMarkdownContent({
 			}) as unknown as Components
 	}, [linkedCards])
 	const rehypePlugins = useMemo(
-		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds)] : undefined),
-		[linkedCards, cardsSkipIds],
+		() => (linkedCards ? [placeCardsPlugin(cardsSkipIds, cardsWorkspaceId)] : undefined),
+		[linkedCards, cardsSkipIds, cardsWorkspaceId],
 	)
 
 	return (

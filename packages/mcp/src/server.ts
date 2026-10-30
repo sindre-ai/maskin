@@ -2092,6 +2092,36 @@ export interface HeroCardPayload {
 
 const HERO_CARD_UI_PAGE_SIZE = 25
 
+/**
+ * Max `relationships` and `connected_objects` rows get_objects returns per
+ * object. The graph endpoint returns every edge, so a hub object with hundreds
+ * of edges produced a 600k+ character result no client could read. Callers
+ * page the rest with list_relationships({ object_id }).
+ */
+export const GET_OBJECTS_EDGE_CAP = 100
+
+/**
+ * Cap one graph block at GET_OBJECTS_EDGE_CAP rows. When rows are dropped the
+ * second element tells the caller the real total and where to page the rest;
+ * it is null when everything fit, so small objects keep their exact shape.
+ */
+function capGraphBlock(
+	rows: unknown,
+	block: 'relationships' | 'connected_objects',
+	objectId: string,
+): [unknown, Record<string, unknown> | null] {
+	if (!Array.isArray(rows) || rows.length <= GET_OBJECTS_EDGE_CAP) return [rows, null]
+	return [
+		rows.slice(0, GET_OBJECTS_EDGE_CAP),
+		{
+			returned: GET_OBJECTS_EDGE_CAP,
+			total: rows.length,
+			truncated: true,
+			hint: `Showing the first ${GET_OBJECTS_EDGE_CAP} of ${rows.length}. Call list_relationships with object_id ${objectId} to page the rest${block === 'connected_objects' ? ', then get_objects on the endpoint ids you need' : ''}.`,
+		},
+	]
+}
+
 interface RawObject {
 	id: string
 	type: string
@@ -3320,10 +3350,22 @@ export function createMcpServer(config: McpConfig) {
 					}
 					const extras: Record<string, unknown> = {}
 					if (includeSet.has('relationships') && graph && 'relationships' in graph) {
-						extras.relationships = graph.relationships
+						const [rows, page] = capGraphBlock(
+							graph.relationships,
+							'relationships',
+							withUrl.id as string,
+						)
+						extras.relationships = rows
+						if (page) extras.relationships_page = page
 					}
 					if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
-						extras.connected_objects = graph.connected_objects
+						const [rows, page] = capGraphBlock(
+							graph.connected_objects,
+							'connected_objects',
+							withUrl.id as string,
+						)
+						extras.connected_objects = rows
+						if (page) extras.connected_objects_page = page
 					}
 					if (includeSet.has('events') && graph && 'events' in graph) {
 						extras.events = graph.events
@@ -5915,11 +5957,15 @@ export function createMcpServer(config: McpConfig) {
 				first_message,
 				subject_type,
 				subject_id,
+				topical,
 				wait,
 			} = args
 			if ((subject_type === undefined) !== (subject_id === undefined)) {
 				throw new Error('subject_type and subject_id go together: give both or neither.')
 			}
+			// One other actor and no subject is the direct message with them, unless a
+			// separate topical chat was asked for. The API gets or creates it.
+			const direct = participant_actor_ids.length === 1 && subject_id === undefined && !topical
 			const wsOpts = { workspaceId: workspace_id }
 			const conversation = (await apiCall(
 				config,
@@ -5928,6 +5974,7 @@ export function createMcpServer(config: McpConfig) {
 				{
 					title,
 					participant_actor_ids,
+					...(direct ? { direct: true } : {}),
 					...(subject_type && subject_id
 						? { subject: { type: subject_type, id: subject_id } }
 						: {}),
@@ -9315,6 +9362,30 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_run', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_put_file',
+		{
+			description: tools.desktop_put_file.description,
+			inputSchema: tools.desktop_put_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/put-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_put_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

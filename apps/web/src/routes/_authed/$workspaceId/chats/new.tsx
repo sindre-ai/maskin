@@ -9,6 +9,7 @@ import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
+	type ChatSelectionFile,
 	EMPTY_CHAT_SELECTION,
 	MAX_CHAT_OBJECT_REFERENCES,
 	chatSelectionReducer,
@@ -277,7 +278,7 @@ function NewChatRoute() {
 	)
 
 	const handleSend = useCallback(
-		async (content: string) => {
+		async (content: string, extras?: { files: ChatSelectionFile[] }) => {
 			setError(null)
 			// Fold both entry points for participants into the id set:
 			// (1) recipient chips picked in the To row above, and
@@ -308,8 +309,9 @@ function NewChatRoute() {
 					: selection.notifications
 
 			const metadata: MessageMetadata = {}
-			if (selection.files.length > 0) {
-				metadata.attachments = selection.files.map((f) => ({
+			const files = [...selection.files, ...(extras?.files ?? [])]
+			if (files.length > 0) {
+				metadata.attachments = files.map((f) => ({
 					file_id: f.fileId,
 					name: f.name,
 					mime_type: f.mimeType ?? 'application/octet-stream',
@@ -580,10 +582,11 @@ function NewChatRoute() {
 
 			{/* The composer is pinned below the scroll region, gutter-aligned with
 			    the header and with no divider above it (mockup 645–646). */}
-			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-3.5">
+			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
 				<Composer
 					workspaceId={workspaceId}
 					onSend={handleSend}
+					longTextAsFile
 					disabled={createConversation.isPending}
 					pending={createConversation.isPending}
 					surface="sheet"

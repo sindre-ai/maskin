@@ -98,6 +98,8 @@ export const queryKeys = {
 			['integrations', integrationId, 'slack', 'conversations', [...types].sort()] as const,
 		slackUsers: (integrationId: string) =>
 			['integrations', integrationId, 'slack', 'users'] as const,
+		driveWatches: (workspaceId: string) =>
+			['integrations', workspaceId, 'google-drive', 'watched-folders'] as const,
 		linkedinIdentities: (workspaceId: string) =>
 			['integrations', workspaceId, 'linkedin-unipile', 'identities'] as const,
 	},
@@ -145,6 +147,7 @@ export const queryKeys = {
 			['sessions', workspaceId, 'conversation', conversationId] as const,
 		firstOutput: (workspaceId: string, sessionId: string) =>
 			['sessions', workspaceId, 'first-output', sessionId] as const,
+		stats: (workspaceId: string) => ['sessions', workspaceId, 'stats'] as const,
 		usage: (
 			workspaceId: string,
 			actorId: string,

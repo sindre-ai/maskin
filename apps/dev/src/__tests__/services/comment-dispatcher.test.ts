@@ -92,8 +92,9 @@ describe('CommentDispatcher', () => {
 		// 40 with the initiated_from lookup added to dispatchMention /
 		// dispatchCommentFallback: each mention now has an extra `await`
 		// (`loadInitiatedFromObject`), so multi-mention fanouts were racing
-		// the assertion at the old 20-tick budget.
-		for (let i = 0; i < 40; i++) await Promise.resolve()
+		// the assertion at the old 20-tick budget. Bumped again to 60 for the
+		// person-pause check, one more `await` per mentioned agent.
+		for (let i = 0; i < 60; i++) await Promise.resolve()
 	}
 
 	it('ignores events that are not commented-on-object', async () => {

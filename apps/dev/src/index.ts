@@ -27,10 +27,12 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { runDraftApprovalSkillBackfillOnBoot } from './lib/draft-approval-skill-boot'
 import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-servers'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
+import { recordDbTime } from './lib/request-timing'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
@@ -40,6 +42,7 @@ import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
+import { DriveWatchRenewer } from './services/drive-watch-renewer'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
@@ -73,7 +76,7 @@ const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
-const db = createDb(databaseUrl)
+const db = createDb(databaseUrl, { onQuery: recordDbTime })
 
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
@@ -237,6 +240,10 @@ const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
 logger.info('Meet watch renewer started')
 
+const driveWatchRenewer = new DriveWatchRenewer(db)
+driveWatchRenewer.start()
+logger.info('Drive watch renewer started')
+
 const resendDomainVerifier = new ResendDomainVerifier(db)
 resendDomainVerifier.start()
 logger.info('Resend domain verifier started')
@@ -339,6 +346,11 @@ migrateAgentToolServers(db)
 // One-off: gives every existing agent its default Heartbeat. Does nothing unless
 // RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.
 void runDefaultHeartbeatBackfillOnBoot(db)
+
+// One-off: gives existing workspaces the draft-approval-tasks skill (skips any that already
+// have one). Does nothing unless RUN_DRAFT_APPROVAL_SKILL_BACKFILL is 1 (or dry), runs once per
+// database, and never blocks or fails startup.
+void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
 
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()

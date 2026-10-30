@@ -14,13 +14,16 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TRIGGER_TYPE_ICON, describeTrigger } from '@/components/triggers/trigger-row'
 import { Sheet, SheetClose, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useActors } from '@/hooks/use-actors'
+import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject } from '@/hooks/use-objects'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTrigger } from '@/hooks/use-triggers'
+import { useWorkspaces } from '@/hooks/use-workspaces'
 import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	defaultStatusColor,
@@ -33,9 +36,11 @@ import {
 	type CardFact,
 	type GithubTarget,
 	type SettingsTarget,
+	chatSummary,
 	cutLabel,
 	githubChipName,
 	githubChipText,
+	peopleLine,
 	pickFacts,
 	plainSnippet,
 	settingsChipText,
@@ -52,7 +57,9 @@ import {
 	CircleDot,
 	ExternalLink,
 	GitPullRequest,
+	Globe,
 	Link2,
+	MessageCircle,
 	RefreshCw,
 	Settings as SettingsIcon,
 	Zap,
@@ -1477,6 +1484,344 @@ export function AgentReferenceCard({
 		link
 	) : (
 		<FoldableCard title={name} head={head} state={state}>
+			{link}
+		</FoldableCard>
+	)
+}
+
+/** What a link into another workspace points at, for the placeholder's words and its address. */
+type OtherWorkspaceKind = 'object' | 'loop' | 'trigger' | 'agent' | 'chat'
+
+const OTHER_WORKSPACE_KIND: Record<OtherWorkspaceKind, string> = {
+	object: 'Object',
+	loop: 'Loop',
+	trigger: 'Trigger',
+	agent: 'Agent',
+	chat: 'Chat',
+}
+
+/**
+ * "{Kind} in {workspace name}" when you belong to that workspace (the name is on the workspace
+ * switcher's list), else "{Kind} in another workspace". Nothing is fetched from that workspace.
+ */
+export function useOtherWorkspaceLabel(kind: OtherWorkspaceKind, otherWorkspaceId: string): string {
+	const { data: workspaces } = useWorkspaces()
+	const name = workspaces
+		?.find((w) => w.id.toLowerCase() === otherWorkspaceId.toLowerCase())
+		?.name?.trim()
+	return `${OTHER_WORKSPACE_KIND[kind]} in ${name || 'another workspace'}`
+}
+
+/** The link to the target in the other workspace, without children; the placeholders give it their look. */
+export function OtherWorkspaceLink({
+	kind,
+	otherWorkspaceId,
+	id,
+	label,
+	newTab = false,
+	card = false,
+	className,
+	children,
+}: {
+	kind: OtherWorkspaceKind
+	otherWorkspaceId: string
+	id: string
+	label: string
+	newTab?: boolean
+	/** Drawn as a card on its own line: marked so the three-card cap and the list bullet see it. */
+	card?: boolean
+	className: string
+	children: ReactNode
+}) {
+	const props = {
+		'aria-label': label,
+		className,
+		...(card ? { 'data-linked-card': '' } : {}),
+		...(newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {}),
+	}
+	switch (kind) {
+		case 'loop':
+			return (
+				<Link
+					to="/$workspaceId/loops/$loopId"
+					params={{ workspaceId: otherWorkspaceId, loopId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+		case 'trigger':
+			return (
+				<Link
+					to="/$workspaceId/triggers/$triggerId"
+					params={{ workspaceId: otherWorkspaceId, triggerId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+		case 'agent':
+			return (
+				<Link
+					to="/$workspaceId/agents/$agentId"
+					params={{ workspaceId: otherWorkspaceId, agentId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+		case 'chat':
+			return (
+				<Link
+					to="/$workspaceId/chats/$conversationId"
+					params={{ workspaceId: otherWorkspaceId, conversationId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+		default:
+			return (
+				<Link
+					to="/$workspaceId/objects/$objectId"
+					params={{ workspaceId: otherWorkspaceId, objectId: id }}
+					{...props}
+				>
+					{children}
+				</Link>
+			)
+	}
+}
+
+/**
+ * A link into another workspace, inside a sentence: a globe and "{Kind} in {workspace name}" on a
+ * dashed, italic plate. Nothing is looked up, so there is no preview and no sheet; the whole chip
+ * is one link that opens the target, in the same tab.
+ */
+export function OtherWorkspaceChip({
+	kind,
+	otherWorkspaceId,
+	id,
+}: {
+	kind: OtherWorkspaceKind
+	otherWorkspaceId: string
+	id: string
+}) {
+	const label = useOtherWorkspaceLabel(kind, otherWorkspaceId)
+	return (
+		<OtherWorkspaceLink
+			kind={kind}
+			otherWorkspaceId={otherWorkspaceId}
+			id={id}
+			label={label}
+			className="not-prose rounded-md border border-dashed border-border px-[0.4em] italic text-muted-foreground no-underline box-decoration-clone transition-colors duration-180 ease-standard hover:border-border-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+		>
+			<ChipText
+				lead={<Globe size="0.85em" aria-hidden className="mr-[0.4em] inline-block align-middle" />}
+				text={label}
+			/>
+		</OtherWorkspaceLink>
+	)
+}
+
+/**
+ * A link to a chat inside a sentence: the message icon and the chat's title, on the same plate as
+ * the other chips. Pinned or archived and the people are in the preview. The whole chip is one
+ * link to the chat, in the same tab. While the chat loads the original link stays; a chat that
+ * cannot be shown (deleted, or one you are not in) reads "Chat not available".
+ */
+export function ChatReferenceChip({
+	workspaceId,
+	chatId,
+	fallback,
+}: {
+	workspaceId: string
+	chatId: string
+	fallback: ReactNode
+}) {
+	const chat = useLinkedChat(workspaceId, chatId)
+	const card = (actions: ReactNode) => (
+		<ChatReferenceCard workspaceId={workspaceId} chatId={chatId} preview actions={actions} />
+	)
+	const sheet: ChipSheetContent = {
+		card: <ChatReferenceCard workspaceId={workspaceId} chatId={chatId} sheet />,
+		openLink: (
+			<Link
+				to="/$workspaceId/chats/$conversationId"
+				params={{ workspaceId, conversationId: chatId }}
+			/>
+		),
+		path: `/${workspaceId}/chats/${chatId}`,
+	}
+
+	if (chat === null) return <UnavailableChip kind="chat" />
+	if (chat === undefined) {
+		return (
+			<ChipPreview card={card} sheet={sheet} enabled>
+				{loadingChip(fallback, false)}
+			</ChipPreview>
+		)
+	}
+
+	const title = chat.title.trim() || 'Untitled chat'
+	return (
+		<ChipPreview card={card} sheet={sheet} enabled>
+			<Link
+				to="/$workspaceId/chats/$conversationId"
+				params={{ workspaceId, conversationId: chat.id }}
+				aria-label={`Chat: ${title}`}
+				className={CHIP}
+			>
+				<ChipText
+					lead={
+						<MessageCircle
+							size="0.95em"
+							aria-hidden
+							className={cn('mr-[0.4em] inline-block align-middle', typeIconColor('conversation'))}
+						/>
+					}
+					text={cutLabel(title)}
+				/>
+			</Link>
+		</ChipPreview>
+	)
+}
+
+/**
+ * A link into another workspace that stands alone on its line: the same words on a dashed, italic
+ * card with a globe. It counts toward the three cards of a message like any card, fetches nothing
+ * and has no fold, preview or sheet. The whole card is one link that opens the target.
+ */
+export function OtherWorkspaceCard({
+	kind,
+	otherWorkspaceId,
+	id,
+}: {
+	kind: OtherWorkspaceKind
+	otherWorkspaceId: string
+	id: string
+}) {
+	const label = useOtherWorkspaceLabel(kind, otherWorkspaceId)
+	return (
+		<OtherWorkspaceLink
+			kind={kind}
+			otherWorkspaceId={otherWorkspaceId}
+			id={id}
+			label={label}
+			card
+			className={cn(
+				CARD_SHELL,
+				'flex-row items-center gap-2 border-dashed border-border bg-surface-sunken p-3 text-[12.5px] italic text-muted-foreground no-underline transition-colors duration-180 ease-standard hover:border-border-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+			)}
+		>
+			<Globe size={14} aria-hidden className="shrink-0" />
+			{label}
+		</OtherWorkspaceLink>
+	)
+}
+
+/**
+ * A link to a chat that stands alone on its line, drawn as a card where it stands: its title, the
+ * last message and who wrote it, who is in it, and when it last moved. A chat read by id has no
+ * last message, so the line and the author are left out. Unread counts are never shown. The whole
+ * card is one link to the chat.
+ */
+export function ChatReferenceCard({
+	workspaceId,
+	chatId,
+	preview = false,
+	sheet = false,
+	actions,
+}: {
+	workspaceId: string
+	chatId: string
+	/** Drawn as the hover preview of a chip: same card, not a link, not counted as a card. */
+	preview?: boolean
+	/** Drawn as the face of the phone sheet of a chip: same card, not a link, not counted as a card. */
+	sheet?: boolean
+	/** The preview's Copy link and Open, at the right end of the footer. */
+	actions?: ReactNode
+}) {
+	const chat = useLinkedChat(workspaceId, chatId)
+	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const marker = preview || sheet ? undefined : ''
+
+	if (chat === undefined) return <LinkedCardSkeleton shell={shell} marker={marker} />
+	if (chat === null) {
+		return <UnavailableCard shell={shell} marker={marker} kind="chat" />
+	}
+
+	const title = chat.title.trim() || 'Untitled chat'
+	// You are named "You" in the summary, as the chat list does, and last in the People row.
+	const selfId = getStoredActor()?.id
+	const author = chat.lastMessage?.authorId
+		? chat.lastMessage.authorId === selfId
+			? 'You'
+			: chat.lastMessage.authorName
+		: null
+	const summary = chatSummary(author, chat.lastMessage?.text)
+	const others = chat.participants.filter((p) => p.actorId !== selfId)
+	const me = chat.participants.filter((p) => p.actorId === selfId)
+	const people = peopleLine([...others, ...me].map((p) => p.actorName))
+	const facts: CardFact[] = people ? [{ label: 'People', value: people }] : []
+	const lastAuthor = chat.participants.find((p) => p.actorId === chat.lastMessage?.authorId)
+	const badge = chat.archived ? 'Archived' : chat.pinned ? 'Pinned' : null
+	const head = (
+		<span className={KIND_TAG}>
+			<MessageCircle size={11} aria-hidden />
+			Chat
+		</span>
+	)
+	const state = badge ? (
+		<span className="text-[11px] font-semibold text-muted-foreground">{badge}</span>
+	) : null
+	const link = (
+		<CardFace
+			shell={shell}
+			preview={preview}
+			sheet={sheet}
+			link={
+				<Link
+					to="/$workspaceId/chats/$conversationId"
+					params={{ workspaceId, conversationId: chat.id }}
+				/>
+			}
+		>
+			<LinkedCardFace
+				icon={<MessageCircle size={14} aria-hidden />}
+				tile={typeTileClass('conversation')}
+				eyebrow="Chat"
+				state={state}
+				trailing={preview || sheet ? null : <OpenArrow />}
+				title={title}
+				summary={summary ?? undefined}
+				facts={facts}
+				actions={actions}
+				footer={
+					<>
+						{lastAuthor ? (
+							<AgentLabel
+								agent={{
+									id: lastAuthor.actorId,
+									name: lastAuthor.actorName,
+									type: lastAuthor.actorType,
+								}}
+							/>
+						) : null}
+						{chat.updatedAt ? (
+							<span>
+								Updated <RelativeTime date={chat.updatedAt} />
+							</span>
+						) : null}
+					</>
+				}
+			/>
+		</CardFace>
+	)
+	return preview || sheet ? (
+		link
+	) : (
+		<FoldableCard title={title} head={head} state={state}>
 			{link}
 		</FoldableCard>
 	)

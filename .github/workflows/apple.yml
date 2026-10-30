@@ -12,6 +12,9 @@ name: Apple
 # change instead. OpenAPI snapshot drift from backend changes is caught by the
 # apple-openapi-snapshot job in ci.yml, so it fails the PR that moved the spec.
 #
+# Pull requests into feat/** run too: stacked slices are based on a task branch, not
+# main, and without this they were never compiled until the whole stack reached main.
+#
 # What each step guards against, cheapest first so a drift failure costs seconds,
 # not a 20-minute Xcode build:
 #   1. Token drift      — Tokens.swift is generated from the design-system CSS
@@ -35,6 +38,11 @@ name: Apple
 # and xcodegen: Tokens.swift and Sources/MaskinAPI/Generated are checked in and
 # verified by `apple`, so the build jobs skip node, pnpm and the OpenAPI steps.
 #
+# Job limits (60 for `apple`, 50 for `apple-build`) are a hang guard, not a budget.
+# After the split, healthy runs took 14-16 min for `apple` and up to 27 min for the
+# slowest platform (iOS), with slow-runner days of 40+ min for `apple` on record. Keep
+# the limit well above the slowest healthy job so a slow runner is not a false red.
+#
 # Toolchain: the project needs Xcode 26 / Swift 6.x. The jobs run on macos-26 and
 # select the newest installed Xcode 26.x explicitly; they fail loudly if none is
 # installed rather than silently building with an older SDK. Builds use generic
@@ -47,19 +55,21 @@ on:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
   pull_request:
-    branches: [main]
+    branches: [main, 'feat/**']
     paths:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
 
+# Superseded runs are cancelled on pull requests only. On main, back-to-back merges
+# used to cancel each other (runs 540-545 and 547), leaving main with no finished run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   apple:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
@@ -134,12 +144,41 @@ jobs:
         # the timing-sensitive store/outbox tests when everything runs at once (they pass alone and
         # in serial: 657 tests, 0 failures, ~23 s). Serial is deterministic and still fast.
         run: swift test --no-parallel
+        env:
+          # The chat card tests write a PNG of every card state here (open, folded, loading,
+          # deleted, in a message, in your own message; light and dark, normal and largest text);
+          # the step below uploads them for the design check.
+          CHATS_SNAPSHOT_DIR: ${{ runner.temp }}/chats-snapshots
+          # The For you view tests write a PNG of every new view here (normal and largest text size,
+          # light and dark); the step below uploads them for the design check.
+          FORYOU_SNAPSHOT_DIR: ${{ runner.temp }}/foryou-snapshots
+
+      # always(): a failing test should not hide the images that did render.
+      - name: Upload chat card snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chats-snapshots
+          path: ${{ runner.temp }}/chats-snapshots
+          if-no-files-found: warn
+          overwrite: true  # a re-run of the job replaces the images of the first try
+          retention-days: 14
+
+      - name: Upload For you snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foryou-snapshots
+          path: ${{ runner.temp }}/foryou-snapshots
+          if-no-files-found: warn
+          overwrite: true  # a re-run of the job replaces the images of the first try
+          retention-days: 14
 
   # --- 4. Platform builds, one runner per platform ---
   apple-build:
     name: apple-build (${{ matrix.platform }})
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       # Let the other platforms finish: one failing platform should not hide a second one.
       fail-fast: false

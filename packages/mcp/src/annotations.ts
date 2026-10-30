@@ -204,6 +204,7 @@ const ROWS: Record<string, Row> = {
 	desktop_type: row('Desktop type'),
 	desktop_key: row('Desktop key'),
 	desktop_run: row('Desktop run command', { destructive: true }),
+	desktop_put_file: row('Desktop put file'),
 	desktop_expose_port: row('Desktop expose port'),
 	desktop_list_ports: row('Desktop list ports'),
 	desktop_close_port: row('Desktop close port'),

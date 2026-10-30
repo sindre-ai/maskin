@@ -213,8 +213,13 @@ struct ChatThreadView: View {
 				}
 				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
 				.navigationDestination(item: $threadRoute) { route in
-					if let root = store.allMessages.first(where: { $0.serverID == route.rootID }) {
+					if let root = store.threadRoot(route.rootID) {
 						ThreadScreen(store: store, root: root)
+					} else {
+						// The root is older than the page held: fetch it rather than push an empty screen.
+						ProgressView()
+							.frame(maxWidth: .infinity, maxHeight: .infinity)
+							.task { _ = await store.loadedThreadRoot(route.rootID) }
 					}
 				}
 				.linkedItems(runtime)
@@ -357,9 +362,7 @@ struct ChatThreadView: View {
 		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
 			return
 		}
-		func held() -> Bool { store.allMessages.contains { $0.serverID == request.rootId } }
-		if !held() { await store.loadThread(request.rootId) }
-		if held() { threadRoute = ThreadRoute(rootID: request.rootId) }
+		if await store.loadedThreadRoot(request.rootId) != nil { threadRoute = ThreadRoute(rootID: request.rootId) }
 		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
 	}
 
@@ -1004,9 +1007,12 @@ struct ThreadTranscript: View {
 			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
 			inlineTranscript: false)
 		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
+		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
 		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
 		ForEach(items) { item in
-			row(item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs)
+			row(
+				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
+				cardOwners: cardOwners)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
@@ -1109,7 +1115,7 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
-		statusIDs: Set<String>
+		statusIDs: Set<String>, cardOwners: [String: String]
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
@@ -1167,7 +1173,8 @@ struct ThreadTranscript: View {
 				onSelectVersion: { store.selectVersion($0, of: message.id) },
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
-				}
+				},
+				cardOwners: cardOwners
 			)
 			.overlay {
 				if matchIDs.contains(message.id) {

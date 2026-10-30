@@ -38,6 +38,7 @@ struct MaskinApp: App {
 	}
 
 	init() {
+		Perf.event("app.init")
 		#if os(macOS)
 			let source = "macos"
 			let platform = DevicePlatform.macos

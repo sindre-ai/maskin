@@ -27,7 +27,7 @@ import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useMarkConversationRead } from '@/hooks/use-mark-conversation-read'
-import { useIsDesktopViewport } from '@/hooks/use-mobile'
+import { useIsWideDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import type { MessageMetadata } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -111,11 +111,11 @@ function ConversationThreadPage() {
 	}, [navigate, openThreadRootId])
 	const closeRepliesRef = useRef(closeReplies)
 	closeRepliesRef.current = closeReplies
-	// Desktop (≥1024) gets the persistent right-rail column when open;
-	// everything smaller (mobile + tablet portrait/landscape at 641-1023) opens
-	// the pane as a bottom Sheet — the "no persistent third column" rail from
-	// the acceptance criteria.
-	const isDesktop = useIsDesktopViewport()
+	// Wide desktop (≥1280) gets the persistent right-rail column when open;
+	// everything smaller (mobile, tablet and 1024-1279 laptops, where a rail
+	// would squeeze the chat to ~142px) opens the pane as a bottom Sheet — the
+	// "no persistent third column" rail from the acceptance criteria.
+	const isDesktop = useIsWideDesktopViewport()
 	// Right-rail Overview (Threads + Produced tabs): local state, not a search
 	// param — a transient view over data already on the page. `?produced` still
 	// deep-links in, opening it on the Produced tab.
@@ -359,7 +359,7 @@ function ConversationThreadPage() {
 				    half. The gutter matches the header's and the transcript's so the
 				    three stack on one vertical edge. */}
 						<LiveCallComposerSlot />
-						<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
+						<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
 							<ThreadComposer
 								workspaceId={workspaceId}
 								conversationId={conversationId}
@@ -367,7 +367,7 @@ function ConversationThreadPage() {
 							/>
 						</div>
 					</div>
-					{/* Desktop (≥1024): persistent right-rail column at 320px, sliding
+					{/* Wide desktop (≥1280): persistent right-rail column at 440px, sliding
 			    in on --duration-slide + ease-emphasized. Reduced motion drops the
 			    animation via `motion-reduce:animate-none` — the underlying
 			    Tailwind utility zeros the duration to the base ~0ms, matching
@@ -375,7 +375,7 @@ function ConversationThreadPage() {
 					{rail && isDesktop ? (
 						<aside
 							aria-label={rail.label}
-							className="duration-slide ease-emphasized w-[400px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none xl:w-[440px]"
+							className="duration-slide ease-emphasized w-[440px] shrink-0 border-l border-border motion-safe:animate-in motion-safe:slide-in-from-right motion-reduce:animate-none"
 						>
 							{rail.node}
 						</aside>

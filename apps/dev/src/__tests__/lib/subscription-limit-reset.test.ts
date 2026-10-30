@@ -1,9 +1,11 @@
+import type { SessionResultFailureReason } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 
 import {
 	parseCliResetBanner,
 	parseRateLimitEventReset,
 	parseSubscriptionLimitReset,
+	pickRetryAt,
 } from '../../lib/subscription-limit-reset'
 
 const FIXED_NOW = new Date('2026-09-29T20:00:00Z').getTime()
@@ -284,5 +286,49 @@ describe('weekly-limit banner as the CLI prints it', () => {
 		const tail =
 			'{"type":"result","result":"You\'ve hit your weekly limit · resets Oct 31, 2pm (Europe/Copenhagen)"}'
 		expect(parseCliResetBanner(tail, weeklyNow)?.toISOString()).toBe('2026-10-31T13:00:00.000Z')
+	})
+})
+
+describe('pickRetryAt', () => {
+	const at = new Date('2026-10-28T06:00:00Z')
+	const reason = (over: Partial<SessionResultFailureReason>): SessionResultFailureReason => ({
+		provider: 'anthropic',
+		reason_code: 'session_limit',
+		human_message: 'Claude session limit reached',
+		http_status: null,
+		reset_at: null,
+		verbatim_output: null,
+		...over,
+	})
+	const backoff = '2026-10-28T06:30:00.000Z'
+
+	it('uses the parsed reset time when there is one, even for a weekly limit', () => {
+		const withReset = reason({ reason_code: 'weekly_limit', reset_at: '2026-10-31T13:00:00.000Z' })
+		expect(pickRetryAt(withReset, at)?.toISOString()).toBe('2026-10-31T13:00:00.000Z')
+	})
+
+	it('falls back to a 30 minute back-off for short-window limits with no reset time', () => {
+		for (const code of [
+			'session_limit',
+			'server_rate_limit',
+			'request_rejected_429',
+			'max_plan_rate_limit',
+			'rate_limit_error',
+		]) {
+			expect(pickRetryAt(reason({ reason_code: code }), at)?.toISOString()).toBe(backoff)
+		}
+	})
+
+	it('does not blind-retry weekly or Opus limits with no reset time', () => {
+		expect(pickRetryAt(reason({ reason_code: 'weekly_limit' }), at)).toBeNull()
+		expect(pickRetryAt(reason({ reason_code: 'opus_limit' }), at)).toBeNull()
+	})
+
+	it('does not retry what waiting will not fix', () => {
+		expect(pickRetryAt(reason({ reason_code: 'not_logged_in' }), at)).toBeNull()
+		expect(pickRetryAt(reason({ reason_code: 'oauth_revoked' }), at)).toBeNull()
+		const openrouter = reason({ provider: 'openrouter', reason_code: 'insufficient_credits' })
+		expect(pickRetryAt(openrouter, at)).toBeNull()
+		expect(pickRetryAt(null, at)).toBeNull()
 	})
 })

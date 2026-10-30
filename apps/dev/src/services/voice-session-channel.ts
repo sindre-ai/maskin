@@ -336,6 +336,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		detail: { resultText: string | null; reason?: string; send?: ReceiptSendInfo },
 	) {
 		const readOnly = deps.isReadOnlyTool(toolName)
+		if (toolName === 'list_for_you' && outcome === 'ran') callState.forYouRead = true
 		// Reads leave no line, except an opened task; a failed read always does.
 		if (readOnly && outcome !== 'failed' && (toolName !== 'get_objects' || outcome !== 'ran'))
 			return

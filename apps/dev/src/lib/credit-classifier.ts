@@ -274,7 +274,10 @@ export function classifySessionExit(
 				: null
 		}
 	}
-	return classifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 })
+	return (
+		(exitCode !== 0 ? classifyClaudeAuthFailure(tail) : null) ??
+		classifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 })
+	)
 }
 
 /**
@@ -299,4 +302,56 @@ export function isClaudeAuthDeathText(text: string): boolean {
 export function endsInClaudeAuthDeath(tail: string): boolean {
 	const result = findFinalResult(tail)
 	return result?.isError === true && isClaudeAuthDeathText(result.text)
+}
+
+const CLI_AUTH_FAILURES: ReadonlyArray<{
+	prefix: string
+	reasonCode: FailureReasonCode
+	humanMessage: string
+}> = [
+	{
+		prefix: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+		reasonCode: 'oauth_expired',
+		humanMessage:
+			'Claude login expired and could not be refreshed — reconnect your Claude subscription',
+	},
+	{
+		prefix: 'Invalid API key',
+		reasonCode: 'invalid_api_key',
+		humanMessage: 'Claude API key was rejected — reconnect your Claude subscription or API key',
+	},
+]
+
+/**
+ * Names the two final errors the CLI ends on when its credential is dead.
+ * Only the final error result is read, so the same words in a tool's output do
+ * not count. These codes are left out of the failover list in session-manager.ts
+ * and carry no reset time, so the failure is stored with a reason but never
+ * moves a slot and never schedules a retry.
+ */
+export function classifyClaudeAuthFailure(tail: string): SessionResultFailureReason | null {
+	const result = findFinalResult(tail)
+	if (result?.isError !== true) return null
+	return classifyClaudeAuthFailureText(result.text)
+}
+
+/**
+ * Same rule on a final error text that is already isolated, which is what the
+ * helper close-out has (it never sees a stdout tail). The caller must only pass
+ * the text of an error result.
+ */
+export function classifyClaudeAuthFailureText(
+	errorText: string,
+): SessionResultFailureReason | null {
+	const text = errorText.trimStart()
+	const failure = CLI_AUTH_FAILURES.find((f) => text.startsWith(f.prefix))
+	if (!failure) return null
+	return {
+		provider: 'anthropic',
+		reason_code: failure.reasonCode,
+		human_message: failure.humanMessage,
+		http_status: 401,
+		reset_at: null,
+		verbatim_output: text.slice(0, 300),
+	}
 }

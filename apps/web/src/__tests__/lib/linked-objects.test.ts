@@ -1,11 +1,14 @@
 import {
 	CHIP_MAX_LENGTH,
+	chatSummary,
 	cutLabel,
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
 	githubChipName,
 	githubChipText,
 	githubTargetOf,
+	isOtherWorkspace,
+	peopleLine,
 	pickFacts,
 	plainSnippet,
 	settingsChipText,
@@ -120,12 +123,32 @@ describe('targetOfHref', () => {
 	it('returns the workspace the address names, for this workspace and for another', () => {
 		const here = 'e2877e32-2c11-489e-96c8-a76200908ed4'
 		const other = '11111111-2222-4333-8444-555555555555'
-		for (const kind of ['objects', 'files', 'loops', 'triggers', 'agents']) {
+		for (const kind of ['objects', 'files', 'loops', 'triggers', 'agents', 'chats']) {
 			const inHere = targetOfHref(`https://maskin.io/${here}/${kind}/${id}`)
 			const inOther = targetOfHref(`https://maskin.io/${other.toUpperCase()}/${kind}/${id}#x`)
 			expect(inHere?.workspaceId).toBe(here)
 			expect(inOther?.workspaceId).toBe(other)
 		}
+	})
+
+	it('reads a chat address, and the workspace it names', () => {
+		const other = '11111111-2222-4333-8444-555555555555'
+		expect(targetOfHref(`https://maskin.io/ws/chats/${id.toUpperCase()}`)).toEqual({
+			kind: 'chat',
+			id,
+			workspaceId: 'ws',
+		})
+		expect(targetOfHref(`/${other}/chats/${id}?thread=7#top`)).toEqual({
+			kind: 'chat',
+			id,
+			workspaceId: other,
+		})
+	})
+
+	it('leaves the chat list, a new chat and a chat id that is not an id as plain links', () => {
+		expect(targetOfHref('/ws/chats')).toBeNull()
+		expect(targetOfHref('/ws/chats/new')).toBeNull()
+		expect(targetOfHref(`/ws/chats/${id}x`)).toBeNull()
 	})
 
 	it('returns no workspace for an address that names none', () => {
@@ -207,14 +230,18 @@ describe('splitOwnLinks', () => {
 		])
 	})
 
-	it('leaves an agent address of another workspace as words', () => {
+	it('marks an agent address of another workspace with that workspace', () => {
 		const other = `https://maskin.io/${A}/agents/${B}`
-		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'agent', id: B, otherWorkspaceId: A }])
 	})
 
-	it('leaves a loop address of another workspace as words', () => {
-		const other = `https://maskin.io/${A}/loops/${B}`
-		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+	it('marks an object, loop, trigger or chat address of another workspace with that workspace', () => {
+		for (const kind of ['objects', 'loops', 'triggers', 'chats']) {
+			const other = `https://maskin.io/${A.toUpperCase()}/${kind}/${B}`
+			expect(splitOwnLinks(other, WS)).toEqual([
+				{ kind: kind.slice(0, -1), id: B, otherWorkspaceId: A },
+			])
+		}
 	})
 
 	it('finds a settings address in your own message, alone or in a sentence', () => {
@@ -248,11 +275,28 @@ describe('splitOwnLinks', () => {
 		}
 	})
 
-	it('leaves links to another workspace, another site or a non-object page as words', () => {
-		const other = `https://maskin.io/${A}/objects/${B}`
+	it('finds a bare address of a chat', () => {
+		expect(splitOwnLinks(`see ${url('chats', A)}.`, WS)).toEqual([
+			{ kind: 'text', text: 'see ' },
+			{ kind: 'chat', id: A },
+			{ kind: 'text', text: '.' },
+		])
+	})
+
+	it('leaves a file of another workspace, another site or a non-object page as words', () => {
+		const otherFile = `https://maskin.io/${A}/files/${B}`
+		const notAWorkspace = `https://maskin.io/settings/objects/${B}`
 		const elsewhere = `https://example.com/${WS}/objects/${A}`
-		const page = url('chats', A)
-		for (const text of [other, elsewhere, page, 'no links here']) {
+		const elsewhereOther = `https://example.com/${A}/objects/${B}`
+		const page = url('sessions', A)
+		for (const text of [
+			otherFile,
+			notAWorkspace,
+			elsewhere,
+			elsewhereOther,
+			page,
+			'no links here',
+		]) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
 	})
@@ -422,6 +466,30 @@ describe('settingsTargetOf', () => {
 	})
 })
 
+describe('isOtherWorkspace', () => {
+	const other = '11111111-2222-4333-8444-555555555555'
+
+	it('is true for an object, loop, trigger, agent or chat whose address names a different workspace', () => {
+		for (const kind of ['object', 'loop', 'trigger', 'agent', 'chat'] as const) {
+			expect(isOtherWorkspace({ kind, id: A, workspaceId: other }, WS)).toBe(true)
+		}
+	})
+
+	it('is false for this workspace in any letter case, and for an address that names none', () => {
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: WS.toUpperCase() }, WS)).toBe(
+			false,
+		)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: null }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A }, WS)).toBe(false)
+	})
+
+	it('is false for a file, for a segment that is not a workspace id and without a current workspace', () => {
+		expect(isOtherWorkspace({ kind: 'file', id: A, workspaceId: other }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: 'settings' }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: other })).toBe(false)
+	})
+})
+
 describe('plainSnippet', () => {
 	it('turns markdown into plain words on one line', () => {
 		expect(
@@ -581,5 +649,45 @@ describe('unavailableCopy', () => {
 			card: 'This bet was deleted',
 			chip: 'Deleted bet',
 		})
+	})
+})
+
+describe('unavailableCopy for a chat', () => {
+	it('reads Chat not available on the card and the chip, never deleted', () => {
+		expect(unavailableCopy('chat')).toEqual({
+			card: 'Chat not available',
+			chip: 'Chat not available',
+		})
+	})
+})
+
+describe('peopleLine', () => {
+	it('lists up to three names', () => {
+		expect(peopleLine(['Ada'])).toBe('Ada')
+		expect(peopleLine(['Ada', 'Forge', 'Lin'])).toBe('Ada, Forge, Lin')
+	})
+
+	it('counts the rest after three names', () => {
+		expect(peopleLine(['Ada', 'Forge', 'Lin', 'Max', 'Sol'])).toBe('Ada, Forge, Lin +2')
+	})
+
+	it('is null when nobody is in the chat', () => {
+		expect(peopleLine([])).toBeNull()
+	})
+})
+
+describe('chatSummary', () => {
+	it('leads the last message with its author', () => {
+		expect(chatSummary('Forge', 'Shipped the **fix**')).toBe('Forge: Shipped the fix')
+	})
+
+	it('shows the words alone when the author is not known', () => {
+		expect(chatSummary(null, 'Shipped')).toBe('Shipped')
+	})
+
+	it('is null for a chat with no message, even with an author', () => {
+		expect(chatSummary('Forge', '')).toBeNull()
+		expect(chatSummary('Forge', null)).toBeNull()
+		expect(chatSummary('Forge', undefined)).toBeNull()
 	})
 })

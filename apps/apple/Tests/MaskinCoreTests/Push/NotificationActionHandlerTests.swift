@@ -23,6 +23,7 @@ private struct FakeBackend: DecisionBackend {
 	var readError: (any Error)?
 	var hang = false
 	var delay: Duration = .zero
+	var hangRead = false
 
 	func postComment(entityId: String, content: String, parentEventId: Int?) async throws {
 		if hang { try await Task.sleep(for: .seconds(30)) }
@@ -32,6 +33,7 @@ private struct FakeBackend: DecisionBackend {
 			.init(entityId: entityId, content: content, parent: parentEventId, key: IdempotencyKey.current))
 	}
 	func markRead(entityId: String, lastEventId: Int) async throws {
+		if hangRead { try await Task.sleep(for: .seconds(3600)) }
 		if delay > .zero { try await Task.sleep(for: delay) }
 		if let readError { throw readError }
 		await calls.read(entityId, lastEventId, IdempotencyKey.current)
@@ -61,10 +63,27 @@ private func signedIn() -> InMemorySecretStore {
 
 private func handler(
 	_ backend: FakeBackend, queue: FakeQueue = FakeQueue(), secrets: InMemorySecretStore = signedIn(),
-	timeout: Duration = .seconds(5)
+	timeout: Duration = .seconds(5),
+	waitForDeadline: (@Sendable (ContinuousClock.Instant) async throws -> Void)? = nil
 ) -> NotificationActionHandler {
-	NotificationActionHandler(
+	if let waitForDeadline {
+		return NotificationActionHandler(
+			secrets: secrets, backend: { _, _ in backend }, queue: queue, attemptTimeout: timeout,
+			waitForDeadline: waitForDeadline)
+	}
+	return NotificationActionHandler(
 		secrets: secrets, backend: { _, _ in backend }, queue: queue, attemptTimeout: timeout)
+}
+
+/// A shared budget that lasts through the first write and is spent by the second: the first wait
+/// for the deadline never ends (the write finishes first and cancels it), the second ends at once.
+private final class SpentAfterOneWrite: @unchecked Sendable {
+	private let lock = NSLock()
+	private var waits = 0
+	func wait(_ deadline: ContinuousClock.Instant) async throws {
+		let nth = lock.withLock { () -> Int in waits += 1; return waits }
+		if nth == 1 { try await Task.sleep(for: .seconds(3600)) }
+	}
 }
 
 @Suite("NotificationActionHandler")
@@ -131,11 +150,13 @@ struct NotificationActionHandlerTests {
 	}
 
 	@Test func bothWritesShareOneDeadline() async {
-		// Each write alone fits in the 400 ms budget; together they do not.
+		// The comment fits in the budget; the mark-read that follows finds it spent.
 		let queue = FakeQueue()
 		let calls = Calls()
+		let budget = SpentAfterOneWrite()
 		let outcome = await handler(
-			FakeBackend(calls: calls, delay: .milliseconds(250)), queue: queue, timeout: .milliseconds(400)
+			FakeBackend(calls: calls, hangRead: true), queue: queue,
+			waitForDeadline: { try await budget.wait($0) }
 		).perform(.option(label: "Ship it"), userText: nil, payload: payload)
 		#expect(outcome == .answered("Ship it"))
 		#expect(await calls.comments.count == 1)

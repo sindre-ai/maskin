@@ -1,7 +1,7 @@
 import type { Database, Transaction } from '@maskin/db'
 import { conversationParticipants, conversations } from '@maskin/db/schema'
 import type { MessageDelivery, MessageMetadata } from '@maskin/shared'
-import { sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import {
 	type InsertedConversationMessage,
@@ -9,9 +9,10 @@ import {
 } from './conversation-messages'
 
 /**
- * The 1-1 chat primitive shared by the agent-intro bet and the capability-scan
- * bet. A 1-1 is derived, never stored: exactly two active participants, one
- * human and one agent (the responder's isDirect rule). No direct column.
+ * The direct message (DM) primitive shared by the agent-intro bet and the
+ * capability-scan bet. A DM is stored: conversations.direct_pair_key marks the
+ * one chat per pair of actors in a workspace. A topical chat with the same two
+ * people has no key, so it is never mistaken for the DM, however recently used.
  *
  * findDirectChat and postToDirectChat are first built by the capability-scan
  * bet (bet/3dae-capability-scan). They are copied here with the same names and
@@ -21,14 +22,23 @@ import {
 
 export interface FindDirectChatArgs {
 	workspaceId: string
+	/** The two ids are interchangeable: the key does not depend on their order. */
 	humanId: string
 	agentId: string
 }
 
 /**
- * The active 1-1 between one human and one agent: both are active participants
- * and nobody else is. Find only, never creates. When the person has more than
- * one such chat the most recently used wins.
+ * The key stored on a DM: both actor ids, lowest first. Lowercased so a
+ * differently cased id still lands on the same key (the migration backfill
+ * builds the same string from uuid columns).
+ */
+export function directPairKey(a: string, b: string): string {
+	return [a.toLowerCase(), b.toLowerCase()].sort().join(':')
+}
+
+/**
+ * The DM between two actors, while both are in it and nobody else is. Find only,
+ * never creates, and never returns a topical chat.
  */
 export async function findDirectChat(
 	db: Database | Transaction,
@@ -42,11 +52,11 @@ export async function findDirectChat(
 		JOIN conversation_participants a
 			ON a.conversation_id = c.id AND a.actor_id = ${args.agentId} AND a.left_at IS NULL
 		WHERE c.workspace_id = ${args.workspaceId}
+			AND c.direct_pair_key = ${directPairKey(args.humanId, args.agentId)}
 			AND (
 				SELECT count(*) FROM conversation_participants p
 				WHERE p.conversation_id = c.id AND p.left_at IS NULL
 			) = 2
-		ORDER BY c.last_message_at DESC, c.id
 		LIMIT 1
 	`)) as unknown as Array<{ id: string }>
 	return rows[0] ? { id: rows[0].id } : null
@@ -92,13 +102,16 @@ export interface FindOrCreateDirectChatArgs extends FindDirectChatArgs {
 }
 
 /**
- * The 1-1 between a human and an agent, created when it does not exist yet.
+ * The DM between two actors, created when it does not exist yet.
  *
- * Nothing in the schema is unique on the pair, so two concurrent callers would
- * otherwise each create one. A transaction-scoped advisory lock keyed on the
- * workspace, human and agent serializes them: the second caller waits, then
- * finds the first caller's chat. The find half is findDirectChat, so there is
- * one definition of "a 1-1" and no second participant query here.
+ * The unique index on the pair key is the hard guarantee of one DM per pair. A
+ * transaction-scoped advisory lock keyed on the same key makes two concurrent
+ * callers queue instead of one of them failing on the index: the second waits,
+ * then finds the first caller's chat.
+ *
+ * An existing DM is returned as it is, whatever its title, and anyone who left
+ * it comes back: there is only one DM per pair, so it cannot be replaced by a
+ * new chat. Topical chats with the same people are ignored.
  *
  * Given a Transaction this joins it (a savepoint), so the lock is held until
  * the caller's own transaction ends. A caller that posts into the chat in the
@@ -108,15 +121,37 @@ export async function findOrCreateDirectChat(
 	db: Database | Transaction,
 	args: FindOrCreateDirectChatArgs,
 ): Promise<{ id: string; created: boolean }> {
+	const pairKey = directPairKey(args.humanId, args.agentId)
 	// A Transaction has the same transaction() (a savepoint), but calling it on the
 	// Database | Transaction union does not type-check, so narrow it here.
 	return (db as Database).transaction(async (tx) => {
 		await tx.execute(
-			sql`SELECT pg_advisory_xact_lock(hashtext(${args.workspaceId}::text || ${args.humanId}::text || ${args.agentId}::text))`,
+			sql`SELECT pg_advisory_xact_lock(hashtext(${args.workspaceId}::text || ${pairKey}))`,
 		)
 
-		const existing = await findDirectChat(tx, args)
-		if (existing) return { id: existing.id, created: false }
+		const [existing] = await tx
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(
+				and(
+					eq(conversations.workspaceId, args.workspaceId),
+					eq(conversations.directPairKey, pairKey),
+				),
+			)
+			.limit(1)
+		if (existing) {
+			await tx
+				.update(conversationParticipants)
+				.set({ leftAt: null, updatedAt: new Date() })
+				.where(
+					and(
+						eq(conversationParticipants.conversationId, existing.id),
+						inArray(conversationParticipants.actorId, [args.humanId, args.agentId]),
+						isNotNull(conversationParticipants.leftAt),
+					),
+				)
+			return { id: existing.id, created: false }
+		}
 
 		const [conversation] = await tx
 			.insert(conversations)
@@ -125,6 +160,7 @@ export async function findOrCreateDirectChat(
 				title: args.title,
 				titleAutoState: 'none',
 				createdBy: args.createdBy,
+				directPairKey: pairKey,
 			})
 			.returning({ id: conversations.id })
 		if (!conversation) throw new Error('Failed to create conversation')

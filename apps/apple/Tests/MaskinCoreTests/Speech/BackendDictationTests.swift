@@ -138,6 +138,8 @@ struct PhraseTranscriptionQueueTests {
 		return (queue, sink, transcriber)
 	}
 
+	// These tests are about what is delivered, not about giving up, so the give-up timeout is far
+	// away: at 5 s a main actor held up by other suites let `drain` cancel phrases still in flight.
 	@Test func deliversInSpeakingOrderEvenWhenARequestFinishesLate() async {
 		let (queue, sink, _) = makeQueue([
 			.init(text: "first", delay: .milliseconds(150)),
@@ -145,7 +147,7 @@ struct PhraseTranscriptionQueueTests {
 		])
 		queue.submit(wav: Data([1]))
 		queue.submit(wav: Data([2]))
-		await queue.drain(timeout: .seconds(5))
+		await queue.drain(timeout: .seconds(300))
 		#expect(sink.texts == ["first", "first second"])
 		#expect(queue.text == "first second")
 	}
@@ -153,7 +155,7 @@ struct PhraseTranscriptionQueueTests {
 	@Test func sendsTheLanguageHint() async {
 		let (queue, _, transcriber) = makeQueue([.init(text: "hej")], language: "da")
 		queue.submit(wav: Data([1]))
-		await queue.drain(timeout: .seconds(5))
+		await queue.drain(timeout: .seconds(300))
 		#expect(transcriber.calls == ["da"])
 	}
 
@@ -161,7 +163,7 @@ struct PhraseTranscriptionQueueTests {
 		let (queue, sink, _) = makeQueue([.init(text: "  "), .init(text: "hello")])
 		queue.submit(wav: Data([1]))
 		queue.submit(wav: Data([2]))
-		await queue.drain(timeout: .seconds(5))
+		await queue.drain(timeout: .seconds(300))
 		#expect(sink.texts == ["hello"])
 	}
 
@@ -172,12 +174,12 @@ struct PhraseTranscriptionQueueTests {
 		queue.submit(wav: Data([1]))
 		queue.submit(wav: Data([2]))
 		queue.submit(wav: Data([3]))
-		await queue.drain(timeout: .seconds(5))
+		await queue.drain(timeout: .seconds(300))
 		#expect(sink.texts == ["ok"])
 		#expect(sink.failures == 1)
 		#expect(queue.hasFailed)
 		queue.submit(wav: Data([4]))
-		await queue.drain(timeout: .seconds(5))
+		await queue.drain(timeout: .seconds(300))
 		#expect(sink.failures == 1)
 	}
 
@@ -185,7 +187,7 @@ struct PhraseTranscriptionQueueTests {
 		let (queue, sink, _) = makeQueue([.init(text: "late", delay: .seconds(30))])
 		queue.submit(wav: Data([1]))
 		queue.cancel()
-		await queue.drain(timeout: .seconds(5))
+		await queue.drain(timeout: .seconds(300))
 		#expect(sink.texts.isEmpty)
 		#expect(sink.failures == 0)
 	}

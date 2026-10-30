@@ -403,7 +403,7 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` plus an always-on `setup` block (`{checks, next_steps, prose}`) — a fresh readiness check surfacing gaps (thin content, no driver, entry-status objects) to walk the user through; same shape create_objects/update_objects return. Opt into further blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. For a loop's deeper setup check (steps, connectors, members), call get_loop — it always returns its own `setup` block, richer than the lightweight per-object slice here. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide. Before you tell anyone whether something was sent, done, approved or on hold, read the task and the contact it belongs to with this tool. A drafts page, target list or search snapshot is a copy that can lag behind, and an answer taken from one is stale. If the task and the page disagree, the task wins; say so and fix the page.",
+			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` plus an always-on `setup` block (`{checks, next_steps, prose}`) — a fresh readiness check surfacing gaps (thin content, no driver, entry-status objects) to walk the user through; same shape create_objects/update_objects return. Opt into further blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges. Both are capped at 100 rows per object; when an object has more, a `relationships_page` / `connected_objects_page` block reports the returned count, the total and a hint, and the rest is paged with list_relationships using `object_id`; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. For a loop's deeper setup check (steps, connectors, members), call get_loop — it always returns its own `setup` block, richer than the lightweight per-object slice here. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide. Before you tell anyone whether something was sent, done, approved or on hold, read the task and the contact it belongs to with this tool. A drafts page, target list or search snapshot is a copy that can lag behind, and an answer taken from one is stale. If the task and the page disagree, the task wins; say so and fix the page.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
@@ -1331,7 +1331,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. To answer inside a thread, pass \`thread_root_id\` (the id of the top-level message the thread hangs off; threads do not nest). Use a thread for a side conversation or a long-running piece of work (a review, a research task) so the main chat stays readable; keep \`also_in_channel\` off unless the reply is something the whole chat should see. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. To answer inside a thread, pass \`thread_root_id\` (the id of the top-level message the thread hangs off; threads do not nest). Use a thread for a side conversation or a long-running piece of work (a review, a research task) so the main chat stays readable; keep \`also_in_channel\` off unless the reply is something the whole chat should see. When you are answering a human who is writing in a thread, your post lands in that thread by itself, so you need no \`thread_root_id\`; pass \`top_level: true\` only when you deliberately want the main timeline. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1365,6 +1365,12 @@ export const tools = {
 				.describe(
 					'With thread_root_id: also show the reply in the main timeline. Leave off unless the whole chat should see it.',
 				),
+			top_level: z
+				.boolean()
+				.optional()
+				.describe(
+					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread. Ignored when thread_root_id or sub_chat_session_id is given.',
+				),
 			wait: z
 				.boolean()
 				.optional()
@@ -1374,7 +1380,7 @@ export const tools = {
 		}),
 	},
 	create_chat: {
-		description: `Start a brand-new top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. Use it for a new topic that deserves its own room. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Start a top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. With one other actor and no subject this opens your direct message with them: every pair has exactly one, so asking again returns it instead of making a new chat. Set \`topical: true\` for a new topic that deserves its own room; with two or more others it is always a new chat. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			title: z.string().min(1).max(CONVERSATION_TITLE_MAX_LENGTH),
@@ -1399,6 +1405,12 @@ export const tools = {
 					'With subject_id: tie the chat to an object (bet, task, insight) or a loop. Asking again returns the chat that already exists for it.',
 				),
 			subject_id: z.string().uuid().optional(),
+			topical: z
+				.boolean()
+				.optional()
+				.describe(
+					'With one other actor: open a new, separate chat for this topic instead of your direct message with them.',
+				),
 			wait: z
 				.boolean()
 				.optional()
@@ -2578,6 +2590,25 @@ export const tools = {
 			agent_id: optionalDesktopAgentId,
 			command: z.string().min(1).max(10000),
 			timeout_s: z.number().int().min(1).max(120).optional().describe('Defaults to 30.'),
+		}),
+	},
+	desktop_put_file: {
+		description:
+			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, then in the chooser select the file and click Open (double click and Enter do not submit it). Only your own computer is reachable.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			file_id: z
+				.string()
+				.uuid()
+				.describe('Id of a workspace file, e.g. from create_file or list_files.'),
+			folder: z
+				.string()
+				.max(255)
+				.optional()
+				.describe(
+					'Folder on your computer, absolute or starting with ~/. Created if missing. Defaults to ~/Downloads.',
+				),
 		}),
 	},
 	desktop_expose_port: {

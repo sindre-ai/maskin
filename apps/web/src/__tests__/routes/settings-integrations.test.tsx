@@ -9,6 +9,7 @@ const mockUseIntegrations = vi.fn()
 const mockUseProviders = vi.fn()
 const mockConnect = vi.fn()
 const mockDisconnect = vi.fn()
+const mockNavigate = vi.fn()
 
 /** Search params the route sees. The page reads `?select_github=<id>` to decide
  *  whether to open the post-authorization org picker. */
@@ -21,6 +22,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
+		useNavigate: () => mockNavigate,
 		createFileRoute: () => (options: Record<string, unknown>) => ({
 			...options,
 			useSearch: () => mockSearch(),
@@ -451,6 +453,106 @@ describe('IntegrationsPage', () => {
 		})
 	})
 
+	describe('google drive provider card (google-drive-integration-ui flag)', () => {
+		const googleDriveProvider = {
+			name: 'google-drive',
+			displayName: 'Google Drive',
+			authType: 'oauth2',
+			events: [],
+			externalIdDisplay: 'email' as const,
+		}
+
+		afterEach(() => {
+			localStorage.removeItem('ff:google-drive-integration-ui')
+		})
+
+		it('hides the Drive card and Connect button when the flag is off', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'off')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [
+					googleDriveProvider,
+					{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' },
+				],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByText('Google Drive')).not.toBeInTheDocument()
+			// Other OAuth providers are unaffected by the Drive flag.
+			expect(screen.getByText('Gmail')).toBeInTheDocument()
+		})
+
+		it('shows the Drive card next to the other OAuth providers when the flag is on', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [
+					googleDriveProvider,
+					{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' },
+				],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByText('Google Drive')).toBeInTheDocument()
+			expect(screen.getByText('Gmail')).toBeInTheDocument()
+			expect(screen.getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
+		})
+
+		it('shows the New pill, description, meta line and a Details link on the Drive card', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByLabelText('New')).toBeInTheDocument()
+			expect(
+				screen.getByText('File bytes, Docs, Sheets, search, folder watch, write, comments.'),
+			).toBeInTheDocument()
+			expect(screen.getByText('Free · Piggybacks on Google auth')).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+		})
+
+		it('keeps the Details link on a connected Drive card', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					buildIntegrationResponse({
+						id: 'gd-1',
+						provider: 'google-drive',
+						status: 'active',
+						externalId: 'kai@acme.test',
+					}),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
+		})
+
+		it('does not put Drive extras on other providers', () => {
+			localStorage.setItem('ff:google-drive-integration-ui', 'on')
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' }],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByLabelText('New')).not.toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Details' })).not.toBeInTheDocument()
+		})
+	})
+
 	describe('gmail label remains unchanged', () => {
 		const gmailProvider = {
 			name: 'gmail',
@@ -574,6 +676,71 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 
 			expect(screen.queryByText('Choose a GitHub organization')).not.toBeInTheDocument()
+		})
+	})
+
+	// A failed connect redirects back with ?error=<code>. The page turns the code
+	// into one plain dismissible alert and removes the param from the URL.
+	describe('failed connect alert', () => {
+		const seed = (error: string) => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }],
+				isLoading: false,
+			})
+			mockSearch.mockReturnValue({ error })
+		}
+
+		it.each([
+			['token_exchange_failed', /didn't accept the sign-in/i],
+			['people_id_fetch_failed', /account details from Google/i],
+			['post_install_failed', /setting up the connection failed/i],
+		])('shows plain copy for %s', (code, copy) => {
+			seed(code)
+			render(<IntegrationsPage />)
+
+			const alert = screen.getByRole('alert')
+			expect(alert).toHaveTextContent(copy)
+			expect(alert).not.toHaveTextContent(code)
+		})
+
+		it('shows a generic line for an unknown code', () => {
+			seed('something_new')
+			render(<IntegrationsPage />)
+
+			const alert = screen.getByRole('alert')
+			expect(alert).toHaveTextContent("Connecting didn't work. Try again.")
+			expect(alert).not.toHaveTextContent('something_new')
+		})
+
+		it('removes the error param from the URL once the alert shows', () => {
+			seed('token_exchange_failed')
+			render(<IntegrationsPage />)
+
+			expect(mockNavigate).toHaveBeenCalledTimes(1)
+			const { search, replace } = mockNavigate.mock.calls[0][0]
+			expect(replace).toBe(true)
+			expect(search({ error: 'token_exchange_failed', return_to: '/x' })).toEqual({
+				error: undefined,
+				return_to: '/x',
+			})
+		})
+
+		it('hides the alert when dismissed', async () => {
+			seed('token_exchange_failed')
+			render(<IntegrationsPage />)
+
+			await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+		})
+
+		it('shows no alert when there is no error param', () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [], isLoading: false })
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 	})
 

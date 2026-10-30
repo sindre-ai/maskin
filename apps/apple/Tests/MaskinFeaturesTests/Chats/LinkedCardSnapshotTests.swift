@@ -10,6 +10,7 @@ import AppKit
 import UIKit
 #endif
 
+@testable import MaskinCore
 @testable import MaskinFeatures
 
 private let ws = "7d1f0c52-0e0a-4f43-9c1e-aaaaaaaaaaaa"
@@ -43,10 +44,34 @@ private struct StubFiles: FilesRemote {
 
 	func summaries(ids: [String]) async throws -> [FileSummary] {
 		ids.map {
-			$0 == pageID
+			$0 == pdfID
+			? FileSummary(id: $0, name: "Contract.pdf", mimeType: "application/pdf", sizeBytes: 90_000)
+			: $0 == pageID
 				? FileSummary(id: $0, name: "Pilot plan.md", mimeType: "text/markdown", sizeBytes: 80)
 				: FileSummary(id: $0, name: "Landing page.html", mimeType: "text/html", sizeBytes: 4000)
 		}
+	}
+}
+
+private let taskID = "55555555-2222-3333-4444-555555555555"
+private let goneID = "66666666-2222-3333-4444-555555555555"
+private let pdfID = "77777777-2222-3333-4444-555555555555"
+
+/// Answers a task for `taskID` and "not found" for anything else.
+private struct StubTasks: ObjectDraftsRemote {
+	func detail(objectId: String) async throws -> ObjectDetail {
+		guard objectId == taskID else { throw ObjectsError(ObjectsRemoteMessages.notFound) }
+		return ObjectDetail(
+			object: WorkObject(
+				id: objectId, type: "task", title: "Fix the login code loop",
+				content: "The login page keeps asking for the code twice. Reproduced on iOS 26 with a fresh install.",
+				status: "in_progress", metadata: ["priority": "P2"], driverId: "agent-1",
+				updatedAt: Date(timeIntervalSinceNow: -7200)),
+			workspaceId: ws)
+	}
+
+	func approve(objectId: String, contentHash: String, idempotencyKey: String) async throws -> ObjectPreview {
+		throw ObjectApprovalError.changed
 	}
 }
 
@@ -55,13 +80,14 @@ private struct StubFiles: FilesRemote {
 struct LinkedCardSnapshotTests {
 	/// Lays the view out in a hosting view (a real layout pass, so measured heights settle, which
 	/// `ImageRenderer` does not wait for) and writes a PNG.
-	private func render<V: View>(_ view: V, width: CGFloat, dark: Bool, name: String) async throws {
+	private func render<V: View>(_ view: V, width: CGFloat, dark: Bool, name: String, largest: Bool = false) async throws {
 		#if canImport(AppKit)
 		let framed = view
 			.padding(MaskinSpace.s9)
 			.frame(width: width)
 			.background(MaskinSurface.grouped)
 			.environment(\.colorScheme, dark ? .dark : .light)
+			.environment(\.dynamicTypeSize, largest ? .accessibility5 : .large)
 		let host = NSHostingView(rootView: framed)
 		host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
 		let window = NSWindow(
@@ -82,7 +108,7 @@ struct LinkedCardSnapshotTests {
 		let dir =
 			ProcessInfo.processInfo.environment["CHATS_SNAPSHOT_DIR"] ?? NSTemporaryDirectory() + "chats-snapshots"
 		try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-		let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name)-\(Int(width))-\(dark ? "dark" : "light").png")
+		let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name)-\(Int(width))-\(dark ? "dark" : "light")\(largest ? "-largest" : "").png")
 		try rep.representation(using: .png, properties: [:])?.write(to: url)
 		#endif
 	}
@@ -134,6 +160,98 @@ struct LinkedCardSnapshotTests {
 			let row = MessageRow(message: message, isOwn: false, showsAuthor: true)
 				.environment(\.linkedItems, store)
 			try await render(row, width: 375, dark: dark, name: "linked-message")
+		}
+	}
+
+	private func objectStore() async -> LinkedItemStore {
+		let store = LinkedItemStore(
+			objects: StubTasks(), files: StubFiles(),
+			actors: { [ActorRef(id: "agent-1", name: "Developer", isAgent: true)] }, workspaceID: { ws })
+		await store.resolve([LinkedTarget(kind: .object, uuid: taskID), LinkedTarget(kind: .object, uuid: goneID)])
+		// The owner's name arrives with its own read.
+		for _ in 0..<40 where store.owner(for: "agent-1") == nil { try? await Task.sleep(for: .milliseconds(50)) }
+		return store
+	}
+
+	@Test("an object card, open, folded, loading and deleted, at 390 wide, light and dark, default and largest text")
+	func objectCards() async throws {
+		let store = await objectStore()
+		let gone = LinkedTarget(kind: .object, uuid: goneID)
+		guard case .object(let object)? = store.item(for: LinkedTarget(kind: .object, uuid: taskID)) else {
+			Issue.record("the task did not resolve")
+			return
+		}
+		#expect(store.item(for: gone) == .deleted(gone))
+		for dark in [false, true] {
+			for largest in [false, true] {
+				let content = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+					LinkedObjectCard(object: object)
+					LinkedObjectCard(object: object, defaultFolded: true)
+					LinkedCardSkeleton()
+					LinkedDeletedCard()
+				}
+				.environment(\.linkedItems, store)
+				try await render(content, width: 390, dark: dark, name: "linked-object-cards", largest: largest)
+			}
+		}
+	}
+
+	@Test("a stand-alone object link is a card in the message, and in your own message too")
+	func objectInMessage() async throws {
+		let store = await objectStore()
+		let link = "[Fix the login code loop](https://maskin.io/\(ws)/objects/\(taskID))"
+		let theirs = ChatMessage(
+			id: "m1", serverID: 1, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content: "I looked at it.\n\n\(link)\n\nThe fix is small.", createdAt: Date(timeIntervalSince1970: 1_790_000_000))
+		let own = ChatMessage(
+			id: "m2", serverID: 2, conversationID: "c", actorID: "me", actorName: "Me", author: .human,
+			content: "Is this the one?\n\n\(link)", createdAt: Date(timeIntervalSince1970: 1_790_000_100))
+		let alone = ChatMessage(
+			id: "m3", serverID: 3, conversationID: "c", actorID: "me", actorName: "Me", author: .human,
+			content: link, createdAt: Date(timeIntervalSince1970: 1_790_000_200))
+		for dark in [false, true] {
+			let column = VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+				MessageRow(message: theirs, isOwn: false, showsAuthor: true)
+				MessageRow(message: own, isOwn: true, showsAuthor: false)
+				MessageRow(message: alone, isOwn: true, showsAuthor: false)
+			}
+			.environment(\.linkedItems, store)
+			try await render(column, width: 390, dark: dark, name: "linked-object-message")
+		}
+	}
+}
+
+extension LinkedCardSnapshotTests {
+	@Test("the Linked sheet draws an object, a deleted object and a page as cards and a PDF as the plain row, light and dark")
+	func linkedSheet() async throws {
+		let store = LinkedItemStore(
+			objects: StubTasks(), files: StubFiles(),
+			actors: { [ActorRef(id: "agent-1", name: "Developer", isAgent: true)] }, workspaceID: { ws })
+		let targets = [
+			LinkedTarget(kind: .object, uuid: taskID), LinkedTarget(kind: .object, uuid: goneID),
+			LinkedTarget(kind: .file, uuid: pageID), LinkedTarget(kind: .file, uuid: pdfID),
+		]
+		await store.resolve(targets)
+		for _ in 0..<40 where store.owner(for: "agent-1") == nil { try? await Task.sleep(for: .milliseconds(50)) }
+		let object = LinkedTarget(kind: .object, uuid: taskID)
+		let gone = LinkedTarget(kind: .object, uuid: goneID)
+		let pdf = LinkedTarget(kind: .file, uuid: pdfID)
+		guard case .object? = store.item(for: object), case .deleted? = store.item(for: gone),
+			case .plain? = store.item(for: pdf)
+		else {
+			Issue.record("the targets did not resolve to an object, a deleted object and a plain PDF")
+			return
+		}
+		let entries = targets.enumerated().map {
+			LinkedEntry(
+				target: $0.element, messageID: "m\($0.offset)", actorID: "agent-1", actorName: "Developer",
+				author: .agent, date: Date(timeIntervalSinceNow: -3600))
+		}
+		for dark in [false, true] {
+			let sheet = LinkedSheet(entries: entries, onJump: { _ in }, onApproved: { _, _, _ in })
+				.frame(height: 820)
+				.environment(\.linkedItems, store)
+			try await render(sheet, width: 390, dark: dark, name: "linked-sheet")
 		}
 	}
 }
