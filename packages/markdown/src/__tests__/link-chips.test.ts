@@ -3,7 +3,7 @@
 
 import { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { buildExtensions } from '../extensions'
 import {
 	type LinkChipHandlers,
@@ -178,6 +178,19 @@ describe('link chips', () => {
 		chip.dispatchEvent(click)
 		expect(click.defaultPrevented).toBe(false)
 		expect(editor.state.selection.from).toBe(before)
+		destroy()
+	})
+
+	it('hands focus back before a click that opens the object in this tab, so the editor saves', () => {
+		const { host, live } = fakeHost()
+		const { editor, destroy } = open(DOC, host)
+		const blur = vi.spyOn(editor.view.dom, 'blur')
+		const chip = live()[0].container
+		chip.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }))
+		chip.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }))
+		expect(blur).not.toHaveBeenCalled()
+		chip.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+		expect(blur).toHaveBeenCalledTimes(1)
 		destroy()
 	})
 })

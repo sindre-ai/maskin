@@ -126,6 +126,18 @@ function chipElement(host: LinkChipHost, run: LinkRun, text: string): HTMLElemen
 	// A press on the chip must not move the cursor, take focus or start an edit. Only the press is
 	// cancelled: the click still reaches the chip's own link.
 	el.addEventListener('mousedown', (event) => event.preventDefault(), true)
+	// The editor saves when it loses focus, and that press kept it. A click that opens the object in
+	// this tab leaves the page, so hand focus back first and let the save run. Cmd or Ctrl click
+	// opens a new tab and the editor stays as it is.
+	el.addEventListener(
+		'click',
+		(event) => {
+			if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+				return
+			el.closest<HTMLElement>('[contenteditable="true"]')?.blur()
+		},
+		true,
+	)
 	host.mount(el, { href: run.href, text, bare: isBare(text, run.href) })
 	return el
 }
