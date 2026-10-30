@@ -147,6 +147,23 @@ describe('ThreadComposer — reply mode', () => {
 		)
 	})
 
+	it('keeps the recipient for the next reply when the reply tagged that same agent', async () => {
+		const user = userEvent.setup()
+		renderReply()
+		const box = await replyBox()
+
+		await user.type(box, 'thanks @For')
+		await user.keyboard('{Enter}')
+		await waitFor(() => expect(chips(box)).toHaveLength(1))
+		expect(chips(box)[0]).toHaveAttribute('data-tag-id', 'agent-1')
+		await user.click(screen.getByRole('button', { name: 'Send message' }))
+
+		await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledTimes(1))
+		await waitFor(() => expect(chips(box)).toHaveLength(0))
+		expect(await screen.findByLabelText('Selected context')).toHaveTextContent('Forge')
+		expect(screen.getByText('Reply to Forge…')).toBeInTheDocument()
+	})
+
 	it('sends no id for an @name that never went through the picker', async () => {
 		const user = userEvent.setup()
 		renderReply({ recipient: null })
