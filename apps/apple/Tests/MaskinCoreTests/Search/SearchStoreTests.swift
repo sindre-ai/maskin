@@ -8,6 +8,7 @@ actor FakeSearchRemote: SearchRemote {
 	var filesHandler: @Sendable (String) async throws -> [SearchResult] = { _ in [] }
 	var chats: Result<[SearchResult], SearchError> = .success([])
 	var agentList: Result<[SearchResult], SearchError> = .success([])
+	var peopleList: [SearchPerson] = []
 	private(set) var objectQueries: [String] = []
 	private(set) var conversationCalls = 0
 
@@ -15,6 +16,7 @@ actor FakeSearchRemote: SearchRemote {
 	func setFiles(_ h: @escaping @Sendable (String) async throws -> [SearchResult]) { filesHandler = h }
 	func setChats(_ r: Result<[SearchResult], SearchError>) { chats = r }
 	func setAgents(_ r: Result<[SearchResult], SearchError>) { agentList = r }
+	func setPeople(_ list: [SearchPerson]) { peopleList = list }
 
 	func searchObjects(query: String, limit: Int) async throws -> [SearchResult] {
 		objectQueries.append(query)
@@ -30,13 +32,19 @@ actor FakeSearchRemote: SearchRemote {
 		return try chats.get()
 	}
 	func agents() async throws -> [SearchResult] { try agentList.get() }
+	func people() async throws -> [SearchPerson] { peopleList }
 }
 
 func object(_ id: String, _ title: String) -> SearchResult {
 	SearchResult(kind: .object, entityId: id, title: title, subtitle: "active", detail: "task")
 }
-func chat(_ id: String, _ title: String, people: String = "") -> SearchResult {
-	SearchResult(kind: .chat, entityId: id, title: title, subtitle: people)
+func chat(
+	_ id: String, _ title: String, people: String = "", ids: [String] = [], snippet: String = "",
+	at updatedAt: Date? = nil
+) -> SearchResult {
+	SearchResult(
+		kind: .chat, entityId: id, title: title, subtitle: people, snippet: snippet, updatedAt: updatedAt,
+		participantIds: ids)
 }
 func agent(_ id: String, _ name: String) -> SearchResult {
 	SearchResult(kind: .agent, entityId: id, title: name)
