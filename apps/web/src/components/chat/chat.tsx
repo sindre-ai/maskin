@@ -16,10 +16,12 @@ import {
 import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import { CreatePicker } from '@/components/shared/create-picker'
 import { UploadProgress } from '@/components/shared/upload-progress'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
 import { useUploadFile } from '@/hooks/use-files'
@@ -31,6 +33,7 @@ import { cn } from '@/lib/cn'
 import { toUploadInput } from '@/lib/large-file-upload'
 import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
+import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
 import { ArrowUp, Hash, Info, Mic, Paperclip, X } from 'lucide-react'
 import {
@@ -454,6 +457,7 @@ export function Composer({
 	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
+	const canWrite = useCanWrite()
 	const selfActor = getStoredActor()
 	const selfActorId = selfActor?.id ?? null
 
@@ -926,7 +930,11 @@ export function Composer({
 				// surface and no error state to set.
 				if (controller.signal.aborted) return
 				console.error(`[chat] failed to upload ${file.name}`, err)
-				const message = err instanceof Error ? err.message : 'Upload failed'
+				const message = isViewerRefusal(err)
+					? VIEWER_READ_ONLY_MESSAGE
+					: err instanceof Error
+						? err.message
+						: 'Upload failed'
 				// Mirror the comment input: the failed chip stays put so the user
 				// can see which attachment broke and remove it. Send stays blocked
 				// (via canSend) until every pending row is resolved or removed.
@@ -944,6 +952,7 @@ export function Composer({
 	// paste both end here, so a chip behaves the same whichever way it arrived.
 	const attachFiles = useCallback(
 		(files: File[]) => {
+			if (!canWrite) return
 			const additions: PendingUpload[] = files.map((file) => ({
 				tempId: makeTempId(),
 				name: file.name,
@@ -958,7 +967,7 @@ export function Composer({
 				void uploadPickedFile(p.tempId, files[idx])
 			})
 		},
-		[uploadPickedFile],
+		[uploadPickedFile, canWrite],
 	)
 
 	const handleFileSelection = useCallback(
@@ -1214,17 +1223,19 @@ export function Composer({
 				)}
 				<div className="flex items-center gap-2">
 					{/* Attach carries a pinned 44 px touch target (`ios-chat-attach-tap-area.spec.ts`). */}
-					<Button
-						type="button"
-						size="icon"
-						variant="ghost"
-						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={disabled}
-						aria-label="Attach file"
-					>
-						<Paperclip size={14} aria-hidden />
-					</Button>
+					<ViewerTooltip>
+						<Button
+							type="button"
+							size="icon"
+							variant="ghost"
+							className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={disabled || !canWrite}
+							aria-label="Attach file"
+						>
+							<Paperclip size={14} aria-hidden />
+						</Button>
+					</ViewerTooltip>
 					{dictation.supported ? (
 						<Button
 							type="button"
