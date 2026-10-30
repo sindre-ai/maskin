@@ -86,7 +86,8 @@ describe('member fixture: nothing changes', () => {
 			</>,
 			{ wrapper: member() },
 		)
-		expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+		// The open modal marks the rest of the page aria-hidden, so look the Edit button up with hidden: true.
+		expect(screen.getByRole('button', { name: 'Edit', hidden: true })).toBeEnabled()
 		const box = screen.getByRole('textbox', { name: 'System prompt' })
 		expect(box).toBeEnabled()
 		await user.type(box, ' More.')
