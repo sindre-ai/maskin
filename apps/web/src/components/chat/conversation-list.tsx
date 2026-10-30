@@ -3,10 +3,11 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import type { ConversationListItemResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
 import { Link } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { ChatsFilter } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
 import { ReplyThreadList } from './replies/reply-thread-list'
@@ -81,7 +82,43 @@ function ChatConversationList({
 		...(filter === 'unread' ? { unread_only: true } : {}),
 	})
 
-	const conversations = data?.pages.flatMap((page) => page.conversations) ?? []
+	const fetched = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
+	// Reading a chat opened from the Unread filter would drop its row on the
+	// next refetch and shift everything below it. Keep rows that were shown in
+	// place (as read) until the filter or workspace changes.
+	const shownRef = useRef<{ key: string; rows: ConversationListItemResponse[] }>({
+		key: '',
+		rows: [],
+	})
+	const conversations = useMemo(() => {
+		if (filter !== 'unread') {
+			// Forget retained rows so coming back to Unread starts from the server's list.
+			shownRef.current = { key: '', rows: [] }
+			return fetched
+		}
+		const key = `${workspaceId}:${filter}`
+		const prev = shownRef.current.key === key ? shownRef.current.rows : []
+		// Server order wins. A retained row the server no longer returns goes back
+		// right after the row that was above it, so a later page never lands on top.
+		const rows = [...fetched]
+		const ids = new Set(rows.map((c) => c.id))
+		prev.forEach((c, i) => {
+			if (ids.has(c.id)) return
+			let at = 0
+			for (let j = i - 1; j >= 0; j--) {
+				const above = rows.findIndex((r) => r.id === prev[j].id)
+				if (above !== -1) {
+					at = above + 1
+					break
+				}
+			}
+			rows.splice(at, 0, { ...c, unread_count: 0 })
+			ids.add(c.id)
+		})
+		const visible = rows.filter((c) => !c.archived)
+		shownRef.current = { key, rows: visible }
+		return visible
+	}, [fetched, filter, workspaceId])
 	// Unread thread replies per chat, from the same list the Threads filter shows. A chat that
 	// reads as caught up can still hold an unread thread; the row says so.
 	const { data: replyThreads } = useReplyThreads(workspaceId)
