@@ -23,3 +23,28 @@ export async function trackChangeProposalSubmitted(p: ChangeProposalSubmittedPro
 		change_count: p.changeCount,
 	})
 }
+
+interface ChangeReviewedProps {
+	workspaceId: string
+	actorId: string
+	fileName: string
+	proposalId: string
+	changeId: string
+	decision: 'accepted' | 'edited_then_accepted' | 'rejected'
+}
+
+/**
+ * A person decided one proposed change. Sent by the server after the decision
+ * has committed, never from the browser, one event per change. A refused call
+ * (403, or 409 because a change went stale) sends nothing here.
+ */
+export async function trackChangeReviewed(p: ChangeReviewedProps): Promise<void> {
+	await capturePosthogEvent('change_reviewed', p.actorId, {
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		file_name: p.fileName,
+		proposal_id: p.proposalId,
+		change_id: p.changeId,
+		decision: p.decision,
+	})
+}
