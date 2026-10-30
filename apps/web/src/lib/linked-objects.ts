@@ -436,7 +436,7 @@ const MAX_PLACED_PER_KIND = 3
 /** Cards for objects in plain paragraphs, per message. The fourth link on its own line is a chip. */
 const MAX_OBJECT_CARDS = 3
 /** Objects a message may make the app fetch. A link beyond that stays the plain link. */
-const MAX_OBJECT_FETCHES = 10
+export const MAX_OBJECT_FETCHES = 10
 
 /** Every object or file a link under these nodes points at, in order, without repeats. */
 function linksIn(nodes: HastNode[]): LinkedTarget[] {

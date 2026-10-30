@@ -49,8 +49,8 @@ export function ObjectDetailBody({
 					preserveSource
 					surface="description"
 					objectId={object.id}
-					// A read-only body (no commit handler) draws its links as chips; the live editor does not.
-					linkedCards={onContentChange ? undefined : outsideChatLinkedCards(workspaceId, 'chips')}
+					// Links draw as chips here too; in the live editor the one the cursor touches stays plain text.
+					linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
 				/>
 			) : null}
 
