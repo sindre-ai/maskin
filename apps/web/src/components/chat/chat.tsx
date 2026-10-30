@@ -1194,10 +1194,14 @@ export function Composer({
 		setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
 	}, [])
 
-	// The chips in the sentence are the tags, so the pill row has no agents to show.
+	// The chips in the sentence are the tags, so the pill row shows only the agents that have no chip
+	// (a thread reply's seeded recipient), which stay visible and removable.
 	const chipSelection = useMemo(
-		() => (inlineTags ? { ...selection, agents: [] } : selection),
-		[inlineTags, selection],
+		() =>
+			inlineTags
+				? { ...selection, agents: selection.agents.filter((id) => !tagIds.includes(id)) }
+				: selection,
+		[inlineTags, selection, tagIds],
 	)
 
 	return (
