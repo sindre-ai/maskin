@@ -159,17 +159,8 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 // of which silently fail the parity constraint ("no functionality hidden on
 // iPad"). Each control is asserted by its accessible role/name + the
 // Playwright `toBeVisible` opacity check (ignores opacity:0 and visibility:hidden).
-// Both callers below are the object-detail surface, whose v2 shell passes its
-// own placeholder down to the composer rather than using comment-input.tsx's
-// default (object-detail-shell.tsx). The 768px split still mirrors
-// useIsMobile() (apps/web/src/hooks/use-mobile.tsx), which is what the shell
-// switches on.
-function commentPlaceholderFor(viewport: NamedViewport): string {
-	return viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions'
-}
-
 async function assertCommentComposerVisible(page: Page, surface: string, viewport: NamedViewport) {
-	const composer = page.getByPlaceholder(commentPlaceholderFor(viewport)).first()
+	const composer = page.getByRole('textbox', { name: 'Comment' }).first()
 	await expect(
 		composer,
 		`${surface}: comment composer must be visible at ${viewport.label}`,
@@ -403,11 +394,11 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		// 3. Comment — type and send via the composer. The activity timeline is
 		//    T2 scope, so the send is confirmed by the composer clearing (the
 		//    posted comment row itself returns with the timeline).
-		const composer = page.getByPlaceholder(commentPlaceholderFor(VIEWPORTS.mobile))
+		const composer = page.getByRole('textbox', { name: 'Comment' })
 		await composer.click()
 		await composer.fill('QA comment from mobile')
 		await page.getByRole('button', { name: 'Send comment' }).click()
-		await expect(composer).toHaveValue('', { timeout: 10000 })
+		await expect(composer).toHaveText('', { timeout: 10000 })
 		await assertNoHorizontalOverflow(page, 'Object detail after comment (step 3)', VIEWPORTS.mobile)
 	})
 })

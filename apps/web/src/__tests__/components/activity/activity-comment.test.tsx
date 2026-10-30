@@ -3,6 +3,10 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse } from '../../factories'
 
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
+}))
+
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({
 		data: { id: 'actor-1', name: 'Alice', type: 'human', email: null },
@@ -249,9 +253,7 @@ describe('ActivityComment', () => {
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 
 		await user.click(screen.getByRole('button', { name: 'Reply' }))
-		expect(
-			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
-		).toBeGreaterThanOrEqual(1)
+		expect(screen.getAllByRole('textbox', { name: 'Comment' }).length).toBeGreaterThanOrEqual(1)
 	})
 
 	it('renders markdown formatting in comment bodies', () => {
@@ -354,9 +356,7 @@ describe('ActivityComment', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Reply' }))
 
-		expect(
-			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
-		).toBeGreaterThanOrEqual(1)
+		expect(screen.getAllByRole('textbox', { name: 'Comment' }).length).toBeGreaterThanOrEqual(1)
 	})
 	it('renders a long bubble comment in full, formatted, with no Show more toggle', () => {
 		const tail = 'the very last words of a long comment'
