@@ -77,7 +77,7 @@ test.describe('Vault mode (the ! prefix)', () => {
 			// Esc leaves vault mode, clears the field and never sends it.
 			await page.getByLabel('Secret to vault').press('Escape')
 			await expect(page.getByLabel('Secret to vault')).toHaveCount(0)
-			await expect(page.getByLabel('Message this conversation')).toHaveValue('')
+			await expect(page.getByLabel('Message this conversation')).toHaveText('')
 			expect(await storageHolds(page, FAKE_TOKEN)).toBe(false)
 			expect(requests).toEqual([])
 		})
@@ -129,6 +129,6 @@ test.describe('Vault mode (the ! prefix)', () => {
 		await composer.click()
 		await composer.pressSequentially(' !hello')
 		await expect(page.getByLabel('Secret to vault')).toHaveCount(0)
-		await expect(composer).toHaveValue(' !hello')
+		await expect(composer).toHaveText('!hello')
 	})
 })

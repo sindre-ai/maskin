@@ -9,6 +9,7 @@ import {
 } from '@/components/chat/mention-picker'
 import { SecretCaptureFlow } from '@/components/chat/secret-capture-flow'
 import { SelectionChips } from '@/components/chat/selection-chips'
+import { TagInput, type TagInputHandle } from '@/components/chat/tag-input'
 import {
 	UnifiedChatSlashPicker,
 	type UnifiedChatSlashPickerHandle,
@@ -31,6 +32,7 @@ import { cn } from '@/lib/cn'
 import { toUploadInput } from '@/lib/large-file-upload'
 import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
+import { type TagValue, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
 import { ArrowUp, Hash, Info, Mic, Paperclip, X } from 'lucide-react'
 import {
@@ -254,6 +256,13 @@ export interface ComposerProps {
 	 * composer mounted never fires, so a stale one cannot overwrite a draft.
 	 */
 	fillRequest?: { text?: string; nonce: number } | null
+	/**
+	 * Writes in the shared tag input instead of a textarea: an `@` tag stays in the sentence as
+	 * a chip and the tagged ids reach the selection (`add_agent` / `remove_agent`) from the chips
+	 * alone, so a typed `@name` that never went through the picker sends no id. The selection's
+	 * agent pills are not drawn in this mode. Off by default; callers opt in one by one.
+	 */
+	inlineTags?: boolean
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -263,6 +272,30 @@ function readDraft(key: string): string {
 		return sessionStorage.getItem(`${DRAFT_PREFIX}${key}`) ?? ''
 	} catch {
 		return ''
+	}
+}
+
+// Chips in a draft: the text keeps "@Name", this keeps which id each chip stood for.
+function readDraftTags(key: string): { id: string; label: string }[] {
+	try {
+		const raw = sessionStorage.getItem(`${DRAFT_PREFIX}${key}:tags`)
+		const parsed: unknown = raw ? JSON.parse(raw) : []
+		if (!Array.isArray(parsed)) return []
+		return parsed.filter(
+			(t): t is { id: string; label: string } =>
+				!!t && typeof t.id === 'string' && typeof t.label === 'string',
+		)
+	} catch {
+		return []
+	}
+}
+
+function writeDraftTags(key: string, tags: { id: string; label: string }[]): void {
+	try {
+		if (tags.length > 0) sessionStorage.setItem(`${DRAFT_PREFIX}${key}:tags`, JSON.stringify(tags))
+		else sessionStorage.removeItem(`${DRAFT_PREFIX}${key}:tags`)
+	} catch {
+		// Same as writeDraft: losing the draft beats breaking typing.
 	}
 }
 
@@ -316,6 +349,7 @@ export function Composer({
 	vaultModeBlocked,
 	callAgent,
 	fillRequest,
+	inlineTags = false,
 }: ComposerProps) {
 	const [internalValue, setInternalValue] = useState(() =>
 		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
@@ -334,6 +368,106 @@ export function Composer({
 		},
 		[controlledValue, onValueChange],
 	)
+	// Pool for the mention picker — cached workspace actors. `useActors` uses
+	// the same query key as every other surface in the app so the picker opens
+	// against warm data (spec: `list_actors({ workspace_id, limit: 100 })` on
+	// chat mount, cached for the session).
+	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
+	const mentionActors = useMemo<MentionPickerActor[]>(
+		() =>
+			(workspaceActors ?? [])
+				// role !== "system" — filter out Google Calendar / Gmail / Slack / GitHub / Ubersuggest.
+				.filter((a) => !a.isSystem)
+				.map((a) => ({
+					id: a.id,
+					name: a.name,
+					type: a.type,
+					description: a.description,
+					email: a.email,
+				})),
+		[workspaceActors],
+	)
+	// Inline tags. `tagIds` are the ids the chips in the input stand for, in order (`tagIdsRef` is
+	// the same list for handlers). `tagLabelsRef` keeps the names a restored draft carried until
+	// the actor list has loaded. `domTextRef` is the text the input shows right now: when `value`
+	// moves away from it (a fill, dictation, a restored draft, a send that cleared the box) the
+	// input is rebuilt from `value`.
+	const [restoredTags] = useState(() =>
+		inlineTags && controlledValue === undefined && draftKey ? readDraftTags(draftKey) : [],
+	)
+	const tagLabelsRef = useRef(new Map(restoredTags.map((t) => [t.id, t.label])))
+	const [initialTagContent] = useState(() => {
+		const ids = restoredTags.map((t) => t.id)
+		const { segments, unmatchedIds } = splitTextByTags(
+			value,
+			ids,
+			(id) => tagLabelsRef.current.get(id) ?? null,
+		)
+		return { segments, ids: ids.filter((id) => !unmatchedIds.includes(id)) }
+	})
+	const [tagIds, setTagIds] = useState<string[]>(initialTagContent.ids)
+	const tagIdsRef = useRef(tagIds)
+	const domTextRef = useRef(value)
+	const tagRef = useRef<TagInputHandle | null>(null)
+	const tagWrapRef = useRef<HTMLDivElement | null>(null)
+	const tagsKeyRef = useRef(draftKey)
+
+	const tagLabelOf = useCallback(
+		(id: string): string | null => {
+			const actor = mentionActors.find((a) => a.id === id)
+			if (actor) return tagLabel(actor, mentionActors)
+			return tagLabelsRef.current.get(id) ?? selection.agentNames[id] ?? null
+		},
+		[mentionActors, selection.agentNames],
+	)
+
+	// Keeps the selection's agent list equal to the chips in the input: the callers build
+	// `metadata.mentions` from it, so only a picked tag ever sends an id.
+	const syncTagIds = useCallback(
+		(next: string[], fromTyping: boolean) => {
+			const prev = tagIdsRef.current
+			if (prev.length === next.length && prev.every((id, i) => id === next[i])) return
+			tagIdsRef.current = next
+			setTagIds(next)
+			for (const id of prev) {
+				if (!next.includes(id)) onDispatchSelection?.({ type: 'remove_agent', id })
+			}
+			for (const id of next) {
+				if (prev.includes(id)) continue
+				const actor = mentionActors.find((a) => a.id === id)
+				onDispatchSelection?.({ type: 'add_agent', agent: { id, name: actor?.name } })
+				if (fromTyping && actor) {
+					trackChatMentionInserted({
+						entity_id: actor.id,
+						entity_type: 'actor',
+						kind: actor.type === 'agent' ? 'agent' : 'human',
+					})
+				}
+			}
+		},
+		[mentionActors, onDispatchSelection],
+	)
+
+	const restoreTags = useCallback(
+		(tags: { id: string; label: string }[]) => {
+			for (const t of tags) tagLabelsRef.current.set(t.id, t.label)
+			syncTagIds(
+				tags.map((t) => t.id),
+				false,
+			)
+		},
+		[syncTagIds],
+	)
+
+	// A draft that came back with chips: the selection starts empty, so hand it the ids once.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs once, for the draft read at mount.
+	useEffect(() => {
+		for (const id of initialTagContent.ids) {
+			const actor = mentionActors.find((a) => a.id === id)
+			onDispatchSelection?.({ type: 'add_agent', agent: { id, name: actor?.name } })
+		}
+	}, [])
+
 	const [secretFlow, setSecretFlow] = useState<{
 		content: string
 		matches: SecretMatch[]
@@ -358,6 +492,7 @@ export function Composer({
 		if (draftKey === undefined || controlledValue !== undefined) return
 		if (draftKeyRef.current !== draftKey) {
 			draftKeyRef.current = draftKey
+			if (inlineTags) restoreTags(readDraftTags(draftKey))
 			setValue(readDraft(draftKey))
 			return
 		}
@@ -367,14 +502,32 @@ export function Composer({
 		// and not in the keystrokes before Send either.
 		if (secretFlow?.blocking || hasHighConfidenceSecret(value, workspaceId)) {
 			writeDraft(draftKey, '')
+			if (inlineTags) writeDraftTags(draftKey, [])
 			return
 		}
 		writeDraft(draftKey, value)
+		// The chips ride along under the same key. The render that switched keys only restores.
+		if (inlineTags) {
+			if (tagsKeyRef.current !== draftKey) tagsKeyRef.current = draftKey
+			else {
+				writeDraftTags(
+					draftKey,
+					tagIds.flatMap((id) => {
+						const label = tagLabelOf(id)
+						return label ? [{ id, label }] : []
+					}),
+				)
+			}
+		}
 	}, [
 		draftKey,
 		value,
 		controlledValue,
 		setValue,
+		inlineTags,
+		restoreTags,
+		tagIds,
+		tagLabelOf,
 		secretFlow?.blocking,
 		vaultFlow?.blocking,
 		workspaceId,
@@ -428,6 +581,10 @@ export function Composer({
 	const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+	const focusInput = useCallback(() => {
+		if (inlineTags) tagRef.current?.focus()
+		else textareaRef.current?.focus()
+	}, [inlineTags])
 
 	// A fill request replaces the draft through the same setter typing uses, so the
 	// sessionStorage mirror keeps working, then puts the caret at the end. Seeded
@@ -438,13 +595,14 @@ export function Composer({
 		handledFillNonceRef.current = fillRequest.nonce
 		if (fillRequest.text !== undefined) setValue(fillRequest.text)
 		requestAnimationFrame(() => {
+			if (inlineTags) return tagRef.current?.focus()
 			const el = textareaRef.current
 			if (!el) return
 			el.focus()
 			const end = el.value.length
 			el.setSelectionRange(end, end)
 		})
-	}, [fillRequest, setValue])
+	}, [fillRequest, setValue, inlineTags])
 	// `/` opens the create list (mockup 761–771). The chosen type seeds the
 	// shipped create surface; the mockup's FROM-THIS-CHAT panel additionally
 	// pre-fills the name/fields from the conversation, which needs a `seed`
@@ -457,25 +615,6 @@ export function Composer({
 	const selfActor = getStoredActor()
 	const selfActorId = selfActor?.id ?? null
 
-	// Pool for the mention picker — cached workspace actors. `useActors` uses
-	// the same query key as every other surface in the app so the picker opens
-	// against warm data (spec: `list_actors({ workspace_id, limit: 100 })` on
-	// chat mount, cached for the session).
-	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
-	const mentionActors = useMemo<MentionPickerActor[]>(
-		() =>
-			(workspaceActors ?? [])
-				// role !== "system" — filter out Google Calendar / Gmail / Slack / GitHub / Ubersuggest.
-				.filter((a) => !a.isSystem)
-				.map((a) => ({
-					id: a.id,
-					name: a.name,
-					type: a.type,
-					description: a.description,
-					email: a.email,
-				})),
-		[workspaceActors],
-	)
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)
 	const conversationList = useMemo(
 		() => conversationPages?.pages.flatMap((p) => p.conversations) ?? [],
@@ -522,6 +661,19 @@ export function Composer({
 			[setValue],
 		),
 	)
+
+	// The input follows `value` whenever something other than typing changed it.
+	const tagSegmentsFor = useCallback(
+		(text: string) => splitTextByTags(text, tagIdsRef.current, tagLabelOf).segments,
+		[tagLabelOf],
+	)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `value` is the trigger; the check reads the refs so a render that lags behind typing cannot overwrite it.
+	useEffect(() => {
+		if (!inlineTags || valueRef.current === domTextRef.current) return
+		const hadFocus = tagWrapRef.current?.contains(document.activeElement) ?? false
+		tagRef.current?.setContent(tagSegmentsFor(valueRef.current))
+		if (hadFocus) tagRef.current?.focus()
+	}, [inlineTags, value, tagSegmentsFor])
 
 	// Abort every in-flight upload when the composer unmounts so a closed
 	// chat surface doesn't leave XHRs hanging (and doesn't race-dispatch
@@ -644,7 +796,7 @@ export function Composer({
 	)
 
 	const handleKeyDown = useCallback(
-		(e: KeyboardEvent<HTMLTextAreaElement>) => {
+		(e: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
 			// While the mention picker is open, route arrow keys / Enter / Escape
 			// through the picker so keyboard nav works without the composer losing
 			// focus. Non-picker keys fall through to the standard textarea handling.
@@ -732,6 +884,50 @@ export function Composer({
 		],
 	)
 
+	// The `/` trigger, shared by both inputs: `next` is the plain text, `pos` the caret in it.
+	const applySlash = useCallback(
+		(next: string, pos: number) => {
+			// The top-level `/` path routes to `<UnifiedChatSlashPicker>`
+			// (Reference on top, Create-new below).
+			const outcome = detectUnifiedSlashTransition({
+				next,
+				pos,
+				slashStart,
+				typeFilterChip,
+			})
+			if (outcome.type === 'promote_to_chip') {
+				// `/task ` transformed → the raw label is stripped from the
+				// input and the chip is set. Picker stays open with the
+				// query cleared and the type filter narrowing both sections.
+				setValue(outcome.nextValue)
+				setSlashStart(outcome.nextSlashStart)
+				setTypeFilterChip(outcome.objectType)
+				setUnifiedOpen(true)
+				// Restore caret to right after the removed `/label ` so a
+				// follow-up keystroke lands where the user expects.
+				requestAnimationFrame(() => {
+					if (inlineTags) return tagRef.current?.setCaretOffset(outcome.nextCaret)
+					const el = textareaRef.current
+					if (el) el.setSelectionRange(outcome.nextCaret, outcome.nextCaret)
+				})
+				return
+			}
+			if (outcome.type === 'open') {
+				setSlashStart(outcome.slashStart)
+				setUnifiedOpen(true)
+				return
+			}
+			if (outcome.type === 'close') {
+				setSlashStart(null)
+				setUnifiedOpen(false)
+				return
+			}
+			// `outcome.type === 'noop'` — either not triggering, or already tracking the
+			// same `/` and the user is just typing more chars.
+		},
+		[slashStart, typeFilterChip, setValue, inlineTags],
+	)
+
 	const handleChange = useCallback(
 		(e: ChangeEvent<HTMLTextAreaElement>) => {
 			const next = e.target.value
@@ -766,44 +962,30 @@ export function Composer({
 			}
 			setMentionTrigger(null)
 
-			// The top-level `/` path routes to `<UnifiedChatSlashPicker>`
-			// (Reference on top, Create-new below).
-			const outcome = detectUnifiedSlashTransition({
-				next,
-				pos,
-				slashStart,
-				typeFilterChip,
-			})
-			if (outcome.type === 'promote_to_chip') {
-				// `/task ` transformed → the raw label is stripped from the
-				// textarea and the chip is set. Picker stays open with the
-				// query cleared and the type filter narrowing both sections.
-				setValue(outcome.nextValue)
-				setSlashStart(outcome.nextSlashStart)
-				setTypeFilterChip(outcome.objectType)
-				setUnifiedOpen(true)
-				// Restore caret to right after the removed `/label ` so a
-				// follow-up keystroke lands where the user expects.
-				requestAnimationFrame(() => {
-					const el = textareaRef.current
-					if (el) el.setSelectionRange(outcome.nextCaret, outcome.nextCaret)
-				})
-				return
-			}
-			if (outcome.type === 'open') {
-				setSlashStart(outcome.slashStart)
-				setUnifiedOpen(true)
-				return
-			}
-			if (outcome.type === 'close') {
-				setSlashStart(null)
-				setUnifiedOpen(false)
-				return
-			}
-			// `outcome.type === 'noop'` — either not triggering, or already tracking the
-			// same `/` and the user is just typing more chars.
+			applySlash(next, pos)
 		},
-		[setValue, slashStart, typeFilterChip, vaultFlow?.blocking, enterVault],
+		[setValue, vaultFlow?.blocking, enterVault, applySlash],
+	)
+
+	// The tag input reports text and chip ids on every change. The `!` vault prefix, the `/`
+	// picker and the id list work off that, the same as handleChange does for the textarea.
+	const handleTagChange = useCallback(
+		(next: TagValue) => {
+			domTextRef.current = next.text
+			if (!vaultFlow?.blocking && valueRef.current === '') {
+				const seed = vaultSeedFrom(next.text)
+				if (seed !== null) {
+					enterVault(seed)
+					tagRef.current?.setContent([])
+					return
+				}
+			}
+			setValue(next.text)
+			syncTagIds(next.ids, true)
+			const pos = tagRef.current?.caretOffset()
+			if (typeof pos === 'number') applySlash(next.text, pos)
+		},
+		[vaultFlow?.blocking, enterVault, setValue, syncTagIds, applySlash],
 	)
 
 	// Compute the picker's live query — text from the char AFTER the `/` up to
@@ -978,13 +1160,15 @@ export function Composer({
 	// from a web page or spreadsheet puts a rendered image next to the text, and the
 	// text is what the user meant to paste.
 	const handlePaste = useCallback(
-		(e: ClipboardEvent<HTMLTextAreaElement>) => {
+		(e: ClipboardEvent<HTMLElement>) => {
 			if (vaultFlow?.blocking) return
 			const text = e.clipboardData.getData('text')
 			if (valueRef.current === '') {
 				const seed = vaultSeedFrom(text)
 				if (seed !== null) {
 					e.preventDefault()
+					// The tag input listens for paste too; the secret must not reach it.
+					e.stopPropagation()
 					enterVault(seed)
 					return
 				}
@@ -993,6 +1177,7 @@ export function Composer({
 			const files = Array.from(e.clipboardData.files)
 			if (files.length === 0) return
 			e.preventDefault()
+			e.stopPropagation()
 			const now = new Date()
 			attachFiles(files.map((file) => nameClipboardImage(file, now)))
 		},
@@ -1008,6 +1193,12 @@ export function Composer({
 		abortControllersRef.current.delete(tempId)
 		setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
 	}, [])
+
+	// The chips in the sentence are the tags, so the pill row has no agents to show.
+	const chipSelection = useMemo(
+		() => (inlineTags ? { ...selection, agents: [] } : selection),
+		[inlineTags, selection],
+	)
 
 	return (
 		<div
@@ -1048,23 +1239,26 @@ export function Composer({
 			{/* Inline `@` mention picker — the composer's textarea remains the
 			    focused element, and the picker consumes arrow keys / Enter /
 			    Escape via `handleKeyDown`'s `reduceMentionPickerKey` branch. */}
-			<MentionPicker
-				open={mentionTrigger !== null}
-				onOpenChange={(next) => {
-					if (!next) setMentionTrigger(null)
-				}}
-				actors={mentionActors}
-				conversationParticipantIds={conversationParticipantIds ?? []}
-				query={mentionTrigger?.query ?? ''}
-				workspaceId={workspaceId}
-				selfActorId={selfActorId}
-				onSelect={(actor) => commitMention(actor)}
-				anchor={
-					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
-				}
-			/>
+			{/* In inline-tag mode the tag input owns the `@` picker. */}
+			{inlineTags ? null : (
+				<MentionPicker
+					open={mentionTrigger !== null}
+					onOpenChange={(next) => {
+						if (!next) setMentionTrigger(null)
+					}}
+					actors={mentionActors}
+					conversationParticipantIds={conversationParticipantIds ?? []}
+					query={mentionTrigger?.query ?? ''}
+					workspaceId={workspaceId}
+					selfActorId={selfActorId}
+					onSelect={(actor) => commitMention(actor)}
+					anchor={
+						<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
+					}
+				/>
+			)}
 			<SelectionChips
-				selection={selection}
+				selection={chipSelection}
 				onRemoveAgent={onRemoveAgent}
 				onRemoveObject={onRemoveObject}
 				onRemoveNotification={onRemoveNotification}
@@ -1132,13 +1326,13 @@ export function Composer({
 						const restored = withoutSecrets(secretFlow.content, secretFlow.matches)
 						setSecretFlow(null)
 						setValue(restored)
-						textareaRef.current?.focus()
+						focusInput()
 					}}
 					onEdit={() => {
 						const restored = secretFlow.content
 						setSecretFlow(null)
 						setValue(restored)
-						textareaRef.current?.focus()
+						focusInput()
 					}}
 					onDone={(keepReceipts) =>
 						setSecretFlow(keepReceipts ? (prev) => prev && { ...prev, blocking: false } : null)
@@ -1159,39 +1353,70 @@ export function Composer({
 					onSend={onSend}
 					onLeave={() => {
 						setVaultFlow(null)
-						requestAnimationFrame(() => textareaRef.current?.focus())
+						requestAnimationFrame(focusInput)
 					}}
 					onDone={(keepReceipts) => {
 						setVaultFlow(keepReceipts ? (prev) => prev && { ...prev, blocking: false } : null)
-						requestAnimationFrame(() => textareaRef.current?.focus())
+						requestAnimationFrame(focusInput)
 					}}
 				/>
 			) : null}
 			{/* Hidden rather than unmounted while vault mode is open, so the composer's own
 			    state is untouched when the user comes back to it. */}
 			<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
-				<Textarea
-					autoResize
-					ref={textareaRef}
-					value={value}
-					onChange={handleChange}
-					onPaste={handlePaste}
-					onKeyDown={handleKeyDown}
-					placeholder={placeholder}
-					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
-					disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
-					rows={1}
-					aria-label={textareaLabel}
-					aria-describedby={hint === undefined ? undefined : hintId}
-					onFocus={() => setTextareaFocused(true)}
-					onBlur={() => setTextareaFocused(false)}
-					// Screen readers announce the picker's active row while focus
-					// stays on the textarea (spec §Accessibility). The picker
-					// keeps this in sync via `onActiveDescendantChange`.
-					aria-activedescendant={unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined}
-					aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
-					aria-expanded={mentionTrigger !== null || undefined}
-				/>
+				{inlineTags ? (
+					// Focus and paste are caught on the wrapper: the tag input has no hooks for them.
+					<div
+						ref={tagWrapRef}
+						className="p-1"
+						onFocus={() => setTextareaFocused(true)}
+						onBlur={() => setTextareaFocused(false)}
+						onPasteCapture={handlePaste}
+					>
+						<TagInput
+							handleRef={tagRef}
+							workspaceId={workspaceId}
+							conversationParticipantIds={conversationParticipantIds}
+							selfActorId={selfActorId}
+							initialSegments={initialTagContent.segments}
+							surface="card"
+							ariaLabel={textareaLabel ?? placeholder}
+							ariaDescribedBy={hint === undefined ? undefined : hintId}
+							// The `/` picker's active row, announced while focus stays in the input.
+							ariaActiveDescendant={
+								unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
+							}
+							placeholder={placeholder}
+							disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
+							className="max-h-40 min-h-[28px] text-sm"
+							onChange={handleTagChange}
+							onKeyDown={handleKeyDown}
+						/>
+					</div>
+				) : (
+					<Textarea
+						autoResize
+						ref={textareaRef}
+						value={value}
+						onChange={handleChange}
+						onPaste={handlePaste}
+						onKeyDown={handleKeyDown}
+						placeholder={placeholder}
+						className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+						disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
+						rows={1}
+						aria-label={textareaLabel}
+						aria-describedby={hint === undefined ? undefined : hintId}
+						onFocus={() => setTextareaFocused(true)}
+						onBlur={() => setTextareaFocused(false)}
+						// Screen readers announce the picker's active row while focus
+						// stays on the textarea (spec §Accessibility). The picker
+						// keeps this in sync via `onActiveDescendantChange`.
+						aria-activedescendant={unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined}
+						aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
+						aria-expanded={mentionTrigger !== null || undefined}
+					/>
+				)}
 				{sendError || externalError ? (
 					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
 						{sendError ?? externalError} — your message is preserved; try again.
