@@ -6,6 +6,7 @@ import type {
 import { FormError } from '@/components/shared/form-error'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { cn } from '@/lib/cn'
 
 function ModeToggle({
@@ -48,6 +49,7 @@ export function MappingSection({
 	errors: WebhookFormErrors
 	onChange: (next: WebhookFormState) => void
 }) {
+	const canWrite = useCanWrite()
 	const set = <K extends keyof WebhookFormState>(key: K, value: WebhookFormState[K]) =>
 		onChange({ ...form, [key]: value })
 
@@ -63,7 +65,8 @@ export function MappingSection({
 				How a signed delivery turns into an event a trigger can listen for.
 			</p>
 
-			<div className="mt-4 grid gap-4">
+			{/* A viewer sees the mapping filled in but cannot change it. */}
+			<fieldset disabled={!canWrite} className="mt-4 grid min-w-0 gap-4 border-0 p-0">
 				<div className="grid gap-1.5">
 					<Label htmlFor="external-id-path">External ID (dedup key)</Label>
 					<Input
@@ -124,7 +127,7 @@ export function MappingSection({
 					</p>
 					<FormError error={errors.action} />
 				</div>
-			</div>
+			</fieldset>
 		</section>
 	)
 }

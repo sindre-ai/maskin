@@ -2,7 +2,9 @@ import { McpTag } from '@/components/integrations/drive/mcp-tag'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDriveWatches, useStopDriveWatch } from '@/hooks/use-integrations'
 import type { DriveWatch } from '@/lib/api'
 import { DRIVE_COPY } from '@/lib/drive-copy'
@@ -90,6 +92,7 @@ function WatchRow({
 	stopping: boolean
 	onStop: () => void
 }) {
+	const canWrite = useCanWrite()
 	const fullPath = folderDisplayPath(watch)
 	const triggerNames = watch.triggers.map((t) => t.name).join(', ')
 
@@ -136,15 +139,17 @@ function WatchRow({
 				</div>
 				<div className="flex shrink-0 items-center gap-2">
 					<McpTag tool="watch_folder" />
-					<Button
-						size="sm"
-						variant="outline"
-						onClick={onStop}
-						disabled={stopping}
-						aria-label={DRIVE_COPY.stopWatchLabel(fullPath)}
-					>
-						{DRIVE_COPY.stopWatch}
-					</Button>
+					<ViewerTooltip>
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={onStop}
+							disabled={stopping || !canWrite}
+							aria-label={DRIVE_COPY.stopWatchLabel(fullPath)}
+						>
+							{DRIVE_COPY.stopWatch}
+						</Button>
+					</ViewerTooltip>
 				</div>
 			</div>
 		</li>

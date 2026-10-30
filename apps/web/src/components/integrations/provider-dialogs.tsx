@@ -1,5 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -10,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useCompleteIntegration,
 	useConnectIntegration,
@@ -37,10 +39,11 @@ export function ApiKeyDialog({
 	returnTo?: string
 }) {
 	const connect = useConnectIntegration(workspaceId)
+	const canWrite = useCanWrite()
 
 	const open = !!provider
 	const handleConnect = () => {
-		if (!provider) return
+		if (!provider || !canWrite) return
 		connect.mutate(
 			{ provider: provider.name, apiKey, returnTo },
 			{
@@ -74,7 +77,10 @@ export function ApiKeyDialog({
 					<Button variant="ghost" onClick={onClose}>
 						Cancel
 					</Button>
-					<Button onClick={handleConnect} disabled={!apiKey.trim() || connect.isPending}>
+					<Button
+						onClick={handleConnect}
+						disabled={!apiKey.trim() || connect.isPending || !canWrite}
+					>
 						Connect
 					</Button>
 				</div>
@@ -111,6 +117,7 @@ export function SkjaldConnectDialog({
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const complete = useCompleteIntegration(workspaceId)
+	const canWrite = useCanWrite()
 	const [step, setStep] = useState<'app' | 1 | 2>('app')
 	const [manual, setManual] = useState<{ webhookUrl: string; integrationId: string } | null>(null)
 	const [secret, setSecret] = useState('')
@@ -126,6 +133,7 @@ export function SkjaldConnectDialog({
 
 	// The manual path is the only one that creates a row up front, so it is only started on request.
 	const handleManual = () => {
+		if (!canWrite) return
 		connect.mutate(
 			{ provider: 'skjald' },
 			{
@@ -147,7 +155,7 @@ export function SkjaldConnectDialog({
 	}
 
 	const handleComplete = () => {
-		if (!manual) return
+		if (!manual || !canWrite) return
 		complete.mutate(
 			{ id: manual.integrationId, secret },
 			{
@@ -177,7 +185,11 @@ export function SkjaldConnectDialog({
 							))}
 						</ol>
 						<div className="flex justify-end gap-2">
-							<Button variant="ghost" onClick={handleManual} disabled={connect.isPending}>
+							<Button
+								variant="ghost"
+								onClick={handleManual}
+								disabled={connect.isPending || !canWrite}
+							>
 								Set up manually
 							</Button>
 							<Button onClick={handleClose}>Done</Button>
@@ -224,7 +236,10 @@ export function SkjaldConnectDialog({
 							<Button variant="ghost" onClick={() => setStep(1)}>
 								Back
 							</Button>
-							<Button onClick={handleComplete} disabled={!secret.trim() || complete.isPending}>
+							<Button
+								onClick={handleComplete}
+								disabled={!secret.trim() || complete.isPending || !canWrite}
+							>
 								Connect
 							</Button>
 						</div>
@@ -246,17 +261,20 @@ export function InstallGithubOrgButton({
 	returnTo?: string
 }) {
 	const connect = useConnectIntegration(workspaceId)
+	const canWrite = useCanWrite()
 	return (
-		<Button
-			variant="outline"
-			size="sm"
-			className="w-full md:flex-1"
-			onClick={() => connect.mutate({ provider: 'github', installNewOrg: true, returnTo })}
-			disabled={connect.isPending}
-		>
-			<Plus className="h-3.5 w-3.5 mr-1" />
-			Install on another organization
-		</Button>
+		<ViewerTooltip className="flex w-full md:flex-1">
+			<Button
+				variant="outline"
+				size="sm"
+				className="w-full md:flex-1"
+				onClick={() => connect.mutate({ provider: 'github', installNewOrg: true, returnTo })}
+				disabled={connect.isPending || !canWrite}
+			>
+				<Plus className="h-3.5 w-3.5 mr-1" />
+				Install on another organization
+			</Button>
+		</ViewerTooltip>
 	)
 }
 
@@ -295,6 +313,7 @@ export function LinkGithubDialog({
 }) {
 	const { data, isLoading } = useLinkableGithubInstallations(workspaceId)
 	const link = useLinkGithubInstallation(workspaceId)
+	const canWrite = useCanWrite()
 	const options = (data ?? []).filter((installation) => !installation.alreadyLinked)
 
 	return (
@@ -339,7 +358,7 @@ export function LinkGithubDialog({
 											},
 										})
 									}
-									disabled={link.isPending}
+									disabled={link.isPending || !canWrite}
 								>
 									Add
 								</Button>

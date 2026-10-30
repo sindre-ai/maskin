@@ -1,8 +1,10 @@
 import { McpDialog } from '@/components/extensions/mcp-dialog'
 import { formFromMcpConfig, mcpToolCount } from '@/components/extensions/mcp-form'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MaskedSecret } from '@/components/ui/masked-secret'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ExtensionMcpConfig, ExtensionResponse, VendorRecipe } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { mcpRemoteUrl } from '@maskin/shared'
@@ -15,6 +17,7 @@ export function McpSection({
 	workspaceId,
 	recipes,
 }: { ext: ExtensionResponse; workspaceId: string; recipes: VendorRecipe[] }) {
+	const canWrite = useCanWrite()
 	const [open, setOpen] = useState(false)
 	const [dialogKey, setDialogKey] = useState(0)
 	const [initialUrl, setInitialUrl] = useState<string | undefined>()
@@ -25,6 +28,7 @@ export function McpSection({
 		: null
 
 	const openDialog = (url?: string) => {
+		if (!canWrite) return
 		setInitialUrl(url)
 		setDialogKey((k) => k + 1)
 		setOpen(true)
@@ -49,13 +53,21 @@ export function McpSection({
 					</p>
 				</div>
 				{cfg ? (
-					<Button variant="secondary" size="sm" onClick={() => openDialog()}>
-						Edit
-					</Button>
+					<ViewerTooltip>
+						<Button variant="secondary" size="sm" disabled={!canWrite} onClick={() => openDialog()}>
+							Edit
+						</Button>
+					</ViewerTooltip>
 				) : (
-					<Button size="sm" onClick={() => openDialog(recipeUrl ?? undefined)}>
-						{recipe ? `Add MCP from the ${recipe.displayName} recipe` : 'Add MCP'}
-					</Button>
+					<ViewerTooltip>
+						<Button
+							size="sm"
+							disabled={!canWrite}
+							onClick={() => openDialog(recipeUrl ?? undefined)}
+						>
+							{recipe ? `Add MCP from the ${recipe.displayName} recipe` : 'Add MCP'}
+						</Button>
+					</ViewerTooltip>
 				)}
 			</div>
 
@@ -67,9 +79,16 @@ export function McpSection({
 					<AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
 					<p className="flex-1">
 						This MCP is not attached to sessions: {ext.mcpLastError}.{' '}
-						<button type="button" className="underline" onClick={() => openDialog()}>
-							Fix it in the MCP step
-						</button>
+						<ViewerTooltip>
+							<button
+								type="button"
+								className="underline disabled:cursor-not-allowed disabled:no-underline"
+								disabled={!canWrite}
+								onClick={() => openDialog()}
+							>
+								Fix it in the MCP step
+							</button>
+						</ViewerTooltip>
 					</p>
 				</div>
 			)}

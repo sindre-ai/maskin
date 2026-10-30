@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useCompleteIntegration,
 	useConnectIntegration,
@@ -75,6 +76,7 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 	const apiKeyInputRef = useRef<HTMLInputElement>(null)
 
 	const connect = useConnectIntegration(workspaceId)
+	const canWrite = useCanWrite()
 	const dnsPrecheck = useResendDnsPrecheck(workspaceId)
 	const complete = useCompleteIntegration(workspaceId)
 
@@ -128,7 +130,7 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 	}
 
 	const handleDomainSubmit = async () => {
-		if (!domain.trim()) return
+		if (!canWrite || !domain.trim()) return
 		// Fire the pre-check before we hit /connect. On a root-MX warn we swap
 		// scene into `s3-root-mx` instead of dispatching /connect.
 		try {
@@ -146,6 +148,7 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 	}
 
 	const handleRegisterDomain = async () => {
+		if (!canWrite) return
 		setConnectError(null)
 		setScene('s3-loading')
 		try {
@@ -171,7 +174,7 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 	}
 
 	const handleComplete = async () => {
-		if (!integrationId || !signingSecret.trim()) return
+		if (!canWrite || !integrationId || !signingSecret.trim()) return
 		try {
 			await complete.mutateAsync({ id: integrationId, secret: signingSecret.trim() })
 			setScene('s4-done')
@@ -260,7 +263,9 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 								</Button>
 								<Button
 									onClick={handleDomainSubmit}
-									disabled={!domain.trim() || dnsPrecheck.isPending || connect.isPending}
+									disabled={
+										!canWrite || !domain.trim() || dnsPrecheck.isPending || connect.isPending
+									}
 								>
 									{scene === 's2-err' ? 'Try another domain' : 'Register domain'}
 								</Button>
@@ -270,7 +275,12 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 						{scene === 's3-pending' && (
 							<Button
 								onClick={handleComplete}
-								disabled={!signingSecret.trim() || !isVerified(dnsRecords) || complete.isPending}
+								disabled={
+									!canWrite ||
+									!signingSecret.trim() ||
+									!isVerified(dnsRecords) ||
+									complete.isPending
+								}
 							>
 								{isVerified(dnsRecords) ? 'Finish connecting' : 'Waiting on DNS…'}
 							</Button>

@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { buildSkillListItem } from '../../factories'
 import { TestWrapper } from '../../setup'
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
