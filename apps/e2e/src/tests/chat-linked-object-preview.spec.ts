@@ -47,13 +47,13 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread).toBeVisible({ timeout: 10_000 })
-			// The card starts collapsed: the title and Open link, then the text once expanded.
+			// A draft is a full card from the start: the title, Open, the text and Approve.
 			await expect(thread.getByText('LinkedIn note to Catja', { exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
 			await expect(thread.getByRole('link', { name: 'Open' })).toBeVisible()
-			await thread.getByRole('button', { name: 'Expand preview' }).click()
 			await expect(thread.getByText(NOTE)).toBeVisible()
+			await expect(thread.getByRole('button', { name: 'Approve draft' })).toBeVisible()
 
 			for (const colorScheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme })

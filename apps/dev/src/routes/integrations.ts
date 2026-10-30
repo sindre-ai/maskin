@@ -6,11 +6,11 @@ import {
 	actors,
 	agentChatGrants,
 	agentGrants,
+	extensions,
 	integrations,
 	webhookDeliveries,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
 	NATIVE_OAUTH_RETURN_URLS,
@@ -19,6 +19,7 @@ import {
 	parseNativeOAuthReturnUrl,
 	skjaldOutcomePayloadSchema,
 	skjaldTranscriptionCompletedPayloadSchema,
+	webhookConfigSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull, sql } from 'drizzle-orm'
@@ -26,18 +27,30 @@ import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { requireCredentials } from '../lib/integrations/credential-column'
 import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
+import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
+import { getEnvOrThrow } from '../lib/integrations/env'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
-import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
+import {
+	allowWebhookRequest,
+	deliveryEntityId,
+	extensionProvider,
+	isStaleDelivery,
+	mapWebhookEvent,
+	verifyExtensionSignature,
+} from '../lib/integrations/extensions'
+import { ensureExtensionSystemActor, readExtensionSecret } from '../lib/integrations/extensions-db'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { decodeLaunchTicket, encodeLaunchTicket } from '../lib/integrations/oauth/native-launch'
+import { resolveOrigin } from '../lib/integrations/oauth/origins'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
@@ -55,6 +68,12 @@ import {
 	persistRecoveredInstallationId,
 	propagateRecoveredInstallationId,
 } from '../lib/integrations/providers/github/installation-recovery'
+import { GOOGLE_DRIVE_PROVIDER } from '../lib/integrations/providers/google-drive/token'
+import {
+	type DriveIntegrationConfig,
+	carriedDriveConfig,
+} from '../lib/integrations/providers/google-drive/watch'
+import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
@@ -104,7 +123,7 @@ import {
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
 import { getProvider, listProviders } from '../lib/integrations/registry'
-import { integrationScopeGaps } from '../lib/integrations/scope-drift'
+import { integrationScopeGaps, parseScopes } from '../lib/integrations/scope-drift'
 import type {
 	NormalizedEvent,
 	ResolvedProvider,
@@ -113,8 +132,6 @@ import type {
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { verifyTimestampSignature } from '../lib/integrations/webhooks/signatures'
-import { LINKEDIN_IDENTITY_PROVIDER } from '../lib/linkedin-addon'
-import { syncLinkedInAddonQuantity } from '../lib/linkedin-addon-billing'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -210,6 +227,7 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		// undecryptable blob (almost always an encryption-key rotation) or an
 		// inactive row must never take the whole integrations list down.
 		let missingScopes: string[] = []
+		let grantedScopes: string[] = []
 		// OAuth scopes only mean something for a registered provider; a saved key or login has none.
 		if (rest.status === 'active' && credentials && rest.providerMode === 'registered') {
 			try {
@@ -217,6 +235,7 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 				if (provider) {
 					const parsed = JSON.parse(decrypt(credentials as string)) as StoredCredentials
 					missingScopes = integrationScopeGaps(provider.config, parsed).missing
+					grantedScopes = typeof parsed.scope === 'string' ? [...parseScopes(parsed.scope)] : []
 				}
 			} catch (err) {
 				logger.warn('Could not evaluate integration scope drift', {
@@ -232,6 +251,7 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 			...rest,
 			missingScopes,
 			needsReconnect: missingScopes.length > 0,
+			grantedScopes,
 			agentGrants: grantsByIntegration.get(rest.id) ?? [],
 			chatGrants: chatsByIntegration.get(rest.id) ?? [],
 		}
@@ -1334,6 +1354,17 @@ app.openapi(connectRoute, (async (c) => {
 		install_new_org?: boolean
 		return_to?: unknown
 		native_return_url?: unknown
+		origin?: unknown
+	}
+
+	// Page that started the flow, so a cancel can land back on it. Looked up in a
+	// server-side table; a value that is supplied but unknown is refused.
+	let origin: string | undefined
+	if (oauthBody.origin !== undefined && oauthBody.origin !== null) {
+		if (!resolveOrigin(oauthBody.origin, providerName)) {
+			return c.json(createApiError('BAD_REQUEST', 'origin is not allowed for this provider'), 400)
+		}
+		origin = oauthBody.origin as string
 	}
 
 	// Native app return target. Strictly allowlisted by exact match; a value that
@@ -1364,6 +1395,7 @@ app.openapi(connectRoute, (async (c) => {
 		nonce,
 		returnTo: sanitizeReturnPath(oauthBody.return_to, workspaceId),
 		...(nativeReturn ? { nativeReturn } : {}),
+		...(origin ? { origin } : {}),
 	}
 
 	// If provider uses PKCE, generate and include code verifier in state
@@ -1707,6 +1739,33 @@ app.openapi(callbackRoute, (async (c) => {
 		return nativeEnd({ status: 'error', reason: 'denied' })
 	}
 
+	// Web flow that started from a page with a registered origin (the Drive
+	// connect wizard): a cancel goes back there. Sits after the state, cookie,
+	// pending-row and member checks, so a forged or replayed cancel gets the same
+	// 400s as before. Flows without an origin, and any error other than
+	// access_denied, keep the response below.
+	if (!native && !query.code && query.error === 'access_denied' && stateData.origin !== undefined) {
+		const origin = resolveOrigin(stateData.origin, providerName)
+		if (origin) {
+			logger.info('OAuth consent cancelled, returning to origin', {
+				provider: providerName,
+				workspaceId: stateData.workspaceId,
+				origin: stateData.origin,
+			})
+			clearOAuthNonceCookie(c, providerName)
+			return c.redirect(
+				frontendUrlForReturn(
+					stateData.workspaceId,
+					`/${stateData.workspaceId}${origin.path}?oauth=cancelled`,
+				),
+			)
+		}
+		logger.warn('OAuth state carried an origin that no longer resolves', {
+			provider: providerName,
+			origin: stateData.origin,
+		})
+	}
+
 	// Handle provider-specific callback
 	let credentials: StoredCredentials
 	try {
@@ -1968,6 +2027,21 @@ app.openapi(callbackRoute, (async (c) => {
 	const isNewConnect = existingSameInstall?.status !== 'active'
 
 	if (existingSameInstall) {
+		// A reconnect rewrites config from scratch, which would drop the Drive
+		// first-use stamp (config.first_tool_call_at) and send the customer UI back
+		// to the first-call state. Carry just that key over from the prior row.
+		const priorConfig = existingSameInstall.config as DriveIntegrationConfig | null
+		const priorFirstToolCallAt = priorConfig?.first_tool_call_at
+		if (priorFirstToolCallAt) activeConfig.first_tool_call_at = priorFirstToolCallAt
+
+		// The same reconnect would also drop the Drive folder watches
+		// (config.drive.watchedFolders). Carry the block over minus its channel
+		// fields, which postInstall mints fresh below.
+		if (providerName === GOOGLE_DRIVE_PROVIDER) {
+			const drive = carriedDriveConfig(priorConfig)
+			if (drive) activeConfig.drive = drive
+		}
+
 		await db
 			.update(integrations)
 			.set({
@@ -2126,83 +2200,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		)
 	}
 
-	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
-	// credentials are still readable so the provider can call its remote API
-	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
-	// are responsible for swallowing errors so disconnect always proceeds.
-	//
-	// Credentials are decrypted lazily (only when a preDisconnect hook exists) and
-	// only for non-pending integrations — pending rows have credentials: '' because
-	// the OAuth flow was never completed and there is nothing to revoke at the provider.
-	try {
-		const resolved = getProvider(existing.provider)
-		if (resolved.preDisconnect && existing.status !== 'pending') {
-			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(existing)))
-			await resolved.preDisconnect({
-				db,
-				integrationId: existing.id,
-				workspaceId: existing.workspaceId,
-				credentials,
-				externalId: existing.externalId,
-			})
-		}
-	} catch (err) {
-		logger.warn(`preDisconnect failed for provider ${existing.provider}`, {
-			integrationId: existing.id,
-			error: err instanceof Error ? err.message : String(err),
-		})
-	}
-
-	await db.transaction(async (tx) => {
-		await tx
-			.update(integrations)
-			.set({ status: 'revoked', updatedAt: new Date() })
-			.where(eq(integrations.id, id))
-
-		await recordEvent(tx, {
-			workspaceId: existing.workspaceId,
-			actorId,
-			action: 'updated',
-			entityType: 'integration',
-			entityId: id,
-			data: { status: 'revoked', reason: 'user_disconnected' },
-		})
-	})
-
-	// Drop the disconnected identity off the $49 add-on. Runs after the status
-	// flip commits, because the sync recomputes quantity from the count of
-	// `active` rows — running it first would still count the row being
-	// revoked and leave the customer billed for it. Quantity changes carry
-	// `proration_behavior: 'none'`, so the identity stays paid for through the
-	// end of the period it was connected in.
-	if (existing.provider === LINKEDIN_IDENTITY_PROVIDER) {
-		await syncLinkedInAddonQuantity(db, existing.workspaceId)
-		// P3-C · Drop every fan-out MCP instance owned by this credential row
-		// from the in-process registry, so `tools/list` on the linkedin-unipile
-		// MCP endpoint no longer surfaces this integration's tools. Belt to the
-		// per-call `integrations.status` gate's braces (operations.ts preamble):
-		// the gate keeps a wrong (revoked) credential from reaching Unipile even
-		// on a race, while the deregister keeps a disconnected identity from
-		// appearing to still be there in the tool list. Uses the same code path
-		// R11-C wired for the Unipile-initiated `account.disconnect` webhook.
-		const dropped = deregisterLinkedInMcpInstancesForIntegration(existing.id)
-		if (dropped > 0) {
-			logger.info('Deregistered LinkedIn fan-out instances on disconnect', {
-				workspaceId: existing.workspaceId,
-				integrationId: existing.id,
-				dropped,
-			})
-		}
-	}
-
-	// Agents hold a copied snapshot of the provider's MCP server config, which
-	// outlives the credential behind it. Left in place, the agent boots with
-	// the server attached, advertises its tools, and fails every call — so it
-	// reports a broken platform instead of a missing connection.
-	//
-	// What counts as this integration's entry is declared in the provider's own
-	// config.ts, and only this credential's entries go (mcp-detach.ts).
-	await detachProviderMcpServers(db, existing, actorId)
+	await disconnectIntegrationRow(db, existing, actorId)
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
@@ -3012,7 +3010,11 @@ webhookApp.post('/slack-commands', async (c) => {
 		// Should be unreachable — slack config is always timestamp-scheme.
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
 	}
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack slash-command signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
 	}
@@ -3051,7 +3053,11 @@ webhookApp.post('/slack-actions-account-link', async (c) => {
 	if (!webhookConfig || 'type' in webhookConfig) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
 	}
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack interactive signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
 	}
@@ -3111,7 +3117,11 @@ webhookApp.post('/slack-interactive', async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack provider webhook config missing'), 500)
 	}
 
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack interactive: signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 	}
@@ -3687,6 +3697,177 @@ webhookApp.post('/resend/:token', async (c) => {
 	}
 })
 
+// ── Custom extension webhook ────────────────────────────────────────────
+// Registered before the generic `/:provider` catch-all, like the Skjald and
+// Resend token routes. `:token` is the opaque routing factor stored on the
+// `extensions` row (identifies the extension and its workspace); the
+// per-extension signing secret, decrypted from `integrations`
+// (provider 'extension:{slug}'), is the authentication factor. Signature
+// scheme, event mapping and rate limit all come from the row's webhook_config.
+// Failures that write nothing (bad signature, bad JSON, unmapped payload)
+// leave no row; only committed deliveries reach webhook_deliveries.
+webhookApp.post('/x/:token', async (c) => {
+	const startedAt = Date.now()
+	const db = c.get('db')
+	const token = c.req.param('token')
+
+	const [ext] = await db
+		.select()
+		.from(extensions)
+		.where(and(eq(extensions.webhookToken, token), eq(extensions.status, 'active')))
+		.limit(1)
+	if (!ext) {
+		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	}
+
+	const parsedConfig = webhookConfigSchema.safeParse(ext.webhookConfig)
+	if (!parsedConfig.success) {
+		logger.error('Extension webhook: stored webhook_config is invalid', { extensionId: ext.id })
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	const config = parsedConfig.data
+
+	const body = await c.req.text()
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	let secret: string | null
+	try {
+		secret = await readExtensionSecret(db, ext.workspaceId, ext.slug)
+	} catch (err) {
+		logger.error('Extension webhook: could not read signing secret', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	if (!secret) {
+		logger.error('Extension webhook: no signing secret stored', { extensionId: ext.id })
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+
+	let verified: boolean
+	try {
+		verified = verifyExtensionSignature(webhookHandler, config, body, headers, secret)
+	} catch (err) {
+		logger.error('Extension webhook: signature check could not run', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	if (!verified) {
+		logger.warn('Extension webhook: signature verification failed', { extensionId: ext.id })
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	if (isStaleDelivery(config, headers)) {
+		logger.warn('Extension webhook: delivery older than maxAgeSeconds', { extensionId: ext.id })
+		return c.json(createApiError('UNAUTHORIZED', 'Delivery is too old'), 401)
+	}
+
+	if (!allowWebhookRequest(token, config.rateLimit.perMinute)) {
+		return c.json(createApiError('RATE_LIMITED', 'Too many requests'), 429)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(body)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
+	}
+
+	const mapped = mapWebhookEvent(config.eventMap, payload)
+	if (!mapped.ok) {
+		return c.json(createApiError('VALIDATION_ERROR', mapped.message), 422)
+	}
+	const { externalId, entityType, action, data } = mapped.event
+
+	const provider = extensionProvider(ext.slug)
+	// The claim key is external id + action, so a cancel after a create for the same
+	// booking is a new delivery while a retry of the same event is still a duplicate.
+	// The event entity id below stays on the bare external id.
+	const claimKey = `${externalId}:${action}`
+	let claimRowId: string | null
+	try {
+		const rows = await db
+			.insert(webhookDeliveries)
+			.values({ provider, externalId: claimKey, workspaceId: ext.workspaceId })
+			.onConflictDoNothing({
+				target: [
+					webhookDeliveries.provider,
+					webhookDeliveries.externalId,
+					webhookDeliveries.workspaceId,
+				],
+			})
+			.returning({ id: webhookDeliveries.id })
+		if (rows.length === 0) {
+			return c.json({ ok: true, status: 'duplicate' })
+		}
+		claimRowId = rows[0]?.id ?? null
+	} catch (err) {
+		logger.error('Extension webhook: could not claim delivery', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+
+	const releaseClaim = async () => {
+		if (!claimRowId) return
+		try {
+			await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
+		} catch (err) {
+			logger.error('Extension webhook: could not release delivery claim', {
+				extensionId: ext.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	try {
+		const systemActorId = await ensureExtensionSystemActor(db, ext.workspaceId, ext.createdBy)
+		await commitWebhookDelivery(db, {
+			eventRows: [
+				{
+					workspaceId: ext.workspaceId,
+					actorId: systemActorId,
+					action,
+					entityType,
+					entityId: deliveryEntityId(ext.id, externalId),
+					data: data as Record<string, unknown>,
+				},
+			],
+			claimRowId,
+		})
+	} catch (err) {
+		if (err instanceof ClaimReleasedError) {
+			logger.warn('Extension webhook claim gone or already processed at commit time', {
+				extensionId: ext.id,
+				claimRowId: err.claimRowId,
+			})
+			return c.json({ ok: true, status: 'duplicate' })
+		}
+		logger.error('Extension webhook processing failed', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+
+	void capturePosthogEvent('webhook_delivery_committed', ext.workspaceId, {
+		provider,
+		external_id: externalId,
+		workspace_id: ext.workspaceId,
+		latency_ms: Date.now() - startedAt,
+	})
+
+	return c.json({ ok: true, status: 'committed' })
+})
+
 // `asyncProcessing` providers (Slack) hand fan-out + events insert off to the
 // event loop so the route can ack fast — the caller never gets a handle on
 // that background promise. Track it here so integration tests (running
@@ -3699,6 +3880,21 @@ const pendingAsyncWebhookWork = new Set<Promise<unknown>>()
 export async function __flushAsyncWebhookProcessingForTests(): Promise<void> {
 	await Promise.all(pendingAsyncWebhookWork)
 }
+
+// ── Google Drive channel notifications ──────────────────────────────────
+// Registered ahead of the '/:provider' catch-all on purpose. Drive pushes carry an
+// empty body (the catch-all rejects that as invalid JSON) and identify the
+// delivery by X-Goog-Channel-ID, not by the Google account email the catch-all
+// joins on (two workspaces can connect the same account). Token check, channel
+// join, dedup and fan-out live in the provider's webhook-handler.
+webhookApp.post('/google-drive', async (c) => {
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+	const result = await processDriveWebhook(c.get('db'), headers)
+	return c.json(result.body, result.status)
+})
 
 webhookApp.post('/:provider', async (c) => {
 	const db = c.get('db')
@@ -3737,7 +3933,11 @@ webhookApp.post('/:provider', async (c) => {
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}
 	} else {
-		if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		if (
+			!webhookHandler.verify(webhookConfig, body, headers, {
+				secret: getEnvOrThrow(webhookConfig.secretEnv),
+			})
+		) {
 			logger.warn(`Webhook signature verification failed for ${providerName}`)
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}

@@ -73,6 +73,15 @@ export const SELF_HEAL_DEFAULT_LIMIT = 500
  */
 export const SELF_HEAL_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000
 
+/**
+ * The window the every-minute tick looks at. A healthy backlog only ever holds
+ * rows from the last few minutes, so checking 7 days of sessions each tick re-probed
+ * `events` for tens of thousands of already-healthy sessions per minute. The
+ * full `SELF_HEAL_LOOKBACK_MS` sweep still runs once at boot and then hourly
+ * (see SessionSelfHealJob), so a multi-hour outage is still repaired.
+ */
+export const SELF_HEAL_RECENT_LOOKBACK_MS = 30 * 60 * 1000
+
 const FAILURE_REASON: SessionResultFailureReason = {
 	provider: 'agent-server',
 	reason_code: 'agent_server_lost',
@@ -225,9 +234,10 @@ export class SessionReconciler {
 		nowMs: number = Date.now(),
 		graceMs: number = SELF_HEAL_GRACE_MS,
 		limit: number = SELF_HEAL_DEFAULT_LIMIT,
+		lookbackMs: number = SELF_HEAL_LOOKBACK_MS,
 	): Promise<SelfHealResult> {
 		const cutoff = new Date(nowMs - graceMs)
-		const floor = new Date(nowMs - SELF_HEAL_LOOKBACK_MS)
+		const floor = new Date(nowMs - lookbackMs)
 		// Paused rows deliberately leave completedAt null (§5.2 col 2), so their
 		// terminal-transition time is updatedAt, which settleSession stamps on every
 		// write. Every other terminal kind has completedAt set.

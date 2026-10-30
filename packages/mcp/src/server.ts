@@ -11,12 +11,15 @@ import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type CustomExtensionEntry,
+	FOR_YOU_TOOL_DEFAULT_LIMIT,
+	type ForYouItemLike,
 	type McpEra,
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
+	slimForYouItems,
 	stripTrailingSlash,
 } from '@maskin/shared'
 import {
@@ -28,7 +31,8 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
-import { TOOL_ANNOTATIONS } from './annotations.js'
+import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
+import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -38,9 +42,18 @@ import {
 	toSnapshotAt,
 } from './cursor.js'
 import {
+	type IntegrationRow,
+	integrationSortKey,
+	leanIntegrationRow,
+	matchesIntegrationFilters,
+	summarizeIntegrations,
+} from './integrations-list.js'
+import { buildListPayload, listText } from './list-response.js'
+import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
 	parseApiErrorStatus,
+	reasonFromError,
 	toolErrorResponse,
 } from './read-error.js'
 import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
@@ -63,10 +76,12 @@ import {
 	type TelemetrySink,
 	createDefaultSink,
 	currentToolCallSeq,
+	recordAliasUse,
 	recordMutation,
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
+import { RUN_AGENT_DROPPED_KEYS, TOOL_NAME_ALIASES } from './tool-aliases.js'
 import { parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
@@ -229,6 +244,7 @@ const CARD_METADATA_KEYS: Record<string, string | null> = {
 	integration_connect: 'connect_integration',
 	keychain_request: 'request_keychain_credential',
 	keychain_access_request: 'request_keychain_access',
+	mcp_server_request: 'add_mcp_server',
 	computer_request: 'show_computer',
 	question: 'ask_user_question',
 	needed_tools: null,
@@ -1277,6 +1293,42 @@ function waitPollDelayMs(attempt: number): number {
 const MAX_POLL_FAILURES = 5
 
 /**
+ * What the caller reads when a handover did not start. A chat agent that only sees a
+ * bare API error tends to tell the person it handed the work over anyway.
+ */
+function sessionNotStartedResult(
+	config: McpConfig,
+	toolName: 'create_session' | 'create_sub_chat',
+	workspaceId: string | undefined,
+	err: unknown,
+) {
+	const reason = err instanceof Error ? err.message : String(err)
+	console.error(`${toolName}: could not start the session`, err)
+	return {
+		_meta: meta(toolName, config, workspaceId),
+		isError: true,
+		content: [
+			{
+				type: 'text' as const,
+				text: `Not started: ${reason}. Nothing was handed over. Tell the person in the same reply that the handover failed and why. Do not say the work was handed over or is in progress.`,
+			},
+		],
+	}
+}
+
+/**
+ * Added to a started session so the caller has something real to quote to the person: the
+ * link to its chat, never the session id.
+ */
+function handoffNote(session: { id: string; status?: string }, url?: unknown) {
+	const status = session.status ?? 'pending'
+	if (typeof url !== 'string' || !url) {
+		return `Started: the session is ${status}. Say it is queued if it has not started running yet. Never show the person a session id.`
+	}
+	return `Started: the session is ${status}. When you tell the person you handed this over, give them this link to its chat as a markdown link: ${url}. Say it is queued if it has not started running yet. Never show the person a session id.`
+}
+
+/**
  * The `wait: true` path of `create_session`: start the session, then wait for it to
  * reach a terminal state and return `{ session, logs }`.
  */
@@ -1299,15 +1351,17 @@ async function createSessionAndWait(
 	// returns the result inline, so it is only registered (below) if the wait runs
 	// out. False, not omitted, because an omitted value defaults on for a helper
 	// started from a chat, and the waiting caller would get the result twice.
-	const session = (await apiCall(
-		config,
-		'POST',
-		'/api/sessions',
-		{ ...createBody, notify_on_complete: false },
-		wsOpts,
-	)) as {
-		id: string
-		status: string
+	let session: { id: string; status: string }
+	try {
+		session = (await apiCall(
+			config,
+			'POST',
+			'/api/sessions',
+			{ ...createBody, notify_on_complete: false },
+			wsOpts,
+		)) as { id: string; status: string }
+	} catch (err) {
+		return sessionNotStartedResult(config, toolName, workspace_id, err)
 	}
 
 	return waitForSessionResult(config, {
@@ -1457,9 +1511,9 @@ async function waitForSessionResult(
 
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
-			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. Session id: ${sessionId}. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
 			: stoppedBecause === 'paused'
-				? `The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session. Session id: ${sessionId}.`
+				? 'The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session.'
 				: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
@@ -1900,6 +1954,40 @@ function extractWorkspaceId(args: unknown): string | undefined {
 }
 
 /**
+ * Refuses a write that names a workspace other than the one the agent session
+ * is running in. The model's own workspace_id wins over the session's default
+ * in every handler, so without this an agent whose key reaches several
+ * workspaces can write to any of them by passing the id.
+ *
+ * Applies only when the call belongs to a session (over HTTP the
+ * X-Maskin-Session-Id header, on stdio the container's SESSION_ID) and a
+ * default workspace is known, so human-driven use outside a session is
+ * untouched. A write is anything not in READ_ONLY_TOOLS, so a new tool is
+ * covered until someone marks it read-only; reads keep taking any workspace
+ * the key reaches. create_workspace is exempt: it has no session workspace to
+ * stay inside. Throws rather than rewriting the id so the model sees its error.
+ */
+function assertWriteStaysInSessionWorkspace(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+): void {
+	if (READ_ONLY_TOOLS.has(toolName) || toolName === 'create_workspace') return
+	const sessionWorkspaceId = config.defaultWorkspaceId
+	if (!sessionWorkspaceId) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	const requested = extractWorkspaceId(args)
+	if (requested === undefined || requested === sessionWorkspaceId) return
+	throw new Error(
+		`${toolName} was called with workspace_id ${requested}, but this session runs in workspace ${sessionWorkspaceId}. Agents can only write to the workspace they run in. Omit workspace_id or pass ${sessionWorkspaceId}.`,
+	)
+}
+
+/**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
  * count one mutation event per call when at least one inner item explicitly
@@ -2031,6 +2119,36 @@ export interface HeroCardPayload {
 }
 
 const HERO_CARD_UI_PAGE_SIZE = 25
+
+/**
+ * Max `relationships` and `connected_objects` rows get_objects returns per
+ * object. The graph endpoint returns every edge, so a hub object with hundreds
+ * of edges produced a 600k+ character result no client could read. Callers
+ * page the rest with list_relationships({ object_id }).
+ */
+export const GET_OBJECTS_EDGE_CAP = 100
+
+/**
+ * Cap one graph block at GET_OBJECTS_EDGE_CAP rows. When rows are dropped the
+ * second element tells the caller the real total and where to page the rest;
+ * it is null when everything fit, so small objects keep their exact shape.
+ */
+function capGraphBlock(
+	rows: unknown,
+	block: 'relationships' | 'connected_objects',
+	objectId: string,
+): [unknown, Record<string, unknown> | null] {
+	if (!Array.isArray(rows) || rows.length <= GET_OBJECTS_EDGE_CAP) return [rows, null]
+	return [
+		rows.slice(0, GET_OBJECTS_EDGE_CAP),
+		{
+			returned: GET_OBJECTS_EDGE_CAP,
+			total: rows.length,
+			truncated: true,
+			hint: `Showing the first ${GET_OBJECTS_EDGE_CAP} of ${rows.length}. Call list_relationships with object_id ${objectId} to page the rest${block === 'connected_objects' ? ', then get_objects on the endpoint ids you need' : ''}.`,
+		},
+	]
+}
 
 interface RawObject {
 	id: string
@@ -2859,7 +2977,34 @@ export function createMcpServer(config: McpConfig) {
 	// without losing the per-tool input schema inference; the wrapper is purely
 	// pass-through so giving up the wrapper's signature is safe.
 	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
-	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
+	const registerAppTool = ((s: any, name: string, baseDefinition: any, handler: any) => {
+		// Old parameter spellings are rewritten inside the input schema, because the
+		// SDK validates arguments before our handler runs. A tool with no alias
+		// rows passes through untouched, so its tools/list entry is unchanged.
+		const definition =
+			baseDefinition?.inputSchema && needsNormalise(name)
+				? {
+						...baseDefinition,
+						inputSchema: wrapInputSchema(baseDefinition.inputSchema, (raw) => {
+							const normalised = normaliseArgs(name, raw)
+							// One event per call that used at least one old name. Here, not in
+							// the handler, so it fires before validation and a call that then
+							// fails validation is still counted. Fire and forget; key names
+							// only. A separate event type from tool_call, so the server-side
+							// trace is not double counted.
+							if (normalised.renames.length > 0) {
+								recordAliasUse(telemetrySink, telemetryTarget, {
+									tool_name: name,
+									workspace_id: extractWorkspaceId(raw),
+									renames: normalised.renames,
+									both_sent: normalised.bothSent,
+									transport: config.transport,
+								})
+							}
+							return normalised.args
+						}),
+					}
+				: baseDefinition
 		const defHasRichRender = Boolean(definition?._meta?.ui)
 		const mutationKind = MUTATION_TOOL_KINDS[name]
 		const isReadTool = READ_TOOL_NAMES.has(name)
@@ -2868,6 +3013,7 @@ export function createMcpServer(config: McpConfig) {
 			const start = Date.now()
 			let response: unknown
 			try {
+				assertWriteStaysInSessionWorkspace(config, name, args)
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
@@ -3261,10 +3407,22 @@ export function createMcpServer(config: McpConfig) {
 					}
 					const extras: Record<string, unknown> = {}
 					if (includeSet.has('relationships') && graph && 'relationships' in graph) {
-						extras.relationships = graph.relationships
+						const [rows, page] = capGraphBlock(
+							graph.relationships,
+							'relationships',
+							withUrl.id as string,
+						)
+						extras.relationships = rows
+						if (page) extras.relationships_page = page
 					}
 					if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
-						extras.connected_objects = graph.connected_objects
+						const [rows, page] = capGraphBlock(
+							graph.connected_objects,
+							'connected_objects',
+							withUrl.id as string,
+						)
+						extras.connected_objects = rows
+						if (page) extras.connected_objects_page = page
 					}
 					if (includeSet.has('events') && graph && 'events' in graph) {
 						extras.events = graph.events
@@ -4742,19 +4900,18 @@ export function createMcpServer(config: McpConfig) {
 									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
 								},
 							}
+			const payload = buildListPayload({
+				key: 'workspaces',
+				rows: safeRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: rows.length,
+			})
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ workspaces: safeRows }),
-					},
-				],
-				structuredContent: {
-					heroCard,
-					workspaces: safeRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				// The card is presentation only; every datum is in the payload the text carries too.
+				structuredContent: { heroCard, ...payload },
 			}
 		},
 	)
@@ -5694,6 +5851,7 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.before_id) params.set('before_id', String(args.before_id))
 			if (args.after_id) params.set('after_id', String(args.after_id))
+			if (args.thread_root_id) params.set('thread_root_id', String(args.thread_root_id))
 			params.set('limit', String(args.limit))
 			const result = await apiCall(
 				config,
@@ -5855,11 +6013,15 @@ export function createMcpServer(config: McpConfig) {
 				first_message,
 				subject_type,
 				subject_id,
+				topical,
 				wait,
 			} = args
 			if ((subject_type === undefined) !== (subject_id === undefined)) {
 				throw new Error('subject_type and subject_id go together: give both or neither.')
 			}
+			// One other actor and no subject is the direct message with them, unless a
+			// separate topical chat was asked for. The API gets or creates it.
+			const direct = participant_actor_ids.length === 1 && subject_id === undefined && !topical
 			const wsOpts = { workspaceId: workspace_id }
 			const conversation = (await apiCall(
 				config,
@@ -5868,6 +6030,7 @@ export function createMcpServer(config: McpConfig) {
 				{
 					title,
 					participant_actor_ids,
+					...(direct ? { direct: true } : {}),
 					...(subject_type && subject_id
 						? { subject: { type: subject_type, id: subject_id } }
 						: {}),
@@ -6760,18 +6923,17 @@ export function createMcpServer(config: McpConfig) {
 					id: loop.id as string,
 				})
 			})
+			const payload = buildListPayload({
+				key: 'loops',
+				rows: enriched,
+				limit: pagination.limit,
+				nextCursor,
+				total: loops.length,
+			})
 			return {
 				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ loops: enriched }),
-					},
-				],
-				structuredContent: {
-					loops: enriched,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -6939,6 +7101,32 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'list_for_you',
+		{
+			description: tools.list_for_you.description,
+			inputSchema: tools.list_for_you.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const params = new URLSearchParams({ for_actor_id: args.actor_id })
+			const result = (await apiCall(config, 'GET', `/api/for-you?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})) as { items?: ForYouItemLike[] }
+			const payload = slimForYouItems(
+				Array.isArray(result?.items) ? result.items : [],
+				args.limit ?? FOR_YOU_TOOL_DEFAULT_LIMIT,
+				args.offset ?? 0,
+			)
+			return {
+				_meta: meta('list_for_you', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+				structuredContent: payload,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_notifications',
 		{
 			description: tools.list_notifications.description,
@@ -7092,18 +7280,17 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.latest_activity_at ?? null,
 				getId: (row) => row.entity_id,
 			})
+			const payload = buildListPayload({
+				key: 'items',
+				rows: pagedItems,
+				limit: pagination.limit,
+				nextCursor,
+				total: items.length,
+			})
 			return {
 				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ items: pagedItems }),
-					},
-				],
-				structuredContent: {
-					items: pagedItems,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7129,9 +7316,14 @@ export function createMcpServer(config: McpConfig) {
 				const { workspace_id, wait, ...rest } = args
 				const createBody = { ...rest, notify_on_complete: true }
 
-				const result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
-					workspaceId: workspace_id,
-				})) as SessionRow
+				let result: SessionRow
+				try {
+					result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
+						workspaceId: workspace_id,
+					})) as SessionRow
+				} catch (err) {
+					return sessionNotStartedResult(config, toolName, workspace_id, err)
+				}
 				const wsId = workspace_id ?? config.defaultWorkspaceId
 				const enriched = await enrichSessionActorName(config, wsId, result)
 				const withUrl = wsId
@@ -7143,11 +7335,83 @@ export function createMcpServer(config: McpConfig) {
 					: enriched
 				return {
 					_meta: meta(toolName, config, (args as { workspace_id?: string }).workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({
+								...withUrl,
+								handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
+							}),
+						},
+					],
 				}
 			},
 		)
 	}
+
+	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
+	// through the same wrapper as a real tool, so it gets the same tool_call row,
+	// size event, token cap and mutation event. The handler calls the wait path of
+	// create_session directly rather than the registered create_session handler,
+	// which would record a second tool_call row for one call.
+	//
+	// Argument mapping, derived from run_agent as it was before PR 1986:
+	//   actor_id, action_prompt, spawned_by_message_id  carried over one to one
+	//   workspace_id                                    filled from the default when absent
+	//   notify_on_complete                              accepted and ignored: create_session no longer
+	//                                                   takes it and registers the same fallback itself
+	//                                                   when the wait times out
+	//   config, poll_interval_seconds, timeout_seconds,
+	//   depends_on_session_ids                          no equivalent, dropped, names recorded
+	// The upstream signature accepts a raw shape; this tool passes a schema object
+	// (the alias layer's preprocess wrapper), so the narrow type is spelled out
+	// here. It is still registered through the same wrapper as every other tool.
+	const registerWrappedSchemaTool = registerAppTool as unknown as (
+		s: typeof server,
+		name: string,
+		definition: {
+			description: string
+			inputSchema: z.ZodTypeAny
+			_meta: Record<string, unknown>
+		},
+		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
+	) => unknown
+	registerWrappedSchemaTool(
+		server,
+		'run_agent',
+		{
+			description: tools.run_agent.description,
+			// The dropped key names are read in this preprocess step, before the
+			// schema strips them, and before validation, so a call that then fails
+			// validation is still counted. Same wrapper the alias rows use; this
+			// tool has no alias rows, so registerAppTool leaves the schema as given.
+			inputSchema: wrapInputSchema(tools.run_agent.inputSchema.shape, (raw) => {
+				const sent =
+					typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+						? (raw as Record<string, unknown>)
+						: {}
+				recordAliasUse(telemetrySink, telemetryTarget, {
+					tool_name: 'run_agent',
+					workspace_id: extractWorkspaceId(raw),
+					dropped_keys: RUN_AGENT_DROPPED_KEYS.filter((key) => key in sent),
+					tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
+					transport: config.transport,
+				})
+				return raw
+			}),
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
+			return createSessionAndWait(config, {
+				workspace_id: workspace_id ?? config.defaultWorkspaceId,
+				actor_id,
+				action_prompt,
+				spawned_by_message_id,
+				wait: true,
+			})
+		},
+	)
 
 	registerAppTool(
 		server,
@@ -7555,7 +7819,8 @@ export function createMcpServer(config: McpConfig) {
 					} else {
 						messageNote = {
 							message_delivered: false,
-							message_note: `The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is. Session id: ${id}.`,
+							message_note:
+								'The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is.',
 						}
 					}
 				}
@@ -7668,44 +7933,62 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const input = args as {
+				limit?: number
+				cursor?: string
+				provider?: string
+				status?: string
+				q?: string
+				verbose?: boolean
+				workspace_id?: string
+			}
+			// The whole list is fetched and paged here, so the full page size is available: there is
+			// no "+ 1" sentinel to leave room for.
 			const pagination = resolveListPagination({
-				limit: (args as { limit?: number }).limit,
-				cursor: (args as { cursor?: string }).cursor,
+				limit: input.limit,
+				cursor: input.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
 			})) as unknown
-			const rows = Array.isArray(result)
-				? (result as Array<{
-						id: string
-						createdAt?: string | null
-						provider?: string
-						status?: string
-					}>)
-				: []
+			const allRows = Array.isArray(result) ? (result as IntegrationRow[]) : []
+			// Filters apply before paging, so `total` and `has_more` describe the matches. A row added
+			// after the walk began stays out of every hop of it.
+			const matching = allRows.filter(
+				(row) =>
+					matchesIntegrationFilters(row, input) &&
+					(!row.createdAt || row.createdAt <= pagination.snapshotAt),
+			)
+			// Live connections first, then the newest. The cursor carries that composite key, so the
+			// snapshot check above stands in for the one `paginateClientSide` would do on a timestamp.
 			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
+				rows: matching,
 				limit: pagination.limit,
 				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
+				order: 'desc',
 				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
+				getSortValue: integrationSortKey,
 				getId: (row) => row.id,
+				applySnapshotFilter: false,
 			})
-			const reconnectHint = buildReconnectHint(pagedRows)
-			const listText = buildListContentText({ integrations: pagedRows })
+			const rows = input.verbose ? pagedRows : pagedRows.map(leanIntegrationRow)
+			// Judged over every row, not just this page: a broken connection must not depend on
+			// which page it landed on.
+			const reconnectHint = buildReconnectHint(allRows)
+			const payload = buildListPayload({
+				key: 'integrations',
+				rows,
+				limit: pagination.limit,
+				nextCursor,
+				total: matching.length,
+				extra: { summary: summarizeIntegrations(allRows) },
+				notes: reconnectHint ? [reconnectHint] : [],
+			})
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: reconnectHint ? `${listText}\n\n${reconnectHint}` : listText,
-					},
-				],
-				structuredContent: {
-					integrations: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7860,7 +8143,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it in your environment.`,
+						text: `A Keychain card for ${args.kind === 'login' ? 'a login' : 'an API key'}${args.suggested_name ? ` (${args.suggested_name})` : ''} is now in the chat. The user types it in there and it goes straight to their vault; you never see it. Do not ask the user to paste the secret in chat. End your turn now without a closing message; they will tell you when it is saved, and you will be restarted with it. ${args.kind === 'login' ? 'A login is never in your environment: type it on your computer with desktop_type, using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.' : 'It is in your environment as KEYCHAIN_BYO_APIKEY_<NAME>.'}`,
 					},
 				],
 			}
@@ -7951,7 +8234,7 @@ export function createMcpServer(config: McpConfig) {
 						content: [
 							{
 								type: 'text' as const,
-								text: `You already have access to ${args.credential_name}. It is in your environment; if it is missing, you were started before it was shared, so ask the user to send you a new message.`,
+								text: `You already have access to ${args.credential_name}. An API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}. If it does not work, you were started before it was shared, so ask the user to send you a new message.`,
 							},
 						],
 					}
@@ -7975,7 +8258,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it in your environment.`,
+						text: `A card asking to use ${args.credential_name} is now in the chat. The user decides there; you never see the value. End your turn now without a closing message. If they allow it you are restarted with it: an API key is in your environment; a login is never there, so type it on your computer with desktop_type using {{keychain:<Name>.username}} and {{keychain:<Name>.password}}.`,
 					},
 				],
 			}
@@ -8057,6 +8340,62 @@ export function createMcpServer(config: McpConfig) {
 					{
 						type: 'text' as const,
 						text: 'A card asking for that access is now in the chat. The user decides there. End your turn now without a closing message. If they allow it you are restarted with the new access.',
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'add_mcp_server',
+		{
+			description: tools.add_mcp_server.description,
+			inputSchema: tools.add_mcp_server.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// A card in the chat with the server's details; the person adds it there (secrets typed
+			// into the card, never through the model), which saves it, gives it to the agent that
+			// asked and restarts that session. The agent can never add a server or widen its own
+			// access from here.
+			const sessionId = config.maskinSessionId ?? process.env.SESSION_ID
+			const toolMeta = meta(
+				'add_mcp_server',
+				config,
+				(args as { workspace_id?: string }).workspace_id,
+			)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			if (!sessionId || !UUID_RE.test(sessionId)) {
+				return fail(
+					'There is no chat to show a card in. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
+				)
+			}
+			const { workspace_id: workspaceId, ...card } = args
+			try {
+				await apiCall(config, 'POST', `/api/sessions/${sessionId}/mcp-server-card`, card, {
+					workspaceId,
+				})
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				if (status === 409) {
+					return fail(
+						'This session has no person in a chat to ask, so no card could be shown. Say in your reply what server you need and how to run it; a person can add it under Settings → Integrations.',
+					)
+				}
+				if (status === 400) return fail(reasonFromError(err, 'invalid_param'))
+				throw err
+			}
+			return {
+				_meta: toolMeta,
+				content: [
+					{
+						type: 'text' as const,
+						text: 'A card to add that server is now in the chat, with its details filled in. The user checks it, types any key it needs and presses Add. End your turn now without a closing message. If they add it you are restarted with the server attached.',
 					},
 				],
 			}
@@ -8324,18 +8663,17 @@ export function createMcpServer(config: McpConfig) {
 				getId: (row) => row.id,
 				applySnapshotFilter: false,
 			})
+			const payload = buildListPayload({
+				key: 'extensions',
+				rows: pagedRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: result.length,
+			})
 			return {
 				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ extensions: pagedRows }),
-					},
-				],
-				structuredContent: {
-					extensions: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -9163,6 +9501,30 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_run', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_put_file',
+		{
+			description: tools.desktop_put_file.description,
+			inputSchema: tools.desktop_put_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/put-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_put_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

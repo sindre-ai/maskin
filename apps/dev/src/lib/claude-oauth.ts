@@ -158,7 +158,15 @@ export function reportClaudeRefreshFailure(params: {
 		const status = error.status === null ? 'none' : String(error.status)
 		Sentry.captureMessage('Claude OAuth token refresh failed', {
 			level: 'warning',
-			tags: { caller, slot, http_status: status, error_type: error.errorType },
+			// workspace_id is a tag so an alert rule can filter on it: the title is
+			// shared by every workspace on the server.
+			tags: {
+				workspace_id: workspaceId,
+				caller,
+				slot,
+				http_status: status,
+				error_type: error.errorType,
+			},
 			extra: {
 				workspaceId,
 				slot,

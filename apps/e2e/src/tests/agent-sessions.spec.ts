@@ -57,7 +57,7 @@ test.describe('Agent detail — Sessions section', () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			const section = page.getByRole('region', { name: 'Sessions' })
+			const section = page.getByRole('region', { name: 'Sessions', exact: true })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 
 			// The section note says what you can do here (mockup 2427), not a count.
@@ -101,7 +101,7 @@ test.describe('Agent detail — Sessions section', () => {
 			])
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
-			const section = page.getByRole('region', { name: 'Sessions' })
+			const section = page.getByRole('region', { name: 'Sessions', exact: true })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 
 			// Active runs sort first, then newest-first — so the oldest two sit

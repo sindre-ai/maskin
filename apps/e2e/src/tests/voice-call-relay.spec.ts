@@ -7,7 +7,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // CI, so the page's RTCPeerConnection and getUserMedia are replaced with
 // in-page fakes and the voice routes are stubbed. What this covers is the app's
 // own wiring: the offer goes to our server (never to the vendor), no browser
-// WebSocket opens, the transcript pane mirrors the call, the browser answers
+// WebSocket opens, the call's captions mirror what the agent says, the browser answers
 // tool calls only when the server said it could not, and the post-call toast.
 
 const SESSION_ID = '11111111-1111-4111-8111-111111111111'
@@ -133,7 +133,7 @@ async function startCall(page: Page, workspaceId: string, agentId: string) {
 	await page.evaluate(() => window.__voice.fromRealtime({ type: 'session.created' }))
 }
 
-test.describe('Voice call: server-side tools, transcript and post-call toast', () => {
+test.describe('Voice call: server-side tools, captions and post-call toast', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`hands the offer to our server, tags a tool call and toasts on end @ ${vp.label}`, async ({
 			page,
@@ -148,10 +148,9 @@ test.describe('Voice call: server-side tools, transcript and post-call toast', (
 
 			await startCall(page, account.workspaceId, agent.id)
 			expect((await offerRequest).postDataJSON()).toEqual({ sdp: 'v=0 browser offer' })
-			await page.getByRole('button', { name: 'Show transcript' }).click()
 
-			// Model asks for a tool: a mono tag in the pane, and nothing from the
-			// browser into the session (the server answers on its own connection).
+			// Model asks for a tool: nothing goes from the browser into the session
+			// (the server answers on its own connection).
 			await page.evaluate(() =>
 				window.__voice.fromRealtime({
 					type: 'response.function_call_arguments.done',
@@ -160,17 +159,11 @@ test.describe('Voice call: server-side tools, transcript and post-call toast', (
 					arguments: JSON.stringify({ q: 'loops v4 bet' }),
 				}),
 			)
-			await expect(page.getByText('searching for loops v4 bet…')).toBeVisible()
 			expect(await page.evaluate(() => window.__voice.dcSent)).toEqual([])
 
-			// Finished turns show in the pane.
-			await page.evaluate(() =>
-				window.__voice.fromRealtime({
-					type: 'conversation.item.input_audio_transcription.completed',
-					transcript: 'search for the loops v4 bet',
-				}),
-			)
-			await expect(page.getByText('search for the loops v4 bet', { exact: false })).toBeVisible()
+			// The agent's finished turn is the call's caption. The inline live
+			// transcript pane is gone: captions replace it.
+			await expect(page.getByRole('button', { name: 'Show transcript' })).toHaveCount(0)
 			await page.evaluate(() =>
 				window.__voice.fromRealtime({
 					type: 'response.output_audio_transcript.done',
@@ -178,6 +171,9 @@ test.describe('Voice call: server-side tools, transcript and post-call toast', (
 				}),
 			)
 			await expect(page.getByText('Top hit is Loops v4.')).toBeVisible()
+			await page.getByRole('button', { name: 'Hide captions' }).click()
+			await expect(page.getByText('Top hit is Loops v4.')).toHaveCount(0)
+			await page.getByRole('button', { name: 'Show captions' }).click()
 
 			// No browser WebSocket, ever.
 			expect(await page.evaluate(() => window.__voice.sockets)).toEqual([])
@@ -190,6 +186,47 @@ test.describe('Voice call: server-side tools, transcript and post-call toast', (
 			).toBeVisible()
 			await page.getByRole('button', { name: 'Open', exact: true }).click()
 			await expect(page).toHaveURL(new RegExp(`/chats/${CONVERSATION_ID}$`))
+		})
+	}
+
+	for (const width of [768, 1024]) {
+		test(`keeps the thread at least 360px wide beside the call panel @ ${width}px`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width, height: 900 })
+			const agent = await account.api.createAgentActor('Vera Voice')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			const conversation = await account.api.createConversation(account.workspaceId, {
+				title: 'E2E call layout',
+				participant_actor_ids: [agent.id],
+				initial_message: 'Opening the thread',
+			})
+			await installFakes(page)
+			await stubVoiceRoutes(page, { tools_available: true })
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread).toBeVisible({ timeout: 10_000 })
+			await page.getByRole('button', { name: /Call Vera Voice/ }).click()
+			await page.getByRole('button', { name: 'Allow microphone & start call' }).click()
+			await page.waitForFunction(
+				() => (window.__voice as unknown as { dcListeners: unknown[] }).dcListeners.length > 0,
+			)
+			await page.evaluate(() => window.__voice.fromRealtime({ type: 'session.created' }))
+
+			const panel = page.getByRole('complementary', { name: 'Call with Vera Voice' })
+			await expect(panel).toBeVisible()
+			// The sidebar folds to its icon rail and the list steps aside, so the
+			// thread keeps its room.
+			await expect
+				.poll(async () => (await thread.boundingBox())?.width ?? 0)
+				.toBeGreaterThanOrEqual(360)
+			const panelBox = await panel.boundingBox()
+			expect(panelBox?.width).toBe(width >= 1024 ? 340 : 300)
+
+			await page.getByRole('button', { name: 'End call' }).click()
+			await expect(panel).toHaveCount(0)
 		})
 	}
 

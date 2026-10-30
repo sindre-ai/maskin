@@ -15,6 +15,40 @@ struct LinkedTargetsTests {
 
 	// MARK: Extraction
 
+	@Test("extract scans a text once and answers repeat reads from the cache")
+	func extractIsCached() {
+		let text = "Draft: [Email](\(object(one)))"
+		let cache = LinkScanCache<[LinkedTarget]>()
+		let first = LinkedTarget.extract(from: text, cache: cache)
+		for _ in 0..<20 { #expect(LinkedTarget.extract(from: text, cache: cache) == first) }
+		#expect(first.map(\.key) == ["object:\(one)"])
+		#expect(cache.computeCount == 1)
+		_ = LinkedTarget.extract(from: "Another [Email](\(object(two)))", cache: cache)
+		#expect(cache.computeCount == 2)
+	}
+
+	@Test("split scans a text once and answers repeat reads from the cache")
+	func splitIsCached() {
+		let text = "Draft:\n\n[Email](\(object(one)))\n\nmore"
+		let cache = LinkScanCache<[LinkedSegment]>()
+		let first = LinkedMessageSplitter.split(text, cache: cache)
+		for _ in 0..<20 { #expect(LinkedMessageSplitter.split(text, cache: cache) == first) }
+		#expect(first == LinkedMessageSplitter.scan(text))
+		#expect(cache.computeCount == 1)
+	}
+
+	@Test("the public calls go through the shared cache")
+	func publicCallsUseTheSharedCache() {
+		// A text no other test uses, so the shared cache cannot already hold it.
+		let text = "Draft: [Email](\(object(one))) \(UUID().uuidString)"
+		#expect(LinkScanCaches.targets.peek(text) == nil)
+		#expect(LinkedTarget.extract(from: text) == LinkedTarget.scan(text))
+		#expect(LinkScanCaches.targets.peek(text) != nil)
+		#expect(LinkScanCaches.segments.peek(text) == nil)
+		#expect(LinkedMessageSplitter.split(text) == LinkedMessageSplitter.scan(text))
+		#expect(LinkScanCaches.segments.peek(text) != nil)
+	}
+
 	@Test("finds objects and files in links of every shape, once each, in order")
 	func extraction() {
 		let text = """
@@ -28,7 +62,7 @@ struct LinkedTargetsTests {
 	@Test("an id in prose, a link elsewhere or an image is not a target")
 	func notTargets() {
 		#expect(LinkedTarget.extract(from: "The id is \(one) and see https://example.com/page").isEmpty)
-		#expect(LinkedTarget.parse(href: "https://maskin.io/\(ws)/chats/\(one)") == nil)
+		#expect(LinkedTarget.parse(href: "https://maskin.io/\(ws)/loops/\(one)")?.kind == .loop)
 		#expect(LinkedTarget.parse(href: "maskin://\(ws)/files/\(file)")?.kind == .file)
 	}
 
@@ -144,15 +178,74 @@ struct LinkedTargetsTests {
 		#expect(parts == [.card(LinkedTarget(kind: .object, uuid: one)), .markdown("[B](\(object(one)))")])
 	}
 
-	@Test("in-sentence cards go under the message, never twice, at most three of each kind")
+	@Test("in-sentence cards go under the message, never twice, three cards in all")
 	func appended() {
 		let ids = (1...5).map { "0000000\($0)-2222-3333-4444-555555555555" }
 		let sentence = ids.map { "see [x](\(object($0)))" }.joined(separator: ", ")
 		let text = "[Placed](\(object(one)))\n\n\(sentence) and \(object(one)) and \(fileURL(file))"
-		let parts = LinkedMessageLayout.parts(segments: LinkedMessageSplitter.split(text), isCard: { _ in true })
+		let parts = LinkedMessageLayout.parts(
+			segments: LinkedMessageSplitter.split(text), isCard: { _ in true }, limit: LinkedMessageLayout.maxCardsPerMessage)
 		let under = LinkedMessageLayout.appended(message: text, parts: parts, isCard: { _ in true })
-		#expect(under.map(\.uuid) == [ids[0], ids[1], ids[2], file])
+		// One card is placed, so two more fit, whatever their kind.
+		#expect(under.map(\.uuid) == [ids[0], ids[1]])
 		#expect(!under.contains { $0.uuid == one })
+	}
+
+	@Test("the three cards are shared by every kind, in the order the message links them")
+	func capAcrossKinds() {
+		let ids = (1...4).map { "0000000\($0)-2222-3333-4444-555555555555" }
+		let text = "see \(fileURL(file)) and \(object(ids[0])) and \(object(ids[1])) and \(object(ids[2]))"
+		let under = LinkedMessageLayout.appended(message: text, parts: [], isCard: { _ in true })
+		#expect(under.map(\.uuid) == [file, ids[0], ids[1]])
+	}
+
+	@Test("stand-alone links past the cap stay links in the text")
+	func capInPlace() {
+		let ids = (1...4).map { "0000000\($0)-2222-3333-4444-555555555555" }
+		let text = ids.map { "[x](\(object($0)))" }.joined(separator: "\n\n")
+		let parts = LinkedMessageLayout.parts(
+			segments: LinkedMessageSplitter.split(text), isCard: { _ in true }, limit: LinkedMessageLayout.maxCardsPerMessage)
+		#expect(
+			parts == [
+				.card(LinkedTarget(kind: .object, uuid: ids[0])), .card(LinkedTarget(kind: .object, uuid: ids[1])),
+				.card(LinkedTarget(kind: .object, uuid: ids[2])), .markdown("[x](\(object(ids[3])))"),
+			])
+		#expect(LinkedMessageLayout.appended(message: text, parts: parts, isCard: { _ in true }).isEmpty)
+	}
+
+	@Test("a target that is a card in an earlier message stays a link here")
+	func skippedTargets() {
+		let text = "[A](\(object(one)))\n\nsee [b](\(object(two)))"
+		let skipping: Set<String> = [LinkedTarget(kind: .object, uuid: one).key]
+		let parts = LinkedMessageLayout.parts(
+			segments: LinkedMessageSplitter.split(text), isCard: { _ in true }, skipping: skipping)
+		#expect(parts == [.markdown(text)])
+		let under = LinkedMessageLayout.appended(message: text, parts: parts, isCard: { _ in true }, skipping: skipping)
+		#expect(under.map(\.uuid) == [two])
+	}
+
+	@Test("at most ten objects are looked up in a message, the rest stay plain")
+	func lookupCap() {
+		let objects = (1...12).map { LinkedTarget(kind: .object, uuid: String(format: "%08d-2222-3333-4444-555555555555", $0)) }
+		let files = (1...2).map { LinkedTarget(kind: .file, uuid: String(format: "%08d-3333-3333-4444-555555555555", $0)) }
+		let looked = LinkedMessageLayout.lookupTargets(objects + files)
+		#expect(looked.filter { $0.kind == .object } == Array(objects.prefix(10)))
+		#expect(looked.filter { $0.kind == .file } == files)
+	}
+
+	@Test("agent and chat addresses are targets, and count with objects toward the ten lookups")
+	func agentAndChatTargets() {
+		let agent = LinkedTarget.parse(href: "https://maskin.io/\(ws)/agents/\(one)")
+		let chat = LinkedTarget.parse(href: "https://maskin.io/\(ws)/chats/\(two)?thread=4")
+		#expect(agent == LinkedTarget(kind: .agent, uuid: one))
+		#expect(chat == LinkedTarget(kind: .chat, uuid: two))
+		#expect(agent?.key == "agent:\(one)" && chat?.key == "chat:\(two)")
+		// The agents list (no id) is not a target.
+		#expect(LinkedTarget.parse(href: "https://maskin.io/\(ws)/agents") == nil)
+		let objects = (1...8).map { LinkedTarget(kind: .object, uuid: String(format: "%08d-2222-3333-4444-555555555555", $0)) }
+		let more = [LinkedTarget(kind: .agent, uuid: one), LinkedTarget(kind: .chat, uuid: two), LinkedTarget(kind: .agent, uuid: file)]
+		#expect(LinkedMessageLayout.lookupTargets(objects + more) == Array((objects + more).prefix(10)))
+		#expect(LinkedConversationItems.mayLink("see \(chat!.key) /chats/") && !LinkedConversationItems.mayLink("no links"))
 	}
 
 	@Test("only targets that are cards are appended")
@@ -182,6 +275,19 @@ struct LinkedTargetsTests {
 		#expect(entries[0].messageID == "m3")
 		#expect(entries[0].actorID == "agent-2")
 		#expect(entries[2].messageID == "m1")
+	}
+
+	@Test("a target belongs to the first message that links it")
+	func firstMentions() {
+		let owners = LinkedConversationItems.firstMentions(in: [
+			message(1, "nothing here"),
+			message(2, "[a](\(object(one))) and [f](\(fileURL(file)))"),
+			message(3, "[again](\(object(one))) and [b](\(object(two)))"),
+			message(4, "system line \(object(two))", kind: "system"),
+		])
+		#expect(owners[LinkedTarget(kind: .object, uuid: one).key] == "m2")
+		#expect(owners[LinkedTarget(kind: .object, uuid: two).key] == "m3")
+		#expect(owners[LinkedTarget(kind: .file, uuid: file).key] == "m2")
 	}
 
 	@Test("the drawer stops at its limit")

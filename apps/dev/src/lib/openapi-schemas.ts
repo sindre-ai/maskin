@@ -279,6 +279,9 @@ export const integrationResponseSchema = z.object({
 	// and reconnecting is what fixes it. Scope names only — never the token.
 	missingScopes: z.array(z.string()).optional(),
 	needsReconnect: z.boolean().optional(),
+	// Scopes this install's token response actually carried, so a provider detail
+	// page can show per-scope status without ever seeing the token. Names only.
+	grantedScopes: z.array(z.string()).optional(),
 	// Keychain. Where the credential came from, and for source chat_capture the
 	// session the key was pasted into. Never the value or the wrapped data key.
 	source: z.string().optional(),

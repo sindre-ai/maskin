@@ -34,6 +34,7 @@ const SCOPE_TYPES: VocabularyType[] = [
 	{ key: 'chat', label: 'Chat' },
 	{ key: 'loop', label: 'Loop' },
 	{ key: 'agent', label: 'Agent' },
+	{ key: 'person', label: 'Person', plural: 'People' },
 	{ key: 'automation', label: 'Automation' },
 ]
 
@@ -77,6 +78,13 @@ const STATUS_WORDS: Record<string, StatusGroup> = {
 	churned: 'archived',
 }
 
+/** A person or agent that can be picked in the @ menu. */
+export interface ParticipantOption {
+	id: string
+	name: string
+	type: 'human' | 'agent'
+}
+
 export interface Vocabulary {
 	/** Lowercase typed word (one word) to type key. */
 	typeWords: ReadonlyMap<string, string>
@@ -84,6 +92,8 @@ export interface Vocabulary {
 	statusWords: ReadonlyMap<string, StatusGroup>
 	/** Type key to plural display name. */
 	typeLabels: ReadonlyMap<string, string>
+	/** Actor id to the person or agent it names: the participant pill label and the @ menu rows. */
+	participants: ReadonlyMap<string, ParticipantOption>
 }
 
 function pluralize(label: string): string {
@@ -94,10 +104,13 @@ function pluralize(label: string): string {
 
 /**
  * Builds the alias tables. `objectTypes` are the workspace's real object types;
- * the four scopes (chat, loop, agent, automation) are always added. A type listed
+ * the five scopes (chat, loop, agent, person, automation) are always added. A type listed
  * in both (loop) is kept once.
  */
-export function buildVocabulary(objectTypes: VocabularyType[]): Vocabulary {
+export function buildVocabulary(
+	objectTypes: VocabularyType[],
+	participants: ParticipantOption[] = [],
+): Vocabulary {
 	const types = new Map<string, VocabularyType>()
 	for (const t of [...SCOPE_TYPES, ...objectTypes]) {
 		if (!types.has(t.key)) types.set(t.key, t)
@@ -108,6 +121,9 @@ export function buildVocabulary(objectTypes: VocabularyType[]): Vocabulary {
 	for (const t of types.values()) {
 		const plural = t.plural ?? pluralize(t.label)
 		typeLabels.set(t.key, plural)
+		// People is a scope with a label for its chip and pill, not a typed word: "person" and
+		// "people" stay synonyms of contact, and only when the workspace has that type.
+		if (t.key === 'person') continue
 		for (const w of [t.key, `${t.key}s`, t.label, plural]) {
 			const word = w.toLowerCase()
 			// A word is claimed by the first type that uses it.
@@ -119,12 +135,21 @@ export function buildVocabulary(objectTypes: VocabularyType[]): Vocabulary {
 		for (const w of words) if (!typeWords.has(w)) typeWords.set(w, key)
 	}
 
-	return { typeWords, statusWords: new Map(Object.entries(STATUS_WORDS)), typeLabels }
+	return {
+		typeWords,
+		statusWords: new Map(Object.entries(STATUS_WORDS)),
+		typeLabels,
+		participants: new Map(participants.map((p) => [p.id, p])),
+	}
 }
 
-export type PillKind = 'type' | 'status'
+export type PillKind = 'type' | 'status' | 'participant'
 
 export function pillLabel(vocab: Vocabulary, kind: PillKind, value: string): string {
+	if (kind === 'participant') {
+		const participant = vocab.participants.get(value)
+		return participant ? `@${participant.name}` : '@Unknown'
+	}
 	if (kind === 'status') return isStatusGroup(value) ? STATUS_GROUP_LABELS[value] : value
 	return vocab.typeLabels.get(value) ?? value
 }

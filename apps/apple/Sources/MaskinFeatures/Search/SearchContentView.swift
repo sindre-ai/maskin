@@ -48,22 +48,60 @@ struct SearchContentBody: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
 			if showsChips { SearchScopeChips(store: store) }
-			switch store.phase {
-			case .idle:
-				needsYouSection
-				recents
-			case .searching where store.allResults.isEmpty:
-				LoadingSkeleton(rows: 5)
-			case .failed(let message):
-				EmptyState(
-					symbol: store.isOffline ? "wifi.slash" : "exclamationmark.triangle",
-					title: "Search didn't work", message: message
-				) {
-					Button("Try again") { Task { await store.retry() } }
-						.buttonStyle(SecondaryActionButtonStyle())
+			SearchParticipantPills(store: store)
+			let suggestions = store.mentionSuggestions
+			if suggestions.isEmpty {
+				phaseContent
+			} else {
+				mentionMenu(suggestions)
+			}
+		}
+	}
+
+	@ViewBuilder private var phaseContent: some View {
+		switch store.phase {
+		case .idle:
+			needsYouSection
+			recents
+		case .searching where store.allResults.isEmpty:
+			LoadingSkeleton(rows: 5)
+		case .failed(let message):
+			EmptyState(
+				symbol: store.isOffline ? "wifi.slash" : "exclamationmark.triangle",
+				title: "Search didn't work", message: message
+			) {
+				Button("Try again") { Task { await store.retry() } }
+					.buttonStyle(SecondaryActionButtonStyle())
+			}
+		case .searching, .results:
+			results
+		}
+	}
+
+	/// The "@" menu: people and agents that match what was typed after the "@". Tapping one makes it
+	/// a pill. When nobody matches, this is not shown and the text is searched as it is.
+	private func mentionMenu(_ suggestions: [SearchPerson]) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			MonoLabel("People and agents").accessibilityAddTraits(.isHeader)
+			card {
+				ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, person in
+					if index > 0 { Divider() }
+					Button { store.pick(person) } label: {
+						HStack(spacing: MaskinSpace.s5) {
+							ActorAvatar(
+								name: person.name, kind: person.isAgent ? .agent : .human, size: MaskinSpace.s11,
+								seed: person.id)
+							Text(person.name).maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(1)
+								.frame(maxWidth: .infinity, alignment: .leading)
+							Text(person.isAgent ? "Agent" : "Person").maskinText(.caption)
+								.foregroundStyle(MaskinColor.ink5)
+						}
+						.padding(.vertical, MaskinSpace.s3)
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+					}
+					.buttonStyle(.maskinPressed)
 				}
-			case .searching, .results:
-				results
 			}
 		}
 	}
@@ -275,5 +313,41 @@ struct SearchScopeChips: View {
 		}
 		.buttonStyle(.maskinPressed)
 		.accessibilityAddTraits(selected ? .isSelected : [])
+	}
+}
+
+/// The people and agents picked with "@", as removable pills, with a line saying what is shown.
+struct SearchParticipantPills: View {
+	let store: SearchStore
+
+	var body: some View {
+		if !store.participants.isEmpty {
+			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+				ScrollView(.horizontal, showsIndicators: false) {
+					HStack(spacing: MaskinSpace.s3) {
+						ForEach(store.participants) { person in pill(person) }
+					}
+				}
+				Text("Only chats with everyone picked are shown.")
+					.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+			}
+		}
+	}
+
+	private func pill(_ person: SearchPerson) -> some View {
+		HStack(spacing: MaskinSpace.s3) {
+			ActorAvatar(
+				name: person.name, kind: person.isAgent ? .agent : .human, size: MaskinSpace.s11, seed: person.id)
+			Text(person.name).maskinText(.subhead).foregroundStyle(MaskinColor.ink).lineLimit(1)
+			Button { store.removeParticipant(person) } label: {
+				Image(systemName: "xmark").foregroundStyle(MaskinColor.ink5)
+					.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.maskinPressed)
+			.accessibilityLabel("Remove \(person.name)")
+		}
+		.padding(.leading, MaskinSpace.s5)
+		.background(MaskinSurface.fill, in: Capsule())
 	}
 }

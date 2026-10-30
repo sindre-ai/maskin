@@ -24,7 +24,7 @@ import { sha256 } from '../lib/capabilities/schema-hash'
 import { BUILTIN_SOURCE_KEY } from '../lib/capabilities/sources'
 import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 import { findDirectChat } from './direct-chat'
@@ -77,6 +77,12 @@ export async function runCapabilityDigest(
 ): Promise<DigestSummary> {
 	const now = options.now ?? (() => new Date())
 	const summary: DigestSummary = { sent: 0, skipped: {} }
+	// Off by default in every workspace. Findings stay pending, so they merge into
+	// the first note once the flag goes on.
+	if (!isFlagEnabledForWorkspace(workspaceId, FLAGS.AGENT_PROACTIVE_1_1)) {
+		summary.skipped.flag_off = 1
+		return summary
+	}
 	const senderId = await findChiefOfStaffId(db, workspaceId)
 	if (!senderId) {
 		summary.skipped.no_chief_of_staff = 1
@@ -124,9 +130,6 @@ interface RecipientRun {
 /** Returns 'sent', a skip reason that was recorded, or null for a quiet week. */
 async function digestForRecipient(db: Database, run: RecipientRun): Promise<string | null> {
 	const { workspaceId, senderId, recipientId } = run
-	// Delivery is off for everyone but the testers. No row, no count: this is the common case.
-	if (!isFlagEnabled(recipientId, FLAGS.AGENT_PROACTIVE_1_1)) return null
-
 	const chat = await findDirectChat(db, { workspaceId, humanId: recipientId, agentId: senderId })
 	const last = chat ? await lastDigest(db, workspaceId, chat.id) : null
 

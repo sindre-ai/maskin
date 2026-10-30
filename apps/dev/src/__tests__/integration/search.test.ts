@@ -1,4 +1,4 @@
-// GET /api/search: five sources, true counts and AND matching. The SQL here is
+// GET /api/search: six sources, true counts and AND matching. The SQL here is
 // new and uses correlated subqueries, so it is pinned against real Postgres
 // (a mocked DB cannot catch unqualified-column bugs, see known-pitfalls.md).
 
@@ -12,7 +12,7 @@ import {
 	triggers,
 } from '@maskin/db/schema'
 import type { SearchQuery, SearchResponse } from '@maskin/shared'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import {
 	buildObject,
@@ -182,14 +182,261 @@ describe('GET /api/search against real Postgres', () => {
 		await say(chat.id, otherUserId, 'the quarterly numbers look odd')
 		await say(chat.id, otherUserId, 'please review the budget')
 
-		expect((await search({ q: 'other person' })).results.map((r) => r.title)).toEqual([
-			'Weekly sync',
-		])
+		// Chats only: the other user is also a member, so the people source finds them too.
+		expect(
+			(await search({ q: 'other person', types: ['chat'] })).results.map((r) => r.title),
+		).toEqual(['Weekly sync'])
 		expect((await search({ q: 'budget' })).total).toBe(1)
-		// Only the latest message is searched.
-		expect((await search({ q: 'quarterly' })).total).toBe(0)
 		const [row] = (await search({ q: 'budget' })).results
 		expect(row?.snippet).toBe('please review the budget')
+	})
+
+	describe('participants filter', () => {
+		let thirdId: string
+
+		beforeEach(async () => {
+			thirdId = (await insertActor(db, { name: 'Third Person' })).id
+			await seedChat('pf with other', [actorId, otherUserId])
+			await seedChat('pf with both', [actorId, otherUserId, thirdId])
+			await seedChat('pf alone', [actorId])
+			await seedChat('pf private', [otherUserId, thirdId])
+			await seedObjects('bet', 'active', 1, () => 'pf bet')
+		})
+
+		it('keeps only chats the picked actor is in, and drops the other sources', async () => {
+			const res = await search({ q: 'pf', participants: [otherUserId] })
+			expect(res.results.map((r) => r.title).sort()).toEqual(['pf with both', 'pf with other'])
+			expect(res.results.every((r) => r.group === 'chats')).toBe(true)
+			expect(res.total).toBe(2)
+			expect(res.facets.types.chat).toBe(2)
+			expect(res.facets.types.bet ?? 0).toBe(0)
+		})
+
+		it('needs every picked actor to be in the chat', async () => {
+			const res = await search({ q: 'pf', participants: [otherUserId, thirdId] })
+			expect(res.results.map((r) => r.title)).toEqual(['pf with both'])
+		})
+
+		it('works with no words at all', async () => {
+			const res = await search({ participants: [thirdId] })
+			expect(res.results.map((r) => r.title)).toEqual(['pf with both'])
+		})
+
+		it('does not count an actor who left the chat', async () => {
+			const chat = await seedChat('pf left', [actorId, otherUserId])
+			await db
+				.update(conversationParticipants)
+				.set({ leftAt: new Date() })
+				.where(
+					and(
+						eq(conversationParticipants.conversationId, chat.id),
+						eq(conversationParticipants.actorId, otherUserId),
+					),
+				)
+			const res = await search({ q: 'pf left', participants: [otherUserId] })
+			expect(res.total).toBe(0)
+		})
+
+		it('never shows a chat the caller is not in, even with the actor picked', async () => {
+			const res = await search({ q: 'pf private', participants: [thirdId] })
+			expect(res.total).toBe(0)
+		})
+
+		it('applies to the second pass for typos too', async () => {
+			await seedChat('Roadmapping sync', [actorId, otherUserId])
+			await seedChat('Roadmapping solo', [actorId])
+			await seedObjects('task', 'todo', 1, () => 'Roadmapping task')
+
+			const res = await search({ q: 'roadmaping', participants: [otherUserId] })
+
+			expect(res.results.map((r) => r.title)).toEqual(['Roadmapping sync'])
+			expect(res.total).toBe(1)
+			expect(res.facets.types.task ?? 0).toBe(0)
+			// Without the participant, all three typo hits count.
+			expect(res.relaxed?.withoutFilters).toBe(3)
+		})
+
+		it('leaves people out, since a person has no chat', async () => {
+			const zelda = await insertActor(db, { name: 'Zelda Quill', email: 'zelda@omega.test' })
+			await ensureWorkspaceMember(db, workspaceId, zelda.id)
+
+			expect((await search({ q: 'zelda' })).results.map((r) => r.group)).toEqual(['people'])
+			const res = await search({ q: 'zelda', participants: [otherUserId] })
+			expect(res.total).toBe(0)
+			expect(res.results).toEqual([])
+		})
+
+		it('lets the search-everything counts ignore the participant', async () => {
+			const res = await search({ q: 'pf', participants: [thirdId] })
+			expect(res.total).toBe(1)
+			// 3 chats the caller is in, plus the bet. The status-only widening keeps the participant.
+			expect(res.relaxed).toEqual({ withoutFilters: 4, withoutStatuses: 1 })
+		})
+	})
+
+	describe('message text of a chat', () => {
+		it('finds a chat by a word that is only in an older message, with that message as the snippet', async () => {
+			const chat = await seedChat('Roadmap', [actorId])
+			await say(chat.id, actorId, 'Stripe invoices fail on retry')
+			await say(chat.id, actorId, 'anyway, lunch?')
+
+			const res = await search({ q: 'stripe' })
+
+			expect(res.total).toBe(1)
+			expect(res.facets.types.chat).toBe(1)
+			expect(res.partial).toEqual([])
+			expect(res.results[0]?.snippet).toBe('Stripe invoices fail on retry')
+		})
+
+		it('needs every word somewhere in the chat, in any order, across title, people and messages', async () => {
+			const chat = await seedChat('Pricing review', [actorId, otherUserId])
+			await say(chat.id, actorId, 'Stripe invoices fail on retry')
+			await say(chat.id, actorId, 'anyway, lunch?')
+			await seedChat('Standup notes', [actorId])
+
+			const ids = async (q: string) => (await search({ q })).results.map((r) => r.id)
+
+			expect(await ids('invoices stripe')).toEqual([chat.id])
+			// Two words that sit in two different messages.
+			expect(await ids('stripe lunch')).toEqual([chat.id])
+			// One in the title, one in a message, one in a person's name.
+			expect(await ids('lunch pricing other')).toEqual([chat.id])
+			// A word the chat never mentions rules it out.
+			expect(await ids('stripe standup')).toEqual([])
+			expect(await ids('zzzznothing')).toEqual([])
+		})
+
+		it('shows the newest message that holds a searched word, and the latest one for a title hit', async () => {
+			const chat = await seedChat('Relaunch plan', [actorId])
+			await say(chat.id, actorId, 'relaunch is slipping, first note')
+			await say(chat.id, actorId, 'relaunch is slipping, second note')
+			await say(chat.id, actorId, 'moving on')
+
+			const [byMessage] = (await search({ q: 'slipping' })).results
+			expect(byMessage?.snippet).toBe('relaunch is slipping, second note')
+
+			// The title matches and no message holds the word: the latest message stays.
+			const other = await seedChat('Offsite', [actorId])
+			await say(other.id, actorId, 'booking the venue')
+			const [byTitle] = (await search({ q: 'offsite' })).results
+			expect(byTitle?.snippet).toBe('booking the venue')
+		})
+
+		it('ranks a title hit above a chat that only mentions the word', async () => {
+			const mentioned = await seedChat('Standup', [actorId])
+			await say(mentioned.id, actorId, 'relaunch is slipping')
+			const titled = await seedChat('Relaunch plan', [actorId])
+			await say(titled.id, actorId, 'nothing to see')
+			await tick()
+			// Make the message-only chat the newest one.
+			await say(mentioned.id, actorId, 'relaunch again')
+
+			const res = await search({ q: 'relaunch' })
+
+			expect(res.results.map((r) => r.id)).toEqual([titled.id, mentioned.id])
+		})
+
+		it('reads LIKE wildcards in a word as plain characters inside messages', async () => {
+			const chat = await seedChat('Numbers', [actorId])
+			await say(chat.id, actorId, 'we are 100% sure')
+			await say(chat.id, actorId, 'anyway')
+
+			expect((await search({ q: '0% su' })).total).toBe(1)
+			expect((await search({ q: 'sur_' })).total).toBe(0)
+		})
+
+		it('never reads messages of a chat the caller is not in, or of another workspace', async () => {
+			const mine = await seedChat('Mine', [actorId])
+			await say(mine.id, actorId, 'unique-zebra here')
+			await say(mine.id, actorId, 'later')
+			const theirs = await seedChat('Theirs', [otherUserId])
+			await say(theirs.id, otherUserId, 'unique-zebra there')
+			await say(theirs.id, otherUserId, 'later')
+
+			expect((await search({ q: 'unique-zebra' })).results.map((r) => r.id)).toEqual([mine.id])
+			expect(
+				(
+					await runSearch(
+						db,
+						{ workspaceId: otherWorkspaceId, callerId: actorId },
+						query({ q: 'unique-zebra' }),
+					)
+				).total,
+			).toBe(0)
+		})
+
+		it('checks messages only in the newest chats past the cap, and reports the source as partial', async () => {
+			const old = await seedChat('Old chat', [actorId])
+			await say(old.id, actorId, 'ancient-llama is here')
+			await say(old.id, actorId, 'later')
+			await tick()
+			const fresh = await seedChat('Fresh chat', [actorId])
+			await say(fresh.id, actorId, 'ancient-llama too')
+			await say(fresh.id, actorId, 'later')
+			// A scan cap of 1 chat: only the newest one has its messages read.
+			const chats = SEARCH_SOURCES.find((s) => s.key === 'chats') as (typeof SEARCH_SOURCES)[number]
+			const capped = SEARCH_SOURCES.map((source) =>
+				source.key === 'chats'
+					? {
+							...chats,
+							candidates: (ctx: Parameters<typeof chats.candidates>[0]) => sql`
+								SELECT c2.id, c2.type, c2.title, c2.sub, c2.body, c2.status, c2.updated_at,
+									(row_number() OVER (ORDER BY c2.updated_at DESC NULLS LAST, c2.id) <= 1) AS deep
+								FROM (${chats.candidates(ctx)}) c2`,
+						}
+					: source,
+			)
+
+			const res = await runSearch(
+				db,
+				{ workspaceId, callerId: actorId },
+				query({ q: 'ancient-llama' }),
+				capped,
+			)
+
+			expect(res.results.map((r) => r.id)).toEqual([fresh.id])
+			expect(res.partial).toEqual(['chats'])
+			// Title and people still reach the older chat.
+			const byTitle = await runSearch(
+				db,
+				{ workspaceId, callerId: actorId },
+				query({ q: 'old chat' }),
+				capped,
+			)
+			expect(byTitle.results.map((r) => r.id)).toEqual([old.id])
+		})
+
+		it('does not report partial for a search with no words', async () => {
+			await seedChat('Anything', [actorId])
+			expect((await search({})).partial).toEqual([])
+		})
+
+		it('counts a chat found through an older message once when the typo pass runs too', async () => {
+			const chat = await seedChat('Roadmapping sync', [actorId])
+			await say(chat.id, actorId, 'the roadmaping doc is stale')
+			await say(chat.id, actorId, 'anyway, lunch?')
+
+			// "roadmaping" is exact in a message (strict hit) and a typo of the title (typo hit).
+			const res = await search({ q: 'roadmaping' })
+
+			expect(res.results.map((r) => r.id)).toEqual([chat.id])
+			expect(res.total).toBe(1)
+			expect(res.facets.types.chat).toBe(1)
+		})
+
+		it('keeps the participant filter working next to the message text', async () => {
+			const chat = await seedChat('Planning', [actorId, otherUserId])
+			await say(chat.id, actorId, 'the zebra budget is late')
+			await say(chat.id, actorId, 'anyway')
+			const solo = await seedChat('Solo planning', [actorId])
+			await say(solo.id, actorId, 'the zebra budget too')
+			await say(solo.id, actorId, 'anyway')
+
+			const res = await search({ q: 'zebra', participants: [otherUserId] })
+
+			expect(res.results.map((r) => r.id)).toEqual([chat.id])
+			expect(res.total).toBe(1)
+		})
 	})
 
 	it('cuts snippets to 160 characters', async () => {
@@ -429,6 +676,93 @@ describe('GET /api/search against real Postgres', () => {
 		expect(res.facets.statuses.archived).toBe(1)
 	})
 
+	describe('people', () => {
+		let magnusId: string
+
+		beforeEach(async () => {
+			const magnus = await insertActor(db, { name: 'Magnus Nodegard', email: 'magnus@omega.test' })
+			magnusId = magnus.id
+			await ensureWorkspaceMember(db, workspaceId, magnusId)
+		})
+
+		it('finds a member by name in the people group, with the email as the sub line', async () => {
+			const res = await search({ q: 'magnus' })
+			expect(res.results).toHaveLength(1)
+			expect(res.results[0]).toMatchObject({
+				id: magnusId,
+				group: 'people',
+				type: 'person',
+				title: 'Magnus Nodegard',
+				sub: 'magnus@omega.test',
+				status: 'member',
+			})
+			expect(res.facets.types.person).toBe(1)
+		})
+
+		it('matches the name in any word order and part of the email', async () => {
+			const reversed = await search({ q: 'nodegard magnus' })
+			expect(reversed.results.map((r) => r.id)).toEqual([magnusId])
+
+			const byEmail = await search({ q: 'omega.test' })
+			expect(byEmail.results.map((r) => r.id)).toEqual([magnusId])
+
+			const nameAndEmail = await search({ q: 'nodegard omega' })
+			expect(nameAndEmail.results.map((r) => r.id)).toEqual([magnusId])
+		})
+
+		it('never returns agents, people from other workspaces or people who are not members', async () => {
+			const agent = await insertActor(db, { type: 'agent', name: 'Magnus Bot' })
+			await ensureWorkspaceMember(db, workspaceId, agent.id)
+			const elsewhere = await insertActor(db, { name: 'Magnus Elsewhere' })
+			await ensureWorkspaceMember(db, otherWorkspaceId, elsewhere.id)
+			await insertActor(db, { name: 'Magnus Outsider' })
+
+			const res = await search({ q: 'magnus', types: ['person'] })
+			expect(res.results.map((r) => r.id)).toEqual([magnusId])
+
+			const all = await search({ q: 'magnus' })
+			expect(all.results.map((r) => [r.group, r.title])).toEqual([
+				['agents', 'Magnus Bot'],
+				['people', 'Magnus Nodegard'],
+			])
+		})
+
+		it('is hidden by any status filter and stays out of the status counts', async () => {
+			const filtered = await search({ q: 'magnus', statuses: ['in_progress'] })
+			expect(filtered.results).toEqual([])
+			expect(filtered.total).toBe(0)
+
+			const open = await search({ q: 'magnus' })
+			expect(open.total).toBe(1)
+			expect(open.facets.statuses).toEqual({
+				needs_you: 0,
+				in_progress: 0,
+				new: 0,
+				done: 0,
+				archived: 0,
+			})
+			// Dropping the status filter would bring the person back.
+			expect(filtered.relaxed).toEqual({ withoutFilters: 1, withoutStatuses: 1 })
+		})
+
+		it('counts under the person type chip and filters with it', async () => {
+			await seedObjects('task', 'todo', 2, (i) => `magnus task ${i}`)
+
+			const res = await search({ q: 'magnus' })
+			expect(res.facets.types).toMatchObject({ person: 1, task: 2 })
+
+			const onlyPeople = await search({ q: 'magnus', types: ['person'] })
+			expect(onlyPeople.results.map((r) => r.group)).toEqual(['people'])
+			expect(onlyPeople.total).toBe(1)
+		})
+
+		it('lists people before objects under relevance sort', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Magnus task')
+			const res = await search({ q: 'magnus' })
+			expect(res.results.map((r) => r.group)).toEqual(['people', 'objects'])
+		})
+	})
+
 	it('lists loops under their own group and type', async () => {
 		await seedObjects('loop', 'live', 1, () => 'rho loop')
 		await seedObjects('task', 'todo', 1, () => 'rho task')
@@ -457,6 +791,141 @@ describe('GET /api/search against real Postgres', () => {
 		expect(res.total).toBe(3)
 		expect(res.facets.types.automation).toBeUndefined()
 		expect(res.facets.types.task).toBe(2)
+	})
+
+	describe('second pass for typos', () => {
+		it('finds an object, an agent and a chat by a one-letter typo of the title', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Quarterly roadmap')
+			const agent = await insertActor(db, { type: 'agent', name: 'Magnus helper' })
+			await ensureWorkspaceMember(db, workspaceId, agent.id)
+			await seedChat('Budget review', [actorId])
+
+			expect((await search({ q: 'qaurterly' })).results.map((r) => r.title)).toEqual([
+				'Quarterly roadmap',
+			])
+			const byAgent = await search({ q: 'mgnus' })
+			expect(byAgent.results.map((r) => [r.group, r.title])).toEqual([['agents', 'Magnus helper']])
+			expect((await search({ q: 'budgat' })).results.map((r) => r.title)).toEqual(['Budget review'])
+		})
+
+		it('counts the hits in total and facets, and puts them below exact hits', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Magnus plan')
+			await tick()
+			// Newer than the exact hit, so recency alone would put it first.
+			await seedObjects('task', 'todo', 1, () => 'Mgnus note')
+
+			const res = await search({ q: 'magnus' })
+
+			expect(res.results.map((r) => r.title)).toEqual(['Magnus plan', 'Mgnus note'])
+			expect(res.total).toBe(2)
+			expect(res.facets.types.task).toBe(2)
+			expect(res.facets.statuses.new).toBe(2)
+			expect(res.capped).toBe(false)
+			expect(res.partial).toEqual([])
+		})
+
+		it('lists the closest spelling first among typo hits', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Quarterlyy plan')
+			await seedObjects('task', 'todo', 1, () => 'Qarterly plan')
+			await seedObjects('task', 'todo', 1, () => 'Quarterly plan')
+
+			const res = await search({ q: 'quartrly' })
+
+			expect(res.results).toHaveLength(3)
+			expect(res.results[0]?.title).toBe('Quarterly plan')
+		})
+
+		it('does not run when the strict search found enough rows', async () => {
+			await seedObjects('task', 'todo', 5, (i) => `widget task ${i}`)
+			await seedObjects('task', 'todo', 1, () => 'widgte typo')
+
+			const res = await search({ q: 'widget' })
+
+			expect(res.total).toBe(5)
+			expect(res.results.map((r) => r.title)).not.toContain('widgte typo')
+		})
+
+		it('does not forgive typos in words of three letters or fewer', async () => {
+			await seedObjects('task', 'todo', 1, () => 'cut the cord')
+			expect((await search({ q: 'cat' })).total).toBe(0)
+		})
+
+		it('counts a row once when it also matches the strict way through its text', async () => {
+			// Title misspelled, but the body holds the word, so the strict pass counted it.
+			await seedObjects('task', 'todo', 1, () => 'Mgnus')
+			await db
+				.update(objects)
+				.set({ content: 'notes about magnus' })
+				.where(eq(objects.title, 'Mgnus'))
+
+			const res = await search({ q: 'magnus' })
+
+			expect(res.results.map((r) => r.title)).toEqual(['Mgnus'])
+			expect(res.total).toBe(1)
+			expect(res.facets.types.task).toBe(1)
+		})
+
+		it('keeps hits out of the list when a filter hides them but still counts them', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Quarterly roadmap')
+			await seedObjects('bet', 'active', 1, () => 'Quarterly goals')
+
+			const res = await search({ q: 'qaurterly', types: ['bet'] })
+
+			expect(res.results.map((r) => r.title)).toEqual(['Quarterly goals'])
+			expect(res.total).toBe(1)
+			expect(res.facets.types).toMatchObject({ task: 1, bet: 1 })
+		})
+
+		it('hides archived hits unless the archived group is selected', async () => {
+			await seedObjects('task', 'archived', 1, () => 'Quarterly roadmap')
+
+			expect((await search({ q: 'qaurterly' })).total).toBe(0)
+			expect((await search({ q: 'qaurterly', statuses: ['archived'] })).total).toBe(1)
+		})
+
+		it('reads only titles and names, not text in the body', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Unrelated')
+			await db
+				.update(objects)
+				.set({ content: 'notes about quarterly planning' })
+				.where(eq(objects.title, 'Unrelated'))
+
+			expect((await search({ q: 'qaurterly' })).total).toBe(0)
+		})
+
+		it('keeps the strict answer and lists the source as partial when it holds more than the cap', async () => {
+			await seedObjects('task', 'todo', 5001, (i) => `filler ${i}`)
+			await seedObjects('task', 'todo', 1, () => 'Quarterly roadmap')
+
+			const res = await search({ q: 'qaurterly' })
+
+			expect(res.partial).toEqual(['objects'])
+		}, 60_000)
+
+		it('still finds typos in the other sources when one source breaks', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Quarterly roadmap')
+			await seedChat('Quarterly sync', [actorId])
+			const sources = SEARCH_SOURCES.map((source) => ({
+				...source,
+				candidates: (ctx: Parameters<typeof source.candidates>[0]) =>
+					source.key === 'automations'
+						? sql`SELECT * FROM table_that_does_not_exist`
+						: source.candidates(ctx),
+			}))
+
+			const res = await runSearch(
+				db,
+				{ workspaceId, callerId: actorId },
+				query({ q: 'qaurterly' }),
+				sources,
+			)
+
+			expect(res.partial).toEqual(['automations'])
+			expect(res.results.map((r) => r.title).sort()).toEqual([
+				'Quarterly roadmap',
+				'Quarterly sync',
+			])
+		})
 	})
 
 	describe('over HTTP with the real auth middleware', () => {
@@ -510,6 +979,22 @@ describe('GET /api/search against real Postgres', () => {
 				jsonGet('/api/search?q=anything', { 'X-Workspace-Id': workspaceId }),
 			)
 			expect(res.status).toBe(401)
+		})
+
+		it('takes participants as a comma list of actor ids', async () => {
+			await seedChat('hotel chat', [actorId, otherUserId])
+			const res = await createApp().request(
+				jsonGet(`/api/search?q=hotel&participants=${otherUserId}`, auth(workspaceId)),
+			)
+			expect(res.status).toBe(200)
+			expect(((await res.json()) as SearchResponse).total).toBe(1)
+		})
+
+		it('returns 400 for a participant that is not an actor id', async () => {
+			const res = await createApp().request(
+				jsonGet('/api/search?participants=not-an-id', auth(workspaceId)),
+			)
+			expect(res.status).toBe(400)
 		})
 
 		it('returns 400 for an invalid status group', async () => {

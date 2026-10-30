@@ -119,11 +119,17 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 
 vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Helper close-out only; covered in integration/helper-limit-retry.test.ts.
+	classifyClaudeAuthFailureText: () => null,
 	// Same call the real helper makes for an exit with no final result message,
 	// so the assertions below keep reading the tail + option the classifier got.
 	// The helper's own rule is covered in lib/credit-classifier.test.ts.
 	classifySessionExit: (tail: string, exitCode: number) =>
 		mockClassifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 }),
+	// The 401 close-out report is not under test here; its rule is covered in
+	// lib/credit-classifier.test.ts.
+	endsInClaudeAuthDeath: () => false,
+	isClaudeAuthDeathText: () => false,
 }))
 
 import { execFile } from 'node:child_process'
@@ -1932,6 +1938,8 @@ describe('SessionManager', () => {
 				[fixtures.workspace],
 				[fixtures.workspace],
 				fixtures.integrationRows,
+				// buildExtensionMcpServers: no extensions in this workspace
+				[],
 				// buildKeychainEnv: no bring-your-own keys in this workspace
 				[],
 				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly
@@ -3265,7 +3273,7 @@ describe('SessionManager', () => {
 		// visible from app logs alone.
 		it('logs a warning with the dropped exit code and current session state when the session is already terminal', async () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
-			mockResults.selectQueue = [[], [], [], [{ status: 'completed' }], [session]]
+			mockResults.selectQueue = [[], [], [], [], [{ status: 'completed' }], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -3376,9 +3384,10 @@ describe('SessionManager', () => {
 		it('gives up and returns false when the fallback lookup after the retries also throws', async () => {
 			mockResults.selectQueue = [[]]
 			mockResults.selectErrorQueue = [
-				undefined,
-				undefined,
-				undefined,
+				undefined, // stdout chunks
+				undefined, // usage watermark
+				undefined, // resume marker
+				undefined, // result rows
 				new Error('connection reset'),
 				new Error('connection reset'),
 				new Error('connection reset'),
@@ -3594,6 +3603,24 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 			expect(storageProvider.put).not.toHaveBeenCalled()
 			// Should resolve (not throw) so the auto-pause loop doesn't keep retrying
+		})
+
+		it('refuses to pause a session on an agent server and leaves it running', async () => {
+			const session = buildSession({
+				status: 'running',
+				containerId: 'remote-sandbox',
+				agentServerId: 'agent-server-1',
+			})
+			mockResults.select = [session]
+			// inspect default mock returns { running: false }: local Docker knows nothing of it
+
+			await expect(manager.pauseSession(session.id)).rejects.toThrow('runs on an agent server')
+
+			// Not marked failed, no snapshot work, no status write at all
+			expect(calls.updates).toEqual([])
+			expect(mockContainerManager.inspect).not.toHaveBeenCalled()
+			expect(mockContainerManager.copyFrom).not.toHaveBeenCalled()
+			expect(mockContainerManager.stop).not.toHaveBeenCalled()
 		})
 
 		it('marks session failed when container vanishes mid-pause', async () => {
@@ -4798,9 +4825,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4828,9 +4855,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -4859,9 +4886,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[otherSession], // hasOtherActiveSessions: agent still has live work
@@ -4913,9 +4940,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]
@@ -5097,9 +5124,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5213,9 +5240,9 @@ describe('SessionManager', () => {
 				const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 				mockResults.selectQueue = [
 					[session], // handleCompletion: load session
-					[], // sumSegmentResultUsage: resume marker
-					[], // sumSegmentResultUsage: result rows
-					[], // extractSessionUsage fallback
+					[], // accumulateSessionUsage: usage watermark
+					[], // sumUncountedResultUsage: resume marker
+					[], // sumUncountedResultUsage: result rows
 					[], // sumAssistantUsage fallback
 					[session], // settleSession's own SELECT of the row
 					[], // hasOtherActiveSessions
@@ -5364,9 +5391,9 @@ describe('SessionManager', () => {
 			}
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5458,9 +5485,9 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 				[], // hasOtherActiveSessions
@@ -5549,7 +5576,7 @@ describe('SessionManager', () => {
 				'usage exceeded the plan cap and no usage credits are available',
 			)
 
-			// Last entry: settleSession's own SELECT of the row; the CAS update then flips it.
+			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
 			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
@@ -5609,7 +5636,7 @@ describe('SessionManager', () => {
 				}
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 
-			// Last entry: settleSession's own SELECT of the row; the CAS update then flips it.
+			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
 			mockResults.selectQueue = [[session], [], [], [], [], [session]]
 			mockResults.updateQueue = [[{ id: session.id }]]
 
@@ -5649,9 +5676,9 @@ describe('SessionManager', () => {
 			internals.activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
-				[], // sumSegmentResultUsage: resume marker
-				[], // sumSegmentResultUsage: result rows
-				[], // extractSessionUsage fallback
+				[], // accumulateSessionUsage: usage watermark
+				[], // sumUncountedResultUsage: resume marker
+				[], // sumUncountedResultUsage: result rows
 				[], // sumAssistantUsage fallback
 				[session], // settleSession's own SELECT of the row
 			]

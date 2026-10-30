@@ -14,7 +14,16 @@ struct IntegrationConnectCard: View {
 	@Environment(\.openURL) private var openURL
 	@Environment(\.scenePhase) private var scenePhase
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
-	@State private var store: IntegrationsStore?
+	@State private var ownStore: IntegrationsStore?
+	/// A store shared with the caller (an intro's tool rows load one list for all of them).
+	var sharedStore: IntegrationsStore?
+
+	init(request: IntegrationConnectRequest, store: IntegrationsStore? = nil) {
+		self.request = request
+		self.sharedStore = store
+	}
+
+	private var store: IntegrationsStore? { sharedStore ?? ownStore }
 
 	var body: some View {
 		Group {
@@ -59,7 +68,7 @@ struct IntegrationConnectCard: View {
 	private func prepare() async {
 		guard store == nil, let runtime else { return }
 		let made = SettingsServices(environment: runtime.environment).integrationsStore()
-		store = made
+		ownStore = made
 		await made.load()
 	}
 

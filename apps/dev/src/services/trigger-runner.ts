@@ -15,6 +15,7 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
 import { type SQL, and, eq, gt, inArray, lt, sql } from 'drizzle-orm'
+import { isActorHumanPaused, isHumanPaused } from '../lib/agent-pause'
 import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
@@ -26,8 +27,11 @@ import {
 	trackTriggerCronTickDropped,
 } from '../lib/analytics/trigger-queue-events'
 import { findChiefOfStaffId } from '../lib/chief-of-staff'
+import {
+	claimCommentResponder,
+	releaseCommentResponderClaim,
+} from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
@@ -167,19 +171,32 @@ const RETRY_AT_MAX_MS = QUEUE_RETENTION_MS
 const PLAN_CAP_FALLBACK_SUPPRESSION_MS = 60 * 60_000
 
 /**
- * Pause for "this workspace has no LLM credentials". Unlike a plan cap this has
- * no natural expiry — nothing resets it but a human connecting a credential —
- * so we re-check hourly rather than never, and clear the entry outright on an
- * entitlement-improving workspace event (see `SUPPRESSION_CLEARING_ACTIONS`).
- *
- * Caveat, deliberately stated rather than implied: importing a Claude
- * subscription via Settings → Keys does NOT currently clear the pause, because
- * `routes/claude-oauth.ts` writes `workspaces.settings` without inserting any
- * `events` row at all — so there is no event to match. That is a pre-existing
- * gap against the "log an event on every mutation" rule, not something this
- * pause introduced; until it is fixed, that recovery waits out the hour below.
+ * Pause for "this workspace has a credential, but it was rejected". It may come
+ * back by itself (a refresh, a recovered subscription), so we re-check hourly,
+ * and clear the entry outright on an entitlement-improving workspace event (see
+ * `SUPPRESSION_CLEARING_ACTIONS`).
  */
 const NO_CREDENTIALS_SUPPRESSION_MS = 60 * 60_000
+
+/**
+ * Pause for "this workspace has nothing configured at all". Unlike a plan cap
+ * this has no natural expiry — nothing resets it but a human connecting a
+ * credential, and every way of doing that logs a workspace event that clears
+ * the pause (settings PATCH, and the Claude login import in
+ * `routes/claude-oauth.ts`). The cap is only a backstop for a change that
+ * slips past those events, so a stuck workspace retries about once a day
+ * instead of once an hour. The pause is persisted, so it survives a restart.
+ */
+const NOTHING_CONFIGURED_SUPPRESSION_MS = 24 * 60 * 60_000
+
+/** The pause for a non-transient credentials failure; see the two constants above for the lengths. */
+function credentialsSuppression(now: Date, nothingConfigured: boolean): WorkspaceSuppression {
+	const ms = nothingConfigured ? NOTHING_CONFIGURED_SUPPRESSION_MS : NO_CREDENTIALS_SUPPRESSION_MS
+	return {
+		until: new Date(now.getTime() + ms),
+		reason: 'no LLM credentials connected for this workspace',
+	}
+}
 
 /**
  * Workspace-event actions that mean "this workspace's entitlement may have
@@ -557,10 +574,7 @@ export class TriggerRunner {
 		if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
 			await this.suppressWorkspace(
 				workspaceId,
-				{
-					until: new Date(now.getTime() + NO_CREDENTIALS_SUPPRESSION_MS),
-					reason: 'no LLM credentials connected for this workspace',
-				},
+				credentialsSuppression(now, err.noCredentialsConfigured),
 				triggerName,
 			)
 			return
@@ -595,12 +609,14 @@ export class TriggerRunner {
 	 * only when `!err.transient`, and routes transient credential errors back
 	 * through its retry path instead.
 	 */
-	handleDispatchPermanentFailure(workspaceId: string, reasonCode?: string): void {
+	handleDispatchPermanentFailure(
+		workspaceId: string,
+		reasonCode?: string,
+		noCredentialsConfigured = false,
+	): void {
 		if (reasonCode !== 'not_logged_in') return
-		this.suppressWorkspace(workspaceId, {
-			until: new Date(Date.now() + NO_CREDENTIALS_SUPPRESSION_MS),
-			reason: 'no LLM credentials connected for this workspace',
-		}).catch((err) =>
+		const suppression = credentialsSuppression(new Date(), noCredentialsConfigured)
+		this.suppressWorkspace(workspaceId, suppression).catch((err) =>
 			logger.error('handleDispatchPermanentFailure: suppressWorkspace failed', {
 				workspaceId,
 				error: String(err),
@@ -746,7 +762,7 @@ export class TriggerRunner {
 
 	/**
 	 * The provider's reset time from a credit-exhaustion session_failed, or null
-	 * to fall back to the exponential backoff. Null when the flag is off, the
+	 * to fall back to the exponential backoff. Null when the
 	 * event is not a classified credit_exhaustion carrying a string retry_at,
 	 * or retry_at is unparseable, already past, or beyond RETRY_AT_MAX_MS —
 	 * event data is external input, and an epoch-9999 timestamp would otherwise
@@ -754,7 +770,6 @@ export class TriggerRunner {
 	 */
 	private async readRetryAt(event: PgEvent): Promise<Date | null> {
 		if (event.action !== 'session_failed') return null
-		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return null
 		const data = await this.fetchEventData(event.event_id)
 		if (data?.classification !== 'credit_exhaustion' || typeof data.retry_at !== 'string') {
 			return null
@@ -940,56 +955,28 @@ export class TriggerRunner {
 			}
 			if (config.action && config.action !== event.action) continue
 
-			// Flag-gate `commented` action so a workspace that hasn't rolled to
-			// trigger_engine_v2 can never end up with commented-action triggers
-			// silently dead in the matcher — the trigger builder rejects the flag-off
-			// state with an error, so a saved trigger with action=commented always
-			// implies its workspace is expected to be on v2. If the flag flips off
-			// again (kill switch), the trigger stops firing entirely; better than
-			// firing with the on_target_type row hidden. Ships as one call site here;
-			// S1's two gate points (loadCooldowns / loadSuppressions) share the
-			// same temporary helper and get swapped to the S7 public resolver in
-			// one aggregate-merge pass.
-			if (
-				event.action === 'commented' &&
-				!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)
-			) {
-				continue
-			}
-
 			// Check filter conditions — for status_changed / updated events the entity lives
 			// on `data.updated` (legacy) or must be hydrated from the objects table (new
 			// {changes} shape). For `commented` the root merges `data`, the comment's
 			// `actorId`, and the target object's `__target_type` (tech spec §5.4 fold 6).
 			//
-			// Matcher v2 (tech spec §2.1) is flag-gated per workspace: when
-			// `trigger_engine_v2` is ON, array-valued entries take any-of semantics
+			// Matcher v2 (tech spec §2.1): array-valued entries take any-of semantics
 			// and every miss emits `trigger_match_failed` so the bet #8 dashboard
-			// can watch dead triggers reactivate. When OFF, today's strict-equality
-			// body runs unchanged (array values reference-equal against a literal
-			// array → always false, matching v1 behaviour); no PostHog row emitted
-			// so a pre-rollout workspace does not spam analytics.
+			// can watch dead triggers reactivate.
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
 				const filterRoot = await buildFilterRoot(data)
 				const filter = config.filter as Record<string, unknown>
-				if (isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) {
-					const result = evaluateFilterV2(filter, filterRoot)
-					if (!result.matches) {
-						void trackTriggerMatchFailed({
-							workspaceId: event.workspace_id,
-							triggerId: trigger.id,
-							eventId: event.event_id,
-							filterShape: result.missShape,
-						})
-						continue
-					}
-				} else {
-					const matches = Object.entries(filter).every(
-						([key, value]) => resolvePath(filterRoot, key) === value,
-					)
-					if (!matches) continue
+				const result = evaluateFilterV2(filter, filterRoot)
+				if (!result.matches) {
+					void trackTriggerMatchFailed({
+						workspaceId: event.workspace_id,
+						triggerId: trigger.id,
+						eventId: event.event_id,
+						filterShape: result.missShape,
+					})
+					continue
 				}
 			}
 
@@ -1038,13 +1025,12 @@ export class TriggerRunner {
 			const eventForPrompt = { ...event, data: dataForPrompt ?? null }
 
 			// Idempotency claim — S2 of the trigger-engine fix bet (tech spec §3.4).
-			// Ships UNCONDITIONAL (no flag check): during blue-green rolling deploys
-			// both trigger-runner instances receive the same PG NOTIFY payload and
+			// During blue-green rolling deploys both
+			// trigger-runner instances receive the same PG NOTIFY payload and
 			// would otherwise both dispatch. First INSERT to succeed claims the
 			// (trigger_id, event_id); the other's ON CONFLICT DO NOTHING returns
 			// zero rows and the dispatch skips. Load-bearing during rollback per
-			// §7.3 — a kill-switch flip must not re-open this window, so the
-			// guard cannot sit behind the v2 gate.
+			// §7.3.
 			const eventIdBigint = Number(event.event_id)
 			const claimed = await this.db
 				.insert(triggerDispatches)
@@ -1360,9 +1346,8 @@ export class TriggerRunner {
 
 	/**
 	 * Hydrate `triggerFailures` from `trigger_cooldowns` at boot — reads every
-	 * row whose `backoff_until` is still in the future, joins to `triggers` to
-	 * find the owning workspace, and skips rows for workspaces that have not
-	 * opted into the v2 gate (§3.2, §7.1).
+	 * row whose `backoff_until` is still in the future and whose trigger still
+	 * exists (§3.2, §7.1).
 	 *
 	 * A DB read failure THROWS: booting with empty Maps against a live DB is
 	 * exactly the deploy-wipe bug this table exists to prevent (§6.3).
@@ -1375,7 +1360,6 @@ export class TriggerRunner {
 			lastFailedAt: Date
 			backoffUntil: Date
 			reason: string | null
-			workspaceId: string
 		}[]
 		try {
 			rows = await this.db
@@ -1385,7 +1369,6 @@ export class TriggerRunner {
 					lastFailedAt: triggerCooldowns.lastFailedAt,
 					backoffUntil: triggerCooldowns.backoffUntil,
 					reason: triggerCooldowns.reason,
-					workspaceId: triggers.workspaceId,
 				})
 				.from(triggerCooldowns)
 				.innerJoin(triggers, eq(triggers.id, triggerCooldowns.triggerId))
@@ -1396,12 +1379,7 @@ export class TriggerRunner {
 		}
 
 		let loaded = 0
-		let skipped = 0
 		for (const row of rows) {
-			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
-				skipped++
-				continue
-			}
 			this.triggerFailures.set(row.triggerId, {
 				count: row.count,
 				lastFailedAt: row.lastFailedAt,
@@ -1410,7 +1388,7 @@ export class TriggerRunner {
 			})
 			loaded++
 		}
-		logger.info(`Trigger cooldowns loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+		logger.info(`Trigger cooldowns loaded — ${loaded} active`)
 	}
 
 	/**
@@ -1439,19 +1417,14 @@ export class TriggerRunner {
 		}
 
 		let loaded = 0
-		let skipped = 0
 		for (const row of rows) {
-			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
-				skipped++
-				continue
-			}
 			this.workspaceSuppressions.set(row.workspaceId, {
 				until: row.suppressedUntil,
 				reason: row.reason,
 			})
 			loaded++
 		}
-		logger.info(`Workspace suppressions loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+		logger.info(`Workspace suppressions loaded — ${loaded} active`)
 	}
 
 	/**
@@ -1491,8 +1464,7 @@ export class TriggerRunner {
 
 	/**
 	 * Parks an event that is about to be dropped so it replays when the window
-	 * lifts (tech spec §4.2). Behind trigger_engine_v2: with the flag off the
-	 * drop is exactly today's, and nothing touches the queue. The queue's own
+	 * lifts (tech spec §4.2). The queue's own
 	 * audit events are never parked — see QUEUE_EVENT_ENTITY_TYPE.
 	 */
 	private async holdDroppedEvent(
@@ -1500,7 +1472,6 @@ export class TriggerRunner {
 		opts: Parameters<typeof enqueueDroppedEvent>[2],
 	): Promise<void> {
 		if (event.entity_type === QUEUE_EVENT_ENTITY_TYPE) return
-		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return
 		await enqueueDroppedEvent(this.db, event, opts)
 	}
 
@@ -1558,7 +1529,6 @@ export class TriggerRunner {
 		try {
 			const replayed = await drainQueue(this.db, scope, {
 				source,
-				canReplay: (workspaceId) => isFlagEnabledForWorkspace(workspaceId, FLAGS.TRIGGER_ENGINE_V2),
 				isHeld,
 				replay,
 			})
@@ -2375,6 +2345,34 @@ export class CommentDispatcher {
 		entityId: string
 		actionPrompt: string
 	}): Promise<boolean> {
+		// A person's Pause holds against the fallback too, for the driver and the Chief of Staff.
+		if (await isActorHumanPaused(this.db, ctx.actorId)) {
+			logger.info('Comment fallback held: agent is paused by a person', {
+				workspace_id: ctx.workspaceId,
+				actor_id: ctx.actorId,
+				object_id: ctx.entityId,
+				source_comment_event_id: ctx.sourceCommentEventId,
+			})
+			return false
+		}
+		// The fallback is the responder of last resort: it stands down when the thread-reply
+		// auto-spawn (routes/events.ts) has claimed, or is claiming, this actor for this comment.
+		// The claim is a primary-key INSERT, so it holds even when the two run ~50ms apart.
+		const claimed = await claimCommentResponder(this.db, {
+			sourceCommentEventId: ctx.sourceCommentEventId,
+			actorId: ctx.actorId,
+			claimedBy: 'comment_fallback',
+		})
+		if (!claimed) {
+			logger.info('Comment fallback stood down: another responder session holds the claim', {
+				workspace_id: ctx.workspaceId,
+				actor_id: ctx.actorId,
+				object_id: ctx.entityId,
+				source_comment_event_id: ctx.sourceCommentEventId,
+			})
+			// A responder exists for this comment, so it is not an unanswered one.
+			return true
+		}
 		try {
 			const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.entityId)
 			await startSession({
@@ -2401,6 +2399,10 @@ export class CommentDispatcher {
 				actorId: ctx.actorId,
 				sourceCommentEventId: ctx.sourceCommentEventId,
 				error: err instanceof Error ? err.message : String(err),
+			})
+			await releaseCommentResponderClaim(this.db, {
+				sourceCommentEventId: ctx.sourceCommentEventId,
+				actorId: ctx.actorId,
 			})
 			return false
 		}
@@ -2563,6 +2565,22 @@ export class CommentDispatcher {
 		this.log(ctx.event, 'case_1_mention', ctx.actor.id)
 
 		if (ctx.actor.type !== 'agent') return
+
+		// A person's Pause holds against a mention too. Like a blocked loop guard, the
+		// notification above stays, so the mention is waiting when the agent resumes.
+		const [mentionedAgent] = await this.db
+			.select({ agentState: actors.agentState, metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, ctx.actor.id))
+			.limit(1)
+		if (mentionedAgent && isHumanPaused(mentionedAgent)) {
+			logger.info('Mention held: agent is paused by a person', {
+				event_id: ctx.event.event_id,
+				resolved_actor_id: ctx.actor.id,
+				object_id: ctx.objectId,
+			})
+			return
+		}
 
 		// Loop guards. Only agent-authored mentions are limited: a human can always
 		// wake an agent. A blocked mention keeps its notification (written above),

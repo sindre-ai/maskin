@@ -3,17 +3,25 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 
 interface ConversationListRowProps {
 	workspaceId: string
 	conversation: ConversationListItemResponse
+	/** Unread replies in this chat's threads (0 when none). Chat unread and thread unread are
+	 *  separate reads, so a chat can look read while a thread inside it is not. */
+	threadUnread?: number
 }
 
 /** How many participant plates the row draws before collapsing to a `+N`. */
 const MAX_ROW_AVATARS = 2
 
-export function ConversationListRow({ workspaceId, conversation }: ConversationListRowProps) {
+export function ConversationListRow({
+	workspaceId,
+	conversation,
+	threadUnread = 0,
+}: ConversationListRowProps) {
 	// Counterparts first, the viewer last (mockup 6106–6108) — a one-to-one
 	// thread should read as "the agent's row", but once several people are in
 	// it, leaving yourself out misrepresents who is in the room. A thread with
@@ -118,12 +126,26 @@ export function ConversationListRow({ workspaceId, conversation }: ConversationL
 					{conversation.snippet ? (
 						<>
 							{snippetAuthor ? <span className="font-medium">{snippetAuthor}: </span> : null}
-							{conversation.snippet}
+							{plainPreview(conversation.snippet).map((part, index) =>
+								part.muted ? (
+									// biome-ignore lint/suspicious/noArrayIndexKey: parts are rebuilt from the text on every render and never reorder
+									<span key={index} className="opacity-80">
+										{part.text}
+									</span>
+								) : (
+									part.text
+								),
+							)}
 						</>
 					) : (
 						'No messages yet'
 					)}
 				</span>
+				{threadUnread > 0 ? (
+					<span className="mt-0.5 block text-[11px] font-medium text-brand">
+						{threadUnread} unread {threadUnread === 1 ? 'reply' : 'replies'} in threads
+					</span>
+				) : null}
 			</div>
 		</Link>
 	)

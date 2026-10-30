@@ -9,11 +9,13 @@ struct OutboxTests {
 	private func makeOutbox(
 		file: URL = temporaryOutboxFile(), executor: ScriptedExecutor = ScriptedExecutor(),
 		network: ManualNetworkMonitor = ManualNetworkMonitor(), workspace: String? = "ws-1",
-		maxAttempts: Int = 8, maxServerErrorAge: TimeInterval = 24 * 60 * 60
+		maxAttempts: Int = 8, maxServerErrorAge: TimeInterval = 24 * 60 * 60,
+		now: @escaping @Sendable () -> Date = { Date() },
+		backoff: @escaping @Sendable (Int) -> TimeInterval = { _ in 0.02 }
 	) -> (Outbox, ScriptedExecutor, ManualNetworkMonitor, URL) {
 		let outbox = Outbox(
-			fileURL: file, executor: executor, network: network, workspaceId: { workspace },
-			backoff: { _ in 0.02 }, maxAttempts: maxAttempts,
+			fileURL: file, executor: executor, network: network, workspaceId: { workspace }, now: now,
+			backoff: backoff, maxAttempts: maxAttempts,
 			maxServerErrorAge: maxServerErrorAge)
 		return (outbox, executor, network, file)
 	}
@@ -23,7 +25,7 @@ struct OutboxTests {
 		let entry = try outbox.enqueue(kind: "t", lane: "a", summary: "s", payload: "one")
 		#expect(await eventually { outbox.entries.isEmpty })
 		#expect(executor.calls.count == 1)
-		#expect(executor.calls[0].key == entry.idempotencyKey)
+		#expect(executor.calls.first?.key == entry.idempotencyKey)
 	}
 
 	@Test func persistsAcrossRestartAndReplaysWhenBackOnline() async throws {
@@ -40,7 +42,7 @@ struct OutboxTests {
 		#expect(second.entries.map(\.id) == [queued.id])
 		await second.drain()
 		#expect(secondExecutor.calls.map(\.payload) == ["one"])
-		#expect(secondExecutor.calls[0].key == queued.idempotencyKey)
+		#expect(secondExecutor.calls.first?.key == queued.idempotencyKey)
 		#expect(second.entries.isEmpty)
 
 		// And the emptied queue is what's persisted.
@@ -153,7 +155,14 @@ struct OutboxTests {
 		let executor = ScriptedExecutor()
 		executor.fail(
 			payload: "one", with: Array(repeating: ChatsHTTPError(status: 503, message: "down"), count: 1000))
-		let (outbox, _, _, _) = makeOutbox(executor: executor, maxAttempts: 2, maxServerErrorAge: 0.3)
+		// Each failed call takes 0.1 s of a fake clock and the back-off is nil, so the 0.3 s age runs
+		// out after a fixed number of calls however busy the machine is (on the real clock it was a
+		// race with the load: one stalled retry and the age was spent after two calls).
+		let clock = StepClock()
+		executor.onCall = { clock.advance(0.1) }
+		let (outbox, _, _, _) = makeOutbox(
+			executor: executor, maxAttempts: 2, maxServerErrorAge: 0.3, now: { clock.now },
+			backoff: { _ in 0 })
 		try outbox.enqueue(kind: "t", lane: "a", summary: "s", payload: "one")
 		#expect(await eventually { !outbox.failures.isEmpty })
 		#expect(outbox.entries.isEmpty)

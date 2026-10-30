@@ -1,6 +1,9 @@
 import { Readable } from 'node:stream'
 import {
+	AbortMultipartUploadCommand,
+	CompleteMultipartUploadCommand,
 	CreateBucketCommand,
+	CreateMultipartUploadCommand,
 	DeleteObjectCommand,
 	GetObjectCommand,
 	HeadBucketCommand,
@@ -8,9 +11,16 @@ import {
 	ListObjectsV2Command,
 	PutObjectCommand,
 	S3Client,
+	UploadPartCommand,
 } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
-import type { PutOptions, StorageProvider } from './interface'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import type {
+	CompletedPart,
+	PresignDownloadOptions,
+	PutOptions,
+	StorageProvider,
+} from './interface'
 
 export interface S3StorageConfig {
 	endpoint: string
@@ -18,10 +28,19 @@ export interface S3StorageConfig {
 	accessKeyId: string
 	secretAccessKey: string
 	region?: string
+	/**
+	 * Address the *browser* uses to reach storage, for presigned URLs. Defaults
+	 * to `endpoint`. Set it when the API reaches storage on an internal address
+	 * (e.g. http://seaweedfs:8333) that clients cannot resolve.
+	 */
+	publicEndpoint?: string
 }
 
 export class S3StorageProvider implements StorageProvider {
 	private client: S3Client
+	// Signs URLs for the browser. Separate from `client` because the host is part
+	// of the signature, so it has to be the host the browser will actually call.
+	private presignClient: S3Client
 	private bucket: string
 
 	constructor(config: S3StorageConfig) {
@@ -34,6 +53,20 @@ export class S3StorageProvider implements StorageProvider {
 				secretAccessKey: config.secretAccessKey,
 			},
 			forcePathStyle: true,
+		})
+		this.presignClient = new S3Client({
+			endpoint: config.publicEndpoint ?? config.endpoint,
+			region: config.region ?? 'us-east-1',
+			credentials: {
+				accessKeyId: config.accessKeyId,
+				secretAccessKey: config.secretAccessKey,
+			},
+			forcePathStyle: true,
+			// SDK v3 adds a CRC32 checksum header/param by default. A browser cannot
+			// compute it for a URL signed ahead of time, and S3-compatible services
+			// (Hetzner, SeaweedFS) reject the mismatch. Only sign it where required.
+			requestChecksumCalculation: 'WHEN_REQUIRED',
+			responseChecksumValidation: 'WHEN_REQUIRED',
 		})
 	}
 
@@ -130,6 +163,87 @@ export class S3StorageProvider implements StorageProvider {
 				Bucket: this.bucket,
 				Key: key,
 			}),
+		)
+	}
+
+	async createMultipartUpload(key: string, options: { contentType: string }): Promise<string> {
+		const response = await this.client.send(
+			new CreateMultipartUploadCommand({
+				Bucket: this.bucket,
+				Key: key,
+				ContentType: options.contentType,
+			}),
+		)
+		if (!response.UploadId) throw new Error(`No upload id returned for key: ${key}`)
+		return response.UploadId
+	}
+
+	presignUploadPart(
+		key: string,
+		uploadId: string,
+		partNumber: number,
+		expiresInSeconds: number,
+	): Promise<string> {
+		return getSignedUrl(
+			this.presignClient,
+			new UploadPartCommand({
+				Bucket: this.bucket,
+				Key: key,
+				UploadId: uploadId,
+				PartNumber: partNumber,
+			}),
+			{ expiresIn: expiresInSeconds },
+		)
+	}
+
+	async completeMultipartUpload(
+		key: string,
+		uploadId: string,
+		parts: CompletedPart[],
+	): Promise<void> {
+		await this.client.send(
+			new CompleteMultipartUploadCommand({
+				Bucket: this.bucket,
+				Key: key,
+				UploadId: uploadId,
+				MultipartUpload: {
+					Parts: [...parts]
+						.sort((a, b) => a.partNumber - b.partNumber)
+						.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
+				},
+			}),
+		)
+	}
+
+	async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+		await this.client.send(
+			new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }),
+		)
+	}
+
+	async headObject(key: string): Promise<{ size: number } | null> {
+		try {
+			const response = await this.client.send(
+				new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+			)
+			return { size: response.ContentLength ?? 0 }
+		} catch (err) {
+			const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode
+			if (status === 404) return null
+			throw err
+		}
+	}
+
+	presignDownload(key: string, options: PresignDownloadOptions): Promise<string> {
+		return getSignedUrl(
+			this.presignClient,
+			new GetObjectCommand({
+				Bucket: this.bucket,
+				Key: key,
+				ResponseContentType: options.contentType,
+				ResponseContentDisposition: options.contentDisposition,
+			}),
+			{ expiresIn: options.expiresInSeconds },
 		)
 	}
 

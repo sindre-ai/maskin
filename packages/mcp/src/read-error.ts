@@ -193,6 +193,7 @@ export const READ_TOOL_NAMES = new Set<string>([
 	'list_integrations',
 	'list_integration_providers',
 	'list_extensions',
+	'list_for_you',
 	'get_started',
 ])
 
@@ -369,6 +370,16 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 		invalidParam: {
 			tool: 'get_loop',
 			hint: 'get_loop({ id: "<uuid>" }) — id must be a UUID.',
+		},
+	},
+	list_for_you: {
+		notFound: {
+			tool: 'list_actors',
+			hint: 'list_actors() to find the person\'s actor id (they must be a member of the workspace), then list_for_you({ actor_id: "<uuid>" }).',
+		},
+		invalidParam: {
+			tool: 'list_for_you',
+			hint: 'list_for_you({ actor_id: "<uuid>", limit: 10 }) — actor_id is required; a person can only read their own list.',
 		},
 	},
 	list_unread: {

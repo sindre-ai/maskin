@@ -15,7 +15,7 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	processing: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	in_progress: { bg: 'bg-status-in_progress-bg', text: 'text-status-in_progress-text' },
 	active: { bg: 'bg-status-active-bg', text: 'text-status-active-text' },
-	signal: { bg: 'bg-status-signal-bg', text: 'text-status-signal-text' },
+	opportunity: { bg: 'bg-status-opportunity-bg', text: 'text-status-opportunity-text' },
 	proposed: { bg: 'bg-status-proposed-bg', text: 'text-status-proposed-text' },
 	clustered: { bg: 'bg-status-clustered-bg', text: 'text-status-clustered-text' },
 	done: { bg: 'bg-status-done-bg', text: 'text-status-done-text' },

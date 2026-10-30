@@ -191,6 +191,31 @@ struct MaskinComposerSnapshotTests {
 		}
 	}
 
+	@Test("the + menu with every row fits above the bar on the smallest supported iPhone")
+	func attachMenuFits() throws {
+		let renderer = ImageRenderer(content: ComposerAttachMenu(actions: ComposerAttachAction.allCases, onPick: { _ in }))
+		renderer.scale = 2
+		let image = try #require(renderer.cgImage)
+		let height = CGFloat(image.height) / renderer.scale
+		// iPhone SE (667pt) with the keyboard down: minus status bar, navigation bar, the composer bar,
+		// the home indicator and the 8pt gap between the menu and the bar.
+		let visible: CGFloat = 667 - 20 - 44 - 56 - 34 - MaskinSpace.s4
+		#expect(height <= visible, "all six rows must sit inside the visible area, got \(height)pt of \(visible)pt")
+	}
+
+	@Test("the + menu caps its height and scrolls when the room above the bar is short")
+	func attachMenuCapped() throws {
+		let all = ComposerAttachAction.allCases
+		let full = ComposerAttachMenu.contentHeight(rows: all.count)
+		let cap: CGFloat = 200
+		#expect(full > cap, "the cap must bite for this test to mean anything")
+		let renderer = ImageRenderer(content: ComposerAttachMenu(actions: all, maxHeight: cap, onPick: { _ in }))
+		renderer.scale = 2
+		let image = try #require(renderer.cgImage)
+		#expect(CGFloat(image.height) / renderer.scale <= cap, "a capped card must not outgrow its cap")
+		#expect(ComposerAttachMenu.contentHeight(rows: 0) == 0)
+	}
+
 	@Test("the old ChatComposer wrapper still renders every voice state", arguments: [false, true])
 	func wrapper(dark: Bool) async throws {
 		let typed = await model("what changed since Friday and what is blocked")

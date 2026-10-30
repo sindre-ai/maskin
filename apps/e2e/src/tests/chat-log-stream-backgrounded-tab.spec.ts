@@ -63,7 +63,7 @@ test.describe('Chats — SSE log stream backgrounded-tab return', () => {
 				],
 				E2E_AGENT_SERVER_SECRET,
 			)
-			await expect(activitySteps.getByText('Using mcp__maskin__warmup_tool')).toBeVisible({
+			await expect(activitySteps.getByText('warmup tool')).toBeVisible({
 				timeout: 10_000,
 			})
 

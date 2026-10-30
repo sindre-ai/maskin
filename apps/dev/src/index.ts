@@ -10,6 +10,7 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
@@ -17,7 +18,7 @@ import { RotateDeksJob } from './jobs/rotate-deks'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
-import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
+import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
@@ -26,18 +27,22 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { runDraftApprovalSkillBackfillOnBoot } from './lib/draft-approval-skill-boot'
 import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-servers'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
+import { recordDbTime } from './lib/request-timing'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
+import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
+import { DriveWatchRenewer } from './services/drive-watch-renewer'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
@@ -60,6 +65,7 @@ import {
 	VoiceSessionTimeoutSweeper,
 	endAllLiveVoiceSessions,
 } from './services/voice-session-timeout-sweeper'
+import { VoiceToolCallLogCleaner } from './services/voice-tool-call-log-cleaner'
 import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
@@ -70,13 +76,14 @@ const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
 if (!databaseUrl) {
 	throw new Error('POSTGRES_URL or DATABASE_URL environment variable is required')
 }
-const db = createDb(databaseUrl)
+const db = createDb(databaseUrl, { onQuery: recordDbTime })
 
 // A malformed KEYCHAIN_MASTER_KEY must stop the process here, not surface on the
 // first credential read.
 assertKeychainKeyConfig()
 
 warnIfPosthogKeyUnset()
+configurePosthogPrivacy(db)
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -124,6 +131,7 @@ const storageProvider = new S3StorageProvider({
 	accessKeyId: process.env.S3_ACCESS_KEY ?? 'admin',
 	secretAccessKey: process.env.S3_SECRET_KEY ?? 'admin',
 	region: process.env.S3_REGION ?? 'us-east-1',
+	publicEndpoint: process.env.S3_PUBLIC_ENDPOINT || undefined,
 })
 
 try {
@@ -233,6 +241,10 @@ const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
 logger.info('Meet watch renewer started')
 
+const driveWatchRenewer = new DriveWatchRenewer(db)
+driveWatchRenewer.start()
+logger.info('Drive watch renewer started')
+
 const resendDomainVerifier = new ResendDomainVerifier(db)
 resendDomainVerifier.start()
 logger.info('Resend domain verifier started')
@@ -245,9 +257,17 @@ const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
 logger.info('Webhook deliveries cleaner started')
 
+const blockedToolCallsCleaner = new BlockedToolCallsCleaner(db)
+blockedToolCallsCleaner.start()
+logger.info('Blocked tool calls cleaner started')
+
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
+
+const voiceToolCallLogCleaner = new VoiceToolCallLogCleaner(db)
+voiceToolCallLogCleaner.start()
+logger.info('Voice tool call log cleaner started')
 
 // §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
 // for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,
@@ -278,6 +298,12 @@ logger.info('Webhook deliveries reconciler started')
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
+
+// Direct uploads: aborts uploads nobody finished and settles ones whose complete
+// request died, so no parts or stitched object are left behind.
+const fileUploadReaperJob = new FileUploadReaperJob(db, storageProvider)
+fileUploadReaperJob.start()
+logger.info('File upload reaper started')
 
 // Keychain: flips chat-captured keys from pending_undo to active once the undo
 // window has passed. One UPDATE per minute, no key use.
@@ -322,6 +348,11 @@ migrateAgentToolServers(db)
 // RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.
 void runDefaultHeartbeatBackfillOnBoot(db)
 
+// One-off: gives existing workspaces the draft-approval-tasks skill (skips any that already
+// have one). Does nothing unless RUN_DRAFT_APPROVAL_SKILL_BACKFILL is 1 (or dry), runs once per
+// database, and never blocks or fails startup.
+void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -330,9 +361,7 @@ const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
-// Daily capability scan, shadow mode. A server job with no model call. Does
-// nothing for a workspace unless FF_WORKSPACE_FEATURES lists it with
-// capability-scan.
+// Daily capability scan. A server job with no model call.
 const capabilityScanner = new CapabilityScanner(db)
 capabilityScanner.start()
 logger.info('Capability scanner started')
@@ -359,8 +388,8 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// In production the dispatch queue — not the createSession promise — is
 	// where a workspace's missing LLM credentials surface, so this is the only
 	// way the trigger runner learns to stop firing against it.
-	onPermanentFailure: ({ workspaceId, reasonCode }) =>
-		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode),
+	onPermanentFailure: ({ workspaceId, reasonCode, noCredentialsConfigured }) =>
+		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode, noCredentialsConfigured),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
@@ -451,6 +480,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
 	keychainUndoSweeperJob.stop()
+	fileUploadReaperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
 	rotateDeksJob.stop()
 	chainSnapshotJob.stop()

@@ -230,7 +230,7 @@ struct ObjectsStoreTests {
 		let task = await store.create(ObjectDraft(type: "task", title: "Elsewhere", status: "todo"))
 		#expect(task != nil)
 		#expect(!store.objects.contains { $0.title == "Elsewhere" })
-		let bet = await store.create(ObjectDraft(type: "bet", title: "Mine", status: "signal"))
+		let bet = await store.create(ObjectDraft(type: "bet", title: "Mine", status: "opportunity"))
 		#expect(store.objects.first?.id == bet?.id)
 	}
 
@@ -610,9 +610,9 @@ struct ObjectTypeCatalogTests {
 /// Polls on the main actor until `condition` holds (events cross an AsyncStream hop).
 @MainActor
 func waitUntil(timeout: Duration = .seconds(15), _ condition: () -> Bool) async throws {
-	let deadline = ContinuousClock.now + timeout
+	var budget = PollBudget(timeout)
 	while !condition() {
-		if ContinuousClock.now > deadline { throw TimeoutError() }
+		if !budget.spend() { throw TimeoutError() }
 		try await Task.sleep(for: .milliseconds(10))
 	}
 }

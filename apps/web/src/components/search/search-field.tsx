@@ -1,3 +1,4 @@
+import type { ParticipantMenuState } from '@/hooks/use-participant-menu'
 import { cn } from '@/lib/cn'
 import type { Pill, SearchParts } from '@/lib/search/parts'
 import type { Suggestion } from '@/lib/search/pillify'
@@ -17,6 +18,8 @@ interface SearchFieldProps {
 	/** Id of the highlighted option, if any. Focus stays in the field. */
 	activeOptionId: string | undefined
 	listboxOpen: boolean
+	/** The @ menu. Absent when the participant filter is off. While it is open it takes the arrows, Enter, Tab and Esc. */
+	menu?: ParticipantMenuState
 	onTextChange: (text: string, composing: boolean) => void
 	onAcceptSuggestion: (via: 'tab' | 'click') => void
 	onDismissSuggestion: () => void
@@ -44,6 +47,7 @@ export function SearchField({
 	listboxId,
 	activeOptionId,
 	listboxOpen,
+	menu,
 	onTextChange,
 	onAcceptSuggestion,
 	onDismissSuggestion,
@@ -63,6 +67,23 @@ export function SearchField({
 		// Keys that belong to an input method (IME) are not ours.
 		if (composing.current || e.nativeEvent.isComposing) return
 		const plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
+		if (menu?.open) {
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault()
+				menu.move(e.key === 'ArrowDown' ? 1 : -1)
+				return
+			}
+			if ((e.key === 'Enter' || e.key === 'Tab') && plain) {
+				e.preventDefault()
+				menu.pickActive(e.key === 'Enter' ? 'keyboard' : 'tab')
+				return
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault()
+				menu.dismiss()
+				return
+			}
+		}
 		switch (e.key) {
 			case 'Tab':
 				// Tab accepts only a suggestion that is showing; otherwise focus moves on.
@@ -131,9 +152,9 @@ export function SearchField({
 					aria-label={palette ? 'Search or run a command' : 'Search'}
 					data-search-field={variant}
 					aria-autocomplete="list"
-					aria-expanded={listboxOpen}
-					aria-controls={listboxId}
-					aria-activedescendant={activeOptionId}
+					aria-expanded={menu?.open || listboxOpen}
+					aria-controls={menu?.open ? menu.listboxId : listboxId}
+					aria-activedescendant={menu?.open ? menu.activeId : activeOptionId}
 					autoComplete="off"
 					spellCheck={false}
 					value={parts.text}
@@ -215,6 +236,7 @@ function PillButton({
 				'inline-flex shrink-0 items-center gap-0.5 rounded-md bg-muted pl-2.5 text-[13px] font-semibold text-foreground',
 				size === 26 ? 'h-[26px]' : 'h-[30px]',
 				pill.kind === 'status' && 'bg-secondary',
+				pill.kind === 'participant' && 'bg-accent',
 			)}
 		>
 			{label}

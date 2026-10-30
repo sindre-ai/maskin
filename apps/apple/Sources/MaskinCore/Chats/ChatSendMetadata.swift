@@ -62,6 +62,20 @@ public struct ChatCardAnswer: Codable, Sendable, Equatable {
 	enum CodingKeys: String, CodingKey { case messageID = "message_id", outcome }
 }
 
+/// The intro step a message was sent from (`metadata.from_suggested_step`). Client-supplied and
+/// carrying no authority; it only lets tap-to-start be counted from saved messages.
+public struct ChatSuggestedStepRef: Codable, Sendable, Equatable {
+	public var introMessageID: Int
+	public var index: Int
+
+	public init(introMessageID: Int, index: Int) {
+		self.introMessageID = introMessageID
+		self.index = index
+	}
+
+	enum CodingKeys: String, CodingKey { case introMessageID = "intro_message_id", index }
+}
+
 /// The client-supplied part of a message's `metadata`. Exactly the keys the API accepts, so the
 /// encoded form can go straight on the wire (and be stored in the outbox).
 public struct ChatSendMetadata: Codable, Sendable, Equatable {
@@ -75,27 +89,31 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 	/// A card button's nudge to the agent: delivered, but not something to read in the chat.
 	public var hiddenFromChat: Bool?
 	public var cardAnswer: ChatCardAnswer?
+	public var fromSuggestedStep: ChatSuggestedStepRef?
 
 	public init(
 		attachments: [ChatAttachmentRef]? = nil, mentions: [String]? = nil,
 		questionAnswer: ChatQuestionAnswer? = nil, hiddenFromChat: Bool? = nil,
-		cardAnswer: ChatCardAnswer? = nil
+		cardAnswer: ChatCardAnswer? = nil, fromSuggestedStep: ChatSuggestedStepRef? = nil
 	) {
 		self.attachments = attachments?.isEmpty == true ? nil : attachments
 		self.mentions = mentions?.isEmpty == true ? nil : mentions
 		self.questionAnswer = questionAnswer
 		self.hiddenFromChat = hiddenFromChat == true ? true : nil
 		self.cardAnswer = cardAnswer
+		self.fromSuggestedStep = fromSuggestedStep
 	}
 
 	enum CodingKeys: String, CodingKey {
 		case attachments, mentions, questionAnswer = "question_answer"
 		case hiddenFromChat = "hidden_from_chat", cardAnswer = "card_answer"
+		case fromSuggestedStep = "from_suggested_step"
 	}
 
 	public var isEmpty: Bool {
 		attachments == nil && mentions == nil && questionAnswer == nil && hiddenFromChat == nil
 			&& cardAnswer == nil
+			&& fromSuggestedStep == nil
 	}
 
 	/// The same data as a `JSONValue`, so an optimistic bubble reads it exactly like a server row.

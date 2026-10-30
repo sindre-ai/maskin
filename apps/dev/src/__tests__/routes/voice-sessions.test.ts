@@ -369,7 +369,10 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		}
 		expect(sent.type).toBe('realtime')
 		expect(sent.model).toBe('gpt-realtime-2.1')
-		expect(sent.tools).toEqual(VOICE_TOOLS)
+		// The toolkit's tools, then the call's own show_in_chat (not held, so no confirmation_id).
+		expect(sent.tools.slice(0, VOICE_TOOLS.length)).toEqual(VOICE_TOOLS)
+		expect(sent.tools.map((t) => t.name)).toContain('show_in_chat')
+		expect(JSON.stringify(sent.tools.at(-1))).not.toContain('confirmation_id')
 		expect(sent.tool_choice).toBe('auto')
 	})
 

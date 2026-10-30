@@ -279,6 +279,68 @@ setup_strip_images_proxy() {
   fi
 }
 
+# --- Guarded MCP servers (BYO integrations) ----------------------------------
+# The API rewrites each custom-extension MCP server to run behind the guard
+# wrapper: `maskin-mcp-guard -- <real command>`. The wrapper is what enforces
+# the per-tool allowlist, so a guarded server must NEVER run without it. This
+# image is the only place that knows whether the wrapper is really here, so the
+# check lives here and fails closed: if the wrapper is missing or does not run,
+# the server is dropped from the MCP config and the reason is logged. The agent
+# then does not get that server at all; it never gets it unguarded.
+MCP_GUARD_NAME="maskin-mcp-guard"
+
+# True when the wrapper command exists and answers --version. The version run
+# catches a wrapper that is present but cannot execute (no node, bad file).
+# Returns the test's status on purpose: callers use it in an `if`.
+mcp_guard_runs() {
+  command -v "$1" > /dev/null 2>&1 && timeout 10 "$1" --version > /dev/null 2>&1
+}
+
+# Session-start log line: which wrapper version this session's image carries.
+# This line is the rollout evidence (a green image workflow proves nothing: the
+# restart step is continue-on-error), so grep a real session log for it.
+log_mcp_guard_version() {
+  local version
+  if command -v "$MCP_GUARD_NAME" > /dev/null 2>&1 \
+    && version=$(timeout 10 "$MCP_GUARD_NAME" --version 2>&1); then
+    # --version prints "maskin-mcp-guard 0.1.0"; log "version: 0.1.0", not the name twice.
+    version="${version//$'\n'/ }"
+    echo "[system] ${MCP_GUARD_NAME} version: ${version#"${MCP_GUARD_NAME}" }"
+  else
+    echo "[system] ${MCP_GUARD_NAME} not available in this image: guarded MCP servers will be dropped"
+  fi
+  return 0
+}
+
+# Takes a merged {"mcpServers": {...}} config and prints it with every guarded
+# server removed whose wrapper command is not usable here. Unguarded servers
+# are never touched. The reason for each drop goes to stderr, the config to
+# stdout.
+drop_unavailable_guarded_servers() {
+  local config="$1"
+  local guarded_filter='(.value.command // "" | tostring | split("/") | last) == $g'
+  local cmd bad='[]'
+  while IFS= read -r cmd; do
+    if [ -n "$cmd" ] && ! mcp_guard_runs "$cmd"; then
+      bad=$(jq -c --arg c "$cmd" '. + [$c]' <<< "$bad")
+    fi
+  done < <(printf '%s' "$config" | jq -r --arg g "$MCP_GUARD_NAME" \
+    "[.mcpServers | to_entries[] | select($guarded_filter) | .value.command | tostring] | unique[]")
+
+  if [ "$bad" = '[]' ]; then
+    printf '%s' "$config"
+    return 0
+  fi
+
+  printf '%s' "$config" | jq -r --arg g "$MCP_GUARD_NAME" --argjson bad "$bad" \
+    ".mcpServers | to_entries[] | select($guarded_filter and ((.value.command | tostring) as \$c | \$bad | any(. == \$c))) | .key" \
+    | while IFS= read -r name; do
+      echo "[system] WARNING: MCP server '${name}' dropped: it must run behind ${MCP_GUARD_NAME}, which is missing or not runnable in this image (fail closed, server not started)" >&2
+    done
+  printf '%s' "$config" | jq -c --arg g "$MCP_GUARD_NAME" --argjson bad "$bad" \
+    ".mcpServers |= with_entries(select(($guarded_filter and ((.value.command | tostring) as \$c | \$bad | any(. == \$c))) | not))"
+}
+
 setup_mcps() {
   # Skip if no MCP config provided
   if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ]; then
@@ -295,6 +357,9 @@ setup_mcps() {
   merged=$(printf '%s\n%s' "$agent_config" "$session_config" | jq -s '
     { mcpServers: ((.[0].mcpServers // {}) * (.[1].mcpServers // {})) }
   ')
+
+  # Fail closed on guarded servers: drop any whose wrapper is not usable here.
+  merged=$(drop_unavailable_guarded_servers "$merged")
 
   # Agents no longer get a browser sidecar (their computer replaces it), so
   # nothing sets BROWSER_CDP_URL. Older agent configs may still carry a
@@ -624,6 +689,7 @@ run_agent() {
 echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
 echo "[system] Runtime: $RUNTIME"
 
+log_mcp_guard_version
 install_runtime
 assert_skills_symlink
 build_context

@@ -220,6 +220,12 @@ public final class ChatComposerModel {
 
 	/// Reply to a message: a strip above the field names whom, and the quote joins the message on send.
 	/// Replying replaces an edit in progress (and gives its draft back).
+	/// Puts an intro step's prompt in the box and asks for focus, so the person can finish it.
+	public func fill(_ prompt: String) {
+		text = prompt
+		focusRequest += 1
+	}
+
 	public func beginReply(author: String, content: String) {
 		let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else { return }
@@ -376,6 +382,8 @@ public final class ChatComposerModel {
 		guard let index = attachments.firstIndex(where: { $0.id == id }) else { return }
 		attachments[index].state = state
 		jobs[id] = nil
+		// The chip truncates its reason to a few letters; the notice under the bar shows all of it.
+		if case .failed(let reason) = state { notice = "\(attachments[index].name): \(reason)" }
 	}
 
 	private static func reason(_ error: any Error) -> String {

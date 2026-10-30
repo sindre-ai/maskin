@@ -77,6 +77,7 @@ const ALL_TOOL_NAMES = [
 	'remove_chat_participant',
 	'get_chat_activity',
 	'stop_chat_agent',
+	'run_agent',
 	'list_sessions',
 	'get_session',
 	'get_session_activity',
@@ -90,6 +91,7 @@ const ALL_TOOL_NAMES = [
 	'approve_object_draft',
 	'create_notification',
 	'list_notifications',
+	'list_for_you',
 	'get_notification',
 	'update_notification',
 	'delete_notification',
@@ -102,6 +104,7 @@ const ALL_TOOL_NAMES = [
 	'list_keychain_credentials',
 	'request_keychain_access',
 	'request_integration_access',
+	'add_mcp_server',
 	'show_computer',
 	'update_integration_access',
 	'disconnect_integration',
@@ -117,6 +120,7 @@ const ALL_TOOL_NAMES = [
 	'desktop_type',
 	'desktop_key',
 	'desktop_run',
+	'desktop_put_file',
 	'desktop_expose_port',
 	'desktop_list_ports',
 	'desktop_close_port',
@@ -805,6 +809,30 @@ describe('create_notification schema', () => {
 				source_actor_id: uuid,
 			}),
 		).toThrow()
+	})
+})
+
+describe('list_for_you schema', () => {
+	const schema = tools.list_for_you.inputSchema
+
+	it('requires an actor id and defaults limit to 10', () => {
+		expect(() => schema.parse({})).toThrow()
+		expect(schema.parse({ actor_id: uuid }).limit).toBe(10)
+	})
+
+	it('rejects a limit above 50', () => {
+		expect(() => schema.parse({ actor_id: uuid, limit: 51 })).toThrow()
+	})
+
+	it('defaults offset to 0 and rejects a negative or fractional offset', () => {
+		expect(schema.parse({ actor_id: uuid }).offset).toBe(0)
+		expect(schema.parse({ actor_id: uuid, offset: 50 }).offset).toBe(50)
+		expect(() => schema.parse({ actor_id: uuid, offset: -1 })).toThrow()
+		expect(() => schema.parse({ actor_id: uuid, offset: 1.5 })).toThrow()
+	})
+
+	it('points list_notifications readers at list_for_you', () => {
+		expect(tools.list_notifications.description).toContain('list_for_you')
 	})
 })
 
@@ -1565,6 +1593,7 @@ describe('workspace_id optional on most tools', () => {
 		'list_keychain_credentials',
 		'request_keychain_access',
 		'request_integration_access',
+		'add_mcp_server',
 		'show_computer',
 		'update_integration_access',
 		'disconnect_integration',

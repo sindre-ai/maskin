@@ -339,7 +339,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 						sort: prev.sort ?? 'updatedAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,
-						groupBy: prev.groupBy ?? 'status',
+						groupBy: prev.groupBy ?? 'none',
 						ids: prev.ids,
 						includeArchived: prev.includeArchived,
 					}),

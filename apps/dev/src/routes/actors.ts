@@ -35,6 +35,7 @@ import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'driz
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
+import { withHumanPauseMarker, withoutHumanPauseMarker } from '../lib/agent-pause'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { resolveBearerCaller } from '../lib/bearer-caller'
@@ -109,6 +110,11 @@ function sameEnvFrom(next: unknown, stored: unknown): boolean {
 function actorEventData(actor: { id: string; type: string; name: string; isSystem: boolean }) {
 	return { id: actor.id, type: actor.type, name: actor.name, is_system: actor.isSystem }
 }
+
+/** Where the actor's picture is served, or null. `v` changes on every upload so the URL can be cached forever. */
+const actorAvatarUrlSql = sql<
+	string | null
+>`CASE WHEN ${actors.metadata}->>'avatar_version' IS NOT NULL THEN '/api/actors/' || ${actors.id} || '/avatar?v=' || (${actors.metadata}->>'avatar_version') END`
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
@@ -755,6 +761,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+					avatar_url: actorAvatarUrlSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -809,6 +816,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
 					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+					avatar_url: actorAvatarUrlSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -1039,6 +1047,7 @@ app.openapi(getActorRoute, (async (c) => {
 				updatedAt: actors.updatedAt,
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
 				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+				avatar_url: actorAvatarUrlSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1357,6 +1366,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			avatar_url: actorAvatarUrlSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1513,8 +1523,10 @@ app.openapi(resetActorRoute, (async (c) => {
 			isSystem: actors.isSystem,
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
+			createdAt: actors.createdAt,
 			updatedAt: actors.updatedAt,
 			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
+			avatar_url: actorAvatarUrlSql,
 		})
 
 	if (!updated) {
@@ -1827,6 +1839,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		.set({
 			agentState: 'paused',
 			agentStateUpdatedAt: new Date(),
+			metadata: withHumanPauseMarker,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -1988,6 +2001,7 @@ app.openapi(runAgentRoute, (async (c) => {
 		.set({
 			agentState: 'running',
 			agentStateUpdatedAt: new Date(),
+			metadata: withoutHumanPauseMarker,
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))

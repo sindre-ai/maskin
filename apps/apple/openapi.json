@@ -184,6 +184,101 @@
 					"reason"
 				]
 			},
+			"VoiceToolCall": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"voice_session_id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"call_id": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"started_at": {
+						"type": "string"
+					},
+					"tool_name": {
+						"type": "string"
+					},
+					"args_summary": {
+						"description": "The arguments the model sent, redacted and size-capped."
+					},
+					"success": {
+						"type": "boolean"
+					},
+					"error_code": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"error_message": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"output_chars": {
+						"type": "integer",
+						"description": "Length of the tool's output before voice's 20,000-character cap."
+					},
+					"output_truncated": {
+						"type": "boolean"
+					},
+					"latency_ms": {
+						"type": "integer"
+					},
+					"output_preview": {
+						"type": [
+							"string",
+							"null"
+						],
+						"description": "The first ~500 characters of what the model was told, redacted."
+					}
+				},
+				"required": [
+					"id",
+					"voice_session_id",
+					"call_id",
+					"started_at",
+					"tool_name",
+					"success",
+					"error_code",
+					"error_message",
+					"output_chars",
+					"output_truncated",
+					"latency_ms",
+					"output_preview"
+				]
+			},
+			"VoiceToolCallList": {
+				"type": "object",
+				"properties": {
+					"tool_calls": {
+						"type": "array",
+						"items": {
+							"$ref": "#/components/schemas/VoiceToolCall"
+						}
+					},
+					"next_cursor": {
+						"type": [
+							"string",
+							"null"
+						]
+					}
+				},
+				"required": [
+					"tool_calls",
+					"next_cursor"
+				]
+			},
 			"TranscribeResponse": {
 				"type": "object",
 				"properties": {
@@ -6192,6 +6287,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Workspace not found",
 						"content": {
@@ -7885,6 +8037,12 @@
 											},
 											"voice_enabled": {
 												"type": "boolean"
+											},
+											"avatar_url": {
+												"type": [
+													"string",
+													"null"
+												]
 											},
 											"workspaces": {
 												"type": "array",
@@ -11964,6 +12122,439 @@
 				}
 			}
 		},
+		"/api/actors/{id}/avatar": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Actors"
+				],
+				"summary": "Upload an actor avatar (PNG or JPG, up to 2 MB)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"multipart/form-data": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"file": {
+										"type": "string",
+										"format": "binary"
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Avatar stored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"avatar_url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"avatar_url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "No file",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is neither the actor itself nor a workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"413": {
+						"description": "Over 2 MB",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"415": {
+						"description": "Not PNG/JPG",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"tags": [
+					"Actors"
+				],
+				"summary": "Get an actor's avatar image",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Image bytes (PNG or JPEG)"
+					},
+					"404": {
+						"description": "No avatar",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/actors/{actorId}/skills": {
 			"get": {
 				"tags": [
@@ -12165,6 +12756,63 @@
 										"frontmatter",
 										"size_bytes",
 										"updated_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid skill name",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
@@ -12590,6 +13238,63 @@
 									},
 									"required": [
 										"ok"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid skill name",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
@@ -13587,7 +14292,7 @@
 														"discarded"
 													],
 													"bet": [
-														"signal",
+														"opportunity",
 														"define",
 														"active",
 														"live",
@@ -14655,7 +15360,7 @@
 														"discarded"
 													],
 													"bet": [
-														"signal",
+														"opportunity",
 														"define",
 														"active",
 														"live",
@@ -20487,7 +21192,7 @@
 						}
 					},
 					"429": {
-						"description": "This workspace already sent 20 invites in the last 24 hours",
+						"description": "This workspace already sent 20 invites in the last 24 hours, or the caller made too many attempts in the last hour",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -24266,6 +24971,362 @@
 				"responses": {
 					"302": {
 						"description": "Redirect to Settings > Integrations with connect status."
+					}
+				}
+			}
+		},
+		"/api/integrations/google/disconnect": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Disconnect a human Google rows (Drive, Drive + Meet, or the whole account)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"format": "email",
+										"description": "Google email of the human, matched case-insensitively"
+									},
+									"scope": {
+										"type": "string",
+										"enum": [
+											"drive",
+											"drive-meet",
+											"google"
+										],
+										"description": "drive: Drive row. drive-meet: Drive and Meet. google: all four Google rows"
+									}
+								},
+								"required": [
+									"email",
+									"scope"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Rows disconnected",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"disconnected": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"provider": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"provider"
+												]
+											}
+										}
+									},
+									"required": [
+										"disconnected"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No connected row for that email in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/integrations/google-drive/watched-folders": {
+			"get": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "List the Drive folders this workspace is watching",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Folder watches across the workspace Drive connections",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"folderId": {
+												"type": "string"
+											},
+											"name": {
+												"type": "string"
+											},
+											"path": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"addedAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"lastFiredAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"integrationId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"account": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"triggers": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"id": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"name": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"id",
+														"name"
+													]
+												}
+											}
+										},
+										"required": [
+											"folderId",
+											"name",
+											"path",
+											"addedAt",
+											"lastFiredAt",
+											"integrationId",
+											"account",
+											"triggers"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/integrations/google-drive/watched-folders/{folderId}": {
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Stop watching a Drive folder",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 200,
+							"pattern": "^[A-Za-z0-9_-]+$"
+						},
+						"required": true,
+						"name": "folderId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The watch was removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"ok": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										},
+										"folderId": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"ok",
+										"folderId"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "This workspace is not watching that folder",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
 					}
 				}
 			}
@@ -30619,6 +31680,12 @@
 											"needsReconnect": {
 												"type": "boolean"
 											},
+											"grantedScopes": {
+												"type": "array",
+												"items": {
+													"type": "string"
+												}
+											},
 											"source": {
 												"type": "string"
 											},
@@ -31026,6 +32093,12 @@
 										},
 										"needsReconnect": {
 											"type": "boolean"
+										},
+										"grantedScopes": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"source": {
 											"type": "string"
@@ -31472,6 +32545,12 @@
 										},
 										"needsReconnect": {
 											"type": "boolean"
+										},
+										"grantedScopes": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"source": {
 											"type": "string"
@@ -32287,6 +33366,12 @@
 										},
 										"needsReconnect": {
 											"type": "boolean"
+										},
+										"grantedScopes": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
 										},
 										"source": {
 											"type": "string"
@@ -37065,6 +38150,175 @@
 				}
 			}
 		},
+		"/api/internal/mcp-guard/report": {
+			"post": {
+				"tags": [
+					"Internal"
+				],
+				"summary": "Record a tool call the guard wrapper refused",
+				"description": "Called by maskin-mcp-guard inside an agent container. Authentication: `Authorization: Bearer <session key>`. The key is bound to one session and one extension, minted at launch. Session and extension come from the key, never from the body. A key stays valid for 60 seconds after its session ends.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"tool_name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 256
+									},
+									"session_id": {
+										"type": "string",
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"tool_name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Denial recorded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"recorded": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"recorded"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Key is missing, unknown, expired, or names another session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/events/history": {
 			"get": {
 				"tags": [
@@ -37503,7 +38757,7 @@
 											"ask",
 											"options"
 										],
-										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 									},
 									"attention": {
 										"type": "integer",
@@ -37707,6 +38961,9 @@
 										},
 										"maxItems": 50
 									},
+									"direct": {
+										"type": "boolean"
+									},
 									"initial_message": {
 										"type": "string",
 										"minLength": 1,
@@ -37803,6 +39060,10 @@
 											"voice_session_id": {
 												"type": "string",
 												"format": "uuid"
+											},
+											"kind": {
+												"type": "string",
+												"maxLength": 40
 											},
 											"final_output": {
 												"type": "object",
@@ -37971,6 +39232,14 @@
 													},
 													"reply_to_session": {
 														"type": "boolean"
+													},
+													"routed_to": {
+														"type": "string",
+														"enum": [
+															"session_chat",
+															"helper_chat",
+															"master"
+														]
 													}
 												},
 												"required": [
@@ -38158,6 +39427,89 @@
 													"level"
 												]
 											},
+											"mcp_server_request": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 60
+													},
+													"hint": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300
+													},
+													"type": {
+														"type": "string",
+														"enum": [
+															"stdio",
+															"http"
+														]
+													},
+													"command": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 512
+													},
+													"args": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"maxLength": 2048
+														},
+														"maxItems": 100
+													},
+													"url": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 2048
+													},
+													"env": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"headers": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"secret_env": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													},
+													"secret_headers": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"session_id",
+													"name"
+												]
+											},
 											"computer_request": {
 												"type": "object",
 												"properties": {
@@ -38332,7 +39684,7 @@
 				},
 				"responses": {
 					"200": {
-						"description": "The existing chat for this subject; new participants were added to it",
+						"description": "The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -40750,6 +42102,10 @@
 												"type": "string",
 												"format": "uuid"
 											},
+											"kind": {
+												"type": "string",
+												"maxLength": 40
+											},
 											"final_output": {
 												"type": "object",
 												"properties": {
@@ -40917,6 +42273,14 @@
 													},
 													"reply_to_session": {
 														"type": "boolean"
+													},
+													"routed_to": {
+														"type": "string",
+														"enum": [
+															"session_chat",
+															"helper_chat",
+															"master"
+														]
 													}
 												},
 												"required": [
@@ -41104,6 +42468,89 @@
 													"level"
 												]
 											},
+											"mcp_server_request": {
+												"type": "object",
+												"properties": {
+													"session_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"reply_to_session": {
+														"type": "boolean"
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 60
+													},
+													"hint": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 300
+													},
+													"type": {
+														"type": "string",
+														"enum": [
+															"stdio",
+															"http"
+														]
+													},
+													"command": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 512
+													},
+													"args": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"maxLength": 2048
+														},
+														"maxItems": 100
+													},
+													"url": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 2048
+													},
+													"env": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"headers": {
+														"type": "object",
+														"additionalProperties": {
+															"type": "string",
+															"maxLength": 4096
+														}
+													},
+													"secret_env": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													},
+													"secret_headers": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 100
+														},
+														"maxItems": 20
+													}
+												},
+												"required": [
+													"session_id",
+													"name"
+												]
+											},
 											"computer_request": {
 												"type": "object",
 												"properties": {
@@ -41276,6 +42723,9 @@
 										"exclusiveMinimum": 0
 									},
 									"also_in_channel": {
+										"type": "boolean"
+									},
+									"top_level": {
 										"type": "boolean"
 									}
 								},
@@ -42377,8 +43827,8 @@
 				"tags": [
 					"Search"
 				],
-				"summary": "Search chats, loops, agents, objects and automations together",
-				"description": "Every typed word must match (AND). Counts and facets cover the full result set; `results` is capped at `limit`. A source that fails is listed in `partial` and the rest still answer. Chats are limited to the caller's own conversations.",
+				"summary": "Search chats, loops, agents, people, objects and automations together",
+				"description": "Every typed word must match (AND). Counts and facets cover the full result set; `results` is capped at `limit`. A source that fails is listed in `partial` and the rest still answer. Chats are limited to the caller's own conversations. `participants` (actor ids) keeps only chats every listed person or agent is in, and the other sources then return nothing.",
 				"parameters": [
 					{
 						"schema": {
@@ -42421,6 +43871,19 @@
 						},
 						"required": false,
 						"name": "statuses",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"format": "uuid"
+							},
+							"maxItems": 5
+						},
+						"required": false,
+						"name": "participants",
 						"in": "query"
 					},
 					{
@@ -42490,6 +43953,7 @@
 															"chats",
 															"loops",
 															"agents",
+															"people",
 															"objects",
 															"automations"
 														]
@@ -42628,6 +44092,7 @@
 													"chats",
 													"loops",
 													"agents",
+													"people",
 													"objects",
 													"automations"
 												]
@@ -43679,6 +45144,78 @@
 									"required": [
 										"error"
 									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/stats": {
+			"get": {
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Per-agent session counts, cost and latest status for the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "One row per agent with at least one session the caller can read",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"actor_id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"total": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"active": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"total_cost_usd": {
+												"type": "number"
+											},
+											"last_30d_cost_usd": {
+												"type": "number"
+											},
+											"latest_status": {
+												"type": "string"
+											},
+											"latest_session_at": {
+												"type": [
+													"string",
+													"null"
+												]
+											}
+										},
+										"required": [
+											"actor_id",
+											"total",
+											"active",
+											"total_cost_usd",
+											"last_30d_cost_usd",
+											"latest_status",
+											"latest_session_at"
+										]
+									}
 								}
 							}
 						}
@@ -46357,7 +47894,8 @@
 											"type": "string",
 											"enum": [
 												"chat",
-												"chief_of_staff"
+												"chief_of_staff",
+												"master"
 											]
 										}
 									},
@@ -48290,6 +49828,428 @@
 					},
 					"404": {
 						"description": "Session or active integration not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Session is not an interactive chat session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Card could not be persisted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/mcp-server-card": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Post a card in the session chat asking the person to add a tool server",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 60
+									},
+									"hint": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 300
+									},
+									"type": {
+										"type": "string",
+										"enum": [
+											"stdio",
+											"http"
+										]
+									},
+									"command": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 512
+									},
+									"args": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"maxLength": 2048
+										},
+										"maxItems": 100
+									},
+									"url": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									},
+									"env": {
+										"type": "object",
+										"additionalProperties": {
+											"type": "string",
+											"maxLength": 4096
+										}
+									},
+									"headers": {
+										"type": "object",
+										"additionalProperties": {
+											"type": "string",
+											"maxLength": 4096
+										}
+									},
+									"secret_env": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"maxItems": 20
+									},
+									"secret_headers": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"maxItems": 20
+									}
+								},
+								"required": [
+									"name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Card posted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"posted": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										},
+										"message_id": {
+											"type": "number"
+										}
+									},
+									"required": [
+										"posted",
+										"message_id"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The server definition is not valid, or carries a secret the agent must not hold",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller does not own this session",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -51053,6 +53013,17 @@
 					{
 						"schema": {
 							"type": "string",
+							"format": "uuid",
+							"description": "Read another member's list. Agents may ask for any member; a person may only ask for their own."
+						},
+						"required": false,
+						"description": "Read another member's list. Agents may ask for any member; a person may only ask for their own.",
+						"name": "for_actor_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
 							"format": "uuid"
 						},
 						"required": true,
@@ -51100,6 +53071,12 @@
 														"type": "string"
 													},
 													"rationale": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"due_at": {
 														"type": [
 															"string",
 															"null"
@@ -51851,7 +53828,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -51871,6 +53848,7 @@
 													"latest_event_id",
 													"headline",
 													"rationale",
+													"due_at",
 													"created_at",
 													"entity_type",
 													"entity_id",
@@ -51888,6 +53866,120 @@
 					},
 					"400": {
 						"description": "Missing workspace ID",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "A person asked for someone else's list",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "for_actor_id is not a member of the workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -54686,7 +56778,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -59686,6 +61778,968 @@
 				}
 			}
 		},
+		"/api/files/uploads": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Start a direct-to-storage upload of a large file",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 255
+									},
+									"description": {
+										"type": [
+											"string",
+											"null"
+										],
+										"maxLength": 1000
+									},
+									"kind": {
+										"type": [
+											"string",
+											"null"
+										],
+										"enum": [
+											"briefing"
+										]
+									},
+									"mime_type": {
+										"type": "string",
+										"minLength": 3,
+										"maxLength": 255,
+										"pattern": "^[a-z0-9!#$&^_.+-]+\\/[a-z0-9!#$&^_.+-]+$"
+									},
+									"size_bytes": {
+										"type": "integer",
+										"exclusiveMinimum": 0,
+										"maximum": 1073741824
+									}
+								},
+								"required": [
+									"name",
+									"mime_type",
+									"size_bytes"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Upload started; PUT each part to its URL, then complete the upload",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"upload_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"file_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"part_size": {
+											"type": "integer",
+											"exclusiveMinimum": 0
+										},
+										"parts": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"part_number": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"url": {
+														"type": "string",
+														"format": "uri"
+													}
+												},
+												"required": [
+													"part_number",
+													"url"
+												]
+											}
+										},
+										"expires_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"upload_id",
+										"file_id",
+										"part_size",
+										"parts",
+										"expires_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal server error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/uploads/{id}/complete": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Finish a direct-to-storage upload and create the file",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"parts": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"part_number": {
+													"type": "integer",
+													"minimum": 1,
+													"maximum": 10000
+												},
+												"etag": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 200
+												}
+											},
+											"required": [
+												"part_number",
+												"etag"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 10000
+									}
+								},
+								"required": [
+									"parts"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "File created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"description": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"kind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"briefing"
+											]
+										},
+										"mimeType": {
+											"type": "string"
+										},
+										"sizeBytes": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"storageKey": {
+											"type": "string"
+										},
+										"createdBy": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"content": {
+											"type": "string"
+										},
+										"encoding": {
+											"type": "string",
+											"enum": [
+												"base64",
+												"utf8"
+											]
+										},
+										"url": {
+											"type": "string",
+											"format": "uri"
+										},
+										"annotations": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"maxLength": 100
+													},
+													"pinNumber": {
+														"type": "integer",
+														"exclusiveMinimum": 0
+													},
+													"selector": {
+														"type": "string",
+														"maxLength": 1000,
+														"default": ""
+													},
+													"bounds": {
+														"type": "object",
+														"properties": {
+															"x": {
+																"type": "number"
+															},
+															"y": {
+																"type": "number"
+															},
+															"w": {
+																"type": "number"
+															},
+															"h": {
+																"type": "number"
+															}
+														},
+														"required": [
+															"x",
+															"y",
+															"w",
+															"h"
+														]
+													},
+													"comment": {
+														"type": "string",
+														"maxLength": 500
+													},
+													"position": {
+														"type": "object",
+														"properties": {
+															"x": {
+																"type": "number"
+															},
+															"y": {
+																"type": "number"
+															}
+														},
+														"required": [
+															"x",
+															"y"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"bounds",
+													"comment"
+												]
+											},
+											"maxItems": 200,
+											"default": []
+										},
+										"contentHash": {
+											"type": [
+												"string",
+												"null"
+											],
+											"pattern": "^[0-9a-f]{64}$"
+										},
+										"warning": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"name",
+										"description",
+										"kind",
+										"mimeType",
+										"sizeBytes",
+										"storageKey",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"content",
+										"encoding",
+										"url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The uploaded parts do not match what was declared",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Upload not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Upload already finished, abandoned or expired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal server error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Storage is unavailable; the upload is intact and can be completed again",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/uploads/{id}": {
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Files"
+				],
+				"summary": "Abandon a direct-to-storage upload",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Upload abandoned; its stored parts are discarded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"aborted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"aborted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Upload not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Upload already finished or being finished",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Storage could not discard the parts; the upload stays open to be reclaimed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/files/{id}/comments": {
 			"get": {
 				"tags": [
@@ -61054,6 +64108,3768 @@
 				}
 			}
 		},
+		"/api/extensions": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "List the workspace's custom extensions",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Extensions, newest first",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"workspaceId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"slug": {
+												"type": "string"
+											},
+											"name": {
+												"type": "string"
+											},
+											"status": {
+												"type": "string",
+												"enum": [
+													"active",
+													"disabled",
+													"draft"
+												]
+											},
+											"mcpConfig": {
+												"type": [
+													"object",
+													"null"
+												],
+												"additionalProperties": {}
+											},
+											"webhookConfig": {
+												"type": [
+													"object",
+													"null"
+												],
+												"additionalProperties": {}
+											},
+											"webhookToken": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"webhookUrl": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"hasSigningSecret": {
+												"type": "boolean"
+											},
+											"hasMcpKey": {
+												"type": "boolean"
+											},
+											"toolGrants": {
+												"type": "object",
+												"additionalProperties": {}
+											},
+											"mcpLastError": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"createdBy": {
+												"type": [
+													"string",
+													"null"
+												],
+												"format": "uuid"
+											},
+											"createdAt": {
+												"type": "string"
+											},
+											"updatedAt": {
+												"type": "string"
+											},
+											"lastDeliveryAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"committedDeliveries": {
+												"type": "integer"
+											}
+										},
+										"required": [
+											"id",
+											"workspaceId",
+											"slug",
+											"name",
+											"status",
+											"mcpConfig",
+											"webhookConfig",
+											"webhookToken",
+											"webhookUrl",
+											"hasSigningSecret",
+											"hasMcpKey",
+											"toolGrants",
+											"mcpLastError",
+											"createdBy",
+											"createdAt",
+											"updatedAt",
+											"lastDeliveryAt",
+											"committedDeliveries"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			},
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Create a custom extension",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"slug": {
+										"type": "string",
+										"minLength": 2,
+										"maxLength": 48,
+										"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+									},
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 80
+									},
+									"status": {
+										"type": "string",
+										"enum": [
+											"active",
+											"disabled",
+											"draft"
+										]
+									},
+									"mcp_config": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"envKey": {
+												"type": "string"
+											},
+											"server": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"stdio"
+																]
+															},
+															"command": {
+																"type": "string"
+															},
+															"args": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"envFromCredential": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"type",
+															"command",
+															"args"
+														]
+													},
+													{
+														"type": "object",
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"http"
+																]
+															},
+															"url": {
+																"type": "string",
+																"format": "uri"
+															}
+														},
+														"required": [
+															"type",
+															"url"
+														]
+													}
+												]
+											},
+											"autoInject": {
+												"type": "boolean",
+												"default": true
+											},
+											"credentialProvider": {
+												"type": "string"
+											},
+											"tools": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"name": {
+															"type": "string"
+														},
+														"kind": {
+															"type": "string",
+															"enum": [
+																"read",
+																"write"
+															]
+														},
+														"description": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"name",
+														"kind"
+													]
+												},
+												"maxItems": 20,
+												"default": []
+											}
+										},
+										"required": [
+											"envKey",
+											"server",
+											"credentialProvider"
+										]
+									},
+									"webhook_config": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"signatureScheme": {
+												"type": "string",
+												"enum": [
+													"hmac-sha256",
+													"hmac-sha1",
+													"timestamp"
+												]
+											},
+											"signatureHeader": {
+												"type": "string",
+												"minLength": 1
+											},
+											"signaturePrefix": {
+												"type": "string"
+											},
+											"timestampHeader": {
+												"type": "string"
+											},
+											"timestampBodyTemplate": {
+												"type": "string"
+											},
+											"maxAgeSeconds": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"default": 300
+											},
+											"secretSource": {
+												"type": "string",
+												"enum": [
+													"env",
+													"credential"
+												],
+												"default": "credential"
+											},
+											"eventMap": {
+												"type": "object",
+												"properties": {
+													"externalIdPath": {
+														"type": "string",
+														"minLength": 1
+													},
+													"entityType": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"action": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"dataPath": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"externalIdPath",
+													"entityType",
+													"action"
+												]
+											},
+											"rateLimit": {
+												"type": "object",
+												"properties": {
+													"perMinute": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"default": 60
+													}
+												},
+												"default": {
+													"perMinute": 60
+												}
+											}
+										},
+										"required": [
+											"signatureScheme",
+											"signatureHeader",
+											"eventMap"
+										]
+									},
+									"signing_secret": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512
+									},
+									"mcp_api_key": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									}
+								},
+								"required": [
+									"slug",
+									"name"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"slug": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"disabled",
+												"draft"
+											]
+										},
+										"mcpConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookToken": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"webhookUrl": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"hasSigningSecret": {
+											"type": "boolean"
+										},
+										"hasMcpKey": {
+											"type": "boolean"
+										},
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"mcpLastError": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"lastDeliveryAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"committedDeliveries": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"slug",
+										"name",
+										"status",
+										"mcpConfig",
+										"webhookConfig",
+										"webhookToken",
+										"webhookUrl",
+										"hasSigningSecret",
+										"hasMcpKey",
+										"toolGrants",
+										"mcpLastError",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"lastDeliveryAt",
+										"committedDeliveries"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Slug taken",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/recipes": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Vendor recipes that pre-fill the extension forms (\"Start from a recipe\")",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Hardcoded recipes, pre-fill only",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"slug": {
+												"type": "string"
+											},
+											"displayName": {
+												"type": "string"
+											},
+											"mcpConfig": {
+												"type": "object",
+												"additionalProperties": {}
+											},
+											"webhookConfig": {
+												"type": "object",
+												"additionalProperties": {}
+											},
+											"docsUrl": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"slug",
+											"displayName",
+											"docsUrl"
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/generate-secret": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Mint a signing secret (32 random bytes, hex) to paste into the vendor. Nothing is stored.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "A fresh secret, shown once",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"secret": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"secret"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/mcp/probe": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Verify an MCP server: list its tools with the given API key. Nothing is stored; the key is used for this call only.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"server_url": {
+										"type": "string",
+										"maxLength": 2048,
+										"format": "uri"
+									},
+									"api_key": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									}
+								},
+								"required": [
+									"server_url"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The tools the server lists, or why it could not be verified",
+						"content": {
+							"application/json": {
+								"schema": {
+									"oneOf": [
+										{
+											"type": "object",
+											"properties": {
+												"ok": {
+													"type": "boolean",
+													"enum": [
+														true
+													]
+												},
+												"tools": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"name": {
+																"type": "string"
+															},
+															"kind": {
+																"type": "string",
+																"enum": [
+																	"read",
+																	"write"
+																]
+															},
+															"description": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"name",
+															"kind"
+														]
+													}
+												}
+											},
+											"required": [
+												"ok",
+												"tools"
+											]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"ok": {
+													"type": "boolean",
+													"enum": [
+														false
+													]
+												},
+												"reason": {
+													"type": "string",
+													"enum": [
+														"rejected",
+														"unreachable",
+														"invalid",
+														"blocked"
+													]
+												},
+												"message": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"ok",
+												"reason",
+												"message"
+											]
+										}
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Get a custom extension (never includes the signing secret)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The extension",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"slug": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"disabled",
+												"draft"
+											]
+										},
+										"mcpConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookToken": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"webhookUrl": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"hasSigningSecret": {
+											"type": "boolean"
+										},
+										"hasMcpKey": {
+											"type": "boolean"
+										},
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"mcpLastError": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"lastDeliveryAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"committedDeliveries": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"slug",
+										"name",
+										"status",
+										"mcpConfig",
+										"webhookConfig",
+										"webhookToken",
+										"webhookUrl",
+										"hasSigningSecret",
+										"hasMcpKey",
+										"toolGrants",
+										"mcpLastError",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"lastDeliveryAt",
+										"committedDeliveries"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"patch": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Update a custom extension. The slug cannot change; a new signing_secret replaces the old one.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 80
+									},
+									"status": {
+										"type": "string",
+										"enum": [
+											"active",
+											"disabled",
+											"draft"
+										]
+									},
+									"mcp_config": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"envKey": {
+												"type": "string"
+											},
+											"server": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"stdio"
+																]
+															},
+															"command": {
+																"type": "string"
+															},
+															"args": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"envFromCredential": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"type",
+															"command",
+															"args"
+														]
+													},
+													{
+														"type": "object",
+														"properties": {
+															"type": {
+																"type": "string",
+																"enum": [
+																	"http"
+																]
+															},
+															"url": {
+																"type": "string",
+																"format": "uri"
+															}
+														},
+														"required": [
+															"type",
+															"url"
+														]
+													}
+												]
+											},
+											"autoInject": {
+												"type": "boolean",
+												"default": true
+											},
+											"credentialProvider": {
+												"type": "string"
+											},
+											"tools": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"name": {
+															"type": "string"
+														},
+														"kind": {
+															"type": "string",
+															"enum": [
+																"read",
+																"write"
+															]
+														},
+														"description": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"name",
+														"kind"
+													]
+												},
+												"maxItems": 20,
+												"default": []
+											}
+										},
+										"required": [
+											"envKey",
+											"server",
+											"credentialProvider"
+										]
+									},
+									"webhook_config": {
+										"type": [
+											"object",
+											"null"
+										],
+										"properties": {
+											"signatureScheme": {
+												"type": "string",
+												"enum": [
+													"hmac-sha256",
+													"hmac-sha1",
+													"timestamp"
+												]
+											},
+											"signatureHeader": {
+												"type": "string",
+												"minLength": 1
+											},
+											"signaturePrefix": {
+												"type": "string"
+											},
+											"timestampHeader": {
+												"type": "string"
+											},
+											"timestampBodyTemplate": {
+												"type": "string"
+											},
+											"maxAgeSeconds": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"default": 300
+											},
+											"secretSource": {
+												"type": "string",
+												"enum": [
+													"env",
+													"credential"
+												],
+												"default": "credential"
+											},
+											"eventMap": {
+												"type": "object",
+												"properties": {
+													"externalIdPath": {
+														"type": "string",
+														"minLength": 1
+													},
+													"entityType": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"action": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"dataPath": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"externalIdPath",
+													"entityType",
+													"action"
+												]
+											},
+											"rateLimit": {
+												"type": "object",
+												"properties": {
+													"perMinute": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"default": 60
+													}
+												},
+												"default": {
+													"perMinute": 60
+												}
+											}
+										},
+										"required": [
+											"signatureScheme",
+											"signatureHeader",
+											"eventMap"
+										]
+									},
+									"signing_secret": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512
+									},
+									"mcp_api_key": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									}
+								},
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Updated",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"slug": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"disabled",
+												"draft"
+											]
+										},
+										"mcpConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookToken": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"webhookUrl": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"hasSigningSecret": {
+											"type": "boolean"
+										},
+										"hasMcpKey": {
+											"type": "boolean"
+										},
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"mcpLastError": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"lastDeliveryAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"committedDeliveries": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"slug",
+										"name",
+										"status",
+										"mcpConfig",
+										"webhookConfig",
+										"webhookToken",
+										"webhookUrl",
+										"hasSigningSecret",
+										"hasMcpKey",
+										"toolGrants",
+										"mcpLastError",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"lastDeliveryAt",
+										"committedDeliveries"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/regenerate-token": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Mint a new webhook token. The old URL stops working immediately (404).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The extension with its new webhook URL",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"slug": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"disabled",
+												"draft"
+											]
+										},
+										"mcpConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookConfig": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"webhookToken": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"webhookUrl": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"hasSigningSecret": {
+											"type": "boolean"
+										},
+										"hasMcpKey": {
+											"type": "boolean"
+										},
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"mcpLastError": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										},
+										"lastDeliveryAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"committedDeliveries": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"slug",
+										"name",
+										"status",
+										"mcpConfig",
+										"webhookConfig",
+										"webhookToken",
+										"webhookUrl",
+										"hasSigningSecret",
+										"hasMcpKey",
+										"toolGrants",
+										"mcpLastError",
+										"createdBy",
+										"createdAt",
+										"updatedAt",
+										"lastDeliveryAt",
+										"committedDeliveries"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "No webhook",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/deliveries": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Committed deliveries from the last 14 days (the idempotency ledger)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Newest first, at most 50",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"windowDays": {
+											"type": "integer"
+										},
+										"committed": {
+											"type": "integer"
+										},
+										"deliveries": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"externalId": {
+														"type": "string"
+													},
+													"receivedAt": {
+														"type": "string"
+													},
+													"processedAt": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"externalId",
+													"receivedAt",
+													"processedAt"
+												]
+											}
+										}
+									},
+									"required": [
+										"windowDays",
+										"committed",
+										"deliveries"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/sample": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Dry run: show the event a sample payload would produce. Writes nothing.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"payload": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 256000
+									},
+									"webhook_config": {
+										"type": "object",
+										"properties": {
+											"signatureScheme": {
+												"type": "string",
+												"enum": [
+													"hmac-sha256",
+													"hmac-sha1",
+													"timestamp"
+												]
+											},
+											"signatureHeader": {
+												"type": "string",
+												"minLength": 1
+											},
+											"signaturePrefix": {
+												"type": "string"
+											},
+											"timestampHeader": {
+												"type": "string"
+											},
+											"timestampBodyTemplate": {
+												"type": "string"
+											},
+											"maxAgeSeconds": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"default": 300
+											},
+											"secretSource": {
+												"type": "string",
+												"enum": [
+													"env",
+													"credential"
+												],
+												"default": "credential"
+											},
+											"eventMap": {
+												"type": "object",
+												"properties": {
+													"externalIdPath": {
+														"type": "string",
+														"minLength": 1
+													},
+													"entityType": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"action": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"literal": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"literal"
+																]
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"path": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"path"
+																]
+															}
+														]
+													},
+													"dataPath": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"externalIdPath",
+													"entityType",
+													"action"
+												]
+											},
+											"rateLimit": {
+												"type": "object",
+												"properties": {
+													"perMinute": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"default": 60
+													}
+												},
+												"default": {
+													"perMinute": 60
+												}
+											}
+										},
+										"required": [
+											"signatureScheme",
+											"signatureHeader",
+											"eventMap"
+										]
+									}
+								},
+								"required": [
+									"payload"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The mapped event, or the first field that did not resolve",
+						"content": {
+							"application/json": {
+								"schema": {
+									"oneOf": [
+										{
+											"type": "object",
+											"properties": {
+												"ok": {
+													"type": "boolean",
+													"enum": [
+														true
+													]
+												},
+												"event": {
+													"type": "object",
+													"properties": {
+														"externalId": {
+															"type": "string"
+														},
+														"entityType": {
+															"type": "string"
+														},
+														"action": {
+															"type": "string"
+														},
+														"data": {}
+													},
+													"required": [
+														"externalId",
+														"entityType",
+														"action"
+													]
+												}
+											},
+											"required": [
+												"ok",
+												"event"
+											]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"ok": {
+													"type": "boolean",
+													"enum": [
+														false
+													]
+												},
+												"field": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"ok",
+												"field",
+												"message"
+											]
+										}
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid body",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/grants": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Read the extension's tool grants and the tools they apply to",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Stored grants and declared tools",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"tools": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"read",
+															"write"
+														]
+													},
+													"description": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"name",
+													"kind"
+												]
+											}
+										}
+									},
+									"required": [
+										"toolGrants",
+										"tools"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/grants/{agentId}": {
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Grant an agent access. Each declared tool starts from its default (read allow, write deny); tools in the body override that. Replaces any earlier entry for the agent.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "agentId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"tools": {
+										"type": "object",
+										"additionalProperties": {
+											"type": "string",
+											"enum": [
+												"allow",
+												"deny"
+											]
+										}
+									}
+								},
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Grants after the change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"tools": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"read",
+															"write"
+														]
+													},
+													"description": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"name",
+													"kind"
+												]
+											}
+										}
+									},
+									"required": [
+										"toolGrants",
+										"tools"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Remove an agent's entry, which denies it every tool again",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "agentId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Grants after the change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"tools": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"read",
+															"write"
+														]
+													},
+													"description": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"name",
+													"kind"
+												]
+											}
+										}
+									},
+									"required": [
+										"toolGrants",
+										"tools"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/grants/{agentId}/tools/{toolName}": {
+			"put": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"extensions"
+				],
+				"summary": "Flip one tool for one agent. Touches only that tool; an agent with no entry gets an entry holding just this tool.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "agentId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						},
+						"required": true,
+						"name": "toolName",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"effect": {
+										"type": "string",
+										"enum": [
+											"allow",
+											"deny"
+										]
+									}
+								},
+								"required": [
+									"effect"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Grants after the change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"toolGrants": {
+											"type": "object",
+											"additionalProperties": {}
+										},
+										"tools": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string"
+													},
+													"kind": {
+														"type": "string",
+														"enum": [
+															"read",
+															"write"
+														]
+													},
+													"description": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"name",
+													"kind"
+												]
+											}
+										}
+									},
+									"required": [
+										"toolGrants",
+										"tools"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not an owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/extensions/{id}/attempted": {
+			"get": {
+				"tags": [
+					"extensions"
+				],
+				"summary": "Tools each agent tried to call and was refused, over the last 30 days",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Distinct refused tool names per agent, from blocked_tool_calls",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"windowDays": {
+											"type": "integer"
+										},
+										"agents": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"agentId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"tools": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
+													"lastAttemptedAt": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"agentId",
+													"tools",
+													"lastAttemptedAt"
+												]
+											}
+										}
+									},
+									"required": [
+										"windowDays",
+										"agents"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/claude-oauth": {
 			"delete": {
 				"x-viewer-policy": "writer",
@@ -62048,7 +68864,7 @@
 				"tags": [
 					"Telemetry"
 				],
-				"summary": "Record an MCP telemetry event (tool_call, mutation, error, or tool_call_response_size).",
+				"summary": "Record an MCP telemetry event (tool_call, mutation, error, alias_use, or tool_call_response_size).",
 				"parameters": [
 					{
 						"schema": {
@@ -62418,6 +69234,108 @@
 										"required": [
 											"event_type",
 											"kind",
+											"tool_name"
+										]
+									},
+									{
+										"type": "object",
+										"properties": {
+											"event_type": {
+												"type": "string",
+												"enum": [
+													"alias_use"
+												]
+											},
+											"tool_name": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 128,
+												"pattern": "^[A-Za-z0-9_.-]+$"
+											},
+											"session_id": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 128
+											},
+											"session_source": {
+												"type": "string",
+												"enum": [
+													"maskin-session",
+													"process",
+													"unknown"
+												]
+											},
+											"transport": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"renames": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"old": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 64,
+															"pattern": "^[A-Za-z0-9_.-]+$"
+														},
+														"new": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 64,
+															"pattern": "^[A-Za-z0-9_.-]+$"
+														}
+													},
+													"required": [
+														"old",
+														"new"
+													]
+												},
+												"maxItems": 64,
+												"default": []
+											},
+											"both_sent": {
+												"type": "boolean",
+												"default": false
+											},
+											"dropped_keys": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 64,
+													"pattern": "^[A-Za-z0-9_.-]+$"
+												},
+												"maxItems": 16
+											},
+											"tool_alias": {
+												"type": "object",
+												"properties": {
+													"old": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 128,
+														"pattern": "^[A-Za-z0-9_.-]+$"
+													},
+													"new": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 128,
+														"pattern": "^[A-Za-z0-9_.-]+$"
+													}
+												},
+												"required": [
+													"old",
+													"new"
+												]
+											}
+										},
+										"required": [
+											"event_type",
 											"tool_name"
 										]
 									}
@@ -65385,6 +72303,323 @@
 				}
 			}
 		},
+		"/api/desktop/put-file": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Desktop"
+				],
+				"summary": "Put a workspace file on an agent's computer",
+				"description": "The computer downloads the file straight from storage, so its bytes never pass through the caller. Starts the computer if needed. Overwrites a file of the same name in the folder. Takes up to two minutes, so a very large file can time out.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid",
+							"description": "Whose computer. Required for people; an agent may omit it (it is its own) and may not name another."
+						},
+						"required": false,
+						"name": "agent_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"file_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"folder": {
+										"type": "string",
+										"maxLength": 255,
+										"pattern": "^(\\/|~\\/)[^\\0\\r\\n]*$",
+										"default": "~/Downloads",
+										"description": "Folder on the computer. Created if missing."
+									}
+								},
+								"required": [
+									"file_id"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The file is on the computer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"path": {
+											"type": "string"
+										},
+										"size_bytes": {
+											"type": "integer"
+										},
+										"sha256": {
+											"type": "string"
+										},
+										"hash_verified": {
+											"type": "boolean",
+											"description": "True when the file has a stored hash and it matches. Large files have none, so only their size is checked."
+										}
+									},
+									"required": [
+										"path",
+										"size_bytes",
+										"sha256",
+										"hash_verified"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "agent_id missing or malformed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "An agent asked for another agent's computer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Desktop not available, or the agent is not in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Desktop could not be reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/desktop/ports": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -66923,6 +74158,182 @@
 					},
 					"404": {
 						"description": "Flag off, or no such voice session for the caller",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/voice-sessions/{id}/tool-calls": {
+			"get": {
+				"tags": [
+					"Voice"
+				],
+				"summary": "List a voice call's tool calls",
+				"description": "What the voice model asked each tool to do and what came back: tool, redacted arguments, success, error, output length, whether the 20,000-character cap cut it, latency, and the first ~500 characters of the output. Oldest first, paged with `cursor`. Visible to the person on the call and to workspace owners and admins. Rows are kept 30 days. A call's tool calls that could not be logged are missing, not failed.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 200,
+							"default": 50
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "cursor",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "A page of tool calls",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/VoiceToolCallList"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Bad limit or cursor",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No such voice session in this workspace, or not visible to the caller",
 						"content": {
 							"application/json": {
 								"schema": {

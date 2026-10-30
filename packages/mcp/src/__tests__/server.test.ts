@@ -97,7 +97,8 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
 		expect(registeredNames).toContain('create_session')
-		expect(registeredNames).not.toContain('run_agent')
+		// Restored as a listed, deprecated alias of create_session (see tool-aliases.ts).
+		expect(registeredNames).toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
@@ -2490,6 +2491,39 @@ describe('tool handlers', () => {
 			)
 		})
 
+		it('without wait: with no web app url the note still carries no session id', async () => {
+			mockFetchSuccess({ id: 'session-1', status: 'queued' })
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.handoff).toContain('is queued')
+			expect(parsed.handoff).not.toContain('session-1')
+		})
+
+		it('without wait: a failed start says nothing was handed over', async () => {
+			mockFetchError(500, 'boom')
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+			})) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('Not started')
+			expect(result.content[0].text).toContain('Nothing was handed over')
+		})
+
+		it('with wait: a failed start says nothing was handed over', async () => {
+			mockFetchError(500, 'boom')
+			const result = (await getHandler('create_session')({
+				actor_id: 'actor-1',
+				action_prompt: 'Fix bugs',
+				wait: true,
+			})) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('Nothing was handed over')
+		})
+
 		it('forwards spawned_by_message_id to the create route', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })
 			const fetchSpy = vi.mocked(fetch)
@@ -3186,7 +3220,7 @@ describe('tool handlers', () => {
 				expect(parsed.session_id).toBe('sess-w1')
 				expect(parsed.session.status).toBe('waiting_for_input')
 				expect(parsed.logs).toEqual([{ message: 'first line' }])
-				expect(parsed.message).toContain('sess-w1')
+				expect(parsed.message).not.toContain('sess-w1')
 				expect(parsed.message).toContain('not finished')
 				expect(parsed.message).toContain('get_session_logs')
 				// The session is not finished, so its result is registered to come back.
@@ -3248,7 +3282,7 @@ describe('tool handlers', () => {
 				const parsed = parseResult(await resultPromise)
 				expect(parsed.stopped_because).toBe('waiting_for_input')
 				expect(parsed.notify_on_complete).toBe('failed')
-				expect(parsed.message).toContain('sess-w3')
+				expect(parsed.message).not.toContain('sess-w3')
 				expect(parsed.message).not.toContain('Its result will come back')
 			})
 
@@ -3557,7 +3591,7 @@ describe('tool handlers', () => {
 	describe('get_workspace_schema handler (workspace lookup)', () => {
 		const workspaces = [
 			{ id: 'ws-a', name: 'Alpha', settings: { statuses: { bet: ['active'] } } },
-			{ id: 'ws-b', name: 'Beta', settings: { statuses: { bet: ['signal'] } } },
+			{ id: 'ws-b', name: 'Beta', settings: { statuses: { bet: ['opportunity'] } } },
 		]
 
 		type SchemaResult = {
@@ -5839,7 +5873,7 @@ describe('tool handlers', () => {
 										llm_keys: { openai: 'sk-secret' },
 										claude_oauth: { primary: { encryptedAccessToken: 'nope' } },
 										custom_llm: { model: 'gpt', api_key: 'sk-also-secret', enabled: false },
-										statuses: { bet: ['signal', 'active'] },
+										statuses: { bet: ['opportunity', 'active'] },
 										display_names: { bet: 'Bet' },
 										// A schema container whose own keys must survive verbatim,
 										// including one that reads like a secret word.
@@ -5861,7 +5895,7 @@ describe('tool handlers', () => {
 			expect(settings.llm_keys).toBeUndefined()
 			expect(settings.claude_oauth).toBeUndefined()
 			expect(settings.custom_llm).toEqual({ model: 'gpt', enabled: false })
-			expect(settings.statuses).toEqual({ bet: ['signal', 'active'] })
+			expect(settings.statuses).toEqual({ bet: ['opportunity', 'active'] })
 			expect(settings.display_names).toEqual({ bet: 'Bet' })
 			expect(settings.field_definitions).toEqual({ monkey: [{ name: 'key', type: 'text' }] })
 			// The text channel must not leak what structuredContent redacted.
@@ -5885,7 +5919,7 @@ describe('tool handlers', () => {
 					createdBy: 'actor-1',
 					settings: {
 						llm_keys: { openai: 'sk-secret' },
-						statuses: { bet: ['signal', 'active'] },
+						statuses: { bet: ['opportunity', 'active'] },
 					},
 				},
 				{
@@ -5895,7 +5929,7 @@ describe('tool handlers', () => {
 					createdAt: '2026-02-01T00:00:00.000Z',
 					updatedAt: '2026-03-01T00:00:00.000Z',
 					onboardingEnabled: false,
-					settings: { statuses: { bet: ['signal'] } },
+					settings: { statuses: { bet: ['opportunity'] } },
 				},
 			]
 
@@ -5997,7 +6031,7 @@ describe('tool handlers', () => {
 					memberCount: number
 				}
 				expect(row.memberCount).toBe(3)
-				expect(row.settings.statuses).toEqual({ bet: ['signal', 'active'] })
+				expect(row.settings.statuses).toEqual({ bet: ['opportunity', 'active'] })
 				expect(row.settings.llm_keys).toBeUndefined()
 				expect(JSON.parse(result.content[0].text).workspaces).toEqual(
 					result.structuredContent.workspaces,
@@ -6805,6 +6839,138 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('list_for_you handler', () => {
+		const person = '9f3a1c52-7d0e-4b8a-a1b2-3c4d5e6f7a8b'
+		const bigDraft = 'x'.repeat(20_000)
+		const route = (n: number) => ({
+			notification_id: n === 3 ? null : `n-${n}`,
+			source: n === 3 ? 'decision' : 'curated',
+			rank: n,
+			latest_event_id: n,
+			headline: `Card ${n}`,
+			rationale: 'why',
+			due_at: n === 1 ? '2026-10-26T08:00:00.000Z' : null,
+			created_at: null,
+			entity_type: n === 2 ? null : 'object',
+			entity_id: n === 2 ? null : `obj-${n}`,
+			session_id: null,
+			object:
+				n === 2
+					? undefined
+					: {
+							id: `obj-${n}`,
+							title: `Obj ${n}`,
+							type: 'bet',
+							status: 'proposed',
+							content: bigDraft,
+						},
+			latest_mention: { content: `${'ask '.repeat(100)}`, decision: { draft: { body: bigDraft } } },
+		})
+
+		it('asks the For You route for that person and returns a slim card per item', async () => {
+			mockFetchSuccess({ items: [1, 2, 3].map(route) })
+
+			const result = (await getHandler('list_for_you')({ actor_id: person, limit: 10 })) as {
+				content: Array<{ text: string }>
+				structuredContent: { total: number; items: Array<Record<string, unknown>> }
+			}
+
+			expect(fetch).toHaveBeenCalledWith(
+				`http://localhost:3000/api/for-you?for_actor_id=${person}`,
+				expect.objectContaining({ method: 'GET' }),
+			)
+			const { items, total } = result.structuredContent
+			expect(total).toBe(3)
+			expect(items.map((i) => i.rank)).toEqual([1, 2, 3])
+			expect(items[0]).toMatchObject({
+				source: 'curated',
+				headline: 'Card 1',
+				notification_id: 'n-1',
+				object_id: 'obj-1',
+				title: 'Obj 1',
+				type: 'bet',
+				status: 'proposed',
+				due_at: '2026-10-26T08:00:00.000Z',
+			})
+			expect((items[0].ask as string).length).toBe(200)
+			// A decision card has no notification; a card with no object keeps its headline.
+			expect(items[2]).toMatchObject({ source: 'decision', notification_id: null })
+			expect(items[1]).toMatchObject({
+				headline: 'Card 2',
+				object_id: null,
+				title: null,
+				type: null,
+			})
+			// content and structuredContent carry the same payload.
+			expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent)
+		})
+
+		it('returns only the limit, counts the whole list and stays under the Live call cap', async () => {
+			mockFetchSuccess({ items: Array.from({ length: 40 }, (_, i) => route(i + 1)) })
+
+			const result = (await getHandler('list_for_you')({ actor_id: person, limit: 15 })) as {
+				content: Array<{ text: string }>
+				structuredContent: { total: number; items: unknown[] }
+			}
+
+			expect(result.structuredContent.items).toHaveLength(15)
+			expect(result.structuredContent.total).toBe(40)
+			expect(result.content[0].text.length).toBeLessThan(20_000)
+		})
+
+		type Page = { total: number; items: Array<{ rank: number; notification_id: string | null }> }
+		const readPage = async (args: { limit: number; offset?: number }) =>
+			(
+				(await getHandler('list_for_you')({ actor_id: person, ...args })) as {
+					structuredContent: Page
+				}
+			).structuredContent
+
+		it('pages through 76 cards with offset, each once and in web order', async () => {
+			const cards = Array.from({ length: 76 }, (_, i) => route(i + 1))
+			mockFetchSuccess({ items: cards })
+			const first = await readPage({ limit: 50, offset: 0 })
+			mockFetchSuccess({ items: cards })
+			const second = await readPage({ limit: 50, offset: 50 })
+
+			expect(first.items).toHaveLength(50)
+			expect(second.items).toHaveLength(26)
+			expect(first.total).toBe(76)
+			expect(second.total).toBe(76)
+			const ranks = [...first.items, ...second.items].map((i) => i.rank)
+			expect(ranks).toEqual(Array.from({ length: 76 }, (_, i) => i + 1))
+		})
+
+		it('treats a missing offset as 0', async () => {
+			mockFetchSuccess({ items: [1, 2, 3].map(route) })
+			const page = await readPage({ limit: 2 })
+			expect(page.items.map((i) => i.rank)).toEqual([1, 2])
+		})
+
+		it('returns an empty page and the true total when the offset is past the end', async () => {
+			mockFetchSuccess({ items: Array.from({ length: 76 }, (_, i) => route(i + 1)) })
+			const page = await readPage({ limit: 50, offset: 100 })
+			expect(page.items).toEqual([])
+			expect(page.total).toBe(76)
+		})
+
+		it('keeps a default-size page of cards with long text under the Live call cap', async () => {
+			const long = (n: number) => ({
+				...route(n),
+				headline: 'h'.repeat(200),
+				rationale: 'r'.repeat(300),
+				object: { id: `obj-${n}`, title: 't'.repeat(80), type: 'bet', status: 'proposed' },
+			})
+			mockFetchSuccess({ items: Array.from({ length: 76 }, (_, i) => long(i + 1)) })
+			const result = (await getHandler('list_for_you')({
+				actor_id: person,
+				limit: 10,
+				offset: 10,
+			})) as { content: Array<{ text: string }> }
+			expect(result.content[0].text.length).toBeLessThan(20_000)
+		})
+	})
+
 	describe('list_actors directory: skill names and name filter', () => {
 		type DirectoryResult = {
 			isError?: boolean
@@ -7019,7 +7185,7 @@ describe('tool handlers', () => {
 			const handler = getHandler('create_objects')
 			const result = (await handler({
 				workspace_id: 'ws-default-123',
-				nodes: [{ $id: 'b1', type: 'bet', status: 'signal' }],
+				nodes: [{ $id: 'b1', type: 'bet', status: 'opportunity' }],
 				edges: [],
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
@@ -7727,7 +7893,7 @@ describe('url field injection', () => {
 	})
 
 	describe('session url', () => {
-		it('create_session — url links to actor page when actorId present', async () => {
+		it('create_session — url links to the chat route for the session', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -7740,11 +7906,19 @@ describe('url field injection', () => {
 				action_prompt: 'Fix bugs',
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-9')
+			const parsed = JSON.parse(result.content[0].text) as {
+				id: string
+				url: string
+				handoff: string
+			}
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-1')
+			// The note gives the person the chat link and never the session id.
+			expect(parsed.handoff).toContain(parsed.url)
+			expect(parsed.handoff.replace(parsed.url, '')).not.toContain('sess-1')
+			expect(parsed.handoff).toContain('Never show the person a session id')
 		})
 
-		it('create_session — url falls back to agents list when actorId absent', async () => {
+		it('create_session — url does not need an actorId', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -7758,7 +7932,7 @@ describe('url field injection', () => {
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents')
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-2')
 		})
 
 		it('list_sessions — url added to each session', async () => {
@@ -7778,7 +7952,7 @@ describe('url field injection', () => {
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
-			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-3')
 		})
 
 		it('create_session (wait: true) — url added to session in response', async () => {
@@ -7813,7 +7987,7 @@ describe('url field injection', () => {
 			const parsed = JSON.parse(result.content[0].text) as {
 				session: { id: string; url: string }
 			}
-			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-7')
+			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-4')
 		})
 	})
 })
@@ -7903,6 +8077,88 @@ describe('X-Maskin-Session-Id source', () => {
 		expect((await postMessageBody()).session_id).toBe(hostSession)
 	})
 
+	// Threads: the handlers bypass the SDK's zod layer, so the schema assertion is
+	// what proves a real client's `thread_root_id` is not stripped before it gets here.
+	it('post_conversation_message accepts thread_root_id and also_in_channel in its schema', () => {
+		const parsed = tools.post_conversation_message.inputSchema.parse({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		expect(parsed.thread_root_id).toBe(42)
+		expect(parsed.also_in_channel).toBe(true)
+	})
+
+	it('post_conversation_message sends thread_root_id and also_in_channel to the API', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'in the thread',
+			thread_root_id: 42,
+			also_in_channel: true,
+		})
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.thread_root_id).toBe(42)
+		expect(sent.also_in_channel).toBe(true)
+	})
+
+	// The opt-out from the server-side thread default: the schema must keep it and the handler must send it.
+	it('post_conversation_message accepts top_level in its schema and sends it to the API', async () => {
+		const input = {
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'for the whole chat',
+			top_level: true,
+		}
+		expect(tools.post_conversation_message.inputSchema.parse(input).top_level).toBe(true)
+
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler(input)
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.top_level).toBe(true)
+		expect(sent.thread_root_id).toBeUndefined()
+	})
+
+	it('list_conversation_messages passes thread_root_id as a query param', async () => {
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve([]),
+		} as Response)
+		const handler = handlers.get('list_conversation_messages')
+		if (!handler) throw new Error('list_conversation_messages handler not registered')
+		await handler({
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			thread_root_id: 42,
+			limit: 50,
+		})
+		const url = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]))
+		expect(url.searchParams.get('thread_root_id')).toBe('42')
+		expect(
+			tools.list_conversation_messages.inputSchema.parse({
+				conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				thread_root_id: 42,
+			}).thread_root_id,
+		).toBe(42)
+	})
+
 	// POST /api/actors reads this header to find the person behind the creating
 	// session, so the new agent can introduce itself to them.
 	async function createActorHeaders(): Promise<Record<string, string>> {
@@ -7913,7 +8169,12 @@ describe('X-Maskin-Session-Id source', () => {
 		} as Response)
 		const handler = handlers.get('create_actor')
 		if (!handler) throw new Error('create_actor handler not registered')
-		await handler({ type: 'agent', name: 'Bot', workspace_id: 'ws-123', description: 'Helper' })
+		await handler({
+			type: 'agent',
+			name: 'Bot',
+			workspace_id: 'ws-default-123',
+			description: 'Helper',
+		})
 		const call = vi
 			.mocked(fetch)
 			.mock.calls.find(

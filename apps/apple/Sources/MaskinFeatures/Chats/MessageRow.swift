@@ -74,33 +74,6 @@ struct SystemLine: View {
 	}
 }
 
-/// What a message attaches: photos as pictures (one large, several as tiles) and every other file
-/// as a chip. Each opens the file.
-struct MessageAttachments: View {
-	let attachments: [ChatAttachmentRef]
-	var alignment: HorizontalAlignment = .leading
-
-	var body: some View {
-		if !attachments.isEmpty {
-			let photos = attachments.filter(\.isImage)
-			let files = attachments.filter { !$0.isImage }
-			VStack(alignment: alignment, spacing: MaskinSpace.s3) {
-				if photos.count == 1, let photo = photos.first {
-					AttachmentThumbnail(file: photo, style: .large)
-				} else if photos.count > 1 {
-					ChipFlow {
-						ForEach(photos) { AttachmentThumbnail(file: $0, style: .tile) }
-					}
-				}
-				if !files.isEmpty {
-					ChipFlow { ForEach(files) { MessageFileChip(file: $0) } }
-				}
-			}
-			.frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
-		}
-	}
-}
-
 /// Your tagged people under your message, each with where they stand: Working, Replied, Waiting for Sam.
 struct MentionStateLine: View {
 	let chips: [MentionStateChip]
@@ -145,8 +118,8 @@ struct MentionLine: View {
 /// One message as a spec 7 bubble. Theirs: a `card` bubble with the tail top-left, full width,
 /// with the 24pt avatar + name + time header on the first of a run (an agent's opens its page);
 /// yours: an ink bubble with the tail bottom-right, at most 82% wide, with the status line under
-/// your newest one. A quote and any attachments sit at the top of the bubble; `edited` sits inside
-/// it. Long-press opens the actions with a preview; swiping right starts a reply. An agent's
+/// your newest one. A quote sits at the top of the bubble and `edited` inside it; pictures and
+/// files sit outside it, above, and a message with no words has no bubble. Long-press opens the actions with a preview; swiping right starts a reply. An agent's
 /// question renders as a decision card under its bubble. Tagged `@Name`s are bold in the text.
 struct MessageRow: View {
 	let message: ChatMessage
@@ -178,6 +151,14 @@ struct MessageRow: View {
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 	/// The person's answer to a Keychain card (allow or not now), posted into the chat.
 	var onKeychainReply: (String, ChatSendMetadata) -> Void = { _, _ in }
+	/// An intro's send step tapped: send its words, noting which step it was.
+	/// Nil where the screen cannot send a step (a thread), so the buttons are not drawn at all rather
+	/// than drawn and dead.
+	var onSendStep: ((_ prompt: String, _ introMessageID: Int, _ index: Int) -> Void)?
+	/// An intro's fill step tapped: put its prompt in the message box.
+	var onFillStep: ((String) -> Void)?
+	/// The steps are on offer only until a person has written after the intro.
+	var introStepsOpen = true
 	/// How a person already answered an agent's card in this message (read from the chat).
 	var cardOutcome: ChatCardAnswer.Outcome?
 	/// The agents in this chat, who may use a credential saved from a Keychain card.
@@ -186,6 +167,10 @@ struct MessageRow: View {
 	/// A person approved a draft shown as a card in this message: its title and the text approved.
 	/// The thread tells the agent.
 	var onApprovedDraft: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	/// For each target the conversation links to, the message that links it first
+	/// (`LinkedConversationItems.firstMentions`): an object is a card there and a link in later
+	/// messages. Empty where the conversation is not known (previews, a thread of replies).
+	var cardOwners: [String: String] = [:]
 	@Environment(\.linkedItems) private var linked
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	/// Present in the app; lets an agent's avatar and name open its page. Absent in previews and tests.
@@ -225,7 +210,7 @@ struct MessageRow: View {
 		}
 	}
 
-	private var shownText: String { messageOverride.text(original: message.content) }
+	private var shownText: String { messageOverride.text(original: message.contentWithoutIntroTail) }
 	private var quote: QuotedReply? { QuotedReply.parse(shownText) }
 	private var bodyText: String { quote?.body ?? shownText }
 
@@ -236,24 +221,70 @@ struct MessageRow: View {
 
 	// MARK: Linked cards
 
-	/// Drafts and pages an agent links to are drawn as cards: in place where the link stands alone,
-	/// under the bubble where it sits in a sentence. Not for your own words, and only once the store
-	/// knows which links deserve a card (until then the link is just text).
+	/// Objects, drafts and pages a message links to are drawn as cards: in place where the link
+	/// stands alone, under the bubble where it sits in a sentence. Your own words get object cards
+	/// only. At most ten objects are looked up; the links past that stay plain.
 	private var linkedTargets: [LinkedTarget] {
-		guard linked != nil, !isOwn, message.kind == "message", !message.isEmojiOnly,
-			bodyText.contains("/objects/") || bodyText.contains("/files/")
+		guard linked != nil, message.kind == "message", !message.isEmojiOnly,
+			LinkedConversationItems.mayLink(bodyText)
 		else { return [] }
-		return LinkedTarget.extract(from: bodyText)
+		let found = LinkedTarget.extract(from: bodyText)
+		return LinkedMessageLayout.lookupTargets(isOwn ? found.filter { $0.kind == .object } : found)
 	}
 
 	/// What to draw for the text, or nil when no link in it is a card (the text then renders as it
-	/// always did, folding included).
+	/// always did, folding included). At most three cards, across every kind; an object that is a
+	/// card in an earlier message of the conversation stays a link here.
 	private func linkedLayout(for targets: [LinkedTarget]) -> (parts: [LinkedMessagePart], appended: [LinkedTarget])? {
 		guard let linked, !targets.isEmpty else { return nil }
-		let parts = LinkedMessageLayout.parts(segments: LinkedMessageSplitter.split(bodyText), isCard: linked.isCard)
-		let appended = LinkedMessageLayout.appended(message: bodyText, parts: parts, isCard: linked.isCard)
+		let looked = Set(targets.map(\.key))
+		let ownMessage = self.isOwn
+		let isCard: (LinkedTarget) -> Bool = { target in
+			guard looked.contains(target.key), linked.showsCard(target) else { return false }
+			// The approval card is for what an agent wrote; a draft you link is a link.
+			if ownMessage, case .draft? = linked.item(for: target) { return false }
+			return true
+		}
+		let skipping = Set(
+			targets.filter { target in
+				guard target.kind != .file, let owner = cardOwners[target.key], owner != message.id else { return false }
+				if case .draft? = linked.item(for: target) { return false }
+				return true
+			}.map(\.key))
+		let parts = LinkedMessageLayout.parts(
+			segments: LinkedMessageSplitter.split(bodyText), isCard: isCard, limit: LinkedMessageLayout.maxCardsPerMessage,
+			skipping: skipping)
+		let appended = LinkedMessageLayout.appended(message: bodyText, parts: parts, isCard: isCard, skipping: skipping)
 		let hasCardInPlace = parts.contains { if case .card = $0 { true } else { false } }
 		return hasCardInPlace || !appended.isEmpty ? (parts, appended) : nil
+	}
+
+	/// How a stand-alone link in the text is drawn. A message that places its own cards draws the
+	/// object and file links it has no card for (past the three, or already a card above) as inline
+	/// links; the thin card stays for the rest.
+	private func standaloneStyle(placingCards: Bool) -> @MainActor (URL, String?) -> MarkdownStandaloneLinkStyle {
+		{ url, _ in
+			let target = LinkedTarget.parse(href: url.absoluteString)
+			if placingCards, target != nil { return .inline }
+			// A person at an agent address is a plain link, not the thin card of an agent.
+			if let target, target.kind == .agent, linked?.state(for: target) == .unavailable { return .inline }
+			return .simple
+		}
+	}
+
+	/// Past ten object links the rest are not looked up, so they read as plain links: the in-app
+	/// link info (which would look them up) is withheld for them.
+	private func cappedLinkInfo(_ targets: [LinkedTarget]) -> (@MainActor (URL) -> MarkdownLinkInfo?)? {
+		guard let base = linkInfo,
+			targets.filter({ $0.kind != .file }).count == LinkedMessageLayout.maxObjectLookupsPerMessage
+		else { return linkInfo }
+		let looked = Set(targets.map(\.key))
+		return { url in
+			if let target = LinkedTarget.parse(href: url.absoluteString), target.kind != .file, !looked.contains(target.key) {
+				return nil
+			}
+			return base(url)
+		}
 	}
 
 	private func linkedBody(_ parts: [LinkedMessagePart]) -> some View {
@@ -271,6 +302,7 @@ struct MessageRow: View {
 				}
 			}
 		}
+		.environment(\.linkedInBubble, true)
 	}
 
 	/// The "Mentioned X" caption only names people the words do not show; a tag in the text is
@@ -283,48 +315,99 @@ struct MessageRow: View {
 	// MARK: Mine
 
 	/// Your message is only a link into Maskin (shown as a card) or only an emoji: no bubble.
-	private var hasOwnSurface: Bool {
+	private func hasOwnSurface(placingCards: Bool) -> Bool {
 		if message.isEmojiOnly { return true }
-		if let link = MarkdownStandaloneLink.match(message.content), linkInfo?(link.url) != nil { return true }
+		// A link the app cannot draw as a card (a chat, an agent, an object it cannot read) keeps
+		// the thin card, as before.
+		if !placingCards, let link = MarkdownStandaloneLink.match(message.content), linkInfo?(link.url) != nil {
+			return true
+		}
 		return false
 	}
 
+	/// The target when the message is nothing but one link drawn as a card.
+	private func soleCardTarget(in parts: [LinkedMessagePart]?, appended: [LinkedTarget]) -> LinkedTarget? {
+		guard let parts, parts.count == 1, appended.isEmpty, quote == nil, message.attachments.isEmpty,
+			case .card(let target) = parts[0]
+		else { return nil }
+		return target
+	}
+
+	/// Pictures and files come first, outside the bubble; a message that is only attachments has no
+	/// bubble at all.
+	private var attachmentsOnly: Bool {
+		!message.attachments.isEmpty && quote == nil && bodyText.isEmpty && !message.isErrorReply
+	}
+
+	/// Your attachments are uploading while the message is on its way, and failed with it.
+	private var ownTransfer: AttachmentTransfer {
+		if message.isFailed { return .failed }
+		return message.isPending ? .uploading(progress: nil) : .ready
+	}
+
 	private var own: some View {
-		VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
-			Group {
-				if hasOwnSurface {
-					VStack(alignment: .trailing, spacing: MaskinSpace.s1) {
-						if message.isEmojiOnly {
-							Text(message.content).maskinSymbol(emojiSize)
-						} else {
-							MarkdownContent(message.content, style: .chat, hardBreaks: true)
-						}
-					}
-					.environment(\.markdownHugsContent, true)
-				} else {
-					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-						if let quote { QuoteBlock(author: quote.author, text: quote.text, onInverse: true) }
-						MessageAttachments(attachments: message.attachments)
-						if !bodyText.isEmpty {
-							HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s3) {
-								MarkdownContent(markdownText, style: .chat, hardBreaks: true)
-									.textSelection(.enabled)
-								if message.editedAt != nil { EditedMark() }
+		// Read once per evaluation: finding the links costs a scan of the text.
+		let targets = linkedTargets
+		let layout = linkedLayout(for: targets)
+		let placingCards = layout != nil
+		// Only a link, drawn as a card: the card is the message, right aligned, no bubble.
+		let soleCard = soleCardTarget(in: layout?.parts, appended: layout?.appended ?? [])
+		return VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
+			VStack(alignment: .trailing, spacing: AttachmentLayout.gap) {
+				MessageAttachments(
+					attachments: message.attachments, alignment: .trailing, threadWidth: rowWidth,
+					transfer: ownTransfer, onRetry: onRetrySend)
+				if !attachmentsOnly {
+					Group {
+						if let soleCard {
+							LinkedTargetCard(target: soleCard, onApproved: onApprovedDraft)
+						} else if hasOwnSurface(placingCards: placingCards) {
+							VStack(alignment: .trailing, spacing: MaskinSpace.s1) {
+								if message.isEmojiOnly {
+									Text(message.content).maskinSymbol(emojiSize)
+								} else {
+									MarkdownContent(message.content, style: .chat, hardBreaks: true)
+								}
 							}
+							.environment(\.markdownHugsContent, true)
+						} else {
+							VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+								if let quote { QuoteBlock(author: quote.author, text: quote.text, onInverse: true) }
+								if !bodyText.isEmpty {
+									if let layout {
+										// The card sits nested in the same ink bubble as the words around it.
+										linkedBody(layout.parts)
+										if message.editedAt != nil { EditedMark() }
+									} else {
+										HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s3) {
+											MarkdownContent(markdownText, style: .chat, hardBreaks: true)
+												.textSelection(.enabled)
+											if message.editedAt != nil { EditedMark() }
+										}
+									}
+								}
+							}
+							.environment(\.markdownHugsContent, true)
+							.environment(\.markdownOnInverse, true)
+							.foregroundStyle(MaskinSurface.onInverse)
+							.padding(.vertical, BubbleShape.myVertical)
+							.padding(.horizontal, BubbleShape.horizontal)
+							.background(MaskinSurface.inverse, in: BubbleShape.mine)
+							.opacity(message.isPending && !message.isFailed ? 0.75 : 1)
 						}
 					}
-					.environment(\.markdownHugsContent, true)
-					.environment(\.markdownOnInverse, true)
-					.foregroundStyle(MaskinSurface.onInverse)
-					.padding(.vertical, BubbleShape.myVertical)
-					.padding(.horizontal, BubbleShape.horizontal)
-					.background(MaskinSurface.inverse, in: BubbleShape.mine)
-					.opacity(message.isPending && !message.isFailed ? 0.75 : 1)
+					.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
 				}
 			}
-			.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
+			.frame(maxWidth: .infinity, alignment: .trailing)
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: true, actions: actions)
+			if let appended = layout?.appended, !appended.isEmpty {
+				VStack(alignment: .trailing, spacing: MaskinSpace.s3) {
+					ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
+				}
+				.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
+			}
 			ReactionChips(reactions: message.reactions, isOwn: true, onToggle: onToggleReaction)
 			if let threadSummary { ThreadPill(summary: threadSummary, isOwn: true, onOpen: onOpenThread) }
 			if mentionChips.isEmpty {
@@ -337,6 +420,13 @@ struct MessageRow: View {
 			}
 		}
 		.frame(maxWidth: .infinity, alignment: .trailing)
+		.environment(\.markdownStandaloneLink, standaloneStyle(placingCards: placingCards))
+		.environment(\.markdownInternalLinkInfo, cappedLinkInfo(targets))
+		// Which links are objects worth a card: asked once per target, cached by the store.
+		.task(id: targets.map(\.key)) {
+			guard let linked, !targets.isEmpty else { return }
+			await linked.resolveWithRetries(targets)
+		}
 	}
 
 	// MARK: Theirs
@@ -352,13 +442,13 @@ struct MessageRow: View {
 					working: working,
 					onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
 			}
-			Group {
+			VStack(alignment: .leading, spacing: AttachmentLayout.gap) {
+				MessageAttachments(attachments: message.attachments, threadWidth: rowWidth)
 				if message.isEmojiOnly {
 					Text(message.content).maskinSymbol(emojiSize)
-				} else {
+				} else if !attachmentsOnly {
 					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 						if let quote { QuoteBlock(author: quote.author, text: quote.text) }
-						MessageAttachments(attachments: message.attachments)
 						if !bodyText.isEmpty {
 							if let layout {
 								linkedBody(layout.parts)
@@ -397,6 +487,14 @@ struct MessageRow: View {
 					request: access, agentID: message.actorID, conversationID: message.conversationID,
 					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
 			}
+			if let intro = AgentIntroView(message: message) {
+				if introStepsOpen, let steps = intro.steps, let introID = message.serverID, let onSendStep, let onFillStep {
+					IntroStepsView(
+						steps: steps, onSend: { step, index in onSendStep(step.prompt, introID, index) },
+						onFill: onFillStep)
+				}
+				if let tools = intro.tools { IntroToolsView(providers: tools) }
+			}
 			if let connect = IntegrationConnectRequest(message: message) {
 				IntegrationConnectCard(request: connect)
 			}
@@ -407,22 +505,30 @@ struct MessageRow: View {
 			}
 			if let computer = ComputerRequest(message: message) {
 				ComputerRequestCard(
-					request: computer, agentName: message.actorName, conversationID: message.conversationID,
-					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
+					request: computer, agentID: message.actorID, agentName: message.actorName,
+					conversationID: message.conversationID, messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
 			}
 			if let credential = KeychainCredentialRequest(message: message) {
 				KeychainRequestCard(
 					request: credential, messageCreatedAt: message.createdAt,
 					agents: agentsAsking(message), onReply: onKeychainReply)
 			}
+			if let server = McpServerRequest(message: message) {
+				McpServerRequestCard(
+					request: server, agentID: message.actorID, messageCreatedAt: message.createdAt,
+					messageID: message.serverID,
+					answered: cardOutcome, onReply: onKeychainReply)
+			}
 			footer
 			MentionLine(names: untaggedNames, isOwn: false)
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
-		// Which links are drafts or pages worth a card: asked once per target, cached by the store.
+		.environment(\.markdownStandaloneLink, standaloneStyle(placingCards: layout != nil))
+		.environment(\.markdownInternalLinkInfo, cappedLinkInfo(targets))
+		// Which links are objects, drafts or pages worth a card: asked once per target, cached by the store.
 		.task(id: targets.map(\.key)) {
 			guard let linked, !targets.isEmpty else { return }
-			await linked.resolveWithRetries(Array(targets.prefix(12)))
+			await linked.resolveWithRetries(targets)
 		}
 	}
 

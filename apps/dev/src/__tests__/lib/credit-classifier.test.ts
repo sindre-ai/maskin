@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { classifyCreditExhaustion, classifySessionExit } from '../../lib/credit-classifier'
+import {
+	classifyCreditExhaustion,
+	classifySessionExit,
+	endsInClaudeAuthDeath,
+	isClaudeAuthDeathText,
+} from '../../lib/credit-classifier'
 
 describe('classifyCreditExhaustion', () => {
 	describe('Claude Code CLI banner strings', () => {
@@ -377,5 +382,67 @@ describe('classifyCreditExhaustion reset time', () => {
 			reset_source: 'cli-banner',
 			reset_confidence: 'authoritative',
 		})
+	})
+})
+
+describe('Claude auth death', () => {
+	const resultLine = (text: string, isError: boolean) =>
+		JSON.stringify({ type: 'result', is_error: isError, result: text })
+	const DEAD = 'Failed to authenticate: OAuth session expired and could not be refreshed'
+
+	it('recognises the CLI giving up on a 401, with or without the API error detail', () => {
+		expect(isClaudeAuthDeathText(DEAD)).toBe(true)
+		expect(isClaudeAuthDeathText(`  Failed to authenticate. API Error: 401 {"type":"error"}`)).toBe(
+			true,
+		)
+		expect(isClaudeAuthDeathText('Reviewed the PR, no problems')).toBe(false)
+	})
+
+	it('matches when the final result is that error', () => {
+		expect(endsInClaudeAuthDeath(`working...\n${resultLine(DEAD, true)}\n`)).toBe(true)
+	})
+
+	it('ignores the same words in a tool result or a successful final result', () => {
+		const quoted = JSON.stringify({
+			type: 'user',
+			message: { content: [{ type: 'tool_result', content: DEAD }] },
+		})
+		expect(endsInClaudeAuthDeath(`${quoted}\n${resultLine('Done', false)}\n`)).toBe(false)
+		expect(endsInClaudeAuthDeath(`${resultLine(DEAD, false)}\n`)).toBe(false)
+		expect(endsInClaudeAuthDeath('')).toBe(false)
+	})
+
+	it('gives an expired login its own auth-class code, with no reset time so it is never retried', () => {
+		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 1)).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'oauth_expired',
+			http_status: 401,
+			reset_at: null,
+		})
+	})
+
+	it('gives a rejected API key its own code', () => {
+		const tail = `working...\n${resultLine('Invalid API key · Fix external API key', true)}\n`
+		expect(classifySessionExit(tail, 1)).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'invalid_api_key',
+			http_status: 401,
+			reset_at: null,
+		})
+	})
+
+	it('leaves other authentication failures unclassified', () => {
+		const other = 'Failed to authenticate. API Error: 401 {"type":"error"}'
+		expect(classifySessionExit(`${resultLine(other, true)}\n`, 1)).toBeNull()
+	})
+
+	it('ignores the messages in tool output, a successful result, or a clean exit', () => {
+		const quoted = JSON.stringify({
+			type: 'user',
+			message: { content: [{ type: 'tool_result', content: DEAD }] },
+		})
+		const clean = `${quoted}\n${resultLine('Invalid API key', false)}\n`
+		expect(classifySessionExit(clean, 1)).toBeNull()
+		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 0)).toBeNull()
 	})
 })

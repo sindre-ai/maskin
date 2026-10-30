@@ -1,8 +1,7 @@
-// Search state in the URL. New params: q, types, statuses, updated, sort.
-// The legacy params type, status and group have other meanings on the old page and
-// keep working there; this parser never reads them. Pill order is not stored: on
+// Search state in the URL: q, types, statuses, participants, updated, sort. Pill order is not stored: on
 // hydrate, pills go before the text.
 
+import { SEARCH_MAX_PARTICIPANTS } from '@maskin/shared'
 import { type SearchParts, partsFrom, pillValues } from './parts'
 import { isStatusGroup } from './vocabulary'
 
@@ -16,6 +15,8 @@ export interface SearchUrlState {
 	text: string
 	types: string[]
 	statuses: string[]
+	/** Actor ids (people or agents) who must all be in a chat. */
+	participants: string[]
 	updated: UpdatedFilter
 	sort: SearchSort
 }
@@ -25,16 +26,20 @@ export type SearchUrlParams = {
 	q?: string
 	types?: string
 	statuses?: string
+	participants?: string
 	updated?: string
 	sort?: string
 }
 
 const MAX_TEXT = 200
+// The server answers 400 to anything that is not an id, or to more than the cap.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export const EMPTY_URL_STATE: SearchUrlState = {
 	text: '',
 	types: [],
 	statuses: [],
+	participants: [],
 	updated: '',
 	sort: 'rel',
 }
@@ -46,6 +51,7 @@ export function serializeSearchState(state: SearchUrlState): SearchUrlParams {
 	if (q) params.q = q
 	if (state.types.length) params.types = state.types.join(',')
 	if (state.statuses.length) params.statuses = state.statuses.join(',')
+	if (state.participants.length) params.participants = state.participants.join(',')
 	if (state.updated) params.updated = state.updated
 	if (state.sort !== 'rel') params.sort = state.sort
 	return params
@@ -65,6 +71,9 @@ export function parseSearchState(params: Record<string, unknown>): SearchUrlStat
 		text: typeof params.q === 'string' ? params.q.trim().slice(0, MAX_TEXT) : '',
 		types: csv(params.types),
 		statuses: csv(params.statuses).filter(isStatusGroup),
+		participants: csv(params.participants)
+			.filter((id) => UUID.test(id))
+			.slice(0, SEARCH_MAX_PARTICIPANTS),
 		updated: UPDATED_VALUES.find((v) => v === updated) ?? '',
 		sort: SORT_VALUES.find((v) => v === sort) ?? 'rel',
 	}
@@ -80,11 +89,12 @@ export function urlStateFromParts(
 		text: parts.text,
 		types: pillValues(parts, 'type'),
 		statuses: pillValues(parts, 'status'),
+		participants: pillValues(parts, 'participant'),
 		updated,
 		sort,
 	}
 }
 
 export function partsFromUrlState(state: SearchUrlState): SearchParts {
-	return partsFrom(state.types, state.statuses, state.text)
+	return partsFrom(state.types, state.statuses, state.text, state.participants)
 }

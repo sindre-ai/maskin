@@ -14,6 +14,29 @@ public struct LiveCallLine: Codable, Equatable, Sendable {
 	}
 }
 
+/// One answer tapped in the call's "Deciding now" card, kept with the call so the thread can draw its
+/// DECIDED row until the server's own row arrives.
+public struct LiveCallDecision: Codable, Equatable, Sendable, Identifiable {
+	public var id: String
+	public var at: Date
+	public var question: String
+	public var choice: String
+
+	public init(id: String = UUID().uuidString, at: Date, question: String, choice: String) {
+		self.id = id
+		self.at = at
+		self.question = question
+		self.choice = choice
+	}
+
+	/// The thread row for this answer, timed from the start of the call it was given in.
+	func event(in record: LiveCallRecord) -> LiveReceiptEvent {
+		.decided(
+			id: "decided-\(id)", callID: record.id, seconds: Int(at.timeIntervalSince(record.startedAt)), at: at,
+			question: question, choice: choice)
+	}
+}
+
 /// One live call, remembered on this device so the thread can show it: where it was, who it was
 /// with, when it started and ended, and which of your lines were spoken rather than typed.
 ///
@@ -35,11 +58,13 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 	/// Whether the person left the call's card open or closed; nil takes the default (open while
 	/// the call runs, closed once it has ended).
 	public var expanded: Bool?
+	/// Answers given from the dock's "Deciding now" card, in order.
+	public var decisions: [LiveCallDecision]
 
 	public init(
 		id: String = UUID().uuidString, conversationID: String, leadName: String, guests: [String] = [],
 		startedAt: Date, endedAt: Date? = nil, spoken: [String] = [], lines: [LiveCallLine] = [],
-		expanded: Bool? = nil
+		expanded: Bool? = nil, decisions: [LiveCallDecision] = []
 	) {
 		self.id = id
 		self.conversationID = conversationID
@@ -50,9 +75,11 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 		self.spoken = spoken
 		self.lines = lines
 		self.expanded = expanded
+		self.decisions = decisions
 	}
 
-	/// Calls saved before voice calls kept their lines have no `lines` key.
+	/// Calls saved before voice calls kept their lines have no `lines` key (nor `decisions`, before
+	/// dock answers were kept).
 	public init(from decoder: Decoder) throws {
 		let c = try decoder.container(keyedBy: CodingKeys.self)
 		id = try c.decode(String.self, forKey: .id)
@@ -64,6 +91,7 @@ public struct LiveCallRecord: Codable, Equatable, Sendable, Identifiable {
 		spoken = try c.decode([String].self, forKey: .spoken)
 		lines = try c.decodeIfPresent([LiveCallLine].self, forKey: .lines) ?? []
 		expanded = try c.decodeIfPresent(Bool.self, forKey: .expanded)
+		decisions = try c.decodeIfPresent([LiveCallDecision].self, forKey: .decisions) ?? []
 	}
 
 	/// The thread shows a card for a call once it has ended or has something in it; a running call
@@ -79,11 +107,28 @@ public struct LiveCallLog {
 	private let defaults: UserDefaults
 	private let key = "live.calls.v1"
 
+	/// The last decoded list with the bytes it came from. The thread asks for its calls on every render,
+	/// so decoding up to `limit` records each time stalled the main thread in a long chat.
+	private final class Decoded {
+		var data: Data?
+		var records: [LiveCallRecord] = []
+		var decodes = 0
+	}
+	private let decoded = Decoded()
+
+	/// How many times the stored list was actually decoded (tests pin that a re-read does not).
+	var decodeCount: Int { decoded.decodes }
+
 	public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
 	public func all() -> [LiveCallRecord] {
 		guard let data = defaults.data(forKey: key) else { return [] }
-		return (try? JSONDecoder().decode([LiveCallRecord].self, from: data)) ?? []
+		if decoded.data == data { return decoded.records }
+		let records = (try? JSONDecoder().decode([LiveCallRecord].self, from: data)) ?? []
+		decoded.data = data
+		decoded.records = records
+		decoded.decodes += 1
+		return records
 	}
 
 	public func records(for conversationID: String) -> [LiveCallRecord] {
@@ -94,7 +139,12 @@ public struct LiveCallLog {
 		var list = all()
 		if let index = list.firstIndex(where: { $0.id == record.id }) { list[index] = record } else { list.append(record) }
 		if list.count > Self.limit { list.removeFirst(list.count - Self.limit) }
-		if let data = try? JSONEncoder().encode(list) { defaults.set(data, forKey: key) }
+		if let data = try? JSONEncoder().encode(list) {
+			defaults.set(data, forKey: key)
+			// What was just written is what the next read gets: no decode for it.
+			decoded.data = data
+			decoded.records = list
+		}
 	}
 
 	public func update(_ id: String, _ change: (inout LiveCallRecord) -> Void) {
@@ -113,12 +163,66 @@ public enum LiveCallWindow {
 
 	/// Whether `message` is part of the call: in its window, and said by you or an agent. Another
 	/// person posting meanwhile in a group chat stays in the thread, outside the card.
-	public static func contains(_ record: LiveCallRecord, _ message: ChatMessage, currentActorID: String?) -> Bool {
+	public static func contains(
+		_ record: LiveCallRecord, _ message: ChatMessage, currentActorID: String?, spokenOnly: Bool = false
+	) -> Bool {
+		// When the transcript is not shown inline only the spoken lines fold away; everything else the
+		// agent or you posted during the call stays in the thread.
+		if spokenOnly, !LiveSpokenLine.isSpoken(message) { return false }
 		guard message.kind == "message", !message.isErrorReply, !message.content.isEmpty else { return false }
+		// What the agent did is its own row in the thread, not a line of the transcript.
+		guard !LiveReceipt.isReceipt(message) else { return false }
 		guard message.actorID == currentActorID || message.author == .agent else { return false }
 		guard let created = message.createdAt else { return record.endedAt == nil }
 		let end = record.endedAt.map { $0.addingTimeInterval(grace) } ?? .distantFuture
 		return created >= record.startedAt.addingTimeInterval(-skew) && created <= end
+	}
+}
+
+extension LiveCallWindow {
+	/// The closing receipt is written a little after hang-up, once the agent has summed the call up.
+	static let summaryGrace: TimeInterval = 120
+
+	/// Whether `message` is the closing receipt of `record`'s call.
+	static func closes(_ record: LiveCallRecord, _ message: ChatMessage) -> Bool {
+		guard let created = message.createdAt else { return record.endedAt == nil }
+		let end = record.endedAt.map { $0.addingTimeInterval(summaryGrace) } ?? .distantFuture
+		return created >= record.startedAt.addingTimeInterval(-skew) && created <= end
+	}
+
+	/// The summary built from the call note when no receipt arrived; nil for a call still running or
+	/// one nobody spoke in.
+	static func fallbackSummary(
+		for record: LiveCallRecord, messages: [ChatMessage], currentActorID: String?
+	) -> LiveCallSummary? {
+		guard let ended = record.endedAt else { return nil }
+		let card = LiveCallCard(record: record, messages: messages, currentActorID: currentActorID)
+		guard !card.messages.isEmpty else { return nil }
+		let turns = card.messages.map {
+			LiveMeetingTurn(speaker: $0.actorName, text: $0.content, isYou: card.isYou($0))
+		}
+		let seconds = Int(ended.timeIntervalSince(record.startedAt))
+		let note = LiveMeetingNote.summary(
+			title: LiveMeetingFormat.endNote(
+				lead: record.leadName, guests: record.guests, seconds: TimeInterval(seconds)),
+			turns: turns)
+		return .fromNote(
+			note, id: record.id, callID: record.id, durationSeconds: seconds, startedAt: record.startedAt,
+			endedAt: ended)
+	}
+}
+
+extension LiveCallSummary {
+	/// Fills what the receipt leaves out from the call it closes: its title, length and times.
+	func placed(in record: LiveCallRecord) -> LiveCallSummary {
+		var copy = self
+		if copy.title.isEmpty { copy.title = "Live meeting with \(record.leadName)" }
+		copy.startedAt = record.startedAt
+		copy.endedAt = record.endedAt ?? endedAt
+		if copy.durationSeconds == nil, let end = copy.endedAt {
+			copy.durationSeconds = max(0, Int(end.timeIntervalSince(record.startedAt)))
+		}
+		return copy
 	}
 }
 

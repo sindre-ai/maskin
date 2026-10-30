@@ -6,13 +6,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { captureMock } = vi.hoisted(() => ({ captureMock: vi.fn(async () => {}) }))
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: captureMock }))
 
 import { encrypt } from '../../lib/crypto'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import {
 	type ActionLogContext,
 	LinkedInActionRefusal,
@@ -57,11 +56,6 @@ beforeEach(() => {
 	captureMock.mockClear()
 })
 
-afterEach(() => {
-	process.env.FF_WORKSPACE_FEATURES = ''
-	_resetFeatureFlagConfig()
-})
-
 type Row = Record<string, unknown>
 
 /** One row of the documented sent-list shape. `createdAt` undefined leaves the date out. */
@@ -104,7 +98,7 @@ function stubClient(rows: Row[]) {
 	return { client, listRelationRequests, cancelRelationRequest, sendConnectionRequest }
 }
 
-async function connect(opts: { flag?: boolean } = {}) {
+async function connect() {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
 	// The sent-list cache is per account and per process, so each connection gets its own
@@ -121,10 +115,6 @@ async function connect(opts: { flag?: boolean } = {}) {
 			createdBy: actorId,
 		})
 		.returning()
-	if (opts.flag !== false) {
-		process.env.FF_WORKSPACE_FEATURES = `${ws.id}:linkedin-outreach-actions`
-		_resetFeatureFlagConfig()
-	}
 	const cfg: LinkedInMcpInstanceConfig = {
 		unipileAccSlug: 'test-acc',
 		identityType: 'personal',
@@ -403,18 +393,6 @@ describe('withdraw_invitation: dedupe and the daily cap', () => {
 })
 
 describe('withdraw_invitation: the tool', () => {
-	it('is absent while the outreach flag is off', async () => {
-		const { client } = stubClient([])
-		__setLinkedInClientForTests(() => client)
-		const h = await connect({ flag: false })
-
-		const { tools } = await h.mcp.listTools()
-		const names = tools.map((t) => t.name)
-
-		expect(names).not.toContain(toolName(h.cfg, 'withdraw_invitation'))
-		expect(names).toContain(toolName(h.cfg, 'list_sent_invitations'))
-	})
-
 	it('withdraws through the tool and logs one ok row with the person and the invitation', async () => {
 		const { client, cancelRelationRequest } = stubClient([
 			sentRow('inv-tool', new Date(Date.now() - 30 * DAY)),

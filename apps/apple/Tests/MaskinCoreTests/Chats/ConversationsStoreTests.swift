@@ -97,6 +97,9 @@ struct ThreadLayoutTests {
 			case .unreadDivider: kinds.append("new")
 			case .handoff: kinds.append("handoff")
 			case .liveCall: kinds.append("call")
+			case .callDivider: kinds.append("call-divider")
+			case .receipt: kinds.append("receipt")
+			case .callSummary: kinds.append("summary")
 case .message(let m, let author): kinds.append("\(m.serverID!)\(author ? "+" : "-")")
 			}
 		}
@@ -236,6 +239,44 @@ struct ConversationsStoreTests {
 		#expect(call?.0 == "Plan")
 		#expect(call?.1 == ["relay"])
 		#expect(call?.2 == nil)
+	}
+
+	@Test("opening the direct message twice gives the same chat and lists it once")
+	func openDirectTwice() async throws {
+		let api = FakeListAPI([chatConvo("a")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		let first = try await store.openDirect(with: "relay", title: "Relay")
+		let second = try await store.openDirect(with: "relay", title: "Relay")
+		#expect(first.id == second.id)
+		#expect(store.conversations.filter { $0.id == first.id }.count == 1)
+		#expect(store.conversations.first?.id == first.id)
+		#expect(await api.directCalls == ["relay", "relay"])
+	}
+
+	@Test("a new chat started on purpose stays separate from the direct message")
+	func newChatStaysTopical() async throws {
+		let api = FakeListAPI([])
+		let store = ConversationsStore(api: api, events: nil)
+		let direct = try await store.openDirect(with: "relay", title: "Relay")
+		let topical = try await store.create(title: "Plan", participantIDs: ["relay"], firstMessage: nil)
+		#expect(direct.id != topical.id)
+		#expect(await api.directCalls == ["relay"])
+		#expect(await api.created.count == 1)
+	}
+
+	@Test("the first message's attachments ride along when the conversation is created")
+	func createWithAttachments() async throws {
+		let api = FakeListAPI([])
+		let store = ConversationsStore(api: api, events: nil)
+		let metadata = ChatSendMetadata(attachments: [ChatAttachmentRef(fileID: "f1", name: "a.jpg")])
+		try await store.create(
+			title: "Plan", participantIDs: ["relay"], firstMessage: "see this", firstMessageMetadata: metadata)
+		#expect(await api.createdMetadata == [metadata])
+		// With no message there is nothing for the attachments to belong to.
+		try await store.create(
+			title: "Plan", participantIDs: ["relay"], firstMessage: " ", firstMessageMetadata: metadata)
+		#expect(await api.createdMetadata.last == .some(nil))
 	}
 
 	@Test("loadMore appends the next page without duplicates")
@@ -380,7 +421,7 @@ private actor TeamFakeAPI: ConversationsAPI, ConversationDeleting {
 
 	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
 		let rows = archived ? self.archived : active
-		return ConversationPage(conversations: Array(rows.dropFirst(offset).prefix(limit)), hasMore: false)
+		return ConversationPage(conversations: Array(rows.dropFirst(offset).prefix(limit)), hasMore: rows.count > offset + limit)
 	}
 
 	func create(title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String) async throws -> ConversationSummary {
@@ -445,6 +486,21 @@ struct ConversationsStoreTeamTests {
 		#expect(store.conversations.map(\.id) == ["z", "b"])
 		#expect(store.archivedConversations.map(\.id) == ["a"])
 		#expect(await api.stateCalls == ["a pinned=- archived=true read=- unread=false", "z pinned=- archived=false read=- unread=false"])
+	}
+
+	@Test("loadMoreArchived pages in the rest of the archive so a search covers all of it")
+	func archivedPaging() async {
+		let archived = (1...70).map { chatConvo("z\($0)") }
+		let api = TeamFakeAPI(active: [chatConvo("a")], archived: archived)
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		#expect(store.archivedConversations.count == 30)
+		#expect(store.archivedHasMore)
+		await store.loadMoreArchived()
+		#expect(store.archivedConversations.map(\.id) == archived.map(\.id))
+		#expect(!store.archivedHasMore)
+		await store.loadMoreArchived()
+		#expect(store.archivedConversations.count == 70, "nothing left to fetch")
 	}
 
 	@Test("a refused archive puts both lists back the way they were")
