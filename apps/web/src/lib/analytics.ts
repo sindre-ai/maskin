@@ -657,15 +657,15 @@ export function trackSearchResultOpened(
 	})
 }
 
-export type SearchFilterDimension = 'type' | 'status' | 'updated' | 'sort' | 'clear'
+export type SearchFilterDimension = 'type' | 'status' | 'participant' | 'updated' | 'sort' | 'clear'
 export type SearchFilterAction = 'add' | 'remove' | 'set' | 'reset'
 export type SearchFilterKind = 'chip' | 'pill' | 'display_menu' | 'clear_button'
 export type SearchFilterVia = 'click' | 'tab' | 'backspace' | 'typed' | 'keyboard'
 
 // Fires when a person changes a search filter on the v2 page: a chip, a pill, the
 // Display menu or Clear filters. Never fires for a change that comes from the URL
-// (a reload, back, a hand-over). `value` is a type key, a status group key or a
-// sort / updated key, empty for a clear. Never carries the query text.
+// (a reload, back, a hand-over). `value` is a type key, a status group key, an actor id
+// (participant) or a sort / updated key, empty for a clear. Never carries the query text.
 export function trackSearchFilterChanged(p: {
 	surface: SearchSurface
 	dimension: SearchFilterDimension

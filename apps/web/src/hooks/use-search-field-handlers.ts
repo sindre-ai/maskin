@@ -13,8 +13,9 @@ import {
 } from '@/lib/analytics'
 import type { SearchParts } from '@/lib/search/parts'
 import { type Suggestion, typeText } from '@/lib/search/pillify'
-import type { Vocabulary } from '@/lib/search/vocabulary'
+import type { ParticipantOption, Vocabulary } from '@/lib/search/vocabulary'
 import { type RefObject, useCallback } from 'react'
+import type { PickVia } from './use-participant-menu'
 import type { SearchAction } from './use-search-state'
 
 interface Input {
@@ -85,6 +86,12 @@ export function useSearchFieldHandlers({
 		}
 		dispatch({ type: 'backspace' })
 	}
+	const onPickParticipant = (option: ParticipantOption, via: PickVia) => {
+		track({ dimension: 'participant', action: 'add', value: option.id, kind: 'pill', via })
+		onEdit?.()
+		dispatch({ type: 'pickParticipant', id: option.id })
+		inputRef.current?.focus()
+	}
 	const onRemovePill = (index: number) => {
 		const pill = parts.pills[index]
 		if (pill) {
@@ -100,5 +107,12 @@ export function useSearchFieldHandlers({
 		inputRef.current?.focus()
 	}
 
-	return { track, onTextChange, onAcceptSuggestion, onBackspaceToWord, onRemovePill }
+	return {
+		track,
+		onTextChange,
+		onAcceptSuggestion,
+		onBackspaceToWord,
+		onRemovePill,
+		onPickParticipant,
+	}
 }

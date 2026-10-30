@@ -70,7 +70,14 @@ public struct MarkdownContent: View {
 	private let style: MarkdownStyle
 	@Environment(\.openURL) private var openURL
 	@Environment(\.markdownInternalLinkHandler) private var internalLinkHandler
+	@Environment(\.markdownChipPreview) private var chipPreview
 	@State private var pending: URL?
+	@State private var preview: ChipPreview?
+
+	private struct ChipPreview: Identifiable {
+		let id = UUID()
+		let content: AnyView
+	}
 
 	/// - Parameter hardBreaks: keep every line break (what a person typed in a chat message).
 	public init(_ markdown: String, style: MarkdownStyle = .document, hardBreaks: Bool = false) {
@@ -84,6 +91,10 @@ public struct MarkdownContent: View {
 			.environment(
 				\.openURL,
 				OpenURLAction { url in
+					if let content = chipPreview?(url) {
+						preview = ChipPreview(content: content)
+						return .handled
+					}
 					if internalLinkHandler?(url) == true { return .handled }
 					switch MarkdownLinkPolicy.decision(for: url) {
 					case .open: return .systemAction
@@ -92,6 +103,7 @@ public struct MarkdownContent: View {
 					}
 				}
 			)
+			.sheet(item: $preview) { $0.content }
 			.confirmationDialog(
 				"Open this link?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
 				titleVisibility: .visible, presenting: pending
@@ -160,6 +172,7 @@ private struct MarkdownBlockView: View {
 	@Environment(\.markdownStyle) private var style
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	@Environment(\.markdownStandaloneLink) private var standaloneLink
+	@Environment(\.markdownCards) private var cards
 	@Environment(\.markdownOnInverse) private var onInverse
 
 	private var primary: Color { onInverse ? MaskinSurface.onInverse : MaskinColor.ink }
@@ -182,11 +195,16 @@ private struct MarkdownBlockView: View {
 				.accessibilityAddTraits(.isHeader)
 		case .paragraph(let text):
 			if let link = MarkdownStandaloneLink.match(text), linkInfo?(link.url) != nil {
-				// A paragraph that is only an internal link reads as a card, not an underlined address.
-				switch standaloneLink?(link.url, link.title) ?? .simple {
-				case .card(let card): card
-				case .simple: MarkdownLinkCard(url: link.url, title: link.title)
-				case .inline: paragraph(text)
+				if cards {
+					// A paragraph that is only an internal link reads as a card, not an underlined address.
+					switch standaloneLink?(link.url, link.title) ?? .simple {
+					case .card(let card): card
+					case .simple: MarkdownLinkCard(url: link.url, title: link.title)
+					case .inline: paragraph(text)
+					}
+				} else {
+					// Cards are off here (a card inside a card is a box in a box): the link is a chip.
+					paragraph(MarkdownStandaloneLink.chipMarkdown(for: text) ?? text)
 				}
 			} else {
 				paragraph(text)
@@ -283,8 +301,8 @@ enum MarkdownTask {
 	}
 }
 
-enum MarkdownClipboard {
-	static func copy(_ string: String) {
+public enum MarkdownClipboard {
+	public static func copy(_ string: String) {
 		// Watch and TV have no general pasteboard: Copy is a no-op there.
 		#if os(iOS)
 		UIPasteboard.general.string = string
@@ -531,8 +549,8 @@ enum MarkdownInline {
 				markdown: markdown,
 				options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
 		else { return AttributedString(markdown) }
-		// Internal links whose visible text is just the address: shown by name instead.
-		var renames: [(range: Range<AttributedString.Index>, text: String)] = []
+		// Internal links shown by name, or as a chip with dots: edits to make once the runs are read.
+		var edits: [(range: Range<AttributedString.Index>, edit: Edit)] = []
 		for run in attr.runs {
 			let intent = run.inlinePresentationIntent ?? []
 			if intent.contains(.code) {
@@ -552,17 +570,24 @@ enum MarkdownInline {
 				attr[run.range].font = base.weight(.semibold)
 			} else if let link = run.link, let info = linkInfo?(link) {
 				// A link into the app: a tinted chip, no underline, opened in the app.
+				let visible = String(attr[run.range].characters).trimmingCharacters(in: .whitespaces)
+				let isAddress = visible == link.absoluteString || visible.hasPrefix("http") || visible.hasPrefix("maskin:")
+				if let chip = chip(
+					for: link, info: info, visible: visible, isAddress: isAddress, base: base, onInverse: onInverse)
+				{
+					edits.append((run.range, .chip(chip)))
+					continue
+				}
 				attr[run.range].foregroundColor = linkColor
 				attr[run.range].backgroundColor = onInverse ? MaskinSurface.onInverse.opacity(0.16) : MaskinSurface.fill
 				attr[run.range].font = base.weight(.semibold)
 				attr[run.range].underlineStyle = nil
-				let visible = String(attr[run.range].characters).trimmingCharacters(in: .whitespaces)
 				// A link that leaves the app ends in a small arrow (a text glyph: a symbol cannot sit in a link).
 				let arrow = info.leavesApp ? "\u{00A0}\u{2197}\u{FE0E}" : ""
-				if visible == link.absoluteString || visible.hasPrefix("http") || visible.hasPrefix("maskin:") {
-					renames.append((run.range, (info.title ?? info.kindLabel) + arrow))
+				if isAddress {
+					edits.append((run.range, .text((info.title ?? info.kindLabel) + arrow)))
 				} else if !arrow.isEmpty {
-					renames.append((run.range, String(attr[run.range].characters) + arrow))
+					edits.append((run.range, .text(String(attr[run.range].characters) + arrow)))
 				}
 			} else if let link = run.link, MarkdownLinkPolicy.decision(for: link) == .reject {
 				// tel:, sms:, facetime:, maskin:// ...: shown as plain text, never tappable.
@@ -573,8 +598,70 @@ enum MarkdownInline {
 			}
 		}
 		// Back to front, so earlier ranges stay valid while text changes length.
-		for rename in renames.reversed() { attr.characters.replaceSubrange(rename.range, with: rename.text) }
+		for (range, edit) in edits.reversed() {
+			switch edit {
+			case .text(let text): attr.characters.replaceSubrange(range, with: text)
+			case .chip(let chip): attr.replaceSubrange(range, with: chip)
+			}
+		}
 		return attr
+	}
+
+	private enum Edit {
+		/// Swap the words, keep the run's look.
+		case text(String)
+		/// Swap the whole run for a finished chip.
+		case chip(AttributedString)
+	}
+
+	/// An object link as a chip with a type dot, its short name and a status dot, or as plain
+	/// "Deleted object" text when it is gone. Nil for any other link, which keeps the plain tinted chip.
+	/// Loading keeps the author's words behind a grey dot (a text run cannot pulse).
+	private static func chip(
+		for link: URL, info: MarkdownLinkInfo, visible: String, isAddress: Bool, base: Font, onInverse: Bool
+	) -> AttributedString? {
+		let onInk = MaskinSurface.onInverse.opacity(0.7)
+		if info.phase == .deleted {
+			var gone = AttributedString("Deleted \(info.kindLabel.lowercased())")
+			gone.font = base.italic()
+			gone.foregroundColor = onInverse ? onInk : MaskinColor.ink4
+			return gone
+		}
+		guard info.phase == .loading || info.objectType != nil else { return nil }
+
+		let name: String
+		if info.objectType != nil, let title = info.title {
+			name = MarkdownChip.shortName(title)
+		} else if isAddress || visible.isEmpty {
+			name = info.title.map(MarkdownChip.shortName) ?? info.kindLabel
+		} else {
+			name = visible
+		}
+		let typeColor = onInverse ? onInk : info.objectType.map(MaskinObjectType.dotColor(for:)) ?? MaskinColor.ink5
+		let statusColor = MarkdownChip.statusDot(for: info.status).map { onInverse ? onInk : MarkdownChip.color(of: $0) }
+		let tint = onInverse ? MaskinSurface.onInverse.opacity(0.16) : MaskinSurface.fill
+		let ink = onInverse ? MaskinSurface.onInverse : MaskinColor.ink
+		let nameFont = base.weight(.semibold)
+		let dotFont = MaskinTypeface.sans(MaskinFontSize.t10, relativeTo: .caption2)
+
+		func piece(_ text: String, color: Color, font: Font, raised: Bool = false) -> AttributedString {
+			var run = AttributedString(text)
+			run.link = link
+			run.foregroundColor = color
+			run.backgroundColor = tint
+			run.font = font
+			run.underlineStyle = nil
+			if raised { run.baselineOffset = MaskinSpace.s1 }
+			return run
+		}
+
+		var chip = piece("\u{25CF}", color: typeColor, font: dotFont, raised: true)
+		chip.append(piece(" " + name, color: ink, font: nameFont))
+		if info.objectType != nil, let statusColor {
+			chip.append(piece(" ", color: ink, font: nameFont))
+			chip.append(piece("\u{25CF}", color: statusColor, font: dotFont, raised: true))
+		}
+		return chip
 	}
 }
 

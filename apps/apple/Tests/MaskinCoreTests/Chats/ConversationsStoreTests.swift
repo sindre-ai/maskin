@@ -241,6 +241,30 @@ struct ConversationsStoreTests {
 		#expect(call?.2 == nil)
 	}
 
+	@Test("opening the direct message twice gives the same chat and lists it once")
+	func openDirectTwice() async throws {
+		let api = FakeListAPI([chatConvo("a")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		let first = try await store.openDirect(with: "relay", title: "Relay")
+		let second = try await store.openDirect(with: "relay", title: "Relay")
+		#expect(first.id == second.id)
+		#expect(store.conversations.filter { $0.id == first.id }.count == 1)
+		#expect(store.conversations.first?.id == first.id)
+		#expect(await api.directCalls == ["relay", "relay"])
+	}
+
+	@Test("a new chat started on purpose stays separate from the direct message")
+	func newChatStaysTopical() async throws {
+		let api = FakeListAPI([])
+		let store = ConversationsStore(api: api, events: nil)
+		let direct = try await store.openDirect(with: "relay", title: "Relay")
+		let topical = try await store.create(title: "Plan", participantIDs: ["relay"], firstMessage: nil)
+		#expect(direct.id != topical.id)
+		#expect(await api.directCalls == ["relay"])
+		#expect(await api.created.count == 1)
+	}
+
 	@Test("the first message's attachments ride along when the conversation is created")
 	func createWithAttachments() async throws {
 		let api = FakeListAPI([])

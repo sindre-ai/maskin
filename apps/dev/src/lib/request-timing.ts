@@ -138,7 +138,9 @@ export function requestTiming(): MiddlewareHandler {
 		await requestStore.run(timing, next)
 
 		const method = c.req.method
-		const route = routePath(c, -1) || 'unmatched'
+		// No index: Hono leaves the route index on the last handler that ran, which is the one that
+		// answered. Index -1 is the last *registered* match, which is always the static/SPA catch-all.
+		const route = routePath(c) || 'unmatched'
 		const status = c.res.status
 		const stream = c.res.headers.get('content-type')?.startsWith('text/event-stream') ?? false
 		if (!stream) {

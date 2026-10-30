@@ -1,6 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, objects, relationships, sessions, triggers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	objects,
+	relationships,
+	sessions,
+	triggers,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import {
 	type LoopTarget,
 	SAFE_METADATA_FIELD_NAME_RE,
@@ -862,7 +870,8 @@ app.openapi(loopStepsRoute, (async (c) => {
 	const triggerById = new Map(triggerRows.map((t) => [t.id, t]))
 
 	// One batched actor lookup for the three per-step actor refs (target /
-	// hands-off / escalates). Missing ids just resolve to null on the step.
+	// hands-off / escalates). Missing ids, and ids of actors who are not members
+	// of this workspace, just resolve to null on the step.
 	const actorIds = new Set<string>()
 	for (const t of triggerRows) {
 		if (t.targetActorId) actorIds.add(t.targetActorId)
@@ -874,6 +883,13 @@ app.openapi(loopStepsRoute, (async (c) => {
 			? await db
 					.select({ id: actors.id, name: actors.name, description: actors.description })
 					.from(actors)
+					.innerJoin(
+						workspaceMembers,
+						and(
+							eq(workspaceMembers.actorId, actors.id),
+							eq(workspaceMembers.workspaceId, workspaceId),
+						),
+					)
 					.where(inArray(actors.id, Array.from(actorIds)))
 			: []
 	const actorById = new Map(actorRows.map((a) => [a.id, a]))

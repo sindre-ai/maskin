@@ -5,6 +5,7 @@ import {
 	VOICE_DRAFT_RULE,
 	VOICE_FOR_YOU_RULE,
 	VOICE_LANGUAGE_RULE,
+	VOICE_REQUEST_RULE,
 	VOICE_SKILLS_TOTAL_MAX_CHARS,
 	VOICE_WRITE_CONFIRMATION,
 	buildVoiceInstructions,
@@ -82,6 +83,19 @@ describe('capVoiceSkills', () => {
 	})
 })
 
+describe('VOICE_CALL_CONDUCT connections rule', () => {
+	it('routes "is X connected" to list_integrations with provider, not a long list', () => {
+		expect(VOICE_CALL_CONDUCT).toContain('list_integrations with provider set to its name')
+		expect(VOICE_CALL_CONDUCT).toContain('Never ask for a long list')
+	})
+
+	it('says an incomplete list is not proof that something is missing', () => {
+		expect(VOICE_CALL_CONDUCT).toContain('voice_truncated')
+		expect(VOICE_CALL_CONDUCT).toContain('page.has_more')
+		expect(VOICE_CALL_CONDUCT).toContain('never that the thing is not connected')
+	})
+})
+
 describe('buildVoiceInstructions', () => {
 	const base = {
 		systemPrompt: 'You are the agent.',
@@ -112,6 +126,14 @@ describe('buildVoiceInstructions', () => {
 		expect(VOICE_LANGUAGE_RULE).toContain('language the person is speaking')
 		expect(VOICE_LANGUAGE_RULE).toContain('natural spoken Danish')
 		expect(VOICE_LANGUAGE_RULE).toContain('pronounce Danish')
+	})
+
+	it('tells the agent that "we need X" is a request to file as a gap, not a limit to work around', () => {
+		expect(buildVoiceInstructions(base)).toContain(VOICE_REQUEST_RULE)
+		expect(VOICE_REQUEST_RULE).toContain('a request and not a limit')
+		expect(VOICE_REQUEST_RULE).toContain('create_objects')
+		expect(VOICE_REQUEST_RULE).toContain('[Gap]')
+		expect(VOICE_REQUEST_RULE).toContain('Do not offer workarounds')
 	})
 
 	it('tells the agent to read what needs the caller from list_for_you, top card first', () => {
