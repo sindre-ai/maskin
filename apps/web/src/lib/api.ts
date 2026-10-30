@@ -44,7 +44,7 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
+import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -757,7 +757,7 @@ export const api = {
 			}),
 		createByoLogin: (
 			workspaceId: string,
-			body: { displayName: string; username: string; password: string },
+			body: { displayName: string; username: string; password: string; email?: string },
 		) =>
 			request<{ integrationId: string }>('/integrations/byo-login', {
 				method: 'POST',
@@ -772,6 +772,7 @@ export const api = {
 				rawSecret?: string
 				username?: string
 				password?: string
+				email?: string
 			},
 		) =>
 			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
@@ -1036,6 +1037,7 @@ export const api = {
 			const qs = new URLSearchParams(params).toString()
 			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
 		},
+		stats: (workspaceId: string) => request<SessionStatsRow[]>('/sessions/stats', { workspaceId }),
 	},
 
 	events: {
@@ -1334,7 +1336,7 @@ export const api = {
 		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
 		// credential comes back: the connection to the vendor is made by the
 		// server when the offer below is posted.
-		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+		create: (workspaceId: string, body: { agent_actor_id: string; conversation_id?: string }) =>
 			request<{ voice_session_id: string }>('/voice-sessions', {
 				method: 'POST',
 				body,

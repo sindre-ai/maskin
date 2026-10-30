@@ -3,6 +3,7 @@ import type { InvokeTool, VoiceRealtimeTool } from '@maskin/mcp'
 import WebSocket from 'ws'
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
+import { VOICE_GREETING_INSTRUCTION } from './voice-instructions'
 import { type VoiceServerMessage, createVoiceChannel } from './voice-session-channel'
 import { endVoiceSession } from './voice-session-lifecycle'
 import type { VoiceSessionRow } from './voice-transcript'
@@ -787,6 +788,16 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				registerLive()
 				startPing()
 				settle(true)
+				// Only the first attach greets; a reconnect goes through the other onOpen above.
+				sendToModel({
+					type: 'conversation.item.create',
+					item: {
+						type: 'message',
+						role: 'system',
+						content: [{ type: 'input_text', text: VOICE_GREETING_INSTRUCTION }],
+					},
+				})
+				sendToModel({ type: 'response.create' })
 			},
 			onMessage: (data) => onSocketMessage(myGen, data),
 			onClose: () => {

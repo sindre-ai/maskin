@@ -89,7 +89,7 @@ function row(
 
 // destructive: delete_*, stop_session, stop_chat_agent, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, mark_read.
-// openWorld: create_session, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
+// openWorld: create_session, its alias run_agent, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
 // send a message out (gmail_send_email, approve_object_draft).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
@@ -160,6 +160,7 @@ const ROWS: Record<string, Row> = {
 	// Sessions
 	create_session: row('Create session', { openWorld: true }),
 	create_sub_chat: row('Create sub-chat', { openWorld: true }),
+	run_agent: row('Run agent (deprecated alias of create_session)', { openWorld: true }),
 	list_sessions: row('List sessions'),
 	get_session: row('Get session'),
 	get_session_logs: row('Get session logs'),

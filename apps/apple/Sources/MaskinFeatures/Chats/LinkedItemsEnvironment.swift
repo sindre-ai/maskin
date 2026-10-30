@@ -34,6 +34,7 @@ enum LinkedItemStores {
 			objects: remote,
 			files: APIFilesRemote(client: environment.client, credentials: credentials),
 			actors: { try await remote.actors() },
+			places: APILinkedPlacesRemote(client: environment.client, workspaceID: workspaceId),
 			workspaceID: { [weak environment] in environment?.workspaceId })
 		cache[key] = store
 		return store
@@ -67,6 +68,23 @@ struct LinkedOpener: DynamicProperty {
 		switch target.kind {
 		case .object: runtime?.openObject(target.uuid)
 		case .file: runtime?.openFile(target.uuid)
+		case .agent: runtime?.openAgent(target.uuid)
+		case .chat: runtime?.openChat(target.uuid)
+		}
+	}
+
+	/// Closes the sheet the caller is in, waits for it to finish, then opens the target: the shell
+	/// presents from above everything and cannot while a sheet is up.
+	static func openAfterClosing(_ target: LinkedTarget, close: () -> Void, runtime: AppRuntime?) {
+		close()
+		Task {
+			try? await Task.sleep(for: .milliseconds(450))
+			switch target.kind {
+			case .object: runtime?.openObject(target.uuid)
+			case .file: runtime?.openFile(target.uuid)
+			case .agent: runtime?.openAgent(target.uuid)
+			case .chat: runtime?.openChat(target.uuid)
+			}
 		}
 	}
 }
@@ -81,7 +99,10 @@ extension LinkedItemStores {
 		}
 		if store.state(for: target) == nil { Task { await store.resolve([target]) } }
 		if case .draft? = store.item(for: target) { return .simple }
-		guard store.showsCard(target) else { return .simple }
+		// A person at an agent address is a plain link.
+		guard store.showsCard(target) else {
+			return target.kind == .agent && store.state(for: target) == .unavailable ? .inline : .simple
+		}
 		return .card(AnyView(LinkedTargetCard(target: target).environment(\.linkedItems, store)))
 	}
 }

@@ -72,7 +72,7 @@ function AddCredentialPage() {
 					(err.code === 'NAME_TAKEN' || err.code === 'NAME_LOOKS_LIKE_SECRET')
 					? err.message
 					: isLogin
-						? 'Could not save this login. Check the name, username and password, then try again.'
+						? 'Could not save this login. Check the name, username or email, and password, then try again.'
 						: 'Could not save this credential. Check the name and secret, then try again.',
 			)
 		}

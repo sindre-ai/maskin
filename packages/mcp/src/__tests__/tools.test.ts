@@ -79,6 +79,7 @@ const ALL_TOOL_NAMES = [
 	'remove_chat_participant',
 	'get_chat_activity',
 	'stop_chat_agent',
+	'run_agent',
 	'list_sessions',
 	'get_session',
 	'get_session_activity',

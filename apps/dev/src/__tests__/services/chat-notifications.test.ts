@@ -13,6 +13,7 @@ const conv = '00000000-0000-0000-0000-0000000000c1'
 const agent = '00000000-0000-0000-0000-0000000000d1'
 const human1 = '00000000-0000-0000-0000-0000000000a1'
 const human2 = '00000000-0000-0000-0000-0000000000a2'
+const human3 = '00000000-0000-0000-0000-0000000000a3'
 
 type Rows = Array<Record<string, unknown>>
 const notificationRows = (inserts: unknown[]) =>
@@ -207,6 +208,20 @@ describe('notifyChatReply', () => {
 		])
 		await notifyChatReply(archived.db as Database, reply({ authorId: human1, metadata: null }))
 		expect(archived.calls.inserts).toHaveLength(0)
+	})
+
+	it('creates nothing when the author is not one of the two people in the chat', async () => {
+		const { db, calls } = ctx([
+			[{ name: 'Cleo', type: 'human' }],
+			[
+				{ actorId: human1, type: 'human', archived: false },
+				{ actorId: human2, type: 'human', archived: false },
+			],
+		])
+
+		await notifyChatReply(db as Database, reply({ authorId: human3, metadata: null }))
+
+		expect(calls.inserts).toHaveLength(0)
 	})
 
 	it('creates nothing when no human is left to notify', async () => {

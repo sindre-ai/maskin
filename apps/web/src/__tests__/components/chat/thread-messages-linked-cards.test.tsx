@@ -30,6 +30,7 @@ vi.mock('@/components/chat/linked-object-preview', () => ({
 	): ReactNode => <p>{`${context.updated ? 'Updated card' : 'Card'} for ${target.id}`}</p>,
 	renderLinkedChip: (_target: unknown, fallback: ReactNode): ReactNode => fallback,
 	renderLinkedGithubChip: (): ReactNode => null,
+	renderLinkedSettingsChip: (): ReactNode => null,
 }))
 
 import { ThreadMessages } from '@/components/chat/thread-messages'
@@ -117,6 +118,24 @@ describe('ThreadMessages: object cards', () => {
 		expect(within(messageWith(/Now also/)).queryByText(`Card for ${A}`)).toBeNull()
 		expect(within(messageWith(/Again/)).queryByText(`Card for ${A}`)).toBeNull()
 		expect(within(messageWith(/Third look/)).queryByText(`Card for ${A}`)).toBeNull()
+	})
+
+	it('draws a chat card for a chat link alone on its line in the Thread pane', async () => {
+		vi.mocked(api.conversations.messages).mockResolvedValue({
+			messages: [
+				buildMessage(1, {
+					content: `Where we talked:\n\n[the chat](https://maskin.io/ws-1/chats/${B})`,
+				}),
+			],
+			has_more: false,
+		} as never)
+
+		render(<ThreadMessages workspaceId="ws-1" conversationId="conv-1" />, {
+			wrapper: TestWrapper,
+		})
+
+		expect(await screen.findByText(/Where we talked/)).toBeInTheDocument()
+		expect(within(messageWith(/Where we talked/)).getByText(`Card for ${B}`)).toBeInTheDocument()
 	})
 
 	describe('a draft linked again', () => {

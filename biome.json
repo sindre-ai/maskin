@@ -37,6 +37,7 @@
 			"apps/apple/Maskin.xcodeproj",
 			"apps/apple/openapi.json",
 			"apps/apple/Sources/MaskinAPI/openapi.json",
+			"apps/apple/Sources/MaskinFeatures/Computer/Resources/novnc-bridge.js",
 			"**/*.xcassets",
 			"**/*.xcassets/**"
 		]

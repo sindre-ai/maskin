@@ -66,7 +66,10 @@ public final class ThreadPrefetcher {
 	/// Run the selected fetches and wait for them (tests; the app uses `listChanged`).
 	public func runPass() async {
 		let picked = selection()
-		let tasks = picked.compactMap { start($0) }
+		let started = picked.compactMap { start($0) }
+		// Also wait for fetches another pass started: returning while one is still in flight
+		// would let its cache write land after this pass reported done.
+		let tasks = started + inFlight.values.filter { other in !started.contains { $0 == other } }
 		for task in tasks { await task.value }
 	}
 

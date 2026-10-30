@@ -75,8 +75,10 @@ export function showsObjectCard(
 
 /** What a link in a message points at. */
 export interface LinkedTarget {
-	kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'
+	kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent' | 'chat'
 	id: string
+	/** The workspace the address names, when it was read from one (see {@link HrefTarget}). */
+	workspaceId?: string | null
 }
 
 /** A {@link LinkedTarget} read from an address, with the workspace that address names. */
@@ -88,14 +90,22 @@ export interface HrefTarget extends LinkedTarget {
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 // What can trail an address in a sentence without belonging to it.
 const URL_TAIL = /[.,;:!?)\]}'"]+$/
-const APP_PATH = new RegExp(`^/([^/]+)/(objects|files|loops|triggers|agents)/(${UUID_SRC})/?$`, 'i')
+const WORKSPACE_ID = new RegExp(`^${UUID_SRC}$`, 'i')
+const APP_PATH = new RegExp(
+	`^/([^/]+)/(objects|files|loops|triggers|agents|chats)/(${UUID_SRC})/?$`,
+	'i',
+)
 
-const OWN_KIND: Record<string, Exclude<OwnSegment, { kind: 'text' | 'github' }>['kind']> = {
+const OWN_KIND: Record<
+	string,
+	Exclude<OwnSegment, { kind: 'text' | 'github' | 'settings' }>['kind']
+> = {
 	objects: 'object',
 	files: 'file',
 	loops: 'loop',
 	triggers: 'trigger',
 	agents: 'agent',
+	chats: 'chat',
 }
 
 function isAppHost(host: string): boolean {
@@ -111,6 +121,66 @@ export interface GithubTarget {
 }
 
 const GITHUB_PATH = /^\/[\w.-]+\/([\w.-]+)\/(pull|issues)\/(\d+)\/?$/
+
+/**
+ * The settings sections a link can name, as the settings menu lists them. `path` is the segment
+ * after `/settings` (empty for General, the page the bare settings address opens). `enterpriseOnly`
+ * sections are in the settings menu only for enterprise workspaces, so elsewhere they stay plain links.
+ */
+export const SETTINGS_SECTIONS = [
+	{ path: '', label: 'General' },
+	{ path: 'objects', label: 'Objects' },
+	{ path: 'members', label: 'Members' },
+	{ path: 'integrations', label: 'Integrations' },
+	{ path: 'extensions', label: 'Extensions' },
+	{ path: 'skills', label: 'Skills' },
+	{ path: 'mcp', label: 'MCP' },
+	{ path: 'billing', label: 'Billing' },
+	{ path: 'keychain', label: 'Keychain' },
+	{ path: 'keys', label: 'Keys', enterpriseOnly: true },
+] as const
+
+/** A link to a settings page of this workspace, read from its address alone. Nothing is fetched. */
+export type SettingsTarget = (typeof SETTINGS_SECTIONS)[number]
+
+function isEnterpriseOnly(section: SettingsTarget): boolean {
+	return 'enterpriseOnly' in section
+}
+
+const SETTINGS_PATH = /^\/([^/]+)\/settings(?:\/([^/]+))?\/?$/i
+// Stands in for the host of an address that has none, so `new URL` accepts it.
+const NO_HOST = 'no-host.invalid'
+
+/**
+ * The settings page an address in this workspace points at: `/{workspaceId}/settings` or
+ * `/{workspaceId}/settings/{section}` for a section of the settings menu, on this app's host or
+ * with no host. An unknown section, a deeper path, another workspace, any other site and an
+ * enterprise-only section (Keys) in a workspace that is not enterprise is null and stays a plain link.
+ */
+export function settingsTargetOf(
+	href: unknown,
+	workspaceId: string,
+	enterprise = false,
+): SettingsTarget | null {
+	if (typeof href !== 'string') return null
+	let url: URL
+	try {
+		url = new URL(href, `http://${NO_HOST}`)
+	} catch {
+		return null
+	}
+	if (url.host !== NO_HOST && !isAppHost(url.host)) return null
+	const match = SETTINGS_PATH.exec(url.pathname)
+	if (!match || match[1].toLowerCase() !== workspaceId.toLowerCase()) return null
+	const path = (match[2] ?? '').toLowerCase()
+	const section = SETTINGS_SECTIONS.find((s) => s.path === path)
+	return section && (enterprise || !isEnterpriseOnly(section)) ? section : null
+}
+
+/** What a settings chip reads, and its accessible name. */
+export function settingsChipText(target: SettingsTarget): string {
+	return `Settings: ${target.label}`
+}
 
 /**
  * The pull request or issue an address points at: exactly github.com (not a lookalike or a
@@ -136,12 +206,18 @@ export function githubTargetOf(href: unknown): GithubTarget | null {
 
 /**
  * One run of a message you wrote: words, a link to an object, file, loop, trigger or agent in this
- * workspace, or a GitHub pull request or issue.
+ * workspace, a settings page, or a GitHub pull request or issue. A link to an object, loop, trigger, agent or chat in another
+ * workspace carries that workspace's id.
  */
 export type OwnSegment =
 	| { kind: 'text'; text: string }
-	| { kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent'; id: string }
+	| {
+			kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent' | 'chat'
+			id: string
+			otherWorkspaceId?: string
+	  }
 	| { kind: 'github'; href: string; target: GithubTarget }
+	| { kind: 'settings'; target: SettingsTarget }
 
 /**
  * Your own message as an ordered run of words and links to this workspace's objects, files, loops, triggers and agents,
@@ -149,7 +225,11 @@ export type OwnSegment =
  * Your own text is plain (not markdown), so only bare addresses count. Any other address, and
  * the punctuation that trails one, stays in the words.
  */
-export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[] {
+export function splitOwnLinks(
+	content: string,
+	workspaceId: string,
+	enterprise = false,
+): OwnSegment[] {
 	const segments: OwnSegment[] = []
 	let cursor = 0
 	const pushText = (text: string) => {
@@ -175,13 +255,28 @@ export function splitOwnLinks(content: string, workspaceId: string): OwnSegment[
 			cursor = (m.index ?? 0) + address.length
 			continue
 		}
-		const match = APP_PATH.exec(url.pathname)
-		if (!match || !isAppHost(url.host) || match[1].toLowerCase() !== workspaceId.toLowerCase()) {
+		const settings = settingsTargetOf(address, workspaceId, enterprise)
+		if (settings) {
+			pushText(content.slice(cursor, m.index ?? 0))
+			segments.push({ kind: 'settings', target: settings })
+			cursor = (m.index ?? 0) + address.length
 			continue
 		}
+		const match = APP_PATH.exec(url.pathname)
+		if (!match || !isAppHost(url.host)) continue
+		const linkedWorkspace = match[1].toLowerCase()
+		const kind = OWN_KIND[match[2].toLowerCase()]
+		const here = linkedWorkspace === workspaceId.toLowerCase()
+		// Another workspace's file stays words; its object, loop, trigger, agent or chat is a placeholder.
+		const staysWords = kind === 'file' || !WORKSPACE_ID.test(linkedWorkspace)
+		if (!here && staysWords) continue
 		const at = m.index ?? 0
 		pushText(content.slice(cursor, at))
-		segments.push({ kind: OWN_KIND[match[2].toLowerCase()], id: match[3].toLowerCase() })
+		segments.push({
+			kind,
+			id: match[3].toLowerCase(),
+			...(here ? {} : { otherWorkspaceId: linkedWorkspace }),
+		})
 		cursor = at + address.length
 	}
 	pushText(content.slice(cursor))
@@ -209,10 +304,11 @@ const HREF_KINDS: [HrefTarget['kind'], RegExp][] = [
 	['loop', hrefOf('loops')],
 	['trigger', hrefOf('triggers')],
 	['agent', hrefOf('agents')],
+	['chat', hrefOf('chats')],
 ]
 
 /**
- * The object, file, loop, trigger or agent a link's address points at, if it points at one, with the
+ * The object, file, loop, trigger, agent or chat a link's address points at, if it points at one, with the
  * workspace the address names (null when it names none). Later kinds are added to the list above.
  */
 export function targetOfHref(href: unknown): HrefTarget | null {
@@ -224,6 +320,28 @@ export function targetOfHref(href: unknown): HrefTarget | null {
 		}
 	}
 	return null
+}
+
+/**
+ * Whether a link's address names another workspace than `workspaceId`: it has a workspace
+ * segment, that segment is a workspace id (not some other path) and it is not this workspace.
+ * Only an object, loop, trigger, agent or chat is drawn as a placeholder then; a file link is left alone.
+ */
+export function isOtherWorkspace(
+	target: LinkedTarget,
+	workspaceId?: string,
+): target is LinkedTarget & {
+	kind: 'object' | 'loop' | 'trigger' | 'agent' | 'chat'
+	workspaceId: string
+} {
+	const named = target.workspaceId
+	return Boolean(
+		workspaceId &&
+			named &&
+			target.kind !== 'file' &&
+			WORKSPACE_ID.test(named) &&
+			named.toLowerCase() !== workspaceId.toLowerCase(),
+	)
 }
 
 // A leading label such as "Draft:" or "Email to Torben:" may sit before a link on its own.
@@ -354,7 +472,7 @@ function linesOf(nodes: HastNode[]): HastNode[][] {
 	return lines.filter((line) => !line.every(isBlank))
 }
 
-/** Objects, loops, triggers and agents: what the app looks up for a link, as against a file. */
+/** Objects, loops, triggers, agents and chats: what the app looks up for a link, as against a file. */
 const isLookedUp = (t: LinkedTarget) => t.kind !== 'file'
 
 /** The tag of the element `placeLinkedCards` inserts for drafts and files linked inside a sentence. */
@@ -376,10 +494,23 @@ export const LINKED_CARDS_TAG = 'linked-cards'
  * An object gets a card in place at most three times per message, and not at all when `skipIds`
  * holds it (an earlier message in the chat already shows it) or it is already drawn: that link is
  * then a chip. Only the first ten objects a message links to are looked up; later links stay
- * plain links. Whether an object or file deserves a card at all is the renderer's call; until it
+ * plain links. A link into another workspace is drawn as a placeholder (a card on its own line,
+ * else a chip) with nothing fetched; it counts toward the three cards but not the ten lookups.
+ * Whether an object or file deserves a card at all is the renderer's call; until it
  * says yes the link shows. Loose, tight, nested and ordered lists all follow the same rules.
+ *
+ * `options.chipsOnly` draws no card at all: every link to an object, loop, trigger, agent or chat
+ * is a chip where it stands, a link alone on its line included (For You cards, object bodies).
+ * `options.draftsAndFiles: false` (outside chat) leaves files as plain links and puts no
+ * approval-card element under a sentence; the renderer keeps a draft's link plain.
  */
-export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>): void {
+export function placeLinkedCards(
+	tree: HastNode,
+	skipIds?: ReadonlySet<string>,
+	workspaceId?: string,
+	options: { chipsOnly?: boolean; draftsAndFiles?: boolean } = {},
+): void {
+	const { chipsOnly = false, draftsAndFiles = true } = options
 	const drawn = new Set<string>()
 	const placed = { object: 0, file: 0 }
 	const trailed = new Set<string>()
@@ -387,24 +518,33 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const key = (t: LinkedTarget) => `${t.kind}:${t.id}`
 	// Loops and triggers cost no request of their own (they read shared lists), but they count
 	// toward the same caps as objects so there is one rule.
+	// A link into another workspace is drawn as a placeholder and nothing is fetched for it, so it
+	// is neither looked up nor counted toward the lookup cap.
+	const other = (t: LinkedTarget) => isOtherWorkspace(t, workspaceId)
 	const fetchable = new Set(
 		linksIn(tree.children ?? [])
-			.filter(isLookedUp)
+			.filter((t) => isLookedUp(t) && !other(t))
 			.slice(0, MAX_OBJECT_FETCHES)
 			.map(key),
 	)
 	const available = (t: LinkedTarget) =>
-		!drawn.has(key(t)) && !skipIds?.has(t.id) && (t.kind === 'file' || fetchable.has(key(t)))
+		!drawn.has(key(t)) &&
+		!skipIds?.has(t.id) &&
+		(t.kind === 'file' || other(t) || fetchable.has(key(t)))
 	// Whether a link standing alone may be replaced by its card here.
 	const cardable = (t: LinkedTarget, inList: boolean) =>
-		available(t) && (inList || t.kind === 'file' || placed.object < MAX_OBJECT_CARDS)
+		!chipsOnly &&
+		(draftsAndFiles || t.kind !== 'file') &&
+		available(t) &&
+		(inList || t.kind === 'file' || placed.object < MAX_OBJECT_CARDS)
 
 	// The cards for objects and files linked in `nodes` that nothing has drawn yet, as one element
 	// to insert after.
 	const cardsAfter = (nodes: HastNode[]): HastNode[] => {
+		if (chipsOnly || !draftsAndFiles) return []
 		const links = linksIn(nodes)
 		const objects = links.filter((t) => {
-			if (t.kind !== 'object' || !available(t) || trailed.has(t.id)) return false
+			if (t.kind !== 'object' || other(t) || !available(t) || trailed.has(t.id)) return false
 			if (trailed.size >= MAX_OBJECT_CARDS) return false
 			trailed.add(t.id)
 			return true
@@ -557,7 +697,7 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 	const markChips = (node: HastNode) => {
 		if (node.tagName === 'a') {
 			const target = targetOfHref(node.properties?.href)
-			if (target && isLookedUp(target) && fetchable.has(key(target))) {
+			if (target && isLookedUp(target) && (fetchable.has(key(target)) || other(target))) {
 				const first = !seen.has(key(target))
 				seen.add(key(target))
 				node.data = {
@@ -574,14 +714,28 @@ export function placeLinkedCards(tree: HastNode, skipIds?: ReadonlySet<string>):
 
 const MAX_SNIPPET_LENGTH = 280
 
+/** A link whose address was cut off by the length limit: `[text](https://exa`. */
+const CUT_LINK_TAIL = /\[([^\]\n]*)\]\([^)\n]*$/
+/** A link whose text was cut off by the length limit: `[some te`. */
+const CUT_LABEL_TAIL = /\[([^\]\n]*)$/
+const BARE_ADDRESS = /<?(https?:\/\/[^\s<>]*)>?/g
+/** Stands in for a bare address while the line is cleaned; never present in real text. */
+const ADDRESS_MARK = '\u0000'
+/** Matches nothing: the address step of plainLines when addresses stay as written. */
+const NO_MATCH = /(?!)/g
+
+/** An address becomes ADDRESS_MARK; the full stop or bracket that closes the sentence stays. */
+function markAddress(_all: string, url: string): string {
+	return ADDRESS_MARK + (url.match(/[.,;:!?)\]'"]+$/)?.[0] ?? '')
+}
+
 /**
- * The first lines of an object's text as plain words, for the muted row on a card: headings,
- * list markers, emphasis, links, code fences and table borders are removed, the lines are joined
- * with spaces and the result is cut at a length the card can clamp to two lines.
+ * Markdown as plain words: headings, list markers, emphasis, links, code fences and table borders
+ * are removed, and the lines joined with spaces. With `marks` set a bare address becomes
+ * ADDRESS_MARK for the caller to word; without it the address stays as written.
  */
-export function plainSnippet(content: string | null | undefined): string {
-	if (!content) return ''
-	const text = content
+function plainLines(text: string, marks: boolean): string {
+	return text
 		.replace(FENCED_CODE, '$1')
 		.split('\n')
 		.map((line) =>
@@ -590,6 +744,7 @@ export function plainSnippet(content: string | null | undefined): string {
 				.replace(/^\s*(?:[-*_]\s*){3,}$/, '')
 				.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
 				.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+				.replace(marks ? BARE_ADDRESS : NO_MATCH, markAddress)
 				.replace(/[*_~`]+/g, '')
 				.replace(/\|/g, ' ')
 				.replace(/^\s*:?-{3,}:?\s*$/, '')
@@ -599,7 +754,50 @@ export function plainSnippet(content: string | null | undefined): string {
 		.join(' ')
 		.replace(/\s+/g, ' ')
 		.trim()
+}
+
+/**
+ * The first lines of an object's text as plain words, for the muted row on a card: headings,
+ * list markers, emphasis, links, code fences and table borders are removed, the lines are joined
+ * with spaces and the result is cut at a length the card can clamp to two lines.
+ */
+export function plainSnippet(content: string | null | undefined): string {
+	if (!content) return ''
+	const text = plainLines(content, false)
 	return text.length > MAX_SNIPPET_LENGTH ? `${text.slice(0, MAX_SNIPPET_LENGTH).trimEnd()}…` : text
+}
+
+/** One run of a chat list preview. `muted` runs are the word "link" standing in for an address. */
+export interface PreviewPart {
+	text: string
+	muted?: boolean
+}
+
+/** How much of a message the chat list preview reads; the row clamps the rest to two lines. */
+const PREVIEW_SOURCE_LENGTH = 400
+
+/**
+ * A chat's last message as plain words for the list row. A markdown link shows its text (also when
+ * the length limit cut the link in the text or in the address), a bare address shows "link" as a
+ * muted run, and marks (bold, italic, code, headings, list marks) are removed. The "{author}: "
+ * lead is not part of this; the row adds it.
+ */
+export function plainPreview(content: string | null | undefined): PreviewPart[] {
+	if (!content) return []
+	const cut = content.length > PREVIEW_SOURCE_LENGTH
+	const source = content
+		.replaceAll(ADDRESS_MARK, '')
+		.slice(0, PREVIEW_SOURCE_LENGTH)
+		.replace(CUT_LINK_TAIL, '$1')
+		.replace(CUT_LABEL_TAIL, '$1')
+	const pieces = plainLines(source, true).split(ADDRESS_MARK)
+	const parts: PreviewPart[] = []
+	pieces.forEach((text, i) => {
+		if (i > 0) parts.push({ text: 'link', muted: true })
+		if (text) parts.push({ text })
+	})
+	if (cut && parts.length > 0) parts.push({ text: '…' })
+	return parts
 }
 
 /** The longest a name on an inline chip runs before it is cut with an ellipsis. */
@@ -684,9 +882,11 @@ export function pickFacts(
 /**
  * The words for something that cannot be drawn, on a card and on a chip. `kind` is the noun
  * ("object"). The lookup cannot tell a deleted thing from one you may not see, so it is always
- * "deleted".
+ * "deleted", except for a chat, which reads "Chat not available".
  */
 export function unavailableCopy(kind: string): { card: string; chip: string } {
+	// A chat you are not in reads the same as a deleted one, and says nothing about whether it exists.
+	if (kind === 'chat') return { card: 'Chat not available', chip: 'Chat not available' }
 	return { card: `This ${kind} was deleted`, chip: `Deleted ${kind}` }
 }
 
@@ -698,4 +898,28 @@ export function githubChipText(target: GithubTarget): string {
 /** The accessible name of a GitHub chip: it says it leaves the app. */
 export function githubChipName(target: GithubTarget): string {
 	return `${target.type === 'pull' ? 'Pull request' : 'Issue'} ${githubChipText(target)}, opens GitHub`
+}
+
+/** The most names the People row of a chat card lists before it counts the rest. */
+export const MAX_CHAT_PEOPLE = 3
+
+/** The People row of a chat card: the first names, then "+n" for the rest. Null when nobody is in the chat. */
+export function peopleLine(names: readonly string[]): string | null {
+	const shown = names.slice(0, MAX_CHAT_PEOPLE).join(', ')
+	if (!shown) return null
+	const rest = names.length - MAX_CHAT_PEOPLE
+	return rest > 0 ? `${shown} +${rest}` : shown
+}
+
+/**
+ * The summary of a chat card: the last message as plain words, led by who wrote it ("Ada: words").
+ * Null when the chat has no message to show, so the card leaves the line out.
+ */
+export function chatSummary(
+	author: string | null | undefined,
+	lastMessage: string | null | undefined,
+): string | null {
+	const words = plainSnippet(lastMessage)
+	if (!words) return null
+	return author ? `${author}: ${words}` : words
 }

@@ -7,7 +7,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useWorkspaceSessions } from '@/hooks/use-sessions'
+import { useWorkspaceSessionStats, useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Users } from 'lucide-react'
@@ -23,17 +23,11 @@ function AgentsRoute() {
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
 	// Live status comes from the 100-newest list the sidebar uses (one request,
-	// coalesced refetches). The full-history walk only refines per-agent counts,
-	// so it must never gate or overwrite status.
-	const { data: recentSessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
-	const { data: allSessions } = useWorkspaceSessions(workspaceId, { paged: true })
+	// coalesced refetches). Counts and cost come from one grouped server query, so
+	// neither grows with the size of the session history.
+	const { data: sessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
+	const { data: stats } = useWorkspaceSessionStats(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
-
-	const sessions = useMemo(() => {
-		const byId = new Map((allSessions ?? []).map((s) => [s.id, s]))
-		for (const s of recentSessions ?? []) byId.set(s.id, s)
-		return Array.from(byId.values())
-	}, [allSessions, recentSessions])
 
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
@@ -79,7 +73,12 @@ function AgentsRoute() {
 					action={<Button onClick={() => setCreatePickerOpen(true)}>Create an agent</Button>}
 				/>
 			) : (
-				<AgentsIndexView workspaceId={workspaceId} agents={agents} sessions={sessions} />
+				<AgentsIndexView
+					workspaceId={workspaceId}
+					agents={agents}
+					sessions={sessions ?? []}
+					stats={stats}
+				/>
 			)}
 			<CreatePicker
 				open={createPickerOpen}

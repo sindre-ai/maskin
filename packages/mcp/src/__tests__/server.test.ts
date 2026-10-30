@@ -97,7 +97,8 @@ describe('createMcpServer', () => {
 		expect(registeredNames).toContain('list_objects')
 		expect(registeredNames).toContain('create_actor')
 		expect(registeredNames).toContain('create_session')
-		expect(registeredNames).not.toContain('run_agent')
+		// Restored as a listed, deprecated alias of create_session (see tool-aliases.ts).
+		expect(registeredNames).toContain('run_agent')
 		expect(registeredNames).toContain('create_trigger')
 	})
 
@@ -2490,16 +2491,15 @@ describe('tool handlers', () => {
 			)
 		})
 
-		it('without wait: tells the caller what to quote when it says the work was handed over', async () => {
+		it('without wait: with no web app url the note still carries no session id', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'queued' })
 			const result = (await getHandler('create_session')({
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.id).toBe('session-1')
-			expect(parsed.handoff).toContain('session session-1 is queued')
-			expect(parsed.handoff).toContain('quote this session id')
+			expect(parsed.handoff).toContain('is queued')
+			expect(parsed.handoff).not.toContain('session-1')
 		})
 
 		it('without wait: a failed start says nothing was handed over', async () => {
@@ -3220,7 +3220,7 @@ describe('tool handlers', () => {
 				expect(parsed.session_id).toBe('sess-w1')
 				expect(parsed.session.status).toBe('waiting_for_input')
 				expect(parsed.logs).toEqual([{ message: 'first line' }])
-				expect(parsed.message).toContain('sess-w1')
+				expect(parsed.message).not.toContain('sess-w1')
 				expect(parsed.message).toContain('not finished')
 				expect(parsed.message).toContain('get_session_logs')
 				// The session is not finished, so its result is registered to come back.
@@ -3282,7 +3282,7 @@ describe('tool handlers', () => {
 				const parsed = parseResult(await resultPromise)
 				expect(parsed.stopped_because).toBe('waiting_for_input')
 				expect(parsed.notify_on_complete).toBe('failed')
-				expect(parsed.message).toContain('sess-w3')
+				expect(parsed.message).not.toContain('sess-w3')
 				expect(parsed.message).not.toContain('Its result will come back')
 			})
 
@@ -7893,7 +7893,7 @@ describe('url field injection', () => {
 	})
 
 	describe('session url', () => {
-		it('create_session — url links to actor page when actorId present', async () => {
+		it('create_session — url links to the chat route for the session', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -7906,11 +7906,19 @@ describe('url field injection', () => {
 				action_prompt: 'Fix bugs',
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-9')
+			const parsed = JSON.parse(result.content[0].text) as {
+				id: string
+				url: string
+				handoff: string
+			}
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-1')
+			// The note gives the person the chat link and never the session id.
+			expect(parsed.handoff).toContain(parsed.url)
+			expect(parsed.handoff.replace(parsed.url, '')).not.toContain('sess-1')
+			expect(parsed.handoff).toContain('Never show the person a session id')
 		})
 
-		it('create_session — url falls back to agents list when actorId absent', async () => {
+		it('create_session — url does not need an actorId', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -7924,7 +7932,7 @@ describe('url field injection', () => {
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents')
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-2')
 		})
 
 		it('list_sessions — url added to each session', async () => {
@@ -7944,7 +7952,7 @@ describe('url field injection', () => {
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
-			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-3')
 		})
 
 		it('create_session (wait: true) — url added to session in response', async () => {
@@ -7979,7 +7987,7 @@ describe('url field injection', () => {
 			const parsed = JSON.parse(result.content[0].text) as {
 				session: { id: string; url: string }
 			}
-			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-7')
+			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-4')
 		})
 	})
 })
@@ -8101,6 +8109,30 @@ describe('X-Maskin-Session-Id source', () => {
 		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
 		expect(sent.thread_root_id).toBe(42)
 		expect(sent.also_in_channel).toBe(true)
+	})
+
+	// The opt-out from the server-side thread default: the schema must keep it and the handler must send it.
+	it('post_conversation_message accepts top_level in its schema and sends it to the API', async () => {
+		const input = {
+			conversation_id: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			content: 'for the whole chat',
+			top_level: true,
+		}
+		expect(tools.post_conversation_message.inputSchema.parse(input).top_level).toBe(true)
+
+		build({})
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			headers: new Headers(),
+			json: () => Promise.resolve({ id: 'msg-1' }),
+		} as Response)
+		const handler = handlers.get('post_conversation_message')
+		if (!handler) throw new Error('post_conversation_message handler not registered')
+		await handler(input)
+		const call = vi.mocked(fetch).mock.calls.find((c) => String(c[0]).endsWith('/messages'))
+		const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+		expect(sent.top_level).toBe(true)
+		expect(sent.thread_root_id).toBeUndefined()
 	})
 
 	it('list_conversation_messages passes thread_root_id as a query param', async () => {

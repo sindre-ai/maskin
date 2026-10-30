@@ -10,11 +10,32 @@ public struct MarkdownLinkInfo: Equatable, Sendable {
 	public var kindLabel: String
 	/// The thing's own name once it has been looked up; nil while unresolved.
 	public var title: String?
+	/// How far the lookup got. Only an object is looked up; everything else is `ready`.
+	public var phase: Phase
+	/// The object's type key once looked up. Set only for an object, and it is what gives its chip dots.
+	public var objectType: String?
+	/// The object's status once looked up; nil when it has none.
+	public var status: String?
 
-	public init(symbol: String, kindLabel: String, title: String? = nil) {
+	public enum Phase: Sendable, Equatable {
+		/// Known, or not looked up at all (a chat, an agent, an object that cannot be read now).
+		case ready
+		/// An object being looked up: the chip keeps the author's words and a grey type dot.
+		case loading
+		/// An object that is gone.
+		case deleted
+	}
+
+	public init(
+		symbol: String, kindLabel: String, title: String? = nil, phase: Phase = .ready, objectType: String? = nil,
+		status: String? = nil
+	) {
 		self.symbol = symbol
 		self.kindLabel = kindLabel
 		self.title = title
+		self.phase = phase
+		self.objectType = objectType
+		self.status = status
 	}
 }
 
@@ -23,6 +44,13 @@ extension EnvironmentValues {
 	/// builds its body, so an implementation that reads observable state re-renders the text when
 	/// a title arrives. Supplied by the app root, which knows its own link shapes.
 	@Entry public var markdownInternalLinkInfo: (@MainActor (URL) -> MarkdownLinkInfo?)? = nil
+}
+
+extension EnvironmentValues {
+	/// The preview sheet a tap on an in-app chip opens: the card, Open and Copy link. Returns nil when
+	/// the link has none (not an object, not looked up yet), and the tap opens the link as before.
+	/// Supplied by the app root, which knows what a link points at.
+	@Entry public var markdownChipPreview: (@MainActor (URL) -> AnyView?)? = nil
 }
 
 /// How a link that stands alone on its line is drawn.
@@ -40,6 +68,12 @@ extension EnvironmentValues {
 	/// draws every internal link as the thin card. Supplied by the app root, which knows what a link
 	/// points at; a chat message overrides it, since it places its own cards.
 	@Entry public var markdownStandaloneLink: (@MainActor (URL, String?) -> MarkdownStandaloneLinkStyle)? = nil
+}
+
+extension EnvironmentValues {
+	/// Whether a link alone on its line may draw as a card. On by default; a surface that already sits
+	/// in a card (the For You card) turns it off, and the link draws as a chip instead.
+	@Entry public var markdownCards: Bool = true
 }
 
 /// A link that is the whole of a message or paragraph: `[Title](url)` or a bare address.
@@ -70,6 +104,19 @@ public enum MarkdownStandaloneLink {
 			return Match(url: url, title: nil)
 		}
 		return nil
+	}
+}
+
+extension MarkdownStandaloneLink {
+	/// The paragraph as inline markdown when it is only a link, so it draws as a chip. A bare address
+	/// becomes a link whose text is the address, which the chip then replaces with the thing's name.
+	/// Nil when the paragraph is anything else.
+	public static func chipMarkdown(for text: String) -> String? {
+		guard let link = match(text) else { return nil }
+		if link.title != nil { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+		let address = link.url.absoluteString
+		let destination = address.replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
+		return "[\(address.replacingOccurrences(of: "]", with: "%5D"))](\(destination))"
 	}
 }
 

@@ -77,12 +77,13 @@ private actor FakeCalls: VoiceCalling {
 @Suite("RealtimeVoiceCall") struct RealtimeVoiceCallTests {
 	private func make(
 		calls: FakeCalls = FakeCalls(), transport: FakeTransport = FakeTransport(),
-		conversationID: String? = nil, reconnectWindow: Duration = .seconds(3600)
+		conversationID: String? = nil, reconnectWindow: Duration = .seconds(3600),
+		recoveryDelays: [Duration] = [.milliseconds(5)]
 	) -> (RealtimeVoiceCall, FakeCalls, FakeTransport) {
 		let call = RealtimeVoiceCall(
 			agentID: "agent-1", agentName: "Chief", conversationID: conversationID, calls: calls,
 			makeTransport: { transport },
-			reconnectWindow: reconnectWindow)
+			reconnectWindow: reconnectWindow, recoveryDelays: recoveryDelays)
 		return (call, calls, transport)
 	}
 
@@ -218,19 +219,18 @@ private actor FakeCalls: VoiceCalling {
 		#expect(transport.micEnabled.last == true)
 	}
 
-	@Test("the agent is asked to greet once, also when muted and after an ICE restart")
-	func greetsOnce() async {
+	@Test("the app does not ask the agent to greet: the server does, also after an ICE restart")
+	func doesNotGreet() async {
 		let (call, _, transport) = make()
 		call.begin(existing: [])
-		call.toggleMute()
 		await settle()
 		transport.receive("session.created")
-		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+		#expect(transport.sent.isEmpty)
 		transport.onConnection?(.failed)
 		transport.onConnection?(.connected)
 		transport.receive("session.created")
 		#expect(transport.iceRestarts == 1)
-		#expect(transport.sent == [RealtimeCallMachine.greetingRequest])
+		#expect(transport.sent.isEmpty)
 	}
 
 	private func chatMessage(_ id: Int, agent: Bool = false, _ text: String, name: String = "Me") -> ChatMessage {
@@ -269,7 +269,7 @@ private actor FakeCalls: VoiceCalling {
 				"Anna typed in the chat during this call: Also Anna is joining",
 			])
 		// Handing a line over does not ask the agent to talk over the person.
-		#expect(transport.sent.filter { $0.contains("response.create") } == [RealtimeCallMachine.greetingRequest])
+		#expect(transport.sent.filter { $0.contains("response.create") }.isEmpty)
 	}
 
 	@Test("the person's own spoken lines, saved into the chat during the call, are not fed back")
@@ -374,23 +374,44 @@ private actor FakeCalls: VoiceCalling {
 		#expect(call.phase == .listening)
 	}
 
-	@Test("a dropped connection that does not come back ends the call as a network error")
-	func dropped() async {
-		let (call, calls, transport) = make(reconnectWindow: .milliseconds(30))
+	@Test("a dropped connection that does not come back is closed and a new call is started on the same chat")
+	func droppedStartsANewCall() async {
+		let (call, calls, transport) = make(conversationID: "chat-1", reconnectWindow: .milliseconds(30))
 		call.begin(existing: [])
 		await settle()
 		transport.onConnection?(.failed)
 		#expect(transport.iceRestarts == 1)
-		// Wait for the call to end instead of guessing how long a loaded runner needs.
+		// Wait for the second call instead of guessing how long a loaded runner needs.
 		var polls = 0
 		while polls < 200 {
 			let hungUp = await !calls.hangups.isEmpty
-			if call.failure != nil && hungUp { break }
+			if await calls.created.count == 2 && hungUp { break }
+			try? await Task.sleep(for: .milliseconds(10))
+			polls += 1
+		}
+		#expect(await calls.created.count == 2)
+		#expect(await calls.createdFrom == ["chat-1", "chat-1"])
+		let hangups = await calls.hangups
+		#expect(hangups == [.init(id: "vs-1", reason: .networkError)], "\(hangups)")
+		#expect(call.failure == nil)
+	}
+
+	@Test("a call that cannot be restarted ends as a network error once the tries run out")
+	func recoveryGivesUp() async {
+		let (call, calls, transport) = make(
+			reconnectWindow: .milliseconds(20), recoveryDelays: [.milliseconds(5), .milliseconds(5)])
+		call.begin(existing: [])
+		await settle()
+		await calls.failCreate(.network("offline"))
+		transport.onConnection?(.failed)
+		var polls = 0
+		while polls < 300 {
+			if call.failure != nil { break }
 			try? await Task.sleep(for: .milliseconds(10))
 			polls += 1
 		}
 		#expect(call.failure != nil)
-		#expect(await calls.hangups == [.init(id: "vs-1", reason: .networkError)])
+		#expect(await calls.created.count == 1)
 	}
 
 	@Test("a connection that comes back in time keeps the call")

@@ -74,33 +74,6 @@ struct SystemLine: View {
 	}
 }
 
-/// What a message attaches: photos as pictures (one large, several as tiles) and every other file
-/// as a chip. Each opens the file.
-struct MessageAttachments: View {
-	let attachments: [ChatAttachmentRef]
-	var alignment: HorizontalAlignment = .leading
-
-	var body: some View {
-		if !attachments.isEmpty {
-			let photos = attachments.filter(\.isImage)
-			let files = attachments.filter { !$0.isImage }
-			VStack(alignment: alignment, spacing: MaskinSpace.s3) {
-				if photos.count == 1, let photo = photos.first {
-					AttachmentThumbnail(file: photo, style: .large)
-				} else if photos.count > 1 {
-					ChipFlow {
-						ForEach(photos) { AttachmentThumbnail(file: $0, style: .tile) }
-					}
-				}
-				if !files.isEmpty {
-					ChipFlow { ForEach(files) { MessageFileChip(file: $0) } }
-				}
-			}
-			.frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
-		}
-	}
-}
-
 /// Your tagged people under your message, each with where they stand: Working, Replied, Waiting for Sam.
 struct MentionStateLine: View {
 	let chips: [MentionStateChip]
@@ -145,8 +118,8 @@ struct MentionLine: View {
 /// One message as a spec 7 bubble. Theirs: a `card` bubble with the tail top-left, full width,
 /// with the 24pt avatar + name + time header on the first of a run (an agent's opens its page);
 /// yours: an ink bubble with the tail bottom-right, at most 82% wide, with the status line under
-/// your newest one. A quote and any attachments sit at the top of the bubble; `edited` sits inside
-/// it. Long-press opens the actions with a preview; swiping right starts a reply. An agent's
+/// your newest one. A quote sits at the top of the bubble and `edited` inside it; pictures and
+/// files sit outside it, above, and a message with no words has no bubble. Long-press opens the actions with a preview; swiping right starts a reply. An agent's
 /// question renders as a decision card under its bubble. Tagged `@Name`s are bold in the text.
 struct MessageRow: View {
 	let message: ChatMessage
@@ -253,7 +226,7 @@ struct MessageRow: View {
 	/// only. At most ten objects are looked up; the links past that stay plain.
 	private var linkedTargets: [LinkedTarget] {
 		guard linked != nil, message.kind == "message", !message.isEmojiOnly,
-			bodyText.contains("/objects/") || bodyText.contains("/files/")
+			LinkedConversationItems.mayLink(bodyText)
 		else { return [] }
 		let found = LinkedTarget.extract(from: bodyText)
 		return LinkedMessageLayout.lookupTargets(isOwn ? found.filter { $0.kind == .object } : found)
@@ -274,7 +247,7 @@ struct MessageRow: View {
 		}
 		let skipping = Set(
 			targets.filter { target in
-				guard target.kind == .object, let owner = cardOwners[target.key], owner != message.id else { return false }
+				guard target.kind != .file, let owner = cardOwners[target.key], owner != message.id else { return false }
 				if case .draft? = linked.item(for: target) { return false }
 				return true
 			}.map(\.key))
@@ -288,10 +261,14 @@ struct MessageRow: View {
 
 	/// How a stand-alone link in the text is drawn. A message that places its own cards draws the
 	/// object and file links it has no card for (past the three, or already a card above) as inline
-	/// links; the thin card stays for chats, agents and the rest.
+	/// links; the thin card stays for the rest.
 	private func standaloneStyle(placingCards: Bool) -> @MainActor (URL, String?) -> MarkdownStandaloneLinkStyle {
 		{ url, _ in
-			placingCards && LinkedTarget.parse(href: url.absoluteString) != nil ? .inline : .simple
+			let target = LinkedTarget.parse(href: url.absoluteString)
+			if placingCards, target != nil { return .inline }
+			// A person at an agent address is a plain link, not the thin card of an agent.
+			if let target, target.kind == .agent, linked?.state(for: target) == .unavailable { return .inline }
+			return .simple
 		}
 	}
 
@@ -299,11 +276,11 @@ struct MessageRow: View {
 	/// link info (which would look them up) is withheld for them.
 	private func cappedLinkInfo(_ targets: [LinkedTarget]) -> (@MainActor (URL) -> MarkdownLinkInfo?)? {
 		guard let base = linkInfo,
-			targets.filter({ $0.kind == .object }).count == LinkedMessageLayout.maxObjectLookupsPerMessage
+			targets.filter({ $0.kind != .file }).count == LinkedMessageLayout.maxObjectLookupsPerMessage
 		else { return linkInfo }
 		let looked = Set(targets.map(\.key))
 		return { url in
-			if let target = LinkedTarget.parse(href: url.absoluteString), target.kind == .object, !looked.contains(target.key) {
+			if let target = LinkedTarget.parse(href: url.absoluteString), target.kind != .file, !looked.contains(target.key) {
 				return nil
 			}
 			return base(url)
@@ -355,6 +332,18 @@ struct MessageRow: View {
 		return target
 	}
 
+	/// Pictures and files come first, outside the bubble; a message that is only attachments has no
+	/// bubble at all.
+	private var attachmentsOnly: Bool {
+		!message.attachments.isEmpty && quote == nil && bodyText.isEmpty && !message.isErrorReply
+	}
+
+	/// Your attachments are uploading while the message is on its way, and failed with it.
+	private var ownTransfer: AttachmentTransfer {
+		if message.isFailed { return .failed }
+		return message.isPending ? .uploading(progress: nil) : .ready
+	}
+
 	private var own: some View {
 		// Read once per evaluation: finding the links costs a scan of the text.
 		let targets = linkedTargets
@@ -363,46 +352,53 @@ struct MessageRow: View {
 		// Only a link, drawn as a card: the card is the message, right aligned, no bubble.
 		let soleCard = soleCardTarget(in: layout?.parts, appended: layout?.appended ?? [])
 		return VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
-			Group {
-				if let soleCard {
-					LinkedTargetCard(target: soleCard, onApproved: onApprovedDraft)
-				} else if hasOwnSurface(placingCards: placingCards) {
-					VStack(alignment: .trailing, spacing: MaskinSpace.s1) {
-						if message.isEmojiOnly {
-							Text(message.content).maskinSymbol(emojiSize)
-						} else {
-							MarkdownContent(message.content, style: .chat, hardBreaks: true)
-						}
-					}
-					.environment(\.markdownHugsContent, true)
-				} else {
-					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-						if let quote { QuoteBlock(author: quote.author, text: quote.text, onInverse: true) }
-						MessageAttachments(attachments: message.attachments)
-						if !bodyText.isEmpty {
-							if let layout {
-								// The card sits nested in the same ink bubble as the words around it.
-								linkedBody(layout.parts)
-								if message.editedAt != nil { EditedMark() }
-							} else {
-								HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s3) {
-									MarkdownContent(markdownText, style: .chat, hardBreaks: true)
-										.textSelection(.enabled)
-									if message.editedAt != nil { EditedMark() }
+			VStack(alignment: .trailing, spacing: AttachmentLayout.gap) {
+				MessageAttachments(
+					attachments: message.attachments, alignment: .trailing, threadWidth: rowWidth,
+					transfer: ownTransfer, onRetry: onRetrySend)
+				if !attachmentsOnly {
+					Group {
+						if let soleCard {
+							LinkedTargetCard(target: soleCard, onApproved: onApprovedDraft)
+						} else if hasOwnSurface(placingCards: placingCards) {
+							VStack(alignment: .trailing, spacing: MaskinSpace.s1) {
+								if message.isEmojiOnly {
+									Text(message.content).maskinSymbol(emojiSize)
+								} else {
+									MarkdownContent(message.content, style: .chat, hardBreaks: true)
 								}
 							}
+							.environment(\.markdownHugsContent, true)
+						} else {
+							VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+								if let quote { QuoteBlock(author: quote.author, text: quote.text, onInverse: true) }
+								if !bodyText.isEmpty {
+									if let layout {
+										// The card sits nested in the same ink bubble as the words around it.
+										linkedBody(layout.parts)
+										if message.editedAt != nil { EditedMark() }
+									} else {
+										HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s3) {
+											MarkdownContent(markdownText, style: .chat, hardBreaks: true)
+												.textSelection(.enabled)
+											if message.editedAt != nil { EditedMark() }
+										}
+									}
+								}
+							}
+							.environment(\.markdownHugsContent, true)
+							.environment(\.markdownOnInverse, true)
+							.foregroundStyle(MaskinSurface.onInverse)
+							.padding(.vertical, BubbleShape.myVertical)
+							.padding(.horizontal, BubbleShape.horizontal)
+							.background(MaskinSurface.inverse, in: BubbleShape.mine)
+							.opacity(message.isPending && !message.isFailed ? 0.75 : 1)
 						}
 					}
-					.environment(\.markdownHugsContent, true)
-					.environment(\.markdownOnInverse, true)
-					.foregroundStyle(MaskinSurface.onInverse)
-					.padding(.vertical, BubbleShape.myVertical)
-					.padding(.horizontal, BubbleShape.horizontal)
-					.background(MaskinSurface.inverse, in: BubbleShape.mine)
-					.opacity(message.isPending && !message.isFailed ? 0.75 : 1)
+					.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
 				}
 			}
-			.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
+			.frame(maxWidth: .infinity, alignment: .trailing)
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: true, actions: actions)
 			if let appended = layout?.appended, !appended.isEmpty {
@@ -445,13 +441,13 @@ struct MessageRow: View {
 					working: working,
 					onOpen: message.author == .agent && runtime != nil ? { runtime?.openAgent(message.actorID) } : nil)
 			}
-			Group {
+			VStack(alignment: .leading, spacing: AttachmentLayout.gap) {
+				MessageAttachments(attachments: message.attachments, threadWidth: rowWidth)
 				if message.isEmojiOnly {
 					Text(message.content).maskinSymbol(emojiSize)
-				} else {
+				} else if !attachmentsOnly {
 					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 						if let quote { QuoteBlock(author: quote.author, text: quote.text) }
-						MessageAttachments(attachments: message.attachments)
 						if !bodyText.isEmpty {
 							if let layout {
 								linkedBody(layout.parts)
@@ -508,8 +504,8 @@ struct MessageRow: View {
 			}
 			if let computer = ComputerRequest(message: message) {
 				ComputerRequestCard(
-					request: computer, agentName: message.actorName, conversationID: message.conversationID,
-					messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
+					request: computer, agentID: message.actorID, agentName: message.actorName,
+					conversationID: message.conversationID, messageID: message.serverID, answered: cardOutcome, onReply: onKeychainReply)
 			}
 			if let credential = KeychainCredentialRequest(message: message) {
 				KeychainRequestCard(

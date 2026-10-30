@@ -173,7 +173,7 @@ private struct AdaptiveTabs: View {
 				.presentationDetents([.medium, .large])
 				.environment(\.shellShowsAvatar, false)
 		}
-		.keepTabBarExpanded()
+		.modifier(TeamFoldingTabBar(runtime: runtime))
 	}
 }
 
@@ -288,19 +288,6 @@ extension ShellTab {
 		case .chats: return .make(count: badges.unreadChats)
 		default: return .none
 		}
-	}
-}
-
-extension View {
-	/// iOS 26: the tab bar stays expanded, every tab visible, however far the content scrolls.
-	/// No-op elsewhere.
-	fileprivate func keepTabBarExpanded() -> some View {
-		#if os(iOS)
-			if #available(iOS 26, *) {
-				return AnyView(tabBarMinimizeBehavior(.never))
-			}
-		#endif
-		return AnyView(self)
 	}
 }
 

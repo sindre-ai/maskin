@@ -31,9 +31,9 @@ const BILLING_INVALIDATING_ACTIONS = new Set([
 // (lib/events/record-event.ts), so a refetch is never answered from a snapshot
 // older than the event no matter how long the window is.
 const SESSIONS_REFETCH_MS = 5_000
-// The paged list walks the whole session history, so it gets a longer window.
-// It only feeds per-agent counts; live status comes from the 100-row list.
-const SESSIONS_PAGED_REFETCH_MS = 30_000
+// The per-agent stats group the whole session history server-side, so they get a longer
+// window. They only feed counts and cost; live status comes from the 100-row list.
+const SESSIONS_STATS_REFETCH_MS = 30_000
 const BILLING_REFETCH_MS = 15_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -193,10 +193,9 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			})
 			// Broad prefix invalidation covers all session queries including byActor,
 			// detail and logs — except the workspace list (exactly ['sessions', ws]),
-			// which is coalesced below, and the paged full-history list
-			// (['sessions', ws, 'paged']), which walks every page sequentially. The prefix
-			// matches both, so exclude them here — invalidating the paged walk per event
-			// cancels and restarts it, so under steady session traffic it never finishes.
+			// which is coalesced below, and the per-agent stats
+			// (['sessions', ws, 'stats']), which are coalesced on a longer window. The prefix
+			// matches both, so exclude them here.
 			// A per-session query (detail, logs) is only stale when the event is about that
 			// session — otherwise every mounted `useSession` refetches on every event for
 			// every other session in the workspace.
@@ -207,7 +206,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 					if (key[1] === 'detail') return key[2] === event.entity_id
 					if (key[2] === 'logs') return key[1] === event.entity_id
 					if (key[1] !== workspaceId) return true
-					return !(key.length === 2 || (key.length === 3 && key[2] === 'paged'))
+					return !(key.length === 2 || (key.length === 3 && key[2] === 'stats'))
 				},
 			})
 			scheduleTrailingRefetch(
@@ -221,12 +220,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			)
 			scheduleTrailingRefetch(
 				queryClient,
-				`sessions-paged:${workspaceId}`,
+				`sessions-stats:${workspaceId}`,
 				{
-					queryKey: [...queryKeys.sessions.all(workspaceId), 'paged'],
+					queryKey: queryKeys.sessions.stats(workspaceId),
 					exact: true,
 				},
-				SESSIONS_PAGED_REFETCH_MS,
+				SESSIONS_STATS_REFETCH_MS,
 			)
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.

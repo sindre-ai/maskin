@@ -27,6 +27,10 @@ struct ConversationListView: View {
 	var onSuggestion: (String) -> Void = { _ in }
 	/// Opens the Threads screen; nil hides its chip (previews and snapshots).
 	var onThreads: (() -> Void)?
+	/// Where the filter chips sit; the bottom placements draw them outside this list.
+	var pillPlacement: TeamPillPlacement = .top
+	/// The shell's bottom pill, told how many are unread and when row selection is running.
+	var pill: TeamPillModel?
 
 	@State private var picking = SelectionModel()
 	@State private var undoOffer: UndoOffer?
@@ -61,7 +65,7 @@ struct ConversationListView: View {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
-			if store.displayOptions.showsFilterChips, !picking.isActive {
+			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
 				TeamFilterChips(
 					chip: $store.chip, unreadCount: layout.unreadCount,
 					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
@@ -141,14 +145,16 @@ struct ConversationListView: View {
 			}
 			if layout.showsArchived, !picking.isActive {
 				ArchivedRow(
-					items: store.archivedConversations, currentActorID: currentActorID, expanded: $archivedExpanded
-				) { item in
-					Task {
-						if await store.setArchived(item.id, false) {
-							undoOffer = UndoOffer(message: "Unarchived. Undo.") { _ = await store.setArchived(item.id, true) }
+					items: layout.isFiltering ? layout.archivedMatches : store.archivedConversations,
+					currentActorID: currentActorID, expanded: $archivedExpanded, forceExpanded: layout.isFiltering,
+					onUnarchive: { item in
+						Task {
+							if await store.setArchived(item.id, false) {
+								undoOffer = UndoOffer(message: "Unarchived. Undo.") { _ = await store.setArchived(item.id, true) }
+							}
 						}
-					}
-				}
+					},
+					onOpen: { item in selection = item.id })
 				.plainRow(insets: EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
 			}
 		}
@@ -161,12 +167,25 @@ struct ConversationListView: View {
 		.scrollContentBackground(.hidden)
 		.ambientBackground()
 		.teamSearch(text: $search)
+		// A search looks through every archived chat, so the pages past the first are fetched.
+		.task(id: !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+			if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await store.loadMoreArchived() }
+		}
 		.overlay { overlay }
 		.refreshable { await store.refresh() }
 		.animation(.snappy, value: picking.isActive)
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
 		.undoToast($undoOffer)
+		.safeAreaInset(edge: .bottom, spacing: MaskinSpace.s4) {
+			if pillPlacement == .floating, store.displayOptions.showsFilterChips, !picking.isActive {
+				TeamFloatingPill(
+					chip: $store.chip, unreadCount: layout.unreadCount,
+					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
+			}
+		}
+		.onChange(of: layout.unreadCount, initial: true) { _, count in pill?.unreadCount = count }
+		.onChange(of: picking.isActive, initial: true) { _, active in pill?.isSelecting = active }
 		.teamRowMenu($menuTarget)
 		.confirmationDialog(
 			deleteTarget.map { $0.conversationIDs.count > 1 ? "Delete \($0.conversationIDs.count) conversations with \($0.title)?" : "Delete this conversation?" } ?? "",

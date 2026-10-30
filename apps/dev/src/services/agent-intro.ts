@@ -24,7 +24,7 @@ const INTRO_CAP = 5
 /** The intro names at most this many needed tools. */
 const MAX_NEEDED_TOOLS = 3
 
-type IntroStage = 'resolve' | 'lock' | 'find' | 'insert' | 'render' | 'scan'
+type IntroStage = 'resolve' | 'dm' | 'lock' | 'find' | 'insert' | 'render' | 'scan'
 type ResolvedVia = 'creator' | 'chat' | 'person_started'
 type SkipReason =
 	| 'no_session'
@@ -59,10 +59,12 @@ export type IntroduceArgs = {
 }
 
 /**
- * Posts the "Meet {name}" intro into a 1-1 between the new agent and the
- * person it was made for: the creator when a person made it, otherwise the
- * person behind the creating agent's session. Template only, no model call, and
- * it never wakes a session (postToDirectChat does not call evaluateAndRespond).
+ * Posts the intro into the 1-1 between the new agent and the person it was made
+ * for: the creator when a person made it, otherwise the person behind the
+ * creating agent's session. An existing 1-1 is reused; when there is none, the
+ * one created is the plain direct message, titled with the agent's name like any
+ * other 1-1. Template only, no model call, and it never wakes a session
+ * (postToDirectChat does not call evaluateAndRespond).
  *
  * Fire and forget from POST /api/actors. It never throws: a failure is logged
  * and captured as agent_intro_failed so agent creation is unaffected.
@@ -77,6 +79,16 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 		if (!(await bothAreMembers(args.db, args.workspaceId, recipient.humanId, actor.id))) {
 			return skip(args, 'not_member')
 		}
+		// The person who made the agent has a DM with it from now on, whether or not the
+		// intro below is sent, skipped by the cap, or fails while it renders.
+		stage = 'dm'
+		await findOrCreateDirectChat(args.db, {
+			workspaceId: args.workspaceId,
+			humanId: recipient.humanId,
+			agentId: actor.id,
+			title: actor.name,
+			createdBy: recipient.humanId,
+		})
 		if ((await introsDeliveredTo(args.db, recipient.humanId)) >= INTRO_CAP) {
 			return skip(args, 'rate_cap')
 		}
@@ -96,7 +108,7 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 				workspaceId: args.workspaceId,
 				humanId: recipient.humanId,
 				agentId: actor.id,
-				title: `Meet ${actor.name}`,
+				title: actor.name,
 				createdBy: recipient.humanId,
 			})
 			stage = 'find'

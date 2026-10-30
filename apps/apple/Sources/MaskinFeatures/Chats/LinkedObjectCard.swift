@@ -12,10 +12,14 @@ struct LinkedObjectCard: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.dynamicTypeSize) private var typeSize
 	@State private var folded: Bool
+	/// The card as the preview sheet shows it: no fold button, and the face does not open the object
+	/// (the sheet has its own Open).
+	private let preview: Bool
 	private let open = LinkedOpener()
 
-	init(object: LinkedObject, defaultFolded: Bool = false) {
+	init(object: LinkedObject, defaultFolded: Bool = false, preview: Bool = false) {
 		self.object = object
+		self.preview = preview
 		_folded = State(initialValue: defaultFolded)
 	}
 
@@ -32,17 +36,26 @@ struct LinkedObjectCard: View {
 
 	// MARK: Open
 
+	@ViewBuilder
 	private var openCard: some View {
-		ZStack(alignment: .topTrailing) {
-			Button { open(object.target) } label: { face }
-				.buttonStyle(.maskinPressed(.shrink))
+		if preview {
+			face
 				.accessibilityElement(children: .ignore)
-				.accessibilityLabel("\(object.kindLabel), \(statusLabel): \(object.displayTitle)")
-				.accessibilityHint("Opens in Maskin")
-				.accessibilityAddTraits(.isLink)
-			foldButton
+				.accessibilityLabel(cardLabel)
+		} else {
+			ZStack(alignment: .topTrailing) {
+				Button { open(object.target) } label: { face }
+					.buttonStyle(.maskinPressed(.shrink))
+					.accessibilityElement(children: .ignore)
+					.accessibilityLabel(cardLabel)
+					.accessibilityHint("Opens in Maskin")
+					.accessibilityAddTraits(.isLink)
+				foldButton
+			}
 		}
 	}
+
+	private var cardLabel: String { "\(object.kindLabel), \(statusLabel): \(object.displayTitle)" }
 
 	private var face: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
@@ -56,7 +69,9 @@ struct LinkedObjectCard: View {
 				Spacer(minLength: 0)
 				badge
 				// Room for the fold button, which sits above this corner.
-				Color.clear.frame(width: MaskinSpace.touchMin - MaskinSpace.s7, height: MaskinSpace.touchMin)
+				if !preview {
+					Color.clear.frame(width: MaskinSpace.touchMin - MaskinSpace.s7, height: MaskinSpace.touchMin)
+				}
 			}
 			.frame(minHeight: MaskinSpace.touchMin)
 			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
@@ -215,14 +230,17 @@ struct LinkedObjectCard: View {
 /// deleted from private, and nothing is private inside a workspace, so it never says "private".
 struct LinkedDeletedCard: View {
 	var kind = "object"
+	var symbol = "trash"
+	/// Replaces "This {kind} was deleted", for a card that says something else (a chat you cannot see).
+	var text: String?
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
-			Image(systemName: "trash")
+			Image(systemName: symbol)
 				.maskinSymbol(MaskinFontSize.t14, weight: .semibold)
 				.foregroundStyle(MaskinColor.ink4)
 				.accessibilityHidden(true)
-			Text("This \(kind) was deleted")
+			Text(text ?? "This \(kind) was deleted")
 				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 				.multilineTextAlignment(.leading)
 			Spacer(minLength: 0)

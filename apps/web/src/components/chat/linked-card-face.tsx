@@ -1,7 +1,7 @@
 import { cn } from '@/lib/cn'
 import { defaultTypeColor, typeColors, typeIcons } from '@/lib/constants'
 import { type CardFact, unavailableCopy } from '@/lib/linked-objects'
-import { Building2, type LucideIcon, Tag, Trash2, User } from 'lucide-react'
+import { Building2, type LucideIcon, MessageCircle, Tag, Trash2, User } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 // The built-in types with an icon of their own; a custom type gets the neutral tag.
@@ -97,8 +97,9 @@ export function LinkedCardFace({
 }
 
 /**
- * The card of something that cannot be drawn (deleted, trash icon), in the dashed, italic, muted
- * look. `kind` is the noun ("object", "loop", "trigger").
+ * The card of something that cannot be drawn (deleted, trash icon; a chat gets the message icon,
+ * as the trash can would say "deleted"), in the dashed, italic, muted look. `kind` is the noun
+ * ("object", "loop", "trigger").
  */
 export function UnavailableCard({
 	shell,
@@ -109,6 +110,7 @@ export function UnavailableCard({
 	marker: string | undefined
 	kind: string
 }) {
+	const Icon = kind === 'chat' ? MessageCircle : Trash2
 	return (
 		<span
 			data-linked-card={marker}
@@ -117,7 +119,7 @@ export function UnavailableCard({
 				'flex-row items-center gap-2 border-dashed border-border bg-surface-sunken p-3 text-[12.5px] italic text-muted-foreground',
 			)}
 		>
-			<Trash2 size={14} aria-hidden className="shrink-0" />
+			<Icon size={14} aria-hidden className="shrink-0" />
 			{unavailableCopy(kind).card}
 		</span>
 	)
@@ -125,9 +127,10 @@ export function UnavailableCard({
 
 /** The chip of something that cannot be drawn, at the size of the sentence. */
 export function UnavailableChip({ kind }: { kind: string }) {
+	const Icon = kind === 'chat' ? MessageCircle : Trash2
 	return (
 		<span className="rounded-md border border-dashed border-border px-[0.4em] italic text-muted-foreground">
-			<Trash2 size="0.85em" aria-hidden className="mr-[0.4em] inline-block align-middle" />
+			<Icon size="0.85em" aria-hidden className="mr-[0.4em] inline-block align-middle" />
 			{unavailableCopy(kind).chip}
 		</span>
 	)

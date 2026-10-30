@@ -155,6 +155,36 @@ describe('chat tools', () => {
 			expect(created?.body).toMatchObject({ subject: { type: 'object', id: agentB } })
 		})
 
+		it('opens the direct message when one other actor is named, and a new chat when asked', async () => {
+			responses['POST /api/conversations'] = { id: chatId, participants }
+			await call('create_chat', {
+				workspace_id: wsId,
+				title: 'Hello',
+				participant_actor_ids: [agentA],
+			})
+			await call('create_chat', {
+				workspace_id: wsId,
+				title: 'A new topic',
+				participant_actor_ids: [agentA],
+				topical: true,
+			})
+			await call('create_chat', {
+				workspace_id: wsId,
+				title: 'Bet chat',
+				participant_actor_ids: [agentA],
+				subject_type: 'object',
+				subject_id: agentB,
+			})
+			const [direct, topical, withSubject] = callsTo('POST', '/api/conversations')
+			expect(direct?.body).toEqual({
+				title: 'Hello',
+				participant_actor_ids: [agentA],
+				direct: true,
+			})
+			expect(topical?.body).toEqual({ title: 'A new topic', participant_actor_ids: [agentA] })
+			expect(withSubject?.body).not.toHaveProperty('direct')
+		})
+
 		it('refuses a subject_type without a subject_id', async () => {
 			await expect(
 				call('create_chat', {

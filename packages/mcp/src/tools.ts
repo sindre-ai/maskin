@@ -1332,7 +1332,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. To answer inside a thread, pass \`thread_root_id\` (the id of the top-level message the thread hangs off; threads do not nest). Use a thread for a side conversation or a long-running piece of work (a review, a research task) so the main chat stays readable; keep \`also_in_channel\` off unless the reply is something the whole chat should see. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. To answer inside a thread, pass \`thread_root_id\` (the id of the top-level message the thread hangs off; threads do not nest). Use a thread for a side conversation or a long-running piece of work (a review, a research task) so the main chat stays readable; keep \`also_in_channel\` off unless the reply is something the whole chat should see. When you are answering a human who is writing in a thread, your post lands in that thread by itself, so you need no \`thread_root_id\`; pass \`top_level: true\` only when you deliberately want the main timeline. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1366,6 +1366,12 @@ export const tools = {
 				.describe(
 					'With thread_root_id: also show the reply in the main timeline. Leave off unless the whole chat should see it.',
 				),
+			top_level: z
+				.boolean()
+				.optional()
+				.describe(
+					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread. Ignored when thread_root_id or sub_chat_session_id is given.',
+				),
 			wait: z
 				.boolean()
 				.optional()
@@ -1375,7 +1381,7 @@ export const tools = {
 		}),
 	},
 	create_chat: {
-		description: `Start a brand-new top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. Use it for a new topic that deserves its own room. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Start a top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. With one other actor and no subject this opens your direct message with them: every pair has exactly one, so asking again returns it instead of making a new chat. Set \`topical: true\` for a new topic that deserves its own room; with two or more others it is always a new chat. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			title: z.string().min(1).max(CONVERSATION_TITLE_MAX_LENGTH),
@@ -1400,6 +1406,12 @@ export const tools = {
 					'With subject_id: tie the chat to an object (bet, task, insight) or a loop. Asking again returns the chat that already exists for it.',
 				),
 			subject_id: z.string().uuid().optional(),
+			topical: z
+				.boolean()
+				.optional()
+				.describe(
+					'With one other actor: open a new, separate chat for this topic instead of your direct message with them.',
+				),
 			wait: z
 				.boolean()
 				.optional()
@@ -1737,6 +1749,23 @@ export const tools = {
 		description:
 			"Hand a task to another agent from inside the chat you are in. It works in a thread under your reply, not in a new chat: the person sees it as a handoff card with live status, can open it, carry on the conversation with that agent there, and break it out into its own chat. Use this when the work belongs to the conversation you are in; to open a separate top-level chat instead, use create_chat. Returns straight away with the sub-chat's details (its `id` is the `session_id` other chat tools take); set `wait: true` to hold until the agent has finished and get its output. When it finishes, its final message comes back to you as a new turn in your own chat, so you do not need to poll. Check on it with get_chat_activity, stop it with stop_chat_agent, talk to it with send_session_message. Give `action_prompt` a clear first line: it becomes the card's title. Same as create_session, which still works.",
 		inputSchema: startAgentInputSchema,
+	},
+	// Deprecated alias of create_session with wait on, restored after PR 1986 because
+	// stored prompts in other workspaces still tell agents to call it. Registered
+	// like any tool; the handler maps the arguments (see TOOL_NAME_ALIASES).
+	// Minimal on purpose, as every listed alias costs tokens in every tool list.
+	// The keys the old tool took and create_session has no equivalent for (config,
+	// poll_interval_seconds, timeout_seconds, depends_on_session_ids) are stripped
+	// by this schema; their names are read before that, in the registration's
+	// preprocess step in server.ts.
+	run_agent: {
+		description: 'Deprecated, use create_session with wait true.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid().optional(),
+			actor_id: z.string().uuid(),
+			action_prompt: z.string().min(1),
+			spawned_by_message_id: z.number().int().positive().optional(),
+		}),
 	},
 	list_sessions: {
 		description:
@@ -2120,9 +2149,33 @@ export const tools = {
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
 		description:
-			'List integrations connected to the workspace. Each row includes `defaultAgentAccess` (what agents without their own entry get) and `agentGrants` (the agents with their own access and its level), the same access shown on the Integrations, Keychain and agent pages; change it with `update_integration_access`. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List integrations connected to the workspace, live connections first and the newest first within each group. Dead rows (a connect that never finished, a revoked connection) sort last but are still listed. Every page starts with a `summary` of the whole workspace: how many rows per status and which connections are active, so you can see what is connected without paging. A connection missing from this page is NOT proof it is absent: find it with `provider` (for example "slack"), `status` or `q` (a word of its name), or follow `next_cursor` while `page.has_more` is true. To answer "can I use X?" call `get_actor` on yourself and read `access`. Rows are slim: `defaultAgentAccess` (what agents without their own entry get), `agentGrants` and `chatGrants`; pass `verbose: true` for config, granted scopes and provider-side ids. Change access with `update_integration_access`. Paginated via a snapshot-consistent cursor (default page: 25).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			provider: z
+				.string()
+				.optional()
+				.describe(
+					'Only this provider, for example "slack" or "gmail". Matches exactly, ignoring case.',
+				),
+			status: z
+				.string()
+				.optional()
+				.describe(
+					'Only this status: "active", "pending", "revoked", "undone" or "awaiting_secret". Matches exactly.',
+				),
+			q: z
+				.string()
+				.optional()
+				.describe(
+					'Words to look for in the provider or the saved name, for example "google" or "stripe". Every word must appear.',
+				),
+			verbose: z
+				.boolean()
+				.optional()
+				.describe(
+					'Return full rows (config, granted scopes, provider-side ids). Default false: slim rows.',
+				),
 			limit: z
 				.number()
 				.int()

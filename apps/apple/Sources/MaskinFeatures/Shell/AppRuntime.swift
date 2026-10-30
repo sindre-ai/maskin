@@ -27,6 +27,9 @@ public final class AppRuntime {
 	/// moment of value, see `valueMomentSeen()`.)
 	var selectedTab: ShellTab = .forYou
 
+	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
+	let teamPill = TeamPillModel()
+
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
 	/// presentations requested in the same tick (a tap that opens an object) replace each
 	/// other deterministically instead of racing, and the sheet can't outlive its workspace.
@@ -421,10 +424,7 @@ public final class AppRuntime {
 		case .object(_, let id):
 			presentation = .object(id)
 		case .chat(_, let id):
-			presentation = nil
-			selectedTab = .chats
-			requestedConversationId = id
-			requestedThreadRoot = nil
+			openChat(id)
 		case .thread(_, let id, let rootId):
 			presentation = nil
 			selectedTab = .chats
@@ -449,6 +449,14 @@ public final class AppRuntime {
 	}
 
 	public func openAgent(_ id: String) { presentedAgentId = id }
+
+	/// Selects the Chats tab and asks for the thread.
+	public func openChat(_ id: String) {
+		presentation = nil
+		selectedTab = .chats
+		requestedConversationId = id
+		requestedThreadRoot = nil
+	}
 	public func openFile(_ id: String) { presentedFileId = id }
 
 	/// Where a search result lands: objects, agents and files open in a sheet over the current

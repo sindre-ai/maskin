@@ -305,7 +305,7 @@ export async function pinDefaultAgentIfUnset(
  * same actor/skill pair (e.g. Chief of Staff re-resolved via
  * ensureChiefOfStaffActor on every bootstrap run).
  */
-async function attachSkill(
+export async function attachSkill(
 	db: Database,
 	agentStorage: AgentStorageManager,
 	workspaceId: string,

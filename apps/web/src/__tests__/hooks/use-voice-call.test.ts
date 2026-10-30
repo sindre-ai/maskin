@@ -41,7 +41,7 @@ vi.mock('@/lib/voice-relay', async (importOriginal) => {
 	}
 })
 
-import { useVoiceCall } from '@/hooks/use-voice-call'
+import { VOICE_RECOVERY_DELAYS_MS, useVoiceCall } from '@/hooks/use-voice-call'
 import { ApiError } from '@/lib/api'
 import { isVoiceUnavailable, resetVoiceAvailability } from '@/lib/voice-availability'
 
@@ -222,9 +222,10 @@ describe('useVoiceCall — session lifecycle', () => {
 		expect(mockHangup).toHaveBeenCalledTimes(1)
 	})
 
-	it('restarts ICE once on a failed connection and ends the call as network_error after 15s', async () => {
+	it('restarts ICE once on a failed connection, and after 30s closes the call and starts a new one on the same chat', async () => {
 		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
-		mockCreate.mockResolvedValue(mintOk)
+		mockCreate.mockResolvedValueOnce(mintOk).mockResolvedValue({ voice_session_id: 'vs-2' })
+		mockHangup.mockResolvedValue({ conversation_id: 'conv-9' })
 		const { result } = renderHook(() => useVoiceCall(AGENT_ID, AGENT_NAME, true))
 		await act(() => result.current.start())
 
@@ -233,20 +234,63 @@ describe('useVoiceCall — session lifecycle', () => {
 		expect(result.current.state).toBe('reconnecting')
 		expect(lastPc?.restartIce).toHaveBeenCalledTimes(1)
 
-		act(() => {
-			vi.advanceTimersByTime(14_000)
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(29_000)
 		})
 		expect(mockHangup).not.toHaveBeenCalled()
-		act(() => {
-			vi.advanceTimersByTime(2_000)
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(2_000)
 		})
 		expect(mockHangup).toHaveBeenCalledWith(
 			'ws-1',
 			'vs-1',
 			expect.objectContaining({ reason: 'network_error' }),
 		)
+		expect(mockCreate).toHaveBeenLastCalledWith('ws-1', {
+			agent_actor_id: AGENT_ID,
+			conversation_id: 'conv-9',
+		})
+		expect(result.current.state).toBe('reconnecting')
+		expect(result.current.notice).toBeNull()
+	})
+
+	it('keeps trying while the network is down, then ends the call with a notice once the tries run out', async () => {
+		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
+		mockCreate.mockResolvedValueOnce(mintOk).mockRejectedValue(new Error('offline'))
+		const { result } = renderHook(() => useVoiceCall(AGENT_ID, AGENT_NAME, true))
+		await act(() => result.current.start())
+
+		vi.useFakeTimers()
+		act(() => lastPc?.setIce('disconnected'))
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(31_000)
+		})
+		expect(result.current.state).toBe('reconnecting')
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(40_000)
+		})
+		// The first call, then one try per wait.
+		expect(mockCreate).toHaveBeenCalledTimes(1 + VOICE_RECOVERY_DELAYS_MS.length)
 		expect(result.current.state).toBe('permission')
 		expect(result.current.notice).toMatch(/connection dropped/)
+	})
+
+	it('ending the call stops a recovery in progress', async () => {
+		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
+		mockCreate.mockResolvedValueOnce(mintOk).mockRejectedValue(new Error('offline'))
+		const { result } = renderHook(() => useVoiceCall(AGENT_ID, AGENT_NAME, true))
+		await act(() => result.current.start())
+
+		vi.useFakeTimers()
+		act(() => lastPc?.setIce('disconnected'))
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(31_000)
+		})
+		act(() => result.current.end())
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(60_000)
+		})
+		expect(mockCreate).toHaveBeenCalledTimes(1 + 1)
 	})
 
 	it('a connection that recovers inside the window resumes without ending the call', async () => {
@@ -261,7 +305,7 @@ describe('useVoiceCall — session lifecycle', () => {
 		act(() => lastPc?.setIce('connected'))
 		expect(result.current.state).toBe('live-agent-speaking')
 		act(() => {
-			vi.advanceTimersByTime(30_000)
+			vi.advanceTimersByTime(60_000)
 		})
 		expect(mockHangup).not.toHaveBeenCalled()
 	})
@@ -371,7 +415,7 @@ describe('useVoiceCall — server connection and post-call toast', () => {
 		vi.useFakeTimers()
 		act(() => lastPc?.setIce('failed'))
 		await act(async () => {
-			vi.advanceTimersByTime(16_000)
+			vi.advanceTimersByTime(31_000)
 		})
 		expect(mockHangup).toHaveBeenCalledWith(
 			'ws-1',

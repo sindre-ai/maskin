@@ -31,6 +31,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
+import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
 import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
@@ -40,6 +41,14 @@ import {
 	paginateClientSide,
 	toSnapshotAt,
 } from './cursor.js'
+import {
+	type IntegrationRow,
+	integrationSortKey,
+	leanIntegrationRow,
+	matchesIntegrationFilters,
+	summarizeIntegrations,
+} from './integrations-list.js'
+import { buildListPayload, listText } from './list-response.js'
 import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
@@ -67,10 +76,12 @@ import {
 	type TelemetrySink,
 	createDefaultSink,
 	currentToolCallSeq,
+	recordAliasUse,
 	recordMutation,
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
+import { RUN_AGENT_DROPPED_KEYS, TOOL_NAME_ALIASES } from './tool-aliases.js'
 import { parseListActorsInclude, tools } from './tools.js'
 
 export interface McpConfig {
@@ -1304,9 +1315,16 @@ function sessionNotStartedResult(
 	}
 }
 
-/** Added to a started session so the caller has something real to quote to the person. */
-function handoffNote(session: { id: string; status?: string }) {
-	return `Started: session ${session.id} is ${session.status ?? 'pending'}. When you tell the person you handed this over, quote this session id or its url, and say it is queued if it has not started running yet. Without one of them, do not say it was handed over.`
+/**
+ * Added to a started session so the caller has something real to quote to the person: the
+ * link to its chat, never the session id.
+ */
+function handoffNote(session: { id: string; status?: string }, url?: unknown) {
+	const status = session.status ?? 'pending'
+	if (typeof url !== 'string' || !url) {
+		return `Started: the session is ${status}. Say it is queued if it has not started running yet. Never show the person a session id.`
+	}
+	return `Started: the session is ${status}. When you tell the person you handed this over, give them this link to its chat as a markdown link: ${url}. Say it is queued if it has not started running yet. Never show the person a session id.`
 }
 
 /**
@@ -1492,9 +1510,9 @@ async function waitForSessionResult(
 
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
-			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. Session id: ${sessionId}. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
 			: stoppedBecause === 'paused'
-				? `The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session. Session id: ${sessionId}.`
+				? 'The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session.'
 				: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
@@ -2958,7 +2976,34 @@ export function createMcpServer(config: McpConfig) {
 	// without losing the per-tool input schema inference; the wrapper is purely
 	// pass-through so giving up the wrapper's signature is safe.
 	// biome-ignore lint/suspicious/noExplicitAny: see comment above.
-	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
+	const registerAppTool = ((s: any, name: string, baseDefinition: any, handler: any) => {
+		// Old parameter spellings are rewritten inside the input schema, because the
+		// SDK validates arguments before our handler runs. A tool with no alias
+		// rows passes through untouched, so its tools/list entry is unchanged.
+		const definition =
+			baseDefinition?.inputSchema && needsNormalise(name)
+				? {
+						...baseDefinition,
+						inputSchema: wrapInputSchema(baseDefinition.inputSchema, (raw) => {
+							const normalised = normaliseArgs(name, raw)
+							// One event per call that used at least one old name. Here, not in
+							// the handler, so it fires before validation and a call that then
+							// fails validation is still counted. Fire and forget; key names
+							// only. A separate event type from tool_call, so the server-side
+							// trace is not double counted.
+							if (normalised.renames.length > 0) {
+								recordAliasUse(telemetrySink, telemetryTarget, {
+									tool_name: name,
+									workspace_id: extractWorkspaceId(raw),
+									renames: normalised.renames,
+									both_sent: normalised.bothSent,
+									transport: config.transport,
+								})
+							}
+							return normalised.args
+						}),
+					}
+				: baseDefinition
 		const defHasRichRender = Boolean(definition?._meta?.ui)
 		const mutationKind = MUTATION_TOOL_KINDS[name]
 		const isReadTool = READ_TOOL_NAMES.has(name)
@@ -4852,19 +4897,18 @@ export function createMcpServer(config: McpConfig) {
 									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
 								},
 							}
+			const payload = buildListPayload({
+				key: 'workspaces',
+				rows: safeRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: rows.length,
+			})
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ workspaces: safeRows }),
-					},
-				],
-				structuredContent: {
-					heroCard,
-					workspaces: safeRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				// The card is presentation only; every datum is in the payload the text carries too.
+				structuredContent: { heroCard, ...payload },
 			}
 		},
 	)
@@ -5966,11 +6010,15 @@ export function createMcpServer(config: McpConfig) {
 				first_message,
 				subject_type,
 				subject_id,
+				topical,
 				wait,
 			} = args
 			if ((subject_type === undefined) !== (subject_id === undefined)) {
 				throw new Error('subject_type and subject_id go together: give both or neither.')
 			}
+			// One other actor and no subject is the direct message with them, unless a
+			// separate topical chat was asked for. The API gets or creates it.
+			const direct = participant_actor_ids.length === 1 && subject_id === undefined && !topical
 			const wsOpts = { workspaceId: workspace_id }
 			const conversation = (await apiCall(
 				config,
@@ -5979,6 +6027,7 @@ export function createMcpServer(config: McpConfig) {
 				{
 					title,
 					participant_actor_ids,
+					...(direct ? { direct: true } : {}),
 					...(subject_type && subject_id
 						? { subject: { type: subject_type, id: subject_id } }
 						: {}),
@@ -6871,18 +6920,17 @@ export function createMcpServer(config: McpConfig) {
 					id: loop.id as string,
 				})
 			})
+			const payload = buildListPayload({
+				key: 'loops',
+				rows: enriched,
+				limit: pagination.limit,
+				nextCursor,
+				total: loops.length,
+			})
 			return {
 				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ loops: enriched }),
-					},
-				],
-				structuredContent: {
-					loops: enriched,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7319,18 +7367,17 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.latest_activity_at ?? null,
 				getId: (row) => row.entity_id,
 			})
+			const payload = buildListPayload({
+				key: 'items',
+				rows: pagedItems,
+				limit: pagination.limit,
+				nextCursor,
+				total: items.length,
+			})
 			return {
 				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ items: pagedItems }),
-					},
-				],
-				structuredContent: {
-					items: pagedItems,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7378,13 +7425,80 @@ export function createMcpServer(config: McpConfig) {
 					content: [
 						{
 							type: 'text' as const,
-							text: JSON.stringify({ ...withUrl, handoff: handoffNote(enriched) }),
+							text: JSON.stringify({
+								...withUrl,
+								handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
+							}),
 						},
 					],
 				}
 			},
 		)
 	}
+
+	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
+	// through the same wrapper as a real tool, so it gets the same tool_call row,
+	// size event, token cap and mutation event. The handler calls the wait path of
+	// create_session directly rather than the registered create_session handler,
+	// which would record a second tool_call row for one call.
+	//
+	// Argument mapping, derived from run_agent as it was before PR 1986:
+	//   actor_id, action_prompt, spawned_by_message_id  carried over one to one
+	//   workspace_id                                    filled from the default when absent
+	//   notify_on_complete                              accepted and ignored: create_session no longer
+	//                                                   takes it and registers the same fallback itself
+	//                                                   when the wait times out
+	//   config, poll_interval_seconds, timeout_seconds,
+	//   depends_on_session_ids                          no equivalent, dropped, names recorded
+	// The upstream signature accepts a raw shape; this tool passes a schema object
+	// (the alias layer's preprocess wrapper), so the narrow type is spelled out
+	// here. It is still registered through the same wrapper as every other tool.
+	const registerWrappedSchemaTool = registerAppTool as unknown as (
+		s: typeof server,
+		name: string,
+		definition: {
+			description: string
+			inputSchema: z.ZodTypeAny
+			_meta: Record<string, unknown>
+		},
+		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
+	) => unknown
+	registerWrappedSchemaTool(
+		server,
+		'run_agent',
+		{
+			description: tools.run_agent.description,
+			// The dropped key names are read in this preprocess step, before the
+			// schema strips them, and before validation, so a call that then fails
+			// validation is still counted. Same wrapper the alias rows use; this
+			// tool has no alias rows, so registerAppTool leaves the schema as given.
+			inputSchema: wrapInputSchema(tools.run_agent.inputSchema.shape, (raw) => {
+				const sent =
+					typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+						? (raw as Record<string, unknown>)
+						: {}
+				recordAliasUse(telemetrySink, telemetryTarget, {
+					tool_name: 'run_agent',
+					workspace_id: extractWorkspaceId(raw),
+					dropped_keys: RUN_AGENT_DROPPED_KEYS.filter((key) => key in sent),
+					tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
+					transport: config.transport,
+				})
+				return raw
+			}),
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
+			return createSessionAndWait(config, {
+				workspace_id: workspace_id ?? config.defaultWorkspaceId,
+				actor_id,
+				action_prompt,
+				spawned_by_message_id,
+				wait: true,
+			})
+		},
+	)
 
 	registerAppTool(
 		server,
@@ -7792,7 +7906,8 @@ export function createMcpServer(config: McpConfig) {
 					} else {
 						messageNote = {
 							message_delivered: false,
-							message_note: `The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is. Session id: ${id}.`,
+							message_note:
+								'The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is.',
 						}
 					}
 				}
@@ -7905,44 +8020,62 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const input = args as {
+				limit?: number
+				cursor?: string
+				provider?: string
+				status?: string
+				q?: string
+				verbose?: boolean
+				workspace_id?: string
+			}
+			// The whole list is fetched and paged here, so the full page size is available: there is
+			// no "+ 1" sentinel to leave room for.
 			const pagination = resolveListPagination({
-				limit: (args as { limit?: number }).limit,
-				cursor: (args as { cursor?: string }).cursor,
+				limit: input.limit,
+				cursor: input.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
 			})) as unknown
-			const rows = Array.isArray(result)
-				? (result as Array<{
-						id: string
-						createdAt?: string | null
-						provider?: string
-						status?: string
-					}>)
-				: []
+			const allRows = Array.isArray(result) ? (result as IntegrationRow[]) : []
+			// Filters apply before paging, so `total` and `has_more` describe the matches. A row added
+			// after the walk began stays out of every hop of it.
+			const matching = allRows.filter(
+				(row) =>
+					matchesIntegrationFilters(row, input) &&
+					(!row.createdAt || row.createdAt <= pagination.snapshotAt),
+			)
+			// Live connections first, then the newest. The cursor carries that composite key, so the
+			// snapshot check above stands in for the one `paginateClientSide` would do on a timestamp.
 			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
+				rows: matching,
 				limit: pagination.limit,
 				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
+				order: 'desc',
 				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
+				getSortValue: integrationSortKey,
 				getId: (row) => row.id,
+				applySnapshotFilter: false,
 			})
-			const reconnectHint = buildReconnectHint(pagedRows)
-			const listText = buildListContentText({ integrations: pagedRows })
+			const rows = input.verbose ? pagedRows : pagedRows.map(leanIntegrationRow)
+			// Judged over every row, not just this page: a broken connection must not depend on
+			// which page it landed on.
+			const reconnectHint = buildReconnectHint(allRows)
+			const payload = buildListPayload({
+				key: 'integrations',
+				rows,
+				limit: pagination.limit,
+				nextCursor,
+				total: matching.length,
+				extra: { summary: summarizeIntegrations(allRows) },
+				notes: reconnectHint ? [reconnectHint] : [],
+			})
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: reconnectHint ? `${listText}\n\n${reconnectHint}` : listText,
-					},
-				],
-				structuredContent: {
-					integrations: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -8617,18 +8750,17 @@ export function createMcpServer(config: McpConfig) {
 				getId: (row) => row.id,
 				applySnapshotFilter: false,
 			})
+			const payload = buildListPayload({
+				key: 'extensions',
+				rows: pagedRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: result.length,
+			})
 			return {
 				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ extensions: pagedRows }),
-					},
-				],
-				structuredContent: {
-					extensions: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)

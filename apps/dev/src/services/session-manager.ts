@@ -244,10 +244,23 @@ import { buildWorkspaceStartupBlock, loadSenderLine } from './workspace-briefing
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
 
-/** Failure reasons for a session whose container is gone / was never assigned. */
-const CONTAINER_LOST_MESSAGE = 'Container disappeared before pause could complete'
+/**
+ * Technical reasons for a session whose container is gone / was never
+ * assigned. These go to the system log and `result.error` only; users see
+ * CONTAINER_LOST_FAILURE_REASON.human_message instead.
+ */
+const CONTAINER_LOST_MESSAGE = 'Container no longer running'
 const NO_CONTAINER_ASSIGNED_MESSAGE =
 	'No container was ever assigned to this session — it was marked running but never started'
+
+const CONTAINER_LOST_FAILURE_REASON: SessionResultFailureReason = {
+	provider: 'local-docker',
+	reason_code: 'container_lost',
+	human_message: 'This session stopped unexpectedly. Send another message to start a new one.',
+	http_status: null,
+	reset_at: null,
+	verbatim_output: null,
+}
 
 /**
  * Guards the MCP health check's partial-line buffer against a stdout stream
@@ -1775,6 +1788,13 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in running state`)
 		}
 
+		// A remote session's sandbox lives on the agent-server, so the local Docker
+		// check below would always call it gone and mark a live session failed.
+		// Snapshot and resume are local-only: refuse, and leave the session running.
+		if (session.agentServerId) {
+			throw new Error(`Session ${sessionId} runs on an agent server and cannot be paused`)
+		}
+
 		// Self-heal: if the container disappeared (stopped or removed externally),
 		// the session can never be snapshotted. Mark it failed and exit so the
 		// auto-pause loop stops retrying every minute.
@@ -1913,6 +1933,7 @@ export class SessionManager extends EventEmitter {
 				source: 'reaper',
 				reason,
 				exitCode: 0,
+				failureReason: CONTAINER_LOST_FAILURE_REASON,
 			},
 			this.buildSettleDeps({ skipStop: true, skipPush: true }),
 		)

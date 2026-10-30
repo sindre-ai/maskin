@@ -983,6 +983,7 @@ describe('Events Routes', () => {
 						},
 					],
 					[], // thread-reply fan-out: object lookup
+					[{ agentState: 'idle', metadata: null }], // thread-reply fan-out: the agent is not paused by a person
 					[{ id: agentAId }], // startSession: the agent is a workspace member
 				]
 				mockResults.insert = [newComment]
@@ -1143,6 +1144,7 @@ describe('Events Routes', () => {
 					// Actor resolution for the mentioned candidate
 					[{ id: agentAId, type: 'agent' }],
 					[], // thread-reply fan-out: object lookup
+					[{ agentState: 'idle', metadata: null }], // thread-reply fan-out: the agent is not paused by a person
 					[{ id: agentAId }], // startSession: the agent is a workspace member
 				]
 				mockResults.insert = [newComment]
