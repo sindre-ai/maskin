@@ -3,7 +3,7 @@
 
 import { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { buildExtensions } from '../extensions'
 import {
 	type LinkChipHandlers,
@@ -20,20 +20,19 @@ const B = 'https://maskin.io/ws/objects/00000000-0000-4000-8000-00000000000b'
 const DOC = `Read [the plan](${A}) and then **[bold *and* more](${B})** before [a site](https://example.com).\n`
 
 function fakeHost(overrides: Partial<LinkChipHost> = {}) {
-	const mounted: { container: HTMLElement; href: string; text: string }[] = []
+	const mounted: { container: HTMLElement; href: string; text: string; bare: boolean }[] = []
 	const unmounted: HTMLElement[] = []
 	const host: LinkChipHost = {
 		maxLookups: 10,
 		chipFor: (href) => (href.includes('/objects/') ? { lookup: href } : null),
 		mount: (container, link) => mounted.push({ container, ...link }),
 		unmount: (container) => unmounted.push(container),
-		open: vi.fn(),
 		...overrides,
 	}
 	// The editor may build a chip element more than once while it starts up; the live ones are the
 	// ones it has not since given back.
 	const live = () => mounted.filter((m) => !unmounted.includes(m.container))
-	return { host, mounted, unmounted, live }
+	return { host, live }
 }
 
 function open(markdown: string, host: LinkChipHost | null) {
@@ -159,34 +158,15 @@ describe('link chips', () => {
 		destroy()
 	})
 
-	it('opens the link the cursor touches on Mod-Enter, and nothing when it touches no chip link', () => {
-		const { host } = fakeHost()
-		const { editor, destroy } = open(DOC, host)
-		const [first] = linkRuns(editor.state.doc)
-		focusAt(editor, first.from + 2)
-		editor.view.dom.dispatchEvent(
-			new KeyboardEvent('keydown', {
-				key: 'Enter',
-				ctrlKey: true,
-				bubbles: true,
-				cancelable: true,
-			}),
-		)
-		expect(host.open).toHaveBeenCalledWith(A)
-		focusAt(editor, 1)
-		editor.view.dom.dispatchEvent(
-			new KeyboardEvent('keydown', {
-				key: 'Enter',
-				ctrlKey: true,
-				bubbles: true,
-				cancelable: true,
-			}),
-		)
-		expect(host.open).toHaveBeenCalledTimes(1)
+	it('hands the host the link text, and says when that text is only the address', () => {
+		const { host, live } = fakeHost()
+		const { destroy } = open(`[the plan](${A}) [${B}](${B}) [${B}/](${B})`, host)
+		expect(live().map((m) => m.bare)).toEqual([false, true, true])
+		expect(live()[0].text).toBe('the plan')
 		destroy()
 	})
 
-	it('opens a clicked chip in a new tab and cancels the press, so the cursor does not move', () => {
+	it('cancels the press on a chip, so the cursor does not move, and leaves the click alone', () => {
 		const { host, live } = fakeHost()
 		const { editor, destroy } = open(DOC, host)
 		const before = editor.state.selection.from
@@ -196,7 +176,7 @@ describe('link chips', () => {
 		expect(press.defaultPrevented).toBe(true)
 		const click = new MouseEvent('click', { bubbles: true, cancelable: true })
 		chip.dispatchEvent(click)
-		expect(host.open).toHaveBeenCalledWith(A)
+		expect(click.defaultPrevented).toBe(false)
 		expect(editor.state.selection.from).toBe(before)
 		destroy()
 	})

@@ -1,5 +1,5 @@
 import { renderLinkedChip, renderLinkedGithubChip } from '@/components/chat/linked-object-preview'
-import { ChipPreviewOffContext } from '@/components/chat/linked-object-reference'
+import { EditorChipContext } from '@/components/chat/linked-object-reference'
 import {
 	MAX_OBJECT_FETCHES,
 	githubTargetOf,
@@ -40,15 +40,20 @@ function chipFor(href: string, workspaceId: string) {
 	return { lookup: `${target.kind}:${target.id}` }
 }
 
-/** The chat's chip for a link, with no preview and no phone sheet, and not a tab stop of its own. */
+/**
+ * The chat's chip for a link, named with the link text the author wrote (the object's own name for
+ * a bare pasted address), with no preview and no phone sheet, and not a tab stop of its own.
+ */
 function EditorLinkChip({
 	workspaceId,
 	href,
 	text,
+	bare,
 }: {
 	workspaceId: string
 	href: string
 	text: string
+	bare: boolean
 }) {
 	const root = useRef<HTMLSpanElement>(null)
 	// The editor owns Tab and the arrow keys: keyboard users reach a link by arrowing to it.
@@ -72,9 +77,9 @@ function EditorLinkChip({
 	if (github) chip = renderLinkedGithubChip(github, href)
 	else if (target) chip = renderLinkedChip(target, fallback, { workspaceId, cardFollows: false })
 	return (
-		<ChipPreviewOffContext.Provider value>
+		<EditorChipContext.Provider value={{ label: bare ? undefined : text }}>
 			<span ref={root}>{chip}</span>
-		</ChipPreviewOffContext.Provider>
+		</EditorChipContext.Provider>
 	)
 }
 
@@ -82,6 +87,7 @@ interface MountedChip {
 	key: number
 	href: string
 	text: string
+	bare: boolean
 }
 
 /**
@@ -115,16 +121,18 @@ export function useEditorLinkChips(workspaceId: string | undefined) {
 					}),
 				)
 			},
-			open: (href) => {
-				window.open(href, '_blank', 'noopener,noreferrer')
-			},
 		}
 	}, [workspaceId, capable])
 
 	const layer = workspaceId
 		? [...mounted].map(([container, chip]) =>
 				createPortal(
-					<EditorLinkChip workspaceId={workspaceId} href={chip.href} text={chip.text} />,
+					<EditorLinkChip
+						workspaceId={workspaceId}
+						href={chip.href}
+						text={chip.text}
+						bare={chip.bare}
+					/>,
 					container,
 					String(chip.key),
 				),

@@ -142,10 +142,12 @@ function previewBounds(chip: Element) {
 const PREVIEW_QUERY = '(min-width: 640px) and (hover: hover) and (pointer: fine)'
 
 /**
- * Provided true around chips that sit inside text being edited: no hover preview and no phone
- * sheet there, because a card opening over words you are about to change gets in the way.
+ * Provided around chips that sit inside text being edited. There is no hover preview and no phone
+ * sheet (a card opening over words you are about to change gets in the way), a chip whose object is
+ * still loading stays the plain link (the line must not jump), and `label`, when set, is the link
+ * text the author wrote and replaces the name on the chip.
  */
-export const ChipPreviewOffContext = createContext(false)
+export const EditorChipContext = createContext<{ label?: string } | null>(null)
 
 /** True on a pointer device at 640px or wider, the only place a chip opens a preview. */
 function usePreviewCapable() {
@@ -236,8 +238,8 @@ function ChipPreview({
 	enabled: boolean
 	children: ReactNode
 }) {
-	const previewOff = useContext(ChipPreviewOffContext)
-	const enabled = enabledByChip && !previewOff
+	const inEditor = useContext(EditorChipContext) !== null
+	const enabled = enabledByChip && !inEditor
 	const capable = usePreviewCapable()
 	const [open, setOpen] = useState(false)
 	const [sheetOpen, setSheetOpen] = useState(false)
@@ -421,7 +423,16 @@ const JOIN = '\u2060'
  * The text of a chip with its marks: `lead` stays on the first character and `trail` on the last,
  * so a dot never wraps onto a line of its own. Everything between breaks like words in a sentence.
  */
-function ChipText({ lead, text, trail }: { lead?: ReactNode; text: string; trail?: ReactNode }) {
+function ChipText({
+	lead,
+	text: name,
+	trail,
+}: {
+	lead?: ReactNode
+	text: string
+	trail?: ReactNode
+}) {
+	const text = useContext(EditorChipContext)?.label ?? name
 	const chars = Array.from(text)
 	if (chars.length < 2) {
 		return (
@@ -452,7 +463,12 @@ function ChipText({ lead, text, trail }: { lead?: ReactNode; text: string; trail
  * at the sentence size, with a neutral dot that pulses (it holds still under reduced motion).
  */
 function loadingChip(fallback: ReactNode, dot = true): ReactNode {
-	if (!isValidElement(fallback)) return fallback
+	return <LoadingChip fallback={fallback} dot={dot} />
+}
+
+function LoadingChip({ fallback, dot }: { fallback: ReactNode; dot: boolean }) {
+	// In the editor the link stays plain until its object arrives.
+	if (useContext(EditorChipContext) !== null || !isValidElement(fallback)) return <>{fallback}</>
 	const link = fallback as ReactElement<{ className?: string; children?: ReactNode }>
 	return cloneElement(
 		link,

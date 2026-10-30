@@ -6,11 +6,13 @@
 // A link the cursor touches (inside it, or on either edge, or at either end of a selection) is
 // left as plain text so it can be edited one letter at a time; when the editor has no focus every
 // link is a chip. The chip itself is drawn by the host (it needs the app's data and components),
-// which is handed an element to draw into.
+// which is handed an element to draw into. A press on the chip is cancelled so it never moves the
+// cursor; the click is left to the chip's own link, which opens the object in the same tab (and in
+// a new tab with Cmd or Ctrl).
 
 import { Extension } from '@tiptap/core'
 import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { type EditorState, Plugin, PluginKey, type Selection } from '@tiptap/pm/state'
+import { Plugin, PluginKey, type Selection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import { withPageSelection } from './comment-highlights'
 
@@ -27,12 +29,13 @@ export interface LinkChipTarget {
 export interface LinkChipHost {
 	/** The chip an address gets, or null when it stays a plain link. Must be cheap and not fetch. */
 	chipFor(href: string): LinkChipTarget | null
-	/** Draw the chip for a link into `container`. Called once for each chip element. */
-	mount(container: HTMLElement, link: { href: string; text: string }): void
+	/**
+	 * Draw the chip for a link into `container`. Called once for each chip element. `text` is the
+	 * link text the author wrote; `bare` is true when that text is just the address (a pasted link).
+	 */
+	mount(container: HTMLElement, link: { href: string; text: string; bare: boolean }): void
 	/** The chip element left the editor; stop drawing into it. */
 	unmount(container: HTMLElement): void
-	/** Open the link's target, in a new tab. */
-	open(href: string): void
 	/** The lookups one body may cost. Links past it stay plain. */
 	maxLookups: number
 }
@@ -110,30 +113,20 @@ function chipRuns(doc: ProseMirrorNode, host: LinkChipHost): LinkRun[] {
 	})
 }
 
+/** Whether the link text is only the address, as when a link is pasted. */
+function isBare(text: string, href: string): boolean {
+	const bare = (value: string) => value.trim().replace(/\/$/, '')
+	return bare(text) === bare(href)
+}
+
 function chipElement(host: LinkChipHost, run: LinkRun, text: string): HTMLElement {
 	const el = document.createElement('span')
 	el.className = CHIP_CLASS
 	el.dataset.href = run.href
-	// A press on the chip must not move the cursor, take focus or start an edit; the click opens
-	// the object in a new tab. Both are handled here, before the chip's own link sees them.
-	el.addEventListener(
-		'mousedown',
-		(event) => {
-			event.preventDefault()
-			event.stopPropagation()
-		},
-		true,
-	)
-	el.addEventListener(
-		'click',
-		(event) => {
-			event.preventDefault()
-			event.stopPropagation()
-			host.open(run.href)
-		},
-		true,
-	)
-	host.mount(el, { href: run.href, text })
+	// A press on the chip must not move the cursor, take focus or start an edit. Only the press is
+	// cancelled: the click still reaches the chip's own link.
+	el.addEventListener('mousedown', (event) => event.preventDefault(), true)
+	host.mount(el, { href: run.href, text, bare: isBare(text, run.href) })
 	return el
 }
 
@@ -168,12 +161,6 @@ function compute(
 	return DecorationSet.create(doc, decorations)
 }
 
-/** The link the cursor touches, if it has a chip: what Mod-Enter opens. */
-function touchedChipLink(state: EditorState, host: LinkChipHost): LinkRun | null {
-	const { selection } = state
-	return chipRuns(state.doc, host).find((run) => touches(selection, run)) ?? null
-}
-
 /**
  * Tiptap extension that draws link chips. The host is read through a ref so the extension (and
  * with it the editor) stays stable across renders; the editor pushes it in with setLinkChips.
@@ -205,15 +192,6 @@ export function createLinkChips(handlers: { current: LinkChipHandlers }) {
 					},
 					props: {
 						decorations: (state) => linkChipsKey.getState(state)?.decorations,
-						handleKeyDown: (view, event) => {
-							const host = linkChipsKey.getState(view.state)?.host
-							if (!host || event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return false
-							const run = touchedChipLink(view.state, host)
-							if (!run) return false
-							event.preventDefault()
-							host.open(run.href)
-							return true
-						},
 						handleDOMEvents: {
 							focus: (view) => {
 								setFocused(view, true)
