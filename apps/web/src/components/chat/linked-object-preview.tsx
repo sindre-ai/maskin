@@ -17,7 +17,7 @@ import {
 import { useLinkedPanel } from '@/components/chat/linked-panel-context'
 import { StatusSelect } from '@/components/objects/property-selects'
 import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
-import { MarkdownContent } from '@/components/shared/markdown-content'
+import { type LinkedCardsOptions, MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
@@ -395,6 +395,7 @@ export function LinkedCardOrLink({
 	inList = false,
 	after = false,
 	updated = false,
+	draftsAndFiles = true,
 }: {
 	workspaceId: string
 	target: LinkedTarget
@@ -409,6 +410,8 @@ export function LinkedCardOrLink({
 	after?: boolean
 	/** A draft edited since an earlier message showed it. */
 	updated?: boolean
+	/** False outside chat: a draft keeps its plain link, with no approval card. */
+	draftsAndFiles?: boolean
 }) {
 	// A link into another workspace is a placeholder, whatever it points at: nothing is fetched,
 	// and only a card on its own line is drawn (in a list it stays the chip, under a sentence nothing).
@@ -461,6 +464,7 @@ export function LinkedCardOrLink({
 			inList={inList}
 			after={after}
 			updated={updated}
+			draftsAndFiles={draftsAndFiles}
 		/>
 	) : (
 		<FileCardOrLink
@@ -512,9 +516,29 @@ export function renderLinkedCard(
 		inList?: boolean
 		after?: boolean
 		updated?: boolean
+		draftsAndFiles?: boolean
 	},
 ): ReactNode {
 	return <LinkedCardOrLink {...context} target={target} fallback={fallback} />
+}
+
+/**
+ * `MarkdownContent`'s `linkedCards` for a surface that is not chat: comments and thread replies
+ * (`full`: a card on its own line, a chip in a sentence) and For You cards, the brief drawer and
+ * object bodies (`chips`: every link a chip). A draft or file link stays a plain link.
+ */
+export function outsideChatLinkedCards(
+	workspaceId: string,
+	mode: 'full' | 'chips',
+): LinkedCardsOptions {
+	return {
+		workspaceId,
+		mode,
+		draftsAndFiles: false,
+		renderCard: renderLinkedCard,
+		renderChip: renderLinkedChip,
+		renderGithubChip: renderLinkedGithubChip,
+	}
 }
 
 /** `MarkdownContent`'s `linkedCards.renderGithubChip`: a link to a GitHub pull request or issue, as a chip that opens GitHub. */
@@ -598,6 +622,7 @@ function ObjectCardOrLink({
 	inList,
 	after,
 	updated,
+	draftsAndFiles,
 }: {
 	workspaceId: string
 	objectId: string
@@ -608,8 +633,11 @@ function ObjectCardOrLink({
 	inList: boolean
 	after: boolean
 	updated: boolean
+	draftsAndFiles: boolean
 }) {
 	const { data: object } = useObject(objectId)
+	// Outside chat there is no approval card: a draft stays the link it was.
+	if (!draftsAndFiles && showsObjectCard(object, workspaceId)) return <>{fallback}</>
 	// A draft keeps today's card, and its lead-in only in a list.
 	if (showsObjectCard(object, workspaceId)) {
 		return withLabel(

@@ -498,12 +498,19 @@ export const LINKED_CARDS_TAG = 'linked-cards'
  * else a chip) with nothing fetched; it counts toward the three cards but not the ten lookups.
  * Whether an object or file deserves a card at all is the renderer's call; until it
  * says yes the link shows. Loose, tight, nested and ordered lists all follow the same rules.
+ *
+ * `options.chipsOnly` draws no card at all: every link to an object, loop, trigger, agent or chat
+ * is a chip where it stands, a link alone on its line included (For You cards, object bodies).
+ * `options.draftsAndFiles: false` (outside chat) leaves files as plain links and puts no
+ * approval-card element under a sentence; the renderer keeps a draft's link plain.
  */
 export function placeLinkedCards(
 	tree: HastNode,
 	skipIds?: ReadonlySet<string>,
 	workspaceId?: string,
+	options: { chipsOnly?: boolean; draftsAndFiles?: boolean } = {},
 ): void {
+	const { chipsOnly = false, draftsAndFiles = true } = options
 	const drawn = new Set<string>()
 	const placed = { object: 0, file: 0 }
 	const trailed = new Set<string>()
@@ -526,11 +533,15 @@ export function placeLinkedCards(
 		(t.kind === 'file' || other(t) || fetchable.has(key(t)))
 	// Whether a link standing alone may be replaced by its card here.
 	const cardable = (t: LinkedTarget, inList: boolean) =>
-		available(t) && (inList || t.kind === 'file' || placed.object < MAX_OBJECT_CARDS)
+		!chipsOnly &&
+		(draftsAndFiles || t.kind !== 'file') &&
+		available(t) &&
+		(inList || t.kind === 'file' || placed.object < MAX_OBJECT_CARDS)
 
 	// The cards for objects and files linked in `nodes` that nothing has drawn yet, as one element
 	// to insert after.
 	const cardsAfter = (nodes: HastNode[]): HastNode[] => {
+		if (chipsOnly || !draftsAndFiles) return []
 		const links = linksIn(nodes)
 		const objects = links.filter((t) => {
 			if (t.kind !== 'object' || other(t) || !available(t) || trailed.has(t.id)) return false
