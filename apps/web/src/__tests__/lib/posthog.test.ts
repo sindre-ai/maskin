@@ -8,6 +8,7 @@ import {
 	registerWorkspaceProperties,
 	resetPosthogIdentity,
 	setCapturingEnabled,
+	setWorkspaceGroup,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -188,6 +189,44 @@ describe('posthog helper', () => {
 		__setInitializedForTesting(true)
 		resetPosthogIdentity()
 		expect(resetSpy).toHaveBeenCalledTimes(1)
+	})
+
+	it('setWorkspaceGroup is a no-op before init', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+
+		setWorkspaceGroup('ws-1', '2026-10-01T00:00:00.000Z')
+
+		expect(groupSpy).not.toHaveBeenCalled()
+	})
+
+	it('setWorkspaceGroup sets a workspace group with the id and created date, and no name', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		setWorkspaceGroup('ws-1', '2026-10-01T00:00:00.000Z')
+
+		expect(groupSpy).toHaveBeenCalledWith('workspace', 'ws-1', {
+			workspace_id: 'ws-1',
+			created_at: '2026-10-01T00:00:00.000Z',
+		})
+	})
+
+	it('setWorkspaceGroup leaves the created date out when the workspace has none', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		setWorkspaceGroup('ws-1', null)
+
+		expect(groupSpy).toHaveBeenCalledWith('workspace', 'ws-1', { workspace_id: 'ws-1' })
+	})
+
+	it('setWorkspaceGroup swallows posthog errors', () => {
+		vi.spyOn(posthog, 'group').mockImplementation(() => {
+			throw new Error('boom')
+		})
+		__setInitializedForTesting(true)
+
+		expect(() => setWorkspaceGroup('ws-1')).not.toThrow()
 	})
 
 	it('identifyForWorkspace swallows posthog errors', async () => {

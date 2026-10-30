@@ -1,5 +1,6 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
 import { EditorBanner } from '@/components/shared/editor-banner'
+import { useEditorLinkChips } from '@/components/shared/editor-link-chips'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
@@ -477,6 +478,7 @@ export function MarkdownContent({
 				preserveSource={preserveSource}
 				surface={surface}
 				objectId={objectId}
+				linkChipsWorkspaceId={renderProps.linkedCards?.workspaceId}
 			/>
 		)
 	}
@@ -504,6 +506,7 @@ function EditorAdapter({
 	preserveSource,
 	surface,
 	objectId,
+	linkChipsWorkspaceId,
 }: {
 	content: string
 	onChange?: (value: string) => unknown
@@ -513,7 +516,10 @@ function EditorAdapter({
 	preserveSource?: boolean
 	surface?: string
 	objectId?: string
+	/** Set where the links in the text draw as chips, except the one the cursor touches. */
+	linkChipsWorkspaceId?: string
 }) {
+	const { host: linkChips, layer: linkChipLayer } = useEditorLinkChips(linkChipsWorkspaceId)
 	const [readOnly, setReadOnly] = useState(false)
 	const [rewriteRefused, setRewriteRefused] = useState(false)
 	// The editor reads `value` once, at mount. With preserveSource it also builds
@@ -612,8 +618,10 @@ function EditorAdapter({
 					preserveSource={preserveSource}
 					surface={surface}
 					objectId={objectId}
+					linkChips={linkChips}
 				/>
 			</Suspense>
+			{linkChipLayer}
 		</>
 	)
 }

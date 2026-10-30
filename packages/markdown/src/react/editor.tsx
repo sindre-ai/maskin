@@ -21,6 +21,12 @@ import {
 import { editorMarkdownIt, nodeFeatures, serializeTopLevelBlocks } from '../editor-blocks'
 import { type EditorDisallowedNode, type EditorVariant, buildExtensions } from '../extensions'
 import {
+	type LinkChipHandlers,
+	type LinkChipHost,
+	createLinkChips,
+	setLinkChips,
+} from '../link-chips'
+import {
 	type LossConstruct,
 	type ReadOnlyCause,
 	type SourceSession,
@@ -35,6 +41,7 @@ import { MarkdownRenderer } from './renderer'
 export type { EditorDisallowedNode, EditorVariant }
 export type { CommentRequest, TextCommentHighlight }
 export type { TextAnchor } from '../text-anchor'
+export type { LinkChipHost, LinkChipTarget } from '../link-chips'
 
 export interface MentionSuggestionItem {
 	id: string
@@ -183,6 +190,12 @@ export interface MarkdownEditorProps {
 	onTextCommentsOrphaned?: (orphanedIds: string[]) => void
 	/** Element id of the panel card a highlight points at (aria-describedby). */
 	textCommentDescribedBy?: (id: string) => string | undefined
+	/**
+	 * Draw the links the host recognises as chips, except the one the cursor touches. A drawing over
+	 * the link only: nothing is written into the document or the markdown. Pass a stable
+	 * (memoised) host; null or omitted draws plain links.
+	 */
+	linkChips?: LinkChipHost | null
 }
 
 export interface MarkdownEditorRef {
@@ -344,6 +357,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			onTextCommentClick,
 			onTextCommentsOrphaned,
 			textCommentDescribedBy,
+			linkChips = null,
 		},
 		ref,
 	) {
@@ -408,6 +422,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		}
 		const commentExtension = useMemo(() => createCommentHighlights(commentHandlersRef), [])
 
+		// Same for the link chips: the host is read through a ref, so the editor is not rebuilt when
+		// it changes; the effect below pushes the new one in.
+		const linkChipHandlersRef = useRef<LinkChipHandlers>({ host: null })
+		linkChipHandlersRef.current = { host: linkChips }
+		const linkChipExtension = useMemo(() => createLinkChips(linkChipHandlersRef), [])
+
 		const shortcutExtension = useMemo(
 			() => buildShortcutExtension(emitShortcut, openLinkPopover, focusToolbar),
 			[emitShortcut, openLinkPopover, focusToolbar],
@@ -419,10 +439,18 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					variant,
 					disallowedNodes,
 					placeholder,
-					[...(extensions ?? []), commentExtension],
+					[...(extensions ?? []), commentExtension, linkChipExtension],
 					shortcutExtension,
 				),
-			[variant, disallowedNodes, placeholder, extensions, commentExtension, shortcutExtension],
+			[
+				variant,
+				disallowedNodes,
+				placeholder,
+				extensions,
+				commentExtension,
+				linkChipExtension,
+				shortcutExtension,
+			],
 		)
 
 		const reportParseError = useCallback(
@@ -529,6 +557,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			if (!editor || editor.isDestroyed) return
 			setTextComments(editor.view, textComments ?? [], activeTextCommentId)
 		}, [editor, textComments, activeTextCommentId])
+
+		// Hand the editor the chip host. A transaction with no document change, so it never reaches
+		// onUpdate, autosave or the markdown.
+		useEffect(() => {
+			if (!editor || editor.isDestroyed) return
+			setLinkChips(editor.view, linkChips)
+		}, [editor, linkChips])
 
 		// preserveSource: check the text against the read-only list once the
 		// editor has parsed it. Whole file, never half. A read-only open is one

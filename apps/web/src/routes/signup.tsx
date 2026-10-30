@@ -4,6 +4,7 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import { identifyForWorkspace } from '@/lib/posthog'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
@@ -132,6 +133,11 @@ function SignupPage() {
 					user_id: actorId,
 					completed: true,
 				})
+				// Identify before signup_completed so the signup lands on the person
+				// the rest of the funnel reads from. A new account has the default
+				// privacy settings, so it is identified in the clear.
+				await identifyForWorkspace(actorId, false, { name: trimmedName, email: email.trim() })
+				trackEvent('signup_completed', { user_id: actorId, workspace_id: workspaceId })
 			}
 			if (anonId) {
 				api.landingEvents
