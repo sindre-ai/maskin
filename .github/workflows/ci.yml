@@ -47,7 +47,16 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed.txt || : > changed.txt
           fi
-          bash scripts/ci/changed-areas.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
+          bash scripts/ci/changed-areas.sh < changed.txt > areas.txt
+          # Task PRs into a bet branch skip the Playwright specs: the 7 verify-e2e shards still
+          # start and report success (the ruleset needs those names) but do no work, about one
+          # minute each instead of six. The full set runs on the bet -> main PR (base_ref is
+          # main), on merge_group and on push to main. Integration tests are NOT trimmed here.
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+            [[ "${{ github.base_ref }}" == bet/* ]]; then
+            sed -i 's/^e2e=.*/e2e=false/' areas.txt
+          fi
+          tee -a "$GITHUB_OUTPUT" < areas.txt
 
   # Config-only gate. The Alloy configs and Grafana alert rules under
   # observability/ are shipped as text and applied by hand — nothing in the
