@@ -1,11 +1,13 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import {
 	type ClaudeOAuthImportInput,
@@ -17,6 +19,7 @@ import { getCredentialsCommand, parseClaudeCredentials } from '@/lib/claude-oaut
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Unplug } from 'lucide-react'
@@ -252,6 +255,7 @@ function AddSlotCard({
 	position: number
 	onConnectClick: () => void
 }) {
+	const canWrite = useCanWrite()
 	const isFirst = position === 0
 	return (
 		<div
@@ -270,9 +274,11 @@ function AddSlotCard({
 					? 'Connect your Claude subscription to start running agent sessions.'
 					: 'When every subscription above has hit its usage limit or expired, agents stop until you reconnect one. Another keeps them running.'}
 			</p>
-			<Button variant="outline" size="sm" onClick={onConnectClick}>
-				{isFirst ? 'Import credentials' : 'Import another subscription'}
-			</Button>
+			<ViewerTooltip>
+				<Button variant="outline" size="sm" disabled={!canWrite} onClick={onConnectClick}>
+					{isFirst ? 'Import credentials' : 'Import another subscription'}
+				</Button>
+			</ViewerTooltip>
 		</div>
 	)
 }
@@ -297,6 +303,7 @@ function SlotCard({
 	onReplaceClick,
 }: SlotCardProps) {
 	const slot = info.slot
+	const canWrite = useCanWrite()
 	const disconnectMutation = useMutation({
 		mutationFn: () => api.claudeOauth.disconnect(workspaceId, slot),
 		onSuccess,
@@ -378,38 +385,40 @@ function SlotCard({
 				)}
 			</div>
 			<div>
-				<div className="flex items-center gap-1 w-fit max-w-full">
-					<input
-						ref={nicknameInputRef}
-						type="text"
-						value={nicknameDraft}
-						onChange={(e) => {
-							setNicknameDraft(e.target.value)
-							if (renameMutation.isError) renameMutation.reset()
-						}}
-						onBlur={handleNicknameBlur}
-						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-						placeholder={NICKNAME_PLACEHOLDER}
-						onFocus={() => {
-							editingNickname.current = true
-						}}
-						maxLength={60}
-						size={Math.max(nicknameDraft.length, NICKNAME_PLACEHOLDER.length)}
-						disabled={renameMutation.isPending}
-						aria-label={`Nickname for ${label} slot`}
-						data-testid={`slot-${slot}-nickname`}
-						className="min-w-0 max-w-full bg-transparent border-none outline-none text-sm font-medium text-foreground placeholder:text-muted-foreground/70 focus:outline-none px-0 py-0 disabled:opacity-60"
-					/>
-					<button
-						type="button"
-						onClick={() => nicknameInputRef.current?.focus()}
-						className="shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
-						aria-label={`Edit nickname for ${label} slot`}
-						tabIndex={-1}
-					>
-						<Pencil size={12} />
-					</button>
-				</div>
+				<ViewerTooltip className="inline-flex max-w-full">
+					<div className="flex items-center gap-1 w-fit max-w-full">
+						<input
+							ref={nicknameInputRef}
+							type="text"
+							value={nicknameDraft}
+							onChange={(e) => {
+								setNicknameDraft(e.target.value)
+								if (renameMutation.isError) renameMutation.reset()
+							}}
+							onBlur={handleNicknameBlur}
+							onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+							placeholder={NICKNAME_PLACEHOLDER}
+							onFocus={() => {
+								editingNickname.current = true
+							}}
+							maxLength={60}
+							size={Math.max(nicknameDraft.length, NICKNAME_PLACEHOLDER.length)}
+							disabled={renameMutation.isPending || !canWrite}
+							aria-label={`Nickname for ${label} slot`}
+							data-testid={`slot-${slot}-nickname`}
+							className="min-w-0 max-w-full bg-transparent border-none outline-none text-sm font-medium text-foreground placeholder:text-muted-foreground/70 focus:outline-none px-0 py-0 disabled:opacity-60"
+						/>
+						<button
+							type="button"
+							onClick={() => nicknameInputRef.current?.focus()}
+							className="shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
+							aria-label={`Edit nickname for ${label} slot`}
+							tabIndex={-1}
+						>
+							<Pencil size={12} />
+						</button>
+					</div>
+				</ViewerTooltip>
 				{renameMutation.isError && (
 					<FormError error={renameMutation.error?.message || 'Could not save nickname'} />
 				)}
@@ -442,28 +451,34 @@ function SlotCard({
 			{unhealthyLine && <p className="text-xs text-warning">{unhealthyLine}</p>}
 			<div className="flex flex-wrap gap-2 pt-1">
 				{position > 0 && (
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => promoteMutation.mutate()}
-						disabled={promoteMutation.isPending}
-					>
-						<ArrowUp size={14} className="mr-1" />
-						{promoteMutation.isPending ? 'Moving...' : 'Use first'}
-					</Button>
+					<ViewerTooltip>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => promoteMutation.mutate()}
+							disabled={promoteMutation.isPending || !canWrite}
+						>
+							<ArrowUp size={14} className="mr-1" />
+							{promoteMutation.isPending ? 'Moving...' : 'Use first'}
+						</Button>
+					</ViewerTooltip>
 				)}
-				<Button variant="ghost" size="sm" onClick={onReplaceClick}>
-					Replace
-				</Button>
-				<Button
-					variant="ghost"
-					size="sm"
-					onClick={() => disconnectMutation.mutate()}
-					disabled={disconnectMutation.isPending}
-				>
-					<Unplug size={14} className="mr-1" />
-					Disconnect
-				</Button>
+				<ViewerTooltip>
+					<Button variant="ghost" size="sm" disabled={!canWrite} onClick={onReplaceClick}>
+						Replace
+					</Button>
+				</ViewerTooltip>
+				<ViewerTooltip>
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => disconnectMutation.mutate()}
+						disabled={disconnectMutation.isPending || !canWrite}
+					>
+						<Unplug size={14} className="mr-1" />
+						Disconnect
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)
@@ -534,6 +549,7 @@ function PasteFlow({
 	onClose,
 	onSuccess,
 }: PasteFlowProps) {
+	const canWrite = useCanWrite()
 	const [pasteValue, setPasteValue] = useState('')
 	const [slot, setSlot] = useState<string>(initialSlot)
 	const [parseError, setParseError] = useState('')
@@ -548,6 +564,7 @@ function PasteFlow({
 	})
 
 	const handleImport = () => {
+		if (!canWrite) return
 		setParseError('')
 		const parsed = parseClaudeCredentials(pasteValue)
 		if (!parsed) {
@@ -620,7 +637,7 @@ function PasteFlow({
 			<div className="flex gap-2">
 				<Button
 					onClick={handleImport}
-					disabled={!pasteValue.trim() || importMutation.isPending}
+					disabled={!pasteValue.trim() || importMutation.isPending || !canWrite}
 					size="sm"
 				>
 					{importMutation.isPending ? 'Importing...' : 'Import'}
@@ -660,18 +677,23 @@ function SavedKey({
 	disabled?: boolean
 	testId: string
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<div className="flex items-center gap-2" data-testid={testId}>
 			<span className="flex-1 text-sm text-foreground">
 				Key saved
 				{hint ? <span className="text-muted-foreground"> · ends in {hint}</span> : null}
 			</span>
-			<Button variant="outline" size="sm" onClick={onReplace} disabled={disabled}>
-				Replace
-			</Button>
-			<Button variant="outline" size="sm" onClick={onClear} disabled={disabled}>
-				Clear
-			</Button>
+			<ViewerTooltip>
+				<Button variant="outline" size="sm" onClick={onReplace} disabled={disabled || !canWrite}>
+					Replace
+				</Button>
+			</ViewerTooltip>
+			<ViewerTooltip>
+				<Button variant="outline" size="sm" onClick={onClear} disabled={disabled || !canWrite}>
+					Clear
+				</Button>
+			</ViewerTooltip>
 		</div>
 	)
 }
@@ -683,6 +705,7 @@ function LLMKeysEditor({
 	workspace: import('@/lib/api').WorkspaceWithRole
 	workspaceId: string
 }) {
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 
 	// Saved keys are write-only: the API says whether one is stored and its last
@@ -700,7 +723,7 @@ function LLMKeysEditor({
 
 	const handleSave = (provider: string) => {
 		const value = keys[provider]?.trim()
-		if (!value) return
+		if (!value || !canWrite) return
 		updateWorkspace.mutate(
 			{ settings: { llm_keys: { [provider]: value } } },
 			{ onSuccess: () => finish(provider) },
@@ -708,6 +731,7 @@ function LLMKeysEditor({
 	}
 
 	const handleClear = (provider: string) => {
+		if (!canWrite) return
 		updateWorkspace.mutate(
 			{ settings: { llm_keys: { [provider]: null } } },
 			{ onSuccess: () => finish(provider) },
@@ -737,7 +761,8 @@ function LLMKeysEditor({
 											onChange={(e) =>
 												setKeys((prev) => ({ ...prev, [provider.key]: e.target.value }))
 											}
-											placeholder={provider.placeholder}
+											placeholder={canWrite ? provider.placeholder : VIEWER_READ_ONLY_MESSAGE}
+											disabled={!canWrite}
 											aria-label={`${provider.label} API key`}
 											autoComplete="off"
 											className="pr-9"
@@ -756,12 +781,16 @@ function LLMKeysEditor({
 											{visible[provider.key] ? <EyeOff size={14} /> : <Eye size={14} />}
 										</button>
 									</div>
-									<Button
-										onClick={() => handleSave(provider.key)}
-										disabled={!keys[provider.key]?.trim() || updateWorkspace.isPending}
-									>
-										Save
-									</Button>
+									<ViewerTooltip>
+										<Button
+											onClick={() => handleSave(provider.key)}
+											disabled={
+												!keys[provider.key]?.trim() || updateWorkspace.isPending || !canWrite
+											}
+										>
+											Save
+										</Button>
+									</ViewerTooltip>
 									{saved && (
 										<Button variant="ghost" onClick={() => finish(provider.key)}>
 											Cancel
@@ -800,6 +829,7 @@ function CustomLlmEditor({
 	workspace: import('@/lib/api').WorkspaceWithRole
 	workspaceId: string
 }) {
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const saved = (settings?.custom_llm as CustomLlmConfig | undefined) ?? {}
@@ -819,6 +849,7 @@ function CustomLlmEditor({
 	const typedKey = apiKey.trim()
 
 	const handleSave = () => {
+		if (!canWrite) return
 		const next: CustomLlmConfig = {
 			enabled,
 			base_url: baseUrl.trim() || null,
@@ -862,11 +893,13 @@ function CustomLlmEditor({
 
 			<div className="space-y-3">
 				<div className="flex items-center gap-2">
-					<Switch
-						checked={enabled}
-						onCheckedChange={setEnabled}
-						disabled={!canEnable && !enabled}
-					/>
+					<ViewerTooltip>
+						<Switch
+							checked={enabled}
+							onCheckedChange={setEnabled}
+							disabled={(!canEnable && !enabled) || !canWrite}
+						/>
+					</ViewerTooltip>
 					<span className="text-sm text-foreground">{enabled ? 'Enabled' : 'Disabled'}</span>
 				</div>
 
@@ -875,7 +908,8 @@ function CustomLlmEditor({
 					<Input
 						value={baseUrl}
 						onChange={(e) => setBaseUrl(e.target.value)}
-						placeholder="https://openrouter.ai/api"
+						placeholder={canWrite ? 'https://openrouter.ai/api' : VIEWER_READ_ONLY_MESSAGE}
+						disabled={!canWrite}
 					/>
 				</div>
 
@@ -888,7 +922,8 @@ function CustomLlmEditor({
 									type={keyVisible ? 'text' : 'password'}
 									value={apiKey}
 									onChange={(e) => setApiKey(e.target.value)}
-									placeholder="sk-or-..."
+									placeholder={canWrite ? 'sk-or-...' : VIEWER_READ_ONLY_MESSAGE}
+									disabled={!canWrite}
 									aria-label="Custom endpoint API key"
 									autoComplete="off"
 									className="pr-9"
@@ -942,7 +977,8 @@ function CustomLlmEditor({
 					<Input
 						value={model}
 						onChange={(e) => setModel(e.target.value)}
-						placeholder="deepseek/deepseek-v4-flash"
+						placeholder={canWrite ? 'deepseek/deepseek-v4-flash' : VIEWER_READ_ONLY_MESSAGE}
+						disabled={!canWrite}
 					/>
 				</div>
 
@@ -951,13 +987,19 @@ function CustomLlmEditor({
 					<Input
 						value={smallModel}
 						onChange={(e) => setSmallModel(e.target.value)}
-						placeholder="Defaults to the model above"
+						placeholder={canWrite ? 'Defaults to the model above' : VIEWER_READ_ONLY_MESSAGE}
+						disabled={!canWrite}
 					/>
 				</div>
 
-				<Button onClick={handleSave} disabled={!isDirty || updateWorkspace.isPending}>
-					Save
-				</Button>
+				<ViewerTooltip>
+					<Button
+						onClick={handleSave}
+						disabled={!isDirty || updateWorkspace.isPending || !canWrite}
+					>
+						Save
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)

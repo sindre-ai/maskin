@@ -1,3 +1,4 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -27,6 +28,7 @@ import {
 	useAttachSkill,
 	useDetachSkill,
 } from '@/hooks/use-agent-skill-attachments'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDeleteSkill, useSaveSkill, useSkill, useSkills } from '@/hooks/use-skills'
 import { useWorkspaceSkills } from '@/hooks/use-workspace-skills'
 import type { AttachedWorkspaceSkill, SkillListItem, WorkspaceSkillListItem } from '@/lib/api'
@@ -62,6 +64,7 @@ export function Skills({ actorId, readOnly = false, attachedFirst = false }: Ski
 	const { workspaceId } = useWorkspace()
 	const { data: skills, isLoading } = useSkills(actorId, workspaceId)
 	const deleteSkill = useDeleteSkill(actorId, workspaceId)
+	const canWrite = useCanWrite()
 
 	const [addingSkill, setAddingSkill] = useState(false)
 	const [editingSkill, setEditingSkill] = useState<string | null>(null)
@@ -128,14 +131,28 @@ export function Skills({ actorId, readOnly = false, attachedFirst = false }: Ski
 						<SkillForm actorId={actorId} onDone={() => setAddingSkill(false)} />
 					) : (
 						<div className="flex flex-wrap items-center gap-2">
-							<Button size="sm" variant="outline" onClick={() => setAddingSkill(true)}>
-								<Plus className="h-3.5 w-3.5 mr-1" />
-								Add Skill
-							</Button>
-							<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-								<FileText className="h-3.5 w-3.5 mr-1" />
-								Import SKILL.md
-							</Button>
+							<ViewerTooltip>
+								<Button
+									size="sm"
+									variant="outline"
+									disabled={!canWrite}
+									onClick={() => setAddingSkill(true)}
+								>
+									<Plus className="h-3.5 w-3.5 mr-1" />
+									Add Skill
+								</Button>
+							</ViewerTooltip>
+							<ViewerTooltip>
+								<Button
+									size="sm"
+									variant="outline"
+									disabled={!canWrite}
+									onClick={() => setImportOpen(true)}
+								>
+									<FileText className="h-3.5 w-3.5 mr-1" />
+									Import SKILL.md
+								</Button>
+							</ViewerTooltip>
 						</div>
 					)}
 
@@ -165,6 +182,7 @@ function WorkspaceSkillsSection({
 	const { data: attachments, isLoading: isLoadingAttachments } = useAgentSkillAttachments(actorId)
 	const attachSkill = useAttachSkill(actorId)
 	const detachSkill = useDetachSkill(actorId)
+	const canWrite = useCanWrite()
 
 	const [open, setOpen] = useState(false)
 	const [query, setQuery] = useState('')
@@ -248,17 +266,20 @@ function WorkspaceSkillsSection({
 
 			{!readOnly && !isLoading && available.length > 0 && (
 				<ResponsivePopover open={open} onOpenChange={handleOpenChange}>
-					<ResponsivePopoverTrigger asChild>
-						<Button
-							size="sm"
-							variant="outline"
-							aria-label="Attach workspace skill"
-							aria-expanded={open}
-						>
-							<Plus className="h-3.5 w-3.5 mr-1" />
-							Attach workspace skill
-						</Button>
-					</ResponsivePopoverTrigger>
+					<ViewerTooltip>
+						<ResponsivePopoverTrigger asChild>
+							<Button
+								size="sm"
+								variant="outline"
+								aria-label="Attach workspace skill"
+								aria-expanded={open}
+								disabled={!canWrite}
+							>
+								<Plus className="h-3.5 w-3.5 mr-1" />
+								Attach workspace skill
+							</Button>
+						</ResponsivePopoverTrigger>
+					</ViewerTooltip>
 					<ResponsivePopoverContent
 						className="md:w-72 md:p-0"
 						align="start"
@@ -363,6 +384,7 @@ function AttachedSkillRow({
 	onRemove: () => void
 	readOnly?: boolean
 }) {
+	const canWrite = useCanWrite()
 	const isFolder = skill.isFolder === true
 	const fileCount = skill.fileCount ?? 0
 	return (
@@ -378,15 +400,18 @@ function AttachedSkillRow({
 				)}
 			</div>
 			{!readOnly && (
-				<Button
-					size="sm"
-					variant="ghost"
-					className="text-muted-foreground shrink-0"
-					onClick={onRemove}
-					aria-label={`Remove ${skill.name}`}
-				>
-					Remove
-				</Button>
+				<ViewerTooltip>
+					<Button
+						size="sm"
+						variant="ghost"
+						className="text-muted-foreground shrink-0"
+						disabled={!canWrite}
+						onClick={onRemove}
+						aria-label={`Remove ${skill.name}`}
+					>
+						Remove
+					</Button>
+				</ViewerTooltip>
 			)}
 		</div>
 	)
@@ -418,6 +443,7 @@ function SkillCard({
 	readOnly?: boolean
 }) {
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const canWrite = useCanWrite()
 
 	return (
 		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2">
@@ -440,24 +466,30 @@ function SkillCard({
 					</div>
 				) : (
 					<div className="flex items-center gap-1 shrink-0">
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground"
-							onClick={onEdit}
-							aria-label="Edit skill"
-						>
-							<Pencil className="h-3.5 w-3.5" />
-						</Button>
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground hover:text-error"
-							onClick={() => setConfirmDelete(true)}
-							aria-label="Delete skill"
-						>
-							<Trash2 className="h-3.5 w-3.5" />
-						</Button>
+						<ViewerTooltip>
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground"
+								disabled={!canWrite}
+								onClick={onEdit}
+								aria-label="Edit skill"
+							>
+								<Pencil className="h-3.5 w-3.5" />
+							</Button>
+						</ViewerTooltip>
+						<ViewerTooltip>
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground hover:text-error"
+								disabled={!canWrite}
+								onClick={() => setConfirmDelete(true)}
+								aria-label="Delete skill"
+							>
+								<Trash2 className="h-3.5 w-3.5" />
+							</Button>
+						</ViewerTooltip>
 					</div>
 				))}
 		</div>
