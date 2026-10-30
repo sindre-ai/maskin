@@ -152,7 +152,8 @@ describe('thread sessions behind the flag (Integration)', () => {
 		await respond(await post(personId, 'a main chat message'))
 
 		const rows = await liveSessions()
-		expect(rows.map((r) => r.threadRootId).sort()).toEqual([null, rootId])
+		expect(rows).toHaveLength(2)
+		expect(rows.map((r) => r.threadRootId)).toEqual(expect.arrayContaining([null, rootId]))
 	})
 
 	it('gives a second thread its own session', async () => {
