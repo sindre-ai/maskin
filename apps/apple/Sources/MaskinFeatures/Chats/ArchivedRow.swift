@@ -4,12 +4,17 @@ import MaskinUI
 import SwiftUI
 
 /// The Archived row at the bottom of Team (spec 7 §6): 52pt, archive icon, "Archived", the count
-/// and a chevron. Expanded, it lists the archived conversations, each with Unarchive.
+/// and a chevron. Expanded, it lists the archived conversations: tap one to open it, or Unarchive.
+/// While searching, `items` are the matches and `forceExpanded` keeps them open.
 struct ArchivedRow: View {
 	let items: [ConversationSummary]
 	let currentActorID: String?
 	@Binding var expanded: Bool
+	var forceExpanded = false
 	let onUnarchive: (ConversationSummary) -> Void
+	var onOpen: (ConversationSummary) -> Void = { _ in }
+
+	private var isOpen: Bool { expanded || forceExpanded }
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -33,7 +38,7 @@ struct ArchivedRow: View {
 					Image(systemName: "chevron.right")
 						.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
 						.foregroundStyle(MaskinColor.inkPlaceholder)
-						.rotationEffect(.degrees(expanded ? 90 : 0))
+						.rotationEffect(.degrees(isOpen ? 90 : 0))
 				}
 				.padding(.horizontal, MaskinSpace.s8 + 1)
 				.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s4)
@@ -41,24 +46,33 @@ struct ArchivedRow: View {
 			}
 			.buttonStyle(.maskinPressed)
 			.accessibilityLabel("Archived, \(items.count)")
-			.accessibilityHint(expanded ? "Hides the archived conversations" : "Shows the archived conversations")
-			if expanded {
+			.accessibilityHint(isOpen ? "Hides the archived conversations" : "Shows the archived conversations")
+			if isOpen {
 				ForEach(items) { item in
 					HStack(spacing: MaskinSpace.s7) {
-						ConversationAvatar(
-							participants: item.others(excluding: currentActorID),
-							size: MaskinSpace.s14 + MaskinSpace.s2)
-						VStack(alignment: .leading, spacing: 1) {
-							Text(title(item))
-								.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .semibold, relativeTo: .body))
-								.foregroundStyle(MaskinColor.ink)
-								.lineLimit(1)
-							Text(subtitle(item))
-								.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-								.foregroundStyle(MaskinColor.ink5)
-								.lineLimit(1)
+						Button {
+							onOpen(item)
+						} label: {
+							HStack(spacing: MaskinSpace.s7) {
+								ConversationAvatar(
+									participants: item.others(excluding: currentActorID),
+									size: MaskinSpace.s14 + MaskinSpace.s2)
+								VStack(alignment: .leading, spacing: 1) {
+									Text(title(item))
+										.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .semibold, relativeTo: .body))
+										.foregroundStyle(MaskinColor.ink)
+										.lineLimit(1)
+									Text(subtitle(item))
+										.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+										.foregroundStyle(MaskinColor.ink5)
+										.lineLimit(1)
+								}
+								Spacer(minLength: MaskinSpace.s4)
+							}
+							.contentShape(Rectangle())
 						}
-						Spacer(minLength: MaskinSpace.s4)
+						.buttonStyle(.maskinPressed)
+						.accessibilityLabel("Open \(title(item))")
 						Button("Unarchive") {
 							MaskinHaptics.play(.selection)
 							onUnarchive(item)

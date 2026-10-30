@@ -145,14 +145,16 @@ struct ConversationListView: View {
 			}
 			if layout.showsArchived, !picking.isActive {
 				ArchivedRow(
-					items: store.archivedConversations, currentActorID: currentActorID, expanded: $archivedExpanded
-				) { item in
-					Task {
-						if await store.setArchived(item.id, false) {
-							undoOffer = UndoOffer(message: "Unarchived. Undo.") { _ = await store.setArchived(item.id, true) }
+					items: layout.isFiltering ? layout.archivedMatches : store.archivedConversations,
+					currentActorID: currentActorID, expanded: $archivedExpanded, forceExpanded: layout.isFiltering,
+					onUnarchive: { item in
+						Task {
+							if await store.setArchived(item.id, false) {
+								undoOffer = UndoOffer(message: "Unarchived. Undo.") { _ = await store.setArchived(item.id, true) }
+							}
 						}
-					}
-				}
+					},
+					onOpen: { item in selection = item.id })
 				.plainRow(insets: EdgeInsets(top: MaskinSpace.s3, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
 			}
 		}
@@ -165,6 +167,10 @@ struct ConversationListView: View {
 		.scrollContentBackground(.hidden)
 		.ambientBackground()
 		.teamSearch(text: $search)
+		// A search looks through every archived chat, so the pages past the first are fetched.
+		.task(id: !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+			if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await store.loadMoreArchived() }
+		}
 		.overlay { overlay }
 		.refreshable { await store.refresh() }
 		.animation(.snappy, value: picking.isActive)
