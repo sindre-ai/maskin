@@ -16,6 +16,11 @@ name: iOS TestFlight
 # key creates the distribution certificate and App Store profiles for io.maskin.app and its
 # extensions, so no certificate or profile files live in the repo or in secrets.
 #
+# Every run starts on a fresh Mac, and the archive can mint a new development certificate.
+# Apple caps certificates per account, so the run records the development certificates that
+# exist before the archive and revokes the ones it created at the end
+# (.github/scripts/asc_dev_certs.py). Distribution certificates are never touched.
+#
 # Build number is a UTC timestamp (yymmddHHMM), always higher than the last upload. The
 # marketing version still comes from project.yml.
 #
@@ -90,6 +95,15 @@ jobs:
           printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
           chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
 
+      # Best effort: if this fails there is no snapshot and the cleanup step does nothing.
+      - name: Record existing development certificates
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyjwt cryptography
+          "$RUNNER_TEMP/venv/bin/python" .github/scripts/asc_dev_certs.py snapshot "$RUNNER_TEMP/dev-certs-before.json"
+
       - name: Archive
         if: steps.gate.outputs.enabled == 'true'
         working-directory: apps/apple
@@ -141,6 +155,16 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/export.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
           echo "Uploaded build $BUILD_NUMBER to App Store Connect."
+
+      # Runs even when the build failed, so a failed archive does not leave certificates behind.
+      # Never fails the build.
+      - name: Revoke development certificates created by this run
+        if: always() && steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        run: |
+          if [ -x "$RUNNER_TEMP/venv/bin/python" ]; then
+            "$RUNNER_TEMP/venv/bin/python" .github/scripts/asc_dev_certs.py revoke-new "$RUNNER_TEMP/dev-certs-before.json"
+          fi
 
       - name: Remove the key
         if: always() && steps.gate.outputs.enabled == 'true'
