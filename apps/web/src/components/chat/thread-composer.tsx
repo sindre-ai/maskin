@@ -243,8 +243,7 @@ export function ThreadComposer({
 			textareaLabel={reply ? 'Reply in thread' : 'Message this conversation'}
 			draftKey={reply ? `${conversationId}:reply:${reply.rootId}` : conversationId}
 			fillRequest={fillRequest}
-			// Thread replies get the tag input in their own task.
-			inlineTags={!reply}
+			inlineTags
 			secretCapture={secretCapture}
 			secretRestarting={secretRestarting}
 			vaultModeBlocked={vaultModeBlocked}
