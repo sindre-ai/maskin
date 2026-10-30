@@ -374,7 +374,6 @@ describe('FileBody', () => {
 			expect(capture).toHaveBeenCalledWith('mini_app_file_viewed', {
 				entity_id: 'file-1',
 				entity_type: 'file',
-				file_name: 'curriculum.html',
 				source: 'web',
 				flow_id: null,
 			})
@@ -416,7 +415,7 @@ describe('FileBody', () => {
 			expect(capture).toHaveBeenCalledTimes(2)
 			expect(capture).toHaveBeenCalledWith(
 				'mini_app_file_viewed',
-				expect.objectContaining({ entity_id: 'file-2', file_name: 'b.html' }),
+				expect.objectContaining({ entity_id: 'file-2' }),
 			)
 		})
 

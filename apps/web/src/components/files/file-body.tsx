@@ -203,7 +203,6 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 		trackMiniAppFileViewed({
 			entity_id: file.id,
 			entity_type: 'file',
-			file_name: file.name,
 		})
 	}, [file])
 
