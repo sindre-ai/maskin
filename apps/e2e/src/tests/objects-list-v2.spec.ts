@@ -97,7 +97,34 @@ test.describe('Objects list — v2 control row', () => {
 			await expect(page.getByText('Reset all')).toBeVisible()
 		})
 
-		test(`the list rests grouped by state with its groups open at ${vp.label}`, async ({
+		test(`the list rests flat, with no state groups, at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Active flat bet',
+				status: 'active',
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Done flat bet',
+				status: 'succeeded',
+			})
+
+			// No groupBy in the URL — the resting state is a flat list.
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+
+			// Both rows are reachable at once, with no group header to open.
+			await expect(page.getByText('Active flat bet')).toBeVisible({ timeout: 15000 })
+			await expect(page.getByText('Done flat bet')).toBeVisible()
+			await expect(page.getByRole('button', { expanded: true, name: /active/i })).toHaveCount(0)
+			await expect(page.getByRole('button', { expanded: false, name: /active/i })).toHaveCount(0)
+		})
+
+		test(`choosing Group by State still groups the list, groups open, at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -114,8 +141,8 @@ test.describe('Objects list — v2 control row', () => {
 				status: 'succeeded',
 			})
 
-			// No groupBy in the URL — the resting state is State (mockup 994–999).
-			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+			// An explicit State grouping is an explicit choice and is honoured.
+			await page.goto(`/${account.workspaceId}/objects?type=bet&groupBy=status`)
 
 			const activeGroup = page.getByRole('button', { expanded: true, name: /active/i })
 			await expect(activeGroup).toBeVisible({ timeout: 15000 })
