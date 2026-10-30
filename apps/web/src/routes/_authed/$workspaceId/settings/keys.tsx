@@ -34,11 +34,11 @@ function KeysPage() {
 		<div className="space-y-6">
 			{enterprise ? (
 				<div className="max-w-lg space-y-6">
-					<div className="border-t border-border pt-6">
+					<div id="claude-subscriptions" className="border-t border-border pt-6">
 						<ClaudeOAuthSection workspaceId={workspaceId} />
 					</div>
 
-					<div className="border-t border-border pt-6">
+					<div id="llm-api-keys" className="border-t border-border pt-6">
 						<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
 					</div>
 

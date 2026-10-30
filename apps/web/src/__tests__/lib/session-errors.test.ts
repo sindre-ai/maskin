@@ -33,7 +33,7 @@ describe('toastSessionCreateError', () => {
 		const options = call?.[1] as unknown as { action: { onClick: () => void } }
 		options.action.onClick()
 		expect(navigate).toHaveBeenCalledWith({
-			to: '/$workspaceId/settings/keys',
+			to: '/$workspaceId/settings/billing',
 			params: { workspaceId },
 		})
 	})

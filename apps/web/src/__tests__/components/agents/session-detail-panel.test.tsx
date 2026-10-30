@@ -41,7 +41,23 @@ vi.mock('@/hooks/use-events', () => ({
 }))
 
 vi.mock('@tanstack/react-router', () => ({
-	Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+	Link: ({
+		children,
+		to,
+		params,
+		hash,
+	}: {
+		children: React.ReactNode
+		to?: string
+		params?: { workspaceId: string }
+		hash?: string
+	}) => (
+		<a
+			href={`${(to ?? '').replace('$workspaceId', params?.workspaceId ?? '')}${hash ? `#${hash}` : ''}`}
+		>
+			{children}
+		</a>
+	),
 	useNavigate: () => navigateMock,
 }))
 
@@ -80,6 +96,19 @@ afterEach(() => {
 })
 
 describe('parseFailureReason', () => {
+	it.each([
+		['Failed to authenticate: OAuth session expired and could not be refreshed', 'oauth_expired'],
+		['Invalid API key · Fix external API key', 'invalid_api_key'],
+	])('reads a code from the error text when a session has no failure_reason: %s', (error, code) => {
+		const parsed = parseFailureReason({ exit_code: 1, error })
+		expect(parsed?.reason_code).toBe(code)
+		expect(parsed?.verbatim_output).toBe(error)
+	})
+
+	it('returns null for other error text without failure_reason', () => {
+		expect(parseFailureReason({ exit_code: 1, error: 'Process crashed' })).toBeNull()
+	})
+
 	it('returns null for null result', () => {
 		expect(parseFailureReason(null)).toBeNull()
 	})
@@ -133,8 +162,9 @@ describe('parseFailureReason', () => {
 function renderCard(
 	failureReason: Parameters<typeof FailureCard>[0]['failureReason'],
 	workspaceId = 'ws-1',
+	{ keysPage = false }: { keysPage?: boolean } = {},
 ) {
-	const Wrapper = createWorkspaceWrapper()
+	const Wrapper = createWorkspaceWrapper({ enterprise: keysPage })
 	return render(
 		<Wrapper>
 			<FailureCard failureReason={failureReason} workspaceId={workspaceId} />
@@ -234,41 +264,127 @@ describe('FailureCard', () => {
 		expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
 	})
 
-	it('shows Connect Claude subscription button for not_logged_in', () => {
-		renderCard({
-			provider: 'anthropic',
-			reason_code: 'not_logged_in',
-			human_message: 'Claude credentials not connected — please import your Claude subscription',
+	describe('recovery link by reason code', () => {
+		const reason = (
+			reason_code: string,
+			provider = 'anthropic',
+		): Parameters<typeof FailureCard>[0]['failureReason'] => ({
+			provider,
+			reason_code,
+			human_message: 'Stored message from the server',
 			http_status: null,
-			reset_at: null,
-			verbatim_output: 'Not logged in',
-		})
-		expect(screen.getByText('Connect Claude subscription')).toBeInTheDocument()
-		expect(screen.queryByText('Wait')).not.toBeInTheDocument()
-		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
-	})
-
-	it.each([
-		[
-			'oauth_expired',
-			'Claude login expired and could not be refreshed — reconnect your Claude subscription',
-		],
-		[
-			'invalid_api_key',
-			'Claude API key was rejected — reconnect your Claude subscription or API key',
-		],
-	])('shows the reconnect hint for %s', (reasonCode, message) => {
-		renderCard({
-			provider: 'anthropic',
-			reason_code: reasonCode,
-			human_message: message,
-			http_status: 401,
 			reset_at: null,
 			verbatim_output: null,
 		})
-		expect(screen.getByText(new RegExp(message))).toBeInTheDocument()
-		expect(screen.getByText('Connect Claude subscription')).toBeInTheDocument()
-		expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+
+		it.each([
+			['oauth_expired', 'Your Claude login expired', 'Reconnect Claude', '#claude-subscriptions'],
+			['oauth_revoked', 'Your Claude login expired', 'Reconnect Claude', '#claude-subscriptions'],
+			['not_logged_in', 'No Claude login is connected', 'Connect Claude', '#claude-subscriptions'],
+			['invalid_api_key', 'Your API key was rejected', 'Replace API key', '#llm-api-keys'],
+			[
+				'session_limit',
+				'Your Claude subscription hit its session limit',
+				'Add a backup subscription',
+				'#claude-subscriptions',
+			],
+			[
+				'weekly_limit',
+				'Your Claude subscription hit its weekly limit',
+				'Add a backup subscription',
+				'#claude-subscriptions',
+			],
+			['credit_balance_low', 'Your API key is out of credit', 'Change API key', '#llm-api-keys'],
+		])(
+			'%s with the Keys page: title and one button to the right section',
+			(code, title, button, hash) => {
+				renderCard(reason(code), 'ws-1', { keysPage: true })
+				expect(screen.getByText(title)).toBeInTheDocument()
+				expect(screen.getByRole('link', { name: button })).toHaveAttribute(
+					'href',
+					`/ws-1/settings/keys${hash}`,
+				)
+				expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+				expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
+				expect(screen.queryByText('Connect Claude subscription')).not.toBeInTheDocument()
+			},
+		)
+
+		it('credit_balance_low also offers Top up on Anthropic in a new tab', () => {
+			renderCard(reason('credit_balance_low'), 'ws-1', { keysPage: true })
+			const link = screen.getByRole('link', { name: /Top up on Anthropic/ })
+			expect(link).toHaveAttribute('href', 'https://console.anthropic.com/settings/plans')
+			expect(link).toHaveAttribute('target', '_blank')
+		})
+
+		it.each([
+			['oauth_expired', 'Agents are paused on our side', /Claude login Maskin uses expired/],
+			['oauth_revoked', 'Agents are paused on our side', /Claude login Maskin uses expired/],
+			['not_logged_in', 'Agents are paused on our side', /could not sign in to Claude/],
+			['invalid_api_key', 'Agents are paused on our side', /key Maskin uses was rejected/],
+			['credit_balance_low', 'Agents are paused on our side', /out of Claude credit/],
+			['session_limit', 'Agents are paused until the limit resets', /hit its Claude usage limit/],
+			['weekly_limit', 'Agents are paused until the limit resets', /hit its Claude usage limit/],
+		])('%s without the Keys page: on-our-side copy and no button', (code, title, sentence) => {
+			renderCard(reason(code))
+			expect(screen.getByText(title)).toBeInTheDocument()
+			expect(screen.getByText(sentence)).toBeInTheDocument()
+			expect(screen.getByText(/You do not need to do anything/)).toBeInTheDocument()
+			expect(screen.queryByRole('link')).not.toBeInTheDocument()
+			expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+		})
+
+		it('replaces the stored message for a mapped code', () => {
+			renderCard(reason('invalid_api_key'), 'ws-1', { keysPage: true })
+			expect(screen.queryByText(/Stored message from the server/)).not.toBeInTheDocument()
+		})
+
+		it('keeps the stored message for not_logged_in from the Maskin pre-flight and adds Connect Claude with the Keys page', () => {
+			renderCard(
+				{
+					...reason('not_logged_in', 'maskin'),
+					human_message: 'Could not reach the login service, try again in a few minutes.',
+				},
+				'ws-1',
+				{ keysPage: true },
+			)
+			expect(
+				screen.getByText('Maskin — Could not reach the login service, try again in a few minutes.'),
+			).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Connect Claude' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/keys#claude-subscriptions',
+			)
+		})
+
+		it('keeps the stored message for not_logged_in from the Maskin pre-flight and links to Billing without the Keys page', () => {
+			renderCard({
+				...reason('not_logged_in', 'maskin'),
+				human_message: 'No working LLM credentials are connected for this workspace.',
+			})
+			expect(
+				screen.getByText('Maskin — No working LLM credentials are connected for this workspace.'),
+			).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'View plan and usage' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/billing',
+			)
+			expect(screen.queryByText('Agents are paused on our side')).not.toBeInTheDocument()
+		})
+
+		it('plan_cap_exceeded Go to Billing opens the Billing page', () => {
+			renderCard(reason('plan_cap_exceeded', 'maskin'))
+			expect(screen.getByRole('link', { name: 'Go to Billing' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/billing',
+			)
+		})
+
+		it('a code with no entry keeps the stored message and no button', () => {
+			renderCard(reason('some_new_code'), 'ws-1', { keysPage: true })
+			expect(screen.getByText('Anthropic — Stored message from the server')).toBeInTheDocument()
+			expect(screen.queryByRole('link')).not.toBeInTheDocument()
+		})
 	})
 
 	it('shows only Wait chip for server_rate_limit (no Top up or Switch button)', () => {
@@ -473,7 +589,12 @@ describe('classifier codes -> FailureCard recovery row', () => {
 			if (!parsed) return
 			expect(parsed.reason_code).toBe(failureReason.reason_code)
 			renderCard(parsed)
-			expect(screen.getByText('Wait')).toBeInTheDocument()
+			// These three have their own recovery card (see 'recovery link by reason code').
+			if (['credit_balance_low', 'session_limit', 'weekly_limit'].includes(parsed.reason_code)) {
+				expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+			} else {
+				expect(screen.getByText('Wait')).toBeInTheDocument()
+			}
 		},
 	)
 })
