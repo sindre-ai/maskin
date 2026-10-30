@@ -8,8 +8,16 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+const workspaceState = vi.hoisted(() => ({ enterprise: false }))
+
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspace: { settings: { statuses: { bet: ['active', 'done'] } } } }),
+	useWorkspace: () => ({
+		workspace: {
+			enterprise: workspaceState.enterprise,
+			settings: { statuses: { bet: ['active', 'done'] } },
+		},
+	}),
+	useIsEnterpriseWorkspace: () => workspaceState.enterprise,
 }))
 
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
@@ -181,6 +189,48 @@ describe('MessageBubble', () => {
 		expect(pullChip).toHaveAttribute('target', '_blank')
 		expect(screen.getByRole('link', { name: 'Issue maskin #12, opens GitHub' })).toBeInTheDocument()
 		expect(container.querySelector('.bg-primary')).toContainElement(pullChip)
+	})
+
+	it('draws a settings address in your own message as a settings chip that opens in a new tab', () => {
+		const address = 'https://maskin.io/ws-1/settings/billing'
+		const { container } = renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: `pay here ${address}`,
+			}),
+		)
+		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		const chip = screen.getByRole('link', { name: 'Settings: Billing' })
+		expect(chip).toHaveAttribute('href', '/ws-1/settings/billing')
+		expect(chip).toHaveAttribute('target', '_blank')
+		expect(container.querySelector('.bg-primary')).toContainElement(chip)
+	})
+
+	it('draws a Keys address in your own message as a chip only in an enterprise workspace', () => {
+		const address = 'https://maskin.io/ws-1/settings/keys'
+		const own = buildMessage({
+			actorId: 'me',
+			actorName: 'Me',
+			actorType: 'human',
+			content: `keys live here ${address}`,
+		})
+		workspaceState.enterprise = true
+		try {
+			const { unmount } = renderBubble(own)
+			expect(screen.getByRole('link', { name: 'Settings: Keys' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/keys',
+			)
+			unmount()
+			workspaceState.enterprise = false
+			renderBubble(own)
+			expect(screen.queryByRole('link', { name: 'Settings: Keys' })).not.toBeInTheDocument()
+			expect(screen.getByText(address, { exact: false })).toBeInTheDocument()
+		} finally {
+			workspaceState.enterprise = false
+		}
 	})
 
 	it('draws a link to a chat in your own message inline, as a chip with its title', () => {

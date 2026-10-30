@@ -2,6 +2,7 @@ import {
 	renderLinkedCard,
 	renderLinkedChip,
 	renderLinkedGithubChip,
+	renderLinkedSettingsChip,
 } from '@/components/chat/linked-object-preview'
 import {
 	OtherWorkspaceLink,
@@ -26,10 +27,13 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	type GithubTarget,
+	type SettingsTarget,
 	githubChipName,
 	githubChipText,
+	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
+import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
 	ArrowUpRight,
@@ -43,6 +47,7 @@ import {
 	MessageSquareReply,
 	Pencil,
 	RotateCcw,
+	Settings as SettingsIcon,
 } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -114,6 +119,7 @@ export function MessageBubble({
 	onReplyInThread,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
+	const enterprise = useIsEnterpriseWorkspace()
 	const isOwn = message.actorId === actor?.id
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
@@ -163,8 +169,8 @@ export function MessageBubble({
 					.join('\n')
 			: message.content
 	const ownSegments = useMemo(
-		() => (isOwn ? splitOwnLinks(shownContent, workspaceId) : []),
-		[isOwn, shownContent, workspaceId],
+		() => (isOwn ? splitOwnLinks(shownContent, workspaceId, enterprise) : []),
+		[isOwn, shownContent, workspaceId, enterprise],
 	)
 
 	if (message.kind === 'system') {
@@ -401,6 +407,7 @@ export function MessageBubble({
 							renderVisuals
 							linkedCards={{
 								workspaceId,
+								enterprise,
 								conversationId: message.conversationId,
 								agentId: message.actorId,
 								skipIds: shownLinkedObjectIds,
@@ -408,6 +415,7 @@ export function MessageBubble({
 								renderCard: renderLinkedCard,
 								renderChip: renderLinkedChip,
 								renderGithubChip: renderLinkedGithubChip,
+								renderSettingsChip: renderLinkedSettingsChip,
 							}}
 						/>
 					</div>
@@ -622,9 +630,13 @@ function OwnLinkChip({
 		| { kind: 'chat'; id: string; otherWorkspaceId?: string }
 		| { kind: 'object' | 'file'; id: string; otherWorkspaceId?: string }
 		| { kind: 'github'; href: string; target: GithubTarget }
+		| { kind: 'settings'; target: SettingsTarget }
 }) {
 	if (segment.kind === 'github') {
 		return <OwnGithubChip href={segment.href} target={segment.target} />
+	}
+	if (segment.kind === 'settings') {
+		return <OwnSettingsChip workspaceId={workspaceId} target={segment.target} />
 	}
 	if (segment.otherWorkspaceId && segment.kind !== 'file') {
 		return (
@@ -657,6 +669,29 @@ function OwnGithubChip({ href, target }: { href: string; target: GithubTarget })
 			<Icon size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{githubChipText(target)}</span>
 			<ArrowUpRight size={12} aria-hidden className="shrink-0" />
+		</a>
+	)
+}
+
+/** A settings page in your own message: a gear and "Settings: {section}", opening the page in a new tab. Nothing is fetched. */
+function OwnSettingsChip({
+	workspaceId,
+	target,
+}: {
+	workspaceId: string
+	target: SettingsTarget
+}) {
+	const text = settingsChipText(target)
+	return (
+		<a
+			href={`/${workspaceId}/settings${target.path ? `/${target.path}` : ''}`}
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label={text}
+			className={OWN_CHIP_CLASS}
+		>
+			<SettingsIcon size={12} aria-hidden className="shrink-0" />
+			<span className="truncate">{text}</span>
 		</a>
 	)
 }

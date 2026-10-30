@@ -66,6 +66,12 @@ const triggerUrl = (id: string) => `https://maskin.io/${WS}/triggers/${id}`
 const AGENT = 'dc2ee1b4-5659-4038-be88-0a1b298ba373'
 const agentUrl = (id: string) => `https://maskin.io/${WS}/agents/${id}`
 
+const settingsUrl = (section = '') => `https://maskin.io/${WS}/settings${section}`
+// A stand-in for the real settings chip: placement is what is under test here.
+const renderSettingsChip = (target: { label: string }) => (
+	<a data-testid="settings-chip" href="/settings">{`Settings: ${target.label}`}</a>
+)
+
 const hasOwnCard = (item: HTMLElement) =>
 	Array.from(item.children).some((child) => child.getAttribute('data-testid') === 'card')
 
@@ -74,13 +80,25 @@ function renderMessage(
 	withCards = true,
 	skipIds?: ReadonlySet<string>,
 	updatedIds?: ReadonlySet<string>,
+	withSettingsChip = true,
+	enterprise = false,
 ) {
 	return render(
 		<MarkdownContent
 			content={content}
 			size="sm"
 			linkedCards={
-				withCards ? { workspaceId: WS, renderCard, renderChip, skipIds, updatedIds } : undefined
+				withCards
+					? {
+							workspaceId: WS,
+							enterprise,
+							renderCard,
+							renderChip,
+							skipIds,
+							updatedIds,
+							renderSettingsChip: withSettingsChip ? renderSettingsChip : undefined,
+						}
+					: undefined
 			}
 		/>,
 		{ wrapper: TestWrapper },
@@ -158,6 +176,74 @@ describe('MarkdownContent linkedCards, GitHub links', () => {
 describe('MarkdownContent linkedCards', () => {
 	beforeEach(() => {
 		qualifying = new Set([A, B, FILE])
+	})
+
+	it('draws a settings link in a sentence as a chip, whatever its link text', () => {
+		renderMessage(`Set it up under [the billing page](${settingsUrl('/billing')}) first.`)
+		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: Billing')
+		expect(screen.queryByText('the billing page')).not.toBeInTheDocument()
+		expect(screen.getByText(/Set it up under/)).toBeInTheDocument()
+	})
+
+	it('keeps a settings link alone on its line a chip in the text, not a card', () => {
+		renderMessage(`Here you go.\n\n[Settings](${settingsUrl()})`)
+		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: General')
+		expect(screen.queryByTestId('card')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('reference')).not.toBeInTheDocument()
+		expect(screen.getByTestId('settings-chip').closest('p')).not.toBeNull()
+	})
+
+	it('does not count settings chips toward the three cards of a message', () => {
+		renderMessage(
+			[
+				`[a](${settingsUrl('/mcp')})`,
+				`[a](${settingsUrl('/billing')})`,
+				`[a](${settingsUrl('/members')})`,
+				`[a](${settingsUrl('/skills')})`,
+				`[e](${objectUrl(A)})`,
+			].join('\n\n'),
+		)
+		expect(screen.getAllByTestId('settings-chip')).toHaveLength(4)
+		expect(screen.getAllByTestId('card')).toHaveLength(1)
+	})
+
+	it('leaves an unknown section, a deeper path and another workspace as plain links', () => {
+		renderMessage(
+			[
+				`[nope](${settingsUrl('/nope')})`,
+				`[deep](${settingsUrl('/keychain/new')})`,
+				`[other](https://maskin.io/${A}/settings/mcp)`,
+			].join('\n\n'),
+		)
+		expect(screen.queryByTestId('settings-chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'nope' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'deep' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'other' })).toBeInTheDocument()
+	})
+
+	it('draws a Keys link as a chip in an enterprise workspace', () => {
+		renderMessage(
+			`[the keys page](${settingsUrl('/keys')})`,
+			true,
+			undefined,
+			undefined,
+			true,
+			true,
+		)
+		expect(screen.getByTestId('settings-chip')).toHaveTextContent('Settings: Keys')
+		expect(screen.queryByText('the keys page')).not.toBeInTheDocument()
+	})
+
+	it('leaves a Keys link a plain link when the workspace is not enterprise', () => {
+		renderMessage(`[the keys page](${settingsUrl('/keys')})`)
+		expect(screen.queryByTestId('settings-chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'the keys page' })).toBeInTheDocument()
+	})
+
+	it('leaves a settings link as it was when no settings chip renderer is given', () => {
+		renderMessage(`[the keys page](${settingsUrl('/keys')})`, true, undefined, undefined, false)
+		expect(screen.queryByTestId('settings-chip')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'the keys page' })).toBeInTheDocument()
 	})
 
 	it('replaces a paragraph that is only a link by its card and drops the link text', () => {

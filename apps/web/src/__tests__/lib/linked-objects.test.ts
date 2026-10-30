@@ -11,6 +11,8 @@ import {
 	peopleLine,
 	pickFacts,
 	plainSnippet,
+	settingsChipText,
+	settingsTargetOf,
 	shortName,
 	showsObjectCard,
 	splitOwnLinks,
@@ -242,6 +244,37 @@ describe('splitOwnLinks', () => {
 		}
 	})
 
+	it('finds a settings address in your own message, alone or in a sentence', () => {
+		const settings = `https://maskin.io/${WS}/settings/billing`
+		expect(splitOwnLinks(settings, WS)).toEqual([
+			{ kind: 'settings', target: { path: 'billing', label: 'Billing' } },
+		])
+		expect(splitOwnLinks(`open ${settings}, then pay`, WS)).toEqual([
+			{ kind: 'text', text: 'open ' },
+			{ kind: 'settings', target: { path: 'billing', label: 'Billing' } },
+			{ kind: 'text', text: ', then pay' },
+		])
+	})
+
+	it('draws a Keys address in your own message as a chip only in an enterprise workspace', () => {
+		const keys = `https://maskin.io/${WS}/settings/keys`
+		expect(splitOwnLinks(keys, WS, true)).toEqual([
+			{ kind: 'settings', target: { path: 'keys', label: 'Keys', enterpriseOnly: true } },
+		])
+		expect(splitOwnLinks(keys, WS, false)).toEqual([{ kind: 'text', text: keys }])
+		expect(splitOwnLinks(keys, WS)).toEqual([{ kind: 'text', text: keys }])
+	})
+
+	it('leaves an unknown settings section, a deeper one and another workspace as words', () => {
+		for (const text of [
+			`https://maskin.io/${WS}/settings/nope`,
+			`https://maskin.io/${WS}/settings/keychain/new`,
+			`https://maskin.io/${A}/settings/mcp`,
+		]) {
+			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
+		}
+	})
+
 	it('finds a bare address of a chat', () => {
 		expect(splitOwnLinks(`see ${url('chats', A)}.`, WS)).toEqual([
 			{ kind: 'text', text: 'see ' },
@@ -359,6 +392,77 @@ describe('splitOwnLinks with GitHub addresses', () => {
 		for (const text of [`${pr}/files`, 'https://github.com.evil.com/a/b/pull/1']) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
+	})
+})
+
+describe('settingsTargetOf', () => {
+	const at = (path: string, host = 'https://maskin.io') => `${host}/${WS}/settings${path}`
+
+	it('reads the bare settings address as General', () => {
+		for (const href of [at(''), at('/'), `/${WS}/settings`]) {
+			expect(settingsTargetOf(href, WS)).toEqual({ path: '', label: 'General' })
+		}
+	})
+
+	it('reads each section of the settings menu', () => {
+		const sections = [
+			['objects', 'Objects'],
+			['members', 'Members'],
+			['integrations', 'Integrations'],
+			['extensions', 'Extensions'],
+			['skills', 'Skills'],
+			['mcp', 'MCP'],
+			['billing', 'Billing'],
+			['keychain', 'Keychain'],
+		]
+		for (const [path, label] of sections) {
+			expect(settingsTargetOf(at(`/${path}`), WS)).toEqual({ path, label })
+		}
+		expect(settingsTargetOf(at('/mcp?tab=x#top'), WS)?.label).toBe('MCP')
+	})
+
+	it('reads Keys only in an enterprise workspace, as the settings menu shows it', () => {
+		expect(settingsTargetOf(at('/keys'), WS, true)).toEqual({
+			path: 'keys',
+			label: 'Keys',
+			enterpriseOnly: true,
+		})
+		expect(settingsTargetOf(at('/keys'), WS, false)).toBeNull()
+		expect(settingsTargetOf(at('/keys'), WS)).toBeNull()
+		// Every other section is the same either way.
+		expect(settingsTargetOf(at('/billing'), WS, true)).toEqual({
+			path: 'billing',
+			label: 'Billing',
+		})
+	})
+
+	it('leaves an unknown section, a deeper path and another page as plain links', () => {
+		for (const href of [
+			at('/nope'),
+			at('/general'),
+			at('/billing/invoices'),
+			at('/keychain/new'),
+			at('/objects/priority'),
+			`https://maskin.io/${WS}/agents`,
+		]) {
+			expect(settingsTargetOf(href, WS)).toBeNull()
+		}
+	})
+
+	it('leaves another workspace, another site and a non-address as plain links', () => {
+		for (const href of [
+			at('/mcp', 'https://example.com'),
+			at('/mcp', 'https://maskin.io.evil.com'),
+			`https://maskin.io/${A}/settings/mcp`,
+			undefined,
+			42,
+		]) {
+			expect(settingsTargetOf(href, WS)).toBeNull()
+		}
+	})
+
+	it('words the chip as Settings and the section', () => {
+		expect(settingsChipText({ path: 'mcp', label: 'MCP' })).toBe('Settings: MCP')
 	})
 })
 
