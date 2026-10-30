@@ -214,16 +214,11 @@ describe('MCP surface pin', () => {
 	})
 
 	it('every alias row targets a registered tool', async () => {
-		const { ALIASES, DEFAULT_WORKSPACE_TOOLS } = await import('../aliases')
+		const { ALIASES } = await import('../aliases')
 		const violations: string[] = []
 		for (const row of ALIASES) {
 			if (!registeredTools.has(row.tool)) {
 				violations.push(`alias row '${row.tool} ${row.oldPath}' targets an unregistered tool`)
-			}
-		}
-		for (const name of DEFAULT_WORKSPACE_TOOLS) {
-			if (!registeredTools.has(name)) {
-				violations.push(`workspace_id fallback names an unregistered tool: ${name}`)
 			}
 		}
 		expect(violations, violations.join('\n')).toEqual([])

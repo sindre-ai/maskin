@@ -69,17 +69,6 @@ export const ALIASES: readonly AliasRow[] = [
 	{ tool: 'delete_workspace_skill', oldPath: 'id', newPath: 'name', kind: 'rename' },
 ]
 
-// workspace_id is required today on these three tools (the ones built on
-// requiredWorkspaceId in ./tools.ts). A call that leaves it out gets the
-// connection's default workspace. This is a relaxation, not an alias: no old
-// name is involved, so it is not in the table above and is never reported as
-// a rename. The advertised schema is unchanged.
-export const DEFAULT_WORKSPACE_TOOLS: ReadonlySet<string> = new Set([
-	'create_objects',
-	'list_objects',
-	'create_loop',
-])
-
 const ROWS_BY_TOOL = new Map<string, AliasRow[]>()
 for (const row of ALIASES) {
 	const rows = ROWS_BY_TOOL.get(row.tool) ?? []

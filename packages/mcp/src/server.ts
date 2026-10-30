@@ -2961,9 +2961,7 @@ export function createMcpServer(config: McpConfig) {
 				? {
 						...baseDefinition,
 						inputSchema: wrapInputSchema(baseDefinition.inputSchema, (raw) => {
-							const normalised = normaliseArgs(name, raw, {
-								defaultWorkspaceId: config.defaultWorkspaceId,
-							})
+							const normalised = normaliseArgs(name, raw)
 							// One event per call that used at least one old name. Here, not in
 							// the handler, so it fires before validation and a call that then
 							// fails validation is still counted. Fire and forget; key names
