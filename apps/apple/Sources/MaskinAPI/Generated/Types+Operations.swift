@@ -47108,25 +47108,37 @@ public enum Operations {
                             public var questions: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload.questionsPayload
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question/reply_to_session`.
                             public var reply_to_session: Swift.Bool?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question/routed_to`.
+                            @frozen public enum routed_toPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case session_chat = "session_chat"
+                                case helper_chat = "helper_chat"
+                                case master = "master"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question/routed_to`.
+                            public var routed_to: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload.routed_toPayload?
                             /// Creates a new `questionPayload`.
                             ///
                             /// - Parameters:
                             ///   - session_id:
                             ///   - questions:
                             ///   - reply_to_session:
+                            ///   - routed_to:
                             public init(
                                 session_id: Swift.String,
                                 questions: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload.questionsPayload,
-                                reply_to_session: Swift.Bool? = nil
+                                reply_to_session: Swift.Bool? = nil,
+                                routed_to: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.questionPayload.routed_toPayload? = nil
                             ) {
                                 self.session_id = session_id
                                 self.questions = questions
                                 self.reply_to_session = reply_to_session
+                                self.routed_to = routed_to
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
                                 case questions
                                 case reply_to_session
+                                case routed_to
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/question`.
@@ -52046,25 +52058,37 @@ public enum Operations {
                             public var questions: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload.questionsPayload
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question/reply_to_session`.
                             public var reply_to_session: Swift.Bool?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question/routed_to`.
+                            @frozen public enum routed_toPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case session_chat = "session_chat"
+                                case helper_chat = "helper_chat"
+                                case master = "master"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question/routed_to`.
+                            public var routed_to: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload.routed_toPayload?
                             /// Creates a new `questionPayload`.
                             ///
                             /// - Parameters:
                             ///   - session_id:
                             ///   - questions:
                             ///   - reply_to_session:
+                            ///   - routed_to:
                             public init(
                                 session_id: Swift.String,
                                 questions: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload.questionsPayload,
-                                reply_to_session: Swift.Bool? = nil
+                                reply_to_session: Swift.Bool? = nil,
+                                routed_to: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.questionPayload.routed_toPayload? = nil
                             ) {
                                 self.session_id = session_id
                                 self.questions = questions
                                 self.reply_to_session = reply_to_session
+                                self.routed_to = routed_to
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
                                 case questions
                                 case reply_to_session
+                                case routed_to
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/question`.

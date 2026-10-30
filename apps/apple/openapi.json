@@ -39092,6 +39092,14 @@
 													},
 													"reply_to_session": {
 														"type": "boolean"
+													},
+													"routed_to": {
+														"type": "string",
+														"enum": [
+															"session_chat",
+															"helper_chat",
+															"master"
+														]
 													}
 												},
 												"required": [
@@ -42125,6 +42133,14 @@
 													},
 													"reply_to_session": {
 														"type": "boolean"
+													},
+													"routed_to": {
+														"type": "string",
+														"enum": [
+															"session_chat",
+															"helper_chat",
+															"master"
+														]
 													}
 												},
 												"required": [
@@ -47738,7 +47754,8 @@
 											"type": "string",
 											"enum": [
 												"chat",
-												"chief_of_staff"
+												"chief_of_staff",
+												"master"
 											]
 										}
 									},
