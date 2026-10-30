@@ -17,6 +17,7 @@ import {
 } from '../lib/analytics/group-chat-routing-events'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
+import { loadSiblingSessionsNote, loadThreadSeed, takeSessionDigests } from './chat-session-context'
 import { insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
 import { type SessionManager, matchThread } from './session-manager'
@@ -712,6 +713,12 @@ export async function deliverTurnToAgent(params: {
 		agentId,
 		sessionThreadRootId,
 	)
+	if (existing) {
+		// What the agent's other sessions in this chat replied since this one last spoke. It rides on
+		// this turn, which the message started anyway, and is never delivered on its own.
+		const digest = takeSessionDigests(existing.id)
+		if (digest) turnPayload.message.content += `\n\n${digest}`
+	}
 	if (existing && existing.status !== 'running') {
 		// The agent's session is still booting (pending/starting/queued) —
 		// its stdin isn't attached yet, so a writeInput would fail and a
@@ -860,6 +867,34 @@ async function spawnOrJoinConversationSession(params: {
 		activeSessionsNote,
 	} = params
 
+	// A thread session starts from the thread root and the main chat, not from the last messages
+	// of whatever thread was busiest, and is told about the agent's other sessions in this chat.
+	let seedHistory = conversationHistory
+	let siblingSessionsNote = ''
+	if (threadRootId !== null) {
+		try {
+			const seed = await loadThreadSeed(db, { conversationId, threadRootId })
+			seedHistory = seed.history
+			logger.info('Seeding a thread session', {
+				conversationId,
+				threadRootId,
+				seedMessages: seed.history.length,
+				approxSeedTokens: seed.approxTokens,
+			})
+		} catch (err) {
+			logger.warn('Could not build a thread seed — using the recent history instead', {
+				conversationId,
+				threadRootId,
+				error: String(err),
+			})
+		}
+		siblingSessionsNote = await loadSiblingSessionsNote(db, {
+			conversationId,
+			agentId,
+			threadRootId,
+		})
+	}
+
 	try {
 		await startSession({
 			workspaceId,
@@ -867,7 +902,7 @@ async function spawnOrJoinConversationSession(params: {
 			callerKind: 'chat',
 			actionPrompt: buildConversationReplyPrompt({
 				conversationId,
-				conversationHistory,
+				conversationHistory: seedHistory,
 				newMessageContent: message.content,
 				authorName: message.authorName,
 				authorActorId: message.actorId,
@@ -875,6 +910,7 @@ async function spawnOrJoinConversationSession(params: {
 				wakeReason,
 				groupWakeRule,
 				activeSessionsNote,
+				siblingSessionsNote,
 				threadRootId,
 			}),
 			config: {
@@ -895,24 +931,27 @@ async function spawnOrJoinConversationSession(params: {
 		// The seed prompt above inlines recent history up to and including this
 		// message — any turn still buffered for this pair from a previous, dead
 		// session is already covered by it. Clear those rows so the post-boot
-		// drain doesn't re-deliver them as duplicates.
-		try {
-			await db
-				.delete(conversationPendingTurns)
-				.where(
-					and(
-						eq(conversationPendingTurns.conversationId, conversationId),
-						eq(conversationPendingTurns.actorId, agentId),
-						matchThread(conversationPendingTurns.threadRootId, threadRootId),
-						lte(conversationPendingTurns.messageId, messageId),
-					),
-				)
-		} catch (err) {
-			logger.warn('Failed to clear seed-covered pending turns', {
-				agentId,
-				conversationId,
-				error: String(err),
-			})
+		// drain doesn't re-deliver them as duplicates. A thread session's seed holds no thread
+		// replies, so a turn buffered for its thread is not covered and stays for the drain.
+		if (threadRootId === null) {
+			try {
+				await db
+					.delete(conversationPendingTurns)
+					.where(
+						and(
+							eq(conversationPendingTurns.conversationId, conversationId),
+							eq(conversationPendingTurns.actorId, agentId),
+							matchThread(conversationPendingTurns.threadRootId, threadRootId),
+							lte(conversationPendingTurns.messageId, messageId),
+						),
+					)
+			} catch (err) {
+				logger.warn('Failed to clear seed-covered pending turns', {
+					agentId,
+					conversationId,
+					error: String(err),
+				})
+			}
 		}
 		return 'started_new_session'
 	} catch (err) {
@@ -1160,6 +1199,8 @@ function buildConversationReplyPrompt(ctx: {
 	wakeReason: ConversationWakeReason
 	groupWakeRule?: boolean
 	activeSessionsNote: string
+	/** A thread session's note on the agent's other live sessions in this chat; '' for none. */
+	siblingSessionsNote: string
 	threadRootId: number | null
 }): string {
 	return [
@@ -1175,6 +1216,7 @@ function buildConversationReplyPrompt(ctx: {
 		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
 		...(ctx.groupWakeRule && !ctx.isDirectConversation ? [GROUP_HANDOFF_HINT] : []),
 		...(ctx.activeSessionsNote ? ['', ctx.activeSessionsNote] : []),
+		...(ctx.siblingSessionsNote ? ['', ctx.siblingSessionsNote] : []),
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,
