@@ -796,6 +796,17 @@ describe('voice channel — a risky write waits for the person to say yes', () =
 	})
 })
 
+describe('voice channel — wait_for_user', () => {
+	it('answers ok without touching the MCP server, the chat or the write gate', async () => {
+		const { toolCall, sent, invokeTool } = setup()
+		await toolCall('wait_for_user', {})
+		expect(invokeTool).not.toHaveBeenCalled()
+		expect(writeLine).not.toHaveBeenCalled()
+		expect(lastResult(sent)).toMatchObject({ ok: true, error_code: null })
+		expect(sent.filter((m) => m.type === 'conversation')).toHaveLength(0)
+	})
+})
+
 describe('voice channel — show_in_chat', () => {
 	const CONV = '8ec06d7f-ea92-4476-90b3-af5c2b46d997'
 
@@ -1203,5 +1214,150 @@ describe('isDecisionCardWrite', () => {
 		expect(
 			isDecisionCardWrite(state, 'create_comment', { entity_id: ENTITY, decision: { q: 1 } }),
 		).toBe(false)
+	})
+})
+
+describe('voice channel — ask_workspace', () => {
+	const ALL_TOOLS = ['search_objects', 'update_objects', 'gmail_send_email'].map((name) => ({
+		type: 'function' as const,
+		name,
+		description: name,
+		parameters: { type: 'object', properties: {} },
+	}))
+	type Turn = {
+		text: string | null
+		toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>
+	}
+
+	function askSetup(turns: Turn[]) {
+		const invoke = vi.fn().mockResolvedValue(textResult('done'))
+		const complete = vi.fn(async () => turns.shift() ?? { text: 'ok', toolCalls: [] })
+		const sent: Array<Record<string, unknown>> = []
+		const channel: Channel = createVoiceChannel({
+			db: {} as Database,
+			session,
+			agentName: 'Chief of Staff',
+			invokeTool: invoke,
+			isReadOnlyTool: (name) => READ_ONLY.has(name) || name === 'ask_workspace',
+			send: (m) => sent.push(m as Record<string, unknown>),
+			delegate: { tools: ALL_TOOLS, model: { complete } },
+		})
+		const ask = (args: Record<string, unknown>, callId = 'call_1') =>
+			channel.onMessage(
+				JSON.stringify({
+					type: 'tool_call',
+					call_id: callId,
+					name: 'ask_workspace',
+					arguments: JSON.stringify(args),
+				}),
+			)
+		const results = () =>
+			sent.filter((m) => m.type === 'tool_result') as Array<{
+				ok: boolean
+				error_code: string | null
+				event: { item: { output: string } }
+			}>
+		const output = (n: number) => JSON.parse(results()[n]?.event.item.output ?? '{}')
+		return { channel, invoke, complete, ask, results, output }
+	}
+
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('runs a read the text model asks for and hands back its answer', async () => {
+		const { ask, invoke, results, output, channel } = askSetup([
+			{
+				text: null,
+				toolCalls: [{ id: 't1', name: 'search_objects', arguments: { q: 'unipile' } }],
+			},
+			{ text: 'The Unipile bet is in progress.', toolCalls: [] },
+		])
+		await ask({ request: 'status of the Unipile bet' })
+		await channel.idle()
+		expect(invoke).toHaveBeenCalledWith(
+			'search_objects',
+			{ q: 'unipile', workspace_id: WORKSPACE },
+			expect.anything(),
+		)
+		expect(results()[0]).toMatchObject({ ok: true, error_code: null })
+		expect(output(0)).toEqual({ result: 'The Unipile bet is in progress.' })
+		// The inner call is logged under its own name, not only as ask_workspace.
+		expect(recordLog.mock.calls.map((c) => (c[1] as { toolName: string }).toolName)).toEqual([
+			'search_objects',
+			'ask_workspace',
+		])
+	})
+
+	it('runs an ordinary write and leaves a receipt for it like a direct call', async () => {
+		describeToolCall.mockResolvedValue([{ kind: 'update', line: 'Updated' } as never])
+		const { ask, invoke } = askSetup([
+			{ text: null, toolCalls: [{ id: 't1', name: 'update_objects', arguments: { ids: ['x'] } }] },
+			{ text: 'Done.', toolCalls: [] },
+		])
+		await ask({ request: 'close it' })
+		expect(invoke).toHaveBeenCalledTimes(1)
+		expect(describeToolCall).toHaveBeenCalledWith(
+			expect.objectContaining({ tool: 'update_objects', outcome: 'ran' }),
+		)
+		expect(postReceiptLine).toHaveBeenCalledTimes(1)
+	})
+
+	it('holds a risky tool the text model picks, and runs exactly that call after a yes', async () => {
+		const args = { to: 'lars@example.dk', body: 'hi' }
+		const { ask, invoke, complete, results, output, channel } = askSetup([
+			{ text: null, toolCalls: [{ id: 't1', name: 'gmail_send_email', arguments: args }] },
+		])
+		await ask({ request: 'email Lars hi' })
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[0]).toMatchObject({ ok: false, error_code: 'voice_confirmation_required' })
+		expect(output(0).error).toContain('Not done yet')
+		expect(output(0).error).toContain('call ask_workspace again with the same request')
+		const id = /confirmation_id "([^"]+)"/.exec(output(0).error)?.[1] ?? ''
+		expect(id).not.toBe('')
+		// The text model stopped at the hold: it is not asked for another turn.
+		expect(complete).toHaveBeenCalledTimes(1)
+
+		await channel.onMessage(JSON.stringify({ type: 'user_speech_started', item_id: 'i1' }))
+		await channel.onMessage(
+			JSON.stringify({ type: 'transcript', role: 'user', text: 'yes, send it', item_id: 'i1' }),
+		)
+		await ask({ request: 'email Lars hi', confirmation_id: id }, 'call_2')
+		expect(invoke).toHaveBeenCalledTimes(1)
+		expect(invoke).toHaveBeenCalledWith(
+			'gmail_send_email',
+			{ ...args, workspace_id: WORKSPACE },
+			expect.anything(),
+		)
+		// Not rebuilt by the text model.
+		expect(complete).toHaveBeenCalledTimes(1)
+		expect(results()[1]).toMatchObject({ ok: true })
+	})
+
+	it('does not run a held call when the person said nothing after the model repeats it', async () => {
+		vi.useFakeTimers()
+		const { ask, invoke, results, output } = askSetup([
+			{ text: null, toolCalls: [{ id: 't1', name: 'gmail_send_email', arguments: { to: 'a' } }] },
+		])
+		await ask({ request: 'email' })
+		const id = /confirmation_id "([^"]+)"/.exec(output(0).error)?.[1] ?? ''
+		const repeated = ask({ request: 'email', confirmation_id: id }, 'call_2')
+		await vi.advanceTimersByTimeAsync(3_000)
+		await repeated
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[1]).toMatchObject({ ok: false, error_code: 'voice_confirmation_missing' })
+	})
+
+	it('ignores a confirmation id it never issued and treats the call as a fresh request', async () => {
+		const { ask, complete, invoke } = askSetup([{ text: 'Nothing to do.', toolCalls: [] }])
+		await ask({ request: 'anything', confirmation_id: 'made-up' })
+		expect(complete).toHaveBeenCalledTimes(1)
+		expect(invoke).not.toHaveBeenCalled()
+	})
+
+	it('answers plainly when the call has no delegate (full tool mode)', async () => {
+		const ctx = setup()
+		await ctx.toolCall('ask_workspace', { request: 'x' })
+		expect(lastResult(ctx.sent)).toMatchObject({ ok: false, error_code: 'voice_tool_failed' })
 	})
 })

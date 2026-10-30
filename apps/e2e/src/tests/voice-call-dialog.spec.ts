@@ -70,3 +70,65 @@ test.describe('Voice call dialog — Permission state', () => {
 		await expect(page.getByRole('button', { name: 'Allow microphone & start call' })).toBeVisible()
 	})
 })
+
+// The WebRTC answer needs the OpenAI edge, so the offer route is intercepted:
+// this asserts what the browser asks the mic for and what it posts, not that
+// audio flows.
+test.describe('Voice call dialog — mic constraints and offer body', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`asks for processed mono audio and posts noise_reduction @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await page.addInitScript(() => {
+				const w = window as unknown as { __micConstraints?: unknown }
+				Object.defineProperty(navigator, 'mediaDevices', {
+					configurable: true,
+					value: {
+						getUserMedia: async (constraints: unknown) => {
+							w.__micConstraints = constraints
+							const ctx = new AudioContext()
+							return ctx.createMediaStreamDestination().stream
+						},
+						enumerateDevices: async () => [{ kind: 'audioinput' }],
+					},
+				})
+			})
+			await page.route('**/api/voice-sessions', (route) =>
+				route.request().method() === 'POST'
+					? route.fulfill({ json: { voice_session_id: 'e2e-voice-session' } })
+					: route.fallback(),
+			)
+			await page.route('**/api/voice-sessions/*/hangup', (route) => route.fulfill({ json: {} }))
+			const offerBody = new Promise<{ sdp: string; noise_reduction?: string }>((resolve) => {
+				void page.route('**/api/voice-sessions/*/offer', (route) => {
+					resolve(route.request().postDataJSON())
+					return route.fulfill({ status: 502, json: { error: 'e2e: no vendor' } })
+				})
+			})
+
+			const agent = await account.api.createAgentActor('Vera Voice')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+			await page.getByRole('button', { name: /Call Vera Voice/ }).click()
+			await page.getByRole('button', { name: 'Allow microphone & start call' }).click()
+
+			const body = await offerBody
+			expect(body.sdp.length).toBeGreaterThan(0)
+			expect(['near_field', 'far_field']).toContain(body.noise_reduction)
+			expect(
+				await page.evaluate(
+					() => (window as never as { __micConstraints: unknown }).__micConstraints,
+				),
+			).toEqual({
+				audio: {
+					echoCancellation: true,
+					noiseSuppression: true,
+					autoGainControl: true,
+					channelCount: 1,
+				},
+			})
+		})
+	}
+})
