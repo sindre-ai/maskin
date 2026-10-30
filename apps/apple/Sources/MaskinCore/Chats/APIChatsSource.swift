@@ -59,6 +59,25 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		title: String, participantIDs: [String], initialMessage: String?,
 		initialMetadata: ChatSendMetadata?, idempotencyKey: String
 	) async throws -> ConversationSummary {
+		try await post(
+			title: title, participantIDs: participantIDs, direct: false, initialMessage: initialMessage,
+			initialMetadata: initialMetadata, idempotencyKey: idempotencyKey)
+	}
+
+	public func directChat(with participantID: String, title: String, idempotencyKey: String)
+		async throws -> ConversationSummary
+	{
+		try await post(
+			title: title, participantIDs: [participantID], direct: true, initialMessage: nil,
+			initialMetadata: nil, idempotencyKey: idempotencyKey)
+	}
+
+	/// Without `direct` the server always makes a new topical chat (201). With it, the server gets or
+	/// creates the one direct message with the other participant: 200 when it exists, 201 when new.
+	private func post(
+		title: String, participantIDs: [String], direct: Bool, initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
 		// Same round-trip as `send`: ChatSendMetadata already uses the API's exact keys.
 		let wireMetadata = try initialMetadata.flatMap { value -> InitialMetadata? in
 			guard !value.isEmpty else { return nil }
@@ -70,10 +89,19 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
 					body: .json(
 						.init(
-							title: title, participant_actor_ids: participantIDs,
+							title: title, participant_actor_ids: participantIDs, direct: direct ? true : nil,
 							initial_message: initialMessage, initial_message_metadata: wireMetadata))))
 		}
 		switch output {
+		case .ok(let ok):
+			let row = try ok.body.json
+			return ConversationSummary(
+				id: row.id, title: row.title, lastMessageAt: ChatDates.parse(row.lastMessageAt),
+				createdAt: ChatDates.parse(row.createdAt), pinned: row.pinned, archived: row.archived,
+				unreadCount: Int(row.unread_count),
+				participants: row.participants.map {
+					ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
+				}, lastReadMessageID: row.last_read_message_id.map(Int.init))
 		case .created(let created):
 			let row = try created.body.json
 			return ConversationSummary(

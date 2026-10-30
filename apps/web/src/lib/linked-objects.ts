@@ -714,14 +714,28 @@ export function placeLinkedCards(
 
 const MAX_SNIPPET_LENGTH = 280
 
+/** A link whose address was cut off by the length limit: `[text](https://exa`. */
+const CUT_LINK_TAIL = /\[([^\]\n]*)\]\([^)\n]*$/
+/** A link whose text was cut off by the length limit: `[some te`. */
+const CUT_LABEL_TAIL = /\[([^\]\n]*)$/
+const BARE_ADDRESS = /<?(https?:\/\/[^\s<>]*)>?/g
+/** Stands in for a bare address while the line is cleaned; never present in real text. */
+const ADDRESS_MARK = '\u0000'
+/** Matches nothing: the address step of plainLines when addresses stay as written. */
+const NO_MATCH = /(?!)/g
+
+/** An address becomes ADDRESS_MARK; the full stop or bracket that closes the sentence stays. */
+function markAddress(_all: string, url: string): string {
+	return ADDRESS_MARK + (url.match(/[.,;:!?)\]'"]+$/)?.[0] ?? '')
+}
+
 /**
- * The first lines of an object's text as plain words, for the muted row on a card: headings,
- * list markers, emphasis, links, code fences and table borders are removed, the lines are joined
- * with spaces and the result is cut at a length the card can clamp to two lines.
+ * Markdown as plain words: headings, list markers, emphasis, links, code fences and table borders
+ * are removed, and the lines joined with spaces. With `marks` set a bare address becomes
+ * ADDRESS_MARK for the caller to word; without it the address stays as written.
  */
-export function plainSnippet(content: string | null | undefined): string {
-	if (!content) return ''
-	const text = content
+function plainLines(text: string, marks: boolean): string {
+	return text
 		.replace(FENCED_CODE, '$1')
 		.split('\n')
 		.map((line) =>
@@ -730,6 +744,7 @@ export function plainSnippet(content: string | null | undefined): string {
 				.replace(/^\s*(?:[-*_]\s*){3,}$/, '')
 				.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
 				.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+				.replace(marks ? BARE_ADDRESS : NO_MATCH, markAddress)
 				.replace(/[*_~`]+/g, '')
 				.replace(/\|/g, ' ')
 				.replace(/^\s*:?-{3,}:?\s*$/, '')
@@ -739,7 +754,50 @@ export function plainSnippet(content: string | null | undefined): string {
 		.join(' ')
 		.replace(/\s+/g, ' ')
 		.trim()
+}
+
+/**
+ * The first lines of an object's text as plain words, for the muted row on a card: headings,
+ * list markers, emphasis, links, code fences and table borders are removed, the lines are joined
+ * with spaces and the result is cut at a length the card can clamp to two lines.
+ */
+export function plainSnippet(content: string | null | undefined): string {
+	if (!content) return ''
+	const text = plainLines(content, false)
 	return text.length > MAX_SNIPPET_LENGTH ? `${text.slice(0, MAX_SNIPPET_LENGTH).trimEnd()}…` : text
+}
+
+/** One run of a chat list preview. `muted` runs are the word "link" standing in for an address. */
+export interface PreviewPart {
+	text: string
+	muted?: boolean
+}
+
+/** How much of a message the chat list preview reads; the row clamps the rest to two lines. */
+const PREVIEW_SOURCE_LENGTH = 400
+
+/**
+ * A chat's last message as plain words for the list row. A markdown link shows its text (also when
+ * the length limit cut the link in the text or in the address), a bare address shows "link" as a
+ * muted run, and marks (bold, italic, code, headings, list marks) are removed. The "{author}: "
+ * lead is not part of this; the row adds it.
+ */
+export function plainPreview(content: string | null | undefined): PreviewPart[] {
+	if (!content) return []
+	const cut = content.length > PREVIEW_SOURCE_LENGTH
+	const source = content
+		.replaceAll(ADDRESS_MARK, '')
+		.slice(0, PREVIEW_SOURCE_LENGTH)
+		.replace(CUT_LINK_TAIL, '$1')
+		.replace(CUT_LABEL_TAIL, '$1')
+	const pieces = plainLines(source, true).split(ADDRESS_MARK)
+	const parts: PreviewPart[] = []
+	pieces.forEach((text, i) => {
+		if (i > 0) parts.push({ text: 'link', muted: true })
+		if (text) parts.push({ text })
+	})
+	if (cut && parts.length > 0) parts.push({ text: '…' })
+	return parts
 }
 
 /** The longest a name on an inline chip runs before it is cut with an ellipsis. */

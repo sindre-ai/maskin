@@ -150,10 +150,9 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 					? (search.order as 'asc' | 'desc')
 					: DEFAULT_ORDER,
 			q: typeof search.q === 'string' ? search.q : undefined,
-			// GROUP BY rests on State (mockup 994–999). `none` is the explicit
-			// "ungrouped" choice — without a sentinel, clearing the param would just
-			// fall back to the default again.
-			groupBy: typeof search.groupBy === 'string' ? search.groupBy : 'status',
+			// GROUP BY rests on `none` (a flat list). `none` stays an explicit sentinel so a
+			// persisted or deep-linked grouping can still be told apart from "no param".
+			groupBy: typeof search.groupBy === 'string' ? search.groupBy : 'none',
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
 			includeArchived: includeArchived ? (1 as const) : undefined,
 			...metadataFilters,
@@ -1744,7 +1743,7 @@ function ObjectsRoute() {
 					starred: undefined,
 					updated: undefined,
 					q: undefined,
-					groupBy: 'status',
+					groupBy: 'none',
 					ids: undefined,
 					includeArchived: undefined,
 				},

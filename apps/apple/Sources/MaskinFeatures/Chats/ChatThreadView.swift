@@ -15,8 +15,15 @@ import SwiftUI
 /// a live status line under it. Takes a ready `ChatStore` and `ChatComposerModel` so it previews
 /// and snapshots without a server.
 /// Which thread is open over a chat: the id of its root message.
-struct ThreadRoute: Hashable {
+struct ThreadRoute: Hashable, Identifiable {
 	let rootID: Int
+	var id: Int { rootID }
+
+	/// The route a tap on a message's thread pill (or Reply in thread) opens. Nil for a message the
+	/// server has not stored yet: it has no thread to open (and shows no pill).
+	static func opening(_ message: ChatMessage) -> ThreadRoute? {
+		message.serverID.map(ThreadRoute.init(rootID:))
+	}
 }
 
 struct ChatThreadView: View {
@@ -212,15 +219,18 @@ struct ChatThreadView: View {
 					Text(store.notice ?? "")
 				}
 				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
-				.navigationDestination(item: $threadRoute) { route in
-					if let root = store.threadRoot(route.rootID) {
-						ThreadScreen(store: store, root: root)
-					} else {
-						// The root is older than the page held: fetch it rather than push an empty screen.
-						ProgressView()
-							.frame(maxWidth: .infinity, maxHeight: .infinity)
-							.task { _ = await store.loadedThreadRoot(route.rootID) }
+				// Wide layouts push the thread. Compact width (iPhone) presents it as a sheet: the chat sits
+				// in the detail column of the Team split view, and a destination declared there is not
+				// reliably honoured when the split view collapses to one column, so the tap did nothing.
+				.navigationDestination(item: pushedThread) { threadDestination($0) }
+				.sheet(item: sheetThread) { route in
+					NavigationStack {
+						threadDestination(route)
+							.toolbar {
+								ToolbarItem(placement: .confirmationAction) { Button("Done") { threadRoute = nil } }
+							}
 					}
+					.presentationDetents([.large])
 				}
 				.linkedItems(runtime)
 				.sheet(item: $caughtSecret) { caught in
@@ -352,6 +362,21 @@ struct ChatThreadView: View {
 				}
 				.buttonStyle(.maskinPressed)
 			}
+		}
+	}
+
+	private var pushedThread: Binding<ThreadRoute?> { sizeClass == .compact ? .constant(nil) : $threadRoute }
+	private var sheetThread: Binding<ThreadRoute?> { sizeClass == .compact ? $threadRoute : .constant(nil) }
+
+	@ViewBuilder
+	private func threadDestination(_ route: ThreadRoute) -> some View {
+		if let root = store.threadRoot(route.rootID) {
+			ThreadScreen(store: store, root: root)
+		} else {
+			// The root is older than the page held: fetch it rather than show an empty screen.
+			ProgressView()
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+				.task { _ = await store.loadedThreadRoot(route.rootID) }
 		}
 	}
 
@@ -492,8 +517,7 @@ struct ChatThreadView: View {
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
 			onOpenThread: { message in
-				guard let id = message.serverID else { return }
-				threadRoute = ThreadRoute(rootID: id)
+				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
 			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)

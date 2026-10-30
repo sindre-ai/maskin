@@ -203,6 +203,32 @@ struct TeamLayoutTests {
 		#expect(none.empty?.action == "Search all of Maskin")
 	}
 
+	@Test("a search also finds archived chats, keeps the Archived row for them and is not a dead end")
+	func searchFindsArchived() {
+		let archived = [
+			chatConvo("old", title: "Roadmap 2025", last: ago(hours: 900)),
+			chatConvo("other", title: "Budget", last: ago(hours: 800)),
+		]
+		let found = build([chatConvo("a")], archived: archived, query: "road")
+		#expect(found.archivedMatches.map(\.id) == ["old"])
+		#expect(found.showsArchived)
+		#expect(found.archivedCount == 2)
+		#expect(found.empty == nil, "an archived match is a result")
+		#expect(found.sections.isEmpty)
+
+		let miss = build([chatConvo("a")], archived: archived, query: "zzz")
+		#expect(miss.archivedMatches.isEmpty)
+		#expect(miss.showsArchived == false)
+		#expect(miss.empty == .noResults("zzz"))
+
+		let plain = build([chatConvo("a")], archived: archived)
+		#expect(plain.archivedMatches.isEmpty, "no query, no matches list")
+		#expect(plain.showsArchived)
+
+		let chipped = build([chatConvo("a")], archived: archived, chip: .unread, query: "road")
+		#expect(chipped.archivedMatches.isEmpty, "a filter chip leaves archived chats out")
+	}
+
 	@Test("nothing at all shows the first-run empty state; archived rows count and show when not filtering")
 	func emptyAndArchived() {
 		let nothing = build([])

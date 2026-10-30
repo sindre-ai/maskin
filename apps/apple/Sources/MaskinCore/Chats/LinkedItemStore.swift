@@ -12,6 +12,13 @@ public enum LinkedItem: Equatable, Sendable {
 	/// An object the lookup could not find. The lookup cannot tell a deleted object from a private
 	/// one, and nothing is private inside a workspace, so the card says it was deleted.
 	case deleted(LinkedTarget)
+	/// An agent in this workspace: drawn with the shared card face.
+	case agent(LinkedAgent)
+	/// A chat you are in: drawn with the shared card face.
+	case chat(LinkedChat)
+	/// A chat you cannot be shown, because you are not in it or it is gone. One answer for both, so the
+	/// card says nothing about whether the chat exists.
+	case chatUnavailable(LinkedTarget)
 	/// Something that stays a link in the chat (a PDF): the drawer lists it as a compact row.
 	case plain(LinkedReference)
 	/// A loop in this workspace.
@@ -22,7 +29,7 @@ public enum LinkedItem: Equatable, Sendable {
 	/// Whether it is drawn as a card in the message.
 	public var isCard: Bool {
 		switch self {
-		case .draft, .file, .object, .deleted, .loop, .trigger: true
+		case .draft, .file, .object, .deleted, .loop, .trigger, .agent, .chat, .chatUnavailable: true
 		case .plain: false
 		}
 	}
@@ -85,6 +92,7 @@ public final class LinkedItemStore {
 
 	@ObservationIgnored private let objects: any ObjectDraftsRemote
 	@ObservationIgnored private let files: any FilesRemote
+	@ObservationIgnored private let places: (any LinkedPlacesRemote)?
 	@ObservationIgnored private let loadActors: (@Sendable () async throws -> [ActorRef])?
 	@ObservationIgnored private var actorsTask: Task<Void, Never>?
 	@ObservationIgnored private let loadLoops: (@Sendable () async throws -> [LoopSummary])?
@@ -126,13 +134,14 @@ public final class LinkedItemStore {
 
 	public init(
 		objects: any ObjectDraftsRemote, files: any FilesRemote,
-		actors: (@Sendable () async throws -> [ActorRef])? = nil,
+		actors: (@Sendable () async throws -> [ActorRef])? = nil, places: (any LinkedPlacesRemote)? = nil,
 		loops: (@Sendable () async throws -> [LoopSummary])? = nil,
 		triggers: (@Sendable () async throws -> TriggerListing)? = nil, workspaceID: @escaping @MainActor () -> String?,
 		retryAfter: TimeInterval = 30, now: @escaping @MainActor () -> Date = { Date() }
 	) {
 		self.objects = objects
 		self.files = files
+		self.places = places
 		self.loadActors = actors
 		self.loadLoops = loops
 		self.loadTriggers = triggers
@@ -155,9 +164,9 @@ public final class LinkedItemStore {
 	/// card is a placeholder), so the message does not jump when the answer arrives; one that cannot
 	/// be shown goes back to text.
 	public func showsCard(_ target: LinkedTarget) -> Bool {
-		guard let state = entries[target.key]?.state else { return target.kind == .object }
+		guard let state = entries[target.key]?.state else { return target.kind != .file }
 		switch state {
-		case .loading: return target.kind == .object
+		case .loading: return target.kind != .file
 		case .unavailable: return false
 		case .ready(let item): return item.isCard
 		}
@@ -236,6 +245,12 @@ public final class LinkedItemStore {
 		switch target.kind {
 		case .object:
 			return classify(try await objects.detail(objectId: target.uuid), workspace: workspace)
+		case .agent:
+			guard let agent = try await places?.agent(id: target.uuid) else { return nil }
+			return .agent(agent)
+		case .chat:
+			guard let places else { return nil }
+			return try await places.chat(id: target.uuid).map(LinkedItem.chat) ?? .chatUnavailable(target)
 		case .file:
 			let found = try await files.summaries(ids: [target.uuid]).first { $0.id.lowercased() == target.uuid }
 			guard let found else { return nil }

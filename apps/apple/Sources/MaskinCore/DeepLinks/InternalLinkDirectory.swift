@@ -56,7 +56,7 @@ public final class InternalLinkDirectory {
 				return .object(
 					Object(type: object.type, title: Self.title(object.title), status: Self.title(object.status)))
 			case .deleted: return .deleted
-			case .file, .plain, .loop, .trigger: return .unreadable
+			case .file, .plain, .loop, .trigger, .agent, .chat, .chatUnavailable: return .unreadable
 			}
 		case .loading?:
 			return .loading
@@ -87,7 +87,7 @@ public final class InternalLinkDirectory {
 			case .loop(let loop): return Named(title: loop.displayName, isDeleted: false)
 			case .trigger(let trigger): return Named(title: trigger.displayName, isDeleted: false)
 			case .deleted: return Named(title: nil, isDeleted: true)
-			case .draft, .file, .object, .plain: return nil
+			case .draft, .file, .object, .plain, .agent, .chat, .chatUnavailable: return nil
 			}
 		case .loading?, .unavailable?:
 			return nil

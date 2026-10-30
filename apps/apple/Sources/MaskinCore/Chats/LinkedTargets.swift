@@ -4,14 +4,14 @@ import Foundation
 /// (`https://maskin.io/<workspace>/objects/<uuid>`, `…/files/<uuid>`); the link is the signal that the
 /// reader would want to see what is behind it.
 public struct LinkedTarget: Hashable, Sendable, Identifiable {
-	public enum Kind: String, Sendable { case object, file, loop, trigger }
+	public enum Kind: String, Sendable { case object, file, agent, chat, loop, trigger }
 
 	public var kind: Kind
 	/// Lowercased, so the same thing linked twice is one target.
 	public var uuid: String
 
 	public var id: String { key }
-	/// `object:<uuid>`, `file:<uuid>`, `loop:<uuid>`, `trigger:<uuid>`: the cache and de-duplication key.
+	/// `object:<uuid>`, `file:<uuid>`, `agent:<uuid>`, `chat:<uuid>`, `loop:<uuid>` or `trigger:<uuid>`: the cache and de-duplication key.
 	public var key: String { "\(kind.rawValue):\(uuid)" }
 
 	public init(kind: Kind, uuid: String) {
@@ -21,7 +21,7 @@ public struct LinkedTarget: Hashable, Sendable, Identifiable {
 
 	private static let hrefPattern = try! NSRegularExpression(
 		pattern:
-			#"/(objects|files|loops|triggers)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)"#,
+			#"/(objects|files|agents|chats|loops|triggers)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)"#,
 		options: .caseInsensitive)
 
 	/// The object or file an address points at, if it points at one. Absolute web links and relative
@@ -31,13 +31,15 @@ public struct LinkedTarget: Hashable, Sendable, Identifiable {
 		guard let m = hrefPattern.firstMatch(in: href, range: range),
 			let kindRange = Range(m.range(at: 1), in: href), let idRange = Range(m.range(at: 2), in: href)
 		else { return nil }
-		let kind: Kind
-		switch href[kindRange].lowercased() {
-		case "files": kind = .file
-		case "loops": kind = .loop
-		case "triggers": kind = .trigger
-		default: kind = .object
-		}
+		let kind: Kind =
+			switch href[kindRange].lowercased() {
+			case "files": .file
+			case "agents": .agent
+			case "chats": .chat
+			case "loops": .loop
+			case "triggers": .trigger
+			default: .object
+			}
 		return LinkedTarget(kind: kind, uuid: String(href[idRange]))
 	}
 
@@ -289,19 +291,18 @@ public enum LinkedMessagePart: Equatable, Sendable {
 public enum LinkedMessageLayout {
 	/// Cards in one message, across every kind (objects, files, drafts). The links past it stay links.
 	public static let maxCardsPerMessage = 3
-	/// Object links in one message that are looked up. The links past it stay plain.
+	/// Object, agent and chat links in one message that are looked up. The links past it stay plain.
 	public static let maxObjectLookupsPerMessage = 10
 	/// File links in one message that are looked up.
 	public static let maxFileLookupsPerMessage = 12
 
-	/// The targets of a message that are looked up: the first ten objects (loops and triggers count
-	/// with them) and the first twelve files.
+	/// The targets of a message that are looked up: the first ten objects, agents, chats, loops and triggers (counted together) and the first twelve files.
 	public static func lookupTargets(_ targets: [LinkedTarget]) -> [LinkedTarget] {
 		var objects = 0
 		var files = 0
 		return targets.filter { target in
 			switch target.kind {
-			case .object, .loop, .trigger:
+			case .object, .agent, .chat, .loop, .trigger:
 				objects += 1
 				return objects <= maxObjectLookupsPerMessage
 			case .file:
@@ -395,6 +396,11 @@ public struct LinkedEntry: Equatable, Sendable, Identifiable {
 public enum LinkedConversationItems {
 	public static let defaultLimit = 100
 
+	/// Cheap test before scanning a message for links: does it name an address of a kind we look up?
+	public static func mayLink(_ content: String) -> Bool {
+		["/objects/", "/files/", "/agents/", "/chats/", "/loops/", "/triggers/"].contains { content.contains($0) }
+	}
+
 	/// For each target the conversation links to, the message (`ChatMessage.id`) that links it first.
 	/// A target is a card in that message only; later messages show it as a link. `messages` run
 	/// oldest first.
@@ -402,7 +408,7 @@ public enum LinkedConversationItems {
 		var owners: [String: String] = [:]
 		for message in messages {
 			guard message.kind == "message", !message.isFailed,
-				message.content.contains("/objects/") || message.content.contains("/files/")
+				Self.mayLink(message.content)
 			else { continue }
 			for target in LinkedTarget.extract(from: message.content) where owners[target.key] == nil {
 				owners[target.key] = message.id
@@ -420,10 +426,10 @@ public enum LinkedConversationItems {
 		for message in messages.reversed() {
 			guard entries.count < limit else { break }
 			guard message.kind == "message", !message.isFailed,
-				message.content.contains("/objects/") || message.content.contains("/files/")
+				Self.mayLink(message.content)
 			else { continue }
 			let targets = LinkedTarget.extract(from: message.content)
-			let objects = targets.filter { $0.kind == .object }
+			let objects = targets.filter { $0.kind != .file }
 			let files = targets.filter { $0.kind == .file }
 			for target in objects + files {
 				guard entries.count < limit, seen.insert(target.key).inserted else { continue }

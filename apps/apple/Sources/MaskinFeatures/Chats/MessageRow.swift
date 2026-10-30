@@ -253,8 +253,7 @@ struct MessageRow: View {
 	/// only. At most ten objects are looked up; the links past that stay plain.
 	private var linkedTargets: [LinkedTarget] {
 		guard linked != nil, message.kind == "message", !message.isEmojiOnly,
-			bodyText.contains("/objects/") || bodyText.contains("/files/") || bodyText.contains("/loops/")
-				|| bodyText.contains("/triggers/")
+			LinkedConversationItems.mayLink(bodyText)
 		else { return [] }
 		let found = LinkedTarget.extract(from: bodyText)
 		return LinkedMessageLayout.lookupTargets(isOwn ? found.filter { $0.kind == .object } : found)
@@ -275,7 +274,7 @@ struct MessageRow: View {
 		}
 		let skipping = Set(
 			targets.filter { target in
-				guard target.kind == .object, let owner = cardOwners[target.key], owner != message.id else { return false }
+				guard target.kind != .file, let owner = cardOwners[target.key], owner != message.id else { return false }
 				if case .draft? = linked.item(for: target) { return false }
 				return true
 			}.map(\.key))
@@ -289,10 +288,14 @@ struct MessageRow: View {
 
 	/// How a stand-alone link in the text is drawn. A message that places its own cards draws the
 	/// object and file links it has no card for (past the three, or already a card above) as inline
-	/// links; the thin card stays for chats, agents and the rest.
+	/// links; the thin card stays for the rest.
 	private func standaloneStyle(placingCards: Bool) -> @MainActor (URL, String?) -> MarkdownStandaloneLinkStyle {
 		{ url, _ in
-			placingCards && LinkedTarget.parse(href: url.absoluteString) != nil ? .inline : .simple
+			let target = LinkedTarget.parse(href: url.absoluteString)
+			if placingCards, target != nil { return .inline }
+			// A person at an agent address is a plain link, not the thin card of an agent.
+			if let target, target.kind == .agent, linked?.state(for: target) == .unavailable { return .inline }
+			return .simple
 		}
 	}
 
@@ -300,11 +303,11 @@ struct MessageRow: View {
 	/// link info (which would look them up) is withheld for them.
 	private func cappedLinkInfo(_ targets: [LinkedTarget]) -> (@MainActor (URL) -> MarkdownLinkInfo?)? {
 		guard let base = linkInfo,
-			targets.filter({ $0.kind == .object }).count == LinkedMessageLayout.maxObjectLookupsPerMessage
+			targets.filter({ $0.kind != .file }).count == LinkedMessageLayout.maxObjectLookupsPerMessage
 		else { return linkInfo }
 		let looked = Set(targets.map(\.key))
 		return { url in
-			if let target = LinkedTarget.parse(href: url.absoluteString), target.kind == .object, !looked.contains(target.key) {
+			if let target = LinkedTarget.parse(href: url.absoluteString), target.kind != .file, !looked.contains(target.key) {
 				return nil
 			}
 			return base(url)

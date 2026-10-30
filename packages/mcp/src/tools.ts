@@ -2111,9 +2111,33 @@ export const tools = {
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
 		description:
-			'List integrations connected to the workspace. Each row includes `defaultAgentAccess` (what agents without their own entry get) and `agentGrants` (the agents with their own access and its level), the same access shown on the Integrations, Keychain and agent pages; change it with `update_integration_access`. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List integrations connected to the workspace, live connections first and the newest first within each group. Dead rows (a connect that never finished, a revoked connection) sort last but are still listed. Every page starts with a `summary` of the whole workspace: how many rows per status and which connections are active, so you can see what is connected without paging. A connection missing from this page is NOT proof it is absent: find it with `provider` (for example "slack"), `status` or `q` (a word of its name), or follow `next_cursor` while `page.has_more` is true. To answer "can I use X?" call `get_actor` on yourself and read `access`. Rows are slim: `defaultAgentAccess` (what agents without their own entry get), `agentGrants` and `chatGrants`; pass `verbose: true` for config, granted scopes and provider-side ids. Change access with `update_integration_access`. Paginated via a snapshot-consistent cursor (default page: 25).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			provider: z
+				.string()
+				.optional()
+				.describe(
+					'Only this provider, for example "slack" or "gmail". Matches exactly, ignoring case.',
+				),
+			status: z
+				.string()
+				.optional()
+				.describe(
+					'Only this status: "active", "pending", "revoked", "undone" or "awaiting_secret". Matches exactly.',
+				),
+			q: z
+				.string()
+				.optional()
+				.describe(
+					'Words to look for in the provider or the saved name, for example "google" or "stripe". Every word must appear.',
+				),
+			verbose: z
+				.boolean()
+				.optional()
+				.describe(
+					'Return full rows (config, granted scopes, provider-side ids). Default false: slim rows.',
+				),
 			limit: z
 				.number()
 				.int()

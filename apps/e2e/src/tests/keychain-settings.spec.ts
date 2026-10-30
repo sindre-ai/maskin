@@ -73,7 +73,7 @@ test.describe('Keychain settings', () => {
 
 			const name = `e-conomic ${Date.now()}`
 			await page.getByLabel('Name', { exact: true }).fill(name)
-			await page.getByLabel('Username').fill('me@example.test')
+			await page.getByLabel('Username or email').fill('me@example.test')
 			const password = page.getByLabel('Password')
 			await expect(password).toHaveAttribute('type', 'password')
 			await password.fill(FAKE_SECRET)

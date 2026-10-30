@@ -37,6 +37,7 @@ enum LinkedItemStores {
 			objects: remote,
 			files: APIFilesRemote(client: environment.client, credentials: credentials),
 			actors: { try await remote.actors() },
+			places: APILinkedPlacesRemote(client: environment.client, workspaceID: workspaceId),
 			loops: { try await loops.loops() },
 			triggers: { try await triggers.listPage() },
 			workspaceID: { [weak environment] in environment?.workspaceId })
@@ -79,6 +80,8 @@ struct LinkedOpener: DynamicProperty {
 		case .file: runtime?.openFile(target.uuid)
 		case .loop: runtime?.openLoop(target.uuid)
 		case .trigger: runtime?.openTrigger(target.uuid)
+		case .agent: runtime?.openAgent(target.uuid)
+		case .chat: runtime?.openChat(target.uuid)
 		}
 	}
 
@@ -93,6 +96,8 @@ struct LinkedOpener: DynamicProperty {
 			case .file: runtime?.openFile(target.uuid)
 			case .loop: runtime?.openLoop(target.uuid)
 			case .trigger: runtime?.openTrigger(target.uuid)
+			case .agent: runtime?.openAgent(target.uuid)
+			case .chat: runtime?.openChat(target.uuid)
 			}
 		}
 	}
@@ -108,7 +113,10 @@ extension LinkedItemStores {
 		}
 		if store.state(for: target) == nil { Task { await store.resolve([target]) } }
 		if case .draft? = store.item(for: target) { return .simple }
-		guard store.showsCard(target) else { return .simple }
+		// A person at an agent address is a plain link.
+		guard store.showsCard(target) else {
+			return target.kind == .agent && store.state(for: target) == .unavailable ? .inline : .simple
+		}
 		return .card(AnyView(LinkedTargetCard(target: target).environment(\.linkedItems, store)))
 	}
 }

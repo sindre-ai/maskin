@@ -75,6 +75,30 @@ private struct StubTasks: ObjectDraftsRemote {
 	}
 }
 
+private let workingAgentID = "77777777-2222-3333-4444-555555555555"
+private let idleAgentID = "88888888-2222-3333-4444-555555555555"
+private let pinnedChatID = "99999999-2222-3333-4444-555555555555"
+private let hiddenChatID = "aaaaaaaa-2222-3333-4444-555555555555"
+
+/// Two agents, one chat you are in and one you are not.
+private struct StubPlaces: LinkedPlacesRemote {
+	func agent(id: String) async throws -> LinkedAgent? {
+		guard id == workingAgentID || id == idleAgentID else { return nil }
+		return LinkedAgent(
+			target: LinkedTarget(kind: .agent, uuid: id), name: id == workingAgentID ? "Developer" : "Code Reviewer",
+			summary: "Writes, tests and ships the product code.", isWorking: id == workingAgentID,
+			lastActive: Date(timeIntervalSinceNow: -600), skillCount: 7)
+	}
+
+	func chat(id: String) async throws -> LinkedChat? {
+		guard id == pinnedChatID else { return nil }
+		return LinkedChat(
+			target: LinkedTarget(kind: .chat, uuid: id), title: "Launch plan", isPinned: true, lastAuthorID: "agent-1",
+			lastAuthorName: "Relay", lastAuthorIsAgent: true, lastText: "The pilot ships on Friday, two teams first.",
+			people: ["Sam", "Relay", "Ada", "Bo"], updatedAt: Date(timeIntervalSinceNow: -3600))
+	}
+}
+
 @MainActor
 @Suite("Linked cards render")
 struct LinkedCardSnapshotTests {
@@ -281,6 +305,41 @@ struct LinkedCardSnapshotTests {
 		}
 	}
 
+	private func placesStore() async -> LinkedItemStore {
+		let store = LinkedItemStore(
+			objects: StubTasks(), files: StubFiles(), places: StubPlaces(), workspaceID: { ws })
+		await store.resolve([
+			LinkedTarget(kind: .agent, uuid: workingAgentID), LinkedTarget(kind: .agent, uuid: idleAgentID),
+			LinkedTarget(kind: .chat, uuid: pinnedChatID), LinkedTarget(kind: .chat, uuid: hiddenChatID),
+		])
+		return store
+	}
+
+	@Test("an agent working and idle, a pinned chat and a chat not available, at 390 wide, light and dark, default and largest text")
+	func placeCards() async throws {
+		let store = await placesStore()
+		guard case .agent(let working)? = store.item(for: LinkedTarget(kind: .agent, uuid: workingAgentID)),
+			case .agent(let idle)? = store.item(for: LinkedTarget(kind: .agent, uuid: idleAgentID)),
+			case .chat(let chat)? = store.item(for: LinkedTarget(kind: .chat, uuid: pinnedChatID))
+		else {
+			Issue.record("the agents and the chat did not resolve")
+			return
+		}
+		#expect(store.item(for: LinkedTarget(kind: .chat, uuid: hiddenChatID)) == .chatUnavailable(LinkedTarget(kind: .chat, uuid: hiddenChatID)))
+		for dark in [false, true] {
+			for largest in [false, true] {
+				let content = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+					LinkedAgentCard(agent: working)
+					LinkedAgentCard(agent: idle)
+					LinkedChatCard(chat: chat)
+					LinkedDeletedCard(kind: "chat", symbol: "message", text: "Chat not available")
+				}
+				.environment(\.linkedItems, store)
+				try await render(content, width: 390, dark: dark, name: "linked-place-cards", largest: largest)
+			}
+		}
+	}
+
 	@Test("object chips in a sentence, wrapped across lines, in your own bubble, at 390 wide, light and dark, default and largest text")
 	func chips() async throws {
 		let store = await objectStore()
@@ -327,6 +386,21 @@ struct LinkedCardSnapshotTests {
 			try await render(row, width: 390, dark: dark, name: "linked-loop-trigger-message")
 		}
 	}
+	@Test("a stand-alone agent link and chat link are cards in the message")
+	func placesInMessage() async throws {
+		let store = await placesStore()
+		let message = ChatMessage(
+			id: "m1", serverID: 1, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content:
+				"Ask the agent.\n\n[Developer](https://maskin.io/\(ws)/agents/\(workingAgentID))\n\nThe thread is here:\n\n[Launch plan](https://maskin.io/\(ws)/chats/\(pinnedChatID))",
+			createdAt: Date(timeIntervalSince1970: 1_790_000_000))
+		for dark in [false, true] {
+			try await render(
+				MessageRow(message: message, isOwn: false, showsAuthor: true).environment(\.linkedItems, store), width: 390,
+				dark: dark, name: "linked-place-message")
+		}
+	}
+
 	@Test("the chip preview sheet, default and Copied, at 390 wide, light and dark, default and largest text")
 	func chipSheet() async throws {
 		let store = await objectStore()

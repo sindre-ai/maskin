@@ -25,8 +25,14 @@ struct LinkedTargetCard: View {
 			LinkedTriggerCard(trigger: trigger)
 		case .deleted?:
 			LinkedDeletedCard(kind: Self.deletedKind(of: target))
+		case .agent(let agent)?:
+			LinkedAgentCard(agent: agent)
+		case .chat(let chat)?:
+			LinkedChatCard(chat: chat)
+		case .chatUnavailable?:
+			LinkedDeletedCard(kind: "chat", symbol: "message", text: "Chat not available")
 		default:
-			if target.kind == .object, store?.showsCard(target) == true { LinkedCardSkeleton() }
+			if target.kind != .file, store?.showsCard(target) == true { LinkedCardSkeleton() }
 		}
 	}
 
@@ -35,7 +41,7 @@ struct LinkedTargetCard: View {
 		switch target.kind {
 		case .loop: "loop"
 		case .trigger: "trigger"
-		case .object, .file: "object"
+		case .object, .file, .agent, .chat: "object"
 		}
 	}
 }
