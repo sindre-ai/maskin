@@ -126,7 +126,7 @@ function StepRow({
 			/>
 			<div className="flex-1 min-w-0 break-words text-[12.5px] leading-relaxed">
 				<span className="font-semibold text-foreground">{agent?.name ?? 'Unknown agent'}</span>{' '}
-				<span className="text-muted-foreground">{trigger.actionPrompt}</span>
+				<span className="text-muted-foreground">{trigger.name}</span>
 			</div>
 			{asksYou && (
 				<span className="shrink-0 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground mt-0.5">
