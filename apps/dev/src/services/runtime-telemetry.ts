@@ -1,4 +1,5 @@
 import { PostHog } from 'posthog-node'
+import { admitPosthogEvent } from '../lib/analytics/event-budget'
 import { logger } from '../lib/logger'
 
 /**
@@ -195,12 +196,15 @@ export class RuntimeTelemetry {
 		agentServerUrl,
 		concurrentCount,
 	}: ConcurrentSessionsGaugeEvent): void {
+		const admission = admitPosthogEvent('runtime_concurrent_sessions_gauge')
+		if (!admission.send) return
 		this.capture({
 			distinctId: agentServerUrl,
 			event: 'runtime_concurrent_sessions_gauge',
 			properties: {
 				agent_server_url: agentServerUrl,
 				concurrent_count: concurrentCount,
+				...(admission.sampleRate ? { sample_rate: admission.sampleRate } : {}),
 			},
 		})
 	}

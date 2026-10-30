@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { logger } from '../logger'
+import { admitPosthogEvent } from './event-budget'
 
 const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'
 const CAPTURE_TIMEOUT_MS = 2_000
@@ -124,6 +125,9 @@ export function warnIfPosthogKeyUnset(): void {
  * `workspace_id` (billing customers, install telemetry) have no workspace
  * setting to honour and are sent as before.
  *
+ * Volume: each event name is sampled or capped per UTC day, see
+ * `event-budget.ts`; tier 1 events are never touched.
+ *
  * Contract: never throws, never blocks the caller. If `POSTHOG_API_KEY` is
  * unset (local dev, CI without analytics), we log once at debug and return.
  * If the request fails, we log at warn — the agent's Slack post still
@@ -149,10 +153,14 @@ export async function capturePosthogEvent(
 		logger.debug('PostHog capture skipped — empty distinct id', { event })
 		return
 	}
+	const admission = admitPosthogEvent(event)
+	if (!admission.send) return
 	const host = process.env.POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST
 
 	let outId = distinctId
-	let outProps = properties
+	let outProps: PosthogEventProps = admission.sampleRate
+		? { ...properties, sample_rate: admission.sampleRate }
+		: properties
 	try {
 		const workspaceId = properties.workspace_id
 		if (typeof workspaceId === 'string' && workspaceId.trim()) {
@@ -163,7 +171,7 @@ export async function capturePosthogEvent(
 			}
 			if (privacy.anonymize) {
 				outId = hashDistinctId(distinctId)
-				outProps = stripIdentifiers(properties)
+				outProps = stripIdentifiers(outProps)
 			}
 		}
 	} catch (err) {
