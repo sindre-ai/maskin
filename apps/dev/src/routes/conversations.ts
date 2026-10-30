@@ -47,6 +47,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { reportChatReply } from '../services/chat-reply-tracking'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
@@ -64,7 +65,7 @@ import {
 	type ThreadReplyDelivery,
 	routeThreadReplyToSubSession,
 } from '../services/thread-reply-routing'
-import { resolveThreadRootId, resolveTurnMessageId } from '../services/turn-origin'
+import { resolveReplyThreadRootId, resolveTurnMessageId } from '../services/turn-origin'
 
 type Env = {
 	Variables: {
@@ -1304,15 +1305,22 @@ app.openapi(postMessageRoute, (async (c) => {
 	// that started the turn, as the end-of-turn reply does. Only for the agent's own session in
 	// this chat (a verified sessionId), so humans and other callers post exactly as before.
 	// An explicit thread_root_id wins, top_level opts out.
+	// A thread session answers in its own thread; any other session follows the message that
+	// started the turn.
 	let turnThreadRootId: number | null = null
-	if (
-		sessionId &&
-		body.thread_root_id === undefined &&
-		body.top_level !== true &&
-		callerType === 'agent'
-	) {
-		const turnMessageId = await resolveTurnMessageId(db, sessionId)
-		turnThreadRootId = await resolveThreadRootId(db, turnMessageId, id)
+	let sessionThreadRootId: number | null = null
+	let turnMessageId: number | null = null
+	if (sessionId && callerType === 'agent') {
+		turnMessageId = await resolveTurnMessageId(db, sessionId)
+		const placed = await resolveReplyThreadRootId(db, {
+			sessionId,
+			turnMessageId,
+			conversationId: id,
+		})
+		sessionThreadRootId = placed.sessionThreadRootId
+		if (body.thread_root_id === undefined && body.top_level !== true) {
+			turnThreadRootId = placed.threadRootId
+		}
 	}
 
 	// A thread reply must hang off a top-level message of this same conversation:
@@ -1352,6 +1360,18 @@ app.openapi(postMessageRoute, (async (c) => {
 		threadAlsoInChannel: body.thread_root_id !== undefined && body.also_in_channel === true,
 	})
 	if (!created) throw new Error('Failed to create message')
+
+	if (sessionId && callerType === 'agent') {
+		reportChatReply(db, {
+			workspaceId,
+			conversationId: id,
+			agentId: callerId,
+			sessionThreadRootId,
+			replyThreadRootId: body.thread_root_id ?? turnThreadRootId,
+			originMessageId: turnMessageId,
+			source: 'post',
+		})
+	}
 
 	// Replying means the human has read everything before their message, so their read cursor
 	// moves to it: otherwise the thread keeps a NEW divider (and the list an unread badge) over
