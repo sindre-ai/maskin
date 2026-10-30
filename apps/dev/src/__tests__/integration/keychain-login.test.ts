@@ -359,38 +359,16 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 		return ((await res.json()) as { integrationId: string }).integrationId
 	}
 
-	it('gives a granted agent KEYCHAIN_BYO_LOGIN_<SLUG>_USERNAME and _PASSWORD, exactly as typed', async () => {
+	it('never puts a granted login in the agent environment, so echo has nothing to print', async () => {
 		const s = await setupWithAgent()
 		await vaultLogin(s, 'e-conomic')
 
 		const env = await launchEnv(s.session)
 
-		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_USERNAME).toBe(USERNAME)
-		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBe(PASSWORD)
-	})
-
-	it('gives the email as _EMAIL only for a login saved with one', async () => {
-		const s = await setupWithAgent()
-		await vaultLogin(s, 'e-conomic')
-		const withEmail = await post(
-			appFor(s.human),
-			'byo-login',
-			s.ws.id,
-			loginBody({ displayName: 'Dinero', email: 'me@work.test' }),
-		)
-		expect(withEmail.status).toBe(201)
-		const { integrationId } = (await withEmail.json()) as { integrationId: string }
-		await insertAgentGrant(db, {
-			workspaceId: s.ws.id,
-			integrationId,
-			actorId: s.agent.id,
-		})
-
-		const env = await launchEnv(s.session)
-
-		expect(env.KEYCHAIN_BYO_LOGIN_DINERO_EMAIL).toBe('me@work.test')
-		expect(env.KEYCHAIN_BYO_LOGIN_DINERO_USERNAME).toBe(USERNAME)
-		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_EMAIL).toBeUndefined()
+		expect(Object.keys(env).filter((k) => k.startsWith('KEYCHAIN_BYO_LOGIN_'))).toEqual([])
+		// Not under another name either.
+		expect(Object.values(env)).not.toContain(USERNAME)
+		expect(Object.values(env)).not.toContain(PASSWORD)
 	})
 
 	it('gives an agent that was not ticked nothing', async () => {
@@ -425,7 +403,7 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBeUndefined()
 	})
 
-	it('injects a key and a login side by side', async () => {
+	it('injects an API key but not a login saved beside it', async () => {
 		const s = await setupWithAgent()
 		await vaultLogin(s, 'e-conomic')
 		const keyRes = await post(appFor(s.human), 'chat-capture', s.ws.id, {
@@ -441,6 +419,6 @@ describe('SessionManager.buildLaunchSpec — login env injection', () => {
 		const env = await launchEnv(s.session)
 
 		expect(env.KEYCHAIN_BYO_APIKEY_STRIPE).toBe(`key_${'CANARY0123'.repeat(3)}`)
-		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBe(PASSWORD)
+		expect(env.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBeUndefined()
 	})
 })

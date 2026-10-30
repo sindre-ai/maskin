@@ -50,6 +50,20 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	public func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
 	) async throws -> ConversationSummary {
+		try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			initialMetadata: nil, idempotencyKey: idempotencyKey)
+	}
+
+	public func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		// Same round-trip as `send`: ChatSendMetadata already uses the API's exact keys.
+		let wireMetadata = try initialMetadata.flatMap { value -> InitialMetadata? in
+			guard !value.isEmpty else { return nil }
+			return try JSONDecoder().decode(InitialMetadata.self, from: JSONEncoder().encode(value))
+		}
 		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
 			try await client.post_sol_api_sol_conversations(
 				.init(
@@ -57,7 +71,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 					body: .json(
 						.init(
 							title: title, participant_actor_ids: participantIDs,
-							initial_message: initialMessage))))
+							initial_message: initialMessage, initial_message_metadata: wireMetadata))))
 		}
 		switch output {
 		case .created(let created):
@@ -318,8 +332,12 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				kind: row.kind, content: row.content, createdAt: ChatDates.parse(row.createdAt),
 				editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata),
 				threadRootID: row.threadRootId.map { Int($0) }, alsoInChannel: row.threadAlsoInChannel)
-		case .badRequest:
-			throw ChatsHTTPError(status: 400, message: "The message was rejected.")
+		case .badRequest(let bad):
+			// A pasted secret that got past the app's own check (it is refused on the server too).
+			let code = (try? bad.body.json)?.error.code
+			throw ChatsHTTPError(
+				status: 400,
+				message: code == "RAW_SECRET_DETECTED" ? ChatsHTTPError.rawSecretMessage : "The message was rejected.")
 		case .notFound:
 			throw ChatsHTTPError(
 				status: 404,
@@ -329,6 +347,9 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			throw ChatsHTTPError(status: status, message: "Couldn't send the message.")
 		}
 	}
+
+	private typealias InitialMetadata = Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload
+		.initial_message_metadataPayload
 
 	private typealias Metadata = Operations
 		.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload
@@ -475,9 +496,11 @@ extension APIChatsSource: ChatFileUploading {
 			return ChatAttachmentRef(
 				fileID: row.id, name: row.name, mimeType: row.mimeType, sizeBytes: Int(row.sizeBytes))
 		case .badRequest:
-			throw ChatsError("That file can't be attached.")
-		default:
-			throw ChatsError("Couldn't upload the file.")
+			throw ChatsError("The server didn't accept that file.")
+		case .internalServerError:
+			throw ChatsError("The upload failed on the server. Try again.")
+		case .undocumented(let status, _):
+			throw ChatsError("The upload failed (error \(status)).")
 		}
 	}
 }

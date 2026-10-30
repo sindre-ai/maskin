@@ -3,9 +3,18 @@ import {
 	getActorAvatarPaletteClass,
 	getActorInitials,
 } from '@/components/shared/actor-avatar'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildActorListItem } from '../../factories'
+import { createWorkspaceWrapper } from '../../setup'
+
+const { listActors } = vi.hoisted(() => ({ listActors: vi.fn() }))
+
+vi.mock('@/lib/api', async (importOriginal) => {
+	const original = await importOriginal<typeof import('@/lib/api')>()
+	return { ...original, api: { ...original.api, actors: { list: listActors } } }
+})
 
 describe('getActorInitials', () => {
 	it('returns first char of first two words for multi-word names', () => {
@@ -188,5 +197,44 @@ describe('ActorAvatar', () => {
 			expect(ring).not.toBeNull()
 			expect(ring?.querySelector('button')).not.toBeNull()
 		})
+	})
+})
+
+describe('ActorAvatar picture lookup', () => {
+	beforeEach(() => {
+		listActors.mockReset()
+	})
+
+	it('draws the picture from the workspace actors list when only an id is given', async () => {
+		listActors.mockResolvedValue([
+			buildActorListItem({ id: 'a-1', name: 'Alice', avatar_url: '/api/actors/a-1/avatar?v=3' }),
+		])
+		const { container } = render(<ActorAvatar name="Alice" type="human" id="a-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+		expect(container.querySelector('img')?.getAttribute('src')).toBe('/api/actors/a-1/avatar?v=3')
+	})
+
+	it('keeps initials for an actor without a picture', async () => {
+		listActors.mockResolvedValue([
+			buildActorListItem({ id: 'a-1', name: 'Alice', avatar_url: null }),
+		])
+		const { container } = render(<ActorAvatar name="Alice" type="human" id="a-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await waitFor(() => expect(listActors).toHaveBeenCalled())
+		expect(container.querySelector('img')).toBeNull()
+		expect(screen.getByText('AL')).toBeInTheDocument()
+	})
+
+	it('does not look anything up when the caller passes imageUrl', () => {
+		render(
+			<ActorAvatar name="Alice" type="human" id="a-1" imageUrl="https://example.com/a.png" />,
+			{
+				wrapper: createWorkspaceWrapper(),
+			},
+		)
+		expect(listActors).not.toHaveBeenCalled()
 	})
 })

@@ -26,7 +26,13 @@ vi.mock('@/hooks/use-mobile', () => ({
 }))
 vi.mock('@/hooks/use-files', () => ({
 	useFile: () => ({
-		data: { id: 'file-1', name: 'deck.html', encoding: 'utf8', content: '<html></html>' },
+		data: {
+			id: 'file-1',
+			name: 'deck.html',
+			mimeType: 'text/html',
+			encoding: 'utf8',
+			content: '<html></html>',
+		},
 		isLoading: false,
 		error: null,
 	}),

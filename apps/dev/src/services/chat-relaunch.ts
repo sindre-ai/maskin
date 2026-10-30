@@ -40,8 +40,8 @@ const inFlight = new Map<string, Promise<RelaunchOutcome>>()
  * Stops the session that holds a vaulted key in its env and waits until it has ended.
  * The respawn is not here: the client posts the redaction-marker message next, and the
  * conversation responder finds no active session and spawns a fresh one seeded with the
- * last 15 messages. pauseSession and resumeSession are never used: on a remote session
- * pauseSession marks the live one failed.
+ * last 15 messages. pauseSession and resumeSession are never used: a pause snapshots a
+ * local container, so pauseSession refuses a remote session.
  *
  * A second vault for the same (conversation, agent) while one is in flight joins it
  * instead of stopping again.

@@ -442,6 +442,22 @@ export const sessionUsageResponseSchema = z.object({
 })
 export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
 
+export const sessionStatsRowSchema = z.object({
+	actor_id: z.string().uuid(),
+	total: z.number().int().min(0),
+	// Sessions in running, starting or pending.
+	active: z.number().int().min(0),
+	total_cost_usd: z.number(),
+	// Same basis as /sessions/usage: settled (or, while open, last active) in the last 30 days.
+	last_30d_cost_usd: z.number(),
+	// Status of the actor's newest session by created_at.
+	latest_status: z.string(),
+	latest_session_at: z.string().nullable(),
+})
+
+export const sessionStatsResponseSchema = z.array(sessionStatsRowSchema)
+export type SessionStatsRow = z.infer<typeof sessionStatsRowSchema>
+
 /**
  * Reason codes for classified session failures. Credit/rate-limit codes are
  * detected from the session stdout tail; infrastructure codes are written by
@@ -467,6 +483,12 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  *                         path so the retry lands on the next slot; if that
  *                         slot's token is only expired-not-revoked, the retry's
  *                         session-start refresh recovers it in place.
+ * - oauth_expired         401 — "Failed to authenticate: OAuth session expired
+ *                         and could not be refreshed", the CLI's final error
+ *                         when its login lapsed. Auth-class like not_logged_in,
+ *                         but not a failover trigger and never retried.
+ * - invalid_api_key       401 — "Invalid API key", the CLI's final error when
+ *                         the API key is rejected. Handled like oauth_expired.
  *
  * OpenRouter HTTP error codes:
  * - insufficient_credits  402 — OpenRouter credit balance exhausted
@@ -478,6 +500,9 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - startup_stalled       Launch never completed: the session sat in
  *                         `starting` past the zombie window with no container
  *                         and no sandbox, and was force-failed.
+ * - container_lost       The session's container was gone (exited, reaped or
+ *                         orphaned by a backend restart) while the row was
+ *                         still active; the row is closed out.
  * - plan_cap_exceeded     The session was deliberately stopped mid-run by
  *                         SessionManager's budget watchdog because workspace
  *                         usage crossed the plan cap with no usage credits
@@ -495,8 +520,11 @@ export const failureReasonCodeSchema = z.enum([
 	'max_plan_rate_limit',
 	'rate_limit_error',
 	'oauth_revoked',
+	'oauth_expired',
+	'invalid_api_key',
 	'insufficient_credits',
 	'agent_server_lost',
+	'container_lost',
 	'plan_cap_exceeded',
 	// The session could not be handed to any agent-server before the dispatch
 	// queue ran out of attempts. Recoverable by starting a new session.

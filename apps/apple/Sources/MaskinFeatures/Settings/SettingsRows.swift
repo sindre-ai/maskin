@@ -109,7 +109,7 @@ struct MemberRow: View {
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s8) {
-			ActorAvatar(name: member.name, kind: member.isAgent ? .agent : .human)
+			ActorAvatar(name: member.name, kind: member.isAgent ? .agent : .human, seed: member.actorId)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text(member.name).foregroundStyle(MaskinColor.ink).lineLimit(1)
 				Text(member.isAgent ? "Agent" : member.role.label)

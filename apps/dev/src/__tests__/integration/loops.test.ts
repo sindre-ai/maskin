@@ -5,6 +5,7 @@ import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import {
+	ensureWorkspaceMember,
 	insertActor,
 	insertObject,
 	insertRelationship,
@@ -583,6 +584,47 @@ describe('Loops read API integration', () => {
 		const emptyRow = body.loops.find((l) => l.id === openLoop.id)
 		expect(emptyRow?.medianTimeToCloseMs).toBeNull()
 	})
+
+	it('still answers when a loop has more closed members than one events lookup batch', async () => {
+		// The close-time lookup reads `events` in batches of 200 ids. 450 closed
+		// members forces three batches, so this fails if batching drops, repeats or
+		// mis-orders a batch — and none of these members has an event, so each one
+		// must take the updated_at fallback (a constant 2s here).
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Many closed members',
+		})
+		const createdAt = new Date('2026-01-01T00:00:00.000Z')
+		const memberCount = 450
+		for (let i = 0; i < memberCount; i++) {
+			const member = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'done',
+				title: `Closed member ${i}`,
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 2000),
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: member.id,
+				type: 'in_loop',
+				createdAt,
+			})
+		}
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.closedCount).toBe(memberCount)
+		expect(row?.medianTimeToCloseMs).toBe(2000)
+	}, 60_000)
 
 	describe('metadata.closed_when', () => {
 		async function setup(loopMetadata: Record<string, unknown>) {
@@ -1519,6 +1561,8 @@ describe('Loops read API integration', () => {
 			const quill = await insertActor(db, { name: 'Quill', type: 'agent' })
 			const sebk = await insertActor(db, { name: 'Sebk', type: 'human' })
 			const magnus = await insertActor(db, { name: 'Magnus', type: 'human' })
+			await ensureWorkspaceMember(db, workspaceId, sebk.id)
+			await ensureWorkspaceMember(db, workspaceId, magnus.id)
 
 			const trigA = await insertTrigger(db, workspaceId, actorId, relay.id, {
 				name: 'Watch inbox',
@@ -1581,6 +1625,46 @@ describe('Loops read API integration', () => {
 			expect(stepB?.handsOffToActor?.name).toBe('Magnus')
 			expect(stepB?.escalatesToActor).toBeNull()
 			expect(stepB?.escalatesToActorId).toBeNull()
+		})
+
+		it('returns no name or description for a step actor outside the loop workspace', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			// Exists in the actors table but is not a member of this workspace.
+			const outsider = await insertActor(db, {
+				name: 'Outsider',
+				type: 'agent',
+				description: 'Secret outsider description',
+			})
+			const trig = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				handsOffToActorId: outsider.id,
+				escalatesToActorId: outsider.id,
+			})
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Foreign actor loop',
+				metadata: { trigger_ids: [trig.id] },
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const raw = await res.text()
+			const body = JSON.parse(raw) as {
+				steps: Array<{
+					agent: { name: string | null } | null
+					handsOffToActor: unknown
+					escalatesToActor: unknown
+				}>
+			}
+			expect(body.steps).toHaveLength(1)
+			expect(body.steps[0].agent?.name).toBe('Relay')
+			expect(body.steps[0].handsOffToActor).toBeNull()
+			expect(body.steps[0].escalatesToActor).toBeNull()
+			expect(raw).not.toContain('Outsider')
+			expect(raw).not.toContain('Secret outsider description')
 		})
 
 		it('sets waitingOnViewer=true and pendingCount from sessions in waiting_for_input status', async () => {

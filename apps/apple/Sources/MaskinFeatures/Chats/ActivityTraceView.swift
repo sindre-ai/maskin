@@ -58,10 +58,12 @@ struct ActivityStepRow: View {
 				Text(step.label)
 					.maskinText(.subhead).fontWeight(emphasized ? .semibold : .regular)
 					.foregroundStyle(color)
-					.lineLimit(emphasized || open ? 3 : 1)
+					// One line until opened, current step or not: a current step that wraps over three
+					// lines and shrinks when the next one starts moves the card, and the thread, on every step.
+					.lineLimit(open ? 3 : 1)
 				if let detail = step.detail, !detail.isEmpty {
 					Text(detail).maskinText(open ? .mono : .caption).foregroundStyle(MaskinColor.ink5)
-						.lineLimit(open ? Self.openLines : (emphasized ? 3 : 1)).truncationMode(.middle)
+						.lineLimit(open ? Self.openLines : 1).truncationMode(.middle)
 				}
 				if open, let output = step.output, !output.isEmpty {
 					Text(output).maskinText(.mono)

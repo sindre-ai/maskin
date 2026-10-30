@@ -187,6 +187,17 @@ interface ListedTool {
 }
 
 /**
+ * What a provider's own tool description leaves out, added to the end of it. Google's
+ * hosted Gmail tool only saves a draft, and agents read "create_draft" as sending.
+ */
+const TOOL_DESCRIPTION_NOTES: Record<string, Record<string, string>> = {
+	gmail: {
+		create_draft:
+			'This only saves a draft in Gmail. It does not send anything. To send an email, use the gmail_send_email tool after a person has approved it, and say "sent" only once that returns a message id.',
+	},
+}
+
+/**
  * A tool whose verdict depends on the call (PostHog exec). It lists as usable to anyone who
  * can read, since some of its commands are reads; readOnlyHint stays false because it can
  * write; a read-only agent is told which commands run. No access still shows it unavailable.
@@ -224,7 +235,9 @@ export function annotateToolsList(
 		if (isCommandGated(ctx.provider, tool.name)) return annotateCommandGatedTool(tool, ctx)
 		const kind = classifyTool(ctx.provider, tool.name, tool.annotations)
 		const usable = kind === 'read' ? canRead(ctx.access) : canWrite(ctx.access)
-		const description = tool.description ?? ''
+		const note = TOOL_DESCRIPTION_NOTES[ctx.provider]?.[tool.name]
+		const upstream = tool.description ?? ''
+		const description = note ? `${upstream} ${note}`.trim() : upstream
 		return {
 			...tool,
 			annotations: { ...tool.annotations, readOnlyHint: kind === 'read' },

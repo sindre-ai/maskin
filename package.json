@@ -20,7 +20,6 @@
 		"db:generate": "turbo db:generate",
 		"db:migrate": "turbo db:migrate",
 		"db:seed": "turbo db:seed",
-		"trigger:lint": "pnpm --filter @maskin/dev trigger:lint",
 		"posthog:bulk-edit-commit-ios": "dotenv -e .env -- tsx scripts/posthog/bulk-edit-commit-ios.ts"
 	},
 	"devDependencies": {

@@ -69,8 +69,8 @@ struct LinkedChevron: View {
 	}
 }
 
-/// A linked thing that has no card: the name and what it is, one tap from opening it. Contacts,
-/// companies and plain tasks in the Linked sheet look like this.
+/// A linked file that has no card, or a link that could not be read: the name and what it is, one tap
+/// from opening it.
 struct LinkedPlainRow: View {
 	let target: LinkedTarget
 	let title: String

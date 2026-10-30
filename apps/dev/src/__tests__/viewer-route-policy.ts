@@ -36,6 +36,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'ends the caller’s own call; a member demoted to viewer mid-call must still be able to hang up, or the call keeps running and billing',
 	],
 	['POST', '/api/webhooks/:provider', 'provider webhook, authenticated by signature'],
+	['POST', '/api/webhooks/google-drive', 'provider webhook, authenticated by channel token'],
 	['POST', '/api/webhooks/resend/:token', 'provider webhook, authenticated by token'],
 	['POST', '/api/webhooks/skjald/:token', 'provider webhook, authenticated by token'],
 	['POST', '/api/webhooks/x/:token', 'custom extension webhook, signed with the extension secret'],
@@ -75,6 +76,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	],
 	['POST', '/api/integrations/linkedin-unipile/webhook', 'provider webhook, authenticated by HMAC'],
 	// Group B leftovers: no handler logic or no workspace data.
+	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
@@ -175,6 +177,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
  * entry needs a viewer 403 case in integration/viewer-read-only.test.ts.
  */
 export const HAND_GATED_ROUTES: OpenRoute[] = [
+	['POST', '/api/integrations/google-drive/mcp', 'MCP endpoint, tools act as the workspace'],
 	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
 	[
 		'POST',

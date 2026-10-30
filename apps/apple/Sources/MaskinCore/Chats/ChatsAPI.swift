@@ -10,6 +10,11 @@ public protocol ConversationsAPI: Sendable {
 	func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
 	) async throws -> ConversationSummary
+	/// Same, with the first message's metadata (its attachments and mentions).
+	func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary
 	func updateState(
 		conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?,
 		markUnread: Bool
@@ -24,6 +29,15 @@ public protocol ConversationsAPI: Sendable {
 }
 
 extension ConversationsAPI {
+	public func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			idempotencyKey: idempotencyKey)
+	}
+
 	public func latestMessageID(conversationID: String) async throws -> Int? { nil }
 	public func threads(limit: Int) async throws -> [ThreadListItem] { [] }
 
@@ -110,6 +124,10 @@ extension ChatAPI {
 /// A non-2xx answer from a write, kept as a status so the outbox can tell "will never work"
 /// (4xx) from "try again" (5xx, offline).
 public struct ChatsHTTPError: Error, Equatable, Sendable {
+	/// What a send refused for holding a secret says (`RAW_SECRET_DETECTED` on the server).
+	public static let rawSecretMessage =
+		"That message looks like it contains a secret, so it wasn't sent. Cut the secret out, or save it to the Keychain."
+
 	public var status: Int
 	public var message: String
 	public init(status: Int, message: String) {

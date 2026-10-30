@@ -1290,6 +1290,30 @@ describe('preflightLlmCredentials', () => {
 	})
 })
 
+describe('LlmCredentialsUnavailableError.toFailureReason workspace name', () => {
+	it('names the workspace and the setting to change when the name is known', () => {
+		const reason = new LlmCredentialsUnavailableError('nothing configured', false, {
+			workspaceName: 'Growth',
+		}).toFailureReason()
+		expect(reason.reason_code).toBe('not_logged_in')
+		expect(reason.human_message).toContain('"Growth"')
+		expect(reason.human_message).toMatch(/Settings → Keys/)
+	})
+
+	it('keeps the generic message when no name is given', () => {
+		const reason = new LlmCredentialsUnavailableError('nothing configured').toFailureReason()
+		expect(reason.human_message).toBe(LlmCredentialsUnavailableError.humanMessage)
+	})
+
+	it('does not tell a transient failure to reconnect, even with a name', () => {
+		const reason = new LlmCredentialsUnavailableError('timeout', true, {
+			workspaceName: 'Growth',
+		}).toFailureReason()
+		expect(reason.human_message).toMatch(/usually temporary/i)
+		expect(reason.human_message).not.toContain('"Growth"')
+	})
+})
+
 const NOT_ENTITLED = { enterprise: false, billingOwnerId: null }
 
 describe('resolveChatCredentials — system fallback entitlement', () => {

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
-import { emitObjectCreated, newQueueRunner, pollUntil, setV2Flag } from './queue-helpers'
+import { emitObjectCreated, newQueueRunner, pollUntil } from './queue-helpers'
 
 // Hold-and-replay proof for S3 of the trigger-engine fix bet (bet #6: events
 // dropped instead of queued). Real Postgres, real TriggerRunner.
@@ -22,7 +22,6 @@ function posthogCalls(event: string) {
 
 describe('S3 — event queue holds events for a suppressed workspace and replays them', () => {
 	afterEach(() => {
-		setV2Flag(null)
 		vi.mocked(capturePosthogEvent).mockClear()
 	})
 
@@ -40,7 +39,6 @@ describe('S3 — event queue holds events for a suppressed workspace and replays
 
 	it('suppress workspace, fire 10 events, unsuppress: all 10 dispatch in event_id order', async () => {
 		const { actorId, ws, target } = await seedWorkspaceWithTrigger()
-		setV2Flag(ws.id)
 		const { bridge, dispatches, runner, internals } = newQueueRunner()
 		await runner.start()
 		try {
@@ -102,33 +100,8 @@ describe('S3 — event queue holds events for a suppressed workspace and replays
 		}
 	})
 
-	it('drops the events, exactly as before, when trigger_engine_v2 is off', async () => {
-		const { actorId, ws } = await seedWorkspaceWithTrigger()
-		setV2Flag(null)
-		const { bridge, dispatches, runner, internals } = newQueueRunner()
-		await runner.start()
-		try {
-			await internals.suppressWorkspace(ws.id, {
-				until: new Date(Date.now() + 60 * 60_000),
-				reason: 'no LLM credentials connected for this workspace',
-			})
-			for (let i = 0; i < 3; i++) await emitObjectCreated(bridge, ws.id, actorId)
-			await new Promise((resolve) => setTimeout(resolve, 500))
-
-			const rows = await db
-				.select()
-				.from(triggerEventQueue)
-				.where(eq(triggerEventQueue.workspaceId, ws.id))
-			expect(rows).toHaveLength(0)
-			expect(dispatches).toHaveLength(0)
-		} finally {
-			await runner.stop()
-		}
-	})
-
 	it('leaves held events pending while the workspace is still suppressed', async () => {
 		const { actorId, ws } = await seedWorkspaceWithTrigger()
-		setV2Flag(ws.id)
 		const { bridge, dispatches, runner, internals } = newQueueRunner()
 		await runner.start()
 		try {

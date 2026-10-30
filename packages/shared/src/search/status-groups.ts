@@ -39,7 +39,7 @@ export function isStatusGroupKey(value: unknown): value is StatusGroupKey {
  */
 const GROUP_STATUSES_BY_TYPE: Record<string, Partial<Record<StatusGroupKey, readonly string[]>>> = {
 	bet: {
-		new: ['signal'],
+		new: ['opportunity'],
 		in_progress: ['define', 'active', 'live'],
 		done: ['succeeded', 'failed'],
 		archived: ['paused', 'archived'],

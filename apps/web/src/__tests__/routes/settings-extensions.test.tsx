@@ -21,6 +21,10 @@ vi.mock('@/components/extensions/extensions-manager', () => ({
 	ExtensionsManager: () => <div>ExtensionsManager</div>,
 }))
 
+vi.mock('@/components/extensions/custom-extensions-section', () => ({
+	CustomExtensionsSection: () => <div>CustomExtensionsSection</div>,
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/settings/extensions'
 
 const ExtensionsPage = (Route as unknown as { component: React.FC }).component

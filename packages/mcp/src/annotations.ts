@@ -88,7 +88,7 @@ function row(
 
 // destructive: delete_*, stop_session, stop_chat_agent, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, mark_read.
-// openWorld: create_session, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
+// openWorld: create_session, its alias run_agent, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
 // send a message out (gmail_send_email, approve_object_draft).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
@@ -157,6 +157,7 @@ const ROWS: Record<string, Row> = {
 	// Sessions
 	create_session: row('Create session', { openWorld: true }),
 	create_sub_chat: row('Create sub-chat', { openWorld: true }),
+	run_agent: row('Run agent (deprecated alias of create_session)', { openWorld: true }),
 	list_sessions: row('List sessions'),
 	get_session: row('Get session'),
 	get_session_logs: row('Get session logs'),
@@ -193,6 +194,7 @@ const ROWS: Record<string, Row> = {
 	list_keychain_credentials: row('List keychain credentials'),
 	request_keychain_access: row('Request keychain access'),
 	request_integration_access: row('Request integration access'),
+	add_mcp_server: row('Add MCP server'),
 	show_computer: row('Show computer'),
 	// Workspace desktop
 	desktop_screenshot: row('Desktop screenshot'),
@@ -203,6 +205,7 @@ const ROWS: Record<string, Row> = {
 	desktop_type: row('Desktop type'),
 	desktop_key: row('Desktop key'),
 	desktop_run: row('Desktop run command', { destructive: true }),
+	desktop_put_file: row('Desktop put file'),
 	desktop_expose_port: row('Desktop expose port'),
 	desktop_list_ports: row('Desktop list ports'),
 	desktop_close_port: row('Desktop close port'),

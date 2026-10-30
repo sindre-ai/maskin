@@ -124,6 +124,8 @@ export interface MarkdownEditorProps {
 	mentionSuggestions?: (query: string) => Promise<MentionSuggestionItem[]>
 	onSubmitShortcut?: () => void
 	className?: string
+	/** Accessible name for the editing field (sets aria-label on the editable element). */
+	ariaLabel?: string
 	extensions?: Extensions
 	/**
 	 * Fires when tiptap-markdown fails to parse `value` on mount, when
@@ -327,6 +329,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			disallowedNodes,
 			onSubmitShortcut,
 			className,
+			ariaLabel,
 			extensions,
 			onParseError,
 			preserveSource = false,
@@ -498,6 +501,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					}
 				},
 				editorProps: {
+					// Naming the field replaces Tiptap's own attributes, so keep its role here.
+					attributes: ariaLabel ? { role: 'textbox', 'aria-label': ariaLabel } : {},
 					handleKeyDown: (_view, event) => {
 						if (
 							variant === 'comment' &&

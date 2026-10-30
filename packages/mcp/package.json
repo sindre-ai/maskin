@@ -12,6 +12,10 @@
 		"./linkedin": {
 			"types": "./src/lib/linkedin-fan-out.ts",
 			"default": "./dist/lib/linkedin-fan-out.js"
+		},
+		"./rate-limit": {
+			"types": "./src/rate-limit/token-bucket.ts",
+			"default": "./dist/rate-limit/token-bucket.js"
 		}
 	},
 	"scripts": {

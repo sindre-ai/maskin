@@ -19,7 +19,7 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 vi.mock('@/lib/command-palette-context', () => ({
-	useCommandPalette: () => ({ open: openRef.current, setOpen: setOpenMock, searchV2: true }),
+	useCommandPalette: () => ({ open: openRef.current, setOpen: setOpenMock }),
 }))
 
 vi.mock('@/lib/api', () => ({

@@ -96,7 +96,7 @@ const TOPUP_REASON_CODES = new Set([
 ])
 
 // Codes where the agent couldn't authenticate — recovery is connecting credentials.
-const AUTH_REASON_CODES = new Set(['not_logged_in'])
+const AUTH_REASON_CODES = new Set(['not_logged_in', 'oauth_expired', 'invalid_api_key'])
 
 // The session was deliberately stopped by the plan-budget watchdog, not a
 // provider failure — recovery is buying usage credits or upgrading.

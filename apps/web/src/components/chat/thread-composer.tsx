@@ -9,10 +9,14 @@ import {
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
+import {
+	type ChatSelectionFile,
+	EMPTY_CHAT_SELECTION,
+	chatSelectionReducer,
+} from '@/lib/chat-selection'
 import { type ComposerCue, NEUTRAL_PLACEHOLDER, deriveComposerCue } from '@/lib/composer-cue'
 import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
-import { useCallback, useMemo, useReducer, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 
 const BOOTING_STATUSES = new Set(['pending', 'starting', 'queued'])
 
@@ -21,6 +25,17 @@ interface ThreadComposerProps {
 	conversationId: string
 	/** A step was tapped: replace the draft with this text (when given) and focus the box. */
 	fillRequest?: { text?: string; nonce: number } | null
+	/**
+	 * Makes this a reply under a top-level message: sends carry `thread_root_id` and
+	 * `also_in_channel`, the recipient (when there is one) is seeded as a mention, and
+	 * the draft is kept per thread. `onSent` runs after a send succeeds.
+	 */
+	reply?: {
+		rootId: number
+		recipient: { id: string; name: string } | null
+		alsoInChannel: boolean
+		onSent?: () => void
+	}
 }
 
 /**
@@ -34,7 +49,12 @@ interface ThreadComposerProps {
  * responder pipeline's mention fast-path auto-joins them as participants if
  * they weren't one already.
  */
-export function ThreadComposer({ workspaceId, conversationId, fillRequest }: ThreadComposerProps) {
+export function ThreadComposer({
+	workspaceId,
+	conversationId,
+	fillRequest,
+	reply,
+}: ThreadComposerProps) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
@@ -72,12 +92,24 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 		[conversation?.participants],
 	)
 
+	// The recipient arrives with async data, so it is seeded by an effect; the reducer
+	// dedupes, so a re-run is a no-op.
+	const replyRootId = reply?.rootId
+	const recipient = reply?.recipient ?? null
+	const recipientId = recipient?.id
+	const recipientName = recipient?.name
+	useEffect(() => {
+		if (replyRootId === undefined || !recipientId) return
+		dispatch({ type: 'add_agent', agent: { id: recipientId, name: recipientName } })
+	}, [replyRootId, recipientId, recipientName])
+
 	const handleSend = useCallback(
-		async (content: string) => {
+		async (content: string, extras?: { files: ChatSelectionFile[] }) => {
 			setError(null)
 			const metadata: MessageMetadata = {}
-			if (selection.files.length > 0) {
-				metadata.attachments = selection.files.map((f) => ({
+			const files = [...selection.files, ...(extras?.files ?? [])]
+			if (files.length > 0) {
+				metadata.attachments = files.map((f) => ({
 					file_id: f.fileId,
 					name: f.name,
 					mime_type: f.mimeType ?? 'application/octet-stream',
@@ -111,14 +143,23 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 				await sendMessage.mutateAsync({
 					content,
 					...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+					...(reply ? { thread_root_id: reply.rootId, also_in_channel: reply.alsoInChannel } : {}),
 				})
 				dispatch({ type: 'clear_all' })
+				// clear_all wipes the seeded recipient; the next reply is still addressed to them.
+				if (reply?.recipient) {
+					dispatch({
+						type: 'add_agent',
+						agent: { id: reply.recipient.id, name: reply.recipient.name },
+					})
+				}
+				reply?.onSent?.()
 			} catch (err) {
 				setError(err instanceof Error ? err.message : 'Failed to send message')
 				throw err
 			}
 		},
-		[selection, sendMessage, self?.id],
+		[selection, sendMessage, self?.id, reply],
 	)
 
 	// Name who you are answering (mockup 7850). "Message this conversation"
@@ -129,9 +170,13 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 		selection.agents.length > 0 ? selection.agentNames[selection.agents[0]] : undefined
 	const counterpart =
 		firstMentionName ?? conversation?.participants.find((p) => p.actorId !== self?.id)?.actorName
-	const todaysPlaceholder = counterpart
-		? `Reply to ${counterpart}…`
-		: 'Message… / reference or create · @ mention'
+	const todaysPlaceholder = reply
+		? firstMentionName
+			? `Reply to ${firstMentionName}…`
+			: 'Reply…'
+		: counterpart
+			? `Reply to ${counterpart}…`
+			: 'Message… / reference or create · @ mention'
 
 	// Group-chat cue (3 or more active participants). While a needed answer is still
 	// loading it is the neutral placeholder with no hint; the box itself is never disabled.
@@ -169,12 +214,15 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 		messagesQuery.hasNextPage,
 		self?.id,
 	])
-	const placeholder = cue?.placeholder ?? todaysPlaceholder
+	// A reply names who it answers, which is the point of the box; the group-chat cue's wording
+	// is for starting a message, so it keeps only its hint here.
+	const placeholder = reply ? todaysPlaceholder : (cue?.placeholder ?? todaysPlaceholder)
 
 	return (
 		<Composer
 			workspaceId={workspaceId}
 			onSend={handleSend}
+			longTextAsFile
 			disabled={false}
 			pending={sendMessage.isPending}
 			surface="sheet"
@@ -192,8 +240,8 @@ export function ThreadComposer({ workspaceId, conversationId, fillRequest }: Thr
 			// The accessible name stays constant while the visible placeholder
 			// names the counterpart — a name that changed with the thread's lead
 			// would make the same control a different control to a screen reader.
-			textareaLabel="Message this conversation"
-			draftKey={conversationId}
+			textareaLabel={reply ? 'Reply in thread' : 'Message this conversation'}
+			draftKey={reply ? `${conversationId}:reply:${reply.rootId}` : conversationId}
 			fillRequest={fillRequest}
 			secretCapture={secretCapture}
 			secretRestarting={secretRestarting}

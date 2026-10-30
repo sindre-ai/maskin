@@ -32,7 +32,7 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			const bet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Bet for actor-avatar initials',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
@@ -115,7 +115,7 @@ test.describe('ActorAvatar — punctuated agent names skip punctuation', () => {
 			const bet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Bet for punctuated initials',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// Author the comment as the punctuated agent so its avatar renders in
