@@ -16,6 +16,7 @@ import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } 
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { redactLogLine } from './lib/redact-path'
+import { requestTiming } from './lib/request-timing'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
 	OwnershipCapExceededError,
@@ -25,6 +26,7 @@ import {
 } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import accountRoutes from './routes/account'
+import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
@@ -53,6 +55,9 @@ import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
+import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
+import integrationsGoogleDriveRoutes from './routes/integrations-google-drive'
+import integrationsGoogleDriveMcpRoutes from './routes/integrations-google-drive-mcp'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
 import integrationsGoogleSearchConsoleMcpRoutes from './routes/integrations-google-search-console-mcp'
 import integrationsGrantsRoutes from './routes/integrations-grants'
@@ -283,6 +288,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
 	)
 
+	app.use('/api/*', requestTiming())
+
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('notifyBridge', notifyBridge)
@@ -329,6 +336,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		const method = c.req.method
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
+		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
+		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
 		if (
 			method === 'POST' &&
@@ -431,6 +440,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/auth', authRoutes)
 	app.route('/api/device-auth', deviceAuthRoutes)
 	app.route('/api/account', accountRoutes)
+	app.route('/api/actors', actorAvatarRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
@@ -454,6 +464,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	// google-drive MCP surface — same ordering constraint as google-meet's above.
+	app.route('/api/integrations/google-drive/mcp', integrationsGoogleDriveMcpRoutes)
+	app.route('/api/integrations/google', integrationsGoogleDisconnectRoutes)
+	// folder watches list + stop for the Drive detail page; its own prefix, so the
+	// generic /api/integrations/{provider}/... routes never see these paths.
+	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)

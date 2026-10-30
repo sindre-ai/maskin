@@ -65,14 +65,21 @@ public struct NotificationActionHandler: Sendable {
 	/// ONE budget for the whole tap (comment + mark-read), not per write: two sequential 20 s
 	/// attempts could outlast the ~30 s background window.
 	private let attemptTimeout: Duration
+	/// Waits out a deadline; tests replace it so "the budget ran out" is an event, not a race
+	/// against the wall clock.
+	private let waitForDeadline: @Sendable (ContinuousClock.Instant) async throws -> Void
 	private let now: @Sendable () -> Date
 	private let laterDefaults: DefaultsBox
 
 	public init(
 		secrets: any SecretStore, backend: @escaping BackendFactory, queue: any DecisionQueueing,
 		attemptTimeout: Duration = .seconds(20), now: @escaping @Sendable () -> Date = { Date() },
-		laterDefaults: UserDefaults = .standard
+		laterDefaults: UserDefaults = .standard,
+		waitForDeadline: @escaping @Sendable (ContinuousClock.Instant) async throws -> Void = {
+			try await Task.sleep(until: $0, clock: .continuous)
+		}
 	) {
+		self.waitForDeadline = waitForDeadline
 		self.now = now
 		self.laterDefaults = DefaultsBox(value: laterDefaults)
 		self.secrets = secrets
@@ -173,10 +180,11 @@ public struct NotificationActionHandler: Sendable {
 	private func attempt(
 		until deadline: ContinuousClock.Instant, _ work: @escaping @Sendable () async throws -> Void
 	) async throws {
+		let waitForDeadline = waitForDeadline
 		try await withThrowingTaskGroup(of: Void.self) { group in
 			group.addTask { try await work() }
 			group.addTask {
-				try await Task.sleep(until: deadline, clock: .continuous)
+				try await waitForDeadline(deadline)
 				throw URLError(.timedOut)
 			}
 			defer { group.cancelAll() }

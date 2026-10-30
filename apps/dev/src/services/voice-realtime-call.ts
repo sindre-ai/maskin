@@ -3,6 +3,7 @@ import type { InvokeTool, VoiceRealtimeTool } from '@maskin/mcp'
 import WebSocket from 'ws'
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
+import { VOICE_GREETING_INSTRUCTION } from './voice-instructions'
 import { type VoiceServerMessage, createVoiceChannel } from './voice-session-channel'
 import { endVoiceSession } from './voice-session-lifecycle'
 import type { VoiceSessionRow } from './voice-transcript'
@@ -334,6 +335,21 @@ export interface AttachVoiceCallInput {
 	now?: () => number
 }
 
+const normalizeSpeech = (text: string) =>
+	text
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}\s]/gu, '')
+		.replace(/\s+/g, ' ')
+		.trim()
+
+/** True when one line is the other, or the start of it: a cut-off line and its retake. */
+export function sameSpeech(a: string, b: string): boolean {
+	const x = normalizeSpeech(a)
+	const y = normalizeSpeech(b)
+	if (!x || !y) return false
+	return x === y || y.startsWith(x) || x.startsWith(y)
+}
+
 interface RealtimeEvent {
 	type?: string
 	call_id?: string
@@ -341,7 +357,8 @@ interface RealtimeEvent {
 	name?: string
 	arguments?: string
 	transcript?: string
-	response?: { output?: Array<{ type?: string }> }
+	response_id?: string
+	response?: { id?: string; status?: string; output?: Array<{ type?: string }> }
 	error?: { code?: string; message?: string }
 }
 
@@ -420,6 +437,56 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		}
 	}
 
+	// What the agent said, held until its response is over. A response that also asks for a tool
+	// is a heads-up ("Let me pull that up") before the real answer, which is noise in the chat; a
+	// response cut off by the caller speaking over it is a half sentence, and the next answer
+	// usually says the same thing again. Neither is written as a message of its own.
+	const heldSpeech = new Map<string, string[]>()
+	let heldCutOff: string | null = null
+	let lastAgentLine: string | null = null
+
+	function postAgentLine(text: string) {
+		lastAgentLine = text
+		feed({ type: 'transcript', role: 'assistant', text })
+	}
+
+	function postCutOff() {
+		if (heldCutOff === null) return
+		const text = heldCutOff
+		heldCutOff = null
+		postAgentLine(text)
+	}
+
+	function noteAgentSpeech(text: string) {
+		if (heldCutOff !== null) {
+			// The cut-off half sentence is dropped when this line carries on from it or repeats it.
+			if (sameSpeech(heldCutOff, text)) heldCutOff = null
+			else postCutOff()
+		}
+		if (lastAgentLine !== null && normalizeSpeech(lastAgentLine) === normalizeSpeech(text)) return
+		postAgentLine(text)
+	}
+
+	function settleResponseSpeech(responseId: string, status: string | undefined, toolTurn: boolean) {
+		const lines = [...(heldSpeech.get(responseId) ?? [])]
+		heldSpeech.delete(responseId)
+		if (lines.length === 0) return
+		const text = lines.join(' ')
+		if (toolTurn) {
+			logger.info('Voice heads-up before a tool call kept out of the chat', {
+				voice_session_id: session.id,
+				chars: text.length,
+			})
+			return
+		}
+		if (status === 'cancelled' || status === 'incomplete') {
+			postCutOff()
+			heldCutOff = text
+			return
+		}
+		noteAgentSpeech(text)
+	}
+
 	function askModelToSpeakIfReady() {
 		if (!toolResponseDone || pendingCalls > 0) return
 		toolResponseDone = false
@@ -459,14 +526,20 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				return
 			case 'conversation.item.input_audio_transcription.completed': {
 				const text = evt.transcript?.trim()
-				if (text) feed({ type: 'transcript', role: 'user', text, item_id: evt.item_id })
+				if (text) {
+					postCutOff()
+					lastAgentLine = null
+					feed({ type: 'transcript', role: 'user', text, item_id: evt.item_id })
+				}
 				return
 			}
 			// GA name first; the beta name is kept so a fake or older edge still works.
 			case 'response.output_audio_transcript.done':
 			case 'response.audio_transcript.done': {
 				const text = evt.transcript?.trim()
-				if (text) feed({ type: 'transcript', role: 'assistant', text })
+				if (!text) return
+				const key = evt.response_id ?? ''
+				heldSpeech.set(key, [...(heldSpeech.get(key) ?? []), text])
 				return
 			}
 			case 'input_audio_buffer.speech_started':
@@ -485,9 +558,11 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 			case 'response.done': {
 				const startedAt = agentResponseStartedAt
 				agentResponseStartedAt = null
+				const asksForTool = evt.response?.output?.some((item) => item.type === 'function_call')
+				settleResponseSpeech(evt.response?.id ?? '', evt.response?.status, asksForTool === true)
 				// A response that only asked for a tool is the middle of a turn, not
 				// the end: the spoken answer follows the tool result.
-				if (evt.response?.output?.some((item) => item.type === 'function_call')) {
+				if (asksForTool) {
 					toolResponseDone = true
 					askModelToSpeakIfReady()
 					return
@@ -535,6 +610,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	function registerLive() {
 		liveCalls.set(session.id, {
 			close: () => {
+				postCutOff()
 				dispose()
 				closedByUs = true
 				stopPing()
@@ -712,6 +788,16 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				registerLive()
 				startPing()
 				settle(true)
+				// Only the first attach greets; a reconnect goes through the other onOpen above.
+				sendToModel({
+					type: 'conversation.item.create',
+					item: {
+						type: 'message',
+						role: 'system',
+						content: [{ type: 'input_text', text: VOICE_GREETING_INSTRUCTION }],
+					},
+				})
+				sendToModel({ type: 'response.create' })
 			},
 			onMessage: (data) => onSocketMessage(myGen, data),
 			onClose: () => {

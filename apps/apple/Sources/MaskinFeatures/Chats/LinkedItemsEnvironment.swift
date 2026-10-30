@@ -1,5 +1,6 @@
 import MaskinAPI
 import MaskinCore
+import MaskinUI
 import SwiftUI
 
 extension EnvironmentValues {
@@ -26,11 +27,13 @@ enum LinkedItemStores {
 		let key = workspaceId
 		if let held = cache[key] { return held }
 		let credentials = environment.auth.credentialsProvider
+		let remote = APIObjectsRemote(
+			client: environment.client, credentials: credentials, baseURL: environment.baseURL,
+			clientSource: environment.clientSource)
 		let store = LinkedItemStore(
-			objects: APIObjectsRemote(
-				client: environment.client, credentials: credentials, baseURL: environment.baseURL,
-				clientSource: environment.clientSource),
+			objects: remote,
 			files: APIFilesRemote(client: environment.client, credentials: credentials),
+			actors: { try await remote.actors() },
 			workspaceID: { [weak environment] in environment?.workspaceId })
 		cache[key] = store
 		return store
@@ -65,5 +68,33 @@ struct LinkedOpener: DynamicProperty {
 		case .object: runtime?.openObject(target.uuid)
 		case .file: runtime?.openFile(target.uuid)
 		}
+	}
+
+	/// Closes the sheet the caller is in, waits for it to finish, then opens the target: the shell
+	/// presents from above everything and cannot while a sheet is up.
+	static func openAfterClosing(_ target: LinkedTarget, close: () -> Void, runtime: AppRuntime?) {
+		close()
+		Task {
+			try? await Task.sleep(for: .milliseconds(450))
+			switch target.kind {
+			case .object: runtime?.openObject(target.uuid)
+			case .file: runtime?.openFile(target.uuid)
+			}
+		}
+	}
+}
+
+extension LinkedItemStores {
+	/// How a link that stands alone on its line is drawn outside a chat message (a comment, a
+	/// description): the card face for an object or page the store can show, the thin card for the
+	/// rest. Drafts keep their approval card to chat, where the agent is told of a yes.
+	static func standaloneStyle(for url: URL, environment: AppEnvironment) -> MarkdownStandaloneLinkStyle {
+		guard let target = LinkedTarget.parse(href: url.absoluteString), let store = store(for: environment) else {
+			return .simple
+		}
+		if store.state(for: target) == nil { Task { await store.resolve([target]) } }
+		if case .draft? = store.item(for: target) { return .simple }
+		guard store.showsCard(target) else { return .simple }
+		return .card(AnyView(LinkedTargetCard(target: target).environment(\.linkedItems, store)))
 	}
 }

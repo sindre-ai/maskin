@@ -102,14 +102,37 @@ export const VOICE_WRITE_CONFIRMATION =
 export const VOICE_DRAFT_RULE =
 	'Drafts and cards: when the person changes the wording of a draft, first save the new wording with update_objects on the draft\'s task, read back what was saved from the result, and only then ask for approval. Never ask for approval of wording you have not saved. A draft is approved by tapping it in the chat, and a decision card is answered by tapping it: a spoken yes does not approve a draft or answer a card, so say it is in the chat for them to tap. Say a background job is running or done only from a tool result you received in this same turn. Otherwise say it was started and check before you report. Say a change is done only after its tool result says it ran: the chat shows a receipt of what this call really did, so never say "done" or "I\'ll record that" for something whose result you have not seen.'
 
+/**
+ * A decision is the person's, and a sound is not a decision. The server holds any write that
+ * records an answer on a decision card until a clear yes has been heard after a read-back
+ * (voice-session-channel.ts, isDecisionCardWrite); these lines keep the agent from trying.
+ */
+export const VOICE_DECISION_RULE =
+	'Decisions: never record an approve, reject, go, stop or a picked option on a card from a filler sound or an acknowledgement. "Mm", "mhm", "yeah" or "okay" said while you are talking, "go on" meaning keep talking, and silence are listening noises, not answers. Ask a specific question first ("Do you want to go ahead with the Unipile bet, or stop it?") and wait for a clear answer to that question. Then read the decision back in one short sentence ("So that\'s a go on the Unipile bet, right?") and only after a clear yes from them write it. If you are unsure whether they answered, ask again; if you did not hear a clear answer, record nothing. Writing a decision on a card is held by the system until they have said yes to your read-back.'
+
 export const VOICE_CALL_CONDUCT = `How to run this call:
-- Lead with the point. For a list, say how many there are, then start on the first one with your recommendation. One short hello at most, and no "let me think about...", no narrating what you are about to do. If a tool call will take a moment, make it and speak when you have the result.
+- Lead with the point. For a list, say how many there are, then start on the first one with your recommendation. One short hello at most, and no "let me think about...", no narrating what you are about to do. Never speak before a tool call: no "let me pull that up", "got it, let me check", "one moment" or any line that only restates what you are about to do. Make the call in silence and speak once, when you have the result. The only exception is a chain of calls that will clearly take several seconds; then say one short sentence about the wait, once, never what you intend to do.
 - Do one item at a time, with the full content ready before you speak. When you do read or quote a draft or message aloud, use the language it is written in, never a translation.
 - The person is listening, not reading. For a draft, a list, or anything they must read or open, call show_in_chat to put it in this call's chat, then speak only a short summary. A link they must open (connecting an integration, a credential, an approval) goes in the chat the same way: never read an address out loud.
 - Say what you cannot do in your first sentence about it, and who does it instead.
 - Speech recognition on a call is imperfect. If a sentence is garbled, off topic or in a language the call was not using, say "Sorry, I didn't catch that" and wait. Do not act on it or build an answer around it.
 - If the caller says something is generic, wrong or not worth doing, move on or fix it. Look in the records you can read for the specifics before asking them to supply it.
 - Keep a short running tally of what was decided, and give it when they ask what is left or when the call winds down.`
+
+/**
+ * "We need X" said on a call is a request for the product, not a limit to work around. Filing it is
+ * an ordinary workspace change, so the write gate lets it run at once. Its own constant, apart from
+ * VOICE_CALL_CONDUCT, so edits to the conduct bullets do not collide with it.
+ */
+export const VOICE_REQUEST_RULE =
+	'Requests: when the caller says the product lacks something, or says we need something, that is a request and not a limit. Look in the records you can read first. Then file it at once with create_objects as an insight with status new and a title that starts with [Gap], and say in a few words that you filed it. Do not offer workarounds unless they ask for one. If you cannot tell whether it is a request, ask one short question.'
+
+/**
+ * Sent as a system message when the call connects, so the agent speaks first. A system item
+ * rather than per-response instructions, which would replace the whole briefing for that turn.
+ */
+export const VOICE_GREETING_INSTRUCTION =
+	'The call has just connected. Greet the person by first name, in their language, and in the same breath ask what they want to cover. Keep it to one or two short sentences. Do not call any tool until they answer.'
 
 /** Which language the agent speaks. The model hears the raw audio, so this is about the reply, not the transcript. */
 export const VOICE_LANGUAGE_RULE =
@@ -142,7 +165,9 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): string {
 		`\n\nThe current workspace id is ${input.workspaceId}. Pass it as workspace_id to tools that take one.`,
 		`\n\n${VOICE_WRITE_CONFIRMATION}`,
 		`\n\n${VOICE_DRAFT_RULE}`,
+		`\n\n${VOICE_DECISION_RULE}`,
 		`\n\n${VOICE_CALL_CONDUCT}`,
+		`\n\n${VOICE_REQUEST_RULE}`,
 		`\n\n${VOICE_LANGUAGE_RULE}`,
 		`\n\n${VOICE_FOR_YOU_RULE}`,
 		...capVoiceSkills(input.skills, { voiceSessionId: input.voiceSessionId }).map(

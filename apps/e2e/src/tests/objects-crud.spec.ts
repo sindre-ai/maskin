@@ -46,7 +46,7 @@ test.describe('Objects CRUD', () => {
 		const obj = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'API Created Bet',
-			status: 'signal',
+			status: 'opportunity',
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
@@ -63,7 +63,7 @@ test.describe('Objects CRUD', () => {
 		const obj = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Original Title',
-			status: 'signal',
+			status: 'opportunity',
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)

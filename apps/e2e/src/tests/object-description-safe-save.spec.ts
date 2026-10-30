@@ -2,7 +2,7 @@ import type { Page, Request } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Object description on the rich editor (bet 666e3c4a), flag on. The editor
+// Object description on the rich editor (bet 666e3c4a). The editor
 // saves only the blocks the person touched, opens text it cannot split safely
 // read-only, and refuses a rewrite that would lose something. One PATCH per
 // blur, nothing sent when nothing changed.
@@ -58,9 +58,6 @@ const READ_ONLY_CASES: Array<[label: string, content: string, cause: string]> = 
 ]
 
 async function openDescription(page: Page, workspaceId: string, objectId: string) {
-	await page.addInitScript(() => {
-		localStorage.setItem('ff:rich-markdown-editor', 'on')
-	})
 	await page.goto(`/${workspaceId}/objects/${objectId}`)
 }
 
@@ -93,7 +90,7 @@ test.describe('Object description on the rich editor', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'No-edit open',
-			status: 'signal',
+			status: 'opportunity',
 			content: AGENT_DESCRIPTION,
 		})
 		const writes = watchObjectWrites(page, bet.id)
@@ -115,7 +112,7 @@ test.describe('Object description on the rich editor', () => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'One word',
-			status: 'signal',
+			status: 'opportunity',
 			content: AGENT_DESCRIPTION,
 		})
 		const writes = watchObjectWrites(page, bet.id)

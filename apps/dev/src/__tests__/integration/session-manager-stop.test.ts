@@ -1,4 +1,4 @@
-import { events, agentServers, sessions } from '@maskin/db/schema'
+import { events, agentServers, sessionLogs, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
@@ -6,7 +6,7 @@ import { logger } from '../../lib/logger'
 import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
 import { _driveToRunning, configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
-import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
+import { insertConversation, insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
 function stubStorage(): StorageProvider {
@@ -973,6 +973,50 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		const error = (row?.result as { error?: string } | null)?.error ?? ''
 		expect(error).toMatch(/No container was ever assigned/)
 		expect(error).not.toMatch(/Container disappeared/)
+	})
+
+	// A chat session whose container is gone is shown to the user as
+	// "<agent> failed to start: <text>". The text must be one plain sentence;
+	// the technical reason stays in result.error and the system log. The dead
+	// row must also stop counting as the active conversation session so the
+	// next message spawns a fresh one. Driven through
+	// markSessionFailedAfterContainerLoss directly, the way conversation-responder
+	// calls it: the reaper's idle-chat-close step would complete an idle
+	// interactive row instead of failing it.
+	it('a chat session that lost its container gets plain user-facing text and frees the conversation', async () => {
+		const conversation = await insertConversation(db, workspaceId, actorId)
+		const twentyMinAgo = new Date(Date.now() - 20 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: twentyMinAgo,
+			startedAt: twentyMinAgo,
+			timeoutAt: null,
+			containerId: null,
+			interactive: true,
+			conversationId: conversation.id,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		await manager.markSessionFailedAfterContainerLoss(session.id, workspaceId)
+		const stillActive = await manager.findConversationSessionAnyActive(conversation.id, actorId)
+		await manager.stop()
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+		const result = row?.result as {
+			error?: string
+			failure_reason?: { reason_code?: string; human_message?: string }
+		} | null
+		expect(result?.failure_reason?.reason_code).toBe('container_lost')
+		const text = result?.failure_reason?.human_message ?? ''
+		expect(text).toMatch(/send another message/i)
+		expect(text).not.toMatch(/pause|container/i)
+
+		const logs = await db.select().from(sessionLogs).where(eq(sessionLogs.sessionId, session.id))
+		expect(logs.some((l) => l.content.includes(result?.error ?? 'missing'))).toBe(true)
+		expect(stillActive).toBeNull()
 	})
 
 	// (d6) The remote dispatch path: startSession hands the row to the dispatch

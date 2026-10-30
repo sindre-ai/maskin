@@ -1,3 +1,4 @@
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
@@ -227,6 +228,7 @@ function CommentRow({
 						size="sm"
 						className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
 						renderVisuals
+						linkedCards={outsideChatLinkedCards(workspaceId, 'full')}
 					/>
 
 					{footer && <div>{footer}</div>}

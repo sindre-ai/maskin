@@ -50,7 +50,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
-import { MASTER_CHAT_FULL_MESSAGE, wouldWidenMasterChat } from '../services/master-chat'
+import { findOrCreateDirectChat } from '../services/direct-chat'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import { importObjectComments } from '../services/object-chat-sync'
@@ -64,6 +64,7 @@ import {
 	type ThreadReplyDelivery,
 	routeThreadReplyToSubSession,
 } from '../services/thread-reply-routing'
+import { resolveThreadRootId, resolveTurnMessageId } from '../services/turn-origin'
 
 type Env = {
 	Variables: {
@@ -195,6 +196,19 @@ async function addParticipantsToConversation(
 	actorIds: string[],
 	addedBy: string,
 ): Promise<void> {
+	// A DM that gains a third person is a group chat from then on. Dropping the
+	// marker frees the pair to get a fresh DM instead of messages landing in the group.
+	const [marked] = await db
+		.select({ key: conversations.directPairKey })
+		.from(conversations)
+		.where(eq(conversations.id, conversationId))
+		.limit(1)
+	if (marked?.key && actorIds.some((id) => !marked.key?.includes(id))) {
+		await db
+			.update(conversations)
+			.set({ directPairKey: null, updatedAt: new Date() })
+			.where(eq(conversations.id, conversationId))
+	}
 	for (const actorId of actorIds) {
 		await db
 			.insert(conversationParticipants)
@@ -293,6 +307,15 @@ async function joinSubjectConversation(
 		entityId: conversation.id,
 		data: { added_actor_ids: participantIds },
 	})
+	return conversationDetailForCaller(db, conversation, callerId)
+}
+
+// The conversation as the caller sees it: their own pin, archive and read state.
+async function conversationDetailForCaller(
+	db: Database,
+	conversation: typeof conversations.$inferSelect,
+	callerId: string,
+) {
 	const [mine] = await db
 		.select()
 		.from(conversationParticipants)
@@ -327,7 +350,8 @@ const createConversationRoute = createRoute({
 	responses: {
 		200: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
-			description: 'The existing chat for this subject; new participants were added to it',
+			description:
+				'The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set',
 		},
 		201: {
 			content: { 'application/json': { schema: conversationDetailResponseSchema } },
@@ -378,6 +402,24 @@ app.openapi(createConversationRoute, (async (c) => {
 		)
 	}
 
+	// The other side of a direct message: exactly one person or agent besides the caller.
+	const directOtherId = body.direct ? participantIds.find((id) => id !== callerId) : undefined
+	if (body.direct && (body.subject || participantIds.length !== 2 || !directOtherId)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'A direct message is with exactly one other participant and has no subject',
+				[
+					{
+						field: 'direct',
+						message: 'Name one participant besides yourself and leave out subject',
+					},
+				],
+			),
+			400,
+		)
+	}
+
 	if (body.subject) {
 		const { type, id } = body.subject
 		const [target] =
@@ -418,7 +460,7 @@ app.openapi(createConversationRoute, (async (c) => {
 		if (!existing) throw err
 		return c.json(await joinSubjectConversation(db, existing, participantIds, callerId), 200)
 	}
-	const { conversation, initialMessage } = txResult
+	const { conversation, initialMessage, reused } = txResult
 	if (body.subject?.type === 'object') {
 		await importObjectComments(db, {
 			conversationId: conversation.id,
@@ -430,25 +472,49 @@ app.openapi(createConversationRoute, (async (c) => {
 
 	async function createInTransaction() {
 		return db.transaction(async (tx) => {
-			const [created] = await tx
-				.insert(conversations)
-				.values({
+			let created: typeof conversations.$inferSelect | undefined
+			let reused = false
+			if (directOtherId) {
+				// The pair's DM: found, or created once under the pair's lock. The lock is
+				// held to the end of this transaction, so the first message below lands
+				// before a concurrent caller looks for the chat.
+				const direct = await findOrCreateDirectChat(tx, {
 					workspaceId,
+					humanId: callerId,
+					agentId: directOtherId,
 					title: body.title,
 					createdBy: callerId,
-					subjectType: body.subject?.type ?? null,
-					subjectId: body.subject?.id ?? null,
 				})
-				.returning()
+				reused = !direct.created
+				;[created] = await tx
+					.select()
+					.from(conversations)
+					.where(eq(conversations.id, direct.id))
+					.limit(1)
+			} else {
+				;[created] = await tx
+					.insert(conversations)
+					.values({
+						workspaceId,
+						title: body.title,
+						createdBy: callerId,
+						subjectType: body.subject?.type ?? null,
+						subjectId: body.subject?.id ?? null,
+					})
+					.returning()
+			}
 			if (!created) throw new Error('Failed to create conversation')
 
-			await tx.insert(conversationParticipants).values(
-				participantIds.map((actorId) => ({
-					conversationId: created.id,
-					actorId,
-					addedBy: callerId,
-				})),
-			)
+			// findOrCreateDirectChat added the participants and recorded the event itself.
+			if (!directOtherId) {
+				await tx.insert(conversationParticipants).values(
+					participantIds.map((actorId) => ({
+						conversationId: created.id,
+						actorId,
+						addedBy: callerId,
+					})),
+				)
+			}
 
 			let initialMessage: typeof messages.$inferSelect | undefined
 			if (body.initial_message) {
@@ -468,19 +534,21 @@ app.openapi(createConversationRoute, (async (c) => {
 					.where(eq(conversations.id, created.id))
 			}
 
-			await recordEvent(tx, {
-				workspaceId,
-				actorId: callerId,
-				action: 'conversation_created',
-				entityType: 'conversation',
-				entityId: created.id,
-				data: {
-					participant_actor_ids: participantIds,
-					...(body.subject ? { subject: body.subject } : {}),
-				},
-			})
+			if (!directOtherId) {
+				await recordEvent(tx, {
+					workspaceId,
+					actorId: callerId,
+					action: 'conversation_created',
+					entityType: 'conversation',
+					entityId: created.id,
+					data: {
+						participant_actor_ids: participantIds,
+						...(body.subject ? { subject: body.subject } : {}),
+					},
+				})
+			}
 
-			return { conversation: created, initialMessage }
+			return { conversation: created, initialMessage, reused }
 		})
 	}
 
@@ -516,6 +584,8 @@ app.openapi(createConversationRoute, (async (c) => {
 				}),
 		)
 	}
+
+	if (reused) return c.json(await conversationDetailForCaller(db, conversation, callerId), 200)
 
 	const participantsByConversation = await loadParticipantsByConversation(db, [conversation.id])
 	return c.json(
@@ -940,10 +1010,6 @@ const addParticipantsRoute = createRoute({
 			description: 'Updated participant list (state omitted — see GET /:id)',
 		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
-		409: {
-			content: { 'application/json': { schema: errorSchema } },
-			description: 'The conversation is a master chat, which only ever holds its own two people',
-		},
 	},
 })
 
@@ -958,10 +1024,6 @@ app.openapi(addParticipantsRoute, (async (c) => {
 	const row = await loadConversationWithAuth(db, id, callerId)
 	if (!row || row.conversation.workspaceId !== workspaceId) {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
-	}
-
-	if (await wouldWidenMasterChat(db, id, body.actor_ids)) {
-		return c.json(createApiError('CONFLICT', MASTER_CHAT_FULL_MESSAGE), 409)
 	}
 
 	const memberIds = await loadWorkspaceMemberIds(db, workspaceId, body.actor_ids)
@@ -1180,10 +1242,6 @@ const postMessageRoute = createRoute({
 			description: 'Body contains a raw secret (RAW_SECRET_DETECTED)',
 		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
-		409: {
-			content: { 'application/json': { schema: errorSchema } },
-			description: 'The message mentions someone who cannot join this master chat',
-		},
 	},
 })
 
@@ -1213,12 +1271,6 @@ app.openapi(postMessageRoute, (async (c) => {
 	})
 	if (secretRefusal) return c.json(secretRefusal, 400)
 
-	// A mention pulls the person or agent into the chat. A master chat only ever holds its two
-	// people, so refuse before anything is posted rather than after.
-	if (await wouldWidenMasterChat(db, id, body.metadata?.mentions ?? [])) {
-		return c.json(createApiError('CONFLICT', MASTER_CHAT_FULL_MESSAGE), 409)
-	}
-
 	// Stamp session_id only when the caller is the agent that ran that
 	// session, for this same conversation — otherwise silently drop it
 	// rather than 400, since a stray/mismatched id here is almost always a
@@ -1247,6 +1299,21 @@ app.openapi(postMessageRoute, (async (c) => {
 		.from(actors)
 		.where(eq(actors.id, callerId))
 		.limit(1)
+
+	// An agent posting mid-turn answers where the human is talking: in the thread of the message
+	// that started the turn, as the end-of-turn reply does. Only for the agent's own session in
+	// this chat (a verified sessionId), so humans and other callers post exactly as before.
+	// An explicit thread_root_id wins, top_level opts out.
+	let turnThreadRootId: number | null = null
+	if (
+		sessionId &&
+		body.thread_root_id === undefined &&
+		body.top_level !== true &&
+		callerType === 'agent'
+	) {
+		const turnMessageId = await resolveTurnMessageId(db, sessionId)
+		turnThreadRootId = await resolveThreadRootId(db, turnMessageId, id)
+	}
 
 	// A thread reply must hang off a top-level message of this same conversation:
 	// threads are one level deep, so a reply to a reply is rejected rather than
@@ -1281,7 +1348,7 @@ app.openapi(postMessageRoute, (async (c) => {
 		content: body.content,
 		metadata,
 		sessionId,
-		threadRootId: body.thread_root_id ?? null,
+		threadRootId: body.thread_root_id ?? turnThreadRootId,
 		threadAlsoInChannel: body.thread_root_id !== undefined && body.also_in_channel === true,
 	})
 	if (!created) throw new Error('Failed to create message')

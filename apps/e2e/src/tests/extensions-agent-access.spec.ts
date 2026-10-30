@@ -5,11 +5,10 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 /**
  * Agent access on a custom extension (bring-your-own integrations): default
  * deny, per-tool grants, and the read-only mirror on the agent page. The
- * surface sits behind the byo-extensions-ui flag, so the specs use the
- * client-side test override. The backend is real: the extension, the agent and
- * the grants all go through /api. The Attempted chip needs a blocked_tool_calls
- * row, which only the guard wrapper writes; it is covered in the component
- * tests and the integration test instead.
+ * backend is real: the extension, the agent and the grants all go through
+ * /api. The Attempted chip needs a blocked_tool_calls row, which only the
+ * guard wrapper writes; it is covered in the component tests and the
+ * integration test instead.
  */
 
 const TOOLS = [
@@ -17,12 +16,6 @@ const TOOLS = [
 	{ name: 'list_transcripts', kind: 'read' },
 	{ name: 'bookmark_meeting', kind: 'write' },
 ]
-
-async function enableFlag(page: Page) {
-	await page.addInitScript(() => {
-		localStorage.setItem('ff:byo-extensions-ui', 'on')
-	})
-}
 
 async function seedExtension(page: Page, apiKey: string, workspaceId: string, name: string) {
 	const res = await page.request.post('/api/extensions', {
@@ -51,7 +44,6 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
-			await enableFlag(page)
 			const extName = `Fireflies ${Date.now()}`
 			const agent = await account.api.createAgentActor(`Analyst ${Date.now()}`, account.workspaceId)
 			const extId = await seedExtension(page, account.apiKey, account.workspaceId, extName)
@@ -98,15 +90,3 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 		})
 	})
 }
-
-test.describe('extension agent access flag', () => {
-	test('hides the mirror on the agent page while the flag is off', async ({ page, account }) => {
-		await page.addInitScript(() => {
-			localStorage.setItem('ff:byo-extensions-ui', 'off')
-		})
-		const agent = await account.api.createAgentActor(`Analyst ${Date.now()}`, account.workspaceId)
-		await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
-		await expect(page.getByRole('heading', { name: 'Access', exact: true })).toBeVisible()
-		await expect(page.getByRole('heading', { name: /Extensions .* can call/ })).toHaveCount(0)
-	})
-})

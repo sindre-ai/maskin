@@ -588,6 +588,28 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 		)
 	})
 
+	it('passes noCredentialsConfigured through to onPermanentFailure', async () => {
+		const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
+		const session = aSessionRow({ workspaceId: 'ws-empty' })
+		const { db } = makeFakeDb({ dispatchRows: [row], sessionRows: [session] })
+		const onPermanentFailure = vi.fn()
+		const queue = makeQueue(
+			db,
+			async () => ({
+				kind: 'permanent_failure',
+				error: 'nothing configured',
+				noCredentialsConfigured: true,
+			}),
+			{ onPermanentFailure },
+		)
+
+		await queue.tick()
+
+		expect(onPermanentFailure).toHaveBeenCalledWith(
+			expect.objectContaining({ workspaceId: 'ws-empty', noCredentialsConfigured: true }),
+		)
+	})
+
 	it('does not notify onPermanentFailure when the session was already terminal', async () => {
 		// Nothing was failed by us — the dispatcher raced us to the row — so
 		// there is no live session to attribute the workspace state to.

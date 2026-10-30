@@ -52,7 +52,7 @@ describe('show_in_chat against real Postgres', () => {
 		expect(rows).toHaveLength(1)
 		expect(rows[0]).toMatchObject({
 			actorId: agent.id,
-			metadata: { source: 'voice', voice_session_id: session.id },
+			metadata: { source: 'voice', voice_session_id: session.id, kind: 'show' },
 		})
 		expect(rows[0]?.content).toContain(
 			`[Reply to Anna](https://app.test/${ws.id}/objects/${object.id})`,
@@ -96,6 +96,33 @@ describe('show_in_chat against real Postgres', () => {
 				.from(conversations)
 				.where(eq(conversations.workspaceId, session.workspaceId)),
 		).toHaveLength(0)
+	})
+
+	it('opens the card from a shortened or dash-less id, and never from another workspace', async () => {
+		const { session, ws, humanId } = await seedCall()
+		const object = await insertObject(db, ws.id, humanId, { title: 'Reply to Jonas' })
+		const other = await seedCall('ended')
+		const foreign = await insertObject(db, other.ws.id, other.humanId)
+
+		const short = await showInChat({
+			db,
+			session,
+			agentName: 'A',
+			args: { object_ids: [object.id.slice(0, 8)] },
+		})
+		expect(short.objectIds).toEqual([object.id])
+		const flat = await showInChat({
+			db,
+			session,
+			agentName: 'A',
+			args: { object_ids: [object.id.replace(/-/g, '')] },
+		})
+		expect(flat.objectIds).toEqual([object.id])
+
+		// A prefix of an object that lives elsewhere does not resolve here.
+		await expect(
+			showInChat({ db, session, agentName: 'A', args: { object_ids: [foreign.id.slice(0, 8)] } }),
+		).rejects.toBeInstanceOf(VoiceShowInChatError)
 	})
 
 	it('refuses a list over the cap', async () => {

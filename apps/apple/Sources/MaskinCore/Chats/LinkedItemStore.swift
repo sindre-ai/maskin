@@ -7,24 +7,28 @@ public enum LinkedItem: Equatable, Sendable {
 	case draft(WorkObject, ObjectPreview)
 	/// A page, document, picture or text the reader can look at.
 	case file(FileReference)
-	/// Something that stays a link in the chat (a contact, a plain task, a PDF): the drawer lists it
-	/// as a compact row.
+	/// Any other object in this workspace: drawn with the shared card face.
+	case object(LinkedObject)
+	/// An object the lookup could not find. The lookup cannot tell a deleted object from a private
+	/// one, and nothing is private inside a workspace, so the card says it was deleted.
+	case deleted(LinkedTarget)
+	/// Something that stays a link in the chat (a PDF): the drawer lists it as a compact row.
 	case plain(LinkedReference)
 
 	/// Whether it is drawn as a card in the message.
 	public var isCard: Bool {
 		switch self {
-		case .draft, .file: true
+		case .draft, .file, .object, .deleted: true
 		case .plain: false
 		}
 	}
 }
 
-/// The name and kind of a linked thing that has no card.
+/// The name and kind of a linked file that has no card.
 public struct LinkedReference: Equatable, Sendable {
 	public var target: LinkedTarget
 	public var title: String
-	/// "Task", "Contact", "PDF".
+	/// "PDF", "File".
 	public var kindLabel: String
 
 	public init(target: LinkedTarget, title: String, kindLabel: String) {
@@ -77,6 +81,8 @@ public final class LinkedItemStore {
 
 	@ObservationIgnored private let objects: any ObjectDraftsRemote
 	@ObservationIgnored private let files: any FilesRemote
+	@ObservationIgnored private let loadActors: (@Sendable () async throws -> [ActorRef])?
+	@ObservationIgnored private var actorsTask: Task<Void, Never>?
 	@ObservationIgnored private let workspaceID: @MainActor () -> String?
 	@ObservationIgnored private let now: @MainActor () -> Date
 	@ObservationIgnored private var inFlight: [String: Task<Void, Never>] = [:]
@@ -86,6 +92,9 @@ public final class LinkedItemStore {
 	public let retryAfter: TimeInterval
 
 	private var entries: [String: Entry] = [:]
+	/// The workspace's people and agents by id, read once: a card names its owner from here, so no
+	/// card asks for its own.
+	public private(set) var actorsByID: [String: ActorRef] = [:]
 	public private(set) var approvals: [String: DraftApprovalPhase] = [:]
 	public private(set) var fileTexts: [String: LinkedFileText] = [:]
 	/// A file larger than this is opened, not previewed in the message.
@@ -98,11 +107,13 @@ public final class LinkedItemStore {
 	public static let maxRetries = 4
 
 	public init(
-		objects: any ObjectDraftsRemote, files: any FilesRemote, workspaceID: @escaping @MainActor () -> String?,
+		objects: any ObjectDraftsRemote, files: any FilesRemote,
+		actors: (@Sendable () async throws -> [ActorRef])? = nil, workspaceID: @escaping @MainActor () -> String?,
 		retryAfter: TimeInterval = 30, now: @escaping @MainActor () -> Date = { Date() }
 	) {
 		self.objects = objects
 		self.files = files
+		self.loadActors = actors
 		self.workspaceID = workspaceID
 		self.retryAfter = retryAfter
 		self.now = now
@@ -117,6 +128,21 @@ public final class LinkedItemStore {
 
 	/// True when the target is drawn as a card in a message.
 	public func isCard(_ target: LinkedTarget) -> Bool { item(for: target)?.isCard == true }
+
+	/// True when the link should be a card now. An object link counts before its answer is in (the
+	/// card is a placeholder), so the message does not jump when the answer arrives; one that cannot
+	/// be shown goes back to text.
+	public func showsCard(_ target: LinkedTarget) -> Bool {
+		guard let state = entries[target.key]?.state else { return target.kind == .object }
+		switch state {
+		case .loading: return target.kind == .object
+		case .unavailable: return false
+		case .ready(let item): return item.isCard
+		}
+	}
+
+	/// The person or agent behind an id, once the workspace's actors have been read.
+	public func owner(for id: String?) -> ActorRef? { id.flatMap { actorsByID[$0] } }
 
 	// MARK: Resolving
 
@@ -160,12 +186,28 @@ public final class LinkedItemStore {
 			}
 		}
 		entries[target.key] = Entry(state: .loading)
+		if target.kind == .object { loadActorsOnce() }
 		let task = Task { [weak self] in
 			guard let self else { return }
 			await self.lookup(target)
 		}
 		inFlight[target.key] = task
 		return task
+	}
+
+	/// Reads the workspace's actors the first time an object is looked up; a failed read is tried
+	/// again with the next lookup.
+	private func loadActorsOnce() {
+		guard actorsTask == nil, let loadActors else { return }
+		actorsTask = Task { [weak self] in
+			let loaded = try? await loadActors()
+			guard let self else { return }
+			if let loaded {
+				self.actorsByID = Dictionary(loaded.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+			} else {
+				self.actorsTask = nil
+			}
+		}
 	}
 
 	private func fetch(_ target: LinkedTarget, workspace: String?) async throws -> LinkedItem? {
@@ -192,7 +234,13 @@ public final class LinkedItemStore {
 			}
 			settle(target, with: item)
 		} catch {
-			// A missing object or file is final; anything else (offline, a 5xx) is tried again later.
+			if target.kind == .object, Self.isGone(error) {
+				// Gone is final, and it is an answer: the card says so.
+				entries[target.key] =
+					workspaceID() == workspace ? Entry(state: .ready(.deleted(target)), failedAt: nil) : nil
+				return
+			}
+			// A missing file is final; anything else (offline, a 5xx) is tried again later.
 			entries[target.key] = Entry(state: .unavailable, failedAt: Self.isGone(error) ? nil : now())
 		}
 	}
@@ -207,18 +255,14 @@ public final class LinkedItemStore {
 		return false
 	}
 
-	/// An object is a card only when it is in this workspace, is a draft worth acting on (it has a
-	/// preview) and has text to show. Anything else is a plain reference.
+	/// An object is a card when it is in this workspace: the approval card for a draft worth acting
+	/// on (it has a preview and text), the shared card face for anything else.
 	func classify(_ detail: ObjectDetail, workspace: String?) -> LinkedItem? {
 		if let current = workspace, detail.workspaceId.lowercased() != current.lowercased() { return nil }
 		let object = detail.object
 		let hasText = !(object.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 		if let preview = detail.preview, hasText { return .draft(object, preview) }
-		let title = object.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return .plain(
-			LinkedReference(
-				target: LinkedTarget(kind: .object, uuid: object.id), title: title.isEmpty ? "Untitled" : title,
-				kindLabel: Self.label(forType: object.type)))
+		return .object(LinkedObject(object: object, kindLabel: Self.label(forType: object.type)))
 	}
 
 	/// A file is a card when it can be read in place: a page, a document, a picture or plain text.

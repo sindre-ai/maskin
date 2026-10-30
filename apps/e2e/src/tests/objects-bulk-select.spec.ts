@@ -22,7 +22,7 @@ test.describe('Bulk-select — checkbox tap zones (ship gate)', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Tap Zone Test Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)
@@ -50,7 +50,7 @@ test.describe('Bulk-select — grouped list selection', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Group Signal Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
@@ -99,12 +99,12 @@ test.describe('Bulk-select — archive action', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Archive Bet A',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Archive Bet B',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// Archive is a bet-only bulk action (T5), so the bar only offers it while
@@ -137,7 +137,7 @@ test.describe('Bulk-select — shift-click range selection', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: `Shift Select Bet ${i}`,
-				status: 'signal',
+				status: 'opportunity',
 			})
 		}
 

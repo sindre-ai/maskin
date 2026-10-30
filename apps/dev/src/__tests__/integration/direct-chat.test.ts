@@ -1,13 +1,18 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { events, conversationParticipants, conversations, messages } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { insertConversationMessage } from '../../services/conversation-messages'
-import { findDirectChat, findOrCreateDirectChat } from '../../services/direct-chat'
+import { directPairKey, findDirectChat, findOrCreateDirectChat } from '../../services/direct-chat'
 import { insertActor, insertConversation, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
-// The 1-1 primitive against real Postgres. The lock (one chat from two
-// concurrent callers) and the find (exactly two active participants) are
-// database semantics, so a mocked db could not show either.
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+// The direct message (DM) primitive against real Postgres. The marker, the unique
+// index and the lock (one chat from two concurrent callers) are database
+// semantics, so a mocked db could not show any of them.
 
 async function addParticipant(
 	conversationId: string,
@@ -29,38 +34,70 @@ describe('Direct chat primitive', () => {
 		agentId = (await insertActor(db, { type: 'agent' })).id
 	})
 
+	/** A chat with exactly these two people. Marked as their DM unless it is topical. */
+	async function chatBetween(
+		a: string,
+		b: string,
+		opts: { topical?: boolean; lastMessageAt?: Date } = {},
+	) {
+		const chat = await insertConversation(db, workspaceId, a, {
+			directPairKey: opts.topical ? null : directPairKey(a, b),
+			...(opts.lastMessageAt ? { lastMessageAt: opts.lastMessageAt } : {}),
+		})
+		await addParticipant(chat.id, a)
+		await addParticipant(chat.id, b)
+		return chat
+	}
+
+	describe('directPairKey', () => {
+		it('is the same whichever actor comes first', () => {
+			expect(directPairKey(humanId, agentId)).toBe(directPairKey(agentId, humanId))
+		})
+	})
+
 	describe('findDirectChat', () => {
-		it('returns an existing exact two-person chat', async () => {
-			const chat = await insertConversation(db, workspaceId, humanId)
-			await addParticipant(chat.id, humanId)
-			await addParticipant(chat.id, agentId)
+		it('returns the DM between the two', async () => {
+			const chat = await chatBetween(humanId, agentId)
 
 			expect(await findDirectChat(db, { workspaceId, humanId, agentId })).toEqual({ id: chat.id })
 		})
 
-		it('returns null when a conversation has 3 active participants', async () => {
-			const other = await insertActor(db, { type: 'agent' })
-			const chat = await insertConversation(db, workspaceId, humanId)
+		it('never returns a topical chat, even a newer one with the same two people', async () => {
+			const dm = await chatBetween(humanId, agentId, { lastMessageAt: new Date('2026-01-01') })
+			await chatBetween(humanId, agentId, { topical: true, lastMessageAt: new Date('2026-06-01') })
+
+			expect(await findDirectChat(db, { workspaceId, humanId, agentId })).toEqual({ id: dm.id })
+		})
+
+		it('returns null when the only chat with the agent is topical', async () => {
+			await chatBetween(humanId, agentId, { topical: true })
+
+			expect(await findDirectChat(db, { workspaceId, humanId, agentId })).toBeNull()
+		})
+
+		it('returns null once one of the two has left the DM', async () => {
+			const chat = await insertConversation(db, workspaceId, humanId, {
+				directPairKey: directPairKey(humanId, agentId),
+			})
 			await addParticipant(chat.id, humanId)
-			await addParticipant(chat.id, agentId)
+			await addParticipant(chat.id, agentId, { leftAt: new Date() })
+
+			expect(await findDirectChat(db, { workspaceId, humanId, agentId })).toBeNull()
+		})
+
+		it('returns null while a third person is in the DM', async () => {
+			const other = await insertActor(db, { type: 'agent' })
+			const chat = await chatBetween(humanId, agentId)
 			await addParticipant(chat.id, other.id)
 
 			expect(await findDirectChat(db, { workspaceId, humanId, agentId })).toBeNull()
 		})
 
-		it('does not count a participant who left', async () => {
-			const other = await insertActor(db, { type: 'agent' })
-			const chat = await insertConversation(db, workspaceId, humanId)
-			await addParticipant(chat.id, humanId)
-			await addParticipant(chat.id, agentId)
-			await addParticipant(chat.id, other.id, { leftAt: new Date() })
-
-			expect(await findDirectChat(db, { workspaceId, humanId, agentId })).toEqual({ id: chat.id })
-		})
-
-		it('returns null for a chat in another workspace', async () => {
+		it('returns null for a DM in another workspace', async () => {
 			const otherWorkspace = await insertWorkspace(db, getTestActorId())
-			const chat = await insertConversation(db, otherWorkspace.id, humanId)
+			const chat = await insertConversation(db, otherWorkspace.id, humanId, {
+				directPairKey: directPairKey(humanId, agentId),
+			})
 			await addParticipant(chat.id, humanId)
 			await addParticipant(chat.id, agentId)
 
@@ -69,9 +106,9 @@ describe('Direct chat primitive', () => {
 	})
 
 	describe('findOrCreateDirectChat', () => {
-		const args = () => ({ workspaceId, humanId, agentId, title: 'Meet Ada', createdBy: humanId })
+		const args = () => ({ workspaceId, humanId, agentId, title: 'Ada', createdBy: humanId })
 
-		it('creates the conversation, both participants and the event when no chat exists', async () => {
+		it('creates the marked conversation, both participants and the event when no DM exists', async () => {
 			const result = await findOrCreateDirectChat(db, args())
 			expect(result.created).toBe(true)
 
@@ -81,9 +118,10 @@ describe('Direct chat primitive', () => {
 				.where(eq(conversations.id, result.id))
 			expect(conversation).toMatchObject({
 				workspaceId,
-				title: 'Meet Ada',
+				title: 'Ada',
 				titleAutoState: 'none',
 				createdBy: humanId,
+				directPairKey: directPairKey(humanId, agentId),
 			})
 
 			const participants = await db
@@ -118,19 +156,67 @@ describe('Direct chat primitive', () => {
 			})
 		})
 
-		it('returns an existing exact two-person chat instead of creating another', async () => {
-			const chat = await insertConversation(db, workspaceId, humanId)
-			await addParticipant(chat.id, humanId)
-			await addParticipant(chat.id, agentId)
+		it('returns the same DM on every call, and for either order of the pair', async () => {
+			const first = await findOrCreateDirectChat(db, args())
+			const second = await findOrCreateDirectChat(db, args())
+			const swapped = await findOrCreateDirectChat(db, {
+				...args(),
+				humanId: agentId,
+				agentId: humanId,
+			})
 
-			const result = await findOrCreateDirectChat(db, args())
-
-			expect(result).toEqual({ id: chat.id, created: false })
+			expect(first.created).toBe(true)
+			expect([second, swapped]).toEqual([
+				{ id: first.id, created: false },
+				{ id: first.id, created: false },
+			])
 			const all = await db
 				.select()
 				.from(conversations)
 				.where(eq(conversations.workspaceId, workspaceId))
 			expect(all).toHaveLength(1)
+		})
+
+		it('creates the DM next to a topical chat with the same two people and leaves the topical chat alone', async () => {
+			const topical = await chatBetween(humanId, agentId, { topical: true })
+
+			const result = await findOrCreateDirectChat(db, args())
+
+			expect(result.created).toBe(true)
+			expect(result.id).not.toBe(topical.id)
+			const [still] = await db.select().from(conversations).where(eq(conversations.id, topical.id))
+			expect(still?.directPairKey).toBeNull()
+		})
+
+		it('brings back a participant who left the DM instead of creating another', async () => {
+			const dm = await findOrCreateDirectChat(db, args())
+			await db
+				.update(conversationParticipants)
+				.set({ leftAt: new Date() })
+				.where(
+					and(
+						eq(conversationParticipants.conversationId, dm.id),
+						eq(conversationParticipants.actorId, humanId),
+					),
+				)
+
+			const again = await findOrCreateDirectChat(db, args())
+
+			expect(again).toEqual({ id: dm.id, created: false })
+			expect(await findDirectChat(db, { workspaceId, humanId, agentId })).toEqual({ id: dm.id })
+		})
+
+		it('keeps one DM per pair at the database, not only under the lock', async () => {
+			await findOrCreateDirectChat(db, args())
+
+			await expect(
+				insertConversation(db, workspaceId, humanId, {
+					directPairKey: directPairKey(humanId, agentId),
+				}),
+			).rejects.toThrow()
+			// Any number of topical chats is fine.
+			await insertConversation(db, workspaceId, humanId)
+			await insertConversation(db, workspaceId, humanId)
 		})
 
 		it('makes two concurrent calls for the same pair produce one conversation', async () => {
@@ -172,11 +258,87 @@ describe('Direct chat primitive', () => {
 		})
 	})
 
+	describe('the 0117 backfill', () => {
+		// The migration's last statement, run on rows the old way made: chats with
+		// no marker. Rolled back at the end so it cannot touch other tests' rows.
+		const backfill = readFileSync(
+			join(__dirname, '../../../../../packages/db/drizzle/0117_conversations_direct_pair_key.sql'),
+			'utf-8',
+		)
+			.split('--> statement-breakpoint')
+			.pop() as string
+
+		async function runBackfill() {
+			const marked = new Map<string, string | null>()
+			const rollback = new Error('rollback')
+			await db
+				.transaction(async (tx) => {
+					await tx.execute(sql.raw(backfill))
+					const rows = await tx
+						.select({ id: conversations.id, key: conversations.directPairKey })
+						.from(conversations)
+					for (const r of rows) marked.set(r.id, r.key)
+					throw rollback
+				})
+				.catch((err) => {
+					if (err !== rollback) throw err
+				})
+			return marked
+		}
+
+		it('marks one chat per person and agent pair, the most recently used, and no other', async () => {
+			const otherAgent = await insertActor(db, { type: 'agent' })
+			const colleague = await insertActor(db, { type: 'human' })
+
+			const older = await chatBetween(humanId, agentId, {
+				topical: true,
+				lastMessageAt: new Date('2026-01-01'),
+			})
+			const newer = await chatBetween(humanId, agentId, {
+				topical: true,
+				lastMessageAt: new Date('2026-06-01'),
+			})
+			const otherPair = await chatBetween(humanId, otherAgent.id, { topical: true })
+			const personToPerson = await chatBetween(humanId, colleague.id, { topical: true })
+			const agentToAgent = await chatBetween(agentId, otherAgent.id, { topical: true })
+
+			const group = await chatBetween(humanId, agentId, { topical: true })
+			await addParticipant(group.id, otherAgent.id)
+
+			const aboutSomething = await insertConversation(db, workspaceId, humanId, {
+				subjectType: 'object',
+				subjectId: crypto.randomUUID(),
+			})
+			await addParticipant(aboutSomething.id, humanId)
+			await addParticipant(aboutSomething.id, agentId)
+
+			const otherWorkspace = await insertWorkspace(db, getTestActorId())
+			const elsewhere = await insertConversation(db, otherWorkspace.id, humanId, {
+				lastMessageAt: new Date('2025-01-01'),
+			})
+			await addParticipant(elsewhere.id, humanId)
+			await addParticipant(elsewhere.id, agentId)
+
+			const marked = await runBackfill()
+
+			expect(marked.get(newer.id)).toBe(directPairKey(humanId, agentId))
+			expect(marked.get(older.id)).toBeNull()
+			expect(marked.get(otherPair.id)).toBe(directPairKey(humanId, otherAgent.id))
+			expect(marked.get(personToPerson.id)).toBeNull()
+			expect(marked.get(agentToAgent.id)).toBeNull()
+			expect(marked.get(group.id)).toBeNull()
+			expect(marked.get(aboutSomething.id)).toBeNull()
+			// The same pair in another workspace has its own DM.
+			expect(marked.get(elsewhere.id)).toBe(directPairKey(humanId, agentId))
+			// The marked chat is the one the app now finds.
+			const dmIds = [...marked].filter(([, key]) => key === directPairKey(humanId, agentId))
+			expect(dmIds.map(([id]) => id).sort()).toEqual([newer.id, elsewhere.id].sort())
+		})
+	})
+
 	describe('insertConversationMessage inside a transaction', () => {
 		it('leaves no message row when the transaction is rolled back', async () => {
-			const chat = await insertConversation(db, workspaceId, humanId)
-			await addParticipant(chat.id, humanId)
-			await addParticipant(chat.id, agentId)
+			const chat = await chatBetween(humanId, agentId)
 
 			await expect(
 				db.transaction(async (tx) => {

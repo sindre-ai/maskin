@@ -306,6 +306,42 @@ export const messageIntegrationAccessRequestSchema = z.object({
 })
 
 /**
+ * The tool server an agent wants to add, as the card shows it. Functions, not shared schemas,
+ * so a tool that embeds the metadata never gets a $ref (see replyToSessionSchema).
+ */
+const mcpServerNameSchema = () => z.string().min(1).max(60)
+const mcpServerValuesSchema = () => z.record(z.string().max(100), z.string().max(4096))
+const mcpServerSecretNamesSchema = () => z.array(z.string().min(1).max(100)).max(20)
+
+/**
+ * An agent's request to add a tool (MCP) server, shown as a card with Add / Not now. Never
+ * accepted from a client. Holds no secret and never can: env and header values here are the
+ * ones the agent may know (a region, a Keychain reference), and the secrets the server needs
+ * are only named (secret_env, secret_headers). The person types those into the card, which
+ * sends them straight to the server definition, so they never pass through the agent or this
+ * message. Adding it is the person's own call to POST /api/custom-mcp-servers.
+ */
+export const messageMcpServerRequestSchema = z.object({
+	/** The session whose turn asked. Ties the card back to the agent the server is given to. */
+	session_id: z.string().uuid(),
+	reply_to_session: replyToSessionSchema(),
+	/** The name the person sees, e.g. "Linear". Editable on the card. */
+	name: mcpServerNameSchema(),
+	/** One line on what the agent needs it for. */
+	hint: z.string().min(1).max(300).optional(),
+	type: z.enum(['stdio', 'http']).optional(),
+	command: z.string().min(1).max(512).optional(),
+	args: z.array(z.string().max(2048)).max(100).optional(),
+	url: z.string().min(1).max(2048).optional(),
+	env: mcpServerValuesSchema().optional(),
+	headers: mcpServerValuesSchema().optional(),
+	/** Env var names the person must fill in, e.g. ["LINEAR_API_KEY"]. */
+	secret_env: mcpServerSecretNamesSchema().optional(),
+	/** Header names the person must fill in, e.g. ["Authorization"]. */
+	secret_headers: mcpServerSecretNamesSchema().optional(),
+})
+
+/**
  * An agent's request for the person to act on the agent's own computer, shown as a card
  * in the chat. Never accepted from a client. Holds nothing sensitive: it only says what
  * the person should do. The card opens the live view of the asking agent's computer
@@ -344,6 +380,12 @@ export const messageMetadataSchema = z.object({
 	source: z.enum(['final_output', 'voice']).optional(),
 	/** Backend-owned: the voice_sessions row a 'voice' message was transcribed from. */
 	voice_session_id: z.string().uuid().optional(),
+	/**
+	 * Backend-owned: what a 'voice' message is when it is not a spoken transcript line. 'show' is
+	 * a draft, object or link the agent put on screen (show_in_chat); 'receipt' and
+	 * 'receipt_summary' record what a call did. A spoken line has no kind.
+	 */
+	kind: z.string().max(40).optional(),
 	final_output: messageFinalOutputSchema.optional(),
 	/** Backend-owned: an agent's AskUserQuestion, surfaced as chips in chat. */
 	question: messageQuestionSchema.optional(),
@@ -357,6 +399,8 @@ export const messageMetadataSchema = z.object({
 	keychain_access_request: messageKeychainAccessRequestSchema.optional(),
 	/** Backend-owned: an agent's request for more access to a connected integration, shown as a card. */
 	integration_access_request: messageIntegrationAccessRequestSchema.optional(),
+	/** Backend-owned: an agent's request to add a tool (MCP) server, shown as a card. */
+	mcp_server_request: messageMcpServerRequestSchema.optional(),
 	/** Backend-owned: an agent asking the person to act on its computer, shown as a card. */
 	computer_request: messageComputerRequestSchema.optional(),
 	/**
@@ -399,6 +443,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		final_output: _finalOutput,
 		question: _question,
 		voice_session_id: _voiceSessionId,
+		kind: _kind,
 		integration_connect: _integrationConnect,
 		helper_return: _helperReturn,
 		delivery: _delivery,
@@ -408,6 +453,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		keychain_request: _keychainRequest,
 		keychain_access_request: _keychainAccessRequest,
 		integration_access_request: _integrationAccessRequest,
+		mcp_server_request: _mcpServerRequest,
 		computer_request: _computerRequest,
 		comment_event_id: _commentEventId,
 		...rest
@@ -427,6 +473,10 @@ export const createConversationSchema = z.object({
 	subject: conversationSubjectSchema.optional(),
 	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
 	participant_actor_ids: z.array(z.string().uuid()).max(MAX_CONVERSATION_PARTICIPANTS),
+	// Open the direct message (DM) with the one other participant instead of a new
+	// topical chat: the pair's existing DM is returned (200), or created once (201,
+	// titled with `title`). Leave it out for a new topical chat, which is always created.
+	direct: z.boolean().optional(),
 	initial_message: z.string().min(1).max(MESSAGE_MAX_LENGTH).optional(),
 	// Structured context (objects/notifications picked via the composer) for the
 	// initial message — mirrors postMessageSchema's metadata so a brand-new
@@ -477,6 +527,10 @@ export const postMessageSchema = z.object({
 	thread_root_id: z.number().int().positive().optional(),
 	// With thread_root_id: also show the reply in the main timeline.
 	also_in_channel: z.boolean().optional(),
+	// An agent posting mid-turn lands in the thread of the message that started the turn when
+	// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
+	// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+	top_level: z.boolean().optional(),
 })
 
 export const editMessageSchema = z.object({
@@ -626,6 +680,26 @@ export function formatIntegrationAccessRequestAsMarkdown(
 	const what = level === 'read_write' ? 'read and write access' : 'read access'
 	const why = reason ? ` ${reason}` : ''
 	return `I'd like ${what} to **${displayName}**.${why} Allow it with the card below, or in Settings → Integrations.`
+}
+
+/** The `mcp-server-card` request body: the tool input, minus the session the server knows. */
+export const sessionMcpServerCardSchema = z.object({
+	name: z.string().trim().min(1).max(60),
+	hint: z.string().trim().min(1).max(300).optional(),
+	type: z.enum(['stdio', 'http']).optional(),
+	command: z.string().trim().min(1).max(512).optional(),
+	args: z.array(z.string().max(2048)).max(100).optional(),
+	url: z.string().trim().min(1).max(2048).optional(),
+	env: z.record(z.string().max(100), z.string().max(4096)).optional(),
+	headers: z.record(z.string().max(100), z.string().max(4096)).optional(),
+	secret_env: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+	secret_headers: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+})
+
+/** The plain-markdown rendering of an add-server card, for every reader that isn't the chat UI. */
+export function formatMcpServerRequestAsMarkdown(name: string, hint?: string): string {
+	const why = hint ? ` ${hint}` : ''
+	return `I'd like to add the **${name}** tool server.${why} Add it with the card below, or in Settings → Integrations. Any key it needs goes straight into the server, so I never see it.`
 }
 
 /** The `computer-card` request body: the tool input, minus the session the server knows. */

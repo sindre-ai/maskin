@@ -125,122 +125,23 @@ test.describe('Object detail — v2 surface', () => {
 		await titleField.press('Enter')
 		await expect(heading).toHaveText('After rename')
 
-		// The body opens its editor on click, the same way it did pre-v2.
-		await page.locator('.prose').first().click()
-		const bodyField = page.locator('textarea').first()
-		await bodyField.fill('Rewritten body.')
-		await bodyField.blur()
+		// The body is the rich editor; it saves when focus leaves it.
+		const editor = page.locator('.ProseMirror[contenteditable="true"]').first()
+		await expect(editor).toBeVisible({ timeout: 15000 })
+		await editor.click()
+		await page.keyboard.press('ControlOrMeta+A')
+		await page.keyboard.type('Rewritten body.')
+		const saved = page.waitForResponse(
+			(res) => res.request().method() === 'PATCH' && res.url().includes(`/api/objects/${bet.id}`),
+		)
+		await heading.click()
+		await saved
 
 		await page.reload()
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText('After rename', {
 			timeout: 15000,
 		})
 		await expect(page.getByText('Rewritten body.')).toBeVisible()
-	})
-
-	// The body is a lightweight markdown surface, but the toolbar belongs to the
-	// editor: highlighting prose you are only reading must not raise it.
-	test('the formatting toolbar rises on an editor selection, never on a view one', async ({
-		page,
-		account,
-	}) => {
-		await page.setViewportSize({ width: 1024, height: 768 })
-		const bet = await account.api.createObject(account.workspaceId, {
-			type: 'bet',
-			title: 'Formatting probe',
-			status: 'active',
-			content: 'Charges retry for three days.',
-		})
-
-		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(page.getByRole('heading', { level: 1, name: 'Formatting probe' })).toBeVisible({
-			timeout: 15000,
-		})
-
-		const bold = page.getByRole('button', { name: 'Bold' })
-		await expect(bold).toHaveCount(0)
-
-		// Selecting while reading leaves the page quiet.
-		await page
-			.locator('.prose p')
-			.first()
-			.evaluate((el) => {
-				const range = document.createRange()
-				const node = el.firstChild as Node
-				range.setStart(node, 0)
-				range.setEnd(node, 7)
-				const selection = window.getSelection()
-				selection?.removeAllRanges()
-				selection?.addRange(range)
-			})
-		await expect(bold).toHaveCount(0)
-
-		// Same seven characters, this time in the editor.
-		await page.locator('.prose p').first().click()
-		const body = page.getByRole('textbox', { name: 'Description' })
-		await expect(body).toBeFocused()
-		await body.press('ControlOrMeta+Home')
-		for (let i = 0; i < 7; i += 1) await body.press('Shift+ArrowRight')
-
-		await expect(bold).toBeVisible()
-		await expect(page.getByRole('button', { name: 'Italic' })).toBeVisible()
-		await expect(page.getByRole('button', { name: 'Code' })).toBeVisible()
-
-		// mousedown, not click — the toolbar must act without stealing the caret.
-		await bold.dispatchEvent('mousedown')
-		await expect(body).toHaveValue('**Charges** retry for three days.')
-
-		await body.press('ControlOrMeta+Enter')
-		await page.reload()
-		await expect(page.getByRole('heading', { level: 1, name: 'Formatting probe' })).toBeVisible({
-			timeout: 15000,
-		})
-		// The word came back bold, so the marker reached the stored markdown.
-		await expect(page.locator('.prose strong')).toHaveText('Charges')
-	})
-
-	// Clicking into the body must change nothing but the affordance — the
-	// mockup renders view and edit at identical size and width.
-	test('the body editor opens focused, at the same size, with its markers dimmed', async ({
-		page,
-		account,
-	}) => {
-		await page.setViewportSize({ width: 1024, height: 768 })
-		const bet = await account.api.createObject(account.workspaceId, {
-			type: 'bet',
-			title: 'Editor probe',
-			status: 'active',
-			content: 'Enterprise **trials** block on backups.',
-		})
-
-		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(page.getByRole('heading', { level: 1, name: 'Editor probe' })).toBeVisible({
-			timeout: 15000,
-		})
-
-		const viewSize = await page
-			.locator('.prose p')
-			.first()
-			.evaluate((el) => getComputedStyle(el).fontSize)
-
-		await page.locator('.prose').first().click()
-		const field = page.locator('textarea').first()
-		await expect(field).toBeFocused()
-		expect(await field.evaluate((el) => getComputedStyle(el).fontSize)).toBe(viewSize)
-
-		// The delimiters are pushed back so the sentence still reads while you
-		// edit it; the overlay carries the text, the field carries the caret.
-		await expect(page.getByText('trials', { exact: true })).toBeVisible()
-		await expect(page.getByText('Esc', { exact: true })).toBeVisible()
-
-		// ⌘↵ commits.
-		await field.fill('Enterprise **trials** block on backups. Edited.')
-		await field.press('ControlOrMeta+Enter')
-		await page.reload()
-		await expect(page.getByRole('heading', { level: 1, name: 'Editor probe' })).toBeVisible({
-			timeout: 15000,
-		})
-		await expect(page.getByText(/Edited\./)).toBeVisible()
 	})
 
 	// "Reference an object" attaches removable chips that post as real

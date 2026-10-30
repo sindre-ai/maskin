@@ -157,7 +157,7 @@ describe('MarketplaceLoopDetail', () => {
 						item_snapshot: {
 							name: 'On new feedback',
 							type: 'event',
-							config: { entity_type: 'signal', action: 'created' },
+							config: { entity_type: 'opportunity', action: 'created' },
 							actionPrompt: 'Acknowledge the customer in their own words.',
 							targetActorId: 'actor-source-1',
 						},
@@ -169,7 +169,7 @@ describe('MarketplaceLoopDetail', () => {
 		expect(screen.getByText('The loop, once installed')).toBeInTheDocument()
 		// "Relay" appears once in the flow and once in "What it brings".
 		expect(screen.getAllByText('Relay')).toHaveLength(2)
-		expect(screen.getByText('When signal is created')).toBeInTheDocument()
+		expect(screen.getByText('When opportunity is created')).toBeInTheDocument()
 		expect(screen.getByText('Acknowledge the customer in their own words.')).toBeInTheDocument()
 	})
 
@@ -197,7 +197,7 @@ describe('MarketplaceLoopDetail', () => {
 						item_snapshot: {
 							name: 'On new feedback',
 							type: 'event',
-							config: { entity_type: 'signal', action: 'created' },
+							config: { entity_type: 'opportunity', action: 'created' },
 							actionPrompt: 'Acknowledge the customer.',
 							targetActorId: 'actor-source-1',
 						},
@@ -232,7 +232,7 @@ describe('MarketplaceLoopDetail', () => {
 						item_snapshot: {
 							name: 'On new feedback',
 							type: 'event',
-							config: { entity_type: 'signal', action: 'created' },
+							config: { entity_type: 'opportunity', action: 'created' },
 							actionPrompt: 'Acknowledge the customer.',
 							targetActorId: 'actor-source-1',
 						},

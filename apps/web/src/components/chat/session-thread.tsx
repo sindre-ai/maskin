@@ -1,5 +1,6 @@
 import { isSessionIdleAwaitingInput } from '@/components/agents/session-log-transcript'
 import { Composer } from '@/components/chat/chat'
+import { PREVIEW_BOUNDS_ATTR } from '@/components/chat/linked-object-reference'
 import { MessageActivity } from '@/components/chat/message-activity'
 import { MessageBubble } from '@/components/chat/message-bubble'
 import { QuestionOptions } from '@/components/chat/question-options'
@@ -154,7 +155,11 @@ export function SessionThread({
 
 	return (
 		<>
-			<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
+			<div
+				// The scroller clips a chip's hover preview, so the preview places itself inside it.
+				{...{ [PREVIEW_BOUNDS_ATTR]: '' }}
+				className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4"
+			>
 				{isLoading ? (
 					<Spinner />
 				) : chat.items.length === 0 && !working ? (

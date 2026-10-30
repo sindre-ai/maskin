@@ -3,17 +3,17 @@ import MaskinAPI
 
 @testable import MaskinCore
 
-/// Polls until `condition` holds (up to ~3s). The outbox drains on background tasks, so tests
-/// wait for the observable outcome instead of sleeping a fixed time.
+/// Polls until `condition` holds (see `PollBudget` for what the bound counts). The outbox drains
+/// on background tasks, so tests wait for the observable outcome instead of sleeping a fixed time.
 @MainActor
 func eventually(
 	timeout: Duration = .seconds(15), _ condition: @MainActor () -> Bool
 ) async -> Bool {
-	let deadline = ContinuousClock.now.advanced(by: timeout)
-	while ContinuousClock.now < deadline {
+	var budget = PollBudget(timeout)
+	repeat {
 		if condition() { return true }
 		try? await Task.sleep(for: .milliseconds(10))
-	}
+	} while budget.spend()
 	return condition()
 }
 
@@ -28,6 +28,8 @@ final class ScriptedExecutor: OutboxExecuting, @unchecked Sendable {
 	struct Call: Equatable { var kind: String; var payload: String; var key: String? }
 
 	private let lock = NSLock()
+	/// Runs inside every call, before it answers: lets a test move a fake clock with the calls.
+	var onCall: (@Sendable () -> Void)?
 	private var recorded: [Call] = []
 	private var scripted: [String: [any Error]] = [:]
 
@@ -48,6 +50,15 @@ final class ScriptedExecutor: OutboxExecuting, @unchecked Sendable {
 			scripted[text] = queue
 			return error
 		}
+		onCall?()
 		if let next { throw next }
 	}
+}
+
+/// A clock the test moves by hand.
+final class StepClock: @unchecked Sendable {
+	private let lock = NSLock()
+	private var date = Date(timeIntervalSince1970: 2_000_000)
+	var now: Date { lock.withLock { date } }
+	func advance(_ seconds: TimeInterval) { lock.withLock { date = date.addingTimeInterval(seconds) } }
 }

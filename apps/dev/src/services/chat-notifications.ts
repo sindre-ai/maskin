@@ -2,6 +2,7 @@ import type { Database, Transaction } from '@maskin/db'
 import {
 	actors,
 	conversationParticipants,
+	messages,
 	notifications,
 	workspaceMembers,
 } from '@maskin/db/schema'
@@ -19,10 +20,13 @@ import { type Notification, insertNotificationsWithEvents } from '../lib/notific
  *
  * Row contract (notifications.metadata):
  *   push_category      'needs_you' | 'conversation'
- *   push_collapse_key  `chat:<conversationId>`
+ *   push_collapse_key  `chat:<conversationId>`, or `chat:<conversationId>:thread:<rootId>`
+ *                      for a thread reply, so one busy thread collapses into one banner
  *   push_delay_seconds conversation rows only; the consumer waits, then skips
  *                      the push if the target already read up to message_id
  *   conversation_id, message_id   deep link + the read-up-to check
+ *   thread_root_id     thread replies only: the deep link opens the thread, and the
+ *                      read-up-to check uses the thread's cursor, not the chat's
  */
 
 const PREVIEW_MAX = 140
@@ -85,6 +89,80 @@ export async function humanParticipants(
 	return rows.map((r) => r.actorId)
 }
 
+/**
+ * The other person in a direct chat: a conversation with exactly two active
+ * participants, both human, one of them the author. Null for a group chat, a chat
+ * with an agent in it, a chat the author is not in, or when the other person has
+ * archived it. A group chat stays quiet at the top level (people there are reached
+ * by @mention); a direct chat has one person to reach.
+ */
+export async function directChatPeer(
+	db: Db,
+	conversationId: string,
+	authorId: string,
+): Promise<string | null> {
+	const rows = await db
+		.select({
+			actorId: conversationParticipants.actorId,
+			type: actors.type,
+			archived: conversationParticipants.archived,
+		})
+		.from(conversationParticipants)
+		.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, conversationId),
+				isNull(conversationParticipants.leftAt),
+			),
+		)
+	if (rows.length !== 2) return null
+	if (!rows.some((r) => r.actorId === authorId)) return null
+	const peer = rows.find((r) => r.actorId !== authorId)
+	if (!peer || peer.type !== 'human' || peer.archived) return null
+	return peer.actorId
+}
+
+/**
+ * The people a thread reply is for: the root's author and everyone who has replied
+ * in it. Humans only, and only those still active in the conversation, minus the
+ * author. A person who never touched the thread is not here, which is the point: a
+ * reply in a side thread should not buzz the whole chat. Someone @mentioned in the
+ * reply who is new to the thread is deliberately not added: notifyChatMention owns
+ * mentions (immediate push, opens the thread), and runs first.
+ */
+export async function threadParticipants(
+	db: Db,
+	args: {
+		conversationId: string
+		threadRootId: number
+		authorId: string
+	},
+): Promise<string[]> {
+	const [root] = await db
+		.select({ actorId: messages.actorId })
+		.from(messages)
+		.where(
+			and(eq(messages.id, args.threadRootId), eq(messages.conversationId, args.conversationId)),
+		)
+		.limit(1)
+	const repliers = await db
+		.selectDistinct({ actorId: messages.actorId })
+		.from(messages)
+		.where(
+			and(
+				eq(messages.conversationId, args.conversationId),
+				eq(messages.threadRootId, args.threadRootId),
+			),
+		)
+	const involved = new Set<string>([
+		...(root ? [root.actorId] : []),
+		...repliers.map((r) => r.actorId),
+	])
+	if (involved.size === 0) return []
+	const humans = await humanParticipants(db, args.conversationId, args.authorId)
+	return humans.filter((id) => involved.has(id))
+}
+
 type ChatNotificationArgs = {
 	workspaceId: string
 	authorId: string
@@ -100,6 +178,8 @@ type ChatNotificationArgs = {
 	sessionId?: string | null
 	/** Overrides the per-conversation `chat:<id>` key, which collapses and rate-limits by chat. */
 	collapseKey?: string
+	/** A thread reply: stamps `thread_root_id` and collapses per thread instead of per chat. */
+	threadRootId?: number | null
 }
 
 /**
@@ -144,9 +224,14 @@ async function createChatNotifications(
 				status: args.status,
 				metadata: {
 					...args.extraMetadata,
-					push_collapse_key: args.collapseKey ?? `chat:${args.conversationId}`,
+					push_collapse_key:
+						args.collapseKey ??
+						(args.threadRootId
+							? `chat:${args.conversationId}:thread:${args.threadRootId}`
+							: `chat:${args.conversationId}`),
 					conversation_id: args.conversationId,
 					message_id: args.messageId,
+					...(args.threadRootId ? { thread_root_id: args.threadRootId } : {}),
 				},
 			})),
 		})
@@ -204,12 +289,13 @@ function isSuccessfulFinalOutput(metadata: MessageMetadata | null | undefined): 
 }
 
 /**
- * An agent's auto-posted end-of-turn reply was just inserted. Called by
- * insertConversationMessage only after a fresh insert (it returns null on a
- * dedupe conflict, so a replayed log line never gets here) and only for
- * `source: 'final_output'` messages, so mid-turn/tool/step messages, human
- * messages, system messages and failure notices create nothing. Notifies every
- * other active human participant; an agent-to-agent chat has none.
+ * A top-level message was just inserted. Called by insertConversationMessage only
+ * after a fresh insert (it returns null on a dedupe conflict, so a replayed log
+ * line never gets here). An agent's auto-posted end-of-turn reply
+ * (`source: 'final_output'`) notifies every other active human participant; an
+ * agent-to-agent chat has none. Mid-turn/tool/step messages, system messages and
+ * failure notices create nothing. A person's message notifies only the other person
+ * in a direct chat (two humans); in a group chat people are reached by @mention.
  *
  * Type: the notification type enum is closed (the iOS client's generated types
  * decode it as an enum), so no new value is added. `good_news` is the neutral
@@ -230,13 +316,38 @@ export async function notifyChatReply(
 		kind: string | null | undefined
 		metadata: MessageMetadata | null | undefined
 		sessionId: string | null | undefined
+		/** Set on a reply inside a thread: the push then goes to the thread's people only. */
+		threadRootId?: number | null
 	},
 ): Promise<void> {
 	if ((msg.kind ?? 'message') !== 'message') return
-	if (!isSuccessfulFinalOutput(msg.metadata)) return
 	try {
 		const author = await actorProfile(db, msg.authorId)
-		if (author?.type !== 'agent') return
+		if (!author) return
+		if (msg.threadRootId) return await notifyThreadReply(db, msg, author)
+		if (author.type === 'human') {
+			const peer = await directChatPeer(db, msg.conversationId, msg.authorId)
+			await createChatNotifications(db, {
+				workspaceId: msg.workspaceId,
+				authorId: msg.authorId,
+				conversationId: msg.conversationId,
+				messageId: msg.messageId,
+				targets: peer ? [peer] : [],
+				type: 'good_news',
+				status: 'seen',
+				title: author.name,
+				content: previewText(msg.content),
+				sessionId: msg.sessionId,
+				extraMetadata: {
+					push_category: 'conversation',
+					push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
+					[PUSH_ONLY_METADATA_KEY]: true,
+				},
+			})
+			return
+		}
+		if (!isSuccessfulFinalOutput(msg.metadata)) return
+		if (author.type !== 'agent') return
 		const targets = await humanParticipants(db, msg.conversationId, msg.authorId)
 		const asksQuestion = Boolean(msg.metadata?.question)
 		await createChatNotifications(db, {
@@ -292,6 +403,8 @@ export async function notifyChatMention(
 		kind: string | null | undefined
 		metadata: MessageMetadata | null | undefined
 		sessionId: string | null | undefined
+		/** Set on a reply inside a thread: the push then opens the thread. */
+		threadRootId?: number | null
 	},
 ): Promise<void> {
 	if ((msg.kind ?? 'message') !== 'message') return
@@ -324,6 +437,7 @@ export async function notifyChatMention(
 			title: `${author?.name ?? 'Someone'} mentioned you`,
 			content: previewText(msg.content),
 			sessionId: msg.sessionId,
+			threadRootId: msg.threadRootId,
 			collapseKey: `chat-mention:${msg.conversationId}:${msg.messageId}`,
 			extraMetadata: { push_category: 'conversation', [PUSH_ONLY_METADATA_KEY]: true },
 		})
@@ -334,6 +448,59 @@ export async function notifyChatMention(
 			error: String(err),
 		})
 	}
+}
+
+/**
+ * A reply landed inside a thread. Unlike a top-level agent reply this fires for a
+ * person's reply too (a chat's top level stays quiet for people; a thread is a
+ * conversation with named participants), and it goes only to the thread's people.
+ * An agent's interim note (anything that is not its end-of-turn output) stays
+ * quiet, as it does at the top level. An agent question in a thread still asks
+ * for an answer, to the same narrowed audience.
+ */
+async function notifyThreadReply(
+	db: Db,
+	msg: {
+		workspaceId: string
+		authorId: string
+		conversationId: string
+		messageId: number
+		content: string
+		metadata: MessageMetadata | null | undefined
+		sessionId: string | null | undefined
+		threadRootId?: number | null
+	},
+	author: { name: string; type: string },
+): Promise<void> {
+	const threadRootId = msg.threadRootId
+	if (!threadRootId) return
+	if (author.type === 'agent' && !isSuccessfulFinalOutput(msg.metadata)) return
+	const targets = await threadParticipants(db, {
+		conversationId: msg.conversationId,
+		threadRootId,
+		authorId: msg.authorId,
+	})
+	const asksQuestion = author.type === 'agent' && Boolean(msg.metadata?.question)
+	await createChatNotifications(db, {
+		workspaceId: msg.workspaceId,
+		authorId: msg.authorId,
+		conversationId: msg.conversationId,
+		messageId: msg.messageId,
+		targets,
+		type: asksQuestion ? 'needs_input' : 'good_news',
+		status: asksQuestion ? 'pending' : 'seen',
+		title: author.name,
+		content: previewText(msg.content),
+		sessionId: msg.sessionId,
+		threadRootId,
+		extraMetadata: asksQuestion
+			? { push_category: 'needs_you' }
+			: {
+					push_category: 'conversation',
+					push_delay_seconds: CHAT_REPLY_PUSH_DELAY_SECONDS,
+					[PUSH_ONLY_METADATA_KEY]: true,
+				},
+	})
 }
 
 /**

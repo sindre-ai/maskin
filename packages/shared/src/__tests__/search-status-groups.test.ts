@@ -11,7 +11,7 @@ import {
 // Written out row by row from the tech spec (section 2), not derived from the
 // implementation's table, so a wrong entry there fails here.
 const TABLE: Array<[type: string, status: string, group: StatusGroupKey]> = [
-	['bet', 'signal', 'new'],
+	['bet', 'opportunity', 'new'],
 	['bet', 'define', 'in_progress'],
 	['bet', 'active', 'in_progress'],
 	['bet', 'live', 'in_progress'],

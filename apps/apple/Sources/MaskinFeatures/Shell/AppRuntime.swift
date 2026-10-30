@@ -27,6 +27,9 @@ public final class AppRuntime {
 	/// moment of value, see `valueMomentSeen()`.)
 	var selectedTab: ShellTab = .forYou
 
+	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
+	let teamPill = TeamPillModel()
+
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
 	/// presentations requested in the same tick (a tap that opens an object) replace each
 	/// other deterministically instead of racing, and the sheet can't outlive its workspace.
@@ -104,6 +107,14 @@ public final class AppRuntime {
 
 	/// Set by a chat link; `ChatsScreen` takes it and resets it to nil.
 	public var requestedConversationId: String?
+	/// A thread push or link names the root message to open inside the requested chat. `ChatThreadView`
+	/// takes it once that chat is on screen and resets it to nil.
+	public var requestedThreadRoot: ThreadRequest?
+
+	public struct ThreadRequest: Equatable, Sendable {
+		public let conversationId: String
+		public let rootId: Int
+	}
 
 	/// Agents and loops are built by talking, never by filling in a form. Screens that used to offer
 	/// a builder form call `buildInChat(_:)`; `ChatsScreen` takes the draft and opens a new chat
@@ -257,6 +268,7 @@ public final class AppRuntime {
 			default: break
 			}
 			requestedConversationId = nil
+			requestedThreadRoot = nil
 			forYouSelection = nil
 			// Switching workspace starts over on For you; a link that caused the switch then
 			// selects its own tab (`handlePendingLink` below).
@@ -327,6 +339,7 @@ public final class AppRuntime {
 		environment.events.disconnect()
 		presentation = nil
 		requestedConversationId = nil
+		requestedThreadRoot = nil
 		forYouSelection = nil
 		selectedTab = .forYou
 		FileStore.clearExports()
@@ -414,6 +427,12 @@ public final class AppRuntime {
 			presentation = nil
 			selectedTab = .chats
 			requestedConversationId = id
+			requestedThreadRoot = nil
+		case .thread(_, let id, let rootId):
+			presentation = nil
+			selectedTab = .chats
+			requestedConversationId = id
+			requestedThreadRoot = ThreadRequest(conversationId: id, rootId: rootId)
 		case .file(_, let id):
 			openFile(id)
 		case .notifications:
@@ -491,6 +510,7 @@ public final class AppRuntime {
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
+		requestedThreadRoot = nil
 		forYouSelection = nil
 		selectedTab = .forYou
 		// Local traces of this account: what they searched for and files they exported to share.

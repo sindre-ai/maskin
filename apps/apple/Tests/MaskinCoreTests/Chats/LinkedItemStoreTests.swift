@@ -107,22 +107,125 @@ struct LinkedItemStoreTests {
 		#expect(store.isCard(target))
 	}
 
-	@Test("a task without a preview, or a draft without text, is a plain reference, not a card")
-	func plainObjects() async {
+	private func task(_ id: String, metadata: [String: String] = [:], driver: String? = nil, content: String? = "Fix the login.") -> ObjectDetail {
+		ObjectDetail(
+			object: WorkObject(
+				id: id, type: "task", title: "  Fix login  ", content: content, status: "in_progress",
+				metadata: metadata, driverId: driver, updatedAt: Date(timeIntervalSince1970: 500)),
+			workspaceId: ws)
+	}
+
+	@Test("an object without a preview, or a draft without text, is an object card with its record")
+	func objectCards() async {
 		let (store, objects, _, _) = make()
-		objects.set(.success(draft(one, preview: nil)), for: one)
+		objects.set(.success(task(one, metadata: ["priority": " P2 "], driver: "a-1")), for: one)
 		objects.set(.success(draft(two, preview: preview(), content: "  \n")), for: two)
 		await store.resolve([LinkedTarget(kind: .object, uuid: one), LinkedTarget(kind: .object, uuid: two)])
+		let target = LinkedTarget(kind: .object, uuid: one)
+		guard case .object(let card)? = store.item(for: target) else {
+			Issue.record("expected an object card, got \(String(describing: store.state(for: target)))")
+			return
+		}
+		#expect(card.title == "Fix login")
+		#expect(card.kindLabel == "Task")
+		#expect(card.status == "in_progress")
+		#expect(card.summary == "Fix the login.")
+		#expect(card.priority == "P2")
+		#expect(card.ownerID == "a-1")
+		#expect(card.updatedAt == Date(timeIntervalSince1970: 500))
+		#expect(store.isCard(target))
+		guard case .object? = store.item(for: LinkedTarget(kind: .object, uuid: two)) else {
+			Issue.record("a draft without text should be an object card")
+			return
+		}
+	}
+
+	@Test("the priority fact is left out when the object has none")
+	func noPriority() async {
+		let (store, objects, _, _) = make()
+		objects.set(.success(task(one, metadata: ["priority": "  "])), for: one)
+		objects.set(.success(task(two)), for: two)
+		await store.resolve([LinkedTarget(kind: .object, uuid: one), LinkedTarget(kind: .object, uuid: two)])
 		for id in [one, two] {
-			let target = LinkedTarget(kind: .object, uuid: id)
-			guard case .plain(let reference)? = store.item(for: target) else {
-				Issue.record("expected plain for \(id)")
+			guard case .object(let card)? = store.item(for: LinkedTarget(kind: .object, uuid: id)) else {
+				Issue.record("expected an object card for \(id)")
 				continue
 			}
-			#expect(reference.title == "Email to Torben")
-			#expect(reference.kindLabel == "Task")
-			#expect(!store.isCard(target))
+			#expect(card.priority == nil)
 		}
+	}
+
+	@Test("a title of spaces is no title, and the card says Untitled")
+	func untitled() {
+		let card = LinkedObject(object: WorkObject(id: one, type: "bet", title: "   ", status: "active"), kindLabel: "Bet")
+		#expect(card.title == nil)
+		#expect(card.displayTitle == "Untitled")
+	}
+
+	@Test("one lookup gives the card and the link their record, once per target")
+	func oneLookupPerTarget() async {
+		let (store, objects, _, _) = make()
+		objects.set(.success(task(one)), for: one)
+		let target = LinkedTarget(kind: .object, uuid: one)
+		await store.resolve([target])
+		let directory = InternalLinkDirectory(store: { store })
+		#expect(directory.object(one) == .init(type: "task", title: "Fix login", status: "in_progress"))
+		await store.resolve([target])
+		#expect(objects.detailCalls.count == 1)
+	}
+
+	@Test("an object is a card from the moment it is asked about, until it turns out not to be one")
+	func showsCardWhileLoading() async {
+		let (store, objects, _, _) = make()
+		let target = LinkedTarget(kind: .object, uuid: one)
+		let file = LinkedTarget(kind: .file, uuid: fileID)
+		#expect(store.showsCard(target))
+		#expect(!store.showsCard(file))
+		objects.set(.success(draft(one, workspace: "ws-other", preview: preview())), for: one)
+		await store.resolve([target])
+		#expect(!store.showsCard(target))
+	}
+
+	@Test("owners are named from one read of the workspace's people, not one per card")
+	func ownerNames() async {
+		let objects = FakeDraftsRemote()
+		let calls = Box(0)
+		let store = LinkedItemStore(
+			objects: objects, files: FakeLinkedFiles(),
+			actors: {
+				calls.value += 1
+				return [ActorRef(id: "a-1", name: "Developer", isAgent: true)]
+			}, workspaceID: { "ws-1" })
+		objects.set(.success(task(one, driver: "a-1")), for: one)
+		objects.set(.success(task(two, driver: "a-1")), for: two)
+		#expect(store.owner(for: "a-1") == nil)
+		await store.resolve([LinkedTarget(kind: .object, uuid: one), LinkedTarget(kind: .object, uuid: two)])
+		#expect(await eventually { store.owner(for: "a-1") != nil })
+		#expect(store.owner(for: "a-1")?.name == "Developer")
+		#expect(store.owner(for: nil) == nil)
+		#expect(calls.value == 1)
+	}
+
+	@Test("an owner read that fails is tried again with the next lookup")
+	func ownerReadRetries() async {
+		let objects = FakeDraftsRemote()
+		let calls = Box(0)
+		let store = LinkedItemStore(
+			objects: objects, files: FakeLinkedFiles(),
+			actors: {
+				calls.value += 1
+				if calls.value == 1 { throw ObjectsError("down") }
+				return [ActorRef(id: "a-1", name: "Developer", isAgent: true)]
+			}, workspaceID: { "ws-1" })
+		objects.set(.success(task(one)), for: one)
+		objects.set(.success(task(two)), for: two)
+		await store.resolve([LinkedTarget(kind: .object, uuid: one)])
+		#expect(await eventually { calls.value == 1 })
+		// The failed read has settled once it has had a moment to clear itself.
+		try? await Task.sleep(for: .milliseconds(50))
+		await store.resolve([LinkedTarget(kind: .object, uuid: two)])
+		#expect(await eventually { store.owner(for: "a-1") != nil })
+		#expect(calls.value == 2)
 	}
 
 	@Test("an object in another workspace never becomes a card, and is not asked about again")
@@ -136,12 +239,13 @@ struct LinkedItemStoreTests {
 		#expect(objects.detailCalls.count == 1)
 	}
 
-	@Test("a missing object is final")
+	@Test("a missing object is a deleted card, and final")
 	func missing() async {
 		let (store, objects, _, clock) = make()
 		let target = LinkedTarget(kind: .object, uuid: one)
 		await store.resolve([target])
-		#expect(store.state(for: target) == .unavailable)
+		#expect(store.state(for: target) == .ready(.deleted(target)))
+		#expect(store.isCard(target))
 		clock.value = clock.value.addingTimeInterval(3600)
 		await store.resolve([target])
 		#expect(objects.detailCalls.count == 1)

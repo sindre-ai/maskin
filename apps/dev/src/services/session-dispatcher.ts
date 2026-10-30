@@ -166,6 +166,7 @@ export class SessionDispatcher {
 					kind: 'permanent_failure',
 					error: err.detail,
 					failureReason: err.toFailureReason(),
+					noCredentialsConfigured: err.noCredentialsConfigured,
 				}
 			}
 			return {

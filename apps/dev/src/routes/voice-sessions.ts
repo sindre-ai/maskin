@@ -22,9 +22,9 @@ import {
 } from '../lib/analytics/voice-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { errorSchema } from '../lib/openapi-schemas'
+import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { captureVoiceException } from '../lib/sentry-voice'
-import { isWorkspaceWriter } from '../lib/workspace-auth'
+import { getWorkspaceRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { resolveVoiceAgentMcpServers } from '../services/voice-agent-mcp'
 import { cardIdOf, readStartCards } from '../services/voice-call-state'
 import {
@@ -49,6 +49,7 @@ import {
 	setEndedReceiptFn,
 } from '../services/voice-session-lifecycle'
 import { VOICE_SHOW_IN_CHAT_TOOL, voiceShowInChatTool } from '../services/voice-show-in-chat'
+import { listVoiceToolCalls } from '../services/voice-tool-call-log'
 import { isTranscriptPersistenceEnabled } from '../services/voice-transcript'
 import { withConfirmationArg } from '../services/voice-write-gate'
 
@@ -816,6 +817,151 @@ app.openapi(hangupVoiceSessionRoute, async (c) => {
 		captureVoiceException(id, err)
 		throw err
 	}
+})
+
+// ── Tool call log ────────────────────────────────────────────────────
+
+const TOOL_CALLS_DEFAULT_LIMIT = 50
+const TOOL_CALLS_MAX_LIMIT = 200
+
+const toolCallsQuery = z.object({
+	// z.coerce turns 'abc' into NaN, which fails int(), so a bad limit is a 400, never a NaN in SQL.
+	limit: z.coerce.number().int().min(1).max(TOOL_CALLS_MAX_LIMIT).default(TOOL_CALLS_DEFAULT_LIMIT),
+	cursor: z.string().min(1).max(200).optional(),
+})
+
+const toolCallItem = z
+	.object({
+		id: z.string().uuid(),
+		voice_session_id: z.string().uuid(),
+		call_id: z.string().nullable(),
+		started_at: z.string(),
+		tool_name: z.string(),
+		args_summary: z.unknown().openapi({
+			description: 'The arguments the model sent, redacted and size-capped.',
+		}),
+		success: z.boolean(),
+		error_code: z.string().nullable(),
+		error_message: z.string().nullable(),
+		output_chars: z.number().int().openapi({
+			description: "Length of the tool's output before voice's 20,000-character cap.",
+		}),
+		output_truncated: z.boolean(),
+		latency_ms: z.number().int(),
+		output_preview: z.string().nullable().openapi({
+			description: 'The first ~500 characters of what the model was told, redacted.',
+		}),
+	})
+	.openapi('VoiceToolCall')
+
+const toolCallsResponse = z
+	.object({
+		tool_calls: z.array(toolCallItem),
+		next_cursor: z.string().nullable(),
+	})
+	.openapi('VoiceToolCallList')
+
+function encodeToolCallCursor(row: { startedAt: Date; id: string }): string {
+	return Buffer.from(`${row.startedAt.toISOString()}|${row.id}`).toString('base64url')
+}
+
+function decodeToolCallCursor(raw: string): { startedAt: Date; id: string } | null {
+	try {
+		const [iso, id] = Buffer.from(raw, 'base64url').toString().split('|')
+		const startedAt = new Date(iso ?? '')
+		if (!id || !z.string().uuid().safeParse(id).success || Number.isNaN(startedAt.getTime())) {
+			return null
+		}
+		return { startedAt, id }
+	} catch {
+		return null
+	}
+}
+
+const listToolCallsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/tool-calls',
+	tags: ['Voice'],
+	summary: "List a voice call's tool calls",
+	description:
+		"What the voice model asked each tool to do and what came back: tool, redacted arguments, success, error, output length, whether the 20,000-character cap cut it, latency, and the first ~500 characters of the output. Oldest first, paged with `cursor`. Visible to the person on the call and to workspace owners and admins. Rows are kept 30 days. A call's tool calls that could not be logged are missing, not failed.",
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+		query: toolCallsQuery,
+	},
+	responses: {
+		200: {
+			description: 'A page of tool calls',
+			content: { 'application/json': { schema: toolCallsResponse } },
+		},
+		400: {
+			description: 'Bad limit or cursor',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No such voice session in this workspace, or not visible to the caller',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(listToolCallsRoute, async (c) => {
+	const actorId = c.get('actorId')
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const { limit, cursor } = c.req.valid('query')
+
+	// The call must belong to the workspace in the header, so ids are not probeable across workspaces.
+	const [session] = await db
+		.select({ id: voiceSessions.id, humanActorId: voiceSessions.humanActorId })
+		.from(voiceSessions)
+		.where(and(eq(voiceSessions.id, id), eq(voiceSessions.workspaceId, workspaceId)))
+		.limit(1)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	if (session.humanActorId !== actorId) {
+		const role = await getWorkspaceRole(db, actorId, workspaceId)
+		if (role !== 'owner' && role !== 'admin') {
+			return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+		}
+	}
+
+	let after: { startedAt: Date; id: string } | null = null
+	if (cursor) {
+		after = decodeToolCallCursor(cursor)
+		if (!after) return c.json(createApiError('VALIDATION_ERROR', 'Invalid cursor'), 400)
+	}
+
+	const rows = await listVoiceToolCalls(db, {
+		voiceSessionId: id,
+		workspaceId,
+		limit: limit + 1,
+		after,
+	})
+	const page = rows.slice(0, limit)
+	const last = page[page.length - 1]
+	return c.json(
+		{
+			tool_calls: page.map((r) => ({
+				id: r.id,
+				voice_session_id: r.voiceSessionId,
+				call_id: r.callId,
+				started_at: r.startedAt.toISOString(),
+				tool_name: r.toolName,
+				args_summary: r.argsSummary ?? null,
+				success: r.success,
+				error_code: r.errorCode,
+				error_message: r.errorMessage,
+				output_chars: r.outputChars,
+				output_truncated: r.outputTruncated,
+				latency_ms: r.latencyMs,
+				output_preview: r.outputPreview,
+			})),
+			next_cursor: rows.length > limit && last ? encodeToolCallCursor(last) : null,
+		},
+		200,
+	)
 })
 
 export default app

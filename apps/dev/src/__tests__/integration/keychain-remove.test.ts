@@ -222,17 +222,17 @@ describe('POST /api/integrations/:id/remove (Integration)', () => {
 		expect(stored).not.toContain('me@example.test')
 	})
 
-	it('stops injecting it into new sessions, and leaves the other credential alone', async () => {
+	it('stops injecting it into new sessions, and a login beside it never was', async () => {
 		const s = await setup()
 		const before = await launchEnv(s)
 		expect(before.KEYCHAIN_BYO_APIKEY_COOLIFY).toBe(KEY)
-		expect(before.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBe(PASSWORD)
+		expect(before.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBeUndefined()
 
 		await remove(appFor(s.human), s.ws.id, s.keyId)
 
 		const after = await launchEnv(s)
 		expect(after.KEYCHAIN_BYO_APIKEY_COOLIFY).toBeUndefined()
-		expect(after.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBe(PASSWORD)
+		expect(after.KEYCHAIN_BYO_LOGIN_E_CONOMIC_PASSWORD).toBeUndefined()
 	})
 
 	it('gives the name back, so the same name can be saved again', async () => {

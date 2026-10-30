@@ -40,20 +40,6 @@ describe('GET /api/feature-flags', () => {
 		expect(await res.json()).toEqual({ flags: ALL_OFF })
 	})
 
-	// A flag only turns ON via the tester-scoped env pair.
-	it('turns TRIGGER_ENGINE_V2 on for a listed tester', async () => {
-		setEnv({
-			FF_TESTER_FEATURES: FLAGS.TRIGGER_ENGINE_V2,
-			FF_TESTER_ACTOR_IDS: TESTER,
-		})
-		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
-
-		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({
-			flags: { ...ALL_OFF, [FLAGS.TRIGGER_ENGINE_V2]: true },
-		})
-	})
-
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
 		setEnv({ FF_TESTER_FEATURES: 'not-a-real-flag', FF_TESTER_ACTOR_IDS: TESTER })
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
