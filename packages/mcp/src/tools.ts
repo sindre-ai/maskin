@@ -2387,6 +2387,44 @@ export const tools = {
 				),
 		}),
 	},
+	deep_research: {
+		description:
+			'Research a question on the web and get back a cited report, without starting a container session. Use it when you need a sourced answer: a fact check, a market or vendor look-up, "what does the law or the documentation say". The report cites its sources as [1], [2] and ends with a Method section. The cost is capped: a run stops at its cap and says so at the top of the report. Pass `question` and an `effort` to start a run; `simple` is one researcher and takes about a minute or two (the only level that runs today). The call waits up to 90 seconds. If the report is ready you get it; if not you get a `research_id` and the status running: call this tool again with just that `research_id` to wait for it, do not start a second run for the same question. To check an earlier run, pass only `research_id`. Not every workspace has this switched on, and it needs an Anthropic API key or custom model endpoint on the workspace (a Claude subscription alone is not enough); the tool says so in plain words when either is missing.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			question: z
+				.string()
+				.min(1)
+				.max(2000)
+				.optional()
+				.describe('What to research, up to 2000 characters. Leave out when you pass research_id.'),
+			effort: z
+				.enum(['simple', 'comparison', 'broad'])
+				.optional()
+				.describe(
+					'How much research to do. Required with `question`. Only "simple" runs today; "comparison" and "broad" are answered with a plain error until they ship.',
+				),
+			context: z
+				.string()
+				.max(2000)
+				.optional()
+				.describe('Background that helps (who is asking, what it is for), up to 2000 characters.'),
+			max_cost_usd: z
+				.number()
+				.min(0.01)
+				.optional()
+				.describe(
+					'Lower the spending cap for this run, in US dollars. It can never raise the cap above the effort default.',
+				),
+			research_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'A run you started earlier. Returns its report, or its status if it is still running.',
+				),
+		}),
+	},
 	update_integration_access: {
 		description:
 			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin): an agent calling it is refused, and should tell the user what it needs instead. `default_agent_access` is what every agent without its own entry gets: "read", "read_write" (every agent may also write) or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (read & write; an action that cannot be undone, such as sending an email through Gmail, still waits for a person to approve it), or "none" (an explicit no that beats a read default), or "default" to remove the agent own entry. A saved key or login is on or off per agent: use "read_write" to give it, "default" to take it away. This is the same access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see the current access, use `list_integrations` (each row has `defaultAgentAccess` and `agentGrants`) or `get_actor` (`access`).',
