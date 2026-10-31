@@ -6,6 +6,7 @@ import {
 	MAX_CONVERSATION_PARTICIPANTS,
 	MESSAGE_MAX_LENGTH,
 	SAFE_METADATA_FIELD_NAME_RE,
+	SEARCH_DATA_USE_RULE,
 	createCommentSchema,
 	firstStepSchema,
 	loopTargetSchema,
@@ -2388,8 +2389,10 @@ export const tools = {
 		}),
 	},
 	deep_research: {
-		description:
-			'Research a question on the web and get back a cited report, without starting a container session. Use it when you need a sourced answer: a fact check, a market or vendor look-up, "what does the law or the documentation say". The report cites its sources as [1], [2] and ends with a Method section. The cost is capped: a run stops at its cap and says so at the top of the report. Pass `question` and an `effort` to start a run; `simple` is one researcher and takes about a minute or two (the only level that runs today). The call waits up to 90 seconds. If the report is ready you get it; if not you get a `research_id` and the status running: call this tool again with just that `research_id` to wait for it, do not start a second run for the same question. To check an earlier run, pass only `research_id`. Not every workspace has this switched on, and it needs an Anthropic API key or custom model endpoint on the workspace (a Claude subscription alone is not enough); the tool says so in plain words when either is missing.',
+		description: [
+			'Research a question on the web and get back a cited report, without starting a container session. Use it when you need a sourced answer: a fact check, a market or vendor look-up, "what does the law or the documentation say". The report cites its sources as [1], [2] and ends with a Method section. The cost is capped: a run stops at its cap and says so at the top of the report. Pass `question` and an `effort` to start a run: `simple` is one researcher and takes about a minute or two, `comparison` uses 2 to 4 researchers, `broad` uses 10 to 12 and can take up to 20 minutes. The call waits up to 90 seconds. If the report is ready you get it; if not you get a `research_id` and the status running: call this tool again with just that `research_id` to wait for it, do not start a second run for the same question. To check an earlier run, pass only `research_id`. Not every workspace has this switched on, and it needs an Anthropic API key or custom model endpoint on the workspace (a Claude subscription alone is not enough); the tool says so in plain words when either is missing.',
+			SEARCH_DATA_USE_RULE,
+		].join(' '),
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			question: z
@@ -2402,7 +2405,7 @@ export const tools = {
 				.enum(['simple', 'comparison', 'broad'])
 				.optional()
 				.describe(
-					'How much research to do. Required with `question`. Only "simple" runs today; "comparison" and "broad" are answered with a plain error until they ship.',
+					'How much research to do. Required with `question`. simple, comparison or broad (more researchers, higher default cost cap).',
 				),
 			context: z
 				.string()

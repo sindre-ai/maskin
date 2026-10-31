@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { researchRuns, workspaces } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { captureResearchRunFinished } from '../lib/analytics/research-events'
 import { isEnterprise } from '../lib/enterprise'
 import { ApiErrorCode } from '../lib/errors'
@@ -12,9 +12,10 @@ import type { ModelPricing } from '../lib/openrouter-pricing'
 import { type ResearchEffort, resolveResearchRunCapCents } from '../lib/research-cap'
 import { UnpricedModelError, requireModelPricing } from '../lib/research/budget'
 import { lookupResearchModelPricing, researchRouteOf } from '../lib/research/model'
+import { searchProviderFromEnv } from '../lib/research/provider-config'
+import { type ResearchRunOutcome, runResearch } from '../lib/research/run'
+import { createQueryScrub, loadWorkspaceNames } from '../lib/research/scrub'
 import { ResearchProviderError, type ResearchSearchProvider } from '../lib/research/search-provider'
-import { type SimpleRunOutcome, runSimpleResearch } from '../lib/research/simple-run'
-import { tavilyProviderFromEnv } from '../lib/research/tavily'
 import type { WorkspaceSettings } from '../lib/types'
 
 /**
@@ -23,8 +24,8 @@ import type { WorkspaceSettings } from '../lib/types'
  * polls GET /api/research/:id. Runs live in this process: a restart loses them.
  */
 
-/** Efforts a run can be started with. Comparison and broad come with the lead call. */
-export const STARTABLE_EFFORTS: readonly ResearchEffort[] = ['simple']
+/** How often a running run saves its spend, so an interrupted run keeps its cost. */
+const PROGRESS_SAVE_INTERVAL_MS = 5_000
 
 const MAX_RUNS_PER_WORKSPACE = 2
 const DEFAULT_MAX_CONCURRENT_RUNS = 4
@@ -127,14 +128,6 @@ export async function startResearchRun(
 	const env = deps.env ?? process.env
 	const { db, workspaceId, actorId } = params
 
-	if (!STARTABLE_EFFORTS.includes(params.effort)) {
-		throw new ResearchStartError(
-			400,
-			ApiErrorCode.BAD_REQUEST,
-			`Effort "${params.effort}" is not available yet. Use "simple".`,
-		)
-	}
-
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) throw new ResearchStartError(400, ApiErrorCode.BAD_REQUEST, 'Workspace not found.')
 	const wsSettings = (ws.settings as WorkspaceSettings) ?? {}
@@ -168,7 +161,7 @@ export async function startResearchRun(
 
 	let search: ResearchSearchProvider
 	try {
-		search = (deps.searchProvider ?? (() => tavilyProviderFromEnv(env)))()
+		search = (deps.searchProvider ?? (() => searchProviderFromEnv(env)))()
 	} catch (err) {
 		if (!(err instanceof ResearchProviderError)) throw err
 		logger.error('deep_research: search provider is not configured', { error: err.message })
@@ -263,13 +256,40 @@ interface ExecuteArgs {
 /** Runs one research run to its end, saves it, and fires the finished event once. Never throws. */
 async function executeRun(a: ExecuteArgs): Promise<void> {
 	const startedAt = new Date()
-	let outcome: SimpleRunOutcome | null = null
+	let outcome: ResearchRunOutcome | null = null
+	let lastSaveAt = 0
+	let saving: Promise<unknown> = Promise.resolve()
 	try {
 		await a.db
 			.update(researchRuns)
 			.set({ status: 'running', startedAt })
 			.where(eq(researchRuns.id, a.runId))
-		outcome = await runSimpleResearch({
+		// Built once per run, from the caller's workspace only (spec 7.9).
+		const scrub = createQueryScrub(await loadWorkspaceNames(a.db, a.workspaceId))
+		outcome = await runResearch({
+			effort: a.effort,
+			scrub,
+			onProgress: (progress) => {
+				const now = Date.now()
+				if (now - lastSaveAt < PROGRESS_SAVE_INTERVAL_MS) return
+				lastSaveAt = now
+				saving = a.db
+					.update(researchRuns)
+					.set({
+						costCents: progress.costCents,
+						tokensIn: progress.tokensIn,
+						tokensOut: progress.tokensOut,
+						searches: progress.searches,
+						extracts: progress.extracts,
+					})
+					.where(eq(researchRuns.id, a.runId))
+					.catch((err) =>
+						logger.error('deep_research: could not save progress', {
+							runId: a.runId,
+							error: String(err),
+						}),
+					)
+			},
 			question: a.question,
 			context: a.context,
 			capCents: a.capCents,
@@ -282,6 +302,8 @@ async function executeRun(a: ExecuteArgs): Promise<void> {
 		logger.error('deep_research: run crashed', { runId: a.runId, error: String(err) })
 	}
 
+	// A late progress save must not land after the final one.
+	await saving
 	const finishedAt = new Date()
 	const status = outcome?.status ?? 'failed'
 	try {
@@ -299,7 +321,10 @@ async function executeRun(a: ExecuteArgs): Promise<void> {
 				reportMd: outcome?.reportMd ?? null,
 				sources: outcome?.sources ?? null,
 				warnings: outcome?.warnings ?? null,
-				stages: outcome?.stages ?? null,
+				// Per-stage cost and time, plus the count of searches the scrub refused (never the names).
+				stages: outcome
+					? { ...outcome.stages, scrub: { rejections: outcome.scrubRejections } }
+					: null,
 				error: outcome ? outcome.error : 'The run stopped on an unexpected error.',
 				finishedAt,
 			})
@@ -324,6 +349,25 @@ async function executeRun(a: ExecuteArgs): Promise<void> {
 		researchers: outcome?.researchers ?? 1,
 		tier12Share: outcome?.tier12Share ?? 0,
 	})
+}
+
+/**
+ * Runs live in this process, so a run still queued or running when the server
+ * starts has no worker any more. Marks it interrupted and keeps the cost saved so
+ * far (spec 7.6). There is no resume: the caller starts the run again. Returns the
+ * number of runs marked.
+ */
+export async function markInterruptedResearchRuns(db: Database): Promise<number> {
+	const rows = await db
+		.update(researchRuns)
+		.set({
+			status: 'interrupted',
+			error: 'The server restarted before this run finished. Start it again.',
+			finishedAt: new Date(),
+		})
+		.where(inArray(researchRuns.status, ['queued', 'running']))
+		.returning({ id: researchRuns.id })
+	return rows.length
 }
 
 export interface ResearchRunView {
