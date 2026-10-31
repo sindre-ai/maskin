@@ -2755,6 +2755,8 @@ export interface MessageKeychainRequest {
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
+	/** Agents the asker said will use it; ticked on the card even when not in the chat. */
+	target_agents?: Array<{ id: string; name: string }>
 }
 
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */

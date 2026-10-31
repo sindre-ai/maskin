@@ -2248,7 +2248,7 @@ export const tools = {
 	},
 	request_keychain_credential: {
 		description:
-			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). If the user offers or asks to give you a login, password or API key ("can I give you my LinkedIn login?", "here is my password"), call this tool right away with kind "login" or "api_key": do not refuse, do not warn about passwords in chat, and do not send them to Settings or an integration instead. This is the safe way to share it, and it applies even when the site also has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for this workspace and shared only with the agents in this chat; the user can change who can use it in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with it: an API key is in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). A login is never in your environment and you never see it: to log in on your computer, type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). If the user offers or asks to give you a login, password or API key ("can I give you my LinkedIn login?", "here is my password"), call this tool right away with kind "login" or "api_key": do not refuse, do not warn about passwords in chat, and do not send them to Settings or an integration instead. This is the safe way to share it, and it applies even when the site also has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for the whole workspace but shared only with the agents in this chat, unless you name other agents in `target_agent_ids`: name the agent that will actually use it (get ids from `list_actors`), since it is often not the one in this chat. The user sees who it is shared with on the card and can untick any; they can change it later in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with it: an API key is in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). A login is never in your environment and you never see it: to log in on your computer, type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			kind: z
@@ -2271,6 +2271,13 @@ export const tools = {
 				.optional()
 				.describe(
 					'One line shown on the card on what you need it for, e.g. "To log in and read the latest invoices."',
+				),
+			target_agent_ids: z
+				.array(z.string())
+				.max(10)
+				.optional()
+				.describe(
+					'Actor ids of the agents that will use the credential, when that is not (only) the agent in this chat. They are shown ticked on the card. Ids that are not agents in this workspace are ignored.',
 				),
 		}),
 	},

@@ -8,6 +8,7 @@ import {
 	sessionLogs,
 	sessions,
 	triggers,
+	workspaceMembers,
 } from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
@@ -1844,7 +1845,12 @@ app.openapi(keychainCardRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { kind, suggested_name: suggestedName, hint } = c.req.valid('json')
+	const {
+		kind,
+		suggested_name: suggestedName,
+		hint,
+		target_agent_ids: targetAgentIds,
+	} = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
@@ -1859,6 +1865,24 @@ app.openapi(keychainCardRoute, (async (c) => {
 	const target = cardTarget(session)
 	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
 
+	// Ids that are not agents in this workspace are dropped, not an error: the card still posts.
+	const wantedIds = [...new Set(targetAgentIds ?? [])].filter(
+		(wanted) => z.string().uuid().safeParse(wanted).success,
+	)
+	const targetAgents = wantedIds.length
+		? await db
+				.select({ id: actors.id, name: actors.name })
+				.from(actors)
+				.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, session.workspaceId),
+						eq(actors.type, 'agent'),
+						inArray(actors.id, wantedIds),
+					),
+				)
+		: []
+
 	const created = await insertConversationMessage(db, {
 		conversationId: target.conversationId,
 		workspaceId: session.workspaceId,
@@ -1870,6 +1894,7 @@ app.openapi(keychainCardRoute, (async (c) => {
 				kind,
 				...(suggestedName ? { suggested_name: suggestedName } : {}),
 				...(hint ? { hint } : {}),
+				...(targetAgents.length ? { target_agents: targetAgents } : {}),
 				...(target.helper ? { reply_to_session: true } : {}),
 			},
 		},

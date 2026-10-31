@@ -8160,6 +8160,7 @@ export function createMcpServer(config: McpConfig) {
 						kind: args.kind,
 						...(args.suggested_name ? { suggested_name: args.suggested_name } : {}),
 						...(args.hint ? { hint: args.hint } : {}),
+						...(args.target_agent_ids?.length ? { target_agent_ids: args.target_agent_ids } : {}),
 					},
 					{ workspaceId: args.workspace_id },
 				)
