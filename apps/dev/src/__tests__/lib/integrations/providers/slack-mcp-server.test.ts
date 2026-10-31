@@ -688,32 +688,29 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		})
 	})
 
-	describe('slack_update_message', () => {
+	describe('slack_update_message (internal channel, direct)', () => {
 		it('calls chat.update with channel + ts + text and returns { channel, ts, updated }', async () => {
-			queueSlackResponses({ ok: true, channel: 'C0GENERAL01', ts: '1717000003.000100' })
+			queueSlackResponses({ ok: true, channel: 'C06LC37JJCS', ts: '1717000003.000100' })
 			const out = await callTool('slack_update_message', {
-				channel: 'C0GENERAL01',
+				channel: 'C06LC37JJCS',
 				ts: '1717000003.000100',
 				text: 'edited',
 			})
 			const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
 			expect(url).toBe('https://slack.com/api/chat.update')
 			expect(JSON.parse(init.body as string)).toEqual({
-				channel: 'C0GENERAL01',
+				channel: 'C06LC37JJCS',
 				ts: '1717000003.000100',
 				text: 'edited',
 			})
-			expect(out).toEqual({ channel: 'C0GENERAL01', ts: '1717000003.000100', updated: true })
+			expect(out).toEqual({ channel: 'C06LC37JJCS', ts: '1717000003.000100', updated: true })
 		})
 
 		it('rewrites cant_update_message into the bot-authored-only hint', async () => {
-			queueSlackResponses(
-				{ ok: true, channels: CHANNELS },
-				{ ok: false, error: 'cant_update_message' },
-			)
+			queueSlackResponses({ ok: false, error: 'cant_update_message' })
 			await expect(
 				callTool('slack_update_message', {
-					channel: '#general',
+					channel: 'C06LC37JJCS',
 					ts: '1717000003.000100',
 					text: 'edited',
 				}),
@@ -724,11 +721,21 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 			queueSlackResponses({ ok: false, error: 'missing_scope' })
 			await expect(
 				callTool('slack_update_message', {
-					channel: 'C0GENERAL01',
+					channel: 'C06LC37JJCS',
 					ts: '1717000003.000100',
 					text: 'edited',
 				}),
 			).rejects.toThrow(/Reconnect Slack/)
+		})
+
+		it('refuses a direct edit in any other channel and calls Slack not at all', async () => {
+			const out = (await tool('slack_update_message').handler(
+				{ channel: 'C0123456789', ts: '1717000003.000100', text: 'edited' },
+				{},
+			)) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(out.isError).toBe(true)
+			expect(out.content[0].text).toMatch(/object_id/)
+			expect(fetchMock).not.toHaveBeenCalled()
 		})
 	})
 
