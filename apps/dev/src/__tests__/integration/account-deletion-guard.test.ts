@@ -47,6 +47,8 @@ const KEPT: Record<string, string> = {
 	triggers: 'created_by / target agent on workspace automation',
 	sessions: 'agent run history; actor is the agent or the person who started it',
 	voice_sessions: 'call record in a kept workspace',
+	research_runs:
+		'run record and cost of an agent call in a kept workspace; the cost counts toward the plan cap',
 	imports: 'import record in a kept workspace',
 	orphan_thread_detections: 'internal detector state keyed on a kept thread',
 	// Agent-side tables: the actor_id is an agent, not the person.
