@@ -1,5 +1,11 @@
 import { z } from 'zod'
-import { SOURCE_TYPES, type SourceType, isDenylistedUrl, isTier12 } from './source-quality'
+import {
+	SOURCE_TYPES,
+	type SourceType,
+	effectiveSourceType,
+	isDenylistedUrl,
+	isTier12,
+} from './source-quality'
 
 /**
  * The evidence ledger (spec sections 7.1 and 7.4). The researcher returns
@@ -129,56 +135,70 @@ export interface Ledger {
 	dropped: { quoteNotFound: number; blocked: number; notFetched: number; malformed: number }
 }
 
+/** One researcher's findings with the page text it fetched, which is all its quotes may rest on. */
+export interface LedgerPart {
+	output: ResearcherOutput
+	/** Maps a normalized URL to the page text the provider's extract returned. */
+	fetchedText: ReadonlyMap<string, string>
+}
+
 /**
  * Keeps the findings that hold up and numbers their sources by first appearance.
- * `fetchedText` maps a normalized URL to the page text the provider's extract returned.
+ * A finding is dropped when its source is blocked or denylisted, when its page was
+ * never fetched by the researcher that cites it, or when its quote is not on that
+ * page. Several researchers share one numbering: the same URL is one source.
  */
+export function buildMergedLedger(
+	parts: readonly LedgerPart[],
+	denylist?: readonly string[],
+): Ledger {
+	const dropped = { quoteNotFound: 0, blocked: 0, notFetched: 0, malformed: 0 }
+	const sources: LedgerSource[] = []
+	const numberByUrl = new Map<string, number>()
+	const findings: LedgerFinding[] = []
+
+	for (const { output, fetchedText } of parts) {
+		dropped.malformed += output.malformedFindings
+		for (const f of output.findings.slice(0, MAX_FINDINGS_PER_RESEARCHER)) {
+			if (f.source_type === 'blocked' || isDenylistedUrl(f.url, denylist)) {
+				dropped.blocked += 1
+				continue
+			}
+			const key = normalizeUrl(f.url)
+			const text = fetchedText.get(key)
+			if (text === undefined) {
+				dropped.notFetched += 1
+				continue
+			}
+			if (!quoteInText(f.quote, text)) {
+				dropped.quoteNotFound += 1
+				continue
+			}
+			let n = numberByUrl.get(key)
+			if (n === undefined) {
+				n = sources.length + 1
+				numberByUrl.set(key, n)
+				sources.push({
+					n,
+					url: f.url,
+					title: f.title || f.url,
+					publisher: f.publisher,
+					date: f.date,
+					source_type: effectiveSourceType(f.url, f.source_type),
+				})
+			}
+			findings.push({ n, claim: f.claim, quote: f.quote, confidence: f.confidence })
+		}
+	}
+	return { sources, findings, dropped }
+}
+
 export function buildLedger(
 	output: ResearcherOutput,
 	fetchedText: ReadonlyMap<string, string>,
 	denylist?: readonly string[],
 ): Ledger {
-	const dropped = {
-		quoteNotFound: 0,
-		blocked: 0,
-		notFetched: 0,
-		malformed: output.malformedFindings,
-	}
-	const sources: LedgerSource[] = []
-	const numberByUrl = new Map<string, number>()
-	const findings: LedgerFinding[] = []
-
-	for (const f of output.findings.slice(0, MAX_FINDINGS_PER_RESEARCHER)) {
-		if (f.source_type === 'blocked' || isDenylistedUrl(f.url, denylist)) {
-			dropped.blocked += 1
-			continue
-		}
-		const key = normalizeUrl(f.url)
-		const text = fetchedText.get(key)
-		if (text === undefined) {
-			dropped.notFetched += 1
-			continue
-		}
-		if (!quoteInText(f.quote, text)) {
-			dropped.quoteNotFound += 1
-			continue
-		}
-		let n = numberByUrl.get(key)
-		if (n === undefined) {
-			n = sources.length + 1
-			numberByUrl.set(key, n)
-			sources.push({
-				n,
-				url: f.url,
-				title: f.title || f.url,
-				publisher: f.publisher,
-				date: f.date,
-				source_type: f.source_type,
-			})
-		}
-		findings.push({ n, claim: f.claim, quote: f.quote, confidence: f.confidence })
-	}
-	return { sources, findings, dropped }
+	return buildMergedLedger([{ output, fetchedText }], denylist)
 }
 
 /** Share of ledger sources in tier 1 or 2, 0 to 1. Zero when there are no sources. */
@@ -279,6 +299,11 @@ export interface MethodInfo {
 	unread: UnreadSource[]
 	costCents: number
 	capCents: number
+	/** Share of ledger sources in tier 1 or 2, 0 to 1 (success criterion 3). */
+	tier12Share: number
+	sourceCount: number
+	/** Searches the workspace-name check refused. A count only, never the names. */
+	scrubRejections: number
 }
 
 const usd = (cents: number): string => `$${(cents / 100).toFixed(2)}`
@@ -291,6 +316,8 @@ export function buildMethodSection(info: MethodInfo): string {
 		`- Searches run: ${info.queries.length}${info.queries.length > 0 ? `. Queries: ${info.queries.map((q) => `"${q}"`).join('; ')}` : ''}`,
 		`- Sources read: ${info.sourcesRead}`,
 		`- Sources not read: ${info.unread.length}${info.unread.length > 0 ? `. ${info.unread.map((u) => `${u.url} (${u.reason})`).join('; ')}` : ''}`,
+		`- Tier 1 and 2 sources: ${info.sourceCount > 0 ? `${Math.round(info.tier12Share * 100)}% of ${info.sourceCount}` : 'none'}`,
+		`- Searches refused by the workspace-name check: ${info.scrubRejections}`,
 		`- Budget used: ${usd(info.costCents)} of a ${usd(info.capCents)} cap`,
 	]
 	return lines.join('\n')

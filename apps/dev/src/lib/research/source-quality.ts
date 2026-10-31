@@ -5,32 +5,61 @@
  * cannot get a blocked page into the ledger.
  */
 
+import { RESEARCH_DOMAIN_DENYLIST, RESEARCH_PRIMARY_ALLOW_PATTERNS } from './source-quality-config'
+
 export const SOURCE_TYPES = ['primary', 'secondary', 'weak', 'blocked'] as const
 export type SourceType = (typeof SOURCE_TYPES)[number]
 
-/**
- * Domains whose pages never come back: passed to the search provider as excluded
- * domains and checked again on every finding. Seed this from the vendor and
- * affiliate blogs the Researcher has flagged; it is config, not code, and the
- * provider takes at most 150.
- */
-export const RESEARCH_DOMAIN_DENYLIST: readonly string[] = []
+export { RESEARCH_DOMAIN_DENYLIST } from './source-quality-config'
 
 /** True when the URL's host is a denylisted domain or a subdomain of one. */
 export function isDenylistedUrl(
 	url: string,
 	denylist: readonly string[] = RESEARCH_DOMAIN_DENYLIST,
 ): boolean {
-	let host: string
-	try {
-		host = new URL(url).hostname.toLowerCase()
-	} catch {
-		return false
-	}
+	const host = hostOf(url)
+	if (!host) return false
 	return denylist.some((d) => {
 		const domain = d.toLowerCase()
 		return host === domain || host.endsWith(`.${domain}`)
 	})
+}
+
+function hostOf(url: string): string | null {
+	try {
+		return new URL(url).hostname.toLowerCase()
+	} catch {
+		return null
+	}
+}
+
+/** True when the URL's host matches an allow pattern: a domain (and its subdomains) or a ".suffix". */
+export function matchesAllowPattern(
+	url: string,
+	patterns: readonly string[] = RESEARCH_PRIMARY_ALLOW_PATTERNS,
+): boolean {
+	const host = hostOf(url)
+	if (!host) return false
+	return patterns.some((p) => {
+		const pattern = p.toLowerCase()
+		return pattern.startsWith('.')
+			? host.endsWith(pattern)
+			: host === pattern || host.endsWith(`.${pattern}`)
+	})
+}
+
+/**
+ * The type a finding is kept under. A model that is unsure may call a government
+ * or standards page "weak"; a host on the allow list is primary whatever it said.
+ * A page the model called blocked stays blocked.
+ */
+export function effectiveSourceType(
+	url: string,
+	type: SourceType,
+	patterns: readonly string[] = RESEARCH_PRIMARY_ALLOW_PATTERNS,
+): SourceType {
+	if (type === 'blocked') return type
+	return matchesAllowPattern(url, patterns) ? 'primary' : type
 }
 
 /** Tier 1 and 2 count toward success criterion 3 (the share of primary or reputable sources). */

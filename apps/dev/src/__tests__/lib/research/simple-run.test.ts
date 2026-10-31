@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { LLMResponse } from '../../../lib/llm/adapter'
+import { createQueryScrub } from '../../../lib/research/scrub'
 import { ResearchProviderError } from '../../../lib/research/search-provider'
 import type { ResearchSearchProvider } from '../../../lib/research/search-provider'
 import { runSimpleResearch } from '../../../lib/research/simple-run'
@@ -97,6 +98,7 @@ const base = {
 	context: null,
 	model: 'm',
 	pricing,
+	scrub: createQueryScrub([]),
 }
 
 describe('runSimpleResearch', () => {

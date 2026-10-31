@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	type LedgerFinding,
 	buildLedger,
+	buildMergedLedger,
 	buildMethodSection,
 	fitFindings,
 	normalizeUrl,
@@ -182,11 +183,100 @@ describe('buildMethodSection', () => {
 			unread: [{ url: 'https://x.dk', reason: 'paywalled' }],
 			costCents: 7,
 			capCents: 100,
+			tier12Share: 0.5,
+			sourceCount: 4,
+			scrubRejections: 2,
 		})
 		expect(text).toContain('## Method')
 		expect(text).toContain('Effort: simple (1 researcher)')
 		expect(text).toContain('"bogføringsloven"')
 		expect(text).toContain('https://x.dk (paywalled)')
 		expect(text).toContain('$0.07 of a $1.00 cap')
+		expect(text).toContain('Tier 1 and 2 sources: 50% of 4')
+		expect(text).toContain('Searches refused by the workspace-name check: 2')
+	})
+
+	it('says none when there are no sources', () => {
+		const text = buildMethodSection({
+			effort: 'simple',
+			researchers: 1,
+			queries: [],
+			sourcesRead: 0,
+			unread: [],
+			costCents: 0,
+			capCents: 100,
+			tier12Share: 0,
+			sourceCount: 0,
+			scrubRejections: 0,
+		})
+		expect(text).toContain('Tier 1 and 2 sources: none')
+	})
+})
+
+describe('buildMergedLedger', () => {
+	const PAGE_B = 'Moms skal afregnes hvert halve år for små virksomheder.'
+	const URL_B = 'https://skat.dk/moms'
+	const partOf = (findings: unknown[], pages: Array<[string, string]>) => {
+		const output = parseResearcherOutput(JSON.stringify({ findings }))
+		if (!output) throw new Error('parse')
+		return { output, fetchedText: new Map(pages.map(([u, t]) => [normalizeUrl(u), t])) }
+	}
+
+	it('numbers sources across researchers and gives the same URL one number', () => {
+		const a = partOf([finding()], [[URL_A, PAGE]])
+		const b = partOf(
+			[
+				finding({ claim: 'Same page, found by a second researcher.' }),
+				finding({
+					url: URL_B,
+					quote: 'Moms skal afregnes hvert halve år',
+					source_type: 'secondary',
+				}),
+			],
+			[
+				[URL_A, PAGE],
+				[URL_B, PAGE_B],
+			],
+		)
+		const ledger = buildMergedLedger([a, b])
+		expect(ledger.sources.map((s) => [s.n, s.url])).toEqual([
+			[1, URL_A],
+			[2, URL_B],
+		])
+		expect(ledger.findings.map((f) => f.n)).toEqual([1, 1, 2])
+	})
+
+	it('checks a quote against the page its own researcher fetched, not another researcher page', () => {
+		const a = partOf([finding()], [[URL_A, PAGE]])
+		// B cites URL_A with A's quote but only ever fetched URL_B.
+		const b = partOf([finding()], [[URL_B, PAGE_B]])
+		const ledger = buildMergedLedger([a, b])
+		expect(ledger.findings).toHaveLength(1)
+		expect(ledger.dropped.notFetched).toBe(1)
+	})
+
+	it('drops findings from a denylisted domain and from its subdomains', () => {
+		const farm = 'https://blog.usecarly.com/best-tools-2026'
+		const part = partOf(
+			[finding({ url: farm }), finding({ url: 'https://vellum.ai/post' }), finding()],
+			[
+				[farm, PAGE],
+				['https://vellum.ai/post', PAGE],
+				[URL_A, PAGE],
+			],
+		)
+		const ledger = buildMergedLedger([part])
+		expect(ledger.findings).toHaveLength(1)
+		expect(ledger.dropped.blocked).toBe(2)
+	})
+
+	it('treats a government host as primary even when the model called it weak', () => {
+		const part = partOf([finding({ source_type: 'weak' })], [[URL_A, PAGE]])
+		expect(buildMergedLedger([part]).sources[0]?.source_type).toBe('primary')
+	})
+
+	it('keeps a blocked source blocked, whatever the host', () => {
+		const part = partOf([finding({ source_type: 'blocked' })], [[URL_A, PAGE]])
+		expect(buildMergedLedger([part]).findings).toEqual([])
 	})
 })

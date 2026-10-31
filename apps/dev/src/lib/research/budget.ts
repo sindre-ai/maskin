@@ -56,12 +56,21 @@ export function worstCaseLlmMicroUsd(
 
 export class RunBudget {
 	private readonly capMicroUsd: number
+	private readonly hasLead: boolean
 	private readonly shares = new Map<BudgetStage, number>()
 	private readonly spent = new Map<BudgetStage, number>()
 	private searches = 0
 	private extracts = 0
 
-	constructor(opts: { capCents: number; researchers: number; hasLead: boolean }) {
+	/** Called after every recorded cost, so a run can save its spend as it goes. */
+	private readonly onSpend: (() => void) | undefined
+
+	constructor(opts: {
+		capCents: number
+		researchers: number
+		hasLead: boolean
+		onSpend?: () => void
+	}) {
 		if (!Number.isInteger(opts.capCents) || opts.capCents <= 0) {
 			throw new RangeError('capCents must be a positive whole number')
 		}
@@ -70,11 +79,28 @@ export class RunBudget {
 		}
 		this.capMicroUsd = opts.capCents * MICRO_USD_PER_CENT
 
-		const leadShare = opts.hasLead ? LEAD_SHARE : 0
-		const researcherShare = (1 - WRITER_SHARE - leadShare) / opts.researchers
+		this.hasLead = opts.hasLead
+		this.onSpend = opts.onSpend
 		this.shares.set('writer', Math.round(WRITER_SHARE * this.capMicroUsd))
 		if (opts.hasLead) this.shares.set('lead', Math.round(LEAD_SHARE * this.capMicroUsd))
-		for (let i = 0; i < opts.researchers; i++) {
+		this.assignResearchers(opts.researchers)
+	}
+
+	/**
+	 * Splits the researchers' 80% (85% with no lead) equally between `count`
+	 * researchers. The lead picks how many only after its own call, so a run with a
+	 * lead builds the budget with a placeholder count and calls this once the brief
+	 * is in. Only valid before any researcher has spent anything.
+	 */
+	assignResearchers(count: number): void {
+		if (!Number.isInteger(count) || count <= 0) {
+			throw new RangeError('researchers must be a positive whole number')
+		}
+		for (const stage of [...this.shares.keys()]) {
+			if (stage.startsWith('researcher:')) this.shares.delete(stage)
+		}
+		const researcherShare = (1 - WRITER_SHARE - (this.hasLead ? LEAD_SHARE : 0)) / count
+		for (let i = 0; i < count; i++) {
 			this.shares.set(`researcher:${i}`, Math.round(researcherShare * this.capMicroUsd))
 		}
 	}
@@ -84,6 +110,7 @@ export class RunBudget {
 		if (!this.shares.has(stage)) throw new RangeError(`unknown budget stage ${stage}`)
 		if (!Number.isFinite(microUsd) || microUsd < 0) throw new RangeError('cost must be >= 0')
 		this.spent.set(stage, (this.spent.get(stage) ?? 0) + microUsd)
+		this.onSpend?.()
 		return this.totalMicroUsd
 	}
 

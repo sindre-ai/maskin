@@ -52,6 +52,7 @@ import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { NotificationPushFanout } from './services/notification-push'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
+import { markInterruptedResearchRuns } from './services/research-service'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
@@ -343,6 +344,16 @@ migrateAgentToolServers(db)
 		if (servers > 0) logger.info('Moved agent tool servers to the workspace', { servers, agents })
 	})
 	.catch((err) => logger.error('Agent tool server migration failed', { error: String(err) }))
+
+// Research runs live in this process, so any left queued or running by the last server are
+// dead. Mark them interrupted, keeping their cost. A failure here never blocks startup.
+markInterruptedResearchRuns(db)
+	.then((count) => {
+		if (count > 0) logger.info('Marked interrupted deep_research runs', { count })
+	})
+	.catch((err) =>
+		logger.error('deep_research interrupted-run sweep failed', { error: String(err) }),
+	)
 
 // One-off: gives every existing agent its default Heartbeat. Does nothing unless
 // RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.

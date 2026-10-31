@@ -4,7 +4,7 @@ import { researchRuns } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, vi } from 'vitest'
 import { createApiError, formatZodError, mapStatusToCode } from '../../lib/errors'
-import { insertActor, insertWorkspace } from '../factories'
+import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 const mocks = vi.hoisted(() => {
@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => {
 			name: 'fake',
 			searchPriceMicroUsd: 8_000,
 			extractUrlPriceMicroUsd: 1_600,
-			search: async () => ({
+			search: vi.fn(async (_params: { query: string }) => ({
 				hits: [
 					{
 						title: 'Bogføringsloven',
@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => {
 					},
 				],
 				costMicroUsd: 8_000,
-			}),
+			})),
 			extract: async (urls: string[]) => ({
 				pages: urls.map((url) => ({
 					url,
@@ -62,7 +62,11 @@ const { PlanCapExceededError } = await import('../../lib/llm-routing')
 const { _resetFeatureFlagConfig } = await import('../../lib/feature-flags')
 const { createIdempotencyMiddleware } = await import('../../middleware/idempotency')
 const { default: researchRoutes } = await import('../../routes/research')
-const { __resetResearchSlotsForTesting } = await import('../../services/research-service')
+const { __resetResearchSlotsForTesting, markInterruptedResearchRuns } = await import(
+	'../../services/research-service'
+)
+const { loadWorkspaceNames } = await import('../../lib/research/scrub')
+const { LEAD_SYSTEM_PROMPT, WRITER_SYSTEM_PROMPT } = await import('../../lib/research/prompts')
 
 const QUOTE = 'Regnskabsmateriale skal opbevares i fem år efter regnskabsårets udløb.'
 const usage = (input: number, output: number) => ({
@@ -177,6 +181,7 @@ describe('deep_research routes (Integration)', () => {
 		actorId = getTestActorId()
 		enableFlag(true)
 		mocks.chat.mockReset()
+		mocks.provider.search.mockClear()
 		mocks.capture.mockReset()
 		mocks.getModelPricing.mockReset()
 		mocks.getModelPricing.mockResolvedValue({
@@ -366,14 +371,6 @@ describe('deep_research routes (Integration)', () => {
 			)
 		})
 
-		it('says comparison is not available yet', async () => {
-			const res = await post({ ...question, effort: 'comparison' })
-			expect(res.status).toBe(400)
-			expect(((await res.json()) as { error: { message: string } }).error.message).toContain(
-				'not available yet',
-			)
-		})
-
 		it('gives a plain error when the workspace has no API key, only a subscription', async () => {
 			// The factory default is an enterprise workspace with no saved key: the
 			// subscription route is skipped by design, so there is nothing to call.
@@ -469,5 +466,143 @@ describe('deep_research routes (Integration)', () => {
 		const fourth = await post(question)
 		expect(fourth.status).toBe(202)
 		await waitForEnd(((await fourth.json()) as { id: string }).id)
+	})
+
+	describe('comparison effort', () => {
+		it('plans with a lead, runs one researcher per subtopic and reports the count', async () => {
+			const subtopic = (objective: string) => ({
+				objective,
+				sub_questions: [`${objective}?`],
+				source_hints: [],
+				boundaries: '',
+				tool_call_limit: 5,
+			})
+			mocks.chat.mockImplementation(async (options: { messages: Array<{ content: string }> }) => {
+				const system = options.messages[0]?.content
+				if (system === LEAD_SYSTEM_PROMPT) {
+					return textTurn(
+						JSON.stringify({
+							interpretation: 'Two angles',
+							subtopics: [subtopic('Angle A'), subtopic('Angle B')],
+						}),
+					)
+				}
+				if (system === WRITER_SYSTEM_PROMPT) return textTurn('## TL;DR\nNo source found.')
+				return textTurn(JSON.stringify({ findings: [], unread: [], gaps: [] }))
+			})
+
+			const res = await post({ ...question, effort: 'comparison' })
+			expect(res.status).toBe(202)
+			const { id } = (await res.json()) as { id: string }
+			const run = await waitForEnd(id)
+
+			expect(run.status).toBe('done')
+			expect(run.cap).toEqual({ cap_cents: 400 })
+			expect(run.report_md).toContain('Effort: comparison (2 researchers)')
+			const events = finishedEvents()
+			expect(events).toHaveLength(1)
+			expect((events[0] as unknown[])[2]).toMatchObject({ effort: 'comparison', researchers: 2 })
+		})
+	})
+
+	describe('the query scrub', () => {
+		const noFindings = () => textTurn(JSON.stringify({ findings: [], unread: [], gaps: [] }))
+
+		it('loads the titles of the caller workspace only, and not archived ones', async () => {
+			const other = await insertWorkspace(db, actorId, {})
+			await insertObject(db, workspaceId, actorId, { type: 'task', title: 'Hansen Tømrer' })
+			// Contacts and companies are workspace objects, so their names are titles.
+			await insertObject(db, workspaceId, actorId, { type: 'contact', title: 'Mette Sørensen' })
+			await insertObject(db, workspaceId, actorId, { type: 'company', title: 'Nordbyg Holding' })
+			await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				title: 'Old Client',
+				status: 'archived',
+			})
+			await insertObject(db, other.id, actorId, { type: 'company', title: 'Konkurrent Nord' })
+
+			const names = await loadWorkspaceNames(db, workspaceId)
+			expect(names.sort()).toEqual(['Hansen Tømrer', 'Mette Sørensen', 'Nordbyg Holding'])
+		})
+
+		it('refuses a search that names a workspace object, spends nothing on it and counts it in the run row', async () => {
+			await insertObject(db, workspaceId, actorId, { type: 'company', title: 'Hansen Tømrer ApS' })
+			mocks.chat
+				.mockResolvedValueOnce(toolTurn('web_search', { query: 'hansen toemrer aps moms' }))
+				.mockResolvedValueOnce(toolTurn('web_search', { query: 'danish vat rules for builders' }))
+				.mockResolvedValueOnce(noFindings())
+				.mockResolvedValueOnce(textTurn('## TL;DR\nNo source found.'))
+
+			const { id } = (await (await post(question)).json()) as { id: string }
+			const run = await waitForEnd(id)
+
+			expect(mocks.provider.search).toHaveBeenCalledTimes(1)
+			expect(mocks.provider.search.mock.calls[0]?.[0].query).toBe('danish vat rules for builders')
+			expect(run.usage.searches).toBe(1)
+			expect(run.report_md).toContain('Searches refused by the workspace-name check: 1')
+			expect(run.report_md).not.toContain('Hansen')
+			const [row] = await db.select().from(researchRuns).where(eq(researchRuns.id, id))
+			expect(row?.stages).toMatchObject({ scrub: { rejections: 1 } })
+			expect(JSON.stringify(row)).not.toContain('Hansen')
+		})
+
+		it('does not use the names of another workspace', async () => {
+			const other = await insertWorkspace(db, actorId, {})
+			await insertObject(db, other.id, actorId, { type: 'company', title: 'Konkurrent Nord' })
+			mocks.chat
+				.mockResolvedValueOnce(toolTurn('web_search', { query: 'konkurrent nord pricing' }))
+				.mockResolvedValueOnce(noFindings())
+				.mockResolvedValueOnce(textTurn('## TL;DR\nNo source found.'))
+
+			const { id } = (await (await post(question)).json()) as { id: string }
+			const run = await waitForEnd(id)
+
+			expect(mocks.provider.search).toHaveBeenCalledTimes(1)
+			expect(run.report_md).toContain('Searches refused by the workspace-name check: 0')
+		})
+	})
+
+	describe('runs left behind by a restart', () => {
+		it('marks queued and running runs interrupted, keeps their cost, and leaves finished runs alone', async () => {
+			const insertRun = async (status: string, costCents: number) => {
+				const [row] = await db
+					.insert(researchRuns)
+					.values({
+						workspaceId,
+						actorId,
+						question: 'q',
+						effort: 'comparison',
+						capCents: 400,
+						status,
+						costCents,
+					})
+					.returning({ id: researchRuns.id })
+				return row?.id as string
+			}
+			const queued = await insertRun('queued', 0)
+			const running = await insertRun('running', 37)
+			const done = await insertRun('done', 12)
+			const capped = await insertRun('capped', 400)
+
+			const marked = await markInterruptedResearchRuns(db)
+			expect(marked).toBeGreaterThanOrEqual(2)
+
+			const rows = await db
+				.select()
+				.from(researchRuns)
+				.where(eq(researchRuns.workspaceId, workspaceId))
+			const byId = new Map(rows.map((r) => [r.id, r]))
+			expect(byId.get(queued)?.status).toBe('interrupted')
+			expect(byId.get(running)).toMatchObject({ status: 'interrupted', costCents: 37 })
+			expect(byId.get(running)?.finishedAt).not.toBeNull()
+			expect(byId.get(running)?.error).toContain('restarted')
+			expect(byId.get(done)).toMatchObject({ status: 'done', costCents: 12 })
+			expect(byId.get(capped)).toMatchObject({ status: 'capped', costCents: 400 })
+
+			// The caller sees it as an ended run with its cost.
+			const view = (await (await get(running)).json()) as RunBody
+			expect(view.status).toBe('interrupted')
+			expect(view.usage.cost_cents).toBe(37)
+		})
 	})
 })

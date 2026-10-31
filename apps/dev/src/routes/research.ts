@@ -31,7 +31,8 @@ const startBodySchema = z.object({
 		.max(2000)
 		.openapi({ example: 'What does the Danish bookkeeping act require of sole proprietors?' }),
 	effort: z.enum(['simple', 'comparison', 'broad']).openapi({
-		description: 'How much research to do. Only "simple" runs today.',
+		description:
+			'How much research to do: simple (one researcher), comparison (2 to 4) or broad (10 to 12).',
 	}),
 	context: z.string().max(2000).optional(),
 	max_cost_usd: z.number().min(0.01).optional().openapi({
