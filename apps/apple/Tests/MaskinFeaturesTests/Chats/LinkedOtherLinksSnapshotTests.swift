@@ -136,6 +136,26 @@ struct LinkedOtherLinksSnapshotTests {
 		}
 	}
 
+	@Test("a GitHub repository name too long for the line loses its middle and keeps the number")
+	func gitHubChipLongRepo() async throws {
+		let repo = "a-repository-with-a-very-long-name-that-cannot-fit-on-one-line-at-390-wide"
+		let pr = URL(string: "https://github.com/sindre-ai/\(repo)/pull/2653")!
+		let issue = URL(string: "https://github.com/sindre-ai/\(repo)/issues/12")!
+		let info = makeLinkInfo()
+		#expect(info(pr)?.title == "\(repo) #2653")
+		for dark in [false, true] {
+			for largest in [false, true] {
+				let content = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+					MarkdownLinkCard(url: pr)
+					MarkdownLinkCard(url: issue)
+					MarkdownContent("See \(pr.absoluteString) for the change.", style: .chat)
+				}
+				.environment(\.markdownInternalLinkInfo, info)
+				try await render(content, width: 390, dark: dark, name: "linked-github-chip-long-repo", largest: largest)
+			}
+		}
+	}
+
 	@Test("a message with an other-workspace link and a GitHub link draws the card and the chip")
 	func inMessage() async throws {
 		let store = makeStore()
@@ -150,6 +170,22 @@ struct LinkedOtherLinksSnapshotTests {
 				.environment(\.linkedItems, store)
 				.environment(\.markdownInternalLinkInfo, makeLinkInfo())
 			try await render(row, width: 390, dark: dark, name: "linked-other-links-message")
+		}
+	}
+
+	@Test("a GitHub chip in your own message sits on the right")
+	func gitHubChipInOwnMessage() async throws {
+		let store = makeStore()
+		// Same message shape as above; `isOwn` is what puts the row on the right.
+		let message = ChatMessage(
+			id: "m2", serverID: 2, conversationID: "c", actorID: "me", actorName: "Me", author: .agent,
+			content: "https://github.com/sindre-ai/maskin/pull/2653\n\nCan you look at this one? It follows https://github.com/sindre-ai/maskin/issues/12.",
+			createdAt: Date(timeIntervalSince1970: 1_790_000_000))
+		for dark in [false, true] {
+			let row = MessageRow(message: message, isOwn: true, showsAuthor: false)
+				.environment(\.linkedItems, store)
+				.environment(\.markdownInternalLinkInfo, makeLinkInfo())
+			try await render(row, width: 390, dark: dark, name: "linked-github-chip-own-message")
 		}
 	}
 }
