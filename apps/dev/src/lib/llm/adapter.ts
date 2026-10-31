@@ -1,13 +1,19 @@
-export interface LLMMessage {
-	role: 'system' | 'user' | 'assistant' | 'tool'
-	content: string
-	tool_call_id?: string
-}
-
 export interface LLMToolCall {
 	id: string
 	name: string
 	arguments: Record<string, unknown>
+}
+
+export interface LLMMessage {
+	role: 'system' | 'user' | 'assistant' | 'tool'
+	content: string
+	tool_call_id?: string
+	/**
+	 * On an assistant message: the tool calls that turn made, so the tool results
+	 * that follow have a call to answer. Without it a multi-turn tool loop is
+	 * rejected by both providers.
+	 */
+	tool_calls?: LLMToolCall[]
 }
 
 /**

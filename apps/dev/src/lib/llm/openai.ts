@@ -40,6 +40,15 @@ export class OpenAIAdapter implements LLMAdapter {
 				role: m.role,
 				content: m.content,
 				...(m.tool_call_id && { tool_call_id: m.tool_call_id }),
+				...(m.tool_calls && m.tool_calls.length > 0
+					? {
+							tool_calls: m.tool_calls.map((tc) => ({
+								id: tc.id,
+								type: 'function',
+								function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+							})),
+						}
+					: {}),
 			})),
 		}
 
