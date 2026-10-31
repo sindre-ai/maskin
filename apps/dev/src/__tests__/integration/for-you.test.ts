@@ -321,6 +321,21 @@ describe('GET /api/for-you', () => {
 			expect(await list()).toEqual([])
 		})
 
+		it('drops the card once its object leaves the status the ask assumed', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'define' })
+			await decisionComment(obj.id, { decision: { ...DECISION, only_while_status: ['define'] } })
+			expect(await list()).toHaveLength(1)
+			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, obj.id))
+			expect(await list()).toEqual([])
+		})
+
+		it('keeps a card that names no assumed status when the object moves on', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'define' })
+			await decisionComment(obj.id)
+			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, obj.id))
+			expect(await list()).toHaveLength(1)
+		})
+
 		it('drops the card after the person replies or reads past it', async () => {
 			const replied = await insertObject(db, workspaceId, humanId, {
 				type: 'task',
