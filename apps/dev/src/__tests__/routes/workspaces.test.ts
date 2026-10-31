@@ -776,6 +776,23 @@ describe('Workspaces Routes', () => {
 			expect(calls.inserts).toHaveLength(0)
 		})
 
+		it('returns 403, the same as for a refused actor, when the actor does not exist', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[], // target actor lookup: no such actor
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, { actor_id: randomUUID() }),
+			)
+
+			expect(res.status).toBe(403)
+			expect(calls.inserts).toHaveLength(0)
+		})
+
 		it('returns 403 and writes nothing when the agent was created outside the workspace', async () => {
 			const wsId = randomUUID()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
