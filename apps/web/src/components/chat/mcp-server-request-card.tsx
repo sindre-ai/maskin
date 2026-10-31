@@ -1,8 +1,10 @@
 import { SecretInput } from '@/components/keychain/secret-input'
 import { FormError } from '@/components/shared/form-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useContinueSession, useSendSessionInput } from '@/hooks/use-sessions'
@@ -69,6 +71,8 @@ export function McpServerRequestCard({
 	const helper = request.reply_to_session === true
 	const continueSession = useContinueSession(workspaceId, conversationId)
 	const sendInput = useSendSessionInput(workspaceId)
+	// Saving and declining both write to the workspace, which a viewer cannot do.
+	const canWrite = useCanWrite()
 
 	const [name, setName] = useState(request.name)
 	const [secretEnv, setSecretEnv] = useState<Record<string, string>>({})
@@ -109,7 +113,7 @@ export function McpServerRequestCard({
 			secretHeaderNames.every((n) => (secretHeaders[n] ?? '').length > 0))
 	const me = getStoredActor()
 	const canAdd = me?.type === 'human'
-	const canSubmit = !busy && canAdd && name.trim().length > 0 && filled
+	const canSubmit = !busy && canAdd && canWrite && name.trim().length > 0 && filled
 
 	const add = async () => {
 		if (!canSubmit) return
@@ -325,14 +329,22 @@ export function McpServerRequestCard({
 				<p className="text-xs text-muted-foreground">Only a person can add a tool server.</p>
 			) : null}
 			<FormError error={error ?? undefined} />
-			<div className="flex flex-wrap items-center gap-2">
-				<Button type="submit" size="sm" disabled={!canSubmit}>
-					{busy ? 'Adding…' : savedServerId ? 'Give to this agent' : 'Add'}
-				</Button>
-				<Button type="button" size="sm" variant="outline" disabled={busy} onClick={decline}>
-					Not now
-				</Button>
-			</div>
+			<ViewerTooltip className="flex">
+				<div className="flex flex-wrap items-center gap-2">
+					<Button type="submit" size="sm" disabled={!canSubmit}>
+						{busy ? 'Adding…' : savedServerId ? 'Give to this agent' : 'Add'}
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						disabled={busy || !canWrite}
+						onClick={decline}
+					>
+						Not now
+					</Button>
+				</div>
+			</ViewerTooltip>
 		</form>
 	)
 }

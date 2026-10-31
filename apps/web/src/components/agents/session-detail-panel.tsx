@@ -1,6 +1,8 @@
 import { AgentOutput } from '@/components/shared/agent-output'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useSessionAffectedObjects } from '@/hooks/use-events'
 import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
@@ -472,30 +474,33 @@ function RestartSessionButton({
 	workspaceId,
 }: { session: SessionResponse; workspaceId: string }) {
 	const createSession = useCreateSession(workspaceId)
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 	return (
-		<button
-			type="button"
-			className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] inline-flex items-center"
-			disabled={createSession.isPending}
-			onClick={() => {
-				trackEvent('session_restart_clicked', {
-					source: 'session-detail-panel',
-					session_id: session.id,
-					actor_id: session.actorId,
-					prior_status: session.status,
-				})
-				createSession.mutate(
-					{
+		<ViewerTooltip>
+			<button
+				type="button"
+				className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] inline-flex items-center"
+				disabled={createSession.isPending || !canWrite}
+				onClick={() => {
+					trackEvent('session_restart_clicked', {
+						source: 'session-detail-panel',
+						session_id: session.id,
 						actor_id: session.actorId,
-						action_prompt: session.actionPrompt,
-					},
-					{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
-				)
-			}}
-		>
-			{createSession.isPending ? 'Restarting…' : 'Restart'}
-		</button>
+						prior_status: session.status,
+					})
+					createSession.mutate(
+						{
+							actor_id: session.actorId,
+							action_prompt: session.actionPrompt,
+						},
+						{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
+					)
+				}}
+			>
+				{createSession.isPending ? 'Restarting…' : 'Restart'}
+			</button>
+		</ViewerTooltip>
 	)
 }
 

@@ -1,7 +1,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/api', () => ({
+vi.mock('@/lib/api', async (importOriginal) => ({
+	// Keep the real ApiError: the hook checks for a viewer refusal with instanceof.
+	...(await importOriginal<typeof import('@/lib/api')>()),
 	api: {
 		sessions: {
 			get: vi.fn(),
