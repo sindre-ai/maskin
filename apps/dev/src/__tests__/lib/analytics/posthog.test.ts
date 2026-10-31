@@ -309,7 +309,10 @@ describe('capturePosthogEvent shared properties', () => {
 
 	it('treats trigger_* events as the trigger, whoever the distinct id is', async () => {
 		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		// trigger_match_failed is sampled at 0.2; a draw of 0 always sends it.
+		const random = vi.spyOn(Math, 'random').mockReturnValue(0)
 		const props = await send('trigger_match_failed', HUMAN, { workspace_id: 'ws-1' })
+		random.mockRestore()
 		expect(props).toMatchObject({ actor_type: 'trigger', $process_person_profile: false })
 	})
 
