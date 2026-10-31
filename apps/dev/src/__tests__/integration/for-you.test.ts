@@ -197,6 +197,69 @@ describe('GET /api/for-you', () => {
 		expect(await list()).toEqual([])
 	})
 
+	describe('a card tied to a session that has ended', () => {
+		async function endedCard(sourceId: (objectId: string) => Promise<number>) {
+			const task = await insertObject(db, workspaceId, humanId, {
+				type: 'task',
+				status: 'in_progress',
+			})
+			const session = await insertSession(db, workspaceId, agentId, humanId, {
+				status: 'completed',
+			})
+			const source = await sourceId(task.id)
+			const card = await item(
+				{ objectId: task.id, sessionId: session.id },
+				{ source_comment_id: source, headline: 'Approve the drafts' },
+			)
+			return { task, card }
+		}
+
+		it('stays when its source comment asks for an approval', async () => {
+			const { card } = await endedCard((id) => decisionComment(id))
+			expect((await list()).map((i) => i.notification_id)).toEqual([card.id])
+		})
+
+		it('stays when its source comment carries a draft', async () => {
+			const draft = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
+			const { card } = await endedCard((id) =>
+				decisionComment(id, {
+					decision: { ...DECISION, draft: { object_id: draft.id, label: 'Email to Hans' } },
+				}),
+			)
+			expect((await list()).map((i) => i.notification_id)).toEqual([card.id])
+		})
+
+		it('is dropped when its source comment is a plain comment', async () => {
+			await endedCard((id) => comment(id, agentId))
+			expect(await list()).toEqual([])
+		})
+
+		it('is dropped when it has no source comment', async () => {
+			const session = await insertSession(db, workspaceId, agentId, humanId, { status: 'failed' })
+			await item({ sessionId: session.id })
+			expect(await list()).toEqual([])
+		})
+
+		it('still goes once the person replies on the thread', async () => {
+			const { task } = await endedCard((id) => decisionComment(id))
+			expect(await list()).toHaveLength(1)
+			await comment(task.id, humanId)
+			expect(await list()).toEqual([])
+		})
+
+		it('still goes once every draft it offered has been dealt with', async () => {
+			const draft = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
+			await endedCard((id) =>
+				decisionComment(id, {
+					decision: { ...DECISION, draft: { object_id: draft.id, label: 'Email to Hans' } },
+				}),
+			)
+			expect(await list()).toHaveLength(1)
+			await db.update(objects).set({ status: 'done' }).where(eq(objects.id, draft.id))
+			expect(await list()).toEqual([])
+		})
+	})
+
 	it('drops an item after the human replies on the thread', async () => {
 		const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'active' })
 		const sourceId = await comment(obj.id, agentId)
