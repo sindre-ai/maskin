@@ -340,7 +340,7 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send mail only', () => {
+		it('openWorldHint is true for create_session and its alias run_agent, the integration tools, the tools that send mail and deep_research (it searches the web) only', () => {
 			const expected = [
 				'create_session',
 				'create_sub_chat',
@@ -353,6 +353,7 @@ describe('MCP surface pin', () => {
 				'approve_object_draft',
 				'gmail_send_email',
 				'update_integration_access',
+				'deep_research',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)
 				.filter(([, entry]) => entry.openWorldHint)
