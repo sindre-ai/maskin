@@ -40,6 +40,8 @@ describe('RuntimeTelemetry', () => {
 				agent_server_url: 'local-docker',
 				session_start_latency_ms: 1234,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -64,6 +66,8 @@ describe('RuntimeTelemetry', () => {
 				duration_ms: 5000,
 				agent_server_url: 'local-docker',
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -86,6 +90,8 @@ describe('RuntimeTelemetry', () => {
 				agent_server_url: 'local-docker',
 				host_isolation_ok: true,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -107,6 +113,8 @@ describe('RuntimeTelemetry', () => {
 				concurrent_count: 47,
 				sample_rate: 0.1,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -235,6 +243,8 @@ describe('RuntimeTelemetry', () => {
 				end_reason: 'user_stopped',
 				duration_ms: 8,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})

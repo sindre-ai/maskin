@@ -9,6 +9,7 @@ import {
 	resetPosthogIdentity,
 	setCapturingEnabled,
 	setWorkspaceGroup,
+	withSharedProperties,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -253,6 +254,7 @@ describe('posthog helper', () => {
 				person_profiles: 'identified_only',
 				capture_pageview: true,
 				autocapture: false,
+				before_send: withSharedProperties,
 			})
 			expect(isPosthogReady()).toBe(true)
 		})
@@ -288,5 +290,23 @@ describe('posthog helper', () => {
 			expect(() => initPosthog()).not.toThrow()
 			expect(isPosthogReady()).toBe(false)
 		})
+	})
+})
+
+describe('withSharedProperties', () => {
+	it('adds surface web and defaults actor_type to human', () => {
+		expect(withSharedProperties({ event: 'x', properties: { a: 1 } })).toEqual({
+			event: 'x',
+			properties: { a: 1, actor_type: 'human', surface: 'web' },
+		})
+	})
+
+	it('keeps an actor_type that is already registered', () => {
+		const out = withSharedProperties({ event: 'x', properties: { actor_type: 'agent' } })
+		expect(out?.properties).toMatchObject({ actor_type: 'agent', surface: 'web' })
+	})
+
+	it('passes a dropped event through', () => {
+		expect(withSharedProperties(null)).toBeNull()
 	})
 })

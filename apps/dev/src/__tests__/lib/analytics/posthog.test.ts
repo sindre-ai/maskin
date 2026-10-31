@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
+import { actors } from '@maskin/db/schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetPosthogEventBudgetForTesting } from '../../../lib/analytics/event-budget'
 import {
@@ -73,6 +74,9 @@ describe('capturePosthogEvent', () => {
 			posted_as_machine: true,
 			has_agent_subscript: true,
 			agent_actor_id: 'actor-1',
+			surface: 'backend',
+			actor_type: 'system',
+			$process_person_profile: false,
 		})
 		expect(typeof body.timestamp).toBe('string')
 	})
@@ -150,7 +154,12 @@ describe('capturePosthogEvent workspace privacy', () => {
 		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
 		const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
 		expect(body.distinct_id).toBe('actor-1')
-		expect(body.properties).toEqual(props)
+		expect(body.properties).toEqual({
+			...props,
+			surface: 'backend',
+			actor_type: 'system',
+			$process_person_profile: false,
+		})
 	})
 
 	it('hashes the distinct id and drops names and emails when anonymise is on', async () => {
@@ -166,6 +175,9 @@ describe('capturePosthogEvent workspace privacy', () => {
 			actor_id: 'actor-1',
 			tool_name: 'create_objects',
 			count: 3,
+			surface: 'backend',
+			actor_type: 'system',
+			$process_person_profile: false,
 		})
 	})
 
@@ -240,6 +252,88 @@ describe('capturePosthogEvent workspace privacy', () => {
 			await capturePosthogEvent('agent_session_completed', 'actor-1', {})
 			expect(fetchMock).toHaveBeenCalledTimes(3)
 		})
+	})
+})
+
+describe('capturePosthogEvent shared properties', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+	const HUMAN = '11111111-1111-4111-8111-111111111111'
+	const AGENT = '22222222-2222-4222-8222-222222222222'
+
+	// A db that answers the workspace privacy read with an empty settings block
+	// and the actor read from a fixed id -> type map.
+	function dbWithActors(types: Record<string, string>) {
+		const select = vi.fn(() => ({
+			from: (table: unknown) => ({
+				where: () => ({
+					limit: async () => {
+						if (table !== actors) return [{ settings: {} }]
+						return Object.entries(types).map(([, type]) => ({ type }))
+					},
+				}),
+			}),
+		}))
+		return { db: { select } as unknown as Database, select }
+	}
+
+	async function send(event: string, distinctId: string, props: Record<string, unknown> = {}) {
+		await capturePosthogEvent(event, distinctId, props as never)
+		const call = fetchMock.mock.calls.at(-1) as [string, RequestInit]
+		return JSON.parse(call[1].body as string).properties as Record<string, unknown>
+	}
+
+	beforeEach(() => {
+		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
+		vi.stubGlobal('fetch', fetchMock)
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+	})
+
+	afterEach(() => {
+		__resetPosthogPrivacyForTesting()
+		vi.unstubAllGlobals()
+		vi.unstubAllEnvs()
+	})
+
+	it('gives a human surface backend and no profile flag', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		const props = await send('workspace_member_joined', HUMAN, { workspace_id: 'ws-1' })
+		expect(props).toMatchObject({ surface: 'backend', actor_type: 'human', workspace_id: 'ws-1' })
+		expect(props).not.toHaveProperty('$process_person_profile')
+	})
+
+	it('turns the profile off for an agent', async () => {
+		configurePosthogPrivacy(dbWithActors({ [AGENT]: 'agent' }).db)
+		const props = await send('agent_comment_posted', AGENT, { workspace_id: 'ws-1' })
+		expect(props).toMatchObject({ actor_type: 'agent', $process_person_profile: false })
+	})
+
+	it('treats trigger_* events as the trigger, whoever the distinct id is', async () => {
+		configurePosthogPrivacy(dbWithActors({ [HUMAN]: 'human' }).db)
+		const props = await send('trigger_match_failed', HUMAN, { workspace_id: 'ws-1' })
+		expect(props).toMatchObject({ actor_type: 'trigger', $process_person_profile: false })
+	})
+
+	it('treats a distinct id that is not an actor as the system', async () => {
+		const { db, select } = dbWithActors({})
+		configurePosthogPrivacy(db)
+		const props = await send('stripe_dispute_created', 'cus_123', {})
+		expect(props).toMatchObject({ actor_type: 'system', $process_person_profile: false })
+		expect(select).not.toHaveBeenCalled()
+	})
+
+	it('keeps an actor_type the caller already set', async () => {
+		configurePosthogPrivacy(dbWithActors({ [AGENT]: 'agent' }).db)
+		const props = await send('mcp_tool_call', AGENT, { actor_type: 'human' })
+		expect(props).toMatchObject({ actor_type: 'human' })
+		expect(props).not.toHaveProperty('$process_person_profile')
+	})
+
+	it('reads the actor type once for a burst of events from the same actor', async () => {
+		const { db, select } = dbWithActors({ [AGENT]: 'agent' })
+		configurePosthogPrivacy(db)
+		await send('a', AGENT, {})
+		await send('b', AGENT, {})
+		expect(select).toHaveBeenCalledTimes(1)
 	})
 })
 
