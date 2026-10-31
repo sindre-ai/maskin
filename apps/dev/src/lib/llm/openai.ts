@@ -4,6 +4,7 @@ import {
 	type LLMMessage,
 	type LLMResponse,
 	type LLMTool,
+	type LLMUsage,
 	LlmNoEligibleHostError,
 } from './adapter'
 import { assertNoRawSecrets } from './secret-guard'
@@ -117,6 +118,27 @@ export class OpenAIAdapter implements LLMAdapter {
 				(choice.finish_reason as string) === 'tool_calls'
 					? ('tool_calls' as const)
 					: ('stop' as const),
+			usage: readUsage(data.usage),
 		}
+	}
+}
+
+function count(value: unknown): number {
+	return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+// prompt_tokens includes the cached tokens, so they are taken out of
+// input_tokens to keep the LLMUsage buckets from overlapping. Cache writes are
+// only reported by some OpenAI-compatible hosts (OpenRouter).
+function readUsage(raw: unknown): LLMUsage {
+	const usage = (raw ?? {}) as Record<string, unknown>
+	const details = (usage.prompt_tokens_details ?? {}) as Record<string, unknown>
+	const cacheRead = count(details.cached_tokens)
+	const cacheWrite = count(details.cache_write_tokens)
+	return {
+		input_tokens: Math.max(0, count(usage.prompt_tokens) - cacheRead - cacheWrite),
+		output_tokens: count(usage.completion_tokens),
+		cache_creation_input_tokens: cacheWrite,
+		cache_read_input_tokens: cacheRead,
 	}
 }
