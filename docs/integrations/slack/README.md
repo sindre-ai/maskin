@@ -51,7 +51,7 @@ built per request by `createSlackMcpServer()` in
 
 | Tool | Slack method | Scope |
 |------|--------------|-------|
-| `slack_send_message` | `chat.postMessage` | `chat:write`, `chat:write.customize` |
+| `slack_send_message` (held: needs an approved `object_id` draft; direct only for the built-in internal channel list) | `chat.postMessage` | `chat:write`, `chat:write.customize` |
 | `slack_list_channels` | `conversations.list` | `channels:read`, `groups:read` |
 | `slack_list_users` | `users.list` | `users:read` |
 | `slack_join_channel` | `conversations.join` | `channels:join` |

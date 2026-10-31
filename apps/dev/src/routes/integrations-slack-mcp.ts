@@ -142,6 +142,7 @@ app.post('/', async (c) => {
 			workspaceId,
 			actorId,
 			slackTeamId: resolved.slackTeamId,
+			db,
 		},
 		gate,
 	)
