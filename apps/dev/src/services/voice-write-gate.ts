@@ -279,6 +279,8 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'create_notification',
 	// Starts work
 	'create_session',
+	// Deprecated alias of create_session (packages/mcp/src/tool-aliases.ts): same effect, same hold.
+	'run_agent',
 	'resume_session',
 	'send_session_message',
 	'create_trigger',
@@ -300,11 +302,29 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'desktop_type',
 	'desktop_key',
 	'desktop_click',
+	'desktop_drag',
+	'desktop_put_file',
+	// Opens a port of the desktop to the outside
+	'desktop_expose_port',
 	'update_workspace',
 	'create_extension',
 	'update_extension',
 	'create_workspace_skill',
 	'update_workspace_skill',
+])
+
+/**
+ * Ordinary changes inside the workspace: recorded in the events log and easy to change back. A
+ * direct call to one runs at once, and so does one made on behalf of ask_workspace. Every other
+ * write a delegated call makes is held (see isRiskyTool's `delegated` flag).
+ */
+export const ORDINARY_WRITE_TOOLS: ReadonlySet<string> = new Set([
+	'create_objects',
+	'update_objects',
+	'create_comment',
+	'mark_read',
+	// An edge between two objects; deleting one is delete_relationship, which is held.
+	'create_relationship',
 ])
 
 /**
@@ -314,6 +334,16 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
  */
 export function isRiskyTool(name: string): boolean {
 	return RISKY_TOOLS.has(name) || name.startsWith('delete_') || name.includes('__')
+}
+
+/**
+ * The hold rule for a call made on behalf of ask_workspace: the default is inverted. Whatever is
+ * not read-only and not an ordinary workspace write is held, so a tool added later (or an alias of
+ * one) is held until someone decides it is safe, instead of running unasked because nobody listed it.
+ */
+export function isHeldWhenDelegated(name: string, isReadOnly: boolean): boolean {
+	if (isReadOnly) return false
+	return isRiskyTool(name) || !ORDINARY_WRITE_TOOLS.has(name)
 }
 
 /**
@@ -429,7 +459,12 @@ export interface WriteGate {
 	/** The transcript of one of the person's utterances arrived. */
 	noteUserLine(text: string, itemId?: string): void
 	/** Decides what a tool call may do. `args` is exactly what would be passed to the tool. */
-	review(tool: string, args: unknown, confirmationId: string | null): Promise<WriteReview>
+	review(
+		tool: string,
+		args: unknown,
+		confirmationId: string | null,
+		opts?: { delegated?: boolean },
+	): Promise<WriteReview>
 	/** The hold still waiting for the person's yes or no, if any. */
 	pendingHold(): PendingHoldInfo | null
 }
@@ -546,6 +581,7 @@ export function createWriteGate(deps: {
 		argsKey: string,
 		known?: HoldPreview | null,
 		yesCarried = 0,
+		risky = isRiskyTool(tool),
 	): Promise<WriteReview> {
 		// Looked up before the hold is made, so nothing awaits between making it and returning it.
 		const preview = known !== undefined ? known : await currentPreview(tool, args)
@@ -560,7 +596,7 @@ export function createWriteGate(deps: {
 		return {
 			kind: 'hold',
 			id: action.id,
-			risky: isRiskyTool(tool),
+			risky,
 			decision: isDecisionWrite?.(tool, args) ?? false,
 			preview,
 			changed,
@@ -611,9 +647,11 @@ export function createWriteGate(deps: {
 			close(action, 'declined')
 		},
 
-		async review(tool, args, confirmationId) {
+		async review(tool, args, confirmationId, opts) {
 			if (isReadOnlyTool(tool)) return { kind: 'run' }
-			if (!isRiskyTool(tool) && !isDecisionWrite?.(tool, args)) return { kind: 'run' }
+			const delegated = opts?.delegated === true
+			const risky = delegated ? isHeldWhenDelegated(tool, false) : isRiskyTool(tool)
+			if (!risky && !isDecisionWrite?.(tool, args)) return { kind: 'run' }
 			if (confirmationId !== null && declinedIds.has(confirmationId)) {
 				return { kind: 'refuse', reason: 'declined' }
 			}
@@ -625,23 +663,24 @@ export function createWriteGate(deps: {
 				action.id === confirmationId &&
 				action.tool === tool &&
 				action.argsKey === argsKey
-			if (!repeats) return holdWithPreview(tool, args, argsKey)
+			if (!repeats) return holdWithPreview(tool, args, argsKey, undefined, 0, risky)
 
 			if (action.answer === null) await waitForAnswer(action)
 			if (action.state === 'declined') return { kind: 'refuse', reason: 'declined' }
 			const yesesHeard = action.yesCarried + (action.answer === 'yes' ? 1 : 0)
 			if (action.state !== 'open') {
 				// Expired or replaced while we waited: the yes, if any, no longer counts.
-				return holdWithPreview(tool, args, argsKey, undefined, yesesHeard)
+				return holdWithPreview(tool, args, argsKey, undefined, yesesHeard, risky)
 			}
 			if (action.answer !== 'yes') return { kind: 'refuse', reason: 'no_yes' }
 			// The yes was for the text the person was asked about. Work the fingerprint out again from the
 			// target now: the arguments (an object id) stay the same when the text behind them changes.
 			const latest = await currentPreview(tool, args)
-			if (action.state !== 'open') return holdWithPreview(tool, args, argsKey, latest, yesesHeard)
+			if (action.state !== 'open')
+				return holdWithPreview(tool, args, argsKey, latest, yesesHeard, risky)
 			if ((latest?.fingerprint ?? null) !== action.fingerprint) {
 				log('stale', tool)
-				return holdWithPreview(tool, args, argsKey, latest, yesesHeard)
+				return holdWithPreview(tool, args, argsKey, latest, yesesHeard, risky)
 			}
 			log('confirmed', tool)
 			close(action, 'confirmed')

@@ -3,8 +3,14 @@ import type { InvokeTool, VoiceRealtimeTool } from '@maskin/mcp'
 import WebSocket from 'ws'
 import { logger } from '../lib/logger'
 import { captureVoiceException } from '../lib/sentry-voice'
+import { voiceCallState } from './voice-call-state'
+import type { DelegateModel } from './voice-delegate'
 import { VOICE_GREETING_INSTRUCTION } from './voice-instructions'
-import { type VoiceServerMessage, createVoiceChannel } from './voice-session-channel'
+import {
+	VOICE_WAIT_FOR_USER_TOOL,
+	type VoiceServerMessage,
+	createVoiceChannel,
+} from './voice-session-channel'
 import { endVoiceSession } from './voice-session-lifecycle'
 import type { VoiceSessionRow } from './voice-transcript'
 
@@ -17,9 +23,10 @@ import type { VoiceSessionRow } from './voice-transcript'
  * with the same key. Tool calls, transcript lines and turn telemetry all run
  * over that socket, through the channel logic in
  * (services/voice-session-channel.ts). Tool calls run as the agent with the
- * call's workspace. Every tool that is not read-only is held until the person
- * says yes out loud (services/voice-write-gate.ts); there is no tool allow-list,
- * attention cap, mentions refusal or bet refusal.
+ * call's workspace. Only risky tools (sends, deletes, access or credential changes,
+ * starting work, tools of attached servers) are held until the person says yes out
+ * loud (services/voice-write-gate.ts, isRiskyTool); ordinary workspace writes run at
+ * once. There is no tool allow-list, attention cap, mentions refusal or bet refusal.
  */
 
 export const VOICE_REALTIME_MODEL = 'gpt-realtime-2.1'
@@ -50,8 +57,59 @@ export function resolveRealtimeVoice(env: NodeJS.ProcessEnv = process.env): stri
 	})
 	return VOICE_REALTIME_VOICE
 }
+export const VOICE_VAD_EAGERNESS_VALUES = ['low', 'medium', 'high', 'auto'] as const
+export type VoiceVadEagerness = (typeof VOICE_VAD_EAGERNESS_VALUES)[number]
+
+/** MASKIN_VOICE_VAD_EAGERNESS: how soon the model takes the turn once the person pauses. Default medium. */
+export function resolveVadEagerness(env: NodeJS.ProcessEnv = process.env): VoiceVadEagerness {
+	const wanted = env.MASKIN_VOICE_VAD_EAGERNESS?.trim().toLowerCase()
+	if (!wanted) return 'medium'
+	if ((VOICE_VAD_EAGERNESS_VALUES as readonly string[]).includes(wanted)) {
+		return wanted as VoiceVadEagerness
+	}
+	logger.warn('MASKIN_VOICE_VAD_EAGERNESS is not low, medium, high or auto; using medium', {
+		wanted,
+	})
+	return 'medium'
+}
+
+export const VOICE_REASONING_EFFORT_VALUES = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const
+export type VoiceReasoningEffort = (typeof VOICE_REASONING_EFFORT_VALUES)[number]
+
+/** MASKIN_VOICE_REASONING_EFFORT: the model's thinking effort per turn; 'off' (null) leaves the field out. Default low. */
+export function resolveReasoningEffort(
+	env: NodeJS.ProcessEnv = process.env,
+): VoiceReasoningEffort | null {
+	const wanted = env.MASKIN_VOICE_REASONING_EFFORT?.trim().toLowerCase()
+	if (!wanted) return 'low'
+	if (wanted === 'off') return null
+	if ((VOICE_REASONING_EFFORT_VALUES as readonly string[]).includes(wanted)) {
+		return wanted as VoiceReasoningEffort
+	}
+	logger.warn('MASKIN_VOICE_REASONING_EFFORT is not a documented level; using low', { wanted })
+	return 'low'
+}
+
+/**
+ * Set once OpenAI has rejected the reasoning field, for the life of the process, so later calls
+ * leave it out at once instead of paying a failed request and a retry each time.
+ */
+let reasoningRejected = false
+
+/** Test hook: forget that the vendor rejected the reasoning field. */
+export function resetReasoningRejection(): void {
+	reasoningRejected = false
+}
+
 /** How long the server socket may stay connecting before the call runs without tools. */
 export const VOICE_CONTROL_CONNECT_TIMEOUT_MS = 5000
+/** How long a call stays quiet after the agent finished before it checks in once. */
+export const VOICE_IDLE_NUDGE_MS = 25_000
+/** Check-ins one call may make in total. */
+export const VOICE_IDLE_NUDGE_MAX = 3
+export const VOICE_IDLE_NUDGE_INSTRUCTION =
+	'The person has been silent for a while. Check in once with a very short, natural line. Do not repeat yourself if they stay quiet.'
+
 /** Stored on voice_sessions.vendor_session_id while an offer is in flight, so only one offer is ever accepted. */
 export const VOICE_OFFER_CLAIM = 'offer-in-flight'
 
@@ -90,6 +148,8 @@ export interface CreateRealtimeCallInput {
 	tools: VoiceRealtimeTool[]
 	/** Names the caller is likely to say (caller, agent, workspace); sent to the transcription as keywords. */
 	transcriptionNames?: string[]
+	/** near_field for headsets and phones, far_field for a laptop mic. Absent means far_field. */
+	noiseReduction?: 'near_field' | 'far_field'
 }
 
 /** The block the call falls back to when OpenAI rejects the richer transcription settings. */
@@ -145,14 +205,38 @@ export function isQuotaBody(body: string): boolean {
 async function defaultCreateRealtimeCall(
 	input: CreateRealtimeCallInput,
 ): Promise<CreateRealtimeCallOutcome> {
-	const outcome = await postRealtimeCall(input, buildTranscriptionConfig(input.transcriptionNames))
+	let reasoning = reasoningRejected ? null : resolveReasoningEffort()
+	let outcome = await postRealtimeCall(
+		input,
+		buildTranscriptionConfig(input.transcriptionNames),
+		reasoning,
+	)
+	// The reasoning field could not be checked against the live API, so a 400 that names it is
+	// retried once without it.
+	if (
+		reasoning &&
+		outcome.kind === 'error' &&
+		outcome.status === 400 &&
+		/reasoning/i.test(outcome.body)
+	) {
+		logger.warn('Voice vendor rejected the reasoning setting; retrying without it', {
+			vendor_body: outcome.body.slice(0, 500),
+		})
+		reasoning = null
+		reasoningRejected = true
+		outcome = await postRealtimeCall(
+			input,
+			buildTranscriptionConfig(input.transcriptionNames),
+			reasoning,
+		)
+	}
 	// A wrong transcription field would fail every call, and only a real call can prove the
 	// block right. So a 400 that names transcription is retried once on the old block.
 	if (outcome.kind === 'error' && outcome.status === 400 && /transcri/i.test(outcome.body)) {
 		logger.warn('Voice vendor rejected the transcription settings; retrying with the old block', {
 			vendor_body: outcome.body.slice(0, 500),
 		})
-		return postRealtimeCall(input, VOICE_LEGACY_TRANSCRIPTION)
+		return postRealtimeCall(input, VOICE_LEGACY_TRANSCRIPTION, reasoning)
 	}
 	return outcome
 }
@@ -160,6 +244,7 @@ async function defaultCreateRealtimeCall(
 async function postRealtimeCall(
 	input: CreateRealtimeCallInput,
 	transcription: Record<string, unknown>,
+	reasoning: VoiceReasoningEffort | null = null,
 ): Promise<CreateRealtimeCallOutcome> {
 	const session = {
 		type: 'realtime',
@@ -175,19 +260,20 @@ async function postRealtimeCall(
 				transcription,
 				// Filters the mic audio before voice detection and the model see it, so
 				// room noise stops registering as speech. far_field suits laptop mics;
-				// near_field is for headsets.
-				noise_reduction: { type: 'far_field' },
+				// near_field is for headsets and phones (the browser says which).
+				noise_reduction: { type: input.noiseReduction ?? 'far_field' },
 				// The API default (server_vad, 0.5 threshold, 200ms of silence) cut a new
 				// turn, and so a new chat message, at every short pause. semantic_vad
-				// judges whether the sentence is finished; 'low' waits longest for the
-				// speaker to carry on.
-				turn_detection: { type: 'semantic_vad', eagerness: 'low' },
+				// judges whether the sentence is finished; eagerness is how soon it takes
+				// the turn ('low' waited too long and felt sluggish).
+				turn_detection: { type: 'semantic_vad', eagerness: resolveVadEagerness() },
 			},
 			output: { voice: input.voice },
 		},
 		// Every MCP tool chat has, read from the server (see createVoiceToolkit).
 		tools: input.tools,
 		tool_choice: 'auto',
+		...(reasoning ? { reasoning: { effort: reasoning } } : {}),
 	}
 	const form = new FormData()
 	form.set('sdp', input.offerSdp)
@@ -327,6 +413,8 @@ export interface AttachVoiceCallInput {
 	readOnlyTools: ReadonlySet<string>
 	/** Releases what the call's tools hold open (connections to the agent's MCP servers). */
 	dispose?: () => Promise<void> | void
+	/** What ask_workspace runs with (all tools and the text model); absent in full tool mode. */
+	delegate?: { tools: VoiceRealtimeTool[]; model: DelegateModel }
 	callId: string
 	apiKey: string
 	callsUrl?: string
@@ -381,9 +469,12 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	const url = realtimeSocketUrl(input.callId, input.callsUrl)
 
 	let disposed = false
+	// Ends any ask_workspace request still running when the call ends.
+	const callEnded = new AbortController()
 	const dispose = () => {
 		if (disposed) return
 		disposed = true
+		callEnded.abort('aborted')
 		Promise.resolve(input.dispose?.()).catch(() => {})
 	}
 
@@ -413,6 +504,47 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	let userAudioMs = 0
 	let agentResponseStartedAt: number | null = null
 	let bargeIn = false
+	// True while the tool calls of the current turn are all wait_for_user: the model stays silent.
+	let turnNeedsReply = false
+	let idleTimer: ReturnType<typeof setTimeout> | null = null
+	// One check-in per silence period; set again when the person speaks.
+	let nudgeAllowed = true
+	let nudgesSent = 0
+
+	function clearIdleTimer() {
+		if (idleTimer) clearTimeout(idleTimer)
+		idleTimer = null
+	}
+
+	function armIdleTimer() {
+		clearIdleTimer()
+		if (!nudgeAllowed || nudgesSent >= VOICE_IDLE_NUDGE_MAX || ended || closedByUs) return
+		idleTimer = setTimeout(() => {
+			idleTimer = null
+			const busy =
+				!socket ||
+				ended ||
+				closedByUs ||
+				userSpeechStartedAt !== null ||
+				agentResponseStartedAt !== null ||
+				pendingCalls > 0 ||
+				toolResponseDone ||
+				voiceCallState(session.id).pendingHold?.() != null
+			if (busy || !nudgeAllowed || nudgesSent >= VOICE_IDLE_NUDGE_MAX) return
+			nudgeAllowed = false
+			nudgesSent += 1
+			sendToModel({
+				type: 'conversation.item.create',
+				item: {
+					type: 'message',
+					role: 'system',
+					content: [{ type: 'input_text', text: VOICE_IDLE_NUDGE_INSTRUCTION }],
+				},
+			})
+			sendToModel({ type: 'response.create' })
+		}, VOICE_IDLE_NUDGE_MS)
+		idleTimer.unref?.()
+	}
 
 	function sendToModel(event: unknown) {
 		if (!socket) {
@@ -490,6 +622,12 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	function askModelToSpeakIfReady() {
 		if (!toolResponseDone || pendingCalls > 0) return
 		toolResponseDone = false
+		// A turn made only of wait_for_user calls ends quietly.
+		if (!turnNeedsReply) {
+			armIdleTimer()
+			return
+		}
+		turnNeedsReply = false
 		sendToModel({ type: 'response.create' })
 	}
 
@@ -499,6 +637,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		agentName: input.agentName,
 		invokeTool: input.invokeTool,
 		isReadOnlyTool: (name) => input.readOnlyTools.has(name),
+		delegate: input.delegate && { ...input.delegate, signal: callEnded.signal },
 		send: onChannelMessage,
 		now,
 	})
@@ -517,6 +656,8 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 			case 'response.function_call_arguments.done':
 				if (!evt.call_id || !evt.name) return
 				pendingCalls += 1
+				clearIdleTimer()
+				if (evt.name !== VOICE_WAIT_FOR_USER_TOOL) turnNeedsReply = true
 				feed({
 					type: 'tool_call',
 					call_id: evt.call_id,
@@ -544,6 +685,8 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 			}
 			case 'input_audio_buffer.speech_started':
 				feed({ type: 'user_speech_started', item_id: evt.item_id })
+				nudgeAllowed = true
+				clearIdleTimer()
 				userSpeechStartedAt = now()
 				// Speaking over an agent that is mid-response is a barge-in.
 				if (agentResponseStartedAt !== null) bargeIn = true
@@ -554,6 +697,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				return
 			case 'response.created':
 				agentResponseStartedAt = now()
+				clearIdleTimer()
 				return
 			case 'response.done': {
 				const startedAt = agentResponseStartedAt
@@ -577,6 +721,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				turnIndex += 1
 				userAudioMs = 0
 				bargeIn = false
+				armIdleTimer()
 				return
 			}
 			case 'error':
@@ -610,6 +755,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 	function registerLive() {
 		liveCalls.set(session.id, {
 			close: () => {
+				clearIdleTimer()
 				postCutOff()
 				dispose()
 				closedByUs = true
@@ -624,6 +770,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		if (ended) return
 		ended = true
 		outbox.length = 0
+		clearIdleTimer()
 		stopPing()
 		dispose()
 		liveCalls.delete(session.id)
@@ -732,6 +879,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 			return
 		}
 		socket = null
+		clearIdleTimer()
 		stopPing()
 		if (reconnectsUsed >= VOICE_SOCKET_MAX_RECONNECTS) {
 			endCallAfterDrop(`dropped ${reconnectsUsed + 1} times`)
@@ -763,6 +911,7 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 		const fail = (reason: string) => {
 			dispose()
 			closedByUs = true
+			clearIdleTimer()
 			try {
 				socket?.close()
 			} catch {

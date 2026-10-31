@@ -1,4 +1,5 @@
 import { ApiError, api } from '@/lib/api'
+import { pickNoiseReduction } from '@/lib/voice-audio-profile'
 import { VOICE_UNAVAILABLE_TOOLTIP, markVoiceUnavailable } from '@/lib/voice-availability'
 import { type VoiceRelay, type VoiceTranscriptLine, createVoiceRelay } from '@/lib/voice-relay'
 import { showVoiceCallEndedToast } from '@/lib/voice-toast'
@@ -62,6 +63,27 @@ function isMicMissing(err: unknown): boolean {
 			err.name === 'OverconstrainedError' ||
 			err.name === 'DevicesNotFoundError')
 	)
+}
+
+// Ideal (not exact) constraints, so a device that cannot do one still opens.
+// A browser that rejects them outright gets one retry with plain audio before
+// the caller treats it as no mic.
+async function getMicStream(): Promise<MediaStream> {
+	try {
+		return await navigator.mediaDevices.getUserMedia({
+			audio: {
+				echoCancellation: true,
+				noiseSuppression: true,
+				autoGainControl: true,
+				channelCount: 1,
+			},
+		})
+	} catch (err) {
+		if (err instanceof DOMException && err.name === 'OverconstrainedError') {
+			return navigator.mediaDevices.getUserMedia({ audio: true })
+		}
+		throw err
+	}
 }
 
 export function useVoiceCall(agentActorId: string, agentName: string, open: boolean): VoiceCall {
@@ -267,7 +289,7 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 
 			let stream: MediaStream
 			try {
-				stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+				stream = await getMicStream()
 			} catch (err) {
 				// No session has been minted yet, so there is nothing to hang up.
 				if (isMicBlocked(err)) {
@@ -406,6 +428,10 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 					workspaceId,
 					session.voice_session_id,
 					offer.sdp ?? '',
+					pickNoiseReduction(
+						stream.getAudioTracks()[0]?.label ?? '',
+						typeof navigator === 'undefined' ? '' : navigator.userAgent,
+					),
 				)
 				if (callRef.current) callRef.current.persistTranscripts = answer.persist_transcripts
 				relay = createVoiceRelay({

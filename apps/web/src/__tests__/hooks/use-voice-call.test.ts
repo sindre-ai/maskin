@@ -331,7 +331,7 @@ describe('useVoiceCall — server connection and post-call toast', () => {
 
 	it('posts the browser offer to the server and applies the answer it returns', async () => {
 		await startCall()
-		expect(mockOffer).toHaveBeenCalledWith('ws-1', 'vs-1', 'v=0')
+		expect(mockOffer).toHaveBeenCalledWith('ws-1', 'vs-1', 'v=0', 'far_field')
 		expect(lastPc?.setRemoteDescription).toHaveBeenCalledWith({ type: 'answer', sdp: 'answer-sdp' })
 	})
 

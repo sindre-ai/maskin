@@ -101,6 +101,14 @@
 						"minLength": 1,
 						"maxLength": 100000,
 						"description": "The browser’s WebRTC SDP offer."
+					},
+					"noise_reduction": {
+						"type": "string",
+						"enum": [
+							"near_field",
+							"far_field"
+						],
+						"description": "Microphone type: near_field for headsets and phones, far_field for a laptop mic. Absent means far_field."
 					}
 				},
 				"required": [
