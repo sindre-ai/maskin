@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 const mockCreate = vi.fn()
-const mockMembersList = vi.fn()
 const mockToastSuccess = vi.fn()
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -13,7 +12,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
 		...actual,
 		api: {
 			invites: { create: (...args: unknown[]) => mockCreate(...args) },
-			workspaces: { members: { list: (...args: unknown[]) => mockMembersList(...args) } },
 		},
 	}
 })
@@ -91,23 +89,6 @@ describe('InviteMemberDialog', () => {
 			role: 'member',
 		})
 		expect(onOpenChange).toHaveBeenCalledWith(false)
-	})
-
-	it('names the linked member in the Branch A toast', async () => {
-		mockCreate.mockResolvedValue({
-			status: 'linked',
-			member: { workspaceId: 'ws-1', actorId: 'a-9', role: 'member' },
-		})
-		mockMembersList.mockResolvedValue([
-			{ actorId: 'a-9', name: 'Ada Lovelace', role: 'member', type: 'human', joinedAt: null },
-		])
-		renderDialog()
-		fillEmail('ada@example.com')
-		fireEvent.click(screen.getByRole('button', { name: 'Send invite' }))
-
-		await waitFor(() =>
-			expect(mockToastSuccess).toHaveBeenCalledWith('Ada Lovelace added as Member.'),
-		)
 	})
 
 	it('renders the Branch C message inline on a 409 and keeps the dialog open', async () => {

@@ -295,13 +295,10 @@ describe('Workspaces Integration', () => {
 			// otherwise a rejected member reads here as a wrong count.
 			await setWorkspacePlan(db, workspace.id, 'pro')
 			const teammate = await insertActor(db)
-			const added = await app.request(
-				jsonRequest('POST', `/api/workspaces/${workspace.id}/members`, {
-					actor_id: teammate.id,
-					role: 'member',
-				}),
-			)
-			expect(added.status).toBe(201)
+			// People can't be added by id any more; seed the membership directly.
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: workspace.id, actorId: teammate.id, role: 'member' })
 
 			const paired = await app.request(jsonGet('/api/workspaces'))
 			const pairedRow = (await paired.json()).find(
@@ -882,7 +879,11 @@ describe('Workspaces Integration', () => {
 			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Create another actor to add as member
-			const newActor = await insertActor(db, { name: 'New Member', email: 'member@test.com' })
+			const newActor = await insertActor(db, {
+				type: 'agent',
+				name: 'New Member',
+				createdBy: getTestActorId(),
+			})
 
 			// Add member
 			const addRes = await app.request(
@@ -913,37 +914,6 @@ describe('Workspaces Integration', () => {
 				'owner',
 			])
 		})
-
-		it('rejects an over-cap invite with 403 SEAT_CAP_EXCEEDED, not a 500', async () => {
-			// This app mounts the router with app.route() and defines no
-			// onError — exactly like every other route-level harness, and unlike
-			// createApp(). A cap rejection that is *thrown* rather than returned
-			// degrades to a bare framework 500 here, which is what this asserts
-			// against: the status is part of the route's contract, so it must not
-			// depend on how the router happens to be mounted.
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Seat Cap 403' }),
-			)
-			const ws = await createRes.json()
-
-			// Left on trial: the owner alone fills the single seat.
-			const overflow = await insertActor(db)
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: overflow.id }),
-			)
-
-			expect(res.status).toBe(403)
-			const body = await res.json()
-			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
-			expect(body.error.workspace_id).toBe(ws.id)
-			expect(body.error.plan).toBe('trial')
-			expect(body.error.cap).toBe(1)
-
-			// The rejection is a no-op, not a partial write.
-			const members = await memberActorIdsFor(ws.id)
-			expect(members).not.toContain(overflow.id)
-		})
 	})
 
 	// Every guard on this route depends on DB semantics a mocked db cannot
@@ -960,12 +930,9 @@ describe('Workspaces Integration', () => {
 			const ws = await createRes.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 			const member = await insertActor(db, { name: 'Member', email: `${randomUUID()}@test.com` })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
-					actor_id: member.id,
-					role: 'member',
-				}),
-			)
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: member.id, role: 'member' })
 			return { app, ws, member }
 		}
 
@@ -1554,7 +1521,7 @@ describe('Workspaces Integration', () => {
 			// re-add being a no-op, not about the cap.
 			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const newMember = await insertActor(db)
+			const newMember = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
@@ -1590,7 +1557,7 @@ describe('Workspaces Integration', () => {
 			const ws = await created.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const admin = await insertActor(db)
+			const admin = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {

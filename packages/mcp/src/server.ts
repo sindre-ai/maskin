@@ -4313,14 +4313,16 @@ export function createMcpServer(config: McpConfig) {
 				;(result as Record<string, unknown>).workspace_id = bornInWorkspace
 				;(result as Record<string, unknown>).role = 'member'
 			} else if (targetWorkspace && !isAgent && !createBody.auto_create_workspace) {
-				// Humans only: add the new actor as a member
+				// Humans only: a person can't be added by id without accepting, so the
+				// workspace invites them by email and they join when they accept.
 				try {
-					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
-						actor_id: result.id,
+					await apiCall(config, 'POST', '/api/invites', {
+						workspaceId: targetWorkspace,
+						email: createBody.email,
 						role: role ?? 'member',
 					})
 					;(result as Record<string, unknown>).workspace_id = targetWorkspace
-					;(result as Record<string, unknown>).role = role ?? 'member'
+					;(result as Record<string, unknown>).invited_role = role ?? 'member'
 				} catch (error) {
 					;(result as Record<string, unknown>).workspace_membership_error = String(error)
 				}
