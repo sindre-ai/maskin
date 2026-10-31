@@ -21756,7 +21756,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Caller is a member but not a human admin or owner, or the actor is not an agent created in this workspace
+            /// Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/403`.
             ///
@@ -21894,7 +21894,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace not found, caller is not a member of it, or actor not found
+            /// Workspace not found, or the caller is not a member of it
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/404`.
             ///

@@ -16621,7 +16621,7 @@
 						}
 					},
 					"403": {
-						"description": "Caller is a member but not a human admin or owner, or the actor is not an agent created in this workspace",
+						"description": "Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -16678,7 +16678,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace not found, caller is not a member of it, or actor not found",
+						"description": "Workspace not found, or the caller is not a member of it",
 						"content": {
 							"application/json": {
 								"schema": {

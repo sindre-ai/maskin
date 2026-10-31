@@ -826,11 +826,11 @@ const addMemberRoute = createRoute({
 		},
 		403: {
 			description:
-				'Caller is a member but not a human admin or owner, or the actor is not an agent created in this workspace',
+				'Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace not found, caller is not a member of it, or actor not found',
+			description: 'Workspace not found, or the caller is not a member of it',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -859,13 +859,13 @@ app.openapi(addMemberRoute, (async (c) => {
 		.from(actors)
 		.where(eq(actors.id, actor_id))
 		.limit(1)
-	if (!targetActor) return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 
 	// An admin may attach an actor without its consent only when this workspace
 	// already owns it: an agent made by the caller or by a current member. A
 	// person, or an agent made elsewhere, has to accept an invitation instead.
+	// A missing id gets the same 403, so the answer never confirms an id exists.
 	const isOwnedAgent =
-		targetActor.type === 'agent' &&
+		targetActor?.type === 'agent' &&
 		targetActor.createdBy !== null &&
 		(targetActor.createdBy === callerId ||
 			(await isWorkspaceMember(db, targetActor.createdBy, workspaceId)))

@@ -3,7 +3,7 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -219,6 +219,51 @@ describe('POST /api/workspaces/:id/members access', () => {
 
 		expect(res.status).toBe(403)
 		expect(await memberRows(a.ws.id)).toHaveLength(before.length)
+	})
+
+	it('answers a missing actor id with the same 403 as a person from another workspace', async () => {
+		const a = await setup()
+		const b = await setup()
+		const before = await memberRows(a.ws.id)
+		const app = createAppAs(a.owner.id, 'human')
+
+		const missing = await addMember(app, a.ws.id, { actor_id: randomUUID(), role: 'member' })
+		const foreign = await addMember(app, a.ws.id, { actor_id: b.owner.id, role: 'member' })
+
+		expect(missing.status).toBe(403)
+		expect(foreign.status).toBe(403)
+		expect(await missing.json()).toEqual(await foreign.json())
+		expect(await memberRows(a.ws.id)).toHaveLength(before.length)
+	})
+
+	it('returns 201 for an agent whose creator is a member of both workspaces', async () => {
+		const a = await setup()
+		const b = await setup()
+		await seedMember(b.ws.id, a.owner.id, 'member')
+
+		// a.target was made by a.owner, who is also a member of workspace B.
+		const res = await addMember(createAppAs(b.owner.id, 'human'), b.ws.id, {
+			actor_id: a.target.id,
+		})
+
+		expect(res.status).toBe(201)
+		expect((await memberRows(b.ws.id)).some((r) => r.actorId === a.target.id)).toBe(true)
+	})
+
+	it('returns 403 and writes no row for an agent whose creator has left the workspace', async () => {
+		const { owner, ws } = await setup()
+		const leaver = await insertActor(db, { type: 'human' })
+		await seedMember(ws.id, leaver.id, 'member')
+		const agent = await insertActor(db, { type: 'agent', createdBy: leaver.id })
+		await db
+			.delete(workspaceMembers)
+			.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, leaver.id)))
+		const before = await memberRows(ws.id)
+
+		const res = await addMember(createAppAs(owner.id, 'human'), ws.id, { actor_id: agent.id })
+
+		expect(res.status).toBe(403)
+		expect(await memberRows(ws.id)).toHaveLength(before.length)
 	})
 
 	it('returns 201 for an agent created by another member of the workspace', async () => {
