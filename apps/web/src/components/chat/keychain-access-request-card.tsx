@@ -1,6 +1,8 @@
 import { keychainUseHint } from '@/components/chat/keychain-request-card'
 import { FormError } from '@/components/shared/form-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useContinueSession, useSendSessionInput } from '@/hooks/use-sessions'
@@ -50,6 +52,8 @@ export function KeychainAccessRequestCard({
 	const helper = request.reply_to_session === true
 	const continueSession = useContinueSession(workspaceId, conversationId)
 	const sendInput = useSendSessionInput(workspaceId)
+	// Allowing access and declining both answer the agent, which a viewer cannot do.
+	const canWrite = useCanWrite()
 
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
@@ -214,30 +218,38 @@ export function KeychainAccessRequestCard({
 					chat or run, until you remove it in Settings → Keychain.
 				</li>
 			</ul>
-			<div className="flex flex-wrap items-center gap-2">
-				{helper ? null : (
+			<ViewerTooltip className="flex">
+				<div className="flex flex-wrap items-center gap-2">
+					{helper ? null : (
+						<Button
+							type="button"
+							size="sm"
+							disabled={busy || !canAllow || !canWrite}
+							onClick={() => void allow('chat')}
+						>
+							Allow in this chat
+						</Button>
+					)}
 					<Button
 						type="button"
 						size="sm"
-						disabled={busy || !canAllow}
-						onClick={() => void allow('chat')}
+						variant={helper ? 'default' : 'outline'}
+						disabled={busy || !canAllow || !canWrite}
+						onClick={() => void allow('always')}
 					>
-						Allow in this chat
+						Always allow
 					</Button>
-				)}
-				<Button
-					type="button"
-					size="sm"
-					variant={helper ? 'default' : 'outline'}
-					disabled={busy || !canAllow}
-					onClick={() => void allow('always')}
-				>
-					Always allow
-				</Button>
-				<Button type="button" size="sm" variant="outline" disabled={busy} onClick={decline}>
-					Not now
-				</Button>
-			</div>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						disabled={busy || !canWrite}
+						onClick={decline}
+					>
+						Not now
+					</Button>
+				</div>
+			</ViewerTooltip>
 		</fieldset>
 	)
 }

@@ -3,6 +3,7 @@ import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { CreateSessionInput, MessageCardAnswer, MessageQuestionAnswer } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
+import { isViewerRefusal } from '@/lib/workspace-role'
 import {
 	useInfiniteQuery,
 	useMutation,
@@ -96,8 +97,9 @@ export function useStopSession(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 		},
-		onError: () => {
-			toast.error('Failed to stop session')
+		onError: (error) => {
+			// A viewer's refused stop already got the shared message.
+			if (!isViewerRefusal(error)) toast.error('Failed to stop session')
 		},
 	})
 }

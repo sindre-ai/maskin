@@ -1,9 +1,11 @@
 import { SecretInput } from '@/components/keychain/secret-input'
 import { FormError } from '@/components/shared/form-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useContinueSession } from '@/hooks/use-sessions'
@@ -71,6 +73,8 @@ export function KeychainRequestCard({
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// A helper is not in this chat and was stopped to take the key, so its follow-up carries on.
 	const continueSession = useContinueSession(workspaceId, conversationId)
+	// Saving writes to the workspace, which a viewer cannot do.
+	const canWrite = useCanWrite()
 	// The Keychain pages only exist behind this flag, so the link and the pointer would dead-end.
 
 	const targetIds = useMemo(
@@ -108,7 +112,12 @@ export function KeychainRequestCard({
 	const nameProblem = name.trim() ? checkCredentialName(name) : null
 	const hasValue = isLogin ? username.trim().length > 0 && password.length > 0 : secret.length > 0
 	const canSave =
-		!busy && name.trim().length > 0 && !nameProblem && hasValue && selectedIds.length > 0
+		!busy &&
+		canWrite &&
+		name.trim().length > 0 &&
+		!nameProblem &&
+		hasValue &&
+		selectedIds.length > 0
 
 	// Saved earlier (a reload, or another tab): same session, same kind, after this card.
 	const savedEarlier = (integrations ?? []).find(
@@ -291,11 +300,13 @@ export function KeychainRequestCard({
 			</fieldset>
 
 			<FormError error={error ?? undefined} />
-			<div className="flex justify-end">
-				<Button type="submit" disabled={!canSave}>
-					{busy ? 'Saving…' : 'Save to Keychain'}
-				</Button>
-			</div>
+			<ViewerTooltip className="flex justify-end">
+				<div className="flex justify-end">
+					<Button type="submit" disabled={!canSave}>
+						{busy ? 'Saving…' : 'Save to Keychain'}
+					</Button>
+				</div>
+			</ViewerTooltip>
 		</form>
 	)
 }

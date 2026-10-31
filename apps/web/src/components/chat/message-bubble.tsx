@@ -15,9 +15,11 @@ import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
@@ -150,6 +152,8 @@ export function MessageBubble({
 	const canReply = !!onReplyInThread && message.id > 0 && message.kind === 'message'
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState('')
+	// Editing and asking agents again are writes; a viewer keeps the buttons, switched off.
+	const canWrite = useCanWrite()
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	// The one read of this flag: files and images lift out of the text bubble when it is on.
@@ -414,28 +418,33 @@ export function MessageBubble({
 					) : null}
 					{canAct && !editing ? (
 						<>
-							<button
-								type="button"
-								onClick={startEditing}
-								aria-label="Edit message"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
-							>
-								<Pencil size={12} aria-hidden />
-							</button>
-							<button
-								type="button"
-								onClick={() =>
-									retryMessage.mutate(
-										{ messageId: message.id },
-										{ onSuccess: () => onRetried?.(message) },
-									)
-								}
-								disabled={retryMessage.isPending}
-								aria-label="Ask agents to respond again"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-							>
-								<RotateCcw size={12} aria-hidden />
-							</button>
+							<ViewerTooltip>
+								<button
+									type="button"
+									onClick={startEditing}
+									disabled={!canWrite}
+									aria-label="Edit message"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<Pencil size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
+							<ViewerTooltip>
+								<button
+									type="button"
+									onClick={() =>
+										retryMessage.mutate(
+											{ messageId: message.id },
+											{ onSuccess: () => onRetried?.(message) },
+										)
+									}
+									disabled={retryMessage.isPending || !canWrite}
+									aria-label="Ask agents to respond again"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<RotateCcw size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
 						</>
 					) : null}
 				</div>
@@ -665,20 +674,22 @@ export function MessageBubble({
 							</button>
 						) : null}
 						{canRetryAgent ? (
-							<button
-								type="button"
-								onClick={() =>
-									retryMessage.mutate(
-										{ messageId: message.id },
-										{ onSuccess: () => onRetried?.(message) },
-									)
-								}
-								disabled={retryMessage.isPending}
-								aria-label="Retry"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-							>
-								<RotateCcw size={12} aria-hidden />
-							</button>
+							<ViewerTooltip>
+								<button
+									type="button"
+									onClick={() =>
+										retryMessage.mutate(
+											{ messageId: message.id },
+											{ onSuccess: () => onRetried?.(message) },
+										)
+									}
+									disabled={retryMessage.isPending || !canWrite}
+									aria-label="Retry"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<RotateCcw size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
 						) : null}
 					</div>
 				) : null}
