@@ -2140,9 +2140,7 @@ export interface CreateInviteInput {
 	role: 'member' | 'viewer'
 }
 
-export type CreateInviteResponse =
-	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
-	| { status: 'pending'; invite: InviteSummary }
+export type CreateInviteResponse = { status: 'pending'; invite: InviteSummary }
 
 export interface DeviceAuthPreview {
 	client: 'tvos'

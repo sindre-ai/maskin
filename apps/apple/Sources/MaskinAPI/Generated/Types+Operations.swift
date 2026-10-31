@@ -21756,7 +21756,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Caller is a member but not a human admin or owner, or the workspace has reached its seat cap
+            /// Caller is a member but not a human admin or owner, or the actor is not an agent created in this workspace
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/403`.
             ///

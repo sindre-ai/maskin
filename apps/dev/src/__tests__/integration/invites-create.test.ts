@@ -210,61 +210,29 @@ describe('Invites — POST / (create)', () => {
 		})
 	})
 
-	describe('Branch A — email belongs to an existing actor', () => {
-		it('adds them straight to the workspace, sends no email, and emits invited + joined', async () => {
+	describe('email belongs to an account in another workspace', () => {
+		it('answers like an unknown email and adds no one until they accept', async () => {
 			const email = uniqueEmail('grace')
+			const otherOwner = await insertActor(db, { type: 'human' })
+			const otherWorkspace = await insertWorkspace(db, otherOwner.id)
 			const existing = await insertActor(db, { email })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: otherWorkspace.id, actorId: existing.id, role: 'member' })
 
-			const res = await app().request(invite(workspaceId, email.toUpperCase(), 'viewer'))
-
-			expect(res.status).toBe(201)
-			expect(await res.json()).toEqual({
-				status: 'linked',
-				member: { workspaceId, actorId: existing.id, role: 'viewer' },
-			})
-			const [member] = await db
-				.select()
-				.from(workspaceMembers)
-				.where(
-					and(
-						eq(workspaceMembers.workspaceId, workspaceId),
-						eq(workspaceMembers.actorId, existing.id),
-					),
-				)
-			expect(member.role).toBe('viewer')
-			expect(await invitesFor(workspaceId)).toHaveLength(0)
-			expect(sendInviteEmailMock).not.toHaveBeenCalled()
-
-			expect(capturePosthogEventMock).toHaveBeenCalledTimes(2)
-			expect(capturePosthogEventMock).toHaveBeenCalledWith(
-				'workspace_member_invited',
-				callerId,
-				expect.objectContaining({ invite_method: 'email' }),
-			)
-			// A direct link is not a redemption, so from_invite is false and the
-			// distinct id is the person who joined, not the admin.
-			expect(capturePosthogEventMock).toHaveBeenCalledWith(
-				'workspace_member_joined',
-				existing.id,
-				expect.objectContaining({ from_invite: false, workspace_id: workspaceId }),
+			const knownRes = await app().request(invite(workspaceId, email.toUpperCase(), 'viewer'))
+			const unknownRes = await app().request(
+				invite(workspaceId, uniqueEmail('nobody').toUpperCase(), 'viewer'),
 			)
 
-			const [event] = await db
-				.select()
-				.from(events)
-				.where(and(eq(events.entityType, 'workspace_member'), eq(events.entityId, existing.id)))
-			expect(event).toMatchObject({ action: 'created', actorId: callerId })
-		})
+			expect(knownRes.status).toBe(unknownRes.status)
+			expect(knownRes.status).toBe(201)
+			const known = await knownRes.json()
+			const unknown = await unknownRes.json()
+			expect(Object.keys(known).sort()).toEqual(Object.keys(unknown).sort())
+			expect(Object.keys(known.invite).sort()).toEqual(Object.keys(unknown.invite).sort())
+			expect(known.status).toBe('pending')
 
-		it('is blocked with 403 SEAT_CAP_EXCEEDED when the workspace is full', async () => {
-			await setWorkspacePlan(db, workspaceId, 'trial')
-			const email = uniqueEmail('grace')
-			const existing = await insertActor(db, { email })
-
-			const res = await app().request(invite(workspaceId, email))
-
-			expect(res.status).toBe(403)
-			expect((await res.json()).error.code).toBe('SEAT_CAP_EXCEEDED')
 			const members = await db
 				.select()
 				.from(workspaceMembers)
@@ -275,7 +243,19 @@ describe('Invites — POST / (create)', () => {
 					),
 				)
 			expect(members).toHaveLength(0)
-			expect(capturePosthogEventMock).not.toHaveBeenCalled()
+			expect(await invitesFor(workspaceId)).toHaveLength(2)
+			expect(sendInviteEmailMock).toHaveBeenCalledTimes(2)
+		})
+
+		it('is not blocked by the seat cap until they accept', async () => {
+			await setWorkspacePlan(db, workspaceId, 'trial')
+			const email = uniqueEmail('grace')
+			await insertActor(db, { email })
+
+			const res = await app().request(invite(workspaceId, email))
+
+			expect(res.status).toBe(201)
+			expect((await res.json()).status).toBe('pending')
 		})
 	})
 

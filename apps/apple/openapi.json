@@ -16621,7 +16621,7 @@
 						}
 					},
 					"403": {
-						"description": "Caller is a member but not a human admin or owner, or the workspace has reached its seat cap",
+						"description": "Caller is a member but not a human admin or owner, or the actor is not an agent created in this workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -20862,7 +20862,7 @@
 					"workspace-invitations"
 				],
 				"summary": "Invite someone to a workspace by email",
-				"description": "If the email belongs to an existing actor who is not yet a member, that actor is added directly (status \"linked\"). Otherwise a pending invite is created and emailed (status \"pending\"). Re-inviting an email with a live pending invite returns that invite unchanged.",
+				"description": "A pending invite is created and emailed (status \"pending\"), whether or not the email already has an account; the person joins by accepting it. Re-inviting an email with a live pending invite returns that invite unchanged.",
 				"requestBody": {
 					"content": {
 						"application/json": {
@@ -20943,93 +20943,53 @@
 						}
 					},
 					"201": {
-						"description": "Actor linked directly, or a new pending invite created and emailed",
+						"description": "A new pending invite was created and emailed",
 						"content": {
 							"application/json": {
 								"schema": {
-									"anyOf": [
-										{
-											"type": "object",
-											"properties": {
-												"status": {
-													"type": "string",
-													"enum": [
-														"linked"
-													]
-												},
-												"member": {
-													"type": "object",
-													"properties": {
-														"workspaceId": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"actorId": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"role": {
-															"type": "string"
-														}
-													},
-													"required": [
-														"workspaceId",
-														"actorId",
-														"role"
-													]
-												}
-											},
-											"required": [
-												"status",
-												"member"
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending"
 											]
 										},
-										{
+										"invite": {
 											"type": "object",
 											"properties": {
-												"status": {
+												"id": {
 													"type": "string",
-													"enum": [
-														"pending"
-													]
+													"format": "uuid"
 												},
-												"invite": {
-													"type": "object",
-													"properties": {
-														"id": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"email": {
-															"type": "string"
-														},
-														"role": {
-															"type": "string"
-														},
-														"expiresAt": {
-															"type": "string"
-														}
-													},
-													"required": [
-														"id",
-														"email",
-														"role",
-														"expiresAt"
-													]
+												"email": {
+													"type": "string"
+												},
+												"role": {
+													"type": "string"
+												},
+												"expiresAt": {
+													"type": "string"
 												}
 											},
 											"required": [
-												"status",
-												"invite"
+												"id",
+												"email",
+												"role",
+												"expiresAt"
 											]
 										}
+									},
+									"required": [
+										"status",
+										"invite"
 									]
 								}
 							}
 						}
 					},
 					"403": {
-						"description": "Caller is not a human owner/admin of the workspace, or the seat cap is reached",
+						"description": "Caller is not a human owner/admin of the workspace",
 						"content": {
 							"application/json": {
 								"schema": {

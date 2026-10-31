@@ -19,10 +19,8 @@ import {
 } from '@/components/ui/select'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateInvite } from '@/hooks/use-invites'
-import { ApiError, api } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { formatRetryAfter, inviteRoleLabel, isValidInviteEmail } from '@/lib/invite-format'
-import { queryKeys } from '@/lib/query-keys'
-import { useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -68,7 +66,6 @@ export function InviteMemberDialog({
 	workspaceId: string
 	workspaceName: string
 }) {
-	const queryClient = useQueryClient()
 	const canWrite = useCanWrite()
 	const createInvite = useCreateInvite(workspaceId)
 	const [email, setEmail] = useState('')
@@ -102,19 +99,7 @@ export function InviteMemberDialog({
 		setError(null)
 		try {
 			const result = await createInvite.mutateAsync({ email: trimmed, role })
-			if (result.status === 'linked') {
-				// The response carries only ids; the members list (just invalidated)
-				// has the display name.
-				const members = await queryClient.fetchQuery({
-					queryKey: queryKeys.workspaces.members(workspaceId),
-					queryFn: () => api.workspaces.members.list(workspaceId),
-					staleTime: 0,
-				})
-				const name = members.find((m) => m.actorId === result.member.actorId)?.name ?? trimmed
-				toast.success(`${name} added as ${inviteRoleLabel(result.member.role)}.`)
-			} else {
-				toast.success(`Invite sent to ${result.invite.email}.`)
-			}
+			toast.success(`Invite sent to ${result.invite.email}.`)
 			reset()
 			onOpenChange(false)
 		} catch (err) {

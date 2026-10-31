@@ -76,7 +76,8 @@ describe('POST /api/workspaces/:id/members access', () => {
 	async function setup() {
 		const owner = await insertActor(db, { type: 'human' })
 		const ws = await insertWorkspace(db, owner.id, { settings: { billing: { plan: 'pro' } } })
-		const target = await insertActor(db, { type: 'human' })
+		// An agent the owner made: the one kind of actor an admin may add by id.
+		const target = await insertActor(db, { type: 'agent', createdBy: owner.id })
 		return { owner, ws, target }
 	}
 
@@ -189,6 +190,47 @@ describe('POST /api/workspaces/:id/members access', () => {
 		const res = await addMember(createAppAs(admin.id, 'human'), ws.id, { actor_id: target.id })
 
 		expect(res.status).toBe(201)
+	})
+
+	it('returns 403 and writes no row when the target is a person in another workspace', async () => {
+		const a = await setup()
+		const b = await setup()
+		const before = await memberRows(a.ws.id)
+
+		const res = await addMember(createAppAs(a.owner.id, 'human'), a.ws.id, {
+			actor_id: b.owner.id,
+			role: 'member',
+		})
+
+		expect(res.status).toBe(403)
+		expect(await memberRows(a.ws.id)).toHaveLength(before.length)
+	})
+
+	it('returns 403 and writes no row for an agent created by someone outside the workspace', async () => {
+		const a = await setup()
+		const b = await setup()
+		const before = await memberRows(a.ws.id)
+
+		// b.target was made by b.owner, who is not a member of workspace A.
+		const res = await addMember(createAppAs(a.owner.id, 'human'), a.ws.id, {
+			actor_id: b.target.id,
+			role: 'member',
+		})
+
+		expect(res.status).toBe(403)
+		expect(await memberRows(a.ws.id)).toHaveLength(before.length)
+	})
+
+	it('returns 201 for an agent created by another member of the workspace', async () => {
+		const { owner, ws } = await setup()
+		const colleague = await insertActor(db, { type: 'human' })
+		await seedMember(ws.id, colleague.id, 'member')
+		const agent = await insertActor(db, { type: 'agent', createdBy: colleague.id })
+
+		const res = await addMember(createAppAs(owner.id, 'human'), ws.id, { actor_id: agent.id })
+
+		expect(res.status).toBe(201)
+		expect((await memberRows(ws.id)).some((r) => r.actorId === agent.id)).toBe(true)
 	})
 
 	it('returns 400 for role owner, even for a human owner, and writes no row', async () => {
