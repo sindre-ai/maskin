@@ -147,7 +147,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/objects/:id/star', 'Group E, personal state'],
 	['DELETE', '/api/objects/:id/star', 'Group E, personal state'],
 	['PUT', '/api/user-display-settings/:object_type', 'Group E, personal state'],
-	['POST', '/api/briefing/spoken', 'Group E, generates a briefing and changes no workspace data'],
+	[
+		'POST',
+		'/api/briefing/spoken',
+		'Group E, a viewer is served the day’s cached brief or deterministic prose; only a writer triggers a model call and the cache write',
+	],
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
 	[
 		'POST',
