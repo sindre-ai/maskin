@@ -27,6 +27,10 @@ export class SlackSendRefusal extends Error {
 export const DIRECT_POST_HELD_MESSAGE =
 	'Direct Slack posts are held for a person to approve. Nothing was posted. Save the message as a task whose content is only the exact text, with metadata.kind slack_message and metadata.channel (for example #coach-maskin). Ask a person to approve it with a decision card whose draft.object_id is that task. Once they approve, call slack_send_message again with object_id set to that task. Do not retry with channel and text.'
 
+/** The refusal for an edit with a channel and text and no approved draft. */
+export const DIRECT_EDIT_HELD_MESSAGE =
+	'Editing a Slack message is held for a person to approve, because it changes what people read under the bot name. Nothing was changed. Save the new text as a task whose content is only the exact text, with metadata.kind slack_message and metadata.channel (the channel the message is in). Ask a person to approve it with a decision card whose draft.object_id is that task. Once they approve, call slack_update_message again with object_id set to that task and ts set to the message to edit. Do not retry with channel and text.'
+
 /** True when a post to this channel id may go without approval. */
 export function isDirectPostChannel(channelId: string): boolean {
 	return DIRECT_POST_CHANNEL_IDS.has(channelId)
