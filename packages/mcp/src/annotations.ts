@@ -196,6 +196,7 @@ const ROWS: Record<string, Row> = {
 	request_integration_access: row('Request integration access'),
 	add_mcp_server: row('Add MCP server'),
 	show_computer: row('Show computer'),
+	deep_research: row('Deep research', { openWorld: true }),
 	// Workspace desktop
 	desktop_screenshot: row('Desktop screenshot'),
 	desktop_click: row('Desktop click'),

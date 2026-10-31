@@ -70,6 +70,15 @@ export const FLAGS = {
 	 * entry) once it is on for everyone.
 	 */
 	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
+	/**
+	 * The deep_research MCP tool and its routes (POST /api/research, GET /api/research/:id), read per
+	 * actor with isFlagEnabled at the top of both handlers in `apps/dev/src/routes/research.ts`. Off
+	 * means the tool answers "not enabled" and no run row is created. The research_runs table and
+	 * the plan-cap sum are in place for everyone and unchanged by the flag. Turn on for the
+	 * Researcher and the Strategist first (FF_TESTER_ACTOR_IDS + deep-research in
+	 * FF_TESTER_FEATURES). Retire (drop the checks and this entry) once the bet is called Won.
+	 */
+	DEEP_RESEARCH: 'deep-research',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

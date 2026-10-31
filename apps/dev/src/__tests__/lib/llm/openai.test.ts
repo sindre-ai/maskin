@@ -108,6 +108,37 @@ describe('OpenAIAdapter', () => {
 		})
 	})
 
+	it('sends the assistant tool calls so the tool results have a call to answer', async () => {
+		const adapter = new OpenAIAdapter('sk-test')
+		mockOkResponse(makeTextResponse('ok'))
+
+		await adapter.chat({
+			model: 'gpt-4o',
+			messages: [
+				{ role: 'user', content: 'hi' },
+				{
+					role: 'assistant',
+					content: '',
+					tool_calls: [{ id: 'call-1', name: 'web_search', arguments: { query: 'a' } }],
+				},
+				{ role: 'tool', content: 'result', tool_call_id: 'call-1' },
+			],
+		})
+
+		const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+		expect(body.messages[1]).toEqual({
+			role: 'assistant',
+			content: '',
+			tool_calls: [
+				{
+					id: 'call-1',
+					type: 'function',
+					function: { name: 'web_search', arguments: '{"query":"a"}' },
+				},
+			],
+		})
+	})
+
 	it('maps tools to OpenAI function format', async () => {
 		const adapter = new OpenAIAdapter('sk-test')
 		mockOkResponse(makeTextResponse('ok'))
