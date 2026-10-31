@@ -179,9 +179,10 @@ describe('runResearch: lead and researchers', () => {
 		expect(out.researchers).toBe(3)
 		expect(out.status).toBe('done')
 
-		const firstPrompts = adapter.calls.researcher
-			.filter((o) => o.messages.length === 2)
-			.map((o) => o.messages[1]?.content ?? '')
+		// Each researcher keeps appending to one messages array, so its calls share it: count the
+		// arrays, and read each one's first user message.
+		const researcherThreads = new Set(adapter.calls.researcher.map((o) => o.messages))
+		const firstPrompts = [...researcherThreads].map((messages) => messages[1]?.content ?? '')
 		expect(firstPrompts).toHaveLength(3)
 		for (const [i, prompt] of firstPrompts.sort().entries()) {
 			expect(prompt).toContain(`Your subtopic: Topic ${i}`)
