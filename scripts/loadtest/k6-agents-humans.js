@@ -184,8 +184,10 @@ function firstId(body, keys) {
 function refuseUnlessStaging() {
 	const problems = []
 	if (!profile) problems.push(`PROFILE must be smoke, baseline or breakpoint (got "${PROFILE}")`)
-	if (!/^https?:\/\/[^/]+$/i.test(BASE_URL)) problems.push('BASE_URL must be an origin, e.g. https://host')
-	if (__ENV.ALLOW_STAGING !== 'yes') problems.push('set ALLOW_STAGING=yes to confirm this is staging')
+	if (!/^https?:\/\/[^/]+$/i.test(BASE_URL))
+		problems.push('BASE_URL must be an origin, e.g. https://host')
+	if (__ENV.ALLOW_STAGING !== 'yes')
+		problems.push('set ALLOW_STAGING=yes to confirm this is staging')
 	if (!API_KEY) problems.push('API_KEY is required')
 	if (!WORKSPACE_ID) problems.push('WORKSPACE_ID is required')
 	const host = BASE_URL.replace(/^https?:\/\//i, '').replace(/:\d+$/, '')
@@ -194,7 +196,9 @@ function refuseUnlessStaging() {
 		problems.push(`${host} is a production host`)
 	}
 	if (!looksStaging) {
-		problems.push(`${host} does not look like staging (needs staging, stg, test or loadtest in the name)`)
+		problems.push(
+			`${host} does not look like staging (needs staging, stg, test or loadtest in the name)`,
+		)
 	}
 	return problems
 }
