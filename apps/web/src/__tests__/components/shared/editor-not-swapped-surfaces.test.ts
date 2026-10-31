@@ -27,9 +27,9 @@ describe('surfaces that stay on a plain input', () => {
 		expect(chatSource).toContain('<Textarea')
 	})
 
-	it('edit-own-message in a chat bubble stays on its textarea', () => {
+	it('edit-own-message in a chat bubble uses the edit card, not the rich editor', () => {
 		expectNoEditor(messageBubbleSource)
-		expect(messageBubbleSource).toContain('<Textarea')
+		expect(messageBubbleSource).toContain('<EditMessageCard')
 		// The bubble body is a read surface: MarkdownContent without editable.
 		expect(messageBubbleSource).not.toMatch(/<MarkdownContent[^>]*\beditable\b/)
 	})
