@@ -161,9 +161,9 @@ describe('fitFindings', () => {
 	const render = (x: LedgerFinding) => x.claim
 
 	it('drops the lowest-confidence findings first and keeps the original order', () => {
-		const kept = fitFindings([f(1, 0.2), f(2, 0.9), f(3, 0.6)], 20, render)
+		const kept = fitFindings([f(1, 0.2), f(2, 0.9), f(3, 0.6)], 10, render)
 		expect(kept.map((x) => x.n)).toEqual([2])
-		const two = fitFindings([f(1, 0.2), f(2, 0.9), f(3, 0.6)], 20 + 10, render)
+		const two = fitFindings([f(1, 0.2), f(2, 0.9), f(3, 0.6)], 20, render)
 		expect(two.map((x) => x.n)).toEqual([2, 3])
 	})
 
