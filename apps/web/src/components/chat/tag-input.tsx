@@ -57,7 +57,10 @@ export interface TagInputProps {
 	placeholder: string
 	disabled?: boolean
 	autoFocus?: boolean
+	/** Sizes the box (min and max height). */
 	className?: string
+	/** Padding for the text and the placeholder, so both start at the same spot. */
+	contentClassName?: string
 	onChange: (value: TagValue) => void
 	/** Keys the input did not use itself (the picker, chips and Shift+Enter come first). */
 	onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void
@@ -81,6 +84,7 @@ export function TagInput({
 	disabled = false,
 	autoFocus = false,
 	className,
+	contentClassName,
 	onChange,
 	onKeyDown,
 	handleRef,
@@ -259,7 +263,10 @@ export function TagInput({
 				{empty ? (
 					<span
 						aria-hidden
-						className="pointer-events-none absolute inset-0 select-none text-muted-foreground"
+						className={cn(
+							'pointer-events-none absolute inset-0 select-none text-muted-foreground',
+							contentClassName,
+						)}
 					>
 						{placeholder}
 					</span>
@@ -276,7 +283,10 @@ export function TagInput({
 					aria-haspopup="listbox"
 					aria-expanded={open}
 					spellCheck
-					className="min-h-[inherit] max-h-[inherit] overflow-y-auto whitespace-pre-wrap break-words outline-none"
+					className={cn(
+						'min-h-[inherit] max-h-[inherit] overflow-y-auto whitespace-pre-wrap break-words outline-none',
+						contentClassName,
+					)}
 					onInput={emit}
 					onClick={syncTrigger}
 					onKeyDown={handleKeyDown}

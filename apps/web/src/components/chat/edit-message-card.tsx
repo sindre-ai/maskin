@@ -86,7 +86,8 @@ export function EditMessageCard({
 					placeholder="Edit your message"
 					disabled={saving}
 					autoFocus
-					className={cn('min-h-[84px] max-h-64 px-3 pt-2.5', saving && 'opacity-60')}
+					className={cn('min-h-[84px] max-h-64', saving && 'opacity-60')}
+					contentClassName="px-3 pt-2.5"
 					onChange={handleChange}
 					onKeyDown={(e) => {
 						if (e.key === 'Enter' && !e.shiftKey) {
@@ -100,7 +101,7 @@ export function EditMessageCard({
 					}}
 				/>
 				<div className="flex flex-wrap items-center justify-end gap-2 px-3 pt-1 pb-2.5">
-					<span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground @xl:block">
+					<span className="hidden min-w-0 flex-1 text-[11px] leading-snug text-muted-foreground @sm:block">
 						@ tags · Enter saves · Shift+Enter new line · Esc cancels
 					</span>
 					<div className="ml-auto flex items-center gap-2">

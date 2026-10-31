@@ -45,6 +45,10 @@ test.describe('Chat — editing a message with tags inside the text', () => {
 				await expect(box.locator('[data-tag-id]')).toHaveCount(1)
 				await expect(box).toContainText(`@Tagcto ${stamp} please start on the MCP tool`)
 				await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled()
+				// The key hint needs room: shown from 1024px, hidden on the phone and in the narrow iPad column.
+				const hint = page.getByText('@ tags · Enter saves')
+				if (vp.width >= 1024) await expect(hint).toBeVisible()
+				else await expect(hint).toBeHidden()
 				await picture(page, testInfo, `edit-card-${vp.width}-${scheme}`)
 
 				// Type @, pick the other agent: a chip lands inside the sentence.
