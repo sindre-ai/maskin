@@ -94,7 +94,9 @@ function routedAdapter(handlers: Handlers) {
 		cache_creation_input_tokens: 0,
 		cache_read_input_tokens: 0,
 	})
-	const chat = vi.fn(async (options: ChatOptions): Promise<LLMResponse> => {
+	const chat = vi.fn(async (liveOptions: ChatOptions): Promise<LLMResponse> => {
+		// The researcher keeps adding to its message list, so keep what this call saw.
+		const options = { ...liveOptions, messages: [...liveOptions.messages] }
 		const system = options.messages[0]?.content
 		let reply: Reply
 		if (system === LEAD_SYSTEM_PROMPT) {

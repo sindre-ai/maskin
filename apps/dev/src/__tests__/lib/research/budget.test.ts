@@ -123,7 +123,8 @@ describe('RunBudget', () => {
 		})
 		budget.recordSearch('researcher:0', 8_000)
 		budget.record('writer', 25_000)
-		expect(seen).toEqual([1, 3])
+		// 0.8 cent, then 3.3 cents in total: each is rounded up.
+		expect(seen).toEqual([1, 4])
 	})
 
 	it('says no to a call that would not fit the stage share', () => {
