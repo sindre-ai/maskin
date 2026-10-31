@@ -51,6 +51,8 @@ const isHttpUrl = (value: string): boolean => {
 
 export class TavilyProvider implements ResearchSearchProvider {
 	readonly name = 'tavily'
+	readonly searchPriceMicroUsd = TAVILY_SEARCH_PRICE_MICRO_USD
+	readonly extractUrlPriceMicroUsd = TAVILY_EXTRACT_URL_PRICE_MICRO_USD
 	private readonly apiKey: string
 	private readonly fetchImpl: FetchLike
 

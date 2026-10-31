@@ -56,6 +56,9 @@ export interface ExtractResult {
 
 export interface ResearchSearchProvider {
 	readonly name: string
+	/** Flat price of one search and of one extracted page, so the run can check a call fits before making it. */
+	readonly searchPriceMicroUsd: number
+	readonly extractUrlPriceMicroUsd: number
 	search(params: SearchParams): Promise<SearchResult>
 	extract(urls: string[]): Promise<ExtractResult>
 }
