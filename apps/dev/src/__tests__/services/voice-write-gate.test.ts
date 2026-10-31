@@ -1,7 +1,10 @@
+import { createVoiceToolkit } from '@maskin/mcp'
 import { describe, expect, it, vi } from 'vitest'
 import {
+	ORDINARY_WRITE_TOOLS,
 	VOICE_CONFIRM_ARG,
 	createWriteGate,
+	isHeldWhenDelegated,
 	isNo,
 	isRiskyTool,
 	isYes,
@@ -675,5 +678,89 @@ describe('createWriteGate: a decision write needs a clear yes', () => {
 		gate.noteSpeechStarted('i1')
 		gate.noteUserLine('yes', 'i1')
 		expect(await gate.review('create_comment', ARGS, hold.id)).toMatchObject({ kind: 'run' })
+	})
+})
+
+describe('every tool of the real toolkit has a write-gate decision', () => {
+	/**
+	 * Writes that run at once on a DIRECT call and are not on the ordinary-write allow-list, so a
+	 * call made through ask_workspace holds them. A tool added to the toolkit must be placed in
+	 * exactly one of: read-only, ORDINARY_WRITE_TOOLS, the risky class (voice-write-gate.ts), or
+	 * this list. A new tool that is in none of them fails here.
+	 */
+	const DIRECT_ONLY_WRITES = new Set([
+		'add_chat_participant',
+		'ask_user_question',
+		'create_chat',
+		'create_file',
+		'create_sub_chat',
+		'create_workspace',
+		'create_workspace_field',
+		'desktop_close_port',
+		'desktop_move',
+		'desktop_screenshot',
+		'desktop_scroll',
+		'get_started',
+		'pause_session',
+		'remove_chat_participant',
+		'show_computer',
+		'stop_chat_agent',
+		'update_file',
+		'update_notification',
+		'update_workspace_field',
+	])
+
+	it('puts each tool in exactly one class', async () => {
+		const { tools, readOnlyTools, close } = await createVoiceToolkit({
+			apiBaseUrl: 'http://localhost:0',
+			apiKey: 'test',
+			defaultWorkspaceId: '00000000-0000-4000-8000-000000000000',
+		})
+		await close()
+		const undecided: string[] = []
+		const several: string[] = []
+		for (const { name } of tools) {
+			const classes = [
+				readOnlyTools.has(name),
+				ORDINARY_WRITE_TOOLS.has(name),
+				isRiskyTool(name),
+				DIRECT_ONLY_WRITES.has(name),
+			].filter(Boolean).length
+			if (classes === 0) undecided.push(name)
+			if (classes > 1) several.push(name)
+		}
+		expect(undecided).toEqual([])
+		expect(several).toEqual([])
+	})
+
+	it('holds every write a delegated call makes unless it is an ordinary write', async () => {
+		const { tools, readOnlyTools, close } = await createVoiceToolkit({
+			apiBaseUrl: 'http://localhost:0',
+			apiKey: 'test',
+			defaultWorkspaceId: '00000000-0000-4000-8000-000000000000',
+		})
+		await close()
+		for (const { name } of tools) {
+			const expected = !readOnlyTools.has(name) && !ORDINARY_WRITE_TOOLS.has(name)
+			expect(isHeldWhenDelegated(name, readOnlyTools.has(name)), name).toBe(expected)
+		}
+	})
+
+	it('holds an alias exactly as it holds the tool it points to', () => {
+		expect(isRiskyTool('run_agent')).toBe(isRiskyTool('create_session'))
+		expect(isRiskyTool('run_agent')).toBe(true)
+		expect(isRiskyTool('resend_send_email')).toBe(true)
+	})
+
+	it('holds an unknown write when it is delegated but runs it when called directly', async () => {
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false })
+		expect(await gate.review('brand_new_tool', {}, null)).toMatchObject({ kind: 'run' })
+		expect(await gate.review('brand_new_tool', {}, null, { delegated: true })).toMatchObject({
+			kind: 'hold',
+			risky: true,
+		})
+		expect(await gate.review('create_comment', {}, null, { delegated: true })).toMatchObject({
+			kind: 'run',
+		})
 	})
 })

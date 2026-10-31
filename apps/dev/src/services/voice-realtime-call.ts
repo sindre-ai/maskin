@@ -90,6 +90,17 @@ export function resolveReasoningEffort(
 	return 'low'
 }
 
+/**
+ * Set once OpenAI has rejected the reasoning field, for the life of the process, so later calls
+ * leave it out at once instead of paying a failed request and a retry each time.
+ */
+let reasoningRejected = false
+
+/** Test hook: forget that the vendor rejected the reasoning field. */
+export function resetReasoningRejection(): void {
+	reasoningRejected = false
+}
+
 /** How long the server socket may stay connecting before the call runs without tools. */
 export const VOICE_CONTROL_CONNECT_TIMEOUT_MS = 5000
 /** How long a call stays quiet after the agent finished before it checks in once. */
@@ -194,7 +205,7 @@ export function isQuotaBody(body: string): boolean {
 async function defaultCreateRealtimeCall(
 	input: CreateRealtimeCallInput,
 ): Promise<CreateRealtimeCallOutcome> {
-	let reasoning = resolveReasoningEffort()
+	let reasoning = reasoningRejected ? null : resolveReasoningEffort()
 	let outcome = await postRealtimeCall(
 		input,
 		buildTranscriptionConfig(input.transcriptionNames),
@@ -212,6 +223,7 @@ async function defaultCreateRealtimeCall(
 			vendor_body: outcome.body.slice(0, 500),
 		})
 		reasoning = null
+		reasoningRejected = true
 		outcome = await postRealtimeCall(
 			input,
 			buildTranscriptionConfig(input.transcriptionNames),

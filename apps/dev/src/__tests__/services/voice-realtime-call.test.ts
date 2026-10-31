@@ -40,6 +40,7 @@ const {
 	createRealtimeCall,
 	realtimeSocketUrl,
 	resolveRealtimeVoice,
+	resetReasoningRejection,
 	resolveReasoningEffort,
 	resolveVadEagerness,
 } = await import('../../services/voice-realtime-call')
@@ -895,6 +896,7 @@ describe('session turn-taking and reasoning settings', () => {
 
 	afterEach(() => {
 		vi.unstubAllEnvs()
+		resetReasoningRejection()
 	})
 
 	it('defaults to medium eagerness, far_field noise reduction and low reasoning', async () => {
@@ -947,6 +949,26 @@ describe('session turn-taking and reasoning settings', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2)
 		expect(sentSession(fetchMock, 0).reasoning).toEqual({ effort: 'low' })
 		expect(sentSession(fetchMock, 1)).not.toHaveProperty('reasoning')
+	})
+
+	it('remembers the rejection so the next call leaves reasoning out and pays no retry', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response('{"error":{"message":"Unknown parameter: session.reasoning."}}', {
+					status: 400,
+				}),
+			)
+			.mockResolvedValue(ok())
+		vi.stubGlobal('fetch', fetchMock)
+		await createRealtimeCall(input)
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		await createRealtimeCall(input)
+		expect(fetchMock).toHaveBeenCalledTimes(3)
+		expect(sentSession(fetchMock, 2)).not.toHaveProperty('reasoning')
+		resetReasoningRejection()
+		await createRealtimeCall(input)
+		expect(sentSession(fetchMock, 3).reasoning).toEqual({ effort: 'low' })
 	})
 
 	it('does not retry a 400 about reasoning when reasoning is off', async () => {

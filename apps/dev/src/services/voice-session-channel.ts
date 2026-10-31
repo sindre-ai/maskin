@@ -19,6 +19,8 @@ import {
 	type DelegateCallOutcome,
 	type DelegateModel,
 	VOICE_ASK_WORKSPACE_TOOL,
+	VOICE_DELEGATE_ANSWER_CHARS,
+	redactSecrets,
 	runVoiceDelegate,
 } from './voice-delegate'
 import {
@@ -104,6 +106,8 @@ export const voiceWaitForUserTool = {
 export const VOICE_MAX_FRAME_BYTES = 256 * 1024
 /** Cap on a tool result handed back to the model, so one huge read cannot flood a Realtime turn. */
 export const VOICE_MAX_TOOL_OUTPUT_CHARS = 20_000
+/** How many fresh ask_workspace requests one call may make; each runs a stronger, costlier model. */
+export const VOICE_ASK_WORKSPACE_MAX_CALLS = 20
 
 const clientMessageSchema = z.discriminatedUnion('type', [
 	z.object({
@@ -416,6 +420,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 	// model is not asked to rebuild it and cannot swap in something the person did not hear.
 	const heldDelegated = new Map<string, { tool: string; args: Record<string, unknown> }>()
 	let delegatedCalls = 0
+	let askWorkspaceCalls = 0
 
 	// One tool call made on behalf of ask_workspace. It takes the same road as a direct call:
 	// id repair, the write gate, the hold preview in the chat, a receipt line and a log row.
@@ -439,7 +444,9 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 		let logError: string | null = null
 		let rawChars: number | null = null
 		try {
-			const review = await writeGate.review(name, args, opts.confirmation ?? null)
+			const review = await writeGate.review(name, args, opts.confirmation ?? null, {
+				delegated: true,
+			})
 			if (review.kind !== 'run') {
 				errorCode =
 					review.kind === 'hold' ? 'voice_confirmation_required' : 'voice_confirmation_missing'
@@ -556,17 +563,31 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 			if (outcome.kind === 'held') {
 				return { ok: false, errorCode: outcome.errorCode, output: outcome.output }
 			}
+			// The same redaction and cap as a fresh delegate answer: this text is spoken too.
+			const spoken = capToolOutput(redactSecrets(outcome.text), VOICE_DELEGATE_ANSWER_CHARS)
 			return outcome.isError
-				? fail(cap(outcome.text), 'voice_tool_failed')
-				: { ok: true, errorCode: null, output: JSON.stringify({ result: cap(outcome.text) }) }
+				? fail(spoken, 'voice_tool_failed')
+				: { ok: true, errorCode: null, output: JSON.stringify({ result: spoken }) }
 		}
 		const request = typeof toolArgs.request === 'string' ? toolArgs.request.trim() : ''
 		if (!request) return fail('ask_workspace needs a request.', 'voice_tool_failed')
+		if (askWorkspaceCalls >= VOICE_ASK_WORKSPACE_MAX_CALLS) {
+			return {
+				ok: true,
+				errorCode: null,
+				output: JSON.stringify({
+					result:
+						'ask_workspace is used up for this call. Tell the person plainly that you cannot look anything else up or change anything more on this call.',
+				}),
+			}
+		}
+		askWorkspaceCalls += 1
 		const result = await runVoiceDelegate({
 			request: request.slice(0, 4_000),
 			tools: delegate.tools,
 			model: delegate.model,
 			signal: delegate.signal,
+			voiceSessionId: session.id,
 			context: `Today is ${new Date(now()).toISOString().slice(0, 10)}.`,
 			callTool: (name, args) => delegatedCall(callId, name, args),
 		})

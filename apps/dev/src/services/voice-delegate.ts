@@ -46,6 +46,8 @@ export const VOICE_DELEGATE_MAX_STEPS = 8
 export const VOICE_DELEGATE_BUDGET_MS = 25_000
 /** What one tool result may add to the delegate's context. */
 export const VOICE_DELEGATE_TOOL_RESULT_CHARS = 12_000
+/** How long, after the budget runs out, a tool call still in flight is waited for. */
+export const VOICE_DELEGATE_SETTLE_MS = 5_000
 /** The answer handed back to the voice model; it has to be spoken. */
 export const VOICE_DELEGATE_ANSWER_CHARS = 1_500
 export const VOICE_DELEGATE_DEFAULT_MODEL = 'gpt-4.1'
@@ -67,6 +69,8 @@ export interface DelegateModel {
 	}): Promise<{
 		text: string | null
 		toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>
+		/** Token counts the vendor reported for this turn, when it reported them. */
+		usage?: { promptTokens: number; completionTokens: number }
 	}>
 }
 
@@ -119,6 +123,10 @@ export async function runVoiceDelegate(opts: {
 	budgetMs?: number
 	/** Extra lines for the system prompt, such as the caller's name and time zone. */
 	context?: string
+	/** For the token-usage log line. */
+	voiceSessionId?: string
+	/** How long to wait for tool calls still running when the budget ends or the call is aborted. */
+	settleMs?: number
 }): Promise<DelegateResult> {
 	const maxSteps = opts.maxSteps ?? VOICE_DELEGATE_MAX_STEPS
 	const budgetMs = opts.budgetMs ?? VOICE_DELEGATE_BUDGET_MS
@@ -149,11 +157,55 @@ export async function runVoiceDelegate(opts: {
 		{ role: 'user', content: opts.request },
 	]
 	const done: string[] = []
-	const incomplete = (reason: 'steps' | 'time' | 'aborted' | 'error'): DelegateResult => ({
-		kind: 'incomplete',
-		reason,
-		text: done.length > 0 ? `Done so far: ${done.join(', ')}.` : 'Nothing was done.',
-	})
+	// Tool calls that have started and not yet answered. An abort does not stop a call already in
+	// flight, so the report after one must say what became of it, not "nothing was done".
+	const inflight = new Map<number, { name: string; settled: Promise<void> }>()
+	let nextCall = 0
+	let promptTokens = 0
+	let completionTokens = 0
+	let steps = 0
+	function track(name: string, args: Record<string, unknown>): Promise<DelegateCallOutcome> {
+		const id = nextCall++
+		const call = Promise.resolve().then(() => opts.callTool(name, args))
+		const settled = call.then(
+			(outcome) => {
+				inflight.delete(id)
+				if (outcome.kind === 'result' && !outcome.isError) done.push(describeCall(name))
+			},
+			() => {
+				inflight.delete(id)
+			},
+		)
+		inflight.set(id, { name, settled })
+		return call
+	}
+	const incomplete = async (
+		reason: 'steps' | 'time' | 'aborted' | 'error',
+	): Promise<DelegateResult> => {
+		if (inflight.size > 0 && reason !== 'steps') {
+			let timer: ReturnType<typeof setTimeout> | undefined
+			await Promise.race([
+				Promise.all([...inflight.values()].map((c) => c.settled)),
+				new Promise<void>((resolve) => {
+					timer = setTimeout(resolve, opts.settleMs ?? VOICE_DELEGATE_SETTLE_MS)
+				}),
+			])
+			clearTimeout(timer)
+		}
+		const parts: string[] = []
+		if (done.length > 0) parts.push(`Done so far: ${done.join(', ')}.`)
+		const unsettled = [...new Set([...inflight.values()].map((c) => describeCall(c.name)))]
+		for (const name of unsettled) {
+			parts.push(
+				`The ${name} call was still running when time ran out, so it may or may not have been done.`,
+			)
+		}
+		return {
+			kind: 'incomplete',
+			reason,
+			text: parts.length > 0 ? parts.join(' ') : 'Nothing was done.',
+		}
+	}
 
 	try {
 		for (let step = 0; step < maxSteps; step++) {
@@ -161,6 +213,9 @@ export async function runVoiceDelegate(opts: {
 				opts.model.complete({ messages, tools: opts.tools, signal: controller.signal }),
 				aborted,
 			])
+			steps += 1
+			promptTokens += turn.usage?.promptTokens ?? 0
+			completionTokens += turn.usage?.completionTokens ?? 0
 			if (turn.toolCalls.length === 0) {
 				const text = redactSecrets((turn.text ?? '').trim())
 				return {
@@ -178,11 +233,13 @@ export async function runVoiceDelegate(opts: {
 					})
 					continue
 				}
-				const outcome = await Promise.race([opts.callTool(call.name, call.arguments), aborted])
+				const outcome = await Promise.race([track(call.name, call.arguments), aborted])
 				if (outcome.kind === 'held') {
 					return { kind: 'held', output: outcome.output, errorCode: outcome.errorCode }
 				}
-				if (!outcome.isError) done.push(describeCall(call.name))
+				// `done` was filled when the call settled (see track), so it also counts a call that
+				// finishes after the budget ran out.
+				if (outcome.kind !== 'result') continue
 				messages.push({
 					role: 'tool',
 					tool_call_id: call.id,
@@ -190,16 +247,22 @@ export async function runVoiceDelegate(opts: {
 				})
 			}
 		}
-		return incomplete('steps')
+		return await incomplete('steps')
 	} catch (err) {
-		if (controller.signal.aborted) return incomplete(stopReason())
+		if (controller.signal.aborted) return await incomplete(stopReason())
 		logger.warn('Voice delegate failed', {
 			error: err instanceof Error ? err.message : String(err),
 		})
-		return incomplete('error')
+		return await incomplete('error')
 	} finally {
 		clearTimeout(timer)
 		opts.signal?.removeEventListener('abort', onOuterAbort)
+		logger.info('Voice delegate run', {
+			voice_session_id: opts.voiceSessionId,
+			prompt_tokens: promptTokens,
+			completion_tokens: completionTokens,
+			steps,
+		})
 		controller.abort('done')
 	}
 }
@@ -250,6 +313,7 @@ export function openAiDelegateModel(opts: {
 				throw new Error(`Delegate model error ${response.status}`)
 			}
 			const data = (await response.json()) as {
+				usage?: { prompt_tokens?: number; completion_tokens?: number }
 				choices?: Array<{
 					message?: {
 						content?: string | null
@@ -260,6 +324,12 @@ export function openAiDelegateModel(opts: {
 			const message = data.choices?.[0]?.message
 			if (!message) throw new Error('Delegate model returned no message')
 			return {
+				usage: data.usage
+					? {
+							promptTokens: data.usage.prompt_tokens ?? 0,
+							completionTokens: data.usage.completion_tokens ?? 0,
+						}
+					: undefined,
 				text: message.content ?? null,
 				toolCalls: (message.tool_calls ?? []).map((c) => {
 					let args: unknown

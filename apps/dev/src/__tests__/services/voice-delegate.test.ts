@@ -95,7 +95,8 @@ describe('runVoiceDelegate', () => {
 			callTool: () => new Promise(() => {}),
 			budgetMs: 1_000,
 		})
-		await vi.advanceTimersByTimeAsync(1_001)
+		// The budget, then the grace period a call still in flight is waited for.
+		await vi.advanceTimersByTimeAsync(1_001 + 5_001)
 		expect(await pending).toMatchObject({ kind: 'incomplete', reason: 'time' })
 	})
 
@@ -260,5 +261,94 @@ describe('settings', () => {
 			'request',
 			'confirmation_id',
 		])
+	})
+})
+
+describe('runVoiceDelegate — a timeout cannot hide a write', () => {
+	it('reports the real outcome of a slow tool that settles inside the grace period', async () => {
+		vi.useFakeTimers()
+		const callTool = vi.fn(
+			() =>
+				new Promise<ReturnType<typeof result>>((resolve) =>
+					setTimeout(() => resolve(result()), 2_000),
+				),
+		)
+		const run = runVoiceDelegate({
+			request: 'r',
+			tools,
+			model: scripted([call('update_objects')]),
+			callTool,
+			budgetMs: 1_000,
+			settleMs: 5_000,
+		})
+		await vi.advanceTimersByTimeAsync(3_000)
+		const out = await run
+		expect(out).toEqual({
+			kind: 'incomplete',
+			reason: 'time',
+			text: 'Done so far: update objects.',
+		})
+	})
+
+	it('says a still-running tool may or may not have been done, never "nothing was done"', async () => {
+		vi.useFakeTimers()
+		const callTool = vi.fn(() => new Promise<never>(() => {}))
+		const run = runVoiceDelegate({
+			request: 'r',
+			tools,
+			model: scripted([call('update_objects')]),
+			callTool,
+			budgetMs: 1_000,
+			settleMs: 5_000,
+		})
+		await vi.advanceTimersByTimeAsync(7_000)
+		const out = await run
+		expect(out.kind).toBe('incomplete')
+		if (out.kind !== 'incomplete') return
+		expect(out.text).toContain('update objects')
+		expect(out.text).toContain('may or may not have been done')
+		expect(out.text).not.toContain('Nothing was done')
+	})
+
+	it('still says nothing was done when no tool had started', async () => {
+		vi.useFakeTimers()
+		const model: DelegateModel = { complete: () => new Promise(() => {}) }
+		const run = runVoiceDelegate({
+			request: 'r',
+			tools,
+			model,
+			callTool: async () => result(),
+			budgetMs: 1_000,
+		})
+		await vi.advanceTimersByTimeAsync(1_500)
+		expect(await run).toMatchObject({ kind: 'incomplete', text: 'Nothing was done.' })
+	})
+})
+
+describe('runVoiceDelegate — token usage', () => {
+	it('logs prompt and completion tokens and steps for the run', async () => {
+		const { logger } = await import('../../lib/logger')
+		const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined as never)
+		const model = scripted([
+			{ ...call('search_objects'), usage: { promptTokens: 100, completionTokens: 10 } },
+			{ text: 'done', toolCalls: [], usage: { promptTokens: 150, completionTokens: 20 } },
+		])
+		await runVoiceDelegate({
+			request: 'r',
+			tools,
+			model,
+			callTool: async () => result(),
+			voiceSessionId: 'vs1',
+		})
+		expect(info).toHaveBeenCalledWith(
+			'Voice delegate run',
+			expect.objectContaining({
+				voice_session_id: 'vs1',
+				prompt_tokens: 250,
+				completion_tokens: 30,
+				steps: 2,
+			}),
+		)
+		info.mockRestore()
 	})
 })

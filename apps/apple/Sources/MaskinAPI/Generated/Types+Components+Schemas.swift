@@ -143,15 +143,32 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferBody/sdp`.
             public var sdp: Swift.String
+            /// Microphone type: near_field for headsets and phones, far_field for a laptop mic. Absent means far_field.
+            ///
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferBody/noise_reduction`.
+            @frozen public enum noise_reductionPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case near_field = "near_field"
+                case far_field = "far_field"
+            }
+            /// Microphone type: near_field for headsets and phones, far_field for a laptop mic. Absent means far_field.
+            ///
+            /// - Remark: Generated from `#/components/schemas/VoiceSessionOfferBody/noise_reduction`.
+            public var noise_reduction: Components.Schemas.VoiceSessionOfferBody.noise_reductionPayload?
             /// Creates a new `VoiceSessionOfferBody`.
             ///
             /// - Parameters:
             ///   - sdp: The browser’s WebRTC SDP offer.
-            public init(sdp: Swift.String) {
+            ///   - noise_reduction: Microphone type: near_field for headsets and phones, far_field for a laptop mic. Absent means far_field.
+            public init(
+                sdp: Swift.String,
+                noise_reduction: Components.Schemas.VoiceSessionOfferBody.noise_reductionPayload? = nil
+            ) {
                 self.sdp = sdp
+                self.noise_reduction = noise_reduction
             }
             public enum CodingKeys: String, CodingKey {
                 case sdp
+                case noise_reduction
             }
         }
         /// - Remark: Generated from `#/components/schemas/HangupVoiceSessionResponse`.

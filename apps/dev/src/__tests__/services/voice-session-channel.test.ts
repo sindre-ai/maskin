@@ -1355,6 +1355,49 @@ describe('voice channel — ask_workspace', () => {
 		expect(invoke).not.toHaveBeenCalled()
 	})
 
+	it('holds a non-read-only tool that is not an ordinary write when the text model picks it', async () => {
+		const { ask, invoke, results } = askSetup([
+			{ text: null, toolCalls: [{ id: 't1', name: 'run_agent', arguments: { actor_id: 'a' } }] },
+		])
+		ALL_TOOLS.push({
+			type: 'function',
+			name: 'run_agent',
+			description: 'run_agent',
+			parameters: { type: 'object', properties: {} },
+		})
+		await ask({ request: 'start the agent' })
+		expect(invoke).not.toHaveBeenCalled()
+		expect(results()[0]).toMatchObject({ ok: false, error_code: 'voice_confirmation_required' })
+		ALL_TOOLS.pop()
+	})
+
+	it('redacts and caps the result of a held call that runs after a yes', async () => {
+		const { ask, invoke, output, channel } = askSetup([
+			{ text: null, toolCalls: [{ id: 't1', name: 'gmail_send_email', arguments: { to: 'a' } }] },
+		])
+		await ask({ request: 'email' })
+		const id = /confirmation_id "([^"]+)"/.exec(output(0).error)?.[1] ?? ''
+		invoke.mockResolvedValue(textResult(`token ank_abcdefghijklmnop1234 ${'x'.repeat(20_000)}`))
+		await channel.onMessage(JSON.stringify({ type: 'user_speech_started', item_id: 'i1' }))
+		await channel.onMessage(
+			JSON.stringify({ type: 'transcript', role: 'user', text: 'yes, send it', item_id: 'i1' }),
+		)
+		await ask({ request: 'email', confirmation_id: id }, 'call_2')
+		const spoken = output(1).result as string
+		expect(spoken).not.toContain('ank_abcdefghijklmnop1234')
+		expect(spoken).toContain('[redacted]')
+		expect(spoken.length).toBeLessThanOrEqual(1_700)
+	})
+
+	it('stops answering ask_workspace after 20 requests on one call', async () => {
+		const { ask, complete, output } = askSetup([])
+		for (let i = 0; i < 20; i++) await ask({ request: `r${i}` }, `call_${i}`)
+		expect(complete).toHaveBeenCalledTimes(20)
+		await ask({ request: 'one more' }, 'call_21')
+		expect(complete).toHaveBeenCalledTimes(20)
+		expect(output(20).result).toContain('used up for this call')
+	})
+
 	it('answers plainly when the call has no delegate (full tool mode)', async () => {
 		const ctx = setup()
 		await ctx.toolCall('ask_workspace', { request: 'x' })
