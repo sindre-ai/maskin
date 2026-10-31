@@ -12,7 +12,7 @@ function showPlanLimitToast(navigate: Navigate, workspaceId: string, isTrial: bo
 		{
 			action: {
 				label: 'Go to Billing',
-				onClick: () => navigate({ to: '/$workspaceId/settings/keys', params: { workspaceId } }),
+				onClick: () => navigate({ to: '/$workspaceId/settings/billing', params: { workspaceId } }),
 			},
 		},
 	)
