@@ -134,6 +134,7 @@ public struct MarkdownLinkCard: View {
 	private let title: String?
 	@Environment(\.markdownInternalLinkInfo) private var linkInfo
 	@Environment(\.markdownInternalLinkHandler) private var internalHandler
+	@Environment(\.markdownOnInverse) private var onInverse
 	@Environment(\.openURL) private var openURL
 
 	public init(url: URL, title: String? = nil) {
@@ -168,13 +169,14 @@ public struct MarkdownLinkCard: View {
 				Text(name).maskinText(.subhead).fontWeight(.semibold).lineLimit(1).truncationMode(.middle)
 				Image(systemName: "arrow.up.right")
 					.maskinSymbol(MaskinFontSize.t11, weight: .semibold)
-					.foregroundStyle(MaskinColor.ink4)
+					.foregroundStyle(onInverse ? MaskinSurface.onInverse.opacity(0.7) : MaskinColor.ink4)
 					.accessibilityHidden(true)
 			}
-			.foregroundStyle(MaskinColor.ink)
+			// On your own ink bubble the chip takes the bubble's text colour and a see-through fill, like the sentence chip.
+			.foregroundStyle(onInverse ? MaskinSurface.onInverse : MaskinColor.ink)
 			.padding(.horizontal, MaskinSpace.s5)
 			.padding(.vertical, MaskinSpace.s3)
-			.background(MaskinSurface.fill, in: Capsule())
+			.background(onInverse ? MaskinSurface.onInverse.opacity(0.16) : MaskinSurface.fill, in: Capsule())
 			// The capsule is smaller than a finger; the tap area is not.
 			.frame(minHeight: MaskinSpace.touchMin)
 			.contentShape(Rectangle())
