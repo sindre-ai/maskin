@@ -252,8 +252,14 @@ describe('buildVoiceInstructions', () => {
 	})
 
 	it('keeps the fixed instructions short', () => {
-		// The previous briefing was 5964 characters without an agent prompt; 40% shorter is 3578; the ask_workspace bullet adds 269.
-		expect(buildVoiceInstructions({ ...base, systemPrompt: null }).length).toBeLessThan(3847)
+		// The previous briefing was 5964 characters without an agent prompt; 40% shorter is 3578; the ask_workspace bullet adds 269; the chime bullet adds 199.
+		expect(buildVoiceInstructions({ ...base, systemPrompt: null }).length).toBeLessThan(4046)
+	})
+
+	it('tells the model the call opens with a chime and the person speaks first', () => {
+		const text = buildVoiceInstructions({ ...base, systemPrompt: null })
+		expect(text).toContain('opens with a short chime')
+		expect(text).toContain('Do not greet or recite a briefing unprompted')
 	})
 
 	it('still has a greeting instruction', () => {
