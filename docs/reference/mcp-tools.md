@@ -70,7 +70,7 @@ Never pass **to**, **subject** or **body**. If the answer says the outcome is un
 
 ### create_loop: steps, status and closing
 
-A step and a trigger are the same thing: **steps** authors new triggers inline, **trigger_ids** attaches existing ones, and both land in the loop's step list. The response nests each step's resolved agent under it. Pick agents by role and system prompt (list_actors, list_triggers); create a specialised agent rather than reuse a mismatched one. **status** runs draft, pilot, supervised, live and can be paused from any point (pausing disables every referenced trigger); **archived** is terminal. A loop is closed when one step is a feedback step. See [loops.md](./loops.md).
+A step and a trigger are the same thing: **steps** authors new triggers inline, **trigger_ids** attaches existing ones, and both land in the loop's step list. The response nests each step's resolved agent under it. Pick agents by role and system prompt (list_actors, list_triggers); create a specialised agent rather than reuse a mismatched one. **driver_id** is required: the agent accountable for the loop, one whose job covers the outcome, preferably the owner of the main target. A human, an unknown actor or a paused agent is refused before anything is created; update_loop can change it but never clear it. **status** runs draft, pilot, supervised, live and can be paused from any point (pausing disables every referenced trigger); **archived** is terminal. A loop is closed when one step is a feedback step. See [loops.md](./loops.md).
 
 ### request_keychain_credential: where the secret lands
 

@@ -1935,7 +1935,7 @@ describe('tool handlers', () => {
 									id: 'loop-1',
 									workspaceId: 'ws-default-123',
 									type: 'loop',
-									driver: null,
+									driver: 'agent-1',
 									activeSessionId: null,
 								},
 							],
@@ -1948,6 +1948,7 @@ describe('tool handlers', () => {
 				const handler = getHandler('create_loop')
 				const result = (await handler({
 					name: 'Lead qualification',
+					driver_id: 'agent-1',
 					content: 'Every lead gets an answer',
 					status: 'learning',
 					entry_condition: 'A lead is created',
@@ -2017,6 +2018,7 @@ describe('tool handlers', () => {
 					title: 'Lead qualification',
 					content: 'Every lead gets an answer',
 					status: 'learning',
+					driver: 'agent-1',
 				})
 				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
 				expect(graphBody.nodes[0].metadata.entry_condition).toBe('A lead is created')
@@ -2027,7 +2029,7 @@ describe('tool handlers', () => {
 
 				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed.loop.id).toBe('loop-1')
-				expect(parsed.loop.driver).toBeUndefined()
+				expect(parsed.loop.driver).toBe('agent-1')
 				expect(parsed.loop.activeSessionId).toBeUndefined()
 				expect(parsed.created_step_trigger_ids).toEqual(['trig-1', 'trig-2'])
 				expect(parsed.steps).toEqual([
@@ -2055,6 +2057,7 @@ describe('tool handlers', () => {
 			it('rejects unknown trigger ids before creating anything', async () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 					const u = String(url)
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
 					if (u.endsWith('/api/triggers')) return okJson([{ id: 'trig-known' }])
 					throw new Error(`Unexpected fetch: ${u}`)
 				})
@@ -2063,6 +2066,7 @@ describe('tool handlers', () => {
 				await expect(
 					handler({
 						name: 'Broken loop',
+						driver_id: 'agent-1',
 						trigger_ids: ['trig-unknown'],
 						steps: [],
 						object_ids: [],
@@ -2080,6 +2084,7 @@ describe('tool handlers', () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 					const u = String(url)
 					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
 					throw new Error(`Unexpected fetch: ${u}`)
 				})
 
@@ -2087,6 +2092,7 @@ describe('tool handlers', () => {
 				await expect(
 					handler({
 						name: 'Bad statuses',
+						driver_id: 'agent-1',
 						closed_statuses: { lead: ['exploded'] },
 						steps: [],
 						trigger_ids: [],
@@ -2099,6 +2105,7 @@ describe('tool handlers', () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 					const u = String(url)
 					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
 					throw new Error(`Unexpected fetch: ${u}`)
 				})
 
@@ -2106,6 +2113,7 @@ describe('tool handlers', () => {
 				await expect(
 					handler({
 						name: 'Bad type',
+						driver_id: 'agent-1',
 						closed_when: { nonexistent: ['loop_stage=live'] },
 						steps: [],
 						trigger_ids: [],
@@ -2139,6 +2147,7 @@ describe('tool handlers', () => {
 				await expect(
 					handler({
 						name: 'Rollback loop',
+						driver_id: 'agent-1',
 						steps: [
 							{
 								name: 'Step',
@@ -2154,6 +2163,60 @@ describe('tool handlers', () => {
 
 				expect(deleted).toEqual(['trig-orphan'])
 			})
+
+			describe('driver_id', () => {
+				function mockActors(rows: Array<Record<string, unknown>>) {
+					vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+						const u = String(url)
+						const method = (init as RequestInit | undefined)?.method
+						if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+						if (u.includes('/api/actors?ids=')) return okJson(rows)
+						throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+					})
+				}
+
+				async function expectRejectedBeforeCreate(args: Record<string, unknown>, message: RegExp) {
+					await expect(
+						getHandler('create_loop')({
+							name: 'No driver',
+							steps: [],
+							trigger_ids: [],
+							object_ids: [],
+							...args,
+						}),
+					).rejects.toThrow(message)
+					const graphCalls = vi
+						.mocked(fetch)
+						.mock.calls.filter((c) => String(c[0]).endsWith('/api/graph'))
+					expect(graphCalls).toHaveLength(0)
+				}
+
+				it('fails with a readable error when driver_id is missing', async () => {
+					mockActors([])
+					await expectRejectedBeforeCreate(
+						{},
+						/driver_id is required.*list_actors.*Chief of Staff/s,
+					)
+				})
+
+				it('rejects a driver that is not in this workspace', async () => {
+					mockActors([])
+					await expectRejectedBeforeCreate(
+						{ driver_id: 'ghost' },
+						/not found or not a member of this workspace.*Chief of Staff/s,
+					)
+				})
+
+				it('rejects a human driver', async () => {
+					mockActors([{ id: 'human-1', type: 'human', agentState: 'idle' }])
+					await expectRejectedBeforeCreate({ driver_id: 'human-1' }, /it is a human, not an agent/)
+				})
+
+				it('rejects a paused agent', async () => {
+					mockActors([{ id: 'agent-1', type: 'agent', agentState: 'paused' }])
+					await expectRejectedBeforeCreate({ driver_id: 'agent-1' }, /that agent is paused/)
+				})
+			})
 		})
 
 		describe('update_loop', () => {
@@ -2167,6 +2230,68 @@ describe('tool handlers', () => {
 
 				const handler = getHandler('update_loop')
 				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('changes the driver to a valid agent', async () => {
+				const patches: Array<Record<string, unknown>> = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.includes('/api/actors?ids='))
+						return okJson([{ id: 'agent-2', type: 'agent', agentState: 'idle' }])
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							driver: 'agent-1',
+							metadata: {},
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						const body = JSON.parse((init as RequestInit).body as string)
+						patches.push(body)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							driver: body.driver,
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const result = (await getHandler('update_loop')({
+					id: 'loop-1',
+					driver_id: 'agent-2',
+				})) as { content: Array<{ text: string }> }
+
+				expect(patches).toEqual([{ driver: 'agent-2' }])
+				expect(JSON.parse(result.content[0].text).loop.driver).toBe('agent-2')
+			})
+
+			it('rejects a human driver and leaves the loop untouched', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.includes('/api/actors?ids='))
+						return okJson([{ id: 'human-1', type: 'human', agentState: 'idle' }])
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: {},
+						})
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				await expect(
+					getHandler('update_loop')({ id: 'loop-1', driver_id: 'human-1' }),
+				).rejects.toThrow(/it is a human, not an agent/)
+				const patches = vi
+					.mocked(fetch)
+					.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'PATCH')
+				expect(patches).toHaveLength(0)
 			})
 
 			it('sets metadata.tags, replacing the previous ones, and clears them with []', async () => {
@@ -7365,6 +7490,9 @@ describe('tool handlers', () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 				const u = String(url)
 				const method = (init as RequestInit | undefined)?.method
+				if (u.includes('/api/actors?ids=')) {
+					return setupOkJson([{ id: 'agent-1', type: 'agent', agentState: 'idle' }])
+				}
 				if (u.endsWith('/api/graph')) {
 					return setupOkJson({
 						nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
@@ -7383,6 +7511,7 @@ describe('tool handlers', () => {
 			const handler = getHandler('create_loop')
 			const result = (await handler({
 				name: 'Test loop',
+				driver_id: 'agent-1',
 				steps: [],
 				trigger_ids: [],
 				object_ids: [],

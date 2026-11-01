@@ -1035,11 +1035,23 @@ describe('create_loop schema', () => {
 	const schema = tools.create_loop.inputSchema
 
 	it('requires workspace_id', () => {
-		expect(() => schema.parse({ name: 'Lead loop' })).toThrow()
+		expect(() => schema.parse({ name: 'Lead loop', driver_id: uuid2 })).toThrow()
+	})
+
+	it('requires driver_id and says how to pick one', () => {
+		expect(() => schema.parse({ workspace_id: uuid, name: 'Lead loop' })).toThrow(
+			/driver_id is required.*list_actors/s,
+		)
+	})
+
+	it('rejects an empty or non-UUID driver_id', () => {
+		for (const driver_id of ['', 'not-a-uuid']) {
+			expect(() => schema.parse({ workspace_id: uuid, name: 'Lead loop', driver_id })).toThrow()
+		}
 	})
 
 	it('applies defaults: draft status, empty steps/trigger_ids/object_ids', () => {
-		const result = schema.parse({ workspace_id: uuid, name: 'Lead loop' })
+		const result = schema.parse({ workspace_id: uuid, name: 'Lead loop', driver_id: uuid2 })
 		expect(result.status).toBe('draft')
 		expect(result.steps).toEqual([])
 		expect(result.trigger_ids).toEqual([])
@@ -1050,6 +1062,7 @@ describe('create_loop schema', () => {
 		const result = schema.parse({
 			workspace_id: uuid,
 			name: 'Lead loop',
+			driver_id: uuid2,
 			steps: [
 				{
 					name: 'Qualify',
@@ -1074,6 +1087,7 @@ describe('create_loop schema', () => {
 		const result = schema.parse({
 			workspace_id: uuid,
 			name: 'Candidate loop',
+			driver_id: uuid2,
 			closed_when: { insight: ['loop_stage=live'] },
 		})
 		expect(result.closed_when).toEqual({ insight: ['loop_stage=live'] })
@@ -1083,7 +1097,12 @@ describe('create_loop schema', () => {
 		'rejects the malformed closed_when rule %j',
 		(rule) => {
 			expect(() =>
-				schema.parse({ workspace_id: uuid, name: 'X', closed_when: { insight: [rule] } }),
+				schema.parse({
+					workspace_id: uuid,
+					name: 'X',
+					driver_id: uuid2,
+					closed_when: { insight: [rule] },
+				}),
 			).toThrow()
 		},
 	)
@@ -1093,6 +1112,7 @@ describe('create_loop schema', () => {
 			schema.parse({
 				workspace_id: uuid,
 				name: 'X',
+				driver_id: uuid2,
 				steps: [
 					{
 						name: 'Bad',
@@ -1106,12 +1126,14 @@ describe('create_loop schema', () => {
 	})
 
 	it('rejects an unknown loop status', () => {
-		expect(() => schema.parse({ workspace_id: uuid, name: 'X', status: 'sideways' })).toThrow()
+		expect(() =>
+			schema.parse({ workspace_id: uuid, name: 'X', driver_id: uuid2, status: 'sideways' }),
+		).toThrow()
 	})
 
 	describe('targets', () => {
 		const row = { label: 'Posts published', source: 'posts per month', actual: 3, target: 8 }
-		const base = { workspace_id: uuid, name: 'X' }
+		const base = { workspace_id: uuid, name: 'X', driver_id: uuid2 }
 
 		it('accepts a list of rows and keeps them', () => {
 			expect(schema.parse({ ...base, targets: [row] }).targets).toEqual([row])
@@ -1148,6 +1170,14 @@ describe('update_loop schema', () => {
 
 	it('requires a uuid loop id', () => {
 		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+
+	it('accepts a driver_id but never an empty or null one', () => {
+		expect(schema.parse({ id: uuid, driver_id: uuid2 }).driver_id).toBe(uuid2)
+		expect(schema.parse({ id: uuid, name: 'X' }).driver_id).toBeUndefined()
+		for (const driver_id of ['', null]) {
+			expect(() => schema.parse({ id: uuid, driver_id })).toThrow()
+		}
 	})
 
 	describe('targets', () => {
