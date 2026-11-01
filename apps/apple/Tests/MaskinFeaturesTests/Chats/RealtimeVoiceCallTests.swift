@@ -15,6 +15,8 @@ private final class FakeTransport: RealtimeTransport {
 	var micEnabled: [Bool] = []
 	var iceRestarts = 0
 	var closed = 0
+	var noiseReduction: VoiceNoiseReduction? = .nearField
+	var metered = 0
 
 	func makeOffer(
 		onEvent: @escaping @MainActor @Sendable (Data) -> Void,
@@ -30,6 +32,7 @@ private final class FakeTransport: RealtimeTransport {
 	func setMicEnabled(_ enabled: Bool) { micEnabled.append(enabled) }
 	func restartIce() { iceRestarts += 1 }
 	func close() { closed += 1 }
+	func startMetering(into meter: CallLevelMeter) { metered += 1 }
 
 	func receive(_ type: String) { onEvent?(Data(#"{"type":"\#(type)"}"#.utf8)) }
 }
@@ -46,6 +49,7 @@ private actor FakeCalls: VoiceCalling {
 	private(set) var created: [String] = []
 	private(set) var createdFrom: [String?] = []
 	private(set) var offers: [String] = []
+	private(set) var offerHints: [VoiceNoiseReduction?] = []
 	private(set) var hangups: [Hangup] = []
 
 	func failCreate(_ failure: VoiceCallFailure) { createFailure = failure }
@@ -58,9 +62,12 @@ private actor FakeCalls: VoiceCalling {
 		return "vs-1"
 	}
 
-	func offer(voiceSessionID: String, sdp: String) async throws -> VoiceCallAnswer {
+	func offer(voiceSessionID: String, sdp: String, noiseReduction: VoiceNoiseReduction?) async throws
+		-> VoiceCallAnswer
+	{
 		if let offerFailure { throw offerFailure }
 		offers.append(sdp)
+		offerHints.append(noiseReduction)
 		return VoiceCallAnswer(sdp: "answer-sdp", toolsAvailable: toolsAvailable, persistTranscripts: true)
 	}
 
@@ -102,6 +109,17 @@ private actor FakeCalls: VoiceCalling {
 		#expect(await calls.offers == ["offer-sdp"])
 		#expect(transport.accepted == ["answer-sdp"])
 		#expect(call.failure == nil)
+	}
+
+	@Test("the offer carries the transport's microphone hint, and metering starts once it is answered")
+	func sendsTheHint() async {
+		let transport = FakeTransport()
+		transport.noiseReduction = .farField
+		let (call, calls, _) = make(transport: transport)
+		call.begin(existing: [])
+		await settle()
+		#expect(await calls.offerHints == [.farField])
+		#expect(transport.metered == 1)
 	}
 
 	@Test("a call started from a chat reserves the call with that chat's id")

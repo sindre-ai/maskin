@@ -49,6 +49,8 @@ final class LiveCallCenter {
 	/// Opens a conversation's thread (set by the shell: selects the Chats tab and requests it).
 	@ObservationIgnored var openConversation: (String) -> Void = { _ in }
 	@ObservationIgnored private var ticker: Task<Void, Never>?
+	/// The current call has been up at least once, so a drop is "reconnecting", not "connecting".
+	@ObservationIgnored private var hasConnected = false
 
 	var conversationID: String? { current?.chat.conversationID }
 
@@ -84,6 +86,7 @@ final class LiveCallCenter {
 				session.origin = origin
 				current = session
 				session.begin()
+				startCallActivity(for: session, workspaceId: environment.auth.session?.workspaceId)
 				startTicker()
 			} catch {
 				problem = (error as? BriefingChat.Failure)?.message ?? error.localizedDescription
@@ -100,10 +103,46 @@ final class LiveCallCenter {
 		ticker?.cancel()
 		ticker = nil
 		current = nil
+		LiveCallControl.shared.clear()
+		CallActivityController.shared?.callEnded()
 		if visibleConversationID != id { openConversation(id) }
 	}
 
-	func toggleMute() { current?.toggleMute() }
+	func toggleMute() {
+		current?.toggleMute()
+		syncCallActivity(immediate: true)
+	}
+
+	/// Puts the call on the Lock Screen and in the Dynamic Island, and wires the card's Mute and End
+	/// to this call. Nothing happens where Live Activities don't exist or are switched off.
+	private func startCallActivity(for session: LiveMeetingSession, workspaceId: String?) {
+		hasConnected = false
+		LiveCallControl.shared.register(
+			toggleMute: { [weak self] in self?.toggleMute() }, hangUp: { [weak self] in self?.end() })
+		guard let workspaceId, let startedAt = session.startedAt else { return }
+		CallActivityController.shared?.callStarted(
+			callId: session.chat.conversationID + "@" + String(startedAt.timeIntervalSince1970),
+			agentName: session.lead.name, workspaceId: workspaceId,
+			conversationId: session.chat.conversationID, startedAt: startedAt,
+			snapshot: snapshot(of: session))
+	}
+
+	private func syncCallActivity(immediate: Bool = false) {
+		guard let session = current else { return }
+		CallActivityController.shared?.sync(snapshot(of: session), immediate: immediate)
+	}
+
+	/// The call as the card sees it. `isConnected` is false while a call is being set up and again
+	/// while it is recovered, so "connecting" is that before the first connection and "reconnecting"
+	/// after it. A failure ends the card.
+	private func snapshot(of session: LiveMeetingSession) -> LiveCallSnapshot {
+		let voice = session.voice
+		if voice.isConnected { hasConnected = true }
+		return LiveCallSnapshot(
+			voicePhase: voice.phase, isMuted: voice.isMuted,
+			connection: voice.isConnected ? .connected : (hasConnected ? .reconnecting : .connecting),
+			failed: voice.failure != nil || !session.isLive)
+	}
 
 	/// The OpenAI Realtime call with the lead agent. Nil when the lead isn't an agent; the call
 	/// then runs as a dictated conversation.
@@ -142,6 +181,7 @@ final class LiveCallCenter {
 				try? await Task.sleep(for: .seconds(1))
 				guard let self, let session = self.current, session.isLive else { return }
 				session.refreshNowPlaying()
+				self.syncCallActivity()
 			}
 		}
 	}

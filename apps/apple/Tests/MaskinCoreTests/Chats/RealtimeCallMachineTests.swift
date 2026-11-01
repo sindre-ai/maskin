@@ -201,9 +201,13 @@ private let errorBody = #"{"error":{"code":"x","message":"x"}}"#
 	func offerAndHangup() async throws {
 		let offerWire = VoiceWire(
 			status: 200, json: #"{"sdp":"answer","tools_available":false,"persist_transcripts":true}"#)
-		let answer = try await calls(offerWire).offer(voiceSessionID: "vs-1", sdp: "offer")
+		let answer = try await calls(offerWire).offer(
+			voiceSessionID: "vs-1", sdp: "offer", noiseReduction: .nearField)
 		#expect(answer == VoiceCallAnswer(sdp: "answer", toolsAvailable: false, persistTranscripts: true))
 		#expect(offerWire.seen.first?.path == "/api/voice-sessions/vs-1/offer")
+		let offerSeen = try #require(offerWire.seen.first)
+		let offerBody = try #require(try JSONSerialization.jsonObject(with: offerSeen.body) as? [String: Any])
+		#expect(offerBody["noise_reduction"] as? String == "near_field")
 
 		let hangupWire = VoiceWire(
 			status: 200,
@@ -238,7 +242,7 @@ private let errorBody = #"{"error":{"code":"x","message":"x"}}"#
 			status: 429,
 			json: #"{"error":{"code":"RATE_LIMITED","message":"x"},"retry_after_seconds":120}"#)
 		do {
-			_ = try await calls(wire).offer(voiceSessionID: "vs-1", sdp: "offer")
+			_ = try await calls(wire).offer(voiceSessionID: "vs-1", sdp: "offer", noiseReduction: nil)
 			Issue.record("expected the offer to fail")
 		} catch {
 			#expect(error as? VoiceCallFailure == .rateLimited(retryAfterSeconds: 120))

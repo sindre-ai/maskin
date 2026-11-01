@@ -22,4 +22,17 @@ import Testing
 	@Test func nothingIsForcedBeforeThereIsARoute() {
 		#expect(!LiveAudioRoute.needsSpeakerOverride(wantsSpeaker: true, output: nil))
 	}
+
+	@Test func closeMicsGetTheNearFieldHint() {
+		#expect(LiveAudioRoute.noiseReduction(for: .other) == .nearField)
+		#expect(LiveAudioRoute.noiseReduction(for: .receiver) == .nearField)
+	}
+
+	@Test func theLoudspeakerGetsTheFarFieldHint() {
+		#expect(LiveAudioRoute.noiseReduction(for: .speaker) == .farField)
+	}
+
+	@Test func noRouteSendsNoHint() {
+		#expect(LiveAudioRoute.noiseReduction(for: nil) == nil)
+	}
 }

@@ -38,3 +38,4 @@ None.
 - **Payments:** none in the app. Plan and credits are managed on the website; the app only shows read-only usage and has no purchase button or link to purchase.
 - **User-generated content:** content is private to the members of a workspace (people invited by the owner) and their agents. No public feed, no anonymous or stranger-to-stranger content.
 - **Permissions:** microphone and speech recognition (dictation only), photo library via the system picker, notifications.
+- **Background audio (`UIBackgroundModes: audio`):** used only while the person is on a live voice call with an agent, so the call keeps its microphone and the agent's voice running when the screen is locked or the app is in the background; the Lock Screen / Dynamic Island card shows the call with Mute and End buttons, and the app does not play audio in the background at any other time.
