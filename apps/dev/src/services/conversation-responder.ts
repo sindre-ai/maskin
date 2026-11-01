@@ -15,10 +15,12 @@ import {
 	type GroupChatRoutingTrigger,
 	trackGroupChatMessageRouted,
 } from '../lib/analytics/group-chat-routing-events'
+import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
+import { loadSiblingSessionsNote, loadThreadSeed, takeSessionDigests } from './chat-session-context'
 import { insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
-import type { SessionManager } from './session-manager'
+import { type SessionManager, matchThread } from './session-manager'
 import { loadActiveSessionsNote } from './spawned-sessions'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
@@ -29,6 +31,9 @@ import { loadActiveSessionsNote } from './spawned-sessions'
 const MAX_CONSECUTIVE_AGENT_REPLIES = 5
 const LOOKBACK_LIMIT = 50
 const HISTORY_CONTEXT_MESSAGES = 15
+// Thread sessions one agent may have live in one chat, next to its main-chat session. A thread
+// message past this falls back to the single-session path.
+const MAX_THREAD_SESSIONS_PER_AGENT = 3
 
 /**
  * Why an agent was handed a turn, as the chat prompts word it. `legacy` is the plain wording
@@ -45,6 +50,8 @@ export type ConversationWakeReason =
 const LAST_SPEAKER_WAKE_TEXT =
 	'This looks like a follow-up to your last reply, so it was routed to you. Reply unless it clearly was not meant for you.'
 const LONE_AGENT_WAKE_TEXT = 'You are the only agent in this chat and this is its first message.'
+const THREAD_SESSION_HINT =
+	'This session is for one thread of the chat. Your reply is posted in that thread, and later turns here are messages from the same thread. The main chat and other threads have their own sessions.'
 const GROUP_HANDOFF_HINT =
 	'To hand something to another agent, post with the chat tool and tag them; tagging in your final reply wakes nobody.'
 
@@ -99,6 +106,7 @@ export async function evaluateAndRespond(ctx: {
 			actorId: messages.actorId,
 			content: messages.content,
 			metadata: messages.metadata,
+			threadRootId: messages.threadRootId,
 			authorName: actors.name,
 			authorType: actors.type,
 		})
@@ -286,6 +294,7 @@ export async function evaluateAndRespond(ctx: {
 				workspaceId,
 				conversationId,
 				messageId,
+				threadRootId: message.threadRootId,
 				agentId: agent.id,
 				message: messageForPrompt,
 				conversationHistory,
@@ -353,6 +362,7 @@ function emitGroupChatRouting(ctx: {
 		actorId: string
 		authorType: string
 		metadata: unknown
+		threadRootId: number | null
 	}
 	participantCount: number
 	trigger: GroupChatRoutingTrigger
@@ -392,6 +402,7 @@ function emitGroupChatRouting(ctx: {
 			workspaceId: ctx.workspaceId,
 			conversationId,
 			messageId: message.id,
+			threadRootId: message.threadRootId,
 			trigger: ctx.trigger,
 			flagOn: ctx.flagOn,
 			rule: ctx.rule,
@@ -481,6 +492,7 @@ async function routeByWakeRule(ctx: {
 		authorName: string
 		metadata: unknown
 		content: string
+		threadRootId: number | null
 	}
 	messageForPrompt: { actorId: string; content: string; authorName: string; authorType: string }
 	mentions: string[]
@@ -569,6 +581,7 @@ async function routeByWakeRule(ctx: {
 					workspaceId,
 					conversationId,
 					messageId,
+					threadRootId: message.threadRootId,
 					agentId: wake.agentId,
 					message: ctx.messageForPrompt,
 					conversationHistory: ctx.conversationHistory,
@@ -635,6 +648,10 @@ function wakeReasonForRule(
  *
  * Shared by the responder (a turn for a message just posted) and a chat card's approve or
  * status change, which tells the agent without posting a message (see chat-card-wake.ts).
+ *
+ * A message in a thread, from a person who has the thread-sessions flag, goes to a session of its
+ * own for that thread (see pickSessionThread); everything else goes to the agent's one main-chat
+ * session, as before.
  */
 export async function deliverTurnToAgent(params: {
 	db: Database
@@ -642,6 +659,8 @@ export async function deliverTurnToAgent(params: {
 	workspaceId: string
 	conversationId: string
 	messageId: number
+	/** The thread `messageId` sits in; null or omitted for a message in the main chat. */
+	threadRootId?: number | null
 	agentId: string
 	message: { actorId: string; content: string; authorName: string; authorType: string }
 	conversationHistory: Array<{ actorName: string; content: string }>
@@ -664,6 +683,14 @@ export async function deliverTurnToAgent(params: {
 		groupWakeRule,
 	} = params
 
+	const sessionThreadRootId = await pickSessionThread({
+		sessionManager,
+		workspaceId,
+		conversationId,
+		agentId,
+		message,
+		threadRootId: params.threadRootId ?? null,
+	})
 	const activeSessionsNote = await loadActiveSessionsNote(db, { conversationId, workspaceId })
 	const turnPayload = {
 		type: 'user' as const,
@@ -681,7 +708,17 @@ export async function deliverTurnToAgent(params: {
 		},
 	}
 
-	const existing = await sessionManager.findConversationSessionAnyActive(conversationId, agentId)
+	const existing = await sessionManager.findConversationSessionAnyActive(
+		conversationId,
+		agentId,
+		sessionThreadRootId,
+	)
+	if (existing) {
+		// What the agent's other sessions in this chat replied since this one last spoke. It rides on
+		// this turn, which the message started anyway, and is never delivered on its own.
+		const digest = takeSessionDigests(existing.id)
+		if (digest) turnPayload.message.content += `\n\n${digest}`
+	}
 	if (existing && existing.status !== 'running') {
 		// The agent's session is still booting (pending/starting/queued) —
 		// its stdin isn't attached yet, so a writeInput would fail and a
@@ -692,12 +729,17 @@ export async function deliverTurnToAgent(params: {
 			conversationId,
 			agentId,
 			messageId,
+			threadRootId: sessionThreadRootId,
 			payload: turnPayload,
 		})
 		// Close the race: the session may have reached `running` (and
 		// already drained) between the lookup above and the buffer insert —
 		// nothing would ever drain this row, so re-check and drain now.
-		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
+		const nowRunning = await sessionManager.findActiveConversationSession(
+			conversationId,
+			agentId,
+			sessionThreadRootId,
+		)
 		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
 		return 'buffered_for_booting_session'
 	}
@@ -734,6 +776,7 @@ export async function deliverTurnToAgent(params: {
 		workspaceId,
 		conversationId,
 		messageId,
+		threadRootId: sessionThreadRootId,
 		agentId,
 		message,
 		conversationHistory,
@@ -742,6 +785,41 @@ export async function deliverTurnToAgent(params: {
 		groupWakeRule,
 		activeSessionsNote,
 	})
+}
+
+/**
+ * The thread whose own session should take this turn, or null for the single-session path (the
+ * agent's one main-chat session). This is the one read of the thread-sessions flag.
+ *
+ * A thread gets its own session only when the message is in a thread and was written by a person
+ * who has the flag (never judged by the agent), and then: a live session for that thread is
+ * reused as is, otherwise a new one starts unless the agent already has
+ * MAX_THREAD_SESSIONS_PER_AGENT thread sessions in this chat or the workspace has no chat
+ * capacity. In those two cases the turn falls back to the single-session path rather than
+ * queueing, because a queued thread reply is slower than the main session answering it.
+ */
+async function pickSessionThread(ctx: {
+	sessionManager: SessionManager
+	workspaceId: string
+	conversationId: string
+	agentId: string
+	message: { actorId: string; authorType: string }
+	threadRootId: number | null
+}): Promise<number | null> {
+	const { sessionManager, conversationId, agentId, threadRootId } = ctx
+	if (threadRootId === null) return null
+	if (ctx.message.authorType !== 'human') return null
+	if (!isFlagEnabled(ctx.message.actorId, FLAGS.CHAT_THREAD_SESSIONS)) return null
+
+	if (
+		await sessionManager.findConversationSessionAnyActive(conversationId, agentId, threadRootId)
+	) {
+		return threadRootId
+	}
+	const live = await sessionManager.countActiveThreadSessions(conversationId, agentId)
+	if (live >= MAX_THREAD_SESSIONS_PER_AGENT) return null
+	if (!(await sessionManager.hasChatCapacity(ctx.workspaceId))) return null
+	return threadRootId
 }
 
 /**
@@ -761,6 +839,8 @@ async function spawnOrJoinConversationSession(params: {
 	workspaceId: string
 	conversationId: string
 	messageId: number
+	/** The thread this session is for; null for the agent's main-chat session. */
+	threadRootId: number | null
 	agentId: string
 	message: { actorId: string; content: string; authorName: string; authorType: string }
 	conversationHistory: Array<{ actorName: string; content: string }>
@@ -777,6 +857,7 @@ async function spawnOrJoinConversationSession(params: {
 		workspaceId,
 		conversationId,
 		messageId,
+		threadRootId,
 		agentId,
 		message,
 		conversationHistory,
@@ -786,6 +867,34 @@ async function spawnOrJoinConversationSession(params: {
 		activeSessionsNote,
 	} = params
 
+	// A thread session starts from the thread root and the main chat, not from the last messages
+	// of whatever thread was busiest, and is told about the agent's other sessions in this chat.
+	let seedHistory = conversationHistory
+	let siblingSessionsNote = ''
+	if (threadRootId !== null) {
+		try {
+			const seed = await loadThreadSeed(db, { conversationId, threadRootId })
+			seedHistory = seed.history
+			logger.info('Seeding a thread session', {
+				conversationId,
+				threadRootId,
+				seedMessages: seed.history.length,
+				approxSeedTokens: seed.approxTokens,
+			})
+		} catch (err) {
+			logger.warn('Could not build a thread seed — using the recent history instead', {
+				conversationId,
+				threadRootId,
+				error: String(err),
+			})
+		}
+		siblingSessionsNote = await loadSiblingSessionsNote(db, {
+			conversationId,
+			agentId,
+			threadRootId,
+		})
+	}
+
 	try {
 		await startSession({
 			workspaceId,
@@ -793,7 +902,7 @@ async function spawnOrJoinConversationSession(params: {
 			callerKind: 'chat',
 			actionPrompt: buildConversationReplyPrompt({
 				conversationId,
-				conversationHistory,
+				conversationHistory: seedHistory,
 				newMessageContent: message.content,
 				authorName: message.authorName,
 				authorActorId: message.actorId,
@@ -801,10 +910,16 @@ async function spawnOrJoinConversationSession(params: {
 				wakeReason,
 				groupWakeRule,
 				activeSessionsNote,
+				siblingSessionsNote,
+				threadRootId,
 			}),
 			config: {
 				interactive: true,
-				conversation: { conversation_id: conversationId, message_id: messageId },
+				conversation: {
+					conversation_id: conversationId,
+					message_id: messageId,
+					...(threadRootId !== null ? { thread_root_id: threadRootId } : {}),
+				},
 			},
 			createdBy: message.actorId,
 			// Chat-only spawn: the conversation_id column on the session row
@@ -816,23 +931,27 @@ async function spawnOrJoinConversationSession(params: {
 		// The seed prompt above inlines recent history up to and including this
 		// message — any turn still buffered for this pair from a previous, dead
 		// session is already covered by it. Clear those rows so the post-boot
-		// drain doesn't re-deliver them as duplicates.
-		try {
-			await db
-				.delete(conversationPendingTurns)
-				.where(
-					and(
-						eq(conversationPendingTurns.conversationId, conversationId),
-						eq(conversationPendingTurns.actorId, agentId),
-						lte(conversationPendingTurns.messageId, messageId),
-					),
-				)
-		} catch (err) {
-			logger.warn('Failed to clear seed-covered pending turns', {
-				agentId,
-				conversationId,
-				error: String(err),
-			})
+		// drain doesn't re-deliver them as duplicates. A thread session's seed holds no thread
+		// replies, so a turn buffered for its thread is not covered and stays for the drain.
+		if (threadRootId === null) {
+			try {
+				await db
+					.delete(conversationPendingTurns)
+					.where(
+						and(
+							eq(conversationPendingTurns.conversationId, conversationId),
+							eq(conversationPendingTurns.actorId, agentId),
+							matchThread(conversationPendingTurns.threadRootId, threadRootId),
+							lte(conversationPendingTurns.messageId, messageId),
+						),
+					)
+			} catch (err) {
+				logger.warn('Failed to clear seed-covered pending turns', {
+					agentId,
+					conversationId,
+					error: String(err),
+				})
+			}
 		}
 		return 'started_new_session'
 	} catch (err) {
@@ -862,7 +981,11 @@ async function spawnOrJoinConversationSession(params: {
 		},
 	}
 
-	const winner = await sessionManager.findConversationSessionAnyActive(conversationId, agentId)
+	const winner = await sessionManager.findConversationSessionAnyActive(
+		conversationId,
+		agentId,
+		threadRootId,
+	)
 	if (!winner) {
 		// The race winner already died between rejecting our insert and this
 		// lookup — vanishingly rare. The next message spawns a fresh session
@@ -875,8 +998,18 @@ async function spawnOrJoinConversationSession(params: {
 	}
 	if (winner.status !== 'running') {
 		// Winner is still booting — same buffer-and-recheck as the primary path.
-		await bufferPendingTurn(db, { conversationId, agentId, messageId, payload: turnPayload })
-		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
+		await bufferPendingTurn(db, {
+			conversationId,
+			agentId,
+			messageId,
+			threadRootId,
+			payload: turnPayload,
+		})
+		const nowRunning = await sessionManager.findActiveConversationSession(
+			conversationId,
+			agentId,
+			threadRootId,
+		)
 		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
 		return 'joined_race_winner'
 	}
@@ -924,6 +1057,8 @@ async function bufferPendingTurn(
 		conversationId: string
 		agentId: string
 		messageId: number
+		/** The thread the buffered session is for; null for the main-chat session. */
+		threadRootId: number | null
 		payload: { type: 'user'; message: { role: 'user'; content: string } }
 	},
 ): Promise<void> {
@@ -934,6 +1069,7 @@ async function bufferPendingTurn(
 				conversationId: params.conversationId,
 				actorId: params.agentId,
 				messageId: params.messageId,
+				threadRootId: params.threadRootId,
 				payload: params.payload,
 			})
 			// Upsert, not DO NOTHING: an edit re-buffers the same
@@ -962,7 +1098,13 @@ async function bufferPendingTurn(
 	}
 }
 
-/** Walks err.cause chain for the sessions_conversation_actor_active_uniq unique violation (23505). */
+/** The two unique indexes that reject a second live session for the same chat and agent (the second adds the thread). */
+const SESSION_RACE_CONSTRAINTS = [
+	'sessions_conversation_actor_active_uniq',
+	'sessions_conversation_actor_thread_active_uniq',
+] as const
+
+/** Walks err.cause chain for a unique violation (23505) on either session index in SESSION_RACE_CONSTRAINTS. */
 function isConversationSessionRaceViolation(err: unknown): boolean {
 	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
 		const e = cur as {
@@ -974,11 +1116,9 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 		}
 		if (e.code === '23505') {
 			const name = e.constraint_name ?? e.constraint
-			if (name === 'sessions_conversation_actor_active_uniq') return true
-			if (
-				typeof e.message === 'string' &&
-				e.message.includes('sessions_conversation_actor_active_uniq')
-			)
+			if (SESSION_RACE_CONSTRAINTS.some((c) => c === name)) return true
+			const message = e.message
+			if (typeof message === 'string' && SESSION_RACE_CONSTRAINTS.some((c) => message.includes(c)))
 				return true
 		}
 		cur = e.cause
@@ -1059,9 +1199,13 @@ function buildConversationReplyPrompt(ctx: {
 	wakeReason: ConversationWakeReason
 	groupWakeRule?: boolean
 	activeSessionsNote: string
+	/** A thread session's note on the agent's other live sessions in this chat; '' for none. */
+	siblingSessionsNote: string
+	threadRootId: number | null
 }): string {
 	return [
 		'A new message was posted in a conversation you are a participant in. This session stays open for the rest of this conversation — later messages will arrive as further turns, not new prompts.',
+		...(ctx.threadRootId !== null ? [THREAD_SESSION_HINT] : []),
 		'',
 		'Recent conversation history (oldest first):',
 		'"""',
@@ -1072,6 +1216,7 @@ function buildConversationReplyPrompt(ctx: {
 		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
 		...(ctx.groupWakeRule && !ctx.isDirectConversation ? [GROUP_HANDOFF_HINT] : []),
 		...(ctx.activeSessionsNote ? ['', ctx.activeSessionsNote] : []),
+		...(ctx.siblingSessionsNote ? ['', ctx.siblingSessionsNote] : []),
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,
