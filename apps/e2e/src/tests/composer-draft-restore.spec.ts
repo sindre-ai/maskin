@@ -57,7 +57,7 @@ test.describe('Composer draft survives an iOS app switch (tab reload)', () => {
 			const composer = page.getByLabel('Message this conversation')
 			await expect(composer).toBeVisible()
 			await composer.fill(DRAFT)
-			await expect(composer).toHaveValue(DRAFT)
+			await expect(composer).toHaveText(DRAFT)
 
 			// The draft must be persisted before "leaving the app", not only in
 			// React state — this is what the reload below depends on.
@@ -72,7 +72,7 @@ test.describe('Composer draft survives an iOS app switch (tab reload)', () => {
 			await expect(page.getByRole('heading', { name: 'E2E composer draft' })).toBeVisible({
 				timeout: 10_000,
 			})
-			await expect(page.getByLabel('Message this conversation')).toHaveValue(DRAFT)
+			await expect(page.getByLabel('Message this conversation')).toHaveText(DRAFT)
 
 			// The draft is keyed per conversation — opening another thread must
 			// show an empty composer, not the previous thread's text.
@@ -80,14 +80,14 @@ test.describe('Composer draft survives an iOS app switch (tab reload)', () => {
 			await expect(page.getByRole('heading', { name: 'E2E composer draft (other)' })).toBeVisible({
 				timeout: 10_000,
 			})
-			await expect(page.getByLabel('Message this conversation')).toHaveValue('')
+			await expect(page.getByLabel('Message this conversation')).toHaveText('')
 
 			// Returning to the original thread still restores its own draft.
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			await expect(page.getByRole('heading', { name: 'E2E composer draft' })).toBeVisible({
 				timeout: 10_000,
 			})
-			await expect(page.getByLabel('Message this conversation')).toHaveValue(DRAFT)
+			await expect(page.getByLabel('Message this conversation')).toHaveText(DRAFT)
 		})
 	}
 })
