@@ -1,6 +1,7 @@
 import { z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, objects } from '@maskin/db/schema'
+import { parseCommentDecision } from '@maskin/shared'
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { feedDecisionSchema, fillDraftBodies, toLatestMention } from '../routes/subscriptions'
 import { dueAtOf } from '../services/push-policy'
@@ -148,6 +149,12 @@ export async function buildForYouItems(
 		const obj = decisionObjectById.get(event.entityId)
 		// Gone or closed (done, discarded, shipped…): the card would only ask about finished work.
 		if (!obj || CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return false
+		// The ask names the state it assumed ("flip to active" assumes "define"). Once the object
+		// is anywhere else the ask is moot, the same rule curated cards already follow.
+		const assumed = parseCommentDecision(
+			(event.data as { decision?: unknown } | null)?.decision,
+		)?.only_while_status
+		if (assumed && !assumed.includes(obj.status ?? '')) return false
 		// Every message it offered has been sent or skipped.
 		if (finishedDraftCards.has(Number(event.id))) return false
 		// The person answered this card with a threaded reply (an option tap is one), or

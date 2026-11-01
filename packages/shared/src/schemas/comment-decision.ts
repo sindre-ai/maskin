@@ -210,6 +210,13 @@ export const commentDecisionSchema = z
 			.describe(
 				`Use this instead of \`draft\` when one card asks about several messages (up to ${DRAFTS_MAX}), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an \`id\`. The card's options still apply to the whole batch. Never put the text in the summary.`,
 			),
+		only_while_status: z
+			.array(z.string().min(1))
+			.min(1)
+			.optional()
+			.describe(
+				'The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.',
+			),
 		draft: decisionDraftSchema
 			.optional()
 			.describe(
