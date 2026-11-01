@@ -128,6 +128,7 @@ app.openapi(recordRoute, (async (c) => {
 				seq: body.seq ?? null,
 				toolName: body.tool_name,
 				argKeys: body.arg_keys ?? [],
+				objectType: body.object_type,
 				ok: body.ok ?? true,
 				// The stdio sink reports failure without a reason, so bucket it the
 				// same way the HTTP path buckets an error it cannot classify. Using

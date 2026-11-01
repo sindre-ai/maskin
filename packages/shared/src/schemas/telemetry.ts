@@ -113,6 +113,74 @@ const mcpProtocolVersionSchema = degradeTo(
 	undefined,
 )
 
+// Which object type a list-family call listed, for the list-tools bet's
+// retry-pair measure ("two list calls on the same object type within 5 calls").
+// A fixed vocabulary, never a raw argument: `type` can be a workspace-defined
+// custom type, and a custom type name is workspace-authored text that must not
+// reach analytics. Anything outside the built-in set is the literal `other`.
+export const LIST_CALL_BUILT_IN_OBJECT_TYPES = [
+	'bet',
+	'task',
+	'insight',
+	'knowledge',
+	'company',
+	'contact',
+	'content',
+	'event',
+	'meeting',
+	'loop',
+] as const
+
+// The four list tools whose type is fixed by the tool itself.
+const FIXED_LIST_TOOL_TYPES = {
+	list_triggers: 'trigger',
+	list_loops: 'loop',
+	list_workspace_skills: 'skill',
+	list_extensions: 'extension',
+} as const
+
+export const LIST_CALL_OBJECT_TYPES = [
+	...LIST_CALL_BUILT_IN_OBJECT_TYPES,
+	'trigger',
+	'skill',
+	'extension',
+	'other',
+	'none',
+] as const
+
+export type ListCallObjectType = (typeof LIST_CALL_OBJECT_TYPES)[number]
+
+const BUILT_IN_OBJECT_TYPE_SET: ReadonlySet<string> = new Set(LIST_CALL_BUILT_IN_OBJECT_TYPES)
+
+/**
+ * Object type for the six list-family tools; undefined for every other tool.
+ * `list_objects` and `search_objects` read the `type` argument: a built-in type
+ * passes through, no `type` is `none`, anything else (custom type, free text,
+ * non-string) is `other`. The other four tools return their own fixed type.
+ */
+export function listCallObjectType(
+	toolName: string,
+	args: unknown,
+): ListCallObjectType | undefined {
+	if (toolName in FIXED_LIST_TOOL_TYPES) {
+		return FIXED_LIST_TOOL_TYPES[toolName as keyof typeof FIXED_LIST_TOOL_TYPES]
+	}
+	if (toolName !== 'list_objects' && toolName !== 'search_objects') return undefined
+	const type =
+		args && typeof args === 'object' && !Array.isArray(args)
+			? (args as Record<string, unknown>).type
+			: undefined
+	if (type === undefined || type === null || type === '') return 'none'
+	if (typeof type === 'string' && BUILT_IN_OBJECT_TYPE_SET.has(type)) {
+		return type as ListCallObjectType
+	}
+	return 'other'
+}
+
+// Optional and degrade-don't-reject, like `arg_keys`: an unexpected value costs
+// the label, never the whole row. An older MCP build sends none.
+const listCallObjectTypeSchema = degradeTo(z.enum(LIST_CALL_OBJECT_TYPES).optional(), undefined)
+
 export const recordMcpToolCallSchema = z.object({
 	event_type: z.literal('tool_call'),
 	tool_name: toolNameSchema,
@@ -128,6 +196,7 @@ export const recordMcpToolCallSchema = z.object({
 	// events are fire-and-forget and can be ingested out of order.
 	seq: z.number().int().min(1).optional(),
 	arg_keys: argKeysSchema,
+	object_type: listCallObjectTypeSchema,
 	ok: z.boolean().optional(),
 	transport: z.enum(['stdio', 'http']).optional(),
 	// How the client resolved `session_id`. Only the client knows this: a

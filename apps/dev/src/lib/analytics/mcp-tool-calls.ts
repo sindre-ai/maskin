@@ -1,4 +1,4 @@
-import type { McpEra, McpProtocolVersionLabel } from '@maskin/shared'
+import type { ListCallObjectType, McpEra, McpProtocolVersionLabel } from '@maskin/shared'
 import type { McpClient } from './mcp-client'
 import type { PosthogEventProps } from './posthog'
 import { capturePosthogEvent } from './posthog'
@@ -39,6 +39,8 @@ export interface McpToolCallTrace {
 	seq: number | null
 	toolName: string
 	argKeys: string[]
+	/** Object type a list-family call listed, from a fixed vocabulary. Absent for other tools. */
+	objectType?: ListCallObjectType
 	ok: boolean
 	/** Bucketed misfire kind when `ok` is false. Never the raw error text. */
 	errorClass: string | null
@@ -119,6 +121,7 @@ export async function captureMcpToolCall(
 		tool_name: trace.toolName,
 		arg_keys: trace.argKeys,
 		arg_count: trace.argKeys.length,
+		object_type: trace.objectType,
 		ok: trace.ok,
 		error_class: trace.errorClass,
 		duration_ms: trace.durationMs,

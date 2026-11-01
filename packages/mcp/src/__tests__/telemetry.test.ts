@@ -485,6 +485,18 @@ describe('recordToolCallResponseSize — shape fields', () => {
 		expect(second.seq).toBe(1)
 	})
 
+	it('records object_type on the stdio tool_call event for list-family tools only', async () => {
+		const { mod, sink, events } = await load()
+		const call = (tool_name: string, args: unknown) => {
+			mod.recordToolCall(sink, TARGET, { tool_name, has_rich_render: false, duration_ms: 1, args })
+			return events[events.length - 1] as Extract<TelemetryEvent, { event_type: 'tool_call' }>
+		}
+		expect(call('list_objects', { type: 'task' }).object_type).toBe('task')
+		expect(call('search_objects', { type: 'a custom type' }).object_type).toBe('other')
+		expect(call('list_loops', {}).object_type).toBe('loop')
+		expect(call('get_objects', { type: 'task' }).object_type).toBeUndefined()
+	})
+
 	it('records argument key names so a broad call is distinguishable from a narrow one', async () => {
 		const { size } = await load()
 		const event = size({

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { createMcpServer } from '@maskin/mcp'
-import { resolveWebAppBaseUrl } from '@maskin/shared'
+import { listCallObjectType, resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
 import { classifyMcpClient } from '../lib/analytics/mcp-client'
@@ -583,6 +583,7 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					tsMs,
 					toolName,
 					argKeys: argKeys(request.params?.arguments),
+					objectType: listCallObjectType(toolName, request.params?.arguments),
 					ok: !unpaired && !error,
 					errorClass: unpaired
 						? 'no-response'

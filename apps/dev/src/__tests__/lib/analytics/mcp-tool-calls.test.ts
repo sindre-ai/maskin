@@ -4,6 +4,7 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: vi.fn(async () => {}),
 }))
 
+import { listCallObjectType } from '@maskin/shared'
 import { classifyMcpClient } from '../../../lib/analytics/mcp-client'
 import {
 	MCP_HANDSHAKE_ANONYMOUS_DISTINCT_ID,
@@ -110,6 +111,51 @@ describe('captureMcpToolCall', () => {
 			client: 'claude_code',
 			actor_type: 'agent',
 		})
+	})
+
+	it('emits object_type for each list-family tool', async () => {
+		const cases = [
+			['list_objects', { type: 'task' }, 'task'],
+			['search_objects', { type: 'bet' }, 'bet'],
+			['list_triggers', {}, 'trigger'],
+			['list_loops', {}, 'loop'],
+			['list_workspace_skills', {}, 'skill'],
+			['list_extensions', {}, 'extension'],
+		] as const
+		for (const [toolName, args, expected] of cases) {
+			vi.mocked(capturePosthogEvent).mockClear()
+			await captureMcpToolCall(WORKSPACE_ID, {
+				...baseTrace(),
+				toolName,
+				argKeys: argKeys(args),
+				objectType: listCallObjectType(toolName, args),
+			})
+			expect(vi.mocked(capturePosthogEvent).mock.calls[0][2]).toMatchObject({
+				object_type: expected,
+			})
+		}
+	})
+
+	it('records a custom type as other and leaves no free text in the event', async () => {
+		const freeText = 'Acquire the Nakatomi account'
+		const args = { type: freeText }
+		await captureMcpToolCall(WORKSPACE_ID, {
+			...baseTrace(),
+			argKeys: argKeys(args),
+			objectType: listCallObjectType('list_objects', args),
+		})
+		const props = vi.mocked(capturePosthogEvent).mock.calls[0][2]
+		expect(props.object_type).toBe('other')
+		expect(JSON.stringify(props)).not.toContain(freeText)
+	})
+
+	it('omits object_type for a tool outside the list family', async () => {
+		await captureMcpToolCall(WORKSPACE_ID, {
+			...baseTrace(),
+			toolName: 'create_objects',
+			objectType: listCallObjectType('create_objects', { type: 'task' }),
+		})
+		expect(vi.mocked(capturePosthogEvent).mock.calls[0][2].object_type).toBeUndefined()
 	})
 
 	it('emits null auth_method and actor_type for an unresolved caller, never api_key', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	alignTopFields,
+	listCallObjectType,
 	recordMcpAliasUseSchema,
 	recordMcpTelemetrySchema,
 	recordMcpToolCallResponseSizeSchema,
@@ -17,6 +18,69 @@ function baseEvent(overrides: Record<string, unknown> = {}) {
 		...overrides,
 	}
 }
+
+describe('listCallObjectType', () => {
+	it('returns the fixed type for the four tools that list one thing', () => {
+		expect(listCallObjectType('list_triggers', {})).toBe('trigger')
+		expect(listCallObjectType('list_loops', { cursor: 'abc' })).toBe('loop')
+		expect(listCallObjectType('list_workspace_skills', undefined)).toBe('skill')
+		expect(listCallObjectType('list_extensions', null)).toBe('extension')
+	})
+
+	it('passes a built-in type through for list_objects and search_objects', () => {
+		expect(listCallObjectType('list_objects', { type: 'task' })).toBe('task')
+		expect(listCallObjectType('search_objects', { type: 'insight', query: 'x' })).toBe('insight')
+	})
+
+	it('records none when no type was passed', () => {
+		expect(listCallObjectType('list_objects', {})).toBe('none')
+		expect(listCallObjectType('search_objects', { query: 'x' })).toBe('none')
+		expect(listCallObjectType('list_objects', undefined)).toBe('none')
+		expect(listCallObjectType('list_objects', { type: '' })).toBe('none')
+	})
+
+	// A custom type name or free text is workspace-authored: it must collapse to
+	// the literal `other` and never reach analytics.
+	it('collapses a custom type, free text or a non-string to other', () => {
+		expect(listCallObjectType('list_objects', { type: 'quarterly_okr' })).toBe('other')
+		expect(listCallObjectType('search_objects', { type: 'Acquire the Nakatomi account' })).toBe(
+			'other',
+		)
+		expect(listCallObjectType('list_objects', { type: 'Task' })).toBe('other')
+		expect(listCallObjectType('list_objects', { type: ['task'] })).toBe('other')
+		expect(listCallObjectType('list_objects', { type: 7 })).toBe('other')
+	})
+
+	it('ignores the type argument on the fixed-type tools', () => {
+		expect(listCallObjectType('list_triggers', { type: 'secret text' })).toBe('trigger')
+	})
+
+	it('is undefined for every other tool', () => {
+		expect(listCallObjectType('get_objects', { type: 'task' })).toBeUndefined()
+		expect(listCallObjectType('create_objects', {})).toBeUndefined()
+	})
+})
+
+describe('recordMcpToolCallSchema — object_type', () => {
+	it('accepts a value from the fixed set', () => {
+		expect(recordMcpToolCallSchema.parse(baseEvent({ object_type: 'bet' })).object_type).toBe('bet')
+		expect(recordMcpToolCallSchema.parse(baseEvent({ object_type: 'other' })).object_type).toBe(
+			'other',
+		)
+	})
+
+	it('is absent from an older build without failing the row', () => {
+		expect(recordMcpToolCallSchema.parse(baseEvent()).object_type).toBeUndefined()
+	})
+
+	it('degrades free text to undefined instead of rejecting the row', () => {
+		const parsed = recordMcpToolCallSchema.parse(
+			baseEvent({ object_type: 'Acquire the Nakatomi account' }),
+		)
+		expect(parsed.object_type).toBeUndefined()
+		expect(parsed.tool_name).toBe('list_objects')
+	})
+})
 
 describe('recordMcpToolCallSchema — arg_keys', () => {
 	it('accepts identifier-like keys', () => {
