@@ -97,13 +97,41 @@ describe('POST /api/transcriptions', () => {
 		expect(res.status).toBe(500)
 	})
 
-	it('502s when the provider fails', async () => {
+	it('502s when the provider fails with another status', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async () => new Response('boom', { status: 500 })),
 		)
 		const res = await post({ audio: 'QUJD' })
 		expect(res.status).toBe(502)
+		expect((await res.json()).error.message).toBe('Transcription failed (speech provider error)')
+	})
+
+	it.each([401, 402])(
+		'503s with an account or key message when the provider says %i',
+		async (status) => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => new Response('no credit', { status })),
+			)
+			const res = await post({ audio: 'QUJD' })
+			expect(res.status).toBe(503)
+			expect((await res.json()).error.message).toBe(
+				'Transcription is not available on this server (speech provider account or key problem)',
+			)
+		},
+	)
+
+	it('504s when the request to the provider times out or throws', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				throw new DOMException('The operation timed out', 'TimeoutError')
+			}),
+		)
+		const res = await post({ audio: 'QUJD' })
+		expect(res.status).toBe(504)
+		expect((await res.json()).error.message).toBe('Transcription timed out, try again')
 	})
 
 	it('429s when the provider rate limits', async () => {

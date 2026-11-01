@@ -100,10 +100,20 @@ type RequestOptions = {
 	credentials?: RequestCredentials
 	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
 	signal?: AbortSignal
+	/** Keep the message of a structured 502/503/504 from our own API instead of the generic service text. */
+	keepServerErrorMessage?: boolean
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId, credentials, signal } = opts
+	const {
+		method = 'GET',
+		body,
+		headers = {},
+		workspaceId,
+		credentials,
+		signal,
+		keepServerErrorMessage,
+	} = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -190,8 +200,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 		// A gateway answering for a down backend (502/503/504) usually carries an
 		// HTML or empty body and, over HTTP/2, no statusText — which surfaced as a
-		// blank toast. Those statuses always get the friendly message.
-		if (SERVICE_UNAVAILABLE_STATUSES.has(res.status) || !message?.trim()) {
+		// blank toast. Those statuses always get the friendly message, unless the
+		// caller asked to keep a message our own API wrote (it sends a code).
+		const ownMessage = keepServerErrorMessage && code !== undefined
+		if ((SERVICE_UNAVAILABLE_STATUSES.has(res.status) && !ownMessage) || !message?.trim()) {
 			message = SERVICE_UNAVAILABLE_MESSAGE
 		}
 
@@ -1327,7 +1339,13 @@ export const api = {
 		// Chat dictation: base64 WAV in, text out. Billed to the operator account,
 		// so the workspace header is required (a read-only viewer is refused).
 		create: (workspaceId: string, body: { audio: string; language?: string }) =>
-			request<{ text: string }>('/transcriptions', { method: 'POST', body, workspaceId }),
+			request<{ text: string }>('/transcriptions', {
+				method: 'POST',
+				body,
+				workspaceId,
+				// The route says which upstream failed (busy, account or key, timeout).
+				keepServerErrorMessage: true,
+			}),
 	},
 
 	voiceSessions: {

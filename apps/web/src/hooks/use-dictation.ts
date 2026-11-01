@@ -15,8 +15,22 @@ const MAX_RECORDING_MS = 3 * 60 * 1000
 const REFINE_WINDOW_MS = 15_000
 /** Minimum gap between clean-up requests, so a fast talker is not a request per phrase. */
 const REFINE_MIN_GAP_MS = 2_000
+/** Wait before the one retry of a phrase the server could not transcribe. */
+const RETRY_DELAY_MS = 1_000
 /** How often the microphone level is sampled to find pauses between phrases. */
 const LEVEL_POLL_MS = 50
+
+/**
+ * A failure worth one more try: busy (429), the speech provider failing (502),
+ * a timeout (504), or a gateway 503 with no body from our API. A 503 that
+ * carries an error code is the route saying the provider refused our key or
+ * account, which a retry cannot fix.
+ */
+function isRetryable(err: unknown): boolean {
+	const { status, code } = err as { status?: number; code?: string }
+	if (status === 429 || status === 502 || status === 504) return true
+	return status === 503 && code === undefined
+}
 
 export interface Dictation {
 	/** False when the browser cannot record audio — render no control at all. */
@@ -140,6 +154,18 @@ export function useDictation(
 		for (const track of session.stream.getTracks()) track.stop()
 	}, [])
 
+	// One request per streamed phrase, retried once after a short wait on a failure that
+	// may pass; the user sees the second failure, not the first.
+	const transcribe = useCallback(async (audio: string) => {
+		try {
+			return await api.transcriptions.create(workspaceIdRef.current, { audio })
+		} catch (err) {
+			if (!isRetryable(err)) throw err
+			await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
+			return api.transcriptions.create(workspaceIdRef.current, { audio })
+		}
+	}, [])
+
 	// Re-transcribes the most recent speech as one piece and swaps it in for the
 	// phrases streamed so far. Best effort: the streamed text stays if anything
 	// goes wrong.
@@ -216,9 +242,7 @@ export function useDictation(
 			const wavPromise = blobToWav16k(blob)
 			const request = (async () => {
 				const wav = await wavPromise
-				const { text } = await api.transcriptions.create(workspaceIdRef.current, {
-					audio: await blobToBase64(wav),
-				})
+				const { text } = await transcribe(await blobToBase64(wav))
 				return text.trim()
 			})()
 			session.chain = session.chain
@@ -242,7 +266,7 @@ export function useDictation(
 					maybeComplete(session)
 				})
 		},
-		[maybeComplete, refine],
+		[maybeComplete, refine, transcribe],
 	)
 
 	const stopTake = useCallback((session: Session) => {
