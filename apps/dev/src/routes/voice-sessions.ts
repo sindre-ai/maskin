@@ -10,7 +10,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { createVoiceToolkit } from '@maskin/mcp'
+import { createVoiceToolkit, selectVoiceRealtimeTools } from '@maskin/mcp'
 import type { VoiceToolkit } from '@maskin/mcp'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { and, eq, isNull } from 'drizzle-orm'
@@ -32,6 +32,13 @@ import {
 	formatVoiceChatHistory,
 	loadVoiceChatHistory,
 } from '../services/voice-chat-history'
+import {
+	VOICE_ASK_WORKSPACE_TOOL,
+	openAiDelegateModel,
+	resolveVoiceDelegateModel,
+	resolveVoiceToolMode,
+	voiceAskWorkspaceTool,
+} from '../services/voice-delegate'
 import { buildVoiceInstructions } from '../services/voice-instructions'
 import {
 	VOICE_OFFER_CLAIM,
@@ -43,6 +50,7 @@ import {
 	resolveRealtimeVoice,
 } from '../services/voice-realtime-call'
 import { postClosingReceipt } from '../services/voice-receipt'
+import { VOICE_WAIT_FOR_USER_TOOL, voiceWaitForUserTool } from '../services/voice-session-channel'
 import {
 	endVoiceSession,
 	setCloseVendorSessionFn,
@@ -366,6 +374,10 @@ const offerBody = z
 		sdp: z.string().min(1).max(100_000).openapi({
 			description: 'The browser’s WebRTC SDP offer.',
 		}),
+		noise_reduction: z.enum(['near_field', 'far_field']).optional().openapi({
+			description:
+				'Microphone type: near_field for headsets and phones, far_field for a laptop mic. Absent means far_field.',
+		}),
 	})
 	.openapi('VoiceSessionOfferBody')
 
@@ -422,7 +434,7 @@ app.openapi(postOfferRoute, async (c) => {
 	const db = c.get('db')
 
 	const { id } = c.req.valid('param')
-	const { sdp } = c.req.valid('json')
+	const { sdp, noise_reduction: noiseReduction } = c.req.valid('json')
 
 	// A session that is not the caller's is a 404, so ids are not probeable.
 	const [session] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, id)).limit(1)
@@ -562,17 +574,41 @@ app.openapi(postOfferRoute, async (c) => {
 	}
 	// show_in_chat is the call's own tool (see services/voice-show-in-chat.ts): not in the MCP
 	// toolkit, and not a write, so it takes no confirmation_id and is never held.
-	const readOnlyTools = new Set([...toolkit.readOnlyTools, VOICE_SHOW_IN_CHAT_TOOL])
+	// wait_for_user is also the call's own: it does nothing and is never held.
+	// ask_workspace is not held itself: every tool it runs goes through the write gate one by one.
+	const readOnlyTools = new Set([
+		...toolkit.readOnlyTools,
+		VOICE_SHOW_IN_CHAT_TOOL,
+		VOICE_WAIT_FOR_USER_TOOL,
+		VOICE_ASK_WORKSPACE_TOOL,
+	])
+	// The call's own tools, kept apart from the MCP toolkit's.
+	// Core mode: the model gets a handful of tools plus ask_workspace, which runs the full
+	// toolkit with a text model. Full mode (MASKIN_VOICE_TOOL_MODE=full) pins every tool.
+	const toolMode = resolveVoiceToolMode()
+	const callTools =
+		toolMode === 'core'
+			? [voiceShowInChatTool, voiceWaitForUserTool, voiceAskWorkspaceTool]
+			: [voiceShowInChatTool, voiceWaitForUserTool]
+	const realtimeTools = selectVoiceRealtimeTools(toolkit.tools, toolMode)
+	const delegate =
+		toolMode === 'core'
+			? {
+					tools: toolkit.tools,
+					model: openAiDelegateModel({ apiKey, model: resolveVoiceDelegateModel() }),
+				}
+			: undefined
 	let outcome: Awaited<ReturnType<typeof createRealtimeCall>>
 	try {
 		outcome = await createRealtimeCall({
-			tools: withConfirmationArg([...toolkit.tools, voiceShowInChatTool], readOnlyTools),
+			tools: withConfirmationArg([...realtimeTools, ...callTools], readOnlyTools),
 			apiKey,
 			callsUrl: realtimeCallsUrl(),
 			offerSdp: sdp,
 			instructions,
 			voice: resolveRealtimeVoice(),
 			transcriptionNames,
+			noiseReduction,
 			model: VOICE_REALTIME_MODEL,
 		})
 	} catch (err) {
@@ -675,6 +711,7 @@ app.openapi(postOfferRoute, async (c) => {
 			agentName: agent.name,
 			invokeTool: toolkit.invokeTool,
 			readOnlyTools,
+			delegate,
 			dispose: () => toolkit.close(),
 			callId: outcome.callId,
 			apiKey,

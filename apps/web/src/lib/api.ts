@@ -1343,10 +1343,19 @@ export const api = {
 		// Hands the browser's WebRTC offer to the server, which connects it to the
 		// vendor and attaches its own tool connection. tools_available is false when
 		// that attach failed; the call still runs, and the agent says tools are down.
-		offer: (workspaceId: string, voiceSessionId: string, sdp: string) =>
+		offer: (
+			workspaceId: string,
+			voiceSessionId: string,
+			sdp: string,
+			noiseReduction?: 'near_field' | 'far_field',
+		) =>
 			request<{ sdp: string; tools_available: boolean; persist_transcripts: boolean }>(
 				`/voice-sessions/${voiceSessionId}/offer`,
-				{ method: 'POST', body: { sdp }, workspaceId },
+				{
+					method: 'POST',
+					body: { sdp, ...(noiseReduction ? { noise_reduction: noiseReduction } : {}) },
+					workspaceId,
+				},
 			),
 		// Ends the call server-side: row status, ended_at, cost, voice_session_ended.
 		// Idempotent, so a double hangup (End button then dialog close) is harmless.
