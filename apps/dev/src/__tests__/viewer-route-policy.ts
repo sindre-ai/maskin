@@ -144,6 +144,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/subscriptions', 'Group E, personal state'],
 	['POST', '/api/subscriptions/read', 'Group E, personal state'],
 	['POST', '/api/subscriptions/unread', 'Group E, personal state'],
+	[
+		'POST',
+		'/api/for-you/dismissals',
+		'Group E, personal state: replaces mark-read for Dismiss, so a viewer can still clear their own card',
+	],
+	['POST', '/api/for-you/dismissals/undo', 'Group E, personal state'],
 	['POST', '/api/objects/:id/star', 'Group E, personal state'],
 	['DELETE', '/api/objects/:id/star', 'Group E, personal state'],
 	['PUT', '/api/user-display-settings/:object_type', 'Group E, personal state'],
