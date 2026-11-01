@@ -12,11 +12,7 @@ import { logger } from '../logger'
 const DEFAULT_DAILY_CAP = 2_500
 
 // Events the product questions depend on. Never sampled, never capped.
-const TIER1_EXACT = new Set([
-	'agent_session_completed',
-	'agent_session_started',
-	'chat_session_started',
-])
+const TIER1_EXACT = new Set(['agent_session_started', 'chat_session_started'])
 const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_']
 
 // Fraction of events sent. 0 drops the event. Sampled events carry
@@ -27,6 +23,9 @@ const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_']
 // Sampled: the rest are diagnostics where the shape of the trend matters more
 // than every row. keychain_credential_accessed also has the credential access
 // log table; session_waiting_stuck also has a warn log per session.
+// agent_session_completed is sampled, not tier 1: the sessions table holds every
+// completion, and a count is read as `count / sample_rate`. The other 0.1 rows
+// are high-volume diagnostics (1 Nov 2026: each sent 300 to 1,500 a day).
 const SAMPLE_RATES: Record<string, number> = {
 	provenance_edge_written: 0,
 	mcp_tool_call_response_size: 0.1,
@@ -35,6 +34,14 @@ const SAMPLE_RATES: Record<string, number> = {
 	keychain_credential_accessed: 0.2,
 	session_waiting_stuck: 0.1,
 	runtime_concurrent_sessions_gauge: 0.1,
+	agent_session_completed: 0.25,
+	mcp_alias_use: 0.1,
+	comment_responder_resolved: 0.1,
+	agent_comment_posted: 0.1,
+	relationship_created: 0.1,
+	mention_guard_decision: 0.1,
+	helper_return_skipped: 0.1,
+	orphan_thread_detected: 0.1,
 }
 
 interface Counts {

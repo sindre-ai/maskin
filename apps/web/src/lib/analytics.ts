@@ -117,6 +117,35 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 	trackEvent('agent_session_started', fillBase(p))
 }
 
+// The browser does not send agent_session_completed or trigger_fired: the
+// backend already reports completions (with trigger provenance), and the
+// browser copies were about half of all PostHog events, outside the backend
+// daily caps. This one event a day per browser says someone opened the app,
+// which is all the browser has to add. It is the daily and weekly active users
+// event.
+const APP_ACTIVE_DAY_KEY = 'maskin-app-active-day'
+
+// Kept in memory too, so a browser with no usable storage sends once per page
+// load instead of on every mount.
+let appActiveDaySent = ''
+
+// Returns true when it sent the event, false when today's was already sent from
+// this browser. `utc_day` is the same day format as the backend's
+// loop_active_day. Call it after identify so the event lands on the person.
+export function trackAppActive(now: Date = new Date()): boolean {
+	const utcDay = now.toISOString().slice(0, 10)
+	if (appActiveDaySent === utcDay) return false
+	appActiveDaySent = utcDay
+	try {
+		if (localStorage.getItem(APP_ACTIVE_DAY_KEY) === utcDay) return false
+		localStorage.setItem(APP_ACTIVE_DAY_KEY, utcDay)
+	} catch {
+		// No storage: the in-memory record above still stops repeats this page load.
+	}
+	trackEvent('app_active', { utc_day: utcDay })
+	return true
+}
+
 // Operator opened a chat with Maskin (Sindre, or a one-shot agent via the `/`
 // picker). Powers the founder-substitution measurement on the
 // `Chat — Maskin becomes the operator's default AI client` bet: counted against
@@ -199,27 +228,6 @@ export function deriveEntryAgentRole(name: string | null | undefined): string | 
 		.replace(/^-+|-+$/g, '')
 }
 
-// G2 trigger provenance. `trigger_id` / `trigger_type` are present only for
-// trigger-dispatched sessions (`cron` / `event` / `reminder`); they are null for
-// comment-fallback, interactive, and API-created sessions, whose attribution
-// rides on `source` instead. Emitted on the same event so the skill-load rate
-// can be segmented cron-vs-event.
-export function trackAgentSessionCompleted(
-	p: BaseProps & {
-		entity_type: 'session'
-		outcome: 'completed' | 'failed' | 'timeout'
-		trigger_id?: string | null
-		trigger_type?: string | null
-	},
-): void {
-	trackEvent('agent_session_completed', {
-		...fillBase(p),
-		outcome: p.outcome,
-		trigger_id: p.trigger_id ?? null,
-		trigger_type: p.trigger_type ?? null,
-	})
-}
-
 export type CommentLengthBucket = '1-50' | '51-200' | '201-1000' | '1000+'
 
 export interface CommentShape {
@@ -247,10 +255,6 @@ export function trackCommentPosted(
 		is_multiline: p.is_multiline,
 		length_bucket: p.length_bucket,
 	})
-}
-
-export function trackTriggerFired(p: BaseProps & { entity_type: 'trigger' }): void {
-	trackEvent('trigger_fired', { ...fillBase(p), source: 'trigger' })
 }
 
 // `source` on `relationship_created` is the UI attribution point Analytics
