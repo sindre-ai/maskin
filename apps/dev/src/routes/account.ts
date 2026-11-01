@@ -12,6 +12,7 @@ import {
 	apiKeys,
 	deviceAuthCodes,
 	deviceTokens,
+	forYouDismissals,
 	liveActivityCards,
 	liveActivityTokens,
 	notificationPreferences,
@@ -212,6 +213,7 @@ app.openapi(deleteRoute, async (c) => {
 		await tx.delete(workspaceMembers).where(eq(workspaceMembers.actorId, actorId))
 		await tx.delete(subscriptions).where(eq(subscriptions.actorId, actorId))
 		await tx.delete(readState).where(eq(readState.actorId, actorId))
+		await tx.delete(forYouDismissals).where(eq(forYouDismissals.actorId, actorId))
 		await tx.delete(starState).where(eq(starState.actorId, actorId))
 		await tx.delete(notifications).where(eq(notifications.targetActorId, actorId))
 		// Personal data (timezone, quiet hours, briefing state); the actor row stays, so its cascade never fires.
