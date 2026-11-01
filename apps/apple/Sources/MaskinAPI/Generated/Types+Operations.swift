@@ -7661,6 +7661,8 @@ public enum Operations {
     ///
     /// POST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.
     ///
+    /// A read-only viewer is served the day's cached brief, or the deterministic prose when nothing is cached yet. A viewer never triggers a model call or writes the cache.
+    ///
     /// - Remark: HTTP `POST /api/briefing/spoken`.
     /// - Remark: Generated from `#/paths//api/briefing/spoken/post`.
     public enum post_sol_api_sol_briefing_sol_spoken {
