@@ -942,14 +942,14 @@ describe('GET /api/for-you', () => {
 		async function withdraw(
 			commentId: number,
 			as = agentId,
-			reason: string | undefined = 'The deadline passed',
+			reason: string | null = 'The deadline passed',
 			inWorkspace = workspaceId,
 		) {
 			return appAs(as, 'agent').request(
 				jsonRequest(
 					'POST',
 					'/api/for-you/withdrawals',
-					{ comment_id: commentId, ...(reason === undefined ? {} : { reason }) },
+					{ comment_id: commentId, ...(reason === null ? {} : { reason }) },
 					{ 'X-Workspace-Id': inWorkspace },
 				),
 			)
@@ -1026,7 +1026,7 @@ describe('GET /api/for-you', () => {
 
 		it('rejects a missing, empty or over-long reason with 400', async () => {
 			const { cardId } = await liveCard()
-			expect((await withdraw(cardId, agentId, undefined)).status).toBe(400)
+			expect((await withdraw(cardId, agentId, null)).status).toBe(400)
 			expect((await withdraw(cardId, agentId, '   ')).status).toBe(400)
 			expect((await withdraw(cardId, agentId, 'x'.repeat(201))).status).toBe(400)
 			expect(await list()).toHaveLength(1)
