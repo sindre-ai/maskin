@@ -80,6 +80,7 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	@ObservationIgnored private let now: @MainActor () -> Date
 	@ObservationIgnored private let reconnectWindow: Duration
 	@ObservationIgnored private let recoveryDelays: [Duration]
+	@ObservationIgnored private let chime: (any CallChimePlaying)?
 
 	@ObservationIgnored private var transport: (any RealtimeTransport)?
 	@ObservationIgnored private var voiceSessionID: String?
@@ -87,6 +88,8 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	@ObservationIgnored private var startTask: Task<Void, Never>?
 	@ObservationIgnored private var reconnectTask: Task<Void, Never>?
 	@ObservationIgnored private var restartedIce = false
+	/// The ready chime plays once per call (per transport), the first time it connects.
+	@ObservationIgnored private var chimed = false
 	/// A call that was lost and whose hangup may not have reached the server, which would keep the
 	/// person's one live-call slot taken and make the next call a 409.
 	@ObservationIgnored private var lostSession: (id: String, input: Int, output: Int)?
@@ -104,8 +107,10 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		makeTransport: @escaping @MainActor () -> (any RealtimeTransport)?,
 		now: @escaping @MainActor () -> Date = { Date() },
 		reconnectWindow: Duration = RealtimeVoiceCall.reconnectWindow,
-		recoveryDelays: [Duration] = RealtimeVoiceCall.recoveryDelays
+		recoveryDelays: [Duration] = RealtimeVoiceCall.recoveryDelays,
+		chime: (any CallChimePlaying)? = nil
 	) {
+		self.chime = chime
 		self.agentID = agentID
 		self.agentName = agentName
 		self.conversationID = conversationID
@@ -190,6 +195,7 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 			return true
 		}
 		self.transport = transport
+		chimed = false
 		do {
 			let id = try await calls.create(agentActorID: agentID, conversationID: conversationID)
 			voiceSessionID = id
@@ -291,6 +297,11 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		switch state {
 		case .connected:
 			isConnected = true
+			// The call is up and the person speaks first: say so softly, once.
+			if !chimed {
+				chimed = true
+				chime?.play()
+			}
 			reconnectTask?.cancel()
 			reconnectTask = nil
 			restartedIce = false

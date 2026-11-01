@@ -8,6 +8,12 @@ import Testing
 		#expect(CallOrbState.derive(phase: .speaking, isMuted: true, isConnected: false) == .connecting)
 	}
 
+	@Test func aFreshlyConnectedCallReadsListeningNotSpeaking() {
+		let fresh = RealtimeCallMachine()
+		#expect(CallOrbState.derive(phase: fresh.phase, isMuted: false, isConnected: true) == .listening)
+		#expect(CallOrbState.derive(phase: fresh.phase, isMuted: false, isConnected: true).accessibilityLabel == "Listening")
+	}
+
 	@Test func eachPhaseMapsToItsState() {
 		#expect(CallOrbState.derive(phase: .listening, isMuted: false, isConnected: true) == .listening)
 		#expect(CallOrbState.derive(phase: .thinking, isMuted: false, isConnected: true) == .thinking)

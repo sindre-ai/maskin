@@ -14,6 +14,16 @@ import Testing
 		RealtimeEvent(type: type, transcript: transcript)
 	}
 
+	@Test("the call is listening from the start and stays so when the edge opens, until someone speaks")
+	func startsListening() {
+		var machine = RealtimeCallMachine()
+		#expect(machine.phase == .listening)
+		_ = machine.handle(RealtimeEvent(type: "session.created"), at: at(0))
+		_ = machine.handle(RealtimeEvent(type: "session.updated"), at: at(0.1))
+		#expect(machine.phase == .listening)
+		#expect(machine.lastAgentWords == nil)
+	}
+
 	@Test("a turn goes listening, thinking, speaking, listening")
 	func turn() {
 		var m = RealtimeCallMachine()

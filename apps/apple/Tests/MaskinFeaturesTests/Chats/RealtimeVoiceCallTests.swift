@@ -81,16 +81,22 @@ private actor FakeCalls: VoiceCalling {
 }
 
 @MainActor
+private final class FakeChime: CallChimePlaying {
+	var plays = 0
+	func play() { plays += 1 }
+}
+
+@MainActor
 @Suite("RealtimeVoiceCall") struct RealtimeVoiceCallTests {
 	private func make(
 		calls: FakeCalls = FakeCalls(), transport: FakeTransport = FakeTransport(),
 		conversationID: String? = nil, reconnectWindow: Duration = .seconds(3600),
-		recoveryDelays: [Duration] = [.milliseconds(5)]
+		recoveryDelays: [Duration] = [.milliseconds(5)], chime: FakeChime? = nil
 	) -> (RealtimeVoiceCall, FakeCalls, FakeTransport) {
 		let call = RealtimeVoiceCall(
 			agentID: "agent-1", agentName: "Chief", conversationID: conversationID, calls: calls,
 			makeTransport: { transport },
-			reconnectWindow: reconnectWindow, recoveryDelays: recoveryDelays)
+			reconnectWindow: reconnectWindow, recoveryDelays: recoveryDelays, chime: chime)
 		return (call, calls, transport)
 	}
 
@@ -98,6 +104,67 @@ private actor FakeCalls: VoiceCalling {
 	private func settle() async {
 		for _ in 0..<20 { await Task.yield() }
 		try? await Task.sleep(for: .milliseconds(20))
+	}
+
+	@Test("the call opens listening, with the agent silent until the person speaks")
+	func opensListening() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.onConnection?(.connected)
+		transport.receive("session.created")
+		#expect(call.phase == .listening)
+		#expect(call.agentWords == nil)
+	}
+
+	@Test("the ready chime plays once, when the call connects")
+	func chimesOnReady() async {
+		let chime = FakeChime()
+		let (call, _, transport) = make(chime: chime)
+		call.begin(existing: [])
+		await settle()
+		#expect(chime.plays == 0)
+		transport.onConnection?(.connected)
+		#expect(chime.plays == 1)
+	}
+
+	@Test("a second connected report for the same call does not chime again")
+	func noSecondChime() async {
+		let chime = FakeChime()
+		let (call, _, transport) = make(chime: chime)
+		call.begin(existing: [])
+		await settle()
+		transport.onConnection?(.connected)
+		transport.onConnection?(.disconnected)
+		transport.onConnection?(.connected)
+		transport.onConnection?(.connected)
+		#expect(chime.plays == 1)
+	}
+
+	@Test("a call that fails before it is ready does not chime")
+	func noChimeOnFailure() async {
+		let chime = FakeChime()
+		let calls = FakeCalls()
+		await calls.failOffer(.unavailable)
+		let (call, _, transport) = make(calls: calls, chime: chime)
+		call.begin(existing: [])
+		await settle()
+		transport.onConnection?(.connected)
+		#expect(chime.plays == 0)
+	}
+
+	@Test("a recovery that starts a new call chimes once more when it is up")
+	func chimesAfterRecovery() async {
+		let chime = FakeChime()
+		let (call, calls, transport) = make(reconnectWindow: .milliseconds(30), chime: chime)
+		call.begin(existing: [])
+		await settle()
+		transport.onConnection?(.connected)
+		transport.onConnection?(.disconnected)
+		try? await Task.sleep(for: .milliseconds(150))
+		#expect(await calls.created.count == 2)
+		transport.onConnection?(.connected)
+		#expect(chime.plays == 2)
 	}
 
 	@Test("it reserves the call, posts the offer and applies the answer")
