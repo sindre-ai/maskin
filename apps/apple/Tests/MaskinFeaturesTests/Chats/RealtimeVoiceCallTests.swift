@@ -161,7 +161,13 @@ private final class FakeChime: CallChimePlaying {
 		await settle()
 		transport.onConnection?(.connected)
 		transport.onConnection?(.disconnected)
-		try? await Task.sleep(for: .milliseconds(150))
+		// Wait for the second call instead of guessing how long a loaded runner needs.
+		var polls = 0
+		while polls < 200 {
+			if await calls.created.count == 2 { break }
+			try? await Task.sleep(for: .milliseconds(10))
+			polls += 1
+		}
 		#expect(await calls.created.count == 2)
 		transport.onConnection?(.connected)
 		#expect(chime.plays == 2)
