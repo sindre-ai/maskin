@@ -6,6 +6,7 @@ import type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileProposalDto,
 	FromSuggestedStep,
 	ListLoopsResponse,
 	LoopSummary,
@@ -27,6 +28,7 @@ export type {
 	CreateFileCommentInput,
 	DisplaySettingsBody,
 	FileCommentDto,
+	FileProposalDto,
 	ListLoopsResponse,
 	LoopSummary,
 	SendRoundInput,
@@ -1384,6 +1386,30 @@ export const api = {
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
+	},
+
+	fileProposals: {
+		listOpen: (workspaceId: string, fileId: string) =>
+			request<{ proposals: FileProposalDto[] }>(`/files/${fileId}/proposals?status=open`, {
+				workspaceId,
+			}),
+		accept: (
+			workspaceId: string,
+			fileId: string,
+			proposalId: string,
+			changeId: string,
+			appliedText?: string,
+		) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/accept`, {
+				method: 'POST',
+				body: appliedText === undefined ? {} : { applied_text: appliedText },
+				workspaceId,
+			}),
+		reject: (workspaceId: string, fileId: string, proposalId: string, changeId: string) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/reject`, {
+				method: 'POST',
+				workspaceId,
+			}),
 	},
 
 	fileComments: {

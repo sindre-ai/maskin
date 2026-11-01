@@ -16,3 +16,13 @@ patterns do not do the job. Reuse a pattern before adding one (see `.claude/rule
   that stands where a vaulted message was, so the transcript visibly says it was rewritten.
   `MessageDivider` is a 10.5px label with no room for the redaction marker, and a normal bubble
   would present the rewrite as something the user typed.
+
+## Agent change review
+
+- **ChangeReview** (`apps/web/src/components/files/change-review.tsx`): the proposal banner above a
+  markdown file, the review view that stands in for the editor, and one card per proposed change
+  with Edit, Reject and Accept and a word-level diff (`del` / `ins`, never colour alone). Nothing
+  in the app reviews a proposed replacement of text: `ReviewPanel` reviews comments, not
+  replacements, and a plain diff viewer has no accept, edit or reject per change. The blocks
+  around a change and the "N unchanged block(s)" rows are built from the current file text, not
+  from stored context. Behind the **agent-change-review** flag.

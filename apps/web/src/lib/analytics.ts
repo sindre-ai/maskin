@@ -286,6 +286,24 @@ export function trackMiniAppFileViewed(
 	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
 }
 
+// Agent change review: fires when the human opens the review view from the
+// proposal banner. The other two review events (change_proposal_submitted,
+// change_reviewed) are sent from the server. Only mounted behind the
+// agent-change-review flag, so with the flag off it cannot fire.
+export function trackChangeReviewOpened(p: {
+	workspace_id: string
+	actor_id: string | null
+	file_name: string
+	proposal_id: string
+}): void {
+	trackEvent('change_review_opened', {
+		workspace_id: p.workspace_id,
+		actor_id: p.actor_id,
+		file_name: p.file_name,
+		proposal_id: p.proposal_id,
+	})
+}
+
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
 // and only the `maxTouchPoints > 1` signal distinguishes it from a real Mac, so
 // the touch-point check is load-bearing — not paranoia. Returning 'web' for
