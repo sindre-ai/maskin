@@ -17,11 +17,11 @@ export const API_KEY_CREDIT_MARK_WINDOW_MS = 30 * 60 * 1000
  * Deliberately not in the shared settings schema, so no client or OpenAPI type
  * grows a field nobody is meant to set. Settings PATCH merges top-level keys
  * onto the stored row, so it passes through untouched.
+ *
+ * The SQL below spells this key out as a literal (no `sql.raw` at import time,
+ * which tests that stub drizzle's `sql` cannot run). Keep the two in step.
  */
 const MARK_KEY = 'anthropic_key_out_of_credit'
-// The key is a constant, so it is written into the statement as a literal.
-const MARK_LITERAL = sql.raw(`'${MARK_KEY}'`)
-const MARK_PATH_LITERAL = sql.raw(`'{${MARK_KEY}}'`)
 
 /**
  * `at` is when the credit error was seen (ms). `key` is a hash of the stored
@@ -85,7 +85,7 @@ export async function markApiKeyOutOfCredit(params: {
 		const rows = await db
 			.update(workspaces)
 			.set({
-				settings: sql`jsonb_set(${workspaces.settings}, ${MARK_PATH_LITERAL}, jsonb_build_object('at', ${now}::bigint, 'key', encode(sha256(convert_to(${workspaces.settings}->'llm_keys'->>'anthropic', 'UTF8')), 'hex')), true)`,
+				settings: sql`jsonb_set(${workspaces.settings}, '{anthropic_key_out_of_credit}', jsonb_build_object('at', ${now}::bigint, 'key', encode(sha256(convert_to(${workspaces.settings}->'llm_keys'->>'anthropic', 'UTF8')), 'hex')), true)`,
 			})
 			.where(
 				and(
@@ -124,11 +124,11 @@ export async function clearStaleApiKeyCreditMark(params: {
 	try {
 		await db
 			.update(workspaces)
-			.set({ settings: sql`${workspaces.settings} - ${MARK_LITERAL}` })
+			.set({ settings: sql`${workspaces.settings} - 'anthropic_key_out_of_credit'` })
 			.where(
 				and(
 					eq(workspaces.id, workspaceId),
-					sql`(${workspaces.settings}->${MARK_LITERAL}->>'at') = ${String(mark.at)}`,
+					sql`(${workspaces.settings}->'anthropic_key_out_of_credit'->>'at') = ${String(mark.at)}`,
 				),
 			)
 	} catch (err) {
