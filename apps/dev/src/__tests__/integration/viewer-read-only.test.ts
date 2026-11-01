@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
-import { files, notifications, voiceSessions, workspaceMembers } from '@maskin/db/schema'
+import {
+	fileUploads,
+	files,
+	notifications,
+	voiceSessions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, mapStatusToCode } from '../../lib/errors'
 import { getWorkspaceRole, isWorkspaceMember, isWorkspaceWriter } from '../../lib/workspace-auth'
@@ -23,6 +29,7 @@ const { default: objectsRoutes } = await import('../../routes/objects')
 const { default: relationshipsRoutes } = await import('../../routes/relationships')
 const { default: graphRoutes } = await import('../../routes/graph')
 const { default: filesRoutes } = await import('../../routes/files')
+const { default: actorAvatarRoutes } = await import('../../routes/actor-avatar')
 const { default: fileCommentsRoutes } = await import('../../routes/file-comments')
 const { default: eventsRoutes } = await import('../../routes/events')
 const { default: importsRoutes } = await import('../../routes/imports')
@@ -54,6 +61,7 @@ function createApp(storage: unknown = {}) {
 	app.route('/api/relationships', relationshipsRoutes as never)
 	app.route('/api/graph', graphRoutes as never)
 	app.route('/api/files', filesRoutes as never)
+	app.route('/api/actors', actorAvatarRoutes as never)
 	app.route('/api/files', fileCommentsRoutes as never)
 	app.route('/api/events', eventsRoutes as never)
 	app.route('/api/imports', importsRoutes as never)
@@ -169,6 +177,69 @@ describe('Viewer role is read-only', () => {
 
 		const list = await app.request(jsonGet('/api/files', auth(viewerKey)))
 		expect(list.status).toBe(200)
+	})
+
+	it('returns 403 to a viewer, demoted mid-upload, on completing or abandoning their own upload', async () => {
+		const app = createApp()
+		const fileId = randomUUID()
+		const [upload] = await db
+			.insert(fileUploads)
+			.values({
+				workspaceId,
+				fileId,
+				name: 'clip.mp4',
+				mimeType: 'video/mp4',
+				sizeBytes: 100 * 1024 * 1024,
+				storageKey: `files/${workspaceId}/${fileId}`,
+				s3UploadId: 'mpu-1',
+				partSize: 8 * 1024 * 1024,
+				partCount: 13,
+				createdBy: viewerId,
+				expiresAt: new Date(Date.now() + 60_000),
+			})
+			.returning()
+		const bearerOnly = { Authorization: `Bearer ${viewerKey}` }
+
+		const complete = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/files/uploads/${upload?.id}/complete`,
+				{ parts: [{ part_number: 1, etag: '"e1"' }] },
+				bearerOnly,
+			),
+		)
+		expect(complete.status).toBe(403)
+		const abort = await app.request(jsonDelete(`/api/files/uploads/${upload?.id}`, bearerOnly))
+		expect(abort.status).toBe(403)
+
+		const [row] = await db
+			.select()
+			.from(fileUploads)
+			.where(eq(fileUploads.id, upload?.id as string))
+		expect(row?.status).toBe('pending')
+	})
+
+	it('lets a viewer upload their own avatar but not another actor’s', async () => {
+		const put = vi.fn(async () => {})
+		const app = createApp({ put, delete: vi.fn(async () => {}) })
+		const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])
+		const upload = (actorId: string) => {
+			const form = new FormData()
+			form.append('file', new File([PNG], 'avatar.png', { type: 'image/png' }))
+			return new Request(`http://localhost/api/actors/${actorId}/avatar`, {
+				method: 'POST',
+				headers: auth(viewerKey),
+				body: form,
+			})
+		}
+
+		const own = await app.request(upload(viewerId))
+		expect(own.status).toBe(200)
+		expect(put).toHaveBeenCalledOnce()
+
+		const other = await app.request(upload(getTestActorId()))
+		expect(other.status).toBe(403)
+		expect(put).toHaveBeenCalledOnce()
 	})
 
 	it('returns 403 to a viewer on file comment writes and 200 on reads', async () => {
