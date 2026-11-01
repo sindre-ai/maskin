@@ -145,13 +145,13 @@ describe('capturePosthogEvent workspace privacy', () => {
 
 	it('sends nothing when the workspace has share-usage off', async () => {
 		configurePosthogPrivacy(fakeDb({ privacy: { share_usage: false } }).db)
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('sends as before when the workspace has no privacy block (defaults: share on, anonymise off)', async () => {
 		configurePosthogPrivacy(fakeDb({}).db)
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
 		expect(body.distinct_id).toBe('actor-1')
 		expect(body.properties).toEqual({
@@ -166,7 +166,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 		configurePosthogPrivacy(
 			fakeDb({ privacy: { share_usage: true, anonymize_workspace: true } }).db,
 		)
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
 		// SHA-256 of 'actor-1', the same treatment as the web's hashDistinctId.
 		expect(body.distinct_id).toBe(createHash('sha256').update('actor-1').digest('hex'))
@@ -184,20 +184,20 @@ describe('capturePosthogEvent workspace privacy', () => {
 	it('sends nothing when the setting cannot be read (fails closed)', async () => {
 		configurePosthogPrivacy(fakeDb(new Error('db down')).db)
 		await expect(
-			capturePosthogEvent('agent_session_completed', 'actor-1', props),
+			capturePosthogEvent('agent_session_started', 'actor-1', props),
 		).resolves.toBeUndefined()
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('sends nothing when the workspace row is missing', async () => {
 		configurePosthogPrivacy(fakeDb(null).db)
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('sends nothing for a workspace event before the lookup is wired', async () => {
 		__resetPosthogPrivacyForTesting()
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
@@ -249,7 +249,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 			vi.stubEnv('POSTHOG_EVENT_DAILY_CAP', '2')
 			vi.spyOn(logger, 'warn').mockImplementation(() => {})
 			for (let i = 0; i < 4; i++) await capturePosthogEvent('file_saved', 'actor-1', {})
-			await capturePosthogEvent('agent_session_completed', 'actor-1', {})
+			await capturePosthogEvent('agent_session_started', 'actor-1', {})
 			expect(fetchMock).toHaveBeenCalledTimes(3)
 		})
 	})

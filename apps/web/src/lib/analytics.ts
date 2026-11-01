@@ -120,29 +120,29 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 // The browser does not send agent_session_completed or trigger_fired: the
 // backend already reports completions (with trigger provenance), and the
 // browser copies were about half of all PostHog events, outside the backend
-// daily caps. This one event a day per person and workspace tells us someone
-// opened the app, which is all the browser has to add.
-const ACTIVE_DAY_KEY_PREFIX = 'maskin-active-day:'
+// daily caps. This one event a day per browser says someone opened the app,
+// which is all the browser has to add. It is the daily and weekly active users
+// event.
+const APP_ACTIVE_DAY_KEY = 'maskin-app-active-day'
 
 // Kept in memory too, so a browser with no usable storage sends once per page
 // load instead of on every mount.
-const activeDaySent = new Map<string, string>()
+let appActiveDaySent = ''
 
-// Returns true when it sent the event, false when today's was already sent
-// from this browser. `utc_day` is the same day format as the backend's
-// loop_active_day.
-export function trackWorkspaceActiveDay(workspaceId: string, now: Date = new Date()): boolean {
+// Returns true when it sent the event, false when today's was already sent from
+// this browser. `utc_day` is the same day format as the backend's
+// loop_active_day. Call it after identify so the event lands on the person.
+export function trackAppActive(now: Date = new Date()): boolean {
 	const utcDay = now.toISOString().slice(0, 10)
-	if (activeDaySent.get(workspaceId) === utcDay) return false
-	activeDaySent.set(workspaceId, utcDay)
-	const key = `${ACTIVE_DAY_KEY_PREFIX}${workspaceId}`
+	if (appActiveDaySent === utcDay) return false
+	appActiveDaySent = utcDay
 	try {
-		if (localStorage.getItem(key) === utcDay) return false
-		localStorage.setItem(key, utcDay)
+		if (localStorage.getItem(APP_ACTIVE_DAY_KEY) === utcDay) return false
+		localStorage.setItem(APP_ACTIVE_DAY_KEY, utcDay)
 	} catch {
 		// No storage: the in-memory record above still stops repeats this page load.
 	}
-	trackEvent('workspace_active_day', { workspace_id: workspaceId, utc_day: utcDay })
+	trackEvent('app_active', { utc_day: utcDay })
 	return true
 }
 

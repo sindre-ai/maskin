@@ -28,6 +28,10 @@ export function initPosthog(): void {
 			api_host: import.meta.env.VITE_POSTHOG_HOST ?? DEFAULT_HOST,
 			person_profiles: 'identified_only',
 			capture_pageview: true,
+			// Leave and web-vitals events were a share of the browser volume with
+			// no question behind them.
+			capture_pageleave: false,
+			capture_performance: false,
 			autocapture: false,
 			before_send: withSharedProperties,
 		})

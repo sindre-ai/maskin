@@ -4,6 +4,7 @@ import {
 	deriveSidebarViewport,
 	trackAgentCreated,
 	trackAgentSessionStarted,
+	trackAppActive,
 	trackAskBannerDecideClicked,
 	trackBetArchived,
 	trackBetCreated,
@@ -38,7 +39,6 @@ import {
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerUpdated,
-	trackWorkspaceActiveDay,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
 import { __setInitializedForTesting } from '@/lib/posthog'
@@ -360,39 +360,34 @@ describe('v1 taxonomy helpers', () => {
 		expect(status.value).toBe('in_progress')
 	})
 
-	it('workspace_active_day sends once per UTC day and workspace, then again the next day', () => {
+	it('app_active sends once per UTC day for the browser, then again the next day', () => {
 		const capture = captureSpy()
-		const day1 = new Date('2026-11-02T08:00:00Z')
 
-		expect(trackWorkspaceActiveDay('ws-day', day1)).toBe(true)
-		expect(trackWorkspaceActiveDay('ws-day', new Date('2026-11-02T23:59:00Z'))).toBe(false)
-		expect(trackWorkspaceActiveDay('ws-other', day1)).toBe(true)
-		expect(trackWorkspaceActiveDay('ws-day', new Date('2026-11-03T00:01:00Z'))).toBe(true)
+		expect(trackAppActive(new Date('2026-11-02T08:00:00Z'))).toBe(true)
+		expect(trackAppActive(new Date('2026-11-02T23:59:00Z'))).toBe(false)
+		expect(trackAppActive(new Date('2026-11-03T00:01:00Z'))).toBe(true)
 
-		expect(capture).toHaveBeenCalledTimes(3)
-		expect(capture).toHaveBeenNthCalledWith(1, 'workspace_active_day', {
-			workspace_id: 'ws-day',
-			utc_day: '2026-11-02',
-		})
+		expect(capture).toHaveBeenCalledTimes(2)
+		expect(capture).toHaveBeenNthCalledWith(1, 'app_active', { utc_day: '2026-11-02' })
 	})
 
-	it('workspace_active_day skips a day already stored by an earlier page load', () => {
+	it('app_active skips a day already stored by an earlier page load', () => {
 		const capture = captureSpy()
-		localStorage.setItem('maskin-active-day:ws-stored', '2026-11-02')
+		localStorage.setItem('maskin-app-active-day', '2026-11-04')
 
-		expect(trackWorkspaceActiveDay('ws-stored', new Date('2026-11-02T10:00:00Z'))).toBe(false)
+		expect(trackAppActive(new Date('2026-11-04T10:00:00Z'))).toBe(false)
 		expect(capture).not.toHaveBeenCalled()
 	})
 
-	it('workspace_active_day still sends once when storage is unavailable', () => {
+	it('app_active still sends once when storage is unavailable', () => {
 		const capture = captureSpy()
 		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
 			throw new Error('SecurityError')
 		})
-		const now = new Date('2026-11-02T10:00:00Z')
+		const now = new Date('2026-11-05T10:00:00Z')
 
-		expect(trackWorkspaceActiveDay('ws-nostorage', now)).toBe(true)
-		expect(trackWorkspaceActiveDay('ws-nostorage', now)).toBe(false)
+		expect(trackAppActive(now)).toBe(true)
+		expect(trackAppActive(now)).toBe(false)
 		expect(capture).toHaveBeenCalledTimes(1)
 	})
 
