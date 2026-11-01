@@ -131,6 +131,57 @@ describe('useDictation', () => {
 		expect(result.current.transcribing).toBe(false)
 	})
 
+	describe('retry', () => {
+		const apiError = (status: number, code?: string) =>
+			Object.assign(new Error(`failed ${status}`), { status, code })
+
+		async function dictateOnePhrase(onPhrase = vi.fn()) {
+			installMic()
+			const { result } = renderHook(() => useDictation(onPhrase, WORKSPACE))
+			act(() => result.current.toggle())
+			await waitFor(() => expect(result.current.recording).toBe(true))
+			act(() => result.current.toggle())
+			return { onPhrase, result }
+		}
+
+		it.each([
+			['429', apiError(429, 'RATE_LIMITED')],
+			['502', apiError(502, 'INTERNAL_ERROR')],
+			['504', apiError(504, 'INTERNAL_ERROR')],
+			['a gateway 503 with no error code', apiError(503)],
+		])('retries a phrase once after a %s and delivers it', async (_name, failure) => {
+			mockCreate.mockRejectedValueOnce(failure).mockResolvedValueOnce({ text: 'second try' })
+			const { onPhrase } = await dictateOnePhrase()
+
+			await waitFor(() => expect(onPhrase).toHaveBeenCalledWith('second try'), { timeout: 4000 })
+			expect(mockCreate).toHaveBeenCalledTimes(2)
+			expect(mockToast.error).not.toHaveBeenCalled()
+		})
+
+		it('shows the second failure and does not retry a third time', async () => {
+			mockCreate.mockRejectedValue(apiError(502, 'INTERNAL_ERROR'))
+			const { result } = await dictateOnePhrase()
+
+			await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('failed 502'), {
+				timeout: 4000,
+			})
+			expect(mockCreate).toHaveBeenCalledTimes(2)
+			await waitFor(() => expect(result.current.transcribing).toBe(false))
+		})
+
+		it.each([
+			['a 503 from the route (provider key or account refused)', apiError(503, 'INTERNAL_ERROR')],
+			['a 401', apiError(401, 'UNAUTHORIZED')],
+			['a 402', apiError(402, 'PLAN_CAP_EXCEEDED')],
+		])('does not retry %s', async (_name, failure) => {
+			mockCreate.mockRejectedValue(failure)
+			await dictateOnePhrase()
+
+			await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(failure.message))
+			expect(mockCreate).toHaveBeenCalledTimes(1)
+		})
+	})
+
 	it('streams each phrase into the composer while still recording', async () => {
 		installMic()
 		// A fake level meter: the test drives the microphone level by hand.
