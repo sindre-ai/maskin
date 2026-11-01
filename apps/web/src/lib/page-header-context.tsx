@@ -50,6 +50,8 @@ interface PageHeaderState {
 	// (D4 read-only rule). Independent from `newMenuPrimaryOverride` so a
 	// read-only object with no pending ask still disables its default button.
 	newMenuDisabled?: boolean
+	// Render flag for the shared nav: skip the <h1> (the page draws its own).
+	hideTitle?: boolean
 }
 
 interface PageHeaderContextValue extends PageHeaderState {
@@ -64,6 +66,7 @@ interface PageHeaderContextValue extends PageHeaderState {
 	setScrollLocked: (scrollLocked: boolean) => void
 	setNewMenuPrimaryOverride: (override: NewMenuPrimaryOverride | undefined) => void
 	setNewMenuDisabled: (disabled: boolean | undefined) => void
+	setHideTitle: (hideTitle: boolean | undefined) => void
 }
 
 const PageHeaderContext = createContext<PageHeaderContextValue>({
@@ -78,6 +81,7 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 	setScrollLocked: () => {},
 	setNewMenuPrimaryOverride: () => {},
 	setNewMenuDisabled: () => {},
+	setHideTitle: () => {},
 })
 
 export function PageHeaderProvider({ children }: { children: ReactNode }) {
@@ -127,6 +131,10 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 		setState((prev) => ({ ...prev, newMenuDisabled }))
 	}, [])
 
+	const setHideTitle = useCallback((hideTitle: boolean | undefined) => {
+		setState((prev) => ({ ...prev, hideTitle }))
+	}, [])
+
 	return (
 		<PageHeaderContext.Provider
 			value={{
@@ -142,6 +150,7 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 				setScrollLocked,
 				setNewMenuPrimaryOverride,
 				setNewMenuDisabled,
+				setHideTitle,
 			}}
 		>
 			{children}

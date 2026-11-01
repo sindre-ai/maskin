@@ -38,9 +38,17 @@ test.describe('Marketplace loop filter', () => {
 			const loopsBox = await loopsSection.boundingBox()
 			if (!filterBox || !loopsBox) throw new Error('missing bounding boxes')
 
+			// Shared page edge: the title and the chip strip start on one left edge.
+			const title = page.getByRole('heading', { level: 1, name: 'Marketplace' })
+			const titleBox = await title.boundingBox()
+			if (!titleBox) throw new Error('missing title bounding box')
+			await expect(title).toHaveCSS('font-size', viewport.width >= 768 ? '34px' : '24px')
+
 			const typeChips = page.getByTestId('marketplace-filter-chips')
 			const chipBox = await typeChips.boundingBox()
 			if (!chipBox) throw new Error('missing chip bounding box')
+
+			expect(Math.abs(chipBox.x - titleBox.x)).toBeLessThanOrEqual(1)
 
 			if (viewport.width < 768) {
 				// Mobile: the filter chip row sits above the (now full-width, stacked) search input.

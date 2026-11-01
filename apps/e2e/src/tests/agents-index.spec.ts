@@ -160,13 +160,14 @@ test.describe('Agents index', () => {
 			// The activity and session columns share one breakpoint — both appear
 			// from 768px up, and neither crowds the phone layout.
 			const row = page.getByRole('link', { name: /Ada Atom/ })
-			const activity = row.getByText('Standing by', { exact: true })
+			const activity = row.getByText('Standing by', { exact: true }).locator('visible=true')
 			const sessions = row.getByText('0 sessions')
+			// Below 768px the Latest text is not a column but a wrapped line under
+			// the outcome, so the same words are readable on touch without hover.
+			await expect(activity).toBeVisible()
 			if (vp.width >= 768) {
-				await expect(activity).toBeVisible()
 				await expect(sessions).toBeVisible()
 			} else {
-				await expect(activity).toBeHidden()
 				await expect(sessions).toBeHidden()
 			}
 		})
@@ -203,6 +204,36 @@ test.describe('Agents index', () => {
 				await expect(status).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
+		})
+
+		// Latest is never hover-only: on md+ a tooltip carries the full text, below
+		// md the text wraps under the outcome.
+		test(`Latest text is reachable without hover @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const ada = await account.api.createAgentActor('Ada Atom')
+			await account.api.addWorkspaceMember(account.workspaceId, ada.id)
+
+			await page.goto(`/${account.workspaceId}/agents`)
+			const row = page.getByRole('link', { name: /Ada Atom/ })
+			await expect(row).toBeVisible({ timeout: 10_000 })
+			const latest = row.getByText('Standing by', { exact: true }).locator('visible=true')
+
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+				await expect(latest).toBeVisible()
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+
+			if (vp.width >= 768) {
+				await latest.hover()
+				await expect(page.getByRole('tooltip')).toContainText('Standing by')
+			}
+
+			const overflow = await page.evaluate(() => ({
+				scroll: document.documentElement.scrollWidth,
+				client: document.documentElement.clientWidth,
+			}))
+			expect(overflow.scroll).toBeLessThanOrEqual(overflow.client + 1)
 		})
 	}
 })

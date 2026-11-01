@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { dismissBodyFor, useDismissForYou, useForYou } from '@/hooks/use-for-you'
 import { useMarkRead } from '@/hooks/use-subscriptions'
@@ -28,6 +29,7 @@ import {
 	type UnreadItem,
 	api,
 } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	cardHeadline,
@@ -212,8 +214,8 @@ function ForYouFeed() {
 	)
 
 	// The feed is one flat column ordered by bucket — decisions first, then
-	// what is waiting on an agent, then FYIs, then what has been handled. The
-	// mockup renders those buckets without headings; the order is the grouping.
+	// what is waiting on an agent, then FYIs, then what has been handled. Each
+	// non-empty bucket gets a heading with its count (see `sections`).
 	// Cards decided in this sitting are folded back in, since the unread query
 	// has already dropped them.
 	const orderedCards = useMemo(() => {
@@ -230,6 +232,23 @@ function ForYouFeed() {
 			)
 			.map((entry) => entry.item)
 	}, [filteredRegular, decided, typeFilter, bucketOf])
+
+	// The ordered column cut into its buckets, so each non-empty one can be headed.
+	const sections = useMemo(() => {
+		const out: Array<{ bucket: FeedBucket; items: UnreadItem[] }> = []
+		for (const item of orderedCards) {
+			const bucket = bucketOf(item)
+			const last = out[out.length - 1]
+			if (last && last.bucket === bucket) last.items.push(item)
+			else out.push({ bucket, items: [item] })
+		}
+		return out
+	}, [orderedCards, bucketOf])
+
+	const countOf = (bucket: FeedBucket) =>
+		sections.find((section) => section.bucket === bucket)?.items.length ?? 0
+	const greeting = greetingFor(getStoredActor()?.name, new Date())
+	const lead = leadLine(countOf('needs'), countOf('fyi'))
 
 	// Posting the reply a taken option stands for. It goes out the moment the
 	// option is taken — there is no delete-comment endpoint, so a deferred
@@ -708,6 +727,11 @@ function ForYouFeed() {
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="mx-auto flex w-full max-w-[700px] flex-col">
+					<div className="pb-4" data-testid="foryou-greeting">
+						<p className="text-xl font-semibold tracking-tight text-foreground">{greeting}</p>
+						<p className="text-sm text-muted-foreground">{lead}</p>
+					</div>
+
 					<BriefingRow workspaceId={workspaceId} />
 
 					{onboardingItems.length > 0 && (
@@ -722,37 +746,67 @@ function ForYouFeed() {
 						</div>
 					)}
 
-					<div className={cn('flex flex-col', mode === 'cards' ? 'gap-3' : 'gap-[7px]')}>
-						<div className="h-1.5" />
-						{orderedCards.map((item) => {
-							const key = feedItemKey(item)
-							return (
-								<FeedCard
-									key={key}
-									workspaceId={workspaceId}
-									item={item}
-									expanded={mode === 'cards' || openKeys.has(key)}
-									onToggleExpanded={
-										mode === 'cards'
-											? undefined
-											: () =>
-													setOpenKeys((prev) => {
-														const next = new Set(prev)
-														if (next.has(key)) next.delete(key)
-														else next.add(key)
-														return next
-													})
-									}
-									decided={decided.get(key)?.option ?? null}
-									onDecide={(option) => handleDecide(item, option)}
-									onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
-									onDraftsDone={() => handleDraftsDone(item)}
-									replied={repliedKeys.has(key)}
-									onReplied={() => handleReplied(item)}
-									onMarkRead={() => dismissAll([item], 'Marked as read')}
-								/>
-							)
-						})}
+					<div className="flex flex-col gap-6 pt-1.5">
+						{sections.map(({ bucket, items: sectionItems }) => (
+							<section
+								key={bucket}
+								aria-labelledby={`foryou-section-${bucket}`}
+								data-testid={`foryou-section-${bucket}`}
+								className="flex flex-col gap-2"
+							>
+								<div className="flex items-center justify-between gap-2">
+									<h2
+										id={`foryou-section-${bucket}`}
+										className="flex items-baseline gap-1.5 text-xs font-semibold text-muted-foreground"
+									>
+										{SECTION_LABEL[bucket]}
+										<span className="tabular-nums" data-testid="foryou-section-count">
+											{sectionItems.length}
+										</span>
+									</h2>
+									{bucket === 'fyi' && (
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => dismissAll(sectionItems, 'Marked as read')}
+										>
+											Mark all read
+										</Button>
+									)}
+								</div>
+								<div className={cn('flex flex-col', mode === 'cards' ? 'gap-3' : 'gap-[7px]')}>
+									{sectionItems.map((item) => {
+										const key = feedItemKey(item)
+										return (
+											<FeedCard
+												key={key}
+												workspaceId={workspaceId}
+												item={item}
+												expanded={mode === 'cards' || openKeys.has(key)}
+												onToggleExpanded={
+													mode === 'cards'
+														? undefined
+														: () =>
+																setOpenKeys((prev) => {
+																	const next = new Set(prev)
+																	if (next.has(key)) next.delete(key)
+																	else next.add(key)
+																	return next
+																})
+												}
+												decided={decided.get(key)?.option ?? null}
+												onDecide={(option) => handleDecide(item, option)}
+												onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
+												onDraftsDone={() => handleDraftsDone(item)}
+												replied={repliedKeys.has(key)}
+												onReplied={() => handleReplied(item)}
+												onMarkRead={() => dismissAll([item], 'Marked as read')}
+											/>
+										)
+									})}
+								</div>
+							</section>
+						))}
 					</div>
 
 					{tail && (
@@ -766,6 +820,35 @@ function ForYouFeed() {
 			</div>
 		</div>
 	)
+}
+
+const SECTION_LABEL: Record<FeedBucket, string> = {
+	needs: 'To decide',
+	waiting: 'Waiting on an agent',
+	fyi: 'Updates for you',
+	done: 'Handled today',
+}
+
+export function greetingFor(name: string | undefined, now: Date): string {
+	const hour = now.getHours()
+	const part =
+		hour < 5
+			? 'Good evening'
+			: hour < 12
+				? 'Good morning'
+				: hour < 18
+					? 'Good afternoon'
+					: 'Good evening'
+	const first = name?.trim().split(/\s+/)[0]
+	return first ? `${part}, ${first}` : part
+}
+
+export function leadLine(decisions: number, updates: number): string {
+	if (decisions === 1) return 'One decision is waiting on you'
+	if (decisions > 1) return `${decisions} decisions are waiting on you`
+	if (updates > 0)
+		return `Nothing to decide, ${updates} ${updates === 1 ? 'update' : 'updates'} for you`
+	return 'You are clear'
 }
 
 // One message of a stacked card, per ask: the key the stack and the card's own bar share.

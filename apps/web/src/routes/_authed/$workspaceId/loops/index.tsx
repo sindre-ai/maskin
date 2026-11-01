@@ -1,10 +1,12 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AssignedInChatRow } from '@/components/loops/assigned-in-chat-row'
+import { isLiveLoopPill } from '@/components/loops/loop-pill'
 import { LoopRow } from '@/components/loops/loop-row'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
@@ -48,6 +50,14 @@ const LOOP_ORDER_COLUMNS = [
 	{ id: 'inProgressCount', label: 'In progress', canHide: false },
 ]
 
+type LoopTab = 'all' | 'to-decide' | 'running'
+
+function matchesTab(loop: LoopSummary, tab: LoopTab): boolean {
+	if (tab === 'to-decide') return loop.pill === 'waiting_on_you'
+	if (tab === 'running') return isLiveLoopPill(loop.pill)
+	return true
+}
+
 function compareLoops(a: LoopSummary, b: LoopSummary, sort: string): number {
 	if (sort === 'name') return (a.name ?? '').localeCompare(b.name ?? '')
 	if (sort === 'inProgressCount') return a.inProgressCount - b.inProgressCount
@@ -77,6 +87,7 @@ function LoopsRoute() {
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
+	const [tab, setTab] = useState<LoopTab>('all')
 
 	const { data: billingUsage } = useBillingUsage(workspaceId)
 	const showNoCreditsPill =
@@ -164,6 +175,27 @@ function LoopsRoute() {
 	}, [loops])
 
 	const hasLoops = sortedLoops.length > 0
+	const visibleLoops = useMemo(
+		() => sortedLoops.filter((loop) => matchesTab(loop, tab)),
+		[sortedLoops, tab],
+	)
+	// Counts come from the loops already loaded; the tabs add no query.
+	const tabs = useMemo(
+		() => [
+			{ label: 'All', value: 'all' as LoopTab, count: sortedLoops.length },
+			{
+				label: 'Running',
+				value: 'running' as LoopTab,
+				count: sortedLoops.filter((l) => matchesTab(l, 'running')).length,
+			},
+			{
+				label: 'To decide',
+				value: 'to-decide' as LoopTab,
+				count: sortedLoops.filter((l) => matchesTab(l, 'to-decide')).length,
+			},
+		],
+		[sortedLoops],
+	)
 
 	return (
 		<div>

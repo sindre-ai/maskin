@@ -1771,7 +1771,7 @@ function ObjectsRoute() {
 				// header row with an expanded NavSearch and get clipped mid-label
 				// (last tab reads as "Custo…"). Restored to the inline "beside <h1>"
 				// arrangement at md and above with `md:basis-auto md:order-none`.
-				className="ml-[14px] min-w-0 basis-full order-2 md:basis-auto md:order-none"
+				className="mt-3 min-w-0 basis-full order-2 md:mt-0 md:ml-3 md:basis-auto md:order-none"
 			/>
 		),
 		[tabsWithCounts, typeFilter, handleTypeFilterChange],

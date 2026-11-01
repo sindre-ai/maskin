@@ -472,10 +472,10 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 											{/* Mono, wide-tracked and colourless — the divider rule below
 											    carries the eye across the row, so the label doesn't also need
 											    a status swatch to mark where a group starts (mockup 748–752). */}
-											<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+											<span className="font-mono text-xs font-medium uppercase tracking-widest text-muted-foreground">
 												{getObjectGroupLabel(groupBy, group.value, actors)}
 											</span>
-											<span className="font-mono text-[10.5px] font-medium tabular-nums text-muted-foreground/50">
+											<span className="font-mono text-xs font-medium tabular-nums text-muted-foreground/50">
 												{group.total ?? group.rows.length}
 											</span>
 											{/* The hairline runs from the count to the right edge — a long
@@ -506,7 +506,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 																? onLoadMoreInGroup?.(group.serverValue ?? '')
 																: revealGroup(group.key)
 														}
-														className="ml-[30px] flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+														className="ml-8 flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
 													>
 														Show{' '}
 														{serverPaged ? Math.min(hiddenCount, GROUP_PAGE_SIZE) : hiddenCount}{' '}

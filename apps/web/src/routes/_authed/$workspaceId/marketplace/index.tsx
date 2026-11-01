@@ -43,11 +43,11 @@ interface FilterItem {
 const TYPE_VALUES = new Set<FilterValue>(['loops', 'actor', 'trigger', 'skill', 'integration'])
 
 const TYPE_ITEMS: FilterItem[] = [
-	{ value: 'loops', label: 'Loops' },
 	{ value: 'actor', label: 'Agents' },
-	{ value: 'trigger', label: 'Triggers' },
-	{ value: 'skill', label: 'Skills' },
 	{ value: 'integration', label: 'Integrations' },
+	{ value: 'loops', label: 'Loops' },
+	{ value: 'skill', label: 'Skills' },
+	{ value: 'trigger', label: 'Triggers' },
 ]
 
 function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): FilterItem[] {
@@ -292,7 +292,7 @@ function ChipStrip({
 			tabs={tabs}
 			value={active}
 			onChange={(value) => onSelect(value)}
-			className="px-1 pb-1 max-sm:[&>button]:min-h-11"
+			className="pb-1 max-sm:[&>button]:min-h-11"
 		/>
 	)
 }

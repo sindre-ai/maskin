@@ -178,10 +178,46 @@ describe('Header', () => {
 			setScrollLocked: vi.fn(),
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
 		})
 
 		render(<Header />)
 		expect(screen.getByRole('button', { name: 'Custom Action' })).toBeInTheDocument()
+	})
+
+	it('renders the title as the page-title heading, and hides it with hideTitle', () => {
+		const base = {
+			actions: null,
+			stickyIdentity: null,
+			title: 'Things',
+			setTitle: vi.fn(),
+			setSubtitle: vi.fn(),
+			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
+			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
+			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
+		}
+		vi.mocked(useMatches).mockReturnValue([
+			{
+				routeId: '/_authed/$workspaceId/objects/',
+				pathname: '/ws-1/objects',
+				params: { workspaceId: 'ws-1' },
+			},
+		] as ReturnType<typeof useMatches>)
+		vi.mocked(usePageHeader).mockReturnValue(base)
+		const { unmount } = render(<Header />)
+		expect(screen.getByRole('heading', { name: 'Things' })).toHaveClass('page-title')
+		unmount()
+
+		vi.mocked(usePageHeader).mockReturnValue({ ...base, hideTitle: true })
+		render(<Header />)
+		expect(screen.queryByRole('heading', { name: 'Things' })).not.toBeInTheDocument()
 	})
 
 	it('puts titleTabs beside the heading, ahead of the search and New cluster', () => {
@@ -200,6 +236,7 @@ describe('Header', () => {
 			setScrollLocked: vi.fn(),
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
 		})
 
 		render(<Header />)
@@ -227,6 +264,7 @@ describe('Header', () => {
 			setScrollLocked: vi.fn(),
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
 		})
 		render(<Header />)
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
@@ -260,6 +298,7 @@ describe('Header', () => {
 			setScrollLocked: vi.fn(),
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -295,6 +334,7 @@ describe('Header', () => {
 			setScrollLocked: vi.fn(),
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -332,6 +372,7 @@ describe('Header', () => {
 			setScrollLocked: vi.fn(),
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
 		})
 
 		render(<Header />)
@@ -382,6 +423,7 @@ describe('Header', () => {
 			setScrollLocked: vi.fn(),
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
 		})
 		vi.mocked(useMatches).mockReturnValue([
 			{
@@ -412,6 +454,7 @@ describe('Header leadingActions', () => {
 			setScrollLocked: vi.fn(),
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
+			setHideTitle: vi.fn(),
 		})
 		render(<Header />)
 

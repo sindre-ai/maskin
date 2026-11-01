@@ -6,6 +6,7 @@ import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { cn } from '@/lib/cn'
 import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
@@ -54,6 +55,24 @@ function ChatsListTitle() {
 	return null
 }
 
+// Cancels MainScrollArea's padding (`px-4 pt-4`, `md:px-8 md:py-8`, `lg:px-12`
+// in `$workspaceId.tsx`) so the split pane runs edge to edge. Keep in step.
+const SHELL_BLEED = '-mx-4 -my-4 md:-mx-8 md:-my-8 lg:-mx-12'
+
+// The list column draws its own title (the shared header hides its <h1> via
+// `hideTitle`), on the same `.page-title` size and side margin every other
+// screen uses so the "Chats" heading sits on the shared left edge.
+function ChatsColumnTitle({ subtitle }: { subtitle?: string }) {
+	return (
+		<div className="flex flex-none items-baseline gap-2 px-4 pt-5 pb-2 md:px-8 lg:px-12">
+			<h2 className="page-title truncate">Chats</h2>
+			{subtitle && (
+				<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
+			)}
+		</div>
+	)
+}
+
 function ChatsLayout() {
 	const { workspaceId } = useWorkspace()
 	const isMobile = useIsMobile()
@@ -98,10 +117,16 @@ function ChatsLayout() {
 	// One writer for the shared nav row: a child route rendering its own
 	// <PageHeader> would lose the race (parent effects run last) and leave the
 	// draft screen labelled "Chats".
+	// The list column (with its own "Chats" title) is on screen unless a thread
+	// has replaced it (mobile) or focus mode / the call panel moved it aside.
+	// The draft screen keeps the shared "New chat" title.
+	const listShown = !hasThread || (!isMobile && !wide && !listAside)
+	const columnTitle = listShown && !isDraft
 	const header = (
 		<PageHeader
 			title={isDraft ? 'New chat' : 'Chats'}
-			subtitle={isDraft ? undefined : subtitle}
+			hideTitle={columnTitle}
+			subtitle={isDraft || columnTitle ? undefined : subtitle}
 			// The split pane owns two internal scrollers; without this the shared
 			// page container scrolls too and the surface double-scrolls.
 			scrollLocked
@@ -109,7 +134,7 @@ function ChatsLayout() {
 		/>
 	)
 
-	// Full-bleed: reclaim the workspace shell's page padding (`p-4 md:p-8` on
+	// Full-bleed: reclaim the workspace shell's page padding (`px-4 pt-4 md:px-8 md:py-8 lg:px-12` on
 	// `data-scroll-root` in `$workspaceId.tsx`) so the split pane gets the
 	// full content width. At exactly 768px (iPad portrait — the narrowest
 	// viewport that still gets the two-pane layout), that padding alone was
@@ -122,11 +147,19 @@ function ChatsLayout() {
 				{header}
 				{hasThread ? null : <ChatsListTitle />}
 				{hasThread ? (
-					<div className="-m-4 flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]">
+					<div
+						className={cn(
+							'flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]',
+							SHELL_BLEED,
+						)}
+					>
 						<Outlet />
 					</div>
 				) : (
-					<ConversationList workspaceId={workspaceId} filter={filter} className="-m-4" />
+					<div className={cn('flex min-h-0 flex-1 flex-col', SHELL_BLEED)}>
+						<ChatsColumnTitle subtitle={subtitle} />
+						<ConversationList workspaceId={workspaceId} filter={filter} />
+					</div>
 				)}
 			</>
 		)
@@ -139,12 +172,10 @@ function ChatsLayout() {
 			<>
 				{header}
 				<ChatsListTitle />
-				<ConversationList
-					workspaceId={workspaceId}
-					filter={filter}
-					expanded
-					className="-m-4 md:-m-8"
-				/>
+				<div className={cn('flex min-h-0 flex-1 flex-col', SHELL_BLEED)}>
+					<ChatsColumnTitle subtitle={subtitle} />
+					<ConversationList workspaceId={workspaceId} filter={filter} expanded />
+				</div>
 			</>
 		)
 	}
@@ -152,11 +183,12 @@ function ChatsLayout() {
 	return (
 		<>
 			{header}
-			<div className="-m-4 flex min-h-0 flex-1 md:-m-8">
+			<div className={cn('flex min-h-0 flex-1', SHELL_BLEED)}>
 				{wide || listAside ? null : (
 					// `bg-surface-sunken` is what makes the split read as index +
 					// document rather than two equal halves (mockup 273).
-					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border bg-surface-sunken md:flex">
+					<div className="hidden shrink-0 flex-col border-r border-border bg-surface-sunken md:flex md:w-66 lg:w-100">
+						<ChatsColumnTitle subtitle={subtitle} />
 						<ConversationList workspaceId={workspaceId} filter={filter} />
 					</div>
 				)}

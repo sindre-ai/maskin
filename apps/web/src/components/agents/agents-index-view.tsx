@@ -12,6 +12,7 @@ import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { formatUsd } from '@/components/settings/billing-usage'
 import { ActorAvatar, getActorAvatarPaletteClass } from '@/components/shared/actor-avatar'
 import { FilterTabs } from '@/components/shared/filter-tabs'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -317,9 +318,9 @@ export function AgentsIndexView({
 	}, [rows.length, statusCounts])
 
 	return (
-		<div>
+		<TooltipProvider>
 			{/* Chips left, Display right, on one 28px line (mockup 2290–2308). */}
-			<div className="flex min-h-7 flex-wrap items-center gap-1.5 px-0.5">
+			<div className="flex min-h-7 flex-wrap items-center gap-1.5">
 				<FilterTabs
 					variant="pill"
 					aria-label="Filter agents by status"
@@ -364,7 +365,7 @@ export function AgentsIndexView({
 			{sortedRows.length === 0 ? (
 				// A centred line, not a bordered empty-state card — the list this
 				// replaces has no frame of its own to sit inside (mockup 2313).
-				<p className="px-3.5 py-9 text-center text-[12.5px] text-muted-foreground">
+				<p className="py-9 text-center text-[12.5px] text-muted-foreground">
 					No agents in that state right now.
 				</p>
 			) : (
@@ -385,7 +386,7 @@ export function AgentsIndexView({
 					))}
 				</div>
 			)}
-		</div>
+		</TooltipProvider>
 	)
 }
 
@@ -430,7 +431,7 @@ function AgentGroupSection({
 			{/* Not the mono `.eyebrow` — the agents list marks a group with a tighter
 			    11px uppercase label so the count and the note can share its line
 			    (mockup 2318–2321). */}
-			<div className="flex items-baseline gap-[9px] px-1 pt-3.5 pb-1.5">
+			<div className="flex items-baseline gap-[9px] pt-3.5 pb-1.5">
 				<h3 className="shrink-0 text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
 					{group.label}
 				</h3>
@@ -462,7 +463,7 @@ function AgentGroupSection({
 				) : (
 					// Sits on the same hairline the rows do, so an empty group reads as
 					// part of the list rather than a gap in it (mockup 2324).
-					<li className="border-b border-border-subtle px-3.5 py-3 text-[11.5px] text-muted-foreground/70">
+					<li className="border-b border-border-subtle py-3 text-[11.5px] text-muted-foreground/70">
 						{`No ${group.label.toLowerCase()} agents right now.`}
 					</li>
 				)}
@@ -495,6 +496,7 @@ function AgentRowItem({
 	// everything else is just an agent.
 	const kind = showKind ? agent.role?.trim() || 'Agent' : undefined
 	const outcome = agent.description?.split('\n')[0]?.trim() || 'No outcome set yet'
+	const latest = describeFocus(portrait, latestSession)
 	const sessionsLabel = `${row.sessionCount} session${row.sessionCount === 1 ? '' : 's'}`
 
 	return (
@@ -506,7 +508,7 @@ function AgentRowItem({
 			<Link
 				to="/$workspaceId/agents/$agentId"
 				params={{ workspaceId, agentId: agent.id }}
-				className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
+				className="group -ml-3.5 flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
 			>
 				<ActorAvatar
 					name={agent.name}
@@ -530,9 +532,22 @@ function AgentRowItem({
 							</span>
 						)}
 					</span>
-					<span className="truncate text-xs text-muted-foreground" title={outcome}>
-						{outcome}
-					</span>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="truncate text-xs text-muted-foreground">{outcome}</span>
+						</TooltipTrigger>
+						<TooltipContent className="max-w-xs">{outcome}</TooltipContent>
+					</Tooltip>
+					{showActivity && (
+						// Below md the Latest column is hidden, so its full text wraps under
+						// the outcome instead — readable on touch with no hover.
+						<span
+							data-testid="agent-latest-mobile"
+							className="line-clamp-2 text-[11.5px] text-muted-foreground md:hidden"
+						>
+							{latest}
+						</span>
+					)}
 				</div>
 				{showActivity && (
 					// "What it's doing now" (mockup 2333) shares the sessions column's

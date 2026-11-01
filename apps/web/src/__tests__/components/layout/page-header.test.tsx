@@ -26,6 +26,7 @@ vi.mock('@/lib/page-header-context', () => ({
 		setScrollLocked: mockSetScrollLocked,
 		setNewMenuPrimaryOverride: mockSetNewMenuPrimaryOverride,
 		setNewMenuDisabled: mockSetNewMenuDisabled,
+		setHideTitle: vi.fn(),
 	}),
 }))
 

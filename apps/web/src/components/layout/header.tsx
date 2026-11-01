@@ -125,7 +125,7 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
 /**
  * The shared top nav — mockup lines 155–279.
  *
- * One 44px row per screen: the screen's <h1> and muted count on the left, then
+ * One row per screen (34px title from `md:`, 48px side margin from `lg:`): the screen's <h1> and muted count on the left, then
  * the workspace search, the screen's own actions, a hairline divider, and the
  * split New button. It wraps rather than scrolls, so a narrow viewport drops the
  * right-hand cluster to a second line instead of hiding controls.
@@ -147,6 +147,7 @@ export function Header() {
 		crumb,
 		newMenuPrimaryOverride,
 		newMenuDisabled,
+		hideTitle,
 	} = usePageHeader()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
@@ -190,7 +191,7 @@ export function Header() {
 	// search, split New button or back arrow competing for the row.
 	if (crumb) {
 		return (
-			<header className="flex flex-none flex-wrap items-center gap-2 border-b border-border px-[clamp(16px,3vw,36px)] pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px]">
+			<header className="flex flex-none flex-wrap items-center gap-2 border-b border-border px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:px-8 lg:px-12">
 				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
 				<Link
 					to={crumb.parentTo}
@@ -219,7 +220,7 @@ export function Header() {
 	}
 
 	return (
-		<header className="flex min-h-11 flex-none flex-wrap items-center gap-2 gap-y-1.5 border-b border-border px-[clamp(16px,4vw,44px)] pt-[calc(env(safe-area-inset-top)+0.375rem)] pb-1.5">
+		<header className="flex flex-none flex-wrap items-center gap-2 gap-y-1.5 px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-1.5 md:px-8 lg:px-12">
 			<SidebarTrigger className="md:hidden -ml-1 h-[30px] w-[30px] shrink-0" />
 			{isDetail && (
 				<Button
@@ -268,9 +269,9 @@ export function Header() {
 				   Zero-basis lets the title give up width first and keeps the nav on
 				   one line. */
 				<div className="flex min-w-0 flex-1 items-baseline gap-2">
-					<h1 className="truncate text-[clamp(17px,2vw,20px)] font-bold tracking-[-0.02em] text-foreground">
-						{headingText}
-					</h1>
+					{/* hideTitle: a two-pane page draws its own title; the context's
+					    title stays published for the crumb and document title. */}
+					{!hideTitle && <h1 className="page-title truncate">{headingText}</h1>}
 					{subtitle && (
 						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
 					)}

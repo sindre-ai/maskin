@@ -184,9 +184,10 @@ describe('AgentsIndexView', () => {
 	describe('row columns', () => {
 		it('reveals the activity and session columns at the same breakpoint', () => {
 			mount([agentBrian()], [brianRunningSession()])
-			const activity = screen.getByText('Crunching numbers')
+			const [mobileLatest, activity] = screen.getAllByText('Crunching numbers')
 			const sessions = screen.getByText('1 session')
 			expect(activity.className).toContain('md:block')
+			expect(mobileLatest.className).toContain('md:hidden')
 			expect(sessions.parentElement?.className).toContain('md:flex')
 			expect(screen.getByText('$0.00').parentElement?.className).toContain('lg:flex')
 		})
@@ -331,7 +332,7 @@ describe('AgentsIndexView', () => {
 			expect(link).toHaveTextContent('Bob')
 			expect(within(row).getByText('member')).toBeInTheDocument()
 			expect(within(row).getByText('Architect')).toBeInTheDocument()
-			expect(within(row).getByText('Standing by')).toBeInTheDocument()
+			expect(within(row).getAllByText('Standing by')[0]).toBeInTheDocument()
 			expect(within(row).getByText('2 sessions')).toBeInTheDocument()
 			expect(within(row).getByText('Idle')).toBeInTheDocument()
 		})
@@ -538,7 +539,7 @@ describe('AgentsIndexView', () => {
 			// kind:false drops the badge; the activity and session columns remain.
 			const row = screen.getByRole('link').closest('li') as HTMLElement
 			expect(within(row).queryByText('Agent')).not.toBeInTheDocument()
-			expect(within(row).getByText('Crunching numbers')).toBeInTheDocument()
+			expect(within(row).getAllByText('Crunching numbers')[0]).toBeInTheDocument()
 			expect(within(row).getByText('1 session')).toBeInTheDocument()
 		}, 10_000)
 	})

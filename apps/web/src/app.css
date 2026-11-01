@@ -744,6 +744,22 @@
 		color: var(--muted-foreground);
 	}
 
+	/* Page title — the v10 mockup's 34px screen heading. 34px is off the Tailwind
+	   scale, so it ships as a utility (like .eyebrow) rather than an arbitrary
+	   value. 24px below md; the 48rem breakpoint is Tailwind's own `md`. */
+	.page-title {
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: -0.035em;
+		line-height: 1.15;
+		color: var(--foreground);
+	}
+	@media (min-width: 48rem) {
+		.page-title {
+			font-size: 2.125rem; /* 34px */
+		}
+	}
+
 	/* Settings section label — the mockup's other uppercase label, used only on
 	   the Settings surface ("WORKSPACE NAME", "APPEARANCE", "PRIVACY & DATA",
 	   mockup 2697, 2704, 2710). It is the body sans at 11px with

@@ -259,14 +259,14 @@ function ContentPushShell({ children }: { children: ReactNode }) {
  * own internal scroll region on the active card's thread) — the container
  * then clips instead of scrolling, so only that inner region scrolls.
  *
- * Padding steps up from `px-4 pt-4` on mobile to `p-8` from `md:` up.
+ * Padding steps up from `px-4 pt-4` on mobile to `px-8 py-8` from `md:` and `px-12` from `lg:` — the same side margin the shared header uses, so title and content share one left edge.
  */
 function MainScrollArea({ children }: { children: ReactNode }) {
 	const { scrollLocked } = usePageHeader()
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:p-8',
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:px-8 md:py-8 lg:px-12',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}
 			data-scroll-root
