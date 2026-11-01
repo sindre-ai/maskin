@@ -20,6 +20,10 @@ vi.mock('@/lib/analytics', () => ({
 	trackEvent: vi.fn(),
 }))
 
+vi.mock('@/lib/posthog', () => ({
+	identifyForWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
@@ -30,6 +34,7 @@ vi.mock('@tanstack/react-router', async () => {
 
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
+import { identifyForWorkspace } from '@/lib/posthog'
 import { Route } from '@/routes/signup'
 
 const SignupPage = (Route as unknown as { component: React.FC }).component
@@ -217,6 +222,45 @@ describe('SignupPage', () => {
 				completed: true,
 			})
 		})
+	})
+
+	it('identifies the person before emitting signup_completed', async () => {
+		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => {
+			expect(trackEvent).toHaveBeenCalledWith('signup_completed', {
+				user_id: 'actor-1',
+				workspace_id: 'ws-1',
+			})
+		})
+		expect(identifyForWorkspace).toHaveBeenCalledWith('actor-1', false, {
+			name: 'Test User',
+			email: 'test@example.com',
+		})
+		const identifyOrder = vi.mocked(identifyForWorkspace).mock.invocationCallOrder[0]
+		const completedOrder = vi
+			.mocked(trackEvent)
+			.mock.calls.findIndex((c) => c[0] === 'signup_completed')
+		expect(identifyOrder).toBeLessThan(
+			vi.mocked(trackEvent).mock.invocationCallOrder[completedOrder],
+		)
+	})
+
+	it('does not emit signup_completed when signup fails', async () => {
+		mockSignup.mockRejectedValue(new Error('Email already in use'))
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await screen.findByText('Email already in use')
+		expect(trackEvent).not.toHaveBeenCalledWith('signup_completed', expect.anything())
+		expect(identifyForWorkspace).not.toHaveBeenCalled()
 	})
 
 	it('still emits signup_form_submitted when the knowledge-object write fails', async () => {

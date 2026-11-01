@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // The observability spec keys the round-send event and the comment-posted
 // `source=file_viewer` off the analytics helpers — mock those so we can
 // assert what fires without a running PostHog client. `sonner` too, since
-// the send mutation calls `toast.success` on success.
-vi.mock('@/lib/analytics', () => ({
+// the send mutation calls `toast.success` on success. commentShape stays real:
+// the hook spreads it into the event and it is a pure function.
+vi.mock('@/lib/analytics', async (importOriginal) => ({
+	commentShape: (await importOriginal<typeof import('@/lib/analytics')>()).commentShape,
 	trackCommentPosted: vi.fn(),
 	trackFileViewerCommentResolved: vi.fn(),
 	trackFileViewerRoundSent: vi.fn(),
@@ -112,8 +114,11 @@ describe('useCreateFileComment — comment_posted fires with source: file_viewer
 				entity_type: 'file',
 				source: 'file_viewer',
 				is_reply: false,
+				is_multiline: false,
+				length_bucket: '1-50',
 			}),
 		)
+		expect(vi.mocked(trackCommentPosted).mock.calls[0][0]).not.toHaveProperty('content')
 	})
 })
 

@@ -808,15 +808,6 @@ export const pendingInviteResponseSchema = z.object({
 	invite: inviteSummarySchema,
 })
 
-export const linkedMemberResponseSchema = z.object({
-	status: z.literal('linked'),
-	member: z.object({
-		workspaceId: z.string().uuid(),
-		actorId: z.string().uuid(),
-		role: z.string(),
-	}),
-})
-
 export const revokeInviteResponseSchema = z.object({ revoked: z.literal(true) })
 
 export const listInvitesQuerySchema = z.object({ workspaceId: z.string().uuid() })
@@ -890,9 +881,9 @@ const createInviteRoute = createRoute({
 	tags: ['workspace-invitations'],
 	summary: 'Invite someone to a workspace by email',
 	description:
-		'If the email belongs to an existing actor who is not yet a member, that actor is added ' +
-		'directly (status "linked"). Otherwise a pending invite is created and emailed (status ' +
-		'"pending"). Re-inviting an email with a live pending invite returns that invite unchanged.',
+		'A pending invite is created and emailed (status "pending"), whether or not the email ' +
+		'already has an account; the person joins by accepting it. Re-inviting an email with a live ' +
+		'pending invite returns that invite unchanged.',
 	request: {
 		body: { content: { 'application/json': { schema: createInviteBodySchema } } },
 	},
@@ -902,15 +893,11 @@ const createInviteRoute = createRoute({
 			content: { 'application/json': { schema: pendingInviteResponseSchema } },
 		},
 		201: {
-			description: 'Actor linked directly, or a new pending invite created and emailed',
-			content: {
-				'application/json': {
-					schema: z.union([linkedMemberResponseSchema, pendingInviteResponseSchema]),
-				},
-			},
+			description: 'A new pending invite was created and emailed',
+			content: { 'application/json': { schema: pendingInviteResponseSchema } },
 		},
 		403: {
-			description: 'Caller is not a human owner/admin of the workspace, or the seat cap is reached',
+			description: 'Caller is not a human owner/admin of the workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -959,117 +946,32 @@ app.openapi(createInviteRoute, (async (c) => {
 
 	const emailLower = email.toLowerCase()
 
-	// Branch A / C: the email already belongs to a Maskin actor.
-	const [existingActor] = await db
-		.select({ id: actors.id, type: actors.type })
-		.from(actors)
-		.where(sql`lower(${actors.email}) = ${emailLower}`)
+	// Branch C: the email belongs to someone already in this workspace. This only
+	// reveals what the caller can already read from the members list. An account
+	// in any other workspace is invited exactly like an unknown address, so the
+	// answer never says whether an email is registered, and nobody becomes a
+	// member until they accept with their own key.
+	const [alreadyMember] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				sql`lower(${actors.email}) = ${emailLower}`,
+			),
+		)
 		.limit(1)
-
-	if (existingActor) {
-		type LinkOutcome =
-			| { kind: 'added' }
-			| { kind: 'already_member' }
-			| { kind: 'workspace_missing' }
-		let outcome: LinkOutcome
-		try {
-			outcome = await db.transaction(async (tx): Promise<LinkOutcome> => {
-				// Same lock + seat-cap + insert sequence as POST /workspaces/:id/members.
-				const [locked] = await tx
-					.select({
-						id: workspaces.id,
-						settings: workspaces.settings,
-						billingOwnerId: workspaces.billingOwnerId,
-					})
-					.from(workspaces)
-					.where(eq(workspaces.id, workspaceId))
-					.for('update')
-					.limit(1)
-				if (!locked) return { kind: 'workspace_missing' }
-
-				if (existingActor.type === 'human' && !isEnterpriseActor(locked.billingOwnerId)) {
-					const [alreadyMember] = await tx
-						.select({ actorId: workspaceMembers.actorId })
-						.from(workspaceMembers)
-						.where(
-							and(
-								eq(workspaceMembers.workspaceId, workspaceId),
-								eq(workspaceMembers.actorId, existingActor.id),
-							),
-						)
-						.limit(1)
-					// A member is never blocked by the cap, so answer 409 rather than 403.
-					if (alreadyMember) return { kind: 'already_member' }
-					const plan = resolvePlanTier(locked.settings)
-					const cap = seatCapForPlan(plan)
-					if (cap !== null) {
-						const used = await countHumanMembers(tx, workspaceId)
-						if (used >= cap) throw new SeatCapExceededError({ workspaceId, plan, used, cap })
-					}
-				}
-
-				const inserted = await tx
-					.insert(workspaceMembers)
-					.values({ workspaceId, actorId: existingActor.id, role })
-					.onConflictDoNothing({
-						target: [workspaceMembers.workspaceId, workspaceMembers.actorId],
-					})
-					.returning()
-				if (!inserted.length) return { kind: 'already_member' }
-
-				await tx.insert(events).values({
-					workspaceId,
-					actorId: callerId,
-					action: 'created',
-					entityType: 'workspace_member',
-					entityId: existingActor.id,
-					data: { role, added_actor_id: existingActor.id },
-				})
-				return { kind: 'added' }
-			})
-		} catch (err) {
-			if (err instanceof SeatCapExceededError) {
-				logger.warn('Invite blocked by seat cap (link existing actor)', {
-					workspaceId: err.workspaceId,
-					plan: err.plan,
-					used: err.used,
-					cap: err.cap,
-				})
-				return c.json(seatCapErrorBody(err), 403)
-			}
-			throw err
-		}
-
-		if (outcome.kind === 'workspace_missing') {
-			return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-		}
-		if (outcome.kind === 'already_member') {
-			return c.json(
-				createApiError('CONFLICT', `${email} is already a member of this workspace`, [
-					{ field: 'email', message: 'Already a member of this workspace' },
-				]),
-				409,
-			)
-		}
-
-		void capturePosthogEvent('workspace_member_invited', callerId, {
-			invite_method: 'email',
-			workspace_id: workspaceId,
-			role,
-		})
-		// A direct link is not a redemption, so this is not from_invite.
-		void capturePosthogEvent('workspace_member_joined', existingActor.id, {
-			from_invite: false,
-			workspace_id: workspaceId,
-			role,
-		})
+	if (alreadyMember) {
 		return c.json(
-			{ status: 'linked' as const, member: { workspaceId, actorId: existingActor.id, role } },
-			201,
+			createApiError('CONFLICT', `${email} is already a member of this workspace`, [
+				{ field: 'email', message: 'Already a member of this workspace' },
+			]),
+			409,
 		)
 	}
 
-	// Branch B: no matching actor, so a pending invite.
+	// Branch B: a pending invite.
 	const now = new Date()
 
 	// An invite past its expiry keeps status 'pending' until something flips it,

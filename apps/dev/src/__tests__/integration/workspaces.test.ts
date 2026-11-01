@@ -168,6 +168,14 @@ async function memberActorIdsFor(workspaceId: string): Promise<string[]> {
 	return rows.map((r) => r.actorId).sort()
 }
 
+async function storedSettings(id: string): Promise<Record<string, unknown>> {
+	const [row] = await db
+		.select({ settings: workspacesTable.settings })
+		.from(workspacesTable)
+		.where(eq(workspacesTable.id, id))
+	return row.settings as Record<string, unknown>
+}
+
 describe('Workspaces Integration', () => {
 	beforeEach(() => {
 		capturePosthogEventMock.mockClear()
@@ -287,13 +295,10 @@ describe('Workspaces Integration', () => {
 			// otherwise a rejected member reads here as a wrong count.
 			await setWorkspacePlan(db, workspace.id, 'pro')
 			const teammate = await insertActor(db)
-			const added = await app.request(
-				jsonRequest('POST', `/api/workspaces/${workspace.id}/members`, {
-					actor_id: teammate.id,
-					role: 'member',
-				}),
-			)
-			expect(added.status).toBe(201)
+			// People can't be added by id any more; seed the membership directly.
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: workspace.id, actorId: teammate.id, role: 'member' })
 
 			const paired = await app.request(jsonGet('/api/workspaces'))
 			const pairedRow = (await paired.json()).find(
@@ -364,10 +369,12 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterSet = await second.json()
-			expect(afterSet.settings.llm_keys).toEqual({
-				anthropic: 'sk-ant-AAA',
-				openai: 'sk-oai-BBB',
-			})
+			// No caller gets a key back; the row holds both, sealed.
+			expect(afterSet.settings.llm_keys).toBeUndefined()
+			expect(afterSet.llm_configured).toMatchObject({ anthropic: true, openai: true })
+			const setKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(openSecret(setKeys.llm_keys.anthropic)).toBe('sk-ant-AAA')
+			expect(openSecret(setKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 
 			// `null` inside llm_keys signals deletion; other providers stay.
 			const third = await app.request(
@@ -376,7 +383,10 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterDelete = await third.json()
-			expect(afterDelete.settings.llm_keys).toEqual({ openai: 'sk-oai-BBB' })
+			expect(afterDelete.llm_configured).toMatchObject({ anthropic: false, openai: true })
+			const deletedKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(deletedKeys.llm_keys.anthropic).toBeUndefined()
+			expect(openSecret(deletedKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 		})
 	})
 
@@ -710,7 +720,8 @@ describe('Workspaces Integration', () => {
 				)
 				expect(res.status).toBe(200)
 				const body = await res.json()
-				expect(body.settings.llm_keys.anthropic).toBe('sk-ant-enterprise')
+				expect(body.settings.llm_keys).toBeUndefined()
+				expect(body.llm_configured.anthropic).toBe(true)
 			} finally {
 				// '' parses to an empty allowlist, same as unset.
 				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
@@ -816,7 +827,8 @@ describe('Workspaces Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.settings.llm_keys.anthropic).toBe('sk-ant-allowed')
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(true)
 		})
 
 		it('does not block deleting an existing (pre-entitlement) BYO key', async () => {
@@ -846,7 +858,10 @@ describe('Workspaces Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.settings.llm_keys).toEqual({})
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(false)
+			const stored = (await storedSettings(ws.id)) as { llm_keys?: Record<string, string> }
+			expect(stored.llm_keys?.anthropic).toBeUndefined()
 		})
 	})
 
@@ -864,7 +879,11 @@ describe('Workspaces Integration', () => {
 			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Create another actor to add as member
-			const newActor = await insertActor(db, { name: 'New Member', email: 'member@test.com' })
+			const newActor = await insertActor(db, {
+				type: 'agent',
+				name: 'New Member',
+				createdBy: getTestActorId(),
+			})
 
 			// Add member
 			const addRes = await app.request(
@@ -895,37 +914,6 @@ describe('Workspaces Integration', () => {
 				'owner',
 			])
 		})
-
-		it('rejects an over-cap invite with 403 SEAT_CAP_EXCEEDED, not a 500', async () => {
-			// This app mounts the router with app.route() and defines no
-			// onError — exactly like every other route-level harness, and unlike
-			// createApp(). A cap rejection that is *thrown* rather than returned
-			// degrades to a bare framework 500 here, which is what this asserts
-			// against: the status is part of the route's contract, so it must not
-			// depend on how the router happens to be mounted.
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Seat Cap 403' }),
-			)
-			const ws = await createRes.json()
-
-			// Left on trial: the owner alone fills the single seat.
-			const overflow = await insertActor(db)
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: overflow.id }),
-			)
-
-			expect(res.status).toBe(403)
-			const body = await res.json()
-			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
-			expect(body.error.workspace_id).toBe(ws.id)
-			expect(body.error.plan).toBe('trial')
-			expect(body.error.cap).toBe(1)
-
-			// The rejection is a no-op, not a partial write.
-			const members = await memberActorIdsFor(ws.id)
-			expect(members).not.toContain(overflow.id)
-		})
 	})
 
 	// Every guard on this route depends on DB semantics a mocked db cannot
@@ -942,12 +930,9 @@ describe('Workspaces Integration', () => {
 			const ws = await createRes.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 			const member = await insertActor(db, { name: 'Member', email: `${randomUUID()}@test.com` })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
-					actor_id: member.id,
-					role: 'member',
-				}),
-			)
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: member.id, role: 'member' })
 			return { app, ws, member }
 		}
 
@@ -1536,7 +1521,7 @@ describe('Workspaces Integration', () => {
 			// re-add being a no-op, not about the cap.
 			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const newMember = await insertActor(db)
+			const newMember = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
@@ -1572,7 +1557,7 @@ describe('Workspaces Integration', () => {
 			const ws = await created.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const admin = await insertActor(db)
+			const admin = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {

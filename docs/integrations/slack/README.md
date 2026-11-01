@@ -51,7 +51,7 @@ built per request by `createSlackMcpServer()` in
 
 | Tool | Slack method | Scope |
 |------|--------------|-------|
-| `slack_send_message` | `chat.postMessage` | `chat:write`, `chat:write.customize` |
+| `slack_send_message` (held: needs an approved `object_id` draft; direct only for the built-in internal channel list) | `chat.postMessage` | `chat:write`, `chat:write.customize` |
 | `slack_list_channels` | `conversations.list` | `channels:read`, `groups:read` |
 | `slack_list_users` | `users.list` | `users:read` |
 | `slack_join_channel` | `conversations.join` | `channels:join` |
@@ -59,7 +59,7 @@ built per request by `createSlackMcpServer()` in
 | `slack_get_permalink` | `chat.getPermalink` | — |
 | `slack_get_channel_history` | `conversations.history` | `channels:history` / `groups:history` / `mpim:history` / `im:history` |
 | `slack_get_thread_replies` | `conversations.replies` | `channels:history` / `groups:history` / `mpim:history` / `im:history` |
-| `slack_update_message` | `chat.update` | `chat:write` |
+| `slack_update_message` (held: needs an approved `object_id` draft and the `ts` to edit; direct only for the built-in internal channel list) | `chat.update` | `chat:write` |
 | `slack_delete_message` | `chat.delete` | `chat:write` |
 | `slack_open_conversation` | `conversations.open` | `im:write` (1:1 DM); group DMs need `mpim:write` — separate bet |
 | `slack_conversations_info` | `conversations.info` | `channels:read` / `groups:read` / `im:read` / `mpim:read` |

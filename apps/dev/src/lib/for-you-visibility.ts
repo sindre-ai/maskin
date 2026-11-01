@@ -66,6 +66,12 @@ export async function findFinishedDraftCards(
 	return finished
 }
 
+/** Whether a comment asks the person for a call: a decision block, which is also where drafts live. */
+function carriesDecision(comment: typeof events.$inferSelect | undefined): boolean {
+	const data = (comment?.data ?? {}) as Record<string, unknown>
+	return parseCommentDecision(data.decision) !== null
+}
+
 export type ForYouCard = {
 	row: typeof notifications.$inferSelect
 	meta: NonNullable<ReturnType<typeof parseForYouMetadata>>
@@ -82,7 +88,7 @@ export type VisibleForYou = {
 
 /**
  * The For You cards `GET /api/for-you` shows for one actor in one workspace: pending/seen
- * `needs_input` rows of kind FOR_YOU_KIND, minus the ones whose session ended, whose object is
+ * `needs_input` rows of kind FOR_YOU_KIND, minus the ones whose session ended (unless the card asks for an approval or carries a draft), whose object is
  * closed or moved on, or that the viewer already read or answered. Shared with the briefing and
  * lifecycle pushes so a push never counts something the app does not show.
  */
@@ -227,7 +233,11 @@ export async function loadVisibleForYou(
 		.filter(({ row, meta }) => {
 			const sessionStatus = row.sessionId ? sessionStatusById.get(row.sessionId) : undefined
 			if (sessionStatus && (TERMINAL_STATUSES as readonly string[]).includes(sessionStatus)) {
-				return false
+				// An ended session has nobody left to answer a question, but a card that asks for
+				// an approval or carries a draft is still the person's to act on.
+				const source =
+					meta.source_comment_id !== undefined ? sourceById.get(meta.source_comment_id) : undefined
+				if (!carriesDecision(source)) return false
 			}
 			// Every message the card offered has been sent or skipped: nothing left to approve.
 			if (meta.source_comment_id !== undefined && finishedDraftCards.has(meta.source_comment_id)) {

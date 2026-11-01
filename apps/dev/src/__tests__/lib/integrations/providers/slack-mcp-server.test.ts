@@ -30,7 +30,7 @@ describe('isSlackBotToken', () => {
 	})
 })
 
-describe('createSlackMcpServer — slack_send_message', () => {
+describe('createSlackMcpServer — slack_send_message (internal channel, direct)', () => {
 	const ctx = {
 		botToken: 'xoxb-test-token',
 		integrationId: 'int-1',
@@ -72,7 +72,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 	}
 
 	it('posts to chat.postMessage as Maskin with the agent label in a Block Kit context block', async () => {
-		await callSendMessage({ channel: 'C123', text: 'hello' })
+		await callSendMessage({ channel: 'C06LC37JJCS', text: 'hello' })
 
 		expect(fetchMock).toHaveBeenCalledOnce()
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
@@ -80,7 +80,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		expect((init.headers as Record<string, string>).Authorization).toBe('Bearer xoxb-test-token')
 
 		const body = JSON.parse(init.body as string)
-		expect(body.channel).toBe('C123')
+		expect(body.channel).toBe('C06LC37JJCS')
 		expect(body.text).toBe('hello')
 		expect(body.username).toBe('Maskin')
 		expect(body.icon_url).toBe('https://maskin.example.com/maskin.png')
@@ -90,8 +90,19 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		])
 	})
 
+	it('refuses a direct post to any other channel and calls Slack not at all', async () => {
+		const result = (await callSendMessage({ channel: 'C0123456789', text: 'hello' })) as {
+			isError?: boolean
+			content: Array<{ text: string }>
+		}
+		expect(result.isError).toBe(true)
+		expect(result.content[0].text).toMatch(/object_id/)
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(capturePosthogEventMock).not.toHaveBeenCalled()
+	})
+
 	it('forwards thread_ts when provided', async () => {
-		await callSendMessage({ channel: 'C123', text: 'reply', thread_ts: '1717000000.000050' })
+		await callSendMessage({ channel: 'C06LC37JJCS', text: 'reply', thread_ts: '1717000000.000050' })
 		const init = fetchMock.mock.calls[0]?.[1] as RequestInit
 		const body = JSON.parse(init.body as string)
 		expect(body.thread_ts).toBe('1717000000.000050')
@@ -107,7 +118,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 				>
 			}
 		)._registeredTools.slack_send_message
-		await tool.handler({ channel: 'C123', text: 'hi' }, {})
+		await tool.handler({ channel: 'C06LC37JJCS', text: 'hi' }, {})
 		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
 		expect('icon_url' in body).toBe(false)
 		expect(body.username).toBe('Maskin')
@@ -123,7 +134,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 				>
 			}
 		)._registeredTools.slack_send_message
-		await tool.handler({ channel: 'C123', text: 'hi' }, {})
+		await tool.handler({ channel: 'C06LC37JJCS', text: 'hi' }, {})
 		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
 		expect(body.username).toBe('Maskin')
 		expect('blocks' in body).toBe(false)
@@ -139,7 +150,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 				>
 			}
 		)._registeredTools.slack_send_message
-		await tool.handler({ channel: 'C123', text: 'hi' }, {})
+		await tool.handler({ channel: 'C06LC37JJCS', text: 'hi' }, {})
 		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
 		expect(body.username).toBe('Maskin')
 		expect('blocks' in body).toBe(false)
@@ -155,7 +166,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 				>
 			}
 		)._registeredTools.slack_send_message
-		await expect(tool.handler({ channel: 'C123', text: 'hi' }, {})).rejects.toThrow(
+		await expect(tool.handler({ channel: 'C06LC37JJCS', text: 'hi' }, {})).rejects.toThrow(
 			/not a bot token/i,
 		)
 		expect(fetchMock).not.toHaveBeenCalled()
@@ -166,13 +177,13 @@ describe('createSlackMcpServer — slack_send_message', () => {
 			ok: true,
 			json: async () => ({ ok: false, error: 'channel_not_found' }),
 		} as Response)
-		await expect(callSendMessage({ channel: 'C123', text: 'hi' })).rejects.toThrow(
+		await expect(callSendMessage({ channel: 'C06LC37JJCS', text: 'hi' })).rejects.toThrow(
 			/channel_not_found/,
 		)
 	})
 
 	it('emits slack.message.posted to PostHog after a successful send — drives the bet ship metric', async () => {
-		await callSendMessage({ channel: 'C123', text: 'hello' })
+		await callSendMessage({ channel: 'C06LC37JJCS', text: 'hello' })
 
 		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
 		const [event, distinctId, props] = capturePosthogEventMock.mock.calls[0] as [
@@ -201,7 +212,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 				>
 			}
 		)._registeredTools.slack_send_message
-		await tool.handler({ channel: 'C123', text: 'hi' }, {})
+		await tool.handler({ channel: 'C06LC37JJCS', text: 'hi' }, {})
 		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
 		expect(props.slack_team_id).toBeNull()
 	})
@@ -211,7 +222,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 			ok: true,
 			json: async () => ({ ok: false, error: 'channel_not_found' }),
 		} as Response)
-		await expect(callSendMessage({ channel: 'C123', text: 'hi' })).rejects.toThrow()
+		await expect(callSendMessage({ channel: 'C06LC37JJCS', text: 'hi' })).rejects.toThrow()
 		expect(capturePosthogEventMock).not.toHaveBeenCalled()
 	})
 
@@ -225,7 +236,9 @@ describe('createSlackMcpServer — slack_send_message', () => {
 			},
 			text: async () => htmlBody,
 		} as unknown as Response)
-		await expect(callSendMessage({ channel: 'C123', text: 'hi' })).rejects.toThrow(/HTTP 503/)
+		await expect(callSendMessage({ channel: 'C06LC37JJCS', text: 'hi' })).rejects.toThrow(
+			/HTTP 503/,
+		)
 	})
 })
 
@@ -675,32 +688,29 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		})
 	})
 
-	describe('slack_update_message', () => {
+	describe('slack_update_message (internal channel, direct)', () => {
 		it('calls chat.update with channel + ts + text and returns { channel, ts, updated }', async () => {
-			queueSlackResponses({ ok: true, channel: 'C0GENERAL01', ts: '1717000003.000100' })
+			queueSlackResponses({ ok: true, channel: 'C06LC37JJCS', ts: '1717000003.000100' })
 			const out = await callTool('slack_update_message', {
-				channel: 'C0GENERAL01',
+				channel: 'C06LC37JJCS',
 				ts: '1717000003.000100',
 				text: 'edited',
 			})
 			const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
 			expect(url).toBe('https://slack.com/api/chat.update')
 			expect(JSON.parse(init.body as string)).toEqual({
-				channel: 'C0GENERAL01',
+				channel: 'C06LC37JJCS',
 				ts: '1717000003.000100',
 				text: 'edited',
 			})
-			expect(out).toEqual({ channel: 'C0GENERAL01', ts: '1717000003.000100', updated: true })
+			expect(out).toEqual({ channel: 'C06LC37JJCS', ts: '1717000003.000100', updated: true })
 		})
 
 		it('rewrites cant_update_message into the bot-authored-only hint', async () => {
-			queueSlackResponses(
-				{ ok: true, channels: CHANNELS },
-				{ ok: false, error: 'cant_update_message' },
-			)
+			queueSlackResponses({ ok: false, error: 'cant_update_message' })
 			await expect(
 				callTool('slack_update_message', {
-					channel: '#general',
+					channel: 'C06LC37JJCS',
 					ts: '1717000003.000100',
 					text: 'edited',
 				}),
@@ -711,11 +721,21 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 			queueSlackResponses({ ok: false, error: 'missing_scope' })
 			await expect(
 				callTool('slack_update_message', {
-					channel: 'C0GENERAL01',
+					channel: 'C06LC37JJCS',
 					ts: '1717000003.000100',
 					text: 'edited',
 				}),
 			).rejects.toThrow(/Reconnect Slack/)
+		})
+
+		it('refuses a direct edit in any other channel and calls Slack not at all', async () => {
+			const out = (await tool('slack_update_message').handler(
+				{ channel: 'C0123456789', ts: '1717000003.000100', text: 'edited' },
+				{},
+			)) as { isError?: boolean; content: Array<{ text: string }> }
+			expect(out.isError).toBe(true)
+			expect(out.content[0].text).toMatch(/object_id/)
+			expect(fetchMock).not.toHaveBeenCalled()
 		})
 	})
 

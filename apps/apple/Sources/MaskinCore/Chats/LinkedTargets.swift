@@ -9,15 +9,23 @@ public struct LinkedTarget: Hashable, Sendable, Identifiable {
 	public var kind: Kind
 	/// Lowercased, so the same thing linked twice is one target.
 	public var uuid: String
+	/// The workspace the address names (`https://maskin.io/<workspace>/objects/<uuid>`), when it names
+	/// one. Not part of what the target is: the same thing linked twice is one target either way.
+	public var workspaceID: String?
 
 	public var id: String { key }
 	/// `object:<uuid>`, `file:<uuid>`, `agent:<uuid>`, `chat:<uuid>`, `loop:<uuid>` or `trigger:<uuid>`: the cache and de-duplication key.
 	public var key: String { "\(kind.rawValue):\(uuid)" }
 
-	public init(kind: Kind, uuid: String) {
+	public init(kind: Kind, uuid: String, workspaceID: String? = nil) {
 		self.kind = kind
 		self.uuid = uuid.lowercased()
+		self.workspaceID = workspaceID
 	}
+
+	public static func == (lhs: LinkedTarget, rhs: LinkedTarget) -> Bool { lhs.key == rhs.key }
+
+	public func hash(into hasher: inout Hasher) { hasher.combine(key) }
 
 	private static let hrefPattern = try! NSRegularExpression(
 		pattern:
@@ -25,7 +33,8 @@ public struct LinkedTarget: Hashable, Sendable, Identifiable {
 		options: .caseInsensitive)
 
 	/// The object or file an address points at, if it points at one. Absolute web links and relative
-	/// `/<workspace>/objects/<uuid>` paths both count.
+	/// `/<workspace>/objects/<uuid>` paths both count. A full Maskin address also says which workspace
+	/// it is in; a relative one does not, and reads as the workspace being read.
 	public static func parse(href: String) -> LinkedTarget? {
 		let range = NSRange(href.startIndex..., in: href)
 		guard let m = hrefPattern.firstMatch(in: href, range: range),
@@ -40,7 +49,12 @@ public struct LinkedTarget: Hashable, Sendable, Identifiable {
 			case "triggers": .trigger
 			default: .object
 			}
-		return LinkedTarget(kind: kind, uuid: String(href[idRange]))
+		let workspace: String? =
+			switch DeepLink(string: href) {
+			case .object(let workspace, _)?, .file(let workspace, _)?: workspace
+			default: nil
+			}
+		return LinkedTarget(kind: kind, uuid: String(href[idRange]), workspaceID: workspace)
 	}
 
 	/// Every object and file a text links to, in the order each first appears, without repeats.

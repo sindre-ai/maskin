@@ -1,3 +1,4 @@
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
@@ -5,6 +6,7 @@ import { Link2, Trash2 } from 'lucide-react'
 import { RelativeTime } from '../shared/relative-time'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
+import { ViewerTooltip } from '../shared/viewer-tooltip'
 import { Button } from '../ui/button'
 
 interface RelationshipNodeProps {
@@ -50,6 +52,7 @@ export function RelationshipNode({
 	direction,
 	onDelete,
 }: RelationshipNodeProps) {
+	const canWrite = useCanWrite()
 	const verb = relationshipVerb(rel.type, direction)
 	const linkedId = direction === 'outbound' ? rel.targetId : rel.sourceId
 	// Prefer the denormalized title for whichever side `linkedId` actually
@@ -89,16 +92,19 @@ export function RelationshipNode({
 				</div>
 			</div>
 			{onDelete && (
-				<Button
-					variant="ghost"
-					size="icon"
-					className="h-6 w-6 opacity-0 group-hover:opacity-100"
-					aria-label="Remove link"
-					title="Remove link"
-					onClick={() => onDelete(rel.id)}
-				>
-					<Trash2 size={12} />
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-6 w-6 opacity-0 group-hover:opacity-100"
+						aria-label="Remove link"
+						title="Remove link"
+						disabled={!canWrite}
+						onClick={() => onDelete(rel.id)}
+					>
+						<Trash2 size={12} />
+					</Button>
+				</ViewerTooltip>
 			)}
 		</div>
 	)

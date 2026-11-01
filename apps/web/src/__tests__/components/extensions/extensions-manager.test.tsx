@@ -14,7 +14,9 @@ const mockCustomExtensions = { current: [] as CustomExtensionInfo[] }
 const mockGetAllWebModules = vi.fn()
 const mockGetWebModule = vi.fn()
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspace: mockWorkspace.current, workspaceId: mockWorkspace.current.id }),
 }))
 

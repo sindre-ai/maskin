@@ -8,6 +8,8 @@ import {
 	registerWorkspaceProperties,
 	resetPosthogIdentity,
 	setCapturingEnabled,
+	setWorkspaceGroup,
+	withSharedProperties,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -190,6 +192,44 @@ describe('posthog helper', () => {
 		expect(resetSpy).toHaveBeenCalledTimes(1)
 	})
 
+	it('setWorkspaceGroup is a no-op before init', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+
+		setWorkspaceGroup('ws-1', '2026-10-01T00:00:00.000Z')
+
+		expect(groupSpy).not.toHaveBeenCalled()
+	})
+
+	it('setWorkspaceGroup sets a workspace group with the id and created date, and no name', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		setWorkspaceGroup('ws-1', '2026-10-01T00:00:00.000Z')
+
+		expect(groupSpy).toHaveBeenCalledWith('workspace', 'ws-1', {
+			workspace_id: 'ws-1',
+			created_at: '2026-10-01T00:00:00.000Z',
+		})
+	})
+
+	it('setWorkspaceGroup leaves the created date out when the workspace has none', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		setWorkspaceGroup('ws-1', null)
+
+		expect(groupSpy).toHaveBeenCalledWith('workspace', 'ws-1', { workspace_id: 'ws-1' })
+	})
+
+	it('setWorkspaceGroup swallows posthog errors', () => {
+		vi.spyOn(posthog, 'group').mockImplementation(() => {
+			throw new Error('boom')
+		})
+		__setInitializedForTesting(true)
+
+		expect(() => setWorkspaceGroup('ws-1')).not.toThrow()
+	})
+
 	it('identifyForWorkspace swallows posthog errors', async () => {
 		vi.spyOn(posthog, 'identify').mockImplementation(() => {
 			throw new Error('boom')
@@ -214,6 +254,7 @@ describe('posthog helper', () => {
 				person_profiles: 'identified_only',
 				capture_pageview: true,
 				autocapture: false,
+				before_send: withSharedProperties,
 			})
 			expect(isPosthogReady()).toBe(true)
 		})
@@ -249,5 +290,23 @@ describe('posthog helper', () => {
 			expect(() => initPosthog()).not.toThrow()
 			expect(isPosthogReady()).toBe(false)
 		})
+	})
+})
+
+describe('withSharedProperties', () => {
+	it('adds surface web and defaults actor_type to human', () => {
+		expect(withSharedProperties({ event: 'x', properties: { a: 1 } })).toEqual({
+			event: 'x',
+			properties: { a: 1, actor_type: 'human', surface: 'web' },
+		})
+	})
+
+	it('keeps an actor_type that is already registered', () => {
+		const out = withSharedProperties({ event: 'x', properties: { actor_type: 'agent' } })
+		expect(out?.properties).toMatchObject({ actor_type: 'agent', surface: 'web' })
+	})
+
+	it('passes a dropped event through', () => {
+		expect(withSharedProperties(null)).toBeNull()
 	})
 })

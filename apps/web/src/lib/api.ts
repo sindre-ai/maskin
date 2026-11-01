@@ -2095,6 +2095,10 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	/** Whether a BYO key is stored. The keys themselves are never returned. */
+	llm_configured?: { anthropic: boolean; openai: boolean; custom_llm: boolean }
+	/** Last four characters of each stored key, for a workspace admin or owner only. */
+	llm_key_hints?: { anthropic: string | null; openai: string | null; custom_llm: string | null }
 	enterprise: boolean
 	// Single accountable human payer for this workspace's plan — read-only,
 	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
@@ -2136,9 +2140,7 @@ export interface CreateInviteInput {
 	role: 'member' | 'viewer'
 }
 
-export type CreateInviteResponse =
-	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
-	| { status: 'pending'; invite: InviteSummary }
+export type CreateInviteResponse = { status: 'pending'; invite: InviteSummary }
 
 export interface DeviceAuthPreview {
 	client: 'tvos'
@@ -2751,6 +2753,8 @@ export interface MessageKeychainRequest {
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
+	/** Agents the asker said will use it; ticked on the card even when not in the chat. */
+	target_agents?: Array<{ id: string; name: string }>
 }
 
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
@@ -3006,6 +3010,8 @@ export interface MessagesListResponse {
 export interface CreateConversationInput {
 	title: string
 	participant_actor_ids: string[]
+	/** Open the pair's one direct message instead of a new topical chat. */
+	direct?: boolean
 	initial_message?: string
 	initial_message_metadata?: MessageMetadata
 }

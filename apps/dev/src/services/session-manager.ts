@@ -733,6 +733,10 @@ export class SessionManager extends EventEmitter {
 			onTurnFinished: (sessionId, outcome) =>
 				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
+			// An interactive CLI stays alive after printing a limit banner as its
+			// final error, so no exit settles the row. Same teardown as a helper.
+			onLimitResult: (sessionId, outcome) =>
+				this.finishHelperSession(sessionId, outcome, { retry: false }),
 		})
 	}
 
@@ -4930,10 +4934,15 @@ ${cont.continues_prompt}
 	 * Settled through settleSession like any other end, so the row reads
 	 * completed (or failed), `notify_on_complete` still sends the result back to
 	 * the agent that started it, and `wait: true` callers see it finish.
+	 *
+	 * `retry: false` keeps the failure reason but sets no retry time. A chat that
+	 * ends on a limit uses it: rerunning an idle chat at the reset is a product
+	 * call nobody has made, so only helper and cron sessions are retried.
 	 */
 	async finishHelperSession(
 		sessionId: string,
 		outcome: { isError: boolean; text: string },
+		options: { retry?: boolean } = {},
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -4971,7 +4980,7 @@ ${cont.continues_prompt}
 						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
 						resultText: outcome.text,
 						failureReason: limitReason ?? undefined,
-						retryAt: scheduledRetryAt ?? undefined,
+						retryAt: options.retry === false ? undefined : (scheduledRetryAt ?? undefined),
 						// Same settle source the idle close uses: the remote stop endpoint
 						// validates it against a fixed list, and this is a close-out of an
 						// idle interactive session.
@@ -5920,6 +5929,11 @@ ${cont.continues_prompt}
 			const skillsAttached =
 				typeof staging?.manifest_skills === 'number' ? staging.manifest_skills : undefined
 			const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : undefined
+			// The row may predate settle (no completedAt yet), so fall back to now.
+			const startedAt = session.startedAt ?? session.createdAt
+			const durationMs = startedAt
+				? Math.max(0, (session.completedAt ?? new Date()).getTime() - startedAt.getTime())
+				: undefined
 			await trackAgentSessionCompletedWithSkills({
 				workspaceId: session.workspaceId,
 				sessionId: session.id,
@@ -5927,6 +5941,7 @@ ${cont.continues_prompt}
 				outcome,
 				skillsAttached,
 				skillsStaged,
+				durationMs,
 			})
 		} catch (err) {
 			// Never propagate — completion path must not be blocked by analytics.

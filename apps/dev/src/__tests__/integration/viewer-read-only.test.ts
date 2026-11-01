@@ -28,18 +28,19 @@ const { default: eventsRoutes } = await import('../../routes/events')
 const { default: importsRoutes } = await import('../../routes/imports')
 const { default: voiceSessionsRoutes } = await import('../../routes/voice-sessions')
 const { default: notificationsRoutes } = await import('../../routes/notifications')
+const { default: briefingRoutes } = await import('../../routes/briefing')
 
 // Real authMiddleware (the role comes from its membership lookup) in front of the
 // real routes, so a viewer API key goes through the same path as in production.
-function createApp() {
+function createApp(storage: unknown = {}) {
 	const app = new OpenAPIHono()
 	app.use('*', authMiddleware(db, { cacheTtlMs: 0 }))
 	app.use('*', async (c, next) => {
 		c.set('db' as never, db as never)
 		const sessionManager = { stopSession: async () => {}, createSession: async () => ({}) }
 		c.set('sessionManager' as never, sessionManager as never)
-		// A viewer is turned away before any route touches storage.
-		c.set('storageProvider' as never, {} as never)
+		// Most viewer writes are turned away before any route touches storage.
+		c.set('storageProvider' as never, storage as never)
 		c.set('notifyBridge' as never, {} as never)
 		await next()
 	})
@@ -58,6 +59,7 @@ function createApp() {
 	app.route('/api/imports', importsRoutes as never)
 	app.route('/api/voice-sessions', voiceSessionsRoutes as never)
 	app.route('/api/notifications', notificationsRoutes as never)
+	app.route('/api/briefing', briefingRoutes as never)
 	return app
 }
 
@@ -462,6 +464,46 @@ describe('Viewer role is read-only', () => {
 			expect(patch.status).toBe(404)
 			const del = await app.request(jsonDelete(`/api/notifications/${other?.id}`, headers))
 			expect(del.status).toBe(404)
+		})
+	})
+
+	describe('spoken briefing', () => {
+		// In-memory storage so the test can see whether the cache was written.
+		function createStorage() {
+			const files = new Map<string, Buffer>()
+			return {
+				files,
+				exists: async (key: string) => files.has(key),
+				get: async (key: string) => files.get(key) as Buffer,
+				put: async (key: string, data: Buffer) => {
+					files.set(key, data)
+				},
+			}
+		}
+
+		it('serves a viewer without writing the cache, and a writer writes it', async () => {
+			const storage = createStorage()
+			const app = createApp(storage)
+
+			const asViewer = await app.request(
+				jsonRequest('POST', '/api/briefing/spoken', undefined, auth(viewerKey)),
+			)
+			expect(asViewer.status).toBe(200)
+			expect((await asViewer.json()).cached).toBe(false)
+			expect(storage.files.size).toBe(0)
+
+			const asMember = await app.request(
+				jsonRequest('POST', '/api/briefing/spoken', undefined, auth(memberKey)),
+			)
+			expect(asMember.status).toBe(200)
+			expect(storage.files.size).toBe(1)
+
+			// Once a writer has produced it, a viewer is served that cached brief.
+			const again = await app.request(
+				jsonRequest('POST', '/api/briefing/spoken', undefined, auth(viewerKey)),
+			)
+			expect(again.status).toBe(200)
+			expect((await again.json()).cached).toBe(true)
 		})
 	})
 

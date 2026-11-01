@@ -16,10 +16,12 @@ import {
 import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import { CreatePicker } from '@/components/shared/create-picker'
 import { UploadProgress } from '@/components/shared/upload-progress'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
 import { useUploadFile } from '@/hooks/use-files'
@@ -31,6 +33,7 @@ import { cn } from '@/lib/cn'
 import { toUploadInput } from '@/lib/large-file-upload'
 import { splitLongMessage } from '@/lib/long-message'
 import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
+import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
 import { type SecretMatch, withoutSecrets } from '@maskin/shared'
 import { ArrowUp, Hash, Info, Mic, Paperclip, X } from 'lucide-react'
 import {
@@ -294,7 +297,7 @@ export function Composer({
 	workspaceId,
 	onSend,
 	longTextAsFile,
-	disabled,
+	disabled: disabledByCaller,
 	pending,
 	placeholder,
 	selection,
@@ -317,6 +320,9 @@ export function Composer({
 	callAgent,
 	fillRequest,
 }: ComposerProps) {
+	// Every send from a composer is a write, so a viewer gets the box switched off.
+	const canWrite = useCanWrite()
+	const disabled = disabledByCaller || !canWrite
 	const [internalValue, setInternalValue] = useState(() =>
 		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
 	)
@@ -926,7 +932,11 @@ export function Composer({
 				// surface and no error state to set.
 				if (controller.signal.aborted) return
 				console.error(`[chat] failed to upload ${file.name}`, err)
-				const message = err instanceof Error ? err.message : 'Upload failed'
+				const message = isViewerRefusal(err)
+					? VIEWER_READ_ONLY_MESSAGE
+					: err instanceof Error
+						? err.message
+						: 'Upload failed'
 				// Mirror the comment input: the failed chip stays put so the user
 				// can see which attachment broke and remove it. Send stays blocked
 				// (via canSend) until every pending row is resolved or removed.
@@ -944,6 +954,7 @@ export function Composer({
 	// paste both end here, so a chip behaves the same whichever way it arrived.
 	const attachFiles = useCallback(
 		(files: File[]) => {
+			if (!canWrite) return
 			const additions: PendingUpload[] = files.map((file) => ({
 				tempId: makeTempId(),
 				name: file.name,
@@ -958,7 +969,7 @@ export function Composer({
 				void uploadPickedFile(p.tempId, files[idx])
 			})
 		},
-		[uploadPickedFile],
+		[uploadPickedFile, canWrite],
 	)
 
 	const handleFileSelection = useCallback(
@@ -1169,111 +1180,113 @@ export function Composer({
 			) : null}
 			{/* Hidden rather than unmounted while vault mode is open, so the composer's own
 			    state is untouched when the user comes back to it. */}
-			<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
-				<Textarea
-					autoResize
-					ref={textareaRef}
-					value={value}
-					onChange={handleChange}
-					onPaste={handlePaste}
-					onKeyDown={handleKeyDown}
-					placeholder={placeholder}
-					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
-					disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
-					rows={1}
-					aria-label={textareaLabel}
-					aria-describedby={hint === undefined ? undefined : hintId}
-					onFocus={() => setTextareaFocused(true)}
-					onBlur={() => setTextareaFocused(false)}
-					// Screen readers announce the picker's active row while focus
-					// stays on the textarea (spec §Accessibility). The picker
-					// keeps this in sync via `onActiveDescendantChange`.
-					aria-activedescendant={unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined}
-					aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
-					aria-expanded={mentionTrigger !== null || undefined}
-				/>
-				{sendError || externalError ? (
-					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
-						{sendError ?? externalError} — your message is preserved; try again.
-					</p>
-				) : null}
-				{hint === undefined ? null : (
-					<output
-						id={hintId}
-						aria-live="polite"
-						className={cn(
-							'px-1 text-muted-foreground text-xs',
-							// The icon and the 8 px gap above the control row exist only while there is text,
-							// so the empty live region adds no height.
-							hintText ? 'mb-2 flex items-start gap-1.5' : 'block',
-						)}
-					>
-						{hintText ? <Info aria-hidden className="mt-px size-3.5 shrink-0" /> : null}
-						{hintText}
-					</output>
-				)}
-				<div className="flex items-center gap-2">
-					{/* Attach carries a pinned 44 px touch target (`ios-chat-attach-tap-area.spec.ts`). */}
-					<Button
-						type="button"
-						size="icon"
-						variant="ghost"
-						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={disabled}
-						aria-label="Attach file"
-					>
-						<Paperclip size={14} aria-hidden />
-					</Button>
-					{dictation.supported ? (
+			<ViewerTooltip className="block">
+				<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
+					<Textarea
+						autoResize
+						ref={textareaRef}
+						value={value}
+						onChange={handleChange}
+						onPaste={handlePaste}
+						onKeyDown={handleKeyDown}
+						placeholder={canWrite ? placeholder : VIEWER_READ_ONLY_MESSAGE}
+						className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+						disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
+						rows={1}
+						aria-label={textareaLabel}
+						aria-describedby={hint === undefined ? undefined : hintId}
+						onFocus={() => setTextareaFocused(true)}
+						onBlur={() => setTextareaFocused(false)}
+						// Screen readers announce the picker's active row while focus
+						// stays on the textarea (spec §Accessibility). The picker
+						// keeps this in sync via `onActiveDescendantChange`.
+						aria-activedescendant={unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined}
+						aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
+						aria-expanded={mentionTrigger !== null || undefined}
+					/>
+					{sendError || externalError ? (
+						<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
+							{sendError ?? externalError} — your message is preserved; try again.
+						</p>
+					) : null}
+					{hint === undefined ? null : (
+						<output
+							id={hintId}
+							aria-live="polite"
+							className={cn(
+								'px-1 text-muted-foreground text-xs',
+								// The icon and the 8 px gap above the control row exist only while there is text,
+								// so the empty live region adds no height.
+								hintText ? 'mb-2 flex items-start gap-1.5' : 'block',
+							)}
+						>
+							{hintText ? <Info aria-hidden className="mt-px size-3.5 shrink-0" /> : null}
+							{hintText}
+						</output>
+					)}
+					<div className="flex items-center gap-2">
+						{/* Attach carries a pinned 44 px touch target (`ios-chat-attach-tap-area.spec.ts`). */}
 						<Button
 							type="button"
 							size="icon"
-							variant={dictation.recording ? 'destructive' : 'outline'}
-							className={cn(
-								'ml-auto h-7 w-7 shrink-0 rounded-full',
-								dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
-							)}
-							onClick={dictation.toggle}
-							disabled={disabled || dictation.transcribing}
-							aria-pressed={dictation.recording}
-							aria-busy={dictation.transcribing}
-							aria-label={
-								dictation.transcribing
-									? 'Transcribing'
-									: dictation.recording
-										? 'Stop dictating'
-										: 'Dictate a message'
-							}
+							variant="ghost"
+							className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={disabled}
+							aria-label="Attach file"
 						>
-							{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
+							<Paperclip size={14} aria-hidden />
 						</Button>
-					) : null}
-					{callAgent ? (
-						// `ml-auto` here only when the mic didn't already claim the gap.
-						<span className={cn('inline-flex', dictation.supported ? '' : 'ml-auto')}>
-							<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />
-						</span>
-					) : null}
-					<Button
-						type="submit"
-						size="icon"
-						className={cn(
-							'h-7 w-7 shrink-0 rounded-full',
-							dictation.supported || callAgent ? '' : 'ml-auto',
-							canSend
-								? 'bg-primary text-primary-foreground'
-								: 'bg-muted text-muted-foreground hover:bg-muted',
-						)}
-						disabled={!canSend}
-						aria-label="Send message"
-					>
-						{/* An up-arrow, not a paper plane — v2's send glyph across every
+						{dictation.supported ? (
+							<Button
+								type="button"
+								size="icon"
+								variant={dictation.recording ? 'destructive' : 'outline'}
+								className={cn(
+									'ml-auto h-7 w-7 shrink-0 rounded-full',
+									dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
+								)}
+								onClick={dictation.toggle}
+								disabled={disabled || dictation.transcribing}
+								aria-pressed={dictation.recording}
+								aria-busy={dictation.transcribing}
+								aria-label={
+									dictation.transcribing
+										? 'Transcribing'
+										: dictation.recording
+											? 'Stop dictating'
+											: 'Dictate a message'
+								}
+							>
+								{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
+							</Button>
+						) : null}
+						{callAgent ? (
+							// `ml-auto` here only when the mic didn't already claim the gap.
+							<span className={cn('inline-flex', dictation.supported ? '' : 'ml-auto')}>
+								<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />
+							</span>
+						) : null}
+						<Button
+							type="submit"
+							size="icon"
+							className={cn(
+								'h-7 w-7 shrink-0 rounded-full',
+								dictation.supported || callAgent ? '' : 'ml-auto',
+								canSend
+									? 'bg-primary text-primary-foreground'
+									: 'bg-muted text-muted-foreground hover:bg-muted',
+							)}
+							disabled={!canSend}
+							aria-label="Send message"
+						>
+							{/* An up-arrow, not a paper plane — v2's send glyph across every
 						    composer (mockup 543). */}
-						{showSpinner ? <Spinner /> : <ArrowUp size={15} />}
-					</Button>
-				</div>
-			</form>
+							{showSpinner ? <Spinner /> : <ArrowUp size={15} />}
+						</Button>
+					</div>
+				</form>
+			</ViewerTooltip>
 			{/* "Turn this into an object" — reuses the shipped creation flow rather
 			    than the mockup's bespoke FROM-THIS-CHAT modal (800–848). The picked
 			    type is seeded; the conversation itself is not, because pre-filling

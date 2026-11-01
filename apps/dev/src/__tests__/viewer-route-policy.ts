@@ -147,7 +147,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/objects/:id/star', 'Group E, personal state'],
 	['DELETE', '/api/objects/:id/star', 'Group E, personal state'],
 	['PUT', '/api/user-display-settings/:object_type', 'Group E, personal state'],
-	['POST', '/api/briefing/spoken', 'Group E, generates a briefing and changes no workspace data'],
+	[
+		'POST',
+		'/api/briefing/spoken',
+		'Group E, a viewer is served the day’s cached brief or deterministic prose; only a writer triggers a model call and the cache write',
+	],
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
 	[
 		'POST',
@@ -207,11 +211,6 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'/api/integrations/linkedin-unipile/mcp/:instanceSlug',
 		'MCP endpoint, tools act as the identity',
 	],
-	['POST', '/api/integrations/linkedin-unipile/send-message', 'sends a LinkedIn message'],
-	['POST', '/api/integrations/linkedin-unipile/reply', 'sends a LinkedIn reply'],
-	['POST', '/api/integrations/linkedin-unipile/publish-post', 'publishes a LinkedIn post'],
-	['POST', '/api/integrations/linkedin-unipile/comment-on-post', 'posts a LinkedIn comment'],
-	['POST', '/api/integrations/linkedin-unipile/reply-to-comment', 'posts a LinkedIn reply'],
 	['POST', '/api/admin/linkedin-unipile/refresh-identities', 'refreshes stored credentials'],
 ]
 

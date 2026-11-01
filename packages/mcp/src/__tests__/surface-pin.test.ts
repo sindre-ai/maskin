@@ -352,6 +352,7 @@ describe('MCP surface pin', () => {
 				'disconnect_integration',
 				'approve_object_draft',
 				'gmail_send_email',
+				'resend_send_email',
 				'update_integration_access',
 				'deep_research',
 			].sort()

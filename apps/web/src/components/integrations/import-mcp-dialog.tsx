@@ -7,6 +7,7 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { CustomMcpServerSpec } from '@/lib/api'
 import { useState } from 'react'
 
@@ -40,6 +41,7 @@ export function ImportMcpDialog({
 	onClose: () => void
 	onImport: (servers: Record<string, CustomMcpServerSpec>) => void
 }) {
+	const canWrite = useCanWrite()
 	const [json, setJson] = useState('')
 	const [parseError, setParseError] = useState<string | null>(null)
 
@@ -50,6 +52,7 @@ export function ImportMcpDialog({
 	}
 
 	const handleImport = () => {
+		if (!canWrite) return
 		const result = parseMcpJson(json)
 		if ('error' in result) {
 			setParseError(result.error)
@@ -84,7 +87,7 @@ export function ImportMcpDialog({
 					<Button variant="ghost" onClick={close} disabled={saving}>
 						Cancel
 					</Button>
-					<Button onClick={handleImport} disabled={!json.trim() || saving}>
+					<Button onClick={handleImport} disabled={!json.trim() || saving || !canWrite}>
 						Import
 					</Button>
 				</div>

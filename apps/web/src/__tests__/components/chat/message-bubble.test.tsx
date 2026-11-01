@@ -1,5 +1,5 @@
 import type { MessageResponse } from '@/lib/api'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -10,7 +10,9 @@ vi.mock('@tanstack/react-router', async () => {
 
 const workspaceState = vi.hoisted(() => ({ enterprise: false }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: {
 			enterprise: workspaceState.enterprise,
@@ -34,15 +36,13 @@ vi.mock('@/hooks/use-linked-chat', () => ({
 	}),
 }))
 
-const objectState = vi.hoisted(() => ({ title: 'Retry window' }))
-
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({
 		data: {
 			id: 'obj-1',
 			workspaceId: 'ws-1',
 			type: 'bet',
-			title: objectState.title,
+			title: 'Retry window',
 			status: 'active',
 			content: 'The retry window text.',
 			metadata: { channel: 'linkedin_dm', priority: 'P1' },
@@ -164,23 +164,81 @@ describe('MessageBubble', () => {
 		expect(screen.queryByText('Me')).not.toBeInTheDocument()
 	})
 
-	it('draws a link to an object in your own message inline, as a chip with its title', () => {
+	describe('a link to an object in your own message', () => {
 		const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 		const address = `https://maskin.io/ws-1/objects/${id}`
-		const { container } = renderBubble(
-			buildMessage({
-				actorId: 'me',
-				actorName: 'Me',
-				actorType: 'human',
-				content: `is this done? ${address}`,
-			}),
-		)
-		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
-		const chip = screen.getByRole('link', { name: 'Retry window' })
-		// Inside the same plate and the same line of words, not a box under it.
-		const plate = container.querySelector('.bg-primary')
-		expect(plate).toContainElement(chip)
-		expect(plate?.textContent).toContain('is this done?')
+
+		it('is a chip inside the sentence, in the same plate, opening in a new tab', () => {
+			const { container } = renderBubble(
+				buildMessage({
+					actorId: 'me',
+					actorName: 'Me',
+					actorType: 'human',
+					content: `is this done? ${address} thanks`,
+				}),
+			)
+			expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+			const chip = screen.getByRole('link', { name: /Retry window/ })
+			const plate = container.querySelector('.bg-primary')
+			expect(plate).toContainElement(chip)
+			expect(plate?.textContent).toContain('is this done?')
+			expect(plate?.textContent).toContain('thanks')
+			expect(chip).toHaveAttribute('target', '_blank')
+			expect(container.querySelector('[data-linked-card]')).toBeNull()
+		})
+
+		it('is a card nested under the words in the same plate when it stands on its own line', () => {
+			const { container } = renderBubble(
+				buildMessage({
+					actorId: 'me',
+					actorName: 'Me',
+					actorType: 'human',
+					content: `is this done?\n${address}`,
+				}),
+			)
+			const plate = container.querySelector('.bg-primary')
+			const card = container.querySelector('[data-linked-card]')
+			expect(card).not.toBeNull()
+			expect(plate).toContainElement(card as HTMLElement)
+			expect(plate?.textContent).toContain('is this done?')
+			expect(card).toHaveTextContent('Retry window')
+			expect(card?.querySelector('a')).toHaveAttribute('target', '_blank')
+			expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		})
+
+		it('is the message itself, with no plate, when the message is only the link', () => {
+			const { container } = renderBubble(
+				buildMessage({
+					actorId: 'me',
+					actorName: 'Me',
+					actorType: 'human',
+					content: address,
+				}),
+			)
+			expect(container.querySelector('[data-linked-card]')).not.toBeNull()
+			expect(container.querySelector('.bg-primary')).toBeNull()
+		})
+
+		it('sets the width by what the message holds: a bubble with a card is min(520px, 88%), a lone card up to 460px, words fit their text', () => {
+			const holder = (content: string) => {
+				const { container } = renderBubble(
+					buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content }),
+				)
+				return (
+					container.querySelector('[data-linked-card]')?.parentElement?.closest('.relative') ?? null
+				)
+			}
+			expect(holder(`is this done?\n${address}`)).toHaveClass('w-[min(520px,88%)]')
+			cleanup()
+			expect(holder(address)).toHaveClass('w-full', 'max-w-[460px]')
+			cleanup()
+			const { container } = renderBubble(
+				buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content: 'just words' }),
+			)
+			const words = container.querySelector('.bg-primary')?.parentElement
+			expect(words).not.toHaveClass('w-[min(520px,88%)]')
+			expect(words).not.toHaveClass('max-w-[460px]')
+		})
 	})
 
 	it('draws a GitHub pull request and issue in your own message as chips that open GitHub', () => {
@@ -269,24 +327,6 @@ describe('MessageBubble', () => {
 		expect(container.querySelectorAll('[data-linked-card]')).toHaveLength(1)
 		expect(screen.getByText('Chat', { selector: '.eyebrow' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Chat: Launch plan' })).toBeInTheDocument()
-	})
-
-	it('cuts the title in a chip at 30 characters', () => {
-		objectState.title = 'A very long title for an object that goes on and on'
-		try {
-			const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
-			renderBubble(
-				buildMessage({
-					actorId: 'me',
-					actorName: 'Me',
-					actorType: 'human',
-					content: `https://maskin.io/ws-1/objects/${id}`,
-				}),
-			)
-			expect(screen.getByText('A very long title for an objec…')).toBeInTheDocument()
-		} finally {
-			objectState.title = 'Retry window'
-		}
 	})
 
 	it('renders another actor as an avatar + name with no card wrapper', () => {

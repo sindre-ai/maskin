@@ -12,7 +12,9 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 // The row Call button mounts VoiceCallDialog, whose hook reads the workspace.
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 

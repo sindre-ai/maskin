@@ -25,6 +25,8 @@ struct LinkedTargetCard: View {
 			LinkedTriggerCard(trigger: trigger)
 		case .deleted?:
 			LinkedDeletedCard(kind: Self.deletedKind(of: target))
+		case .otherWorkspace(let link)?:
+			LinkedOtherWorkspaceCard(link: link)
 		case .agent(let agent)?:
 			LinkedAgentCard(agent: agent)
 		case .chat(let chat)?:

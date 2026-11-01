@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
 	createInviteBodySchema,
 	inviteSummarySchema,
-	linkedMemberResponseSchema,
 	listInvitesQuerySchema,
 	pendingInviteListItemSchema,
 	pendingInviteResponseSchema,
@@ -55,18 +54,8 @@ describe('POST /api/invites response schemas', () => {
 		expect(inviteSummarySchema.safeParse(invite).success).toBe(true)
 	})
 
-	it('matches the linked shape', () => {
-		expect(
-			linkedMemberResponseSchema.safeParse({
-				status: 'linked',
-				member: { workspaceId: UUID, actorId: UUID, role: 'member' },
-			}).success,
-		).toBe(true)
-	})
-
-	it('does not let one status carry the other status payload', () => {
+	it('rejects any other status', () => {
 		expect(pendingInviteResponseSchema.safeParse({ status: 'linked', invite }).success).toBe(false)
-		expect(linkedMemberResponseSchema.safeParse({ status: 'pending', invite }).success).toBe(false)
 	})
 })
 

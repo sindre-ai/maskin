@@ -4,7 +4,7 @@ import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } from '@maskin/shared'
 import * as Sentry from '@sentry/node'
 import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
-import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { classifyBannerResult, classifyCreditExhaustion } from '../lib/credit-classifier'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
@@ -380,6 +380,13 @@ export type InteractiveTurnFinalizerOptions = {
 	 * the same reason as the options above — no session-manager import here.
 	 */
 	onHelperResult?: (sessionId: string, outcome: { isError: boolean; text: string }) => Promise<void>
+	/**
+	 * Called when a session that is not a helper closes a turn with an error
+	 * result that opens with a limit banner. The CLI stays alive after printing
+	 * it, so no exit will ever settle the row: this ends the session as failed.
+	 * Injected for the same reason as the options above.
+	 */
+	onLimitResult?: (sessionId: string, outcome: { isError: true; text: string }) => Promise<void>
 }
 
 export class InteractiveTurnFinalizer {
@@ -434,6 +441,7 @@ export class InteractiveTurnFinalizer {
 	private readonly onResumeAfterMove?: InteractiveTurnFinalizerOptions['onResumeAfterMove']
 	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
+	private readonly onLimitResult?: InteractiveTurnFinalizerOptions['onLimitResult']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
@@ -444,6 +452,7 @@ export class InteractiveTurnFinalizer {
 		this.fallbackModel = options.fallbackModel ?? null
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onHelperResult = options.onHelperResult
+		this.onLimitResult = options.onLimitResult
 		this.onStopSession = options.onStopSession
 		this.onResumeAfterMove = options.onResumeAfterMove
 		this.onTurnFinished = options.onTurnFinished
@@ -578,6 +587,7 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} produced final output before a conversation was attached; dropping this turn's reply`,
 			)
+			await this.failOnLimitResult(sessionId, result, logId)
 			return
 		}
 
@@ -595,6 +605,7 @@ export class InteractiveTurnFinalizer {
 		// fall back to something they can actually read.
 		if (result.isError) {
 			await this.handleFailedTurn(sessionId, gate, gate.conversationId, result, logId)
+			await this.failOnLimitResult(sessionId, result, logId)
 			return
 		}
 
@@ -674,6 +685,30 @@ export class InteractiveTurnFinalizer {
 			text,
 			recovered ? { recovered: true } : {},
 		)
+	}
+
+	/**
+	 * A turn closed with an error that opens with a limit banner: the session
+	 * can do nothing more, so end it as failed rather than leave it reading
+	 * running. Runs after the chat has been told, and acts only on the newest
+	 * turn, since the agent-server replays old stdout after a restart.
+	 * A banner that is only quoted inside a longer result does not count
+	 * (classifyBannerResult checks the text opens with it).
+	 */
+	private async failOnLimitResult(
+		sessionId: string,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+	): Promise<void> {
+		if (!this.onLimitResult || !result.isError || !classifyBannerResult(result.text)) return
+		try {
+			if (!(await this.isNewestTurn(sessionId, logId))) return
+			await this.onLimitResult(sessionId, { isError: true, text: result.text })
+		} catch (err) {
+			logger.error(
+				`Session ${sessionId} could not be ended after a limit error: ${describeError(err)}`,
+			)
+		}
 	}
 
 	/**

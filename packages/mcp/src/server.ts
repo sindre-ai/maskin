@@ -980,10 +980,20 @@ async function assertLoopTypesValid(
 async function getWorkspace(
 	config: McpConfig,
 	workspaceId: string,
-): Promise<{ id: string; name: string; settings: Record<string, unknown> }> {
+): Promise<{
+	id: string
+	name: string
+	settings: Record<string, unknown>
+	llm_configured?: { anthropic?: boolean; openai?: boolean }
+}> {
 	const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 		skipWorkspace: true,
-	})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+	})) as Array<{
+		id: string
+		name: string
+		settings: Record<string, unknown>
+		llm_configured?: { anthropic?: boolean; openai?: boolean }
+	}>
 	const workspace = workspaces.find((w) => w.id === workspaceId)
 	if (!workspace) throw new Error('Workspace not found')
 	return workspace
@@ -3351,11 +3361,13 @@ export function createMcpServer(config: McpConfig) {
 			// to a single `unknown` check — surfacing "no LLM keys" as certain
 			// when we actually couldn't check would be a false negative.
 			let sharedWorkspaceSettings: Record<string, unknown> | null = null
+			let sharedWorkspaceLlmConfigured: { anthropic?: boolean; openai?: boolean } | undefined
 			let sharedWorkspaceError: unknown = null
 			if (wsId) {
 				try {
 					const workspace = await getWorkspace(config, wsId)
 					sharedWorkspaceSettings = workspace.settings
+					sharedWorkspaceLlmConfigured = workspace.llm_configured
 				} catch (err) {
 					sharedWorkspaceError = err
 				}
@@ -3429,7 +3441,7 @@ export function createMcpServer(config: McpConfig) {
 								content: (withUrl.content as string | undefined) ?? null,
 								driver: (withUrl.driver as string | undefined) ?? null,
 							},
-							readWorkspaceLlmReadiness(sharedWorkspaceSettings),
+							readWorkspaceLlmReadiness(sharedWorkspaceSettings, sharedWorkspaceLlmConfigured),
 							readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
 						)
 					})
@@ -4302,14 +4314,16 @@ export function createMcpServer(config: McpConfig) {
 				;(result as Record<string, unknown>).workspace_id = bornInWorkspace
 				;(result as Record<string, unknown>).role = 'member'
 			} else if (targetWorkspace && !isAgent && !createBody.auto_create_workspace) {
-				// Humans only: add the new actor as a member
+				// Humans only: a person can't be added by id without accepting, so the
+				// workspace invites them by email and they join when they accept.
 				try {
-					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
-						actor_id: result.id,
+					await apiCall(config, 'POST', '/api/invites', {
+						workspaceId: targetWorkspace,
+						email: createBody.email,
 						role: role ?? 'member',
 					})
 					;(result as Record<string, unknown>).workspace_id = targetWorkspace
-					;(result as Record<string, unknown>).role = role ?? 'member'
+					;(result as Record<string, unknown>).invited_role = role ?? 'member'
 				} catch (error) {
 					;(result as Record<string, unknown>).workspace_membership_error = String(error)
 				}
@@ -7532,6 +7546,44 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'resend_send_email',
+		{
+			description: tools.resend_send_email.description,
+			inputSchema: tools.resend_send_email.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('resend_send_email', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const sent = (await apiCall(
+					config,
+					'POST',
+					'/api/integrations/resend/send',
+					{ object_id: args.object_id },
+					{ workspaceId: args.workspace_id },
+				)) as { email_id: string; from: string }
+				return reply(
+					`Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
+				)
+			} catch (err) {
+				// The server words every refusal for the agent (what happened, what to do next),
+				// so pass it on as a result instead of a thrown error.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not sent. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_sessions',
 		{
 			description: tools.list_sessions.description,
@@ -8111,6 +8163,7 @@ export function createMcpServer(config: McpConfig) {
 						kind: args.kind,
 						...(args.suggested_name ? { suggested_name: args.suggested_name } : {}),
 						...(args.hint ? { hint: args.hint } : {}),
+						...(args.target_agent_ids?.length ? { target_agent_ids: args.target_agent_ids } : {}),
 					},
 					{ workspaceId: args.workspace_id },
 				)

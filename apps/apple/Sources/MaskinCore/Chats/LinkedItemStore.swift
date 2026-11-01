@@ -12,6 +12,8 @@ public enum LinkedItem: Equatable, Sendable {
 	/// An object the lookup could not find. The lookup cannot tell a deleted object from a private
 	/// one, and nothing is private inside a workspace, so the card says it was deleted.
 	case deleted(LinkedTarget)
+	/// A link whose address names another workspace: known from the address, never looked up.
+	case otherWorkspace(LinkedOtherWorkspace)
 	/// An agent in this workspace: drawn with the shared card face.
 	case agent(LinkedAgent)
 	/// A chat you are in: drawn with the shared card face.
@@ -29,7 +31,7 @@ public enum LinkedItem: Equatable, Sendable {
 	/// Whether it is drawn as a card in the message.
 	public var isCard: Bool {
 		switch self {
-		case .draft, .file, .object, .deleted, .loop, .trigger, .agent, .chat, .chatUnavailable: true
+		case .draft, .file, .object, .deleted, .loop, .trigger, .agent, .chat, .chatUnavailable, .otherWorkspace: true
 		case .plain: false
 		}
 	}
@@ -110,6 +112,7 @@ public final class LinkedItemStore {
 		var readAt: Date
 	}
 	@ObservationIgnored private let workspaceID: @MainActor () -> String?
+	@ObservationIgnored private let memberWorkspaceName: @MainActor (String) -> String?
 	@ObservationIgnored private let now: @MainActor () -> Date
 	@ObservationIgnored private var inFlight: [String: Task<Void, Never>] = [:]
 	@ObservationIgnored private var fileTextOrder: [String] = []
@@ -132,11 +135,15 @@ public final class LinkedItemStore {
 	/// How many times a failed lookup is asked again by `resolveWithRetries`.
 	public static let maxRetries = 4
 
+	/// - Parameter workspaceName: the name of a workspace the reader belongs to, from the workspace
+	///   switcher's list, or nil for one they are not in (a card for a link into another workspace
+	///   names the first and says "another workspace" for the second).
 	public init(
 		objects: any ObjectDraftsRemote, files: any FilesRemote,
 		actors: (@Sendable () async throws -> [ActorRef])? = nil, places: (any LinkedPlacesRemote)? = nil,
 		loops: (@Sendable () async throws -> [LoopSummary])? = nil,
 		triggers: (@Sendable () async throws -> TriggerListing)? = nil, workspaceID: @escaping @MainActor () -> String?,
+		workspaceName: @escaping @MainActor (String) -> String? = { _ in nil },
 		retryAfter: TimeInterval = 30, now: @escaping @MainActor () -> Date = { Date() }
 	) {
 		self.objects = objects
@@ -146,16 +153,20 @@ public final class LinkedItemStore {
 		self.loadLoops = loops
 		self.loadTriggers = triggers
 		self.workspaceID = workspaceID
+		self.memberWorkspaceName = workspaceName
 		self.retryAfter = retryAfter
 		self.now = now
 	}
 
 	// MARK: Reading
 
-	/// Nil until something asked for the target.
-	public func state(for target: LinkedTarget) -> LinkedItemState? { entries[target.key]?.state }
+	/// Nil until something asked for the target. A link into another workspace is known at once, from
+	/// its address.
+	public func state(for target: LinkedTarget) -> LinkedItemState? {
+		entries[target.key]?.state ?? otherWorkspace(target).map { LinkedItemState.ready(.otherWorkspace($0)) }
+	}
 
-	public func item(for target: LinkedTarget) -> LinkedItem? { entries[target.key]?.state.item }
+	public func item(for target: LinkedTarget) -> LinkedItem? { state(for: target)?.item }
 
 	/// True when the target is drawn as a card in a message.
 	public func isCard(_ target: LinkedTarget) -> Bool { item(for: target)?.isCard == true }
@@ -164,8 +175,8 @@ public final class LinkedItemStore {
 	/// card is a placeholder), so the message does not jump when the answer arrives; one that cannot
 	/// be shown goes back to text.
 	public func showsCard(_ target: LinkedTarget) -> Bool {
-		guard let state = entries[target.key]?.state else { return target.kind != .file }
-		switch state {
+		guard let current = self.state(for: target) else { return target.kind != .file }
+		switch current {
 		case .loading: return target.kind != .file
 		case .unavailable: return false
 		case .ready(let item): return item.isCard
@@ -174,6 +185,22 @@ public final class LinkedItemStore {
 
 	/// The person or agent behind an id, once the workspace's actors have been read.
 	public func owner(for id: String?) -> ActorRef? { id.flatMap { actorsByID[$0] } }
+
+	/// The name of a workspace the reader belongs to; nil for one they are not in.
+	public func workspaceName(for id: String) -> String? { memberWorkspaceName(id) }
+
+	/// Where a link into another workspace goes; nil for a link into the workspace being read.
+	public func otherWorkspaceURL(for target: LinkedTarget) -> URL? {
+		if case .ready(.otherWorkspace(let link))? = state(for: target) { return link.url }
+		return nil
+	}
+
+	/// What the target's address says when it names a workspace other than the one being read.
+	private func otherWorkspace(_ target: LinkedTarget) -> LinkedOtherWorkspace? {
+		guard let there = target.workspaceID, let here = workspaceID(), there.lowercased() != here.lowercased()
+		else { return nil }
+		return LinkedOtherWorkspace(target: target, workspaceID: there)
+	}
 
 	// MARK: Resolving
 
@@ -207,6 +234,8 @@ public final class LinkedItemStore {
 
 	/// Starts (or joins) the lookup for a target unless it is settled or recently failed.
 	private func startLookup(_ target: LinkedTarget) -> Task<Void, Never>? {
+		// A link into another workspace is answered by its address: nothing is fetched for it.
+		if otherWorkspace(target) != nil { return nil }
 		if let running = inFlight[target.key] { return running }
 		if let entry = entries[target.key] {
 			switch entry.state {

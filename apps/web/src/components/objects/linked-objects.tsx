@@ -1,3 +1,4 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -13,6 +14,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFiles } from '@/hooks/use-files'
 import { useObjects } from '@/hooks/use-objects'
 import {
@@ -115,6 +117,7 @@ export function LinkedObjectsView({
 }) {
 	const [activeFilter, setActiveFilter] = useState<string>('all')
 	const [addLinkKind, setAddLinkKind] = useState<'object' | 'file' | null>(null)
+	const canWrite = useCanWrite()
 
 	// External open trigger (file-detail's `Link to object` button). Watching
 	// the nonce (not the kind) so the same-kind click retriggers.
@@ -226,17 +229,20 @@ export function LinkedObjectsView({
 					/>
 				)}
 				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button
-							variant="ghost"
-							size="icon"
-							className="h-8 w-8"
-							title="Add link"
-							aria-label="Add link"
-						>
-							<Plus size={14} />
-						</Button>
-					</DropdownMenuTrigger>
+					<ViewerTooltip>
+						<DropdownMenuTrigger asChild>
+							<Button
+								variant="ghost"
+								size="icon"
+								className="h-8 w-8"
+								title="Add link"
+								aria-label="Add link"
+								disabled={!canWrite}
+							>
+								<Plus size={14} />
+							</Button>
+						</DropdownMenuTrigger>
+					</ViewerTooltip>
 					<DropdownMenuContent align="end" className="min-w-[180px]">
 						{/* Keyboard hints "O" / "F" match Designer §7 — the picker
 						  itself also intercepts O/F to jump between tabs. On
@@ -522,6 +528,7 @@ function RelatedEmptyState({
 	onLinkObject: () => void
 	onLinkFile: () => void
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<div className="rounded-xl border border-dashed border-border bg-muted/40 px-4 py-6 text-center">
 			<div className="text-sm font-medium text-foreground">No links yet</div>
@@ -529,12 +536,16 @@ function RelatedEmptyState({
 				Attach a file, link to another object, or drag a file here.
 			</p>
 			<div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-				<Button variant="outline" size="sm" onClick={onLinkObject}>
-					Link to object
-				</Button>
-				<Button variant="outline" size="sm" onClick={onLinkFile}>
-					Link to file
-				</Button>
+				<ViewerTooltip>
+					<Button variant="outline" size="sm" disabled={!canWrite} onClick={onLinkObject}>
+						Link to object
+					</Button>
+				</ViewerTooltip>
+				<ViewerTooltip>
+					<Button variant="outline" size="sm" disabled={!canWrite} onClick={onLinkFile}>
+						Link to file
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)

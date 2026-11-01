@@ -24,6 +24,18 @@ struct ThreadRoute: Hashable, Identifiable {
 	static func opening(_ message: ChatMessage) -> ThreadRoute? {
 		message.serverID.map(ThreadRoute.init(rootID:))
 	}
+
+	/// The route "jump to message" opens for a message that lives in a thread (a reply not also posted
+	/// in the channel). Nil for a channel message: the jump scrolls to it instead.
+	static func opening(replyIn message: ChatMessage) -> ThreadRoute? {
+		guard !message.alsoInChannel else { return nil }
+		return message.threadRootID.map(ThreadRoute.init(rootID:))
+	}
+
+	/// The route a thread requested from outside the chat (a notification or link) opens.
+	static func opening(request: AppRuntime.ThreadRequest) -> ThreadRoute {
+		ThreadRoute(rootID: request.rootId)
+	}
 }
 
 struct ChatThreadView: View {
@@ -219,11 +231,10 @@ struct ChatThreadView: View {
 					Text(store.notice ?? "")
 				}
 				.task(id: runtime?.requestedThreadRoot) { await openRequestedThread() }
-				// Wide layouts push the thread. Compact width (iPhone) presents it as a sheet: the chat sits
-				// in the detail column of the Team split view, and a destination declared there is not
-				// reliably honoured when the split view collapses to one column, so the tap did nothing.
-				.navigationDestination(item: pushedThread) { threadDestination($0) }
-				.sheet(item: sheetThread) { route in
+				// The thread opens as a sheet at every width. A pushed destination declared here is not
+				// reliably honoured: the chat sits in the detail column of the Team split view, which
+				// collapses on iPhone and has no stack of its own on iPad or a wide Mac window.
+				.sheet(item: $threadRoute) { route in
 					NavigationStack {
 						threadDestination(route)
 							.toolbar {
@@ -365,9 +376,6 @@ struct ChatThreadView: View {
 		}
 	}
 
-	private var pushedThread: Binding<ThreadRoute?> { sizeClass == .compact ? .constant(nil) : $threadRoute }
-	private var sheetThread: Binding<ThreadRoute?> { sizeClass == .compact ? $threadRoute : .constant(nil) }
-
 	@ViewBuilder
 	private func threadDestination(_ route: ThreadRoute) -> some View {
 		if let root = store.threadRoot(route.rootID) {
@@ -387,7 +395,7 @@ struct ChatThreadView: View {
 		guard let request = runtime?.requestedThreadRoot, request.conversationId == store.conversationID else {
 			return
 		}
-		if await store.loadedThreadRoot(request.rootId) != nil { threadRoute = ThreadRoute(rootID: request.rootId) }
+		if await store.loadedThreadRoot(request.rootId) != nil { threadRoute = ThreadRoute.opening(request: request) }
 		if runtime?.requestedThreadRoot == request { runtime?.requestedThreadRoot = nil }
 	}
 
@@ -399,8 +407,12 @@ struct ChatThreadView: View {
 	/// Brings the message that linked something into view: in the timeline, or in its thread.
 	private func jump(to entry: LinkedEntry, proxy: ScrollViewProxy) {
 		guard let message = store.allMessages.first(where: { $0.id == entry.messageID }) else { return }
-		if let rootID = message.threadRootID, !message.alsoInChannel {
-			threadRoute = ThreadRoute(rootID: rootID)
+		if let route = ThreadRoute.opening(replyIn: message) {
+			// The Linked sheet is still closing, and a sheet presented over it is dropped.
+			Task {
+				try? await Task.sleep(for: .milliseconds(450))
+				threadRoute = route
+			}
 		} else {
 			scroll(to: message.id, proxy: proxy)
 		}

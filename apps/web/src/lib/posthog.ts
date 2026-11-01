@@ -4,6 +4,21 @@ const DEFAULT_HOST = 'https://eu.i.posthog.com'
 
 let initialized = false
 
+// Every web event says where it came from and who acted. The web is only ever
+// used by a signed-in or signing-up person, so an event with no actor_type yet
+// (pageviews before the workspace mounts, sign-up events) is a human's. The
+// workspace mount registers the real actor_type, which wins.
+export function withSharedProperties<T extends { properties?: Record<string, unknown> }>(
+	event: T | null,
+): T | null {
+	if (!event) return event
+	const properties = event.properties ?? {}
+	return {
+		...event,
+		properties: { actor_type: 'human', ...properties, surface: 'web' },
+	} as T
+}
+
 export function initPosthog(): void {
 	if (initialized) return
 	const key = import.meta.env.VITE_POSTHOG_KEY
@@ -14,6 +29,7 @@ export function initPosthog(): void {
 			person_profiles: 'identified_only',
 			capture_pageview: true,
 			autocapture: false,
+			before_send: withSharedProperties,
 		})
 		initialized = true
 	} catch {
@@ -63,6 +79,22 @@ export function registerWorkspaceProperties(props: WorkspaceSuperProperties): vo
 	if (!initialized) return
 	try {
 		posthog.register(props)
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
+// Ties every event from this browser to one `workspace` group, so per-workspace
+// funnels and retention read off a single group instead of the workspace_id
+// super property. Only the id and created date go up: the workspace name is
+// never sent, so the anonymise setting needs no branch here. Call it after
+// setCapturingEnabled so an opted-out workspace sends nothing.
+export function setWorkspaceGroup(workspaceId: string, createdAt?: string | null): void {
+	if (!initialized) return
+	try {
+		const properties: Record<string, string> = { workspace_id: workspaceId }
+		if (createdAt) properties.created_at = createdAt
+		posthog.group('workspace', workspaceId, properties)
 	} catch {
 		// Analytics must never break the UI.
 	}

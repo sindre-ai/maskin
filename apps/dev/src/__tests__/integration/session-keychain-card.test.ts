@@ -151,6 +151,55 @@ describe('POST /sessions/:id/keychain-card', () => {
 		).toEqual({ session_id: session.id, kind: 'api_key' })
 	})
 
+	it('stores the named target agents with their names, and ignores unknown, non-agent and outside ids', async () => {
+		const session = await chatSession()
+		const app = createSessionsApp(agentId)
+		const target = await insertActor(db, { type: 'agent', name: 'Infra & DevOps' })
+		if (!target) throw new Error('failed to seed target agent')
+		await db.insert(workspaceMembers).values({ workspaceId, actorId: target.id, role: 'member' })
+		const outsider = await insertActor(db, { type: 'agent' })
+		if (!outsider) throw new Error('failed to seed outside agent')
+
+		const res = await app.request(
+			keychainCard(session.id, workspaceId, {
+				kind: 'api_key',
+				target_agent_ids: [
+					target.id,
+					target.id,
+					humanId,
+					outsider.id,
+					'not-a-uuid',
+					'00000000-0000-0000-0000-000000000000',
+				],
+			}),
+		)
+		expect(res.status).toBe(200)
+
+		const rows = await messagesFor(conversationId)
+		expect(
+			(rows[0]?.metadata as { keychain_request?: Record<string, unknown> }).keychain_request,
+		).toEqual({
+			session_id: session.id,
+			kind: 'api_key',
+			target_agents: [{ id: target.id, name: 'Infra & DevOps' }],
+		})
+	})
+
+	it('posts the card with no target_agents when none of the ids are valid', async () => {
+		const session = await chatSession()
+		const app = createSessionsApp(agentId)
+
+		const res = await app.request(
+			keychainCard(session.id, workspaceId, { kind: 'api_key', target_agent_ids: ['nope'] }),
+		)
+		expect(res.status).toBe(200)
+
+		const rows = await messagesFor(conversationId)
+		expect(
+			(rows[0]?.metadata as { keychain_request?: Record<string, unknown> }).keychain_request,
+		).toEqual({ session_id: session.id, kind: 'api_key' })
+	})
+
 	it('rejects a kind it does not know', async () => {
 		const session = await chatSession()
 		const app = createSessionsApp(agentId)

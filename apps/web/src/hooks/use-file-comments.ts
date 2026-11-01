@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
+	commentShape,
 	trackCommentPosted,
 	trackFileViewerCommentResolved,
 	trackFileViewerRoundSent,
@@ -52,7 +53,7 @@ export function useCreateFileComment(workspaceId: string, fileId: string) {
 				source: 'file_viewer',
 				is_reply: created.parentId !== null,
 				attachment_count: 0,
-				content: created.body,
+				...commentShape(created.body),
 			})
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.fileComments.all(workspaceId, fileId),

@@ -17,6 +17,7 @@ import {
 import { WebhookRevealDialog } from '@/components/extensions/webhook-reveal-dialog'
 import { WebhookSection } from '@/components/extensions/webhook-section'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -27,6 +28,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useExtension,
 	useGenerateExtensionSecret,
@@ -58,6 +60,7 @@ function ExtensionDetailBody({
 	ext,
 	workspaceId,
 }: { ext: ExtensionResponse; workspaceId: string }) {
+	const canWrite = useCanWrite()
 	const update = useUpdateExtension(workspaceId, ext.id)
 	const regenerate = useRegenerateExtensionToken(workspaceId, ext.id)
 	const generateSecret = useGenerateExtensionSecret(workspaceId)
@@ -82,6 +85,7 @@ function ExtensionDetailBody({
 		: configFromForm(form)
 
 	const startEditing = () => {
+		if (!canWrite) return
 		if (ext.webhookConfig) setForm(formFromConfig(ext.webhookConfig))
 		setAttempted(false)
 		setEditing(true)
@@ -94,6 +98,7 @@ function ExtensionDetailBody({
 	}
 
 	const handleGenerate = async () => {
+		if (!canWrite) return
 		try {
 			const { secret } = await generateSecret.mutateAsync()
 			setForm((f) => ({ ...f, signingSecret: secret }))
@@ -103,6 +108,7 @@ function ExtensionDetailBody({
 	}
 
 	const handleSave = async () => {
+		if (!canWrite) return
 		const found = validateWebhookForm(form, { requireSecret: !ext.hasSigningSecret })
 		if (hasErrors(found)) {
 			setAttempted(true)
@@ -129,6 +135,7 @@ function ExtensionDetailBody({
 	}
 
 	const handleRegenerate = async () => {
+		if (!canWrite) return
 		try {
 			const updated = await regenerate.mutateAsync()
 			setConfirmRegenerate(false)
@@ -182,9 +189,11 @@ function ExtensionDetailBody({
 								Cancel
 							</Button>
 						)}
-						<Button type="button" onClick={handleSave} disabled={update.isPending}>
-							{saved ? 'Save changes' : 'Save + generate URL'}
-						</Button>
+						<ViewerTooltip>
+							<Button type="button" onClick={handleSave} disabled={update.isPending || !canWrite}>
+								{saved ? 'Save changes' : 'Save + generate URL'}
+							</Button>
+						</ViewerTooltip>
 					</div>
 				</>
 			)}
@@ -227,13 +236,15 @@ function ExtensionDetailBody({
 						<Button variant="ghost" onClick={() => setConfirmRegenerate(false)}>
 							Cancel
 						</Button>
-						<Button
-							variant="destructive"
-							onClick={handleRegenerate}
-							disabled={regenerate.isPending}
-						>
-							Regenerate token
-						</Button>
+						<ViewerTooltip>
+							<Button
+								variant="destructive"
+								onClick={handleRegenerate}
+								disabled={regenerate.isPending || !canWrite}
+							>
+								Regenerate token
+							</Button>
+						</ViewerTooltip>
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
