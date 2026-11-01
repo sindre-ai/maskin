@@ -286,12 +286,15 @@ describe('capturePosthogEvent shared properties', () => {
 		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
 		vi.stubGlobal('fetch', fetchMock)
 		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		// A draw of 0 always passes the sampler, so sampled event names are still sent.
+		vi.spyOn(Math, 'random').mockReturnValue(0)
 	})
 
 	afterEach(() => {
 		__resetPosthogPrivacyForTesting()
 		vi.unstubAllGlobals()
 		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
 	})
 
 	it('gives a human surface backend and no profile flag', async () => {
