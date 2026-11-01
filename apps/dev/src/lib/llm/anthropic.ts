@@ -1,4 +1,4 @@
-import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './adapter'
+import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool, LLMUsage } from './adapter'
 import { assertNoRawSecrets } from './secret-guard'
 
 export class AnthropicAdapter implements LLMAdapter {
@@ -25,13 +25,7 @@ export class AnthropicAdapter implements LLMAdapter {
 		const body: Record<string, unknown> = {
 			model: options.model || 'claude-sonnet-5-5',
 			max_tokens: options.max_tokens ?? 4096,
-			messages: nonSystemMessages.map((m) => ({
-				role: m.role === 'tool' ? 'user' : m.role,
-				content:
-					m.role === 'tool'
-						? [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: m.content }]
-						: m.content,
-			})),
+			messages: toAnthropicMessages(nonSystemMessages),
 		}
 
 		if (systemMessages.length > 0) {
@@ -84,6 +78,63 @@ export class AnthropicAdapter implements LLMAdapter {
 			content: (textContent?.text as string) ?? null,
 			tool_calls: toolCalls,
 			finish_reason: finishReason,
+			usage: readUsage(data.usage),
 		}
 	}
+}
+
+function count(value: unknown): number {
+	return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+// Anthropic reports input_tokens without the cached buckets, so the figures
+// already match the LLMUsage convention.
+function readUsage(raw: unknown): LLMUsage {
+	const usage = (raw ?? {}) as Record<string, unknown>
+	return {
+		input_tokens: count(usage.input_tokens),
+		output_tokens: count(usage.output_tokens),
+		cache_creation_input_tokens: count(usage.cache_creation_input_tokens),
+		cache_read_input_tokens: count(usage.cache_read_input_tokens),
+	}
+}
+
+/**
+ * Tool results answer the assistant's tool_use blocks, and Anthropic wants every
+ * result of one turn together in a single user message, so consecutive tool
+ * messages are folded into one.
+ */
+function toAnthropicMessages(messages: LLMMessage[]): Array<Record<string, unknown>> {
+	const out: Array<Record<string, unknown>> = []
+	let toolResults: unknown[] | null = null
+	for (const m of messages) {
+		if (m.role === 'tool') {
+			const block = { type: 'tool_result', tool_use_id: m.tool_call_id, content: m.content }
+			if (toolResults) {
+				toolResults.push(block)
+			} else {
+				toolResults = [block]
+				out.push({ role: 'user', content: toolResults })
+			}
+			continue
+		}
+		toolResults = null
+		if (m.role === 'assistant' && m.tool_calls?.length) {
+			out.push({
+				role: 'assistant',
+				content: [
+					...(m.content ? [{ type: 'text', text: m.content }] : []),
+					...m.tool_calls.map((tc) => ({
+						type: 'tool_use',
+						id: tc.id,
+						name: tc.name,
+						input: tc.arguments,
+					})),
+				],
+			})
+		} else {
+			out.push({ role: m.role, content: m.content })
+		}
+	}
+	return out
 }

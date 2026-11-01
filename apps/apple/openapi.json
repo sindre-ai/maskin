@@ -22557,6 +22557,633 @@
 				}
 			}
 		},
+		"/api/research": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Research"
+				],
+				"summary": "Start a deep research run",
+				"description": "Creates a research run and returns at once; the run continues in the background and is read with GET /research/:id. Idempotency-Key is required: sending the same key again returns the same run instead of starting (and paying for) a second one. Behind the deep-research tester flag.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 200
+						},
+						"required": true,
+						"name": "idempotency-key",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"question": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2000,
+										"example": "What does the Danish bookkeeping act require of sole proprietors?"
+									},
+									"effort": {
+										"type": "string",
+										"enum": [
+											"simple",
+											"comparison",
+											"broad"
+										],
+										"description": "How much research to do: simple (one researcher), comparison (2 to 4) or broad (10 to 12)."
+									},
+									"context": {
+										"type": "string",
+										"maxLength": 2000
+									},
+									"max_cost_usd": {
+										"type": "number",
+										"minimum": 0.01,
+										"description": "Lowers the run cap in US dollars. Can never raise it above the effort default."
+									}
+								},
+								"required": [
+									"question",
+									"effort"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Run accepted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"status": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"status"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request or no usable credentials",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"402": {
+						"description": "Plan cap reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not enabled",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many runs at once",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "Search is not set up on this server",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/research/{id}": {
+			"get": {
+				"tags": [
+					"Research"
+				],
+				"summary": "Get a deep research run",
+				"description": "Status, report, sources, usage, cap and warnings of one run. The workspace comes from the run itself, so membership is checked here. Behind the deep-research tester flag.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The run",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"queued",
+												"running",
+												"done",
+												"capped",
+												"failed",
+												"interrupted"
+											]
+										},
+										"effort": {
+											"type": "string"
+										},
+										"report_md": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"sources": {
+											"type": "array",
+											"items": {}
+										},
+										"usage": {
+											"type": "object",
+											"properties": {
+												"cost_cents": {
+													"type": "number"
+												},
+												"tokens_in": {
+													"type": "number"
+												},
+												"tokens_out": {
+													"type": "number"
+												},
+												"searches": {
+													"type": "number"
+												},
+												"extracts": {
+													"type": "number"
+												}
+											},
+											"required": [
+												"cost_cents",
+												"tokens_in",
+												"tokens_out",
+												"searches",
+												"extracts"
+											]
+										},
+										"cap": {
+											"type": "object",
+											"properties": {
+												"cap_cents": {
+													"type": "number"
+												}
+											},
+											"required": [
+												"cap_cents"
+											]
+										},
+										"warnings": {
+											"type": "array",
+											"items": {}
+										},
+										"error": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"created_at": {
+											"type": "string"
+										},
+										"finished_at": {
+											"type": [
+												"string",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"id",
+										"status",
+										"effort",
+										"report_md",
+										"sources",
+										"usage",
+										"cap",
+										"warnings",
+										"error",
+										"created_at",
+										"finished_at"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not enabled",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/triggers": {
 			"post": {
 				"x-viewer-policy": "writer",

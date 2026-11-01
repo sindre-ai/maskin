@@ -108,6 +108,37 @@ describe('OpenAIAdapter', () => {
 		})
 	})
 
+	it('sends the assistant tool calls so the tool results have a call to answer', async () => {
+		const adapter = new OpenAIAdapter('sk-test')
+		mockOkResponse(makeTextResponse('ok'))
+
+		await adapter.chat({
+			model: 'gpt-4o',
+			messages: [
+				{ role: 'user', content: 'hi' },
+				{
+					role: 'assistant',
+					content: '',
+					tool_calls: [{ id: 'call-1', name: 'web_search', arguments: { query: 'a' } }],
+				},
+				{ role: 'tool', content: 'result', tool_call_id: 'call-1' },
+			],
+		})
+
+		const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+		expect(body.messages[1]).toEqual({
+			role: 'assistant',
+			content: '',
+			tool_calls: [
+				{
+					id: 'call-1',
+					type: 'function',
+					function: { name: 'web_search', arguments: '{"query":"a"}' },
+				},
+			],
+		})
+	})
+
 	it('maps tools to OpenAI function format', async () => {
 		const adapter = new OpenAIAdapter('sk-test')
 		mockOkResponse(makeTextResponse('ok'))
@@ -297,5 +328,89 @@ describe('OpenAIAdapter provider preferences', () => {
 			.catch((e) => e)
 		expect(err).not.toBeInstanceOf(LlmNoEligibleHostError)
 		expect(err.message).toBe('OpenAI API error: 500 boom')
+	})
+})
+
+describe('OpenAIAdapter usage', () => {
+	beforeEach(() => {
+		vi.stubGlobal('fetch', mockFetch)
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+		vi.restoreAllMocks()
+	})
+
+	function mockOkResponse(data: Record<string, unknown>) {
+		mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(data) })
+	}
+
+	const message = { message: { content: 'hi' }, finish_reason: 'stop' }
+	const chat = () =>
+		new OpenAIAdapter('k').chat({ model: 'gpt-4o', messages: [{ role: 'user', content: 'x' }] })
+
+	it('reads prompt and completion tokens from the provider usage block', async () => {
+		mockOkResponse({
+			choices: [message],
+			usage: { prompt_tokens: 120, completion_tokens: 45, total_tokens: 165 },
+		})
+
+		const result = await chat()
+
+		expect(result.usage).toEqual({
+			input_tokens: 120,
+			output_tokens: 45,
+			cache_creation_input_tokens: 0,
+			cache_read_input_tokens: 0,
+		})
+	})
+
+	it('splits cached tokens out of the input count', async () => {
+		mockOkResponse({
+			choices: [message],
+			usage: {
+				prompt_tokens: 1000,
+				completion_tokens: 20,
+				prompt_tokens_details: { cached_tokens: 700, cache_write_tokens: 100 },
+			},
+		})
+
+		const result = await chat()
+
+		expect(result.usage).toEqual({
+			input_tokens: 200,
+			output_tokens: 20,
+			cache_creation_input_tokens: 100,
+			cache_read_input_tokens: 700,
+		})
+	})
+
+	it('returns zeros when the provider sends no usage block', async () => {
+		mockOkResponse({ choices: [message] })
+
+		const result = await chat()
+
+		expect(result.usage).toEqual({
+			input_tokens: 0,
+			output_tokens: 0,
+			cache_creation_input_tokens: 0,
+			cache_read_input_tokens: 0,
+		})
+	})
+
+	it('never reports a negative input count', async () => {
+		mockOkResponse({
+			choices: [message],
+			usage: {
+				prompt_tokens: 10,
+				completion_tokens: 1,
+				prompt_tokens_details: { cached_tokens: 50 },
+			},
+		})
+
+		const result = await chat()
+
+		expect(result.usage.input_tokens).toBe(0)
+		expect(result.usage.cache_read_input_tokens).toBe(50)
 	})
 })

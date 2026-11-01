@@ -107,6 +107,7 @@ const ALL_TOOL_NAMES = [
 	'request_integration_access',
 	'add_mcp_server',
 	'show_computer',
+	'deep_research',
 	'update_integration_access',
 	'disconnect_integration',
 	'list_extensions',

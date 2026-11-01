@@ -14,6 +14,7 @@ import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { ResearchFindingsCleanupJob } from './jobs/research-findings-cleanup'
 import { RotateDeksJob } from './jobs/rotate-deks'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
@@ -52,6 +53,7 @@ import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { NotificationPushFanout } from './services/notification-push'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
+import { markInterruptedResearchRuns } from './services/research-service'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
@@ -344,6 +346,23 @@ migrateAgentToolServers(db)
 	})
 	.catch((err) => logger.error('Agent tool server migration failed', { error: String(err) }))
 
+// Research runs live in this process, so any left queued or running by the last server are
+// dead. Mark them interrupted, keeping their cost. A failure here never blocks startup.
+markInterruptedResearchRuns(db)
+	.then((count) => {
+		if (count > 0) logger.info('Marked interrupted deep_research runs', { count })
+	})
+	.catch((err) =>
+		logger.error('deep_research interrupted-run sweep failed', { error: String(err) }),
+	)
+
+// Raw web quotes on deep_research runs are blanked 30 days after the run (spec 7.6). Runs
+// once on boot and then daily. tick() never throws, so it cannot block startup.
+const researchFindingsCleanupJob = new ResearchFindingsCleanupJob(db)
+researchFindingsCleanupJob.start()
+void researchFindingsCleanupJob.tick()
+logger.info('deep_research findings cleanup scheduled')
+
 // One-off: gives every existing agent its default Heartbeat. Does nothing unless
 // RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.
 void runDefaultHeartbeatBackfillOnBoot(db)
@@ -480,6 +499,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
 	keychainUndoSweeperJob.stop()
+	researchFindingsCleanupJob.stop()
 	fileUploadReaperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
 	rotateDeksJob.stop()

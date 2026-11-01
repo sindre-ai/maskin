@@ -56,6 +56,7 @@ import {
 	reasonFromError,
 	toolErrorResponse,
 } from './read-error.js'
+import { type ResearchRunView, describeResearchRun, waitForResearchRun } from './research-wait.js'
 import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
 import {
 	type ApiCaller as SetupApiCaller,
@@ -8439,6 +8440,83 @@ export function createMcpServer(config: McpConfig) {
 						text: 'A card to add that server is now in the chat, with its details filled in. The user checks it, types any key it needs and presses Add. End your turn now without a closing message. If they add it you are restarted with the server attached.',
 					},
 				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'deep_research',
+		{
+			description: tools.deep_research.description,
+			inputSchema: tools.deep_research.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const toolMeta = meta('deep_research', config, args.workspace_id)
+			const fail = (text: string) => ({
+				_meta: toolMeta,
+				isError: true,
+				content: [{ type: 'text' as const, text }],
+			})
+			const wsOpts = { workspaceId: args.workspace_id }
+			// The SDK checks the schema before this runs; these cover a caller that skips it.
+			const effort = tools.deep_research.inputSchema.shape.effort.safeParse(args.effort)
+			if (!effort.success) {
+				return fail('effort must be one of "simple", "comparison" or "broad".')
+			}
+			if (!args.research_id && !args.question) {
+				return fail('Pass a question to start a run, or a research_id to check one you started.')
+			}
+			if (!args.research_id && !effort.data) {
+				return fail('Pass an effort ("simple", "comparison" or "broad") with the question.')
+			}
+			try {
+				let id = args.research_id
+				if (!id) {
+					const body = {
+						question: args.question,
+						effort: effort.data,
+						...(args.context ? { context: args.context } : {}),
+						...(args.max_cost_usd !== undefined ? { max_cost_usd: args.max_cost_usd } : {}),
+					}
+					// A run costs money, so the key is never empty: inside an agent session a replayed call
+					// maps to the same run, elsewhere each call is its own.
+					const started = (await apiCall(config, 'POST', '/api/research', body, {
+						...wsOpts,
+						idempotencyKey: deriveIdempotencyKey('POST', '/api/research', body) ?? randomUUID(),
+					})) as { id: string }
+					id = started.id
+				}
+				const runId = id
+				const run = await waitForResearchRun(
+					() =>
+						apiCall(
+							config,
+							'GET',
+							`/api/research/${runId}`,
+							undefined,
+							wsOpts,
+						) as Promise<ResearchRunView>,
+				)
+				const { text, isError } = describeResearchRun(run)
+				return {
+					_meta: toolMeta,
+					...(isError ? { isError: true } : {}),
+					content: [{ type: 'text' as const, text }],
+				}
+			} catch (err) {
+				const status = parseApiErrorStatus(err)
+				const message =
+					err instanceof Error ? err.message.replace(/^API error \d+: /, '') : String(err)
+				if (status === 403) return fail('Deep research is not enabled for you yet.')
+				if (status === 404 && args.research_id) {
+					return fail('No research run with that research_id in this workspace.')
+				}
+				if (status === 400 || status === 402 || status === 429 || status === 503) {
+					return fail(message)
+				}
+				throw err
 			}
 		},
 	)
