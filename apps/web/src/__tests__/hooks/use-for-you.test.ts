@@ -1,4 +1,4 @@
-import { forYouItemToFeedItem } from '@/hooks/use-for-you'
+import { dismissBodyFor, forYouItemToFeedItem } from '@/hooks/use-for-you'
 import type { ForYouItem } from '@/lib/api'
 
 function buildForYouItem(overrides: Partial<ForYouItem> = {}): ForYouItem {
@@ -80,7 +80,36 @@ describe('forYouItemToFeedItem', () => {
 		expect(item?.curated).toEqual({
 			headline: 'Graduate 5 wiki pages',
 			rationale: 'Only you can approve voice.',
+			notification_id: 'n-1',
 		})
 		expect(item?.latest_event_id).toBe(321)
+	})
+})
+
+describe('dismissBodyFor', () => {
+	const mention = {
+		event_id: 77,
+		actor_id: 'a-2',
+		created_at: '2026-10-20T09:00:00.000Z',
+		content: 'Send the note?',
+		attention: 3,
+		decision: null,
+	}
+
+	it('names the notification of a curated card', () => {
+		const item = forYouItemToFeedItem(buildForYouItem({ latest_mention: mention }))
+		expect(item && dismissBodyFor(item)).toEqual({ notification_id: 'n-1' })
+	})
+
+	it('names the comment that raised a decision card, which has no notification', () => {
+		const item = forYouItemToFeedItem(
+			buildForYouItem({ notification_id: null, source: 'decision', latest_mention: mention }),
+		)
+		expect(item && dismissBodyFor(item)).toEqual({ source_comment_id: 77 })
+	})
+
+	it('has nothing to name for a card with neither', () => {
+		const item = forYouItemToFeedItem(buildForYouItem({ notification_id: null }))
+		expect(item && dismissBodyFor(item)).toBeNull()
 	})
 })

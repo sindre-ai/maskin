@@ -7,8 +7,8 @@ import type { UnreadItem } from '@/lib/api'
 
 /**
  * Dismissing a card that already carries a decision receipt clears it out of
- * `decided`, and the server has already dropped it from the unread list — so a
- * mark-read that then fails leaves the card in neither place. Without a
+ * `decided`, and the server has already dropped it from the list — so a
+ * dismissal that then fails leaves the card in neither place. Without a
  * rollback it disappears for good while the toast promises the opposite.
  */
 vi.mock('@tanstack/react-router', async () => {
@@ -26,20 +26,35 @@ vi.mock('@/lib/workspace-context', () => ({
 type TestState = {
 	__items: UnreadItem[]
 	__markReadFails: boolean
+	__dismissFails: boolean
 	__lastMutateOptions?: unknown
 	__createCalls: Array<Record<string, unknown>>
 	__markReadCalls: Array<Record<string, unknown>>
+	__dismissCalls: Array<Record<string, unknown>>
 }
 const testState = globalThis as unknown as TestState
 testState.__items = []
 testState.__markReadFails = false
+testState.__dismissFails = false
 testState.__createCalls = []
 testState.__markReadCalls = []
+testState.__dismissCalls = []
 
-vi.mock('@/hooks/use-for-you', () => ({
+vi.mock('@/hooks/use-for-you', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-for-you')>()),
 	useForYou: () => ({
 		data: { items: (globalThis as unknown as TestState).__items },
 		isLoading: false,
+	}),
+	// Dismiss is its own call, separate from mark-read. `mutateAsync` returns a promise per
+	// call, so each caller keeps its own success/failure handling.
+	useDismissForYou: () => ({
+		mutateAsync: (vars: Record<string, unknown>) => {
+			const state = globalThis as unknown as TestState
+			state.__dismissCalls.push(vars)
+			if (!state.__dismissFails) return Promise.resolve({})
+			return Promise.reject(new Error('dismiss failed'))
+		},
 	}),
 }))
 
@@ -186,8 +201,10 @@ describe('For You — dismiss rollback', () => {
 	beforeEach(() => {
 		testState.__items = [buildItem('thread-1', 'Renewal terms need a read')]
 		testState.__markReadFails = false
+		testState.__dismissFails = false
 		testState.__createCalls = []
 		testState.__markReadCalls = []
+		testState.__dismissCalls = []
 	})
 
 	it('keeps the decision receipt when dismissing it fails', async () => {
@@ -201,8 +218,8 @@ describe('For You — dismiss rollback', () => {
 		})
 		expect(screen.getByTestId('foryou-feed-card')).toHaveAttribute('data-decided', 'true')
 
-		// Now dismiss it and let the mark-read fail.
-		testState.__markReadFails = true
+		// Now dismiss it and let the dismissal fail.
+		testState.__dismissFails = true
 		await user.click(screen.getByRole('button', { name: 'dismiss' }))
 		await act(async () => {
 			await Promise.resolve()
@@ -308,6 +325,40 @@ describe('For You — dismiss rollback', () => {
 		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
 	})
 
+	// Opening a page moves the read position and must not retire a card, so Dismiss
+	// is its own call. It names the comment that raised the card (a decision card has
+	// no notification) and never touches the read position.
+	it('dismisses by the comment that raised the card, without marking it read', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+
+		await user.click(screen.getByRole('button', { name: 'dismiss' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(testState.__dismissCalls).toEqual([{ body: { source_comment_id: 4242 } }])
+		expect(testState.__markReadCalls).toEqual([])
+	})
+
+	it('dismisses a curated card by its notification', async () => {
+		const user = userEvent.setup()
+		testState.__items = [
+			{
+				...buildItem('thread-1', 'Renewal terms need a read'),
+				curated: { headline: 'Renewal', rationale: null, notification_id: 'notif-1' },
+			},
+		]
+		await renderFeed()
+
+		await user.click(screen.getByRole('button', { name: 'dismiss' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(testState.__dismissCalls).toEqual([{ body: { notification_id: 'notif-1' } }])
+	})
+
 	it('still hides the card when the dismissal succeeds', async () => {
 		const user = userEvent.setup()
 		await renderFeed()
@@ -339,7 +390,7 @@ describe('For You — dismiss rollback', () => {
 		await renderFeed()
 		expect(screen.getAllByTestId('foryou-feed-card')).toHaveLength(3)
 
-		testState.__markReadFails = true
+		testState.__dismissFails = true
 		// Alt+U is the keyboard mirror of the `···` menu's "Dismiss all".
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyU', altKey: true }))

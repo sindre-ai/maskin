@@ -5,12 +5,13 @@ import { FOR_YOU_KIND, slimForYouItems } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
-import { jsonGet } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 type Env = { Variables: { db: Database; actorId: string; actorType: string } }
 
 const { default: forYouRoutes } = await import('../../routes/for-you')
+const { default: eventsRoutes } = await import('../../routes/events')
 
 function appAs(actorId: string, actorType = 'human') {
 	const app = new OpenAPIHono<Env>({
@@ -35,6 +36,14 @@ function appAs(actorId: string, actorType = 'human') {
 		await next()
 	})
 	app.route('/api/for-you', forYouRoutes)
+	// The comment route an option tap goes through. It reads these two from the context; the
+	// tap posts nothing that needs a live bridge or session.
+	app.use('/api/events/*', async (c, next) => {
+		c.set('notifyBridge' as never, {} as never)
+		c.set('sessionManager' as never, { createSession: async () => undefined } as never)
+		await next()
+	})
+	app.route('/api/events', eventsRoutes)
 	return app
 }
 
@@ -56,7 +65,8 @@ describe('GET /api/for-you', () => {
 		).id
 	})
 
-	async function comment(entityId: string, actor: string) {
+	/** A comment on the object. With `parentEventId` it is a reply in that thread. */
+	async function comment(entityId: string, actor: string, parentEventId?: number) {
 		const [row] = await db
 			.insert(events)
 			.values({
@@ -65,10 +75,29 @@ describe('GET /api/for-you', () => {
 				action: 'commented',
 				entityType: 'object',
 				entityId,
-				data: { content: 'Ship it?', mentions: [humanId] },
+				data: {
+					content: 'Ship it?',
+					mentions: [humanId],
+					...(parentEventId ? { parentEventId } : {}),
+				},
 			})
 			.returning()
 		return row.id
+	}
+
+	/** Marks the object read up to an event, the way opening its page does. */
+	async function readUpTo(entityId: string, lastReadEventId: number) {
+		await db.insert(readState).values({
+			workspaceId,
+			actorId: humanId,
+			entityType: 'object',
+			entityId,
+			lastReadEventId,
+		})
+	}
+
+	async function post(path: string, body: Record<string, unknown>, as = humanId) {
+		return appAs(as).request(jsonRequest('POST', path, body, { 'X-Workspace-Id': workspaceId }))
 	}
 
 	const DECISION = {
@@ -211,7 +240,7 @@ describe('GET /api/for-you', () => {
 				{ objectId: task.id, sessionId: session.id },
 				{ source_comment_id: source, headline: 'Approve the drafts' },
 			)
-			return { task, card }
+			return { task, card, source }
 		}
 
 		it('stays when its source comment asks for an approval', async () => {
@@ -240,10 +269,10 @@ describe('GET /api/for-you', () => {
 			expect(await list()).toEqual([])
 		})
 
-		it('still goes once the person replies on the thread', async () => {
-			const { task } = await endedCard((id) => decisionComment(id))
+		it('still goes once the person replies in the thread', async () => {
+			const { task, source } = await endedCard((id) => decisionComment(id))
 			expect(await list()).toHaveLength(1)
-			await comment(task.id, humanId)
+			await comment(task.id, humanId, source)
 			expect(await list()).toEqual([])
 		})
 
@@ -260,13 +289,32 @@ describe('GET /api/for-you', () => {
 		})
 	})
 
-	it('drops an item after the human replies on the thread', async () => {
-		const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'active' })
-		const sourceId = await comment(obj.id, agentId)
-		await item({ objectId: obj.id }, { source_comment_id: sourceId })
-		expect(await list()).toHaveLength(1)
-		await comment(obj.id, humanId)
-		expect(await list()).toEqual([])
+	describe('a curated card with a source comment', () => {
+		async function card() {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'active' })
+			const sourceId = await comment(obj.id, agentId)
+			await item({ objectId: obj.id }, { source_comment_id: sourceId })
+			return { obj, sourceId }
+		}
+
+		it('drops after the human replies in its thread', async () => {
+			const { obj, sourceId } = await card()
+			expect(await list()).toHaveLength(1)
+			await comment(obj.id, humanId, sourceId)
+			expect(await list()).toEqual([])
+		})
+
+		it('stays when the human only comments on the object, without replying to it', async () => {
+			const { obj } = await card()
+			await comment(obj.id, humanId)
+			expect(await list()).toHaveLength(1)
+		})
+
+		it('stays when the human opens the object page, which moves the read position past it', async () => {
+			const { obj } = await card()
+			await readUpTo(obj.id, await comment(obj.id, agentId))
+			expect(await list()).toHaveLength(1)
+		})
 	})
 
 	it('keeps an item when a newer agent comment arrives but the human has not replied', async () => {
@@ -321,24 +369,141 @@ describe('GET /api/for-you', () => {
 			expect(await list()).toEqual([])
 		})
 
-		it('drops the card after the person replies or reads past it', async () => {
-			const replied = await insertObject(db, workspaceId, humanId, {
-				type: 'task',
-				status: 'backlog',
-			})
-			await decisionComment(replied.id)
-			await comment(replied.id, humanId)
+		describe('what retires a decision card', () => {
+			async function decisionTask() {
+				const task = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				return { task, cardId: await decisionComment(task.id) }
+			}
 
-			const read = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
-			const readId = await decisionComment(read.id)
-			await db.insert(readState).values({
-				workspaceId,
-				actorId: humanId,
-				entityType: 'object',
-				entityId: read.id,
-				lastReadEventId: readId,
+			it('keeps the card when the person opens the page, which moves the read position past it', async () => {
+				const { task, cardId } = await decisionTask()
+				await readUpTo(task.id, cardId)
+				expect(await list()).toHaveLength(1)
 			})
-			expect(await list()).toEqual([])
+
+			it('keeps the card when the person comments on the object without replying to it', async () => {
+				const { task } = await decisionTask()
+				await comment(task.id, humanId)
+				expect(await list()).toHaveLength(1)
+			})
+
+			it('drops the card when the person replies to it', async () => {
+				const { task, cardId } = await decisionTask()
+				await comment(task.id, humanId, cardId)
+				expect(await list()).toEqual([])
+			})
+
+			it('drops the card when the person replies to an agent reply under it', async () => {
+				const { task, cardId } = await decisionTask()
+				await comment(task.id, agentId, cardId)
+				expect(await list()).toHaveLength(1)
+				// The server stores a reply to a reply against the root of the thread, which is the card.
+				await comment(task.id, humanId, cardId)
+				expect(await list()).toEqual([])
+			})
+
+			it('keeps the newest card when the person replied to an older card on the same object', async () => {
+				const { task, cardId: older } = await decisionTask()
+				await comment(task.id, humanId, older)
+				const newer = await decisionComment(task.id)
+				const items = await list()
+				expect(items).toHaveLength(1)
+				expect(items[0]).toMatchObject({ source: 'decision', entity_id: task.id })
+				// Answering the newer card retires it.
+				await comment(task.id, humanId, newer)
+				expect(await list()).toEqual([])
+			})
+
+			it('drops a card that is itself a reply once the person replies after it in that thread', async () => {
+				const task = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				const root = await comment(task.id, agentId)
+				const [card] = await db
+					.insert(events)
+					.values({
+						workspaceId,
+						actorId: agentId,
+						action: 'commented',
+						entityType: 'object',
+						entityId: task.id,
+						data: {
+							content: 'Approve?',
+							mentions: [humanId],
+							parentEventId: root,
+							decision: DECISION,
+						},
+					})
+					.returning()
+				expect(card.id).toBeGreaterThan(root)
+				expect(await list()).toHaveLength(1)
+				// Replies are stored against the root, so this is how a reply to the card arrives.
+				await comment(task.id, humanId, root)
+				expect(await list()).toEqual([])
+			})
+
+			it('drops the card when the person dismisses it, and brings it back on undo', async () => {
+				const { task, cardId } = await decisionTask()
+				const [card] = await list()
+				expect(card).toMatchObject({ source: 'decision', entity_id: task.id })
+
+				const dismissed = await post('/api/for-you/dismissals', { source_comment_id: cardId })
+				expect(dismissed.status).toBe(200)
+				expect(await list()).toEqual([])
+				// Dismissing twice is fine.
+				expect((await post('/api/for-you/dismissals', { source_comment_id: cardId })).status).toBe(
+					200,
+				)
+				// Opening the page afterwards changes nothing.
+				await readUpTo(task.id, cardId)
+				expect(await list()).toEqual([])
+
+				const undone = await post('/api/for-you/dismissals/undo', { source_comment_id: cardId })
+				expect(undone.status).toBe(200)
+				expect(await list()).toHaveLength(1)
+			})
+
+			it("does not let one person's dismissal hide the card from another", async () => {
+				const { cardId } = await decisionTask()
+				const other = await insertActor(db, {
+					type: 'human',
+					name: 'Someone else',
+					email: `other_${Date.now()}_${Math.random()}@example.com`,
+				})
+				const res = await post('/api/for-you/dismissals', { source_comment_id: cardId }, other.id)
+				expect(res.status).toBe(200)
+				expect(await list()).toHaveLength(1)
+			})
+		})
+
+		describe('an option tap', () => {
+			it('posts a reply threaded to the card, and that reply retires the card', async () => {
+				const task = await insertObject(db, workspaceId, humanId, {
+					type: 'task',
+					status: 'backlog',
+				})
+				const cardId = await decisionComment(task.id)
+				expect(await list()).toHaveLength(1)
+
+				// What the web feed card sends when a person taps an option: the option label as the
+				// content, with the card's event id as the parent. The iOS handler sends the same.
+				const res = await appAs(humanId).request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{ entity_id: task.id, content: 'Send as is', parent_event_id: cardId },
+						{ 'X-Workspace-Id': workspaceId },
+					),
+				)
+				expect(res.status).toBe(201)
+				const reply = (await res.json()) as { data: { parentEventId?: number | null } }
+				expect(reply.data.parentEventId).toBe(cardId)
+				expect(await list()).toEqual([])
+			})
 		})
 
 		describe('a card whose drafts have all been dealt with', () => {
@@ -494,18 +659,59 @@ describe('GET /api/for-you', () => {
 		})
 	})
 
-	it('drops an item the human has dismissed, and does not resurface it', async () => {
-		const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'active' })
-		const sourceId = await comment(obj.id, agentId)
-		await item({ objectId: obj.id }, { source_comment_id: sourceId })
-		await db.insert(readState).values({
-			workspaceId,
-			actorId: humanId,
-			entityType: 'object',
-			entityId: obj.id,
-			lastReadEventId: sourceId,
+	describe('Dismiss on a curated card', () => {
+		it('drops the card, stays gone when the page is opened, and comes back on undo', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'active' })
+			const sourceId = await comment(obj.id, agentId)
+			const card = await item({ objectId: obj.id }, { source_comment_id: sourceId })
+			expect(await list()).toHaveLength(1)
+
+			const dismissed = await post('/api/for-you/dismissals', { notification_id: card.id })
+			expect(dismissed.status).toBe(200)
+			const [row] = await db.select().from(notifications).where(eq(notifications.id, card.id))
+			expect(row.status).toBe('dismissed')
+			expect(await list()).toEqual([])
+			await readUpTo(obj.id, sourceId)
+			expect(await list()).toEqual([])
+
+			const undone = await post('/api/for-you/dismissals/undo', { notification_id: card.id })
+			expect(undone.status).toBe(200)
+			expect(await list()).toHaveLength(1)
 		})
-		expect(await list()).toEqual([])
+
+		it("refuses a card that is not the person's own, and a body that names nothing", async () => {
+			const other = await insertActor(db, {
+				type: 'human',
+				name: 'Someone else',
+				email: `other_${Date.now()}_${Math.random()}@example.com`,
+			})
+			const theirs = await item({ targetActorId: other.id })
+			expect((await post('/api/for-you/dismissals', { notification_id: theirs.id })).status).toBe(
+				404,
+			)
+			const [row] = await db.select().from(notifications).where(eq(notifications.id, theirs.id))
+			expect(row.status).toBe('pending')
+			expect((await post('/api/for-you/dismissals', {})).status).toBe(400)
+		})
+
+		it('does not accept the id of a comment from another workspace', async () => {
+			const otherWs = (await insertWorkspace(db, humanId)).id
+			const obj = await insertObject(db, otherWs, humanId, { type: 'bet', status: 'active' })
+			const [foreign] = await db
+				.insert(events)
+				.values({
+					workspaceId: otherWs,
+					actorId: agentId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: obj.id,
+					data: { content: 'x' },
+				})
+				.returning()
+			expect(
+				(await post('/api/for-you/dismissals', { source_comment_id: foreign.id })).status,
+			).toBe(404)
+		})
 	})
 
 	it('does not leak items from another workspace', async () => {
@@ -703,25 +909,22 @@ describe('GET /api/for-you', () => {
 			const open = (status = 'active') =>
 				insertObject(db, workspaceId, humanId, { type: 'bet', status })
 
-			// Hidden: answered, read, ended session, closed object, only_while_status moved on.
+			// Hidden: answered, dismissed, ended session, closed object, only_while_status moved on.
 			const answered = await open()
 			const answeredSource = await comment(answered.id, agentId)
 			await item(
 				{ objectId: answered.id },
 				{ source_comment_id: answeredSource, headline: 'answered' },
 			)
-			await comment(answered.id, humanId)
+			await comment(answered.id, humanId, answeredSource)
 
-			const read = await open()
-			const readSource = await comment(read.id, agentId)
-			await item({ objectId: read.id }, { source_comment_id: readSource, headline: 'read' })
-			await db.insert(readState).values({
-				workspaceId,
-				actorId: humanId,
-				entityType: 'object',
-				entityId: read.id,
-				lastReadEventId: readSource,
-			})
+			const dismissed = await open()
+			const dismissedSource = await comment(dismissed.id, agentId)
+			const dismissedCard = await item(
+				{ objectId: dismissed.id },
+				{ source_comment_id: dismissedSource, headline: 'dismissed' },
+			)
+			await post('/api/for-you/dismissals', { notification_id: dismissedCard.id })
 
 			const ended = await insertSession(db, workspaceId, agentId, humanId, { status: 'completed' })
 			await item({ sessionId: ended.id }, { headline: 'ended session' })
