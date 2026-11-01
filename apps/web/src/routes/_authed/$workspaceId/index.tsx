@@ -364,13 +364,13 @@ function ForYouFeed() {
 			const stacked = decision?.drafts ?? []
 			const settleByMessage =
 				sends && stacked.some((draft) => draftCallsRef.current.has(draftCallKey(item, draft)))
-			const approval = sends ? approveDraft(decision?.draft) : Promise.resolve()
+			const approval: Promise<unknown> = sends ? approveDraft(decision?.draft) : Promise.resolve()
 			// `mutateAsync` for the same reason as `markItemRead`: "Take every
 			// suggested option" calls this in a loop over one shared observer,
 			// and with call-site callbacks every reply but the last would fail
 			// silently behind a green receipt claiming it was sent.
 			approval
-				.then(() =>
+				.then<unknown>(() =>
 					settleByMessage
 						? Promise.all(stacked.map((draft) => handleDraftAction(item, draft, 'send')))
 						: postReply.mutateAsync({
