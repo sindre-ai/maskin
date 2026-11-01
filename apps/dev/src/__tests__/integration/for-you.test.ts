@@ -1,6 +1,16 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, files, notifications, objects, readState, sessions } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	files,
+	forYouWithdrawals,
+	notifications,
+	objects,
+	readState,
+	sessions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { FOR_YOU_KIND, slimForYouItems } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -925,6 +935,196 @@ describe('GET /api/for-you', () => {
 			})
 			expect(draft?.file).toBeUndefined()
 			expect(draft?.body).toBe('The page is attached.')
+		})
+	})
+
+	describe('Withdraw a decision card', () => {
+		async function withdraw(
+			commentId: number,
+			as = agentId,
+			reason: string | null = 'The deadline passed',
+			inWorkspace = workspaceId,
+		) {
+			return appAs(as, 'agent').request(
+				jsonRequest(
+					'POST',
+					'/api/for-you/withdrawals',
+					{ comment_id: commentId, ...(reason === null ? {} : { reason }) },
+					{ 'X-Workspace-Id': inWorkspace },
+				),
+			)
+		}
+
+		async function chiefOfStaff() {
+			const cos = await insertActor(db, {
+				type: 'agent',
+				name: 'Chief of Staff',
+				email: null,
+				apiKey: `ank_chief_${Date.now()}_${Math.random()}`,
+			})
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: cos.id, role: 'member' })
+			return cos.id
+		}
+
+		async function liveCard() {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
+			const cardId = await decisionComment(obj.id)
+			expect(await list()).toHaveLength(1)
+			return { obj, cardId }
+		}
+
+		it('lets the writer retire its own card, and returns the reason', async () => {
+			const { cardId } = await liveCard()
+			const res = await withdraw(cardId)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toEqual({
+				ok: true,
+				comment_id: cardId,
+				reason: 'The deadline passed',
+			})
+			expect(await list()).toEqual([])
+			const [row] = await db
+				.select()
+				.from(forYouWithdrawals)
+				.where(eq(forYouWithdrawals.sourceCommentId, cardId))
+			expect(row).toMatchObject({
+				workspaceId,
+				withdrawnBy: agentId,
+				reason: 'The deadline passed',
+			})
+		})
+
+		it('lets the Chief of Staff retire a card another agent wrote', async () => {
+			const { cardId } = await liveCard()
+			const res = await withdraw(cardId, await chiefOfStaff())
+			expect(res.status).toBe(200)
+			expect(await list()).toEqual([])
+		})
+
+		it('refuses a third agent, an agent merely named like the Chief of Staff, and the addressee', async () => {
+			const { cardId } = await liveCard()
+			const third = await insertActor(db, { type: 'agent', name: 'Third', email: null })
+			const lookalike = await insertActor(db, {
+				type: 'agent',
+				name: 'Chief of Staff',
+				email: null,
+			})
+			// Same name, but in no workspace member list: not this workspace's Chief of Staff.
+			expect((await withdraw(cardId, third.id)).status).toBe(403)
+			expect((await withdraw(cardId, lookalike.id)).status).toBe(403)
+			expect((await withdraw(cardId, humanId)).status).toBe(403)
+			expect(await list()).toHaveLength(1)
+			expect(await db.select().from(forYouWithdrawals)).toEqual([])
+		})
+
+		it('answers 400 for a comment that is not a decision card, and writes nothing', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
+			const plain = await decisionComment(obj.id, { decision: null })
+			expect((await withdraw(plain)).status).toBe(400)
+			expect(await db.select().from(forYouWithdrawals)).toEqual([])
+		})
+
+		it('rejects a missing, empty or over-long reason with 400', async () => {
+			const { cardId } = await liveCard()
+			expect((await withdraw(cardId, agentId, null)).status).toBe(400)
+			expect((await withdraw(cardId, agentId, '   ')).status).toBe(400)
+			expect((await withdraw(cardId, agentId, 'x'.repeat(201))).status).toBe(400)
+			expect(await list()).toHaveLength(1)
+			expect((await withdraw(cardId, agentId, 'x'.repeat(200))).status).toBe(200)
+		})
+
+		it('answers 404 for an unknown comment and for one from another workspace', async () => {
+			const { cardId } = await liveCard()
+			const otherWs = (await insertWorkspace(db, humanId)).id
+			// The writer is the caller, so only the workspace scoping can refuse this.
+			expect((await withdraw(cardId, agentId, 'Gone', otherWs)).status).toBe(404)
+			expect((await withdraw(2_000_000_000)).status).toBe(404)
+			expect(await list()).toHaveLength(1)
+		})
+
+		it('is fine to withdraw twice, and keeps the first reason', async () => {
+			const { cardId } = await liveCard()
+			expect((await withdraw(cardId, agentId, 'First reason')).status).toBe(200)
+			const again = await withdraw(cardId, agentId, 'Second reason')
+			expect(again.status).toBe(200)
+			expect(await again.json()).toMatchObject({ reason: 'First reason' })
+			expect(await db.select().from(forYouWithdrawals)).toHaveLength(1)
+		})
+
+		it('takes the card from every person, not only the one it was addressed to first', async () => {
+			const other = await insertActor(db, {
+				type: 'human',
+				name: 'Someone else',
+				email: `other_${Date.now()}_${Math.random()}@example.com`,
+			})
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
+			const cardId = await decisionComment(obj.id, { mentions: [humanId, other.id] })
+			const otherList = async () =>
+				(
+					(await (
+						await appAs(other.id).request(
+							jsonGet('/api/for-you', { 'X-Workspace-Id': workspaceId }),
+						)
+					).json()) as { items: unknown[] }
+				).items
+			expect(await otherList()).toHaveLength(1)
+			await withdraw(cardId)
+			expect(await otherList()).toEqual([])
+			expect(await list()).toEqual([])
+		})
+
+		it('does not bring an older decision on the same object back', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
+			await decisionComment(obj.id, { decision: { ...DECISION, title: 'Older ask' } })
+			const newest = await decisionComment(obj.id, {
+				decision: { ...DECISION, title: 'Newer ask' },
+			})
+			expect((await list()).map((i) => i.headline)).toEqual(['Newer ask'])
+			await withdraw(newest)
+			expect(await list()).toEqual([])
+		})
+
+		it('drops a curated card that points at the withdrawn comment, and a different live decision on that object shows up', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
+			const sourceId = await decisionComment(obj.id, {
+				decision: { ...DECISION, title: 'Dead ask' },
+			})
+			await item(
+				{ objectId: obj.id },
+				{ source_comment_id: sourceId, headline: 'Curated dead ask' },
+			)
+			// The curated card stands in for the decision card on its object.
+			expect((await list()).map((i) => i.headline)).toEqual(['Curated dead ask'])
+			const live = await decisionComment(obj.id, { decision: { ...DECISION, title: 'Live ask' } })
+			expect(live).toBeGreaterThan(sourceId)
+
+			await withdraw(sourceId)
+			expect((await list()).map((i) => [i.source, i.headline])).toEqual([['decision', 'Live ask']])
+		})
+
+		it('drops a curated card that has a source comment but no object', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
+			const sourceId = await decisionComment(obj.id)
+			await item({ objectId: null }, { source_comment_id: sourceId, headline: 'No object' })
+			// No object means no curated entity to stand in for the decision card, so both show.
+			// Withdrawing the source comment must take both.
+			expect((await list()).map((i) => i.headline)).toContain('No object')
+			await withdraw(sourceId)
+			expect(await list()).toEqual([])
+		})
+
+		it('keeps the card withdrawn after the person who withdrew it is deleted', async () => {
+			const { cardId } = await liveCard()
+			const cos = await chiefOfStaff()
+			expect((await withdraw(cardId, cos)).status).toBe(200)
+			await db.delete(workspaceMembers).where(eq(workspaceMembers.actorId, cos))
+			await db.delete(actors).where(eq(actors.id, cos))
+			const [row] = await db
+				.select()
+				.from(forYouWithdrawals)
+				.where(eq(forYouWithdrawals.sourceCommentId, cardId))
+			expect(row.withdrawnBy).toBeNull()
+			expect(await list()).toEqual([])
 		})
 	})
 

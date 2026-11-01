@@ -897,6 +897,25 @@ export const forYouDismissals = pgTable(
 	(t) => [primaryKey({ name: 'for_you_dismissals_pk', columns: [t.actorId, t.sourceCommentId] })],
 )
 
+// ── For You withdrawals ────────────────────────────────────────────────────
+//
+// One row per withdrawn decision card, keyed on the card's source comment. The agent that wrote
+// the comment, or the Chief of Staff, retires a card that is dead (a test card, a passed
+// deadline, a duplicate). Global: the card leaves every list that reads the For You loaders.
+// withdrawn_by is SET NULL, not cascade: removing the withdrawer must not bring the card back.
+// Deleting the row is the undo.
+export const forYouWithdrawals = pgTable('for_you_withdrawals', {
+	sourceCommentId: bigint('source_comment_id', { mode: 'number' })
+		.primaryKey()
+		.references(() => events.id, { onDelete: 'cascade' }),
+	workspaceId: uuid('workspace_id')
+		.references(() => workspaces.id, { onDelete: 'cascade' })
+		.notNull(),
+	withdrawnBy: uuid('withdrawn_by').references(() => actors.id, { onDelete: 'set null' }),
+	reason: text('reason').notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(

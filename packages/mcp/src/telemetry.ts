@@ -559,6 +559,8 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Sessions
 	create_session: 'session_create',
 	create_sub_chat: 'session_create',
+	// For You
+	withdraw_decision_card: 'for_you_withdraw',
 	// Chats
 	create_chat: 'chat_create',
 	add_chat_participant: 'chat_participant_add',

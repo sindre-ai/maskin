@@ -539,6 +539,7 @@
 			"values",
 			"workspace_id"
 		],
-		"update_workspace_skill": ["content", "name", "workspace_id"]
+		"update_workspace_skill": ["content", "name", "workspace_id"],
+		"withdraw_decision_card": ["comment_id", "reason", "workspace_id"]
 	}
 }

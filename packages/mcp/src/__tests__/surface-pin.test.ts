@@ -325,13 +325,14 @@ describe('MCP surface pin', () => {
 			for (const name of expected) expect(registeredTools.has(name)).toBe(true)
 		})
 
-		it('idempotentHint is true for update_*, delete_*, pause_session and mark_read only', () => {
+		it('idempotentHint is true for update_*, delete_*, pause_session, mark_read and withdraw_decision_card only', () => {
 			const expected = [
 				...Object.keys(TOOL_ANNOTATIONS).filter(
 					(n) => n.startsWith('update_') || n.startsWith('delete_'),
 				),
 				'pause_session',
 				'mark_read',
+				'withdraw_decision_card',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)
 				.filter(([, entry]) => entry.idempotentHint)
