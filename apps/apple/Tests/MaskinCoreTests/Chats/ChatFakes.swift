@@ -237,6 +237,20 @@ actor FakeListAPI: ConversationsAPI {
 		return chatConvo("new", title: title, participants: [chatMe])
 	}
 
+	/// The direct message the fake server already has per participant; the first call makes one.
+	var directChats: [String: ConversationSummary] = [:]
+	var directCalls: [String] = []
+
+	func directChat(with participantID: String, title: String, idempotencyKey: String) async throws
+		-> ConversationSummary
+	{
+		directCalls.append(participantID)
+		if let existing = directChats[participantID] { return existing }
+		let made = chatConvo("dm-\(participantID)", title: title, participants: [chatMe, chatRelay])
+		directChats[participantID] = made
+		return made
+	}
+
 	var createdMetadata: [ChatSendMetadata?] = []
 
 	func create(

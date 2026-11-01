@@ -2,7 +2,9 @@ import { ImportMcpDialog } from '@/components/integrations/import-mcp-dialog'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import { ToolServerAccess } from '@/components/integrations/tool-server-access'
 import { ToolServerForm } from '@/components/integrations/tool-server-form'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useCreateCustomMcpServer,
 	useCustomMcpServer,
@@ -37,6 +39,7 @@ function describeServer(row: IntegrationResponse): string {
  */
 export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 	const { workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const { data: integrations } = useIntegrations(workspaceId)
 	const create = useCreateCustomMcpServer(workspaceId)
 	const [adding, setAdding] = useState(false)
@@ -48,12 +51,15 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 		(i) => i.provider === 'custom-mcp' && i.status === 'active',
 	)
 	const me = getStoredActor()
-	const isHuman = me?.type === 'human' && workspace.role !== 'viewer'
+	const isHuman = me?.type === 'human'
 
-	const handleCreate = (name: string, server: CustomMcpServerSpec) =>
+	const handleCreate = (name: string, server: CustomMcpServerSpec) => {
+		if (!canWrite) return
 		create.mutate({ name, server }, { onSuccess: () => setAdding(false) })
+	}
 
 	const handleImport = async (imported: Record<string, CustomMcpServerSpec>) => {
+		if (!canWrite) return
 		setImportError(null)
 		const failed: string[] = []
 		for (const [name, server] of Object.entries(imported)) {
@@ -116,14 +122,28 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 
 			{isHuman && !adding && (
 				<div className="flex flex-wrap items-center gap-2 pt-1">
-					<Button size="sm" variant="outline" onClick={() => setAdding(true)}>
-						<Plus className="mr-1 h-3.5 w-3.5" />
-						Add server
-					</Button>
-					<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-						<FileJson className="mr-1 h-3.5 w-3.5" />
-						Import .mcp.json
-					</Button>
+					<ViewerTooltip>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={!canWrite}
+							onClick={() => setAdding(true)}
+						>
+							<Plus className="mr-1 h-3.5 w-3.5" />
+							Add server
+						</Button>
+					</ViewerTooltip>
+					<ViewerTooltip>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={!canWrite}
+							onClick={() => setImportOpen(true)}
+						>
+							<FileJson className="mr-1 h-3.5 w-3.5" />
+							Import .mcp.json
+						</Button>
+					</ViewerTooltip>
 				</div>
 			)}
 
@@ -151,6 +171,7 @@ function ServerRow({
 	onEdit: () => void
 }) {
 	const { workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const remove = useRemoveCustomMcpServer(workspaceId)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const me = getStoredActor()
@@ -168,38 +189,46 @@ function ServerRow({
 				canEdit &&
 				(confirmDelete ? (
 					<div className="flex shrink-0 items-center gap-1">
-						<Button
-							size="sm"
-							variant="destructive"
-							disabled={remove.isPending}
-							onClick={() => remove.mutate(row.id)}
-						>
-							Remove
-						</Button>
+						<ViewerTooltip>
+							<Button
+								size="sm"
+								variant="destructive"
+								disabled={remove.isPending || !canWrite}
+								onClick={() => remove.mutate(row.id)}
+							>
+								Remove
+							</Button>
+						</ViewerTooltip>
 						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
 							Cancel
 						</Button>
 					</div>
 				) : (
 					<div className="flex shrink-0 items-center gap-1">
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground"
-							onClick={onEdit}
-							aria-label={`Edit ${name}`}
-						>
-							<Pencil className="h-3.5 w-3.5" />
-						</Button>
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground hover:text-error"
-							onClick={() => setConfirmDelete(true)}
-							aria-label={`Remove ${name}`}
-						>
-							<Trash2 className="h-3.5 w-3.5" />
-						</Button>
+						<ViewerTooltip>
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground"
+								disabled={!canWrite}
+								onClick={onEdit}
+								aria-label={`Edit ${name}`}
+							>
+								<Pencil className="h-3.5 w-3.5" />
+							</Button>
+						</ViewerTooltip>
+						<ViewerTooltip>
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground hover:text-error"
+								disabled={!canWrite}
+								onClick={() => setConfirmDelete(true)}
+								aria-label={`Remove ${name}`}
+							>
+								<Trash2 className="h-3.5 w-3.5" />
+							</Button>
+						</ViewerTooltip>
 					</div>
 				))
 			}

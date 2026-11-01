@@ -88,6 +88,15 @@ describe('requestTiming', () => {
 		return app
 	}
 
+	// Registered the way app-factory does: the static middleware and SPA fallback come after every
+	// API route and match every path.
+	function buildAppWithCatchAlls() {
+		const app = buildApp()
+		app.use('*', async (_c, next) => next())
+		app.get('*', (c) => c.text('spa'))
+		return app
+	}
+
 	it('logs the route pattern with summed database time, never the raw URL', async () => {
 		const res = await buildApp().request('/api/objects/6f1c-secret-id?token=abc')
 		expect(res.status).toBe(200)
@@ -139,5 +148,45 @@ describe('requestTiming', () => {
 		expect(line.route).toBe('/api/events')
 		expect(line.stream).toBe(true)
 		expect(line.db_queries).toBe(1)
+	})
+
+	it('names the handler that answered even when catch-all routes are registered after it', async () => {
+		const app = buildAppWithCatchAlls()
+		await app.request('/api/objects/abc')
+		const controller = new AbortController()
+		const res = await app.request(
+			new Request('http://localhost/api/events', { signal: controller.signal }),
+		)
+		await res.text().catch(() => {})
+		controller.abort()
+
+		flushRouteTiming()
+		const lines = linesFor('api_route_timing')
+		expect(lines.map((l) => [l.route, l.stream]).sort()).toEqual([
+			['/api/events', true],
+			['/api/objects/:id', false],
+		])
+	})
+
+	it('logs a path with no API handler under the wildcard', async () => {
+		const app = buildAppWithCatchAlls()
+		const res = await app.request('/api/nope')
+		expect(res.status).toBe(200)
+
+		flushRouteTiming()
+		expect(linesFor('api_route_timing').map((l) => l.route)).toEqual(['/*'])
+	})
+
+	it('names the middleware that stopped the request early', async () => {
+		const app = new Hono()
+		app.use('/api/*', requestTiming())
+		app.use('/api/*', async (c) => c.json({ error: 'unauthorized' }, 401))
+		app.get('/api/objects/:id', (c) => c.json({}))
+		app.get('*', (c) => c.text('spa'))
+		const res = await app.request('/api/objects/abc')
+		expect(res.status).toBe(401)
+
+		flushRouteTiming()
+		expect(linesFor('api_route_timing').map((l) => l.route)).toEqual(['/api/*'])
 	})
 })

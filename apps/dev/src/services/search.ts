@@ -17,6 +17,12 @@ import { canHaveTypo, titleTypoDistance } from '../lib/search-typo'
 /** A source that takes longer than this is reported as partial instead of failing the request. */
 const SOURCE_TIMEOUT_MS = 5000
 const MAX_TOKENS = 8
+/**
+ * Chats whose messages are searched: the caller's newest ones by last message. Older
+ * chats are still found by title and people, but their messages are skipped and the
+ * source is reported as partial.
+ */
+const CHAT_MESSAGE_SCAN_CAP = 2000
 /** Safety bound on the counted rows (types x statuses x window flag, so tiny in practice). */
 const MAX_AGGREGATE_ROWS = 5000
 /** The hidden-by-default status, same literal as the objects routes. */
@@ -53,11 +59,27 @@ export interface SearchSource {
 	 */
 	statusPairs: (ctx: SearchContext) => SQL
 	/**
+	 * A boolean over a candidate row (aliased `s`): true when the row passes the
+	 * participants filter. A source without it never passes once a participant is
+	 * picked. It is a flag, not a WHERE, so the relaxed counts can still ignore it.
+	 */
+	participantsOk?: (participants: string[]) => SQL
+	/**
 	 * The rows have no status of their own (people). Any status filter hides them,
 	 * and they stay out of the status counts, so a chip never counts rows that
 	 * disappear when it is picked.
 	 */
 	statusless?: boolean
+	/**
+	 * Optional deeper text, searched on top of title, body and sub. Needs the candidates
+	 * to return a boolean `deep` column that says whether the row is inside the scan
+	 * cap; rows outside it are not checked and make the source partial.
+	 * `deepHit` is a boolean for one LIKE pattern over the candidate row `s`.
+	 * `hitSnippet` is the text to show instead of the body for a matched row `m`: the
+	 * newest piece of deep text holding any of the patterns, or null.
+	 */
+	deepHit?: (pattern: string) => SQL
+	hitSnippet?: (patterns: string[]) => SQL
 }
 
 export const SEARCH_SOURCES: SearchSource[] = [
@@ -86,7 +108,9 @@ export const SEARCH_SOURCES: SearchSource[] = [
 					) THEN 'unread'
 					ELSE 'read'
 				END AS status,
-				c.last_message_at AS updated_at
+				c.last_message_at AS updated_at,
+				(row_number() OVER (ORDER BY c.last_message_at DESC NULLS LAST, c.id)
+					<= ${CHAT_MESSAGE_SCAN_CAP}) AS deep
 			FROM conversations c
 			INNER JOIN conversation_participants cp
 				ON cp.conversation_id = c.id AND cp.actor_id = ${callerId} AND cp.left_at IS NULL
@@ -97,6 +121,32 @@ export const SEARCH_SOURCES: SearchSource[] = [
 				LIMIT 1
 			) lm ON true
 			WHERE c.workspace_id = ${workspaceId}`,
+		// The chat must hold every picked actor (still a member, not left).
+		participantsOk: (participants) =>
+			sql.join(
+				participants.map(
+					(actorId) => sql`EXISTS (
+						SELECT 1 FROM conversation_participants cpf
+						WHERE cpf.conversation_id = s.id AND cpf.actor_id = ${actorId} AND cpf.left_at IS NULL
+					)`,
+				),
+				sql` AND `,
+			),
+		// Any message of the chat, not only the latest one.
+		deepHit: (pattern) => sql`EXISTS (
+			SELECT 1 FROM messages dm
+			WHERE dm.conversation_id = s.id AND dm.content ILIKE ${pattern}
+		)`,
+		hitSnippet: (patterns) => sql`(
+			SELECT left(hm.content, 160) FROM messages hm
+			WHERE hm.conversation_id = m.id
+				AND (${sql.join(
+					patterns.map((pattern) => sql`hm.content ILIKE ${pattern}`),
+					sql` OR `,
+				)})
+			ORDER BY hm.id DESC
+			LIMIT 1
+		)`,
 	},
 	{
 		key: 'loops',
@@ -174,37 +224,43 @@ export function searchTokens(q: string | undefined): string[] {
 	return [...new Set(words)].slice(0, MAX_TOKENS)
 }
 /** Hit-flag column names. The index comes from our own loop over the words, never from input. */
-const flag = (kind: 't' | 'b' | 'u', i: number) => sql.raw(`${kind}${i}`)
+const flag = (kind: 't' | 'b' | 'u' | 'd', i: number) => sql.raw(`${kind}${i}`)
 
 /**
  * Per word, three flags computed once per row: a hit in the title, the body, the
- * sub line. The match (every word hits somewhere) and the score both read the
- * flags, so the text is scanned a single time.
+ * sub line. A source with deep text adds a fourth, only for rows inside its scan
+ * cap (the CASE keeps the lookup from running for the rest). The match (every word
+ * hits somewhere) and the score both read the flags, so the text is scanned a
+ * single time.
  */
-function flagColumns(tokens: string[]): SQL {
+function flagColumns(tokens: string[], source: SearchSource): SQL {
 	const perToken = tokens.map((token, i) => {
 		const pattern = tokenIlikePattern(token)
-		return sql`, (s.title ilike ${pattern}) AS ${flag('t', i)}, (s.body ilike ${pattern}) AS ${flag('b', i)}, (s.sub ilike ${pattern}) AS ${flag('u', i)}`
+		const deep = source.deepHit
+			? sql`, (CASE WHEN s.deep THEN ${source.deepHit(pattern)} ELSE false END) AS ${flag('d', i)}`
+			: sql``
+		return sql`, (s.title ilike ${pattern}) AS ${flag('t', i)}, (s.body ilike ${pattern}) AS ${flag('b', i)}, (s.sub ilike ${pattern}) AS ${flag('u', i)}${deep}`
 	})
 	return sql.join(perToken, sql``)
 }
 
-/** Every word must hit the title, the body or the sub line (AND across words). */
-function matchCondition(tokens: string[]): SQL {
+/** Every word must hit the title, the body, the sub line or the deep text (AND across words). */
+function matchCondition(tokens: string[], hasDeep: boolean): SQL {
 	if (tokens.length === 0) return sql`true`
-	const perToken = tokens.map(
-		(_, i) => sql`(x.${flag('t', i)} or x.${flag('b', i)} or x.${flag('u', i)})`,
-	)
+	const perToken = tokens.map((_, i) => {
+		const deep = hasDeep ? sql` or x.${flag('d', i)}` : sql``
+		return sql`(x.${flag('t', i)} or x.${flag('b', i)} or x.${flag('u', i)}${deep})`
+	})
 	return sql.join(perToken, sql` and `)
 }
 
 /** Same per-word formula as /api/objects/search: title hit plus coverage, body hit worth 1. */
-function scoreExpression(tokens: string[]): SQL {
+function scoreExpression(tokens: string[], hasDeep: boolean): SQL {
 	if (tokens.length === 0) return sql`0`
-	const perToken = tokens.map(
-		(token, i) =>
-			sql`((case when x.${flag('t', i)} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(x.title), 1)) else 0 end) + (case when x.${flag('b', i)} then 1 else 0 end))`,
-	)
+	const perToken = tokens.map((token, i) => {
+		const body = hasDeep ? sql`(x.${flag('b', i)} or x.${flag('d', i)})` : sql`x.${flag('b', i)}`
+		return sql`((case when x.${flag('t', i)} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(x.title), 1)) else 0 end) + (case when ${body} then 1 else 0 end))`
+	})
 	return sql.join(perToken, sql` + `)
 }
 
@@ -223,6 +279,8 @@ interface AggregateRow {
 	type: string
 	status: string
 	in_window: boolean
+	/** False when the row misses the participants filter; always true with none picked. */
+	p_ok: boolean
 	n: number
 }
 
@@ -240,13 +298,15 @@ interface SourceResult {
 	rows: SearchResultRow[]
 	/** Matches after every filter, before the cap. */
 	total: number
+	/** The source skipped some of its deep text because it was over its scan cap. */
+	truncated: boolean
 	/** Text match only, minus the archive rule. */
 	typeCounts: Map<string, number>
 	/** Text match plus selected types, archive rule lifted. */
 	statusCounts: Record<StatusGroupKey, number>
 	/** Text match with every filter dropped (archive rule kept). */
 	withoutFilters: number
-	/** Text match plus selected types (archive rule kept). */
+	/** Text match plus selected types and participants (archive rule kept). */
 	withoutStatuses: number
 	knownTypes: string[]
 	/** Title hits with a typo, found by the second pass. Empty when it did not run. */
@@ -293,22 +353,31 @@ function filterRules(query: SearchQuery, source: SearchSource) {
 
 type FilterRules = ReturnType<typeof filterRules>
 
+/** True for a candidate row (aliased `s`) that passes the participants filter; true for all with none picked. */
+function participantsCondition(query: SearchQuery, source: SearchSource): SQL {
+	const participants = query.participants ?? []
+	if (participants.length === 0) return sql`true`
+	// With a participant picked, a source that cannot filter by one never matches.
+	return source.participantsOk ? source.participantsOk(participants) : sql`false`
+}
+
 /** Adds `n` rows of one (type, status, window) cell to the counts of a source. */
 function tally(
 	result: SourceResult,
 	rules: FilterRules,
-	row: { type: string; status: string; in_window: boolean; n: number },
+	row: { type: string; status: string; in_window: boolean; p_ok: boolean; n: number },
 ) {
 	const { archivedHidden, typeOk, statusOk, cutoff, statusless } = rules
 	const group = getStatusGroup(row.type, row.status)
 	const hidden = archivedHidden(row.status)
 
+	// The "search everything" count ignores the participants along with every other filter.
+	if (row.status !== ARCHIVED) result.withoutFilters += row.n
+	if (!row.p_ok) return
+
 	if (!hidden) result.typeCounts.set(row.type, (result.typeCounts.get(row.type) ?? 0) + row.n)
 	if (typeOk(row.type) && !statusless) result.statusCounts[group] += row.n
-	if (row.status !== ARCHIVED) {
-		result.withoutFilters += row.n
-		if (typeOk(row.type)) result.withoutStatuses += row.n
-	}
+	if (row.status !== ARCHIVED && typeOk(row.type)) result.withoutStatuses += row.n
 	if (!hidden && typeOk(row.type) && statusOk(group) && (!cutoff || row.in_window)) {
 		result.total += row.n
 	}
@@ -341,7 +410,10 @@ async function runSource(
 		}
 	}
 
-	const match = matchCondition(tokens)
+	// Deep text only matters when there is a word to look for.
+	const hasDeep = Boolean(source.deepHit) && tokens.length > 0
+	const match = matchCondition(tokens, hasDeep)
+	const participantsOk = participantsCondition(query, source)
 	const inWindow = cutoff ? sql`coalesce(x.updated_at > ${cutoff}::timestamptz, false)` : sql`true`
 	const pairList = sql.join(
 		passingPairs.map(({ type, status }) => sql`(${type}::text, ${status}::text)`),
@@ -350,33 +422,45 @@ async function runSource(
 	const topFilter =
 		passingPairs.length === 0
 			? sql`false`
-			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window`
+			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window AND m.p_ok`
 	const ordering = orderBy(query.sort)
+	// The snippet of a returned row is the deep text that hit, when the row had its
+	// deep text checked; otherwise the body.
+	const pickedSnippet =
+		hasDeep && source.hitSnippet
+			? sql`coalesce(CASE WHEN m.deep THEN ${source.hitSnippet(tokens.map(tokenIlikePattern))} END, m.snippet)`
+			: sql`m.snippet`
+	const truncatedFlag = hasDeep
+		? sql`(SELECT coalesce(bool_or(NOT x.deep), false) FROM x)`
+		: sql`false`
 
 	// One scan. x computes the per-word hit flags once per row (OFFSET 0 keeps the
 	// planner from folding them back into the filter), m keeps the matches, and
 	// both the counts and the top rows read m.
-	const [raw] = await rowsOf<{ aggregate: unknown; top_rows: unknown }>(
+	const [raw] = await rowsOf<{ aggregate: unknown; top_rows: unknown; truncated: boolean }>(
 		executor,
 		sql`WITH x AS (
-				SELECT s.id, s.type, s.title, s.sub, left(s.body, 160) AS snippet, s.status, s.updated_at
-					${flagColumns(tokens)}
+				SELECT s.id, s.type, s.title, s.sub, left(s.body, 160) AS snippet, s.status, s.updated_at,
+					(${participantsOk}) AS p_ok
+					${hasDeep ? sql`, s.deep` : sql``}
+					${flagColumns(tokens, source)}
 				FROM (${source.candidates(ctx)}) s
 				OFFSET 0
 			),
 			m AS (
-				SELECT x.id, x.type, x.title, x.sub, x.snippet, x.status, x.updated_at,
-					${scoreExpression(tokens)} AS score,
+				SELECT x.id, x.type, x.title, x.sub, x.snippet, x.status, x.updated_at, x.p_ok,
+					${hasDeep ? sql`x.deep,` : sql``}
+					${scoreExpression(tokens, hasDeep)} AS score,
 					${inWindow} AS in_window
 				FROM x
 				WHERE ${match}
 			),
 			counted AS (
-				SELECT m.type, m.status, m.in_window, count(*)::int AS n
-				FROM m GROUP BY 1, 2, 3 LIMIT ${MAX_AGGREGATE_ROWS}
+				SELECT m.type, m.status, m.in_window, m.p_ok, count(*)::int AS n
+				FROM m GROUP BY 1, 2, 3, 4 LIMIT ${MAX_AGGREGATE_ROWS}
 			),
 			picked AS (
-				SELECT m.id, m.type, m.title, m.sub, m.snippet, m.status,
+				SELECT m.id, m.type, m.title, m.sub, ${pickedSnippet} AS snippet, m.status,
 					to_char(m.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso,
 					row_number() OVER (ORDER BY ${ordering}) AS rn
 				FROM m
@@ -385,12 +469,14 @@ async function runSource(
 				LIMIT ${query.limit}
 			)
 			SELECT (SELECT coalesce(json_agg(counted), '[]'::json) FROM counted) AS aggregate,
-				(SELECT coalesce(json_agg(picked ORDER BY picked.rn), '[]'::json) FROM picked) AS top_rows`,
+				(SELECT coalesce(json_agg(picked ORDER BY picked.rn), '[]'::json) FROM picked) AS top_rows,
+				${truncatedFlag} AS truncated`,
 	)
 
 	const result: SourceResult = {
 		rows: [],
 		total: 0,
+		truncated: raw?.truncated === true,
 		typeCounts: new Map(),
 		statusCounts: emptyStatusCounts(),
 		withoutFilters: 0,
@@ -449,16 +535,17 @@ async function runTypoPass(
 	const rules = filterRules(query, source)
 	const { truncated, hits } = await db.transaction(async (tx) => {
 		await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(SOURCE_TIMEOUT_MS))}`)
-		const candidates = await rowsOf<RawRow>(
+		const candidates = await rowsOf<RawRow & { p_ok: boolean }>(
 			tx,
 			sql`SELECT s.id, s.type, s.title, s.sub, left(s.body, 160) AS snippet, s.status,
-					to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso
+					to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso,
+					(${participantsCondition(query, source)}) AS p_ok
 				FROM (${source.candidates(ctx)}) s
 				WHERE s.title <> ''
 				ORDER BY s.updated_at DESC NULLS LAST, s.id
 				LIMIT ${TYPO_CANDIDATE_CAP + 1}`,
 		)
-		const fuzzy: Array<{ raw: RawRow; distance: number }> = []
+		const fuzzy: Array<{ raw: RawRow & { p_ok: boolean }; distance: number }> = []
 		for (const raw of candidates.slice(0, TYPO_CANDIDATE_CAP)) {
 			const distance = titleTypoDistance(tokens, raw.title)
 			if (distance !== null) fuzzy.push({ raw, distance })
@@ -474,11 +561,11 @@ async function runTypoPass(
 			const matched = await rowsOf<{ id: string }>(
 				tx,
 				sql`WITH x AS (
-						SELECT s.id ${flagColumns(tokens)}
+						SELECT s.id ${flagColumns(tokens, source)}
 						FROM (${source.candidates(ctx)}) s
 						WHERE s.id IN (${ids})
 					)
-					SELECT x.id FROM x WHERE ${matchCondition(tokens)}`,
+					SELECT x.id FROM x WHERE ${matchCondition(tokens, Boolean(source.deepHit))}`,
 			)
 			for (const row of matched) strict.add(row.id)
 		}
@@ -492,9 +579,16 @@ async function runTypoPass(
 		const inWindow = rules.cutoff
 			? raw.updated_iso !== null && new Date(raw.updated_iso) > new Date(rules.cutoff)
 			: true
-		tally(result, rules, { type: raw.type, status: raw.status, in_window: inWindow, n: 1 })
+		tally(result, rules, {
+			type: raw.type,
+			status: raw.status,
+			in_window: inWindow,
+			p_ok: raw.p_ok,
+			n: 1,
+		})
 		const group = getStatusGroup(raw.type, raw.status)
 		if (
+			!raw.p_ok ||
 			rules.archivedHidden(raw.status) ||
 			!rules.typeOk(raw.type) ||
 			!rules.statusOk(group) ||
@@ -582,7 +676,8 @@ async function addTypoHits(
 
 /**
  * Runs the six sources in parallel and folds them into one response. A source
- * that throws or times out is left out of every count and listed in `partial`.
+ * that throws or times out is left out of every count and listed in `partial`. A
+ * source that hit its scan cap keeps its counts and is listed in `partial` too.
  * `sources` is a parameter so a test can swap in a failing one.
  */
 export async function runSearch(
@@ -602,6 +697,7 @@ export async function runSearch(
 		const source = sources[i] as SearchSource
 		if (outcome.status === 'fulfilled') {
 			ok.push({ source, result: outcome.value })
+			if (outcome.value.truncated) partial.push(source.key)
 			return
 		}
 		partial.push(source.key)

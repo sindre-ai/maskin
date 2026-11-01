@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { messages, sessionLogs } from '@maskin/db/schema'
+import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { splitLines } from '@maskin/shared'
 import { and, desc, eq, like, lte } from 'drizzle-orm'
 import { logger } from '../lib/logger'
@@ -94,5 +94,40 @@ export async function resolveThreadRootId(
 			`Could not resolve thread for message ${turnMessageId}: ${err instanceof Error ? err.stack || err.message : String(err)}`,
 		)
 		return null
+	}
+}
+
+/**
+ * Where an agent's reply from this session goes. A thread session answers in its own thread,
+ * whatever message started the turn, so the place is fixed by the session. A session with no
+ * thread (the main chat, or any session that started before thread sessions existed) keeps
+ * the turn-origin guess: a turn started by a thread message answers in that thread.
+ *
+ * `sessionThreadRootId` is returned too, for reply tracking. A lookup failure answers
+ * top-level rather than losing the reply, like resolveThreadRootId.
+ */
+export async function resolveReplyThreadRootId(
+	db: Database,
+	params: { sessionId: string; turnMessageId: number | null; conversationId?: string },
+): Promise<{ sessionThreadRootId: number | null; threadRootId: number | null }> {
+	let sessionThreadRootId: number | null = null
+	try {
+		const [row] = await db
+			.select({ threadRootId: sessions.threadRootId })
+			.from(sessions)
+			.where(eq(sessions.id, params.sessionId))
+			.limit(1)
+		sessionThreadRootId = row?.threadRootId ?? null
+	} catch (err) {
+		logger.warn(
+			`Could not read the thread of session ${params.sessionId}: ${err instanceof Error ? err.stack || err.message : String(err)}`,
+		)
+	}
+	if (sessionThreadRootId !== null) {
+		return { sessionThreadRootId, threadRootId: sessionThreadRootId }
+	}
+	return {
+		sessionThreadRootId: null,
+		threadRootId: await resolveThreadRootId(db, params.turnMessageId, params.conversationId),
 	}
 }

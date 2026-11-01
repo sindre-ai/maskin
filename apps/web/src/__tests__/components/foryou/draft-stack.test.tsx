@@ -1,6 +1,6 @@
 import { DraftStack } from '@/components/foryou/draft-stack'
 import type { LatestMentionDecisionDraft } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -74,5 +74,32 @@ describe('DraftStack', () => {
 		expect(await screen.findByRole('alert')).toHaveTextContent('Could not send your reply')
 		expect(screen.getByText('Hej Kenneth, tak for sidst.')).toBeInTheDocument()
 		expect(onAllDone).not.toHaveBeenCalled()
+	})
+
+	it('settles the card once even when two messages are dealt with at the same time', async () => {
+		const resolvers: Array<() => void> = []
+		const onAction = vi.fn(() => new Promise<void>((resolve) => resolvers.push(resolve)))
+		const { onAllDone } = setup(onAction)
+		await userEvent.click(screen.getAllByRole('button', { name: 'Skip' })[0])
+		// The first message's buttons are disabled while its call is out, so the second
+		// message is the other Skip in the list.
+		await userEvent.click(screen.getAllByRole('button', { name: 'Skip' })[1])
+		expect(onAction).toHaveBeenCalledTimes(2)
+		await act(async () => {
+			for (const resolve of resolvers) resolve()
+		})
+		expect(onAllDone).toHaveBeenCalledTimes(1)
+		expect(screen.getAllByText(/Skipped/)).toHaveLength(2)
+	})
+
+	it('does not act twice on the same message while its call is still out', async () => {
+		const onAction = vi.fn(() => new Promise<void>(() => {}))
+		setup(onAction)
+		const skip = screen.getAllByRole('button', { name: 'Skip' })[0]
+		await act(async () => {
+			skip.click()
+			skip.click()
+		})
+		expect(onAction).toHaveBeenCalledTimes(1)
 	})
 })

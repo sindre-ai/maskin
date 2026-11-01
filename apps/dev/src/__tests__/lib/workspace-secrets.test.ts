@@ -9,6 +9,7 @@ import {
 	SEALED_PREFIX,
 	SecretUnreadableError,
 	countWorkspaceLlmSecrets,
+	hintOf,
 	isSealed,
 	openSecret,
 	openWorkspaceLlmSecrets,
@@ -79,6 +80,29 @@ describe('sealSecret / openSecret', () => {
 	it('refuses to seal when the encryption key is missing, instead of storing plain text', () => {
 		vi.stubEnv('INTEGRATION_ENCRYPTION_KEY', '')
 		expect(() => sealSecret('FAKE-value')).toThrow('INTEGRATION_ENCRYPTION_KEY')
+	})
+})
+
+describe('hintOf', () => {
+	it('is the last four characters of a plain or sealed key of 12 or more characters', () => {
+		expect(hintOf('FAKE-key-value-1234')).toBe('1234')
+		expect(hintOf(sealSecret('FAKE-key-value-5678'))).toBe('5678')
+		expect(hintOf('123456789012')).toBe('9012')
+	})
+
+	it('is null for a key under 12 characters, so a short key is not given away', () => {
+		expect(hintOf('12345678901')).toBeNull()
+		expect(hintOf(sealSecret('short'))).toBeNull()
+	})
+
+	it('is null for nothing stored, a non-string, or a sealed value that cannot be opened', () => {
+		expect(hintOf(undefined)).toBeNull()
+		expect(hintOf(null)).toBeNull()
+		expect(hintOf('')).toBeNull()
+		expect(hintOf(42)).toBeNull()
+		const sealed = sealSecret('FAKE-key-value-1234')
+		vi.stubEnv('INTEGRATION_ENCRYPTION_KEY', KEY_B)
+		expect(hintOf(sealed)).toBeNull()
 	})
 })
 

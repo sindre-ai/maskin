@@ -1,7 +1,12 @@
 import { events, agentServers, sessionLogs, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
-import { capturePosthogEvent } from '../../lib/analytics/posthog'
+import { __resetPosthogEventBudgetForTesting } from '../../lib/analytics/event-budget'
+import {
+	__resetPosthogPrivacyForTesting,
+	capturePosthogEvent,
+	configurePosthogPrivacy,
+} from '../../lib/analytics/posthog'
 import { logger } from '../../lib/logger'
 import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
 import { _driveToRunning, configureSessionLifecycle } from '../../services/session-lifecycle'
@@ -1259,6 +1264,12 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 
 		const originalKey = process.env.POSTHOG_API_KEY
 		process.env.POSTHOG_API_KEY = 'phc_test'
+		// The workspace's privacy setting gates every send, so the capture needs the lookup wired.
+		configurePosthogPrivacy(db)
+		// session_waiting_stuck is sampled; a draw of 0 is always under the rate, so
+		// the capture (and the fetch that flips the row) happens on every run.
+		const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+		__resetPosthogEventBudgetForTesting()
 		let captureCalls = 0
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
 			captureCalls++
@@ -1271,6 +1282,9 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			// no-op
 		} finally {
 			fetchSpy.mockRestore()
+			randomSpy.mockRestore()
+			__resetPosthogEventBudgetForTesting()
+			__resetPosthogPrivacyForTesting()
 			if (originalKey === undefined) Reflect.deleteProperty(process.env, 'POSTHOG_API_KEY')
 			else process.env.POSTHOG_API_KEY = originalKey
 			await manager.stop()

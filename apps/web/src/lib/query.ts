@@ -1,6 +1,7 @@
 import { MutationCache, QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError } from './api'
+import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from './workspace-role'
 
 export const queryClient = new QueryClient({
 	mutationCache: new MutationCache({
@@ -8,6 +9,13 @@ export const queryClient = new QueryClient({
 			// A mutation that sets `meta: { handlesOwnErrors: true }` shows its own
 			// message; a second generic toast here would stack on top of it.
 			if (mutation.meta?.handlesOwnErrors) return
+			// A viewer's write the server refused (the control was not disabled, or the
+			// role changed after the page loaded). One plain message, and a fixed id so
+			// a burst of refused saves shows it once.
+			if (isViewerRefusal(error)) {
+				toast.error(VIEWER_READ_ONLY_MESSAGE, { id: 'viewer-read-only' })
+				return
+			}
 			if (error instanceof ApiError && error.hasFieldErrors()) return
 			// PLAN_CAP_EXCEEDED is always rendered by the call site via
 			// `toastSessionCreateError`, which shows an actionable "upgrade / buy

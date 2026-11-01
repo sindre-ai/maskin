@@ -265,8 +265,12 @@ public struct TeamLayout: Equatable, Sendable {
 	public var tiles: [Tile]
 	public var sections: [Section]
 	public var archivedCount: Int
-	/// Hidden while searching or filtering, and when nothing is archived.
+	/// Hidden while filtering, and when nothing is archived. A search keeps it only when an
+	/// archived conversation matches, so archived chats can be found.
 	public var showsArchived: Bool
+	/// The archived conversations that match the search, newest first as loaded. Empty without a
+	/// query, and while a filter chip is on.
+	public var archivedMatches: [ConversationSummary] = []
 	public var empty: Empty?
 	/// Unread rows across the list (the Unread chip's count), pinned ones included.
 	public var unreadCount: Int
@@ -375,7 +379,9 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 		sections = sections.filter { !$0.rows.isEmpty }
 
-		let hasAny = !tiles.isEmpty || !sections.isEmpty
+		let archivedMatches =
+			!query.isEmpty && input.chip == .all ? input.archived.filter { matches($0, query: query) } : []
+		let hasAny = !tiles.isEmpty || !sections.isEmpty || !archivedMatches.isEmpty
 		let empty: Empty?
 		if hasAny {
 			empty = nil
@@ -390,7 +396,8 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 		return TeamLayout(
 			tiles: tiles, sections: sections, archivedCount: input.archived.count,
-			showsArchived: !isFiltering && !input.archived.isEmpty, empty: empty,
+			showsArchived: (!isFiltering && !input.archived.isEmpty) || !archivedMatches.isEmpty,
+			archivedMatches: archivedMatches, empty: empty,
 			unreadCount: totalUnread, isFiltering: isFiltering)
 	}
 

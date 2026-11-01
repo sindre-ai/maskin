@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { LinkedObjectsForFile } from '@/components/objects/linked-objects'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -23,6 +24,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { useAttachingObjects } from '@/hooks/use-attaching-objects'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import {
 	useCreateFileComment,
@@ -682,6 +684,7 @@ function TopBarActions({
 	// "Comments {n}" at every width, since comments are made by selecting text.
 	commentCount: number | null
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<div className="flex flex-wrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
 			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
@@ -702,16 +705,19 @@ function TopBarActions({
 				<Link2 size={14} />
 				<span className="hidden md:inline">Linked</span>
 			</Button>
-			<Button
-				variant={annotateMode ? 'secondary' : 'ghost'}
-				size="sm"
-				onClick={onToggleAnnotate}
-				aria-label="Toggle annotate mode"
-				aria-pressed={annotateMode}
-			>
-				<MapPin size={14} className="md:hidden" />
-				<span className="hidden md:inline">Annotate</span>
-			</Button>
+			<ViewerTooltip>
+				<Button
+					variant={annotateMode ? 'secondary' : 'ghost'}
+					size="sm"
+					onClick={onToggleAnnotate}
+					disabled={!canWrite}
+					aria-label="Toggle annotate mode"
+					aria-pressed={annotateMode}
+				>
+					<MapPin size={14} className="md:hidden" />
+					<span className="hidden md:inline">Annotate</span>
+				</Button>
+			</ViewerTooltip>
 			<Button
 				variant={panelOpen ? 'secondary' : 'ghost'}
 				size="sm"

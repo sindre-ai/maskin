@@ -164,7 +164,7 @@ describe('resolveMcpFromExtension and buildExtensionMcpServers', () => {
 		expect(capturePosthogEvent).toHaveBeenCalledWith(
 			'extension_mcp_tool_cap_exceeded',
 			workspaceId,
-			{ extension_id: row.id, slug: 'twenty-one', tool_count: 21 },
+			{ workspace_id: workspaceId, extension_id: row.id, slug: 'twenty-one', tool_count: 21 },
 		)
 	})
 

@@ -1,4 +1,6 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { AlertTriangle } from 'lucide-react'
 
 /** The one banner for "this connection needs the human to do something at
@@ -19,6 +21,7 @@ export function ScopeDriftBanner({
 	ctaPending?: boolean
 	testId?: string
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<output
 			className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-warning md:flex-row md:items-center md:gap-4"
@@ -30,15 +33,17 @@ export function ScopeDriftBanner({
 				<p className="text-sm font-medium">{title}</p>
 				<p className="text-xs opacity-80">{body}</p>
 			</div>
-			<Button
-				size="sm"
-				variant="outline"
-				className="shrink-0"
-				onClick={onCta}
-				disabled={ctaPending}
-			>
-				{ctaLabel}
-			</Button>
+			<ViewerTooltip className="inline-flex shrink-0">
+				<Button
+					size="sm"
+					variant="outline"
+					className="shrink-0"
+					onClick={onCta}
+					disabled={ctaPending || !canWrite}
+				>
+					{ctaLabel}
+				</Button>
+			</ViewerTooltip>
 		</output>
 	)
 }

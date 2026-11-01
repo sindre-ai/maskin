@@ -80,6 +80,12 @@ async function humanMemberCount(workspaceId: string): Promise<number> {
 	return countHumanMembers(db, workspaceId)
 }
 
+// Setup helper: people can no longer be added to a workspace by id, so tests
+// that need an extra member seed the membership row directly.
+async function seedMember(workspaceId: string, actorId: string, role = 'member') {
+	await db.insert(workspaceMembers).values({ workspaceId, actorId, role })
+}
+
 async function getWorkspace(workspaceId: string) {
 	const [row] = await db
 		.select()
@@ -91,26 +97,9 @@ async function getWorkspace(workspaceId: string) {
 
 describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 	describe('seat cap', () => {
-		it('blocks the 2nd human member on a trial workspace (cap 1)', async () => {
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Trial Seat' }),
-			)
-			const ws = await createRes.json()
-
-			const other = await insertActor(db, { name: 'Second Human' })
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: other.id }),
-			)
-			expect(res.status).toBe(403)
-			const body = await res.json()
-			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
-			expect(body.error.cap).toBe(1)
-			expect(body.error.used).toBe(1)
-
-			expect(await humanMemberCount(ws.id)).toBe(1)
-		})
-
+		// The seat cap is enforced where a person joins: accepting an invite (see
+		// invites-accept.test.ts). People can no longer be added by id, so this
+		// route only ever adds agents, which never count toward the cap.
 		it('never blocks agents, even on a trial workspace already at the human seat cap', async () => {
 			const app = createApp()
 			const createRes = await app.request(
@@ -118,7 +107,11 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			const agent = await insertActor(db, { type: 'agent', name: 'Agent One' })
+			const agent = await insertActor(db, {
+				type: 'agent',
+				name: 'Agent One',
+				createdBy: getTestActorId(),
+			})
 			const res = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: agent.id }),
 			)
@@ -127,93 +120,29 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			expect(body.added).toBe(true)
 		})
 
-		it('allows up to 5 human members on a pro workspace and blocks the 6th', async () => {
+		it('re-adding an agent that is already a member is idempotent, not a 500', async () => {
 			const app = createApp()
 			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Pro Seats' }),
+				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Add' }),
 			)
 			const ws = await createRes.json()
-			await setWorkspacePlan(db, ws.id, 'pro')
 
-			// Owner already counts as 1 — 4 more fit under cap 5.
-			for (let i = 0; i < 4; i++) {
-				const human = await insertActor(db, { name: `Pro Member ${i}` })
-				const res = await app.request(
-					jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: human.id }),
-				)
-				expect(res.status).toBe(201)
-			}
-			expect(await humanMemberCount(ws.id)).toBe(5)
-
-			const sixth = await insertActor(db, { name: 'Sixth Human' })
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: sixth.id }),
-			)
-			expect(res.status).toBe(403)
-			const body = await res.json()
-			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
-			expect(body.error.cap).toBe(5)
-			expect(body.error.used).toBe(5)
-		})
-
-		it('serializes concurrent invites racing the last seat — exactly one succeeds', async () => {
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Race Seats' }),
-			)
-			const ws = await createRes.json()
-			await setWorkspacePlan(db, ws.id, 'pro')
-
-			// Bring to 4/5 (owner + 3), leaving exactly one free seat two
-			// concurrent requests will race for.
-			for (let i = 0; i < 3; i++) {
-				const human = await insertActor(db, { name: `Pre-race Member ${i}` })
-				await app.request(
-					jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: human.id }),
-				)
-			}
-			expect(await humanMemberCount(ws.id)).toBe(4)
-
-			const [candidateA, candidateB] = await Promise.all([
-				insertActor(db, { name: 'Race Candidate A' }),
-				insertActor(db, { name: 'Race Candidate B' }),
-			])
-
-			const [resA, resB] = await Promise.all([
-				app.request(
-					jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: candidateA.id }),
-				),
-				app.request(
-					jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: candidateB.id }),
-				),
-			])
-
-			const statuses = [resA.status, resB.status].sort()
-			expect(statuses).toEqual([201, 403])
-			expect(await humanMemberCount(ws.id)).toBe(5)
-		})
-
-		it('re-inviting an already-a-member actor is idempotent, not a 500', async () => {
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Invite' }),
-			)
-			const ws = await createRes.json()
-			await setWorkspacePlan(db, ws.id, 'pro')
-
-			const human = await insertActor(db, { name: 'Repeat Invitee' })
+			const agent = await insertActor(db, {
+				type: 'agent',
+				name: 'Repeat Agent',
+				createdBy: getTestActorId(),
+			})
 			const first = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: human.id }),
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: agent.id }),
 			)
 			expect(first.status).toBe(201)
 			expect((await first.json()).added).toBe(true)
 
 			const second = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: human.id }),
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: agent.id }),
 			)
 			expect(second.status).toBe(201)
 			expect((await second.json()).added).toBe(false)
-			expect(await humanMemberCount(ws.id)).toBe(2)
 		})
 	})
 
@@ -312,9 +241,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			)
 			expect(before.status).toBe(404)
 
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newOwner.id }),
-			)
+			await seedMember(ws.id, newOwner.id)
 			const after = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/transfer-ownership`, {
 					new_owner_actor_id: newOwner.id,
@@ -353,9 +280,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			for (let i = 0; i < 5; i++) {
 				await insertWorkspace(db, newOwner.id, { settings: { billing: { plan: 'pro' } } })
 			}
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newOwner.id }),
-			)
+			await seedMember(ws.id, newOwner.id)
 
 			const res = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/transfer-ownership`, {
@@ -384,9 +309,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				.insert(workspaceMembers)
 				.values({ workspaceId: ws.id, actorId: accessOwner.id, role: 'owner' })
 			const target = await insertActor(db, { name: 'Transfer Target 2' })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: target.id }),
-			)
+			await seedMember(ws.id, target.id)
 
 			const appAsAccessOwner = createAppAsActor(accessOwner.id)
 			const res = await appAsAccessOwner.request(
@@ -408,9 +331,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			const ws = await createRes.json()
 
 			const agent = await insertActor(db, { type: 'agent', name: 'Agent Target' })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: agent.id }),
-			)
+			await seedMember(ws.id, agent.id)
 
 			const res = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/transfer-ownership`, {
@@ -459,7 +380,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 	})
 
 	describe('remove member / leave workspace', () => {
-		it('self-removal frees a seat-cap slot', async () => {
+		it('self-removal removes the member and lowers the human count', async () => {
 			const app = createApp()
 			const createRes = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Leave Frees Seat' }),
@@ -470,9 +391,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			const members = []
 			for (let i = 0; i < 4; i++) {
 				const human = await insertActor(db, { name: `Leave Test Member ${i}` })
-				await app.request(
-					jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: human.id }),
-				)
+				await seedMember(ws.id, human.id)
 				members.push(human)
 			}
 			expect(await humanMemberCount(ws.id)).toBe(5)
@@ -486,12 +405,6 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			)
 			expect(leaveRes.status).toBe(200)
 			expect(await humanMemberCount(ws.id)).toBe(4)
-
-			const newHuman = await insertActor(db, { name: 'Fills Freed Seat' })
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newHuman.id }),
-			)
-			expect(res.status).toBe(201)
 		})
 
 		it('cannot remove the current billing owner', async () => {
@@ -519,9 +432,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			const ws = await createRes.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 			const newOwner = await insertActor(db, { name: 'New Owner For Removal' })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newOwner.id }),
-			)
+			await seedMember(ws.id, newOwner.id)
 			await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/transfer-ownership`, {
 					new_owner_actor_id: newOwner.id,
@@ -547,12 +458,8 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 
 			const memberX = await insertActor(db, { name: 'Plain Member X' })
 			const memberY = await insertActor(db, { name: 'Plain Member Y' })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: memberX.id }),
-			)
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: memberY.id }),
-			)
+			await seedMember(ws.id, memberX.id)
+			await seedMember(ws.id, memberY.id)
 
 			const appAsX = createAppAsActor(memberX.id)
 			const removeOther = await appAsX.request(
@@ -596,39 +503,6 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owned #2' }),
 			)
 			expect(second.status).toBe(201)
-		})
-
-		it('lets a workspace bill-owned by an allowlisted actor exceed the trial seat cap', async () => {
-			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Seats' }),
-			)
-			const ws = await createRes.json()
-
-			const other = await insertActor(db, { name: 'Enterprise Second Human' })
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: other.id }),
-			)
-			expect(res.status).toBe(201)
-			expect(await humanMemberCount(ws.id)).toBe(2)
-		})
-
-		it('still enforces the seat cap once the actor is removed from the allowlist', async () => {
-			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Then Not' }),
-			)
-			const ws = await createRes.json()
-
-			// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
-			delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
-			const other = await insertActor(db, { name: 'Blocked Second Human' })
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: other.id }),
-			)
-			expect(res.status).toBe(403)
 		})
 	})
 })

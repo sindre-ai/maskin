@@ -1420,7 +1420,7 @@ describe('tool handlers', () => {
 			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
 		})
 
-		it('still signs a human up without a key and adds them with the add-member call', async () => {
+		it('still signs a human up without a key and invites them instead of adding them by id', async () => {
 			const requests = recordRequests()
 
 			const handler = getHandler('create_actor')
@@ -1429,13 +1429,19 @@ describe('tool handlers', () => {
 				name: 'Pat',
 				email: 'pat@example.com',
 				workspace_id: 'ws-123',
-				role: 'admin',
+				role: 'member',
 			})
 
 			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
 			expect(create?.body).not.toHaveProperty('workspace_id')
-			const add = requests.find((r) => r.url.endsWith('/api/workspaces/ws-123/members'))
-			expect(add?.body).toEqual({ actor_id: 'actor-new', role: 'admin' })
+			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
+			const invite = requests.find((r) => r.url === 'http://localhost:3000/api/invites')
+			expect(invite?.method).toBe('POST')
+			expect(invite?.body).toEqual({
+				workspaceId: 'ws-123',
+				email: 'pat@example.com',
+				role: 'member',
+			})
 		})
 
 		it('splits the merged llm_config into llm_provider + llm_config on the POST body', async () => {
@@ -2491,16 +2497,15 @@ describe('tool handlers', () => {
 			)
 		})
 
-		it('without wait: tells the caller what to quote when it says the work was handed over', async () => {
+		it('without wait: with no web app url the note still carries no session id', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'queued' })
 			const result = (await getHandler('create_session')({
 				actor_id: 'actor-1',
 				action_prompt: 'Fix bugs',
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.id).toBe('session-1')
-			expect(parsed.handoff).toContain('session session-1 is queued')
-			expect(parsed.handoff).toContain('quote this session id')
+			expect(parsed.handoff).toContain('is queued')
+			expect(parsed.handoff).not.toContain('session-1')
 		})
 
 		it('without wait: a failed start says nothing was handed over', async () => {
@@ -3221,7 +3226,7 @@ describe('tool handlers', () => {
 				expect(parsed.session_id).toBe('sess-w1')
 				expect(parsed.session.status).toBe('waiting_for_input')
 				expect(parsed.logs).toEqual([{ message: 'first line' }])
-				expect(parsed.message).toContain('sess-w1')
+				expect(parsed.message).not.toContain('sess-w1')
 				expect(parsed.message).toContain('not finished')
 				expect(parsed.message).toContain('get_session_logs')
 				// The session is not finished, so its result is registered to come back.
@@ -3283,7 +3288,7 @@ describe('tool handlers', () => {
 				const parsed = parseResult(await resultPromise)
 				expect(parsed.stopped_because).toBe('waiting_for_input')
 				expect(parsed.notify_on_complete).toBe('failed')
-				expect(parsed.message).toContain('sess-w3')
+				expect(parsed.message).not.toContain('sess-w3')
 				expect(parsed.message).not.toContain('Its result will come back')
 			})
 
@@ -7894,7 +7899,7 @@ describe('url field injection', () => {
 	})
 
 	describe('session url', () => {
-		it('create_session — url links to actor page when actorId present', async () => {
+		it('create_session — url links to the chat route for the session', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -7907,11 +7912,19 @@ describe('url field injection', () => {
 				action_prompt: 'Fix bugs',
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-9')
+			const parsed = JSON.parse(result.content[0].text) as {
+				id: string
+				url: string
+				handoff: string
+			}
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-1')
+			// The note gives the person the chat link and never the session id.
+			expect(parsed.handoff).toContain(parsed.url)
+			expect(parsed.handoff.replace(parsed.url, '')).not.toContain('sess-1')
+			expect(parsed.handoff).toContain('Never show the person a session id')
 		})
 
-		it('create_session — url falls back to agents list when actorId absent', async () => {
+		it('create_session — url does not need an actorId', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -7925,7 +7938,7 @@ describe('url field injection', () => {
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/agents')
+			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-2')
 		})
 
 		it('list_sessions — url added to each session', async () => {
@@ -7945,7 +7958,7 @@ describe('url field injection', () => {
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
-			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-8')
+			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-3')
 		})
 
 		it('create_session (wait: true) — url added to session in response', async () => {
@@ -7980,7 +7993,7 @@ describe('url field injection', () => {
 			const parsed = JSON.parse(result.content[0].text) as {
 				session: { id: string; url: string }
 			}
-			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/agents/actor-7')
+			expect(parsed.session.url).toBe('https://maskin.example.com/ws-default-123/sessions/sess-4')
 		})
 	})
 })

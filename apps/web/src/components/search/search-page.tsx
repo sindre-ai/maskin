@@ -5,8 +5,10 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useOnlineStatus } from '@/hooks/use-online-status'
+import { useParticipantMenu, useParticipantOptions } from '@/hooks/use-participant-menu'
 import { useSearchFieldHandlers } from '@/hooks/use-search-field-handlers'
 import {
 	SEARCH_QUERY_DEBOUNCE_MS,
@@ -33,6 +35,7 @@ import {
 	failedTypeKeys,
 } from '@/lib/search/chips'
 import { explainEmpty } from '@/lib/search/empty-state'
+import { PARTICIPANT_FILTER_FLAG } from '@/lib/search/mention'
 import { navigateToSearchRow } from '@/lib/search/open-row'
 import { hasPill, queryText } from '@/lib/search/parts'
 import { shortcutLabel } from '@/lib/search/platform'
@@ -49,6 +52,7 @@ import { useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { DisplayMenu } from './display-menu'
+import { ParticipantMenu } from './participant-menu'
 import { StatusChips, TypeChips } from './search-chips'
 import { SearchField } from './search-field'
 import { SearchResultList, optionId, orderRows } from './search-results'
@@ -114,9 +118,17 @@ export function SearchPageV2() {
 		[objectTypes],
 	)
 
-	const urlState = useMemo(() => parseSearchState(search as Record<string, unknown>), [search])
+	// Off, a participants param in a link is ignored and the next URL write drops it.
+	const participantFilterOn = useFeatureFlag(PARTICIPANT_FILTER_FLAG)
+	const urlState = useMemo(() => {
+		const parsed = parseSearchState(search as Record<string, unknown>)
+		return participantFilterOn ? parsed : { ...parsed, participants: [] }
+	}, [search, participantFilterOn])
 	const urlKey = JSON.stringify(serializeSearchState(urlState))
-	const { state, dispatch, suggestion, types, statuses } = useSearchState(vocab, urlState)
+	const { state, dispatch, suggestion, types, statuses, participants } = useSearchState(
+		vocab,
+		urlState,
+	)
 	const { parts, updated, sort } = state
 
 	// How this search began, for analytics: a link or reload, typing, a recent search.
@@ -141,7 +153,7 @@ export function SearchPageV2() {
 	// keeps typing; anything else (back, a link, the launcher) is read into the state.
 	const debouncedText = useDebouncedValue(parts.text, SEARCH_QUERY_DEBOUNCE_MS)
 	const committedKey = JSON.stringify(
-		serializeSearchState({ text: debouncedText, types, statuses, updated, sort }),
+		serializeSearchState({ text: debouncedText, types, statuses, participants, updated, sort }),
 	)
 	const pendingWrites = useRef<string[]>([])
 	// biome-ignore lint/correctness/useExhaustiveDependencies: urlKey only tells whether a write is needed
@@ -169,7 +181,7 @@ export function SearchPageV2() {
 
 	// The words the current answer is for (the typed text lags it by the debounce).
 	const query = queryText({ ...parts, text: debouncedText })
-	const input = { text: debouncedText, types, statuses, updated, sort }
+	const input = { text: debouncedText, types, statuses, participants, updated, sort }
 	const enabled = hasSearchInput(input)
 	const result = useSearchQuery(workspaceId, input)
 	const { data, isError, isFetching, isPlaceholderData, refetch } = result
@@ -227,16 +239,28 @@ export function SearchPageV2() {
 		else navigate({ to: '/$workspaceId', params: { workspaceId } })
 	}
 
-	const { track, onTextChange, onAcceptSuggestion, onBackspaceToWord, onRemovePill } =
-		useSearchFieldHandlers({
-			surface: 'search_view',
-			parts,
-			vocab,
-			suggestion,
-			dispatch,
-			inputRef,
-			onEdit: () => setEntry('typed'),
-		})
+	const {
+		track,
+		onTextChange,
+		onAcceptSuggestion,
+		onBackspaceToWord,
+		onRemovePill,
+		onPickParticipant,
+	} = useSearchFieldHandlers({
+		surface: 'search_view',
+		parts,
+		vocab,
+		suggestion,
+		dispatch,
+		inputRef,
+		onEdit: () => setEntry('typed'),
+	})
+	const participantOptions = useParticipantOptions(vocab)
+	const menu = useParticipantMenu({
+		parts,
+		options: participantOptions,
+		onPick: onPickParticipant,
+	})
 	const onDismissSuggestion = () => {
 		dispatch({ type: 'dismiss' })
 		setAnnouncement('Suggestion dismissed')
@@ -334,28 +358,40 @@ export function SearchPageV2() {
 						>
 							<ArrowLeft aria-hidden="true" className="size-4" />
 						</Button>
-						<SearchField
-							parts={parts}
-							vocab={vocab}
-							suggestion={suggestion}
-							inputRef={inputRef}
-							listboxId={listboxId}
-							activeOptionId={activeId}
-							listboxOpen={showList}
-							onTextChange={onTextChange}
-							onAcceptSuggestion={onAcceptSuggestion}
-							onDismissSuggestion={onDismissSuggestion}
-							onBackspaceToWord={onBackspaceToWord}
-							onRemovePill={onRemovePill}
-							onClearText={() => dispatch({ type: 'text', text: '' })}
-							onMoveActive={moveActive}
-							onOpenActive={() => activeRow && openRow(activeRow)}
-							onEscape={() => {
-								// Esc clears the words first; with nothing left it steps back.
-								if (parts.text) dispatch({ type: 'text', text: '' })
-								else goBack()
-							}}
-						/>
+						<div className="relative flex min-w-0 flex-1">
+							<SearchField
+								parts={parts}
+								vocab={vocab}
+								suggestion={suggestion}
+								inputRef={inputRef}
+								listboxId={listboxId}
+								activeOptionId={activeId}
+								listboxOpen={showList}
+								menu={menu}
+								onTextChange={onTextChange}
+								onAcceptSuggestion={onAcceptSuggestion}
+								onDismissSuggestion={onDismissSuggestion}
+								onBackspaceToWord={onBackspaceToWord}
+								onRemovePill={onRemovePill}
+								onClearText={() => dispatch({ type: 'text', text: '' })}
+								onMoveActive={moveActive}
+								onOpenActive={() => activeRow && openRow(activeRow)}
+								onEscape={() => {
+									// Esc clears the words first; with nothing left it steps back.
+									if (parts.text) dispatch({ type: 'text', text: '' })
+									else goBack()
+								}}
+							/>
+							{menu.open ? (
+								<ParticipantMenu
+									rows={menu.rows}
+									activeIndex={menu.activeIndex}
+									listboxId={menu.listboxId}
+									onPick={menu.pick}
+									className="absolute inset-x-0 top-full z-20 mt-1"
+								/>
+							) : null}
+						</div>
 					</div>
 
 					<TypeChips
@@ -415,6 +451,11 @@ export function SearchPageV2() {
 									) : null}
 								</p>
 							) : null}
+							{participants.length > 0 ? (
+								<p className="text-[11.5px] text-muted-foreground">
+									Showing chats only. Loops, agents and objects have no people to filter by.
+								</p>
+							) : null}
 							{filtersActive ? (
 								<Button
 									type="button"
@@ -453,6 +494,7 @@ export function SearchPageV2() {
 									text: recent.q,
 									types: recent.types,
 									statuses: recent.statuses,
+									participants: [],
 									updated: '',
 									sort: 'rel',
 								},

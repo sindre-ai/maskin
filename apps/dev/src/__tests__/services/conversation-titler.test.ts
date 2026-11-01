@@ -26,7 +26,7 @@ describe('sanitizeTitle', () => {
 	it('truncates an over-long title with an ellipsis', () => {
 		const result = sanitizeTitle('word '.repeat(40))
 		expect(result).not.toBeNull()
-		expect(result?.length).toBeLessThanOrEqual(48)
+		expect(result?.length).toBeLessThanOrEqual(32)
 		expect(result?.endsWith('…')).toBe(true)
 	})
 

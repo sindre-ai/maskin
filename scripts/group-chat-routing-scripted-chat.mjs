@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // Re-runnable scripted 4-person group chat (H1, H2 people; A, B agents) that records the
-// group_chat_message_routed events the backend emits. A local sink stands in for PostHog;
-// nothing else is mocked.
+// group_chat_message_routed events the backend emits. A local sink stands in for PostHog and
+// for Resend (H2 joins by invite, and the accept link is only ever sent by email); nothing
+// else is mocked.
 //
 // Start the backend capturing into the sink. MASKIN_TEST_GRANT_TOKEN lets the script lift
 // the trial plan's one-person seat cap so H2 can join (the seam the E2E specs use):
 //
 //   MASKIN_TEST_GRANT_TOKEN=x POSTHOG_API_KEY=x POSTHOG_HOST=http://127.0.0.1:8999 \
-//     pnpm dev:no-docker
+//     RESEND_API_KEY=re_scripted RESEND_BASE_URL=http://127.0.0.1:8999 \
+//     APP_URL=http://localhost:5173 pnpm dev:no-docker
 //   MASKIN_TEST_GRANT_TOKEN=x node scripts/group-chat-routing-scripted-chat.mjs \
 //     [--api-url http://localhost:3000] [--capture-port 8999] [--out payloads.json]
 import { writeFileSync } from 'node:fs'
@@ -29,12 +31,20 @@ function fail(message) {
 if (!grantToken) fail('MASKIN_TEST_GRANT_TOKEN must be set here and on the backend')
 
 const captured = []
+const sentEmails = []
 const sink = createServer((req, res) => {
 	let body = ''
 	req.on('data', (chunk) => {
 		body += chunk
 	})
 	req.on('end', () => {
+		if (req.method === 'POST' && req.url === '/emails') {
+			try {
+				sentEmails.push(JSON.parse(body))
+			} catch {}
+			res.writeHead(200).end(`{"id":"scripted-${sentEmails.length}"}`)
+			return
+		}
 		res.writeHead(200).end('{"status":1}')
 		try {
 			const event = JSON.parse(body)
@@ -53,6 +63,16 @@ async function eventFor(messageId) {
 		await new Promise((resolve) => setTimeout(resolve, 250))
 	}
 	return null
+}
+
+async function inviteTokenFor(email) {
+	for (let i = 0; i < 60; i++) {
+		const mail = sentEmails.findLast((m) => [m.to].flat().includes(email))
+		const token = mail?.text?.match(/\/invite\?token=([^\s&]+)/)?.[1]
+		if (token) return decodeURIComponent(token)
+		await new Promise((resolve) => setTimeout(resolve, 250))
+	}
+	return fail(`no invite email for ${email}; start the backend with RESEND_BASE_URL as above`)
 }
 
 async function api(method, path, { key, workspaceId, body, headers } = {}) {
@@ -91,10 +111,12 @@ await api('POST', `/api/test-grants/${workspaceId}`, {
 	body: { plan: 'team' },
 	headers: { 'X-Test-Grant-Token': grantToken },
 })
-await api('POST', `/api/workspaces/${workspaceId}/members`, {
+// A person can't be added by id: H1 invites H2's email and H2 accepts with their own key.
+await api('POST', '/api/invites', {
 	...asH1,
-	body: { actor_id: h2.id, role: 'member' },
+	body: { workspaceId, email: h2.email, role: 'member' },
 })
+await api('POST', `/api/invites/${await inviteTokenFor(h2.email)}/accept`, { key: h2.api_key })
 const agent = (name) =>
 	api('POST', '/api/actors', {
 		key: h1.api_key,

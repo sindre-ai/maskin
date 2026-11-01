@@ -1,4 +1,6 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 
 /**
  * One option of an agent's decision, as the reader taps it.
@@ -47,6 +49,8 @@ export function DecisionOptions({
 	pendingId: string | null
 	onChoose: (option: DecisionOption) => void
 }) {
+	// Answering posts a comment, which a viewer cannot do.
+	const canWrite = useCanWrite()
 	const primary = options.filter((option) => option.recommended)
 	const others = options.filter((option) => !option.recommended)
 	const line = suggestedLine(options)
@@ -54,41 +58,43 @@ export function DecisionOptions({
 		pendingId === option.id ? `${option.label}…` : option.label
 
 	return (
-		<div className="flex flex-col gap-2">
-			{primary.map((option) => (
-				<Button
-					key={option.id}
-					type="button"
-					data-action-id={option.id}
-					disabled={pendingId !== null}
-					onClick={() => onChoose(option)}
-					className="h-auto min-h-12 w-full justify-between whitespace-normal rounded-xl px-4 py-3 text-left text-[14px] font-bold"
-				>
-					<span className="min-w-0">{label(option)}</span>
-					{/* Out of the accessible name on purpose: the button is its label. */}
-					<span aria-hidden className="shrink-0 text-[11px] font-semibold opacity-70">
-						Recommended
-					</span>
-				</Button>
-			))}
-			{others.length > 0 && (
-				<div className="flex flex-wrap gap-2">
-					{others.map((option) => (
-						<Button
-							key={option.id}
-							type="button"
-							variant="secondary"
-							data-action-id={option.id}
-							disabled={pendingId !== null}
-							onClick={() => onChoose(option)}
-							className="h-auto min-h-11 min-w-[8rem] flex-1 whitespace-normal rounded-xl px-3 py-2.5 text-center text-[13px] font-semibold"
-						>
-							{label(option)}
-						</Button>
-					))}
-				</div>
-			)}
-			{line && <p className="text-[12px] leading-[1.45] text-muted-foreground">{line}</p>}
-		</div>
+		<ViewerTooltip className="flex flex-col gap-2">
+			<div className="flex flex-col gap-2">
+				{primary.map((option) => (
+					<Button
+						key={option.id}
+						type="button"
+						data-action-id={option.id}
+						disabled={pendingId !== null || !canWrite}
+						onClick={() => onChoose(option)}
+						className="h-auto min-h-12 w-full justify-between whitespace-normal rounded-xl px-4 py-3 text-left text-[14px] font-bold"
+					>
+						<span className="min-w-0">{label(option)}</span>
+						{/* Out of the accessible name on purpose: the button is its label. */}
+						<span aria-hidden className="shrink-0 text-[11px] font-semibold opacity-70">
+							Recommended
+						</span>
+					</Button>
+				))}
+				{others.length > 0 && (
+					<div className="flex flex-wrap gap-2">
+						{others.map((option) => (
+							<Button
+								key={option.id}
+								type="button"
+								variant="secondary"
+								data-action-id={option.id}
+								disabled={pendingId !== null || !canWrite}
+								onClick={() => onChoose(option)}
+								className="h-auto min-h-11 min-w-[8rem] flex-1 whitespace-normal rounded-xl px-3 py-2.5 text-center text-[13px] font-semibold"
+							>
+								{label(option)}
+							</Button>
+						))}
+					</div>
+				)}
+				{line && <p className="text-[12px] leading-[1.45] text-muted-foreground">{line}</p>}
+			</div>
+		</ViewerTooltip>
 	)
 }

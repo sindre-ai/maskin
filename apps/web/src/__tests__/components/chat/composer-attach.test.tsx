@@ -75,6 +75,14 @@ describe('Composer file-attach input', () => {
 		expect(input.multiple).toBe(true)
 	})
 
+	it('offers the paperclip only, with no + menu', () => {
+		renderComposer()
+		expect(screen.getByRole('button', { name: 'Attach file' })).toBeInTheDocument()
+		expect(
+			screen.queryByRole('button', { name: 'Add an object, file, or mention' }),
+		).not.toBeInTheDocument()
+	})
+
 	it('uploads a picked PDF via useUploadFile and dispatches add_file on success', async () => {
 		uploadFileMock.mockResolvedValueOnce({ id: 'file-pdf-1' })
 		const onDispatchSelection = vi.fn()

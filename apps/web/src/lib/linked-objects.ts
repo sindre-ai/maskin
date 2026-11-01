@@ -215,6 +215,8 @@ export type OwnSegment =
 			kind: 'object' | 'file' | 'loop' | 'trigger' | 'agent' | 'chat'
 			id: string
 			otherWorkspaceId?: string
+			/** The link as it was typed, shown until the object is known. */
+			address: string
 	  }
 	| { kind: 'github'; href: string; target: GithubTarget }
 	| { kind: 'settings'; target: SettingsTarget }
@@ -276,11 +278,95 @@ export function splitOwnLinks(
 			kind,
 			id: match[3].toLowerCase(),
 			...(here ? {} : { otherWorkspaceId: linkedWorkspace }),
+			address,
 		})
 		cursor = at + address.length
 	}
 	pushText(content.slice(cursor))
 	return segments
+}
+
+/** A link to an object on a line of its own, drawn as a card. */
+export interface OwnCard {
+	kind: 'card'
+	id: string
+	address: string
+}
+
+/** One drawn piece of a message you wrote, as {@link placeOwnLinks} decides it. */
+export type OwnPlacement =
+	| { kind: 'text'; text: string }
+	| OwnCard
+	| { kind: 'chip' | 'file'; id: string; address: string }
+	/** Any other link (loop, trigger, agent, chat, GitHub, settings, another workspace): its chip, as before. */
+	| { kind: 'other'; segment: Exclude<OwnSegment, { kind: 'text' }> }
+
+/** Cards in one message you wrote, as in any other author's message. */
+const MAX_OWN_CARDS = 3
+
+/**
+ * Decides, in reading order, how each link in a message you wrote is drawn. A link to an object
+ * on a line of its own is a card where it stands (the line break next to it goes: the card has
+ * its own space); any other link to an object is a chip. At most three cards per message; an
+ * object the message already draws, or `skipIds` holds (an earlier message shows it), is a chip.
+ * Links to files stay chips, and so does any link that is not an object of this workspace. The
+ * words keep their order.
+ */
+export function placeOwnLinks(
+	segments: OwnSegment[],
+	skipIds?: ReadonlySet<string>,
+): OwnPlacement[] {
+	const parts: OwnPlacement[] = []
+	const drawn = new Set<string>()
+	let cards = 0
+	// Words right after a card: the line break that ended the card's line belongs to the card.
+	let afterCard = false
+	segments.forEach((segment, i) => {
+		if (segment.kind === 'text') {
+			const text = afterCard ? segment.text.replace(/^[ \t]*\n?/, '') : segment.text
+			afterCard = false
+			if (text) parts.push({ kind: 'text', text })
+			return
+		}
+		afterCard = false
+		if (
+			(segment.kind !== 'object' && segment.kind !== 'file') ||
+			segment.otherWorkspaceId !== undefined
+		) {
+			parts.push({ kind: 'other', segment })
+			return
+		}
+		const link = { id: segment.id, address: segment.address }
+		if (segment.kind === 'file') {
+			parts.push({ kind: 'file', ...link })
+			return
+		}
+		const before = segments[i - 1]
+		const after = segments[i + 1]
+		const aloneBefore = !before || (before.kind === 'text' && /(^|\n)[ \t]*$/.test(before.text))
+		const aloneAfter = !after || (after.kind === 'text' && /^[ \t]*(\n|$)/.test(after.text))
+		const fresh = !drawn.has(segment.id) && !skipIds?.has(segment.id)
+		drawn.add(segment.id)
+		if (aloneBefore && aloneAfter && fresh && cards < MAX_OWN_CARDS) {
+			cards += 1
+			const last = parts[parts.length - 1]
+			if (last?.kind === 'text') {
+				last.text = last.text.replace(/\n?[ \t]*$/, '')
+				if (!last.text) parts.pop()
+			}
+			parts.push({ kind: 'card', ...link })
+			afterCard = true
+		} else {
+			parts.push({ kind: 'chip', ...link })
+		}
+	})
+	return parts
+}
+
+/** A message that is nothing but one card: the card is the message, with no bubble around it. */
+export function isOnlyCard(parts: OwnPlacement[]): boolean {
+	const shown = parts.filter((p) => p.kind !== 'text' || p.text.trim())
+	return shown.length === 1 && shown[0].kind === 'card'
 }
 
 /** The few fields of a hast node the placement rules read; `react-markdown` hands these out. */
@@ -436,7 +522,7 @@ const MAX_PLACED_PER_KIND = 3
 /** Cards for objects in plain paragraphs, per message. The fourth link on its own line is a chip. */
 const MAX_OBJECT_CARDS = 3
 /** Objects a message may make the app fetch. A link beyond that stays the plain link. */
-const MAX_OBJECT_FETCHES = 10
+export const MAX_OBJECT_FETCHES = 10
 
 /** Every object or file a link under these nodes points at, in order, without repeats. */
 function linksIn(nodes: HastNode[]): LinkedTarget[] {
@@ -714,14 +800,28 @@ export function placeLinkedCards(
 
 const MAX_SNIPPET_LENGTH = 280
 
+/** A link whose address was cut off by the length limit: `[text](https://exa`. */
+const CUT_LINK_TAIL = /\[([^\]\n]*)\]\([^)\n]*$/
+/** A link whose text was cut off by the length limit: `[some te`. */
+const CUT_LABEL_TAIL = /\[([^\]\n]*)$/
+const BARE_ADDRESS = /<?(https?:\/\/[^\s<>]*)>?/g
+/** Stands in for a bare address while the line is cleaned; never present in real text. */
+const ADDRESS_MARK = '\u0000'
+/** Matches nothing: the address step of plainLines when addresses stay as written. */
+const NO_MATCH = /(?!)/g
+
+/** An address becomes ADDRESS_MARK; the full stop or bracket that closes the sentence stays. */
+function markAddress(_all: string, url: string): string {
+	return ADDRESS_MARK + (url.match(/[.,;:!?)\]'"]+$/)?.[0] ?? '')
+}
+
 /**
- * The first lines of an object's text as plain words, for the muted row on a card: headings,
- * list markers, emphasis, links, code fences and table borders are removed, the lines are joined
- * with spaces and the result is cut at a length the card can clamp to two lines.
+ * Markdown as plain words: headings, list markers, emphasis, links, code fences and table borders
+ * are removed, and the lines joined with spaces. With `marks` set a bare address becomes
+ * ADDRESS_MARK for the caller to word; without it the address stays as written.
  */
-export function plainSnippet(content: string | null | undefined): string {
-	if (!content) return ''
-	const text = content
+function plainLines(text: string, marks: boolean): string {
+	return text
 		.replace(FENCED_CODE, '$1')
 		.split('\n')
 		.map((line) =>
@@ -730,6 +830,7 @@ export function plainSnippet(content: string | null | undefined): string {
 				.replace(/^\s*(?:[-*_]\s*){3,}$/, '')
 				.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
 				.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+				.replace(marks ? BARE_ADDRESS : NO_MATCH, markAddress)
 				.replace(/[*_~`]+/g, '')
 				.replace(/\|/g, ' ')
 				.replace(/^\s*:?-{3,}:?\s*$/, '')
@@ -739,7 +840,50 @@ export function plainSnippet(content: string | null | undefined): string {
 		.join(' ')
 		.replace(/\s+/g, ' ')
 		.trim()
+}
+
+/**
+ * The first lines of an object's text as plain words, for the muted row on a card: headings,
+ * list markers, emphasis, links, code fences and table borders are removed, the lines are joined
+ * with spaces and the result is cut at a length the card can clamp to two lines.
+ */
+export function plainSnippet(content: string | null | undefined): string {
+	if (!content) return ''
+	const text = plainLines(content, false)
 	return text.length > MAX_SNIPPET_LENGTH ? `${text.slice(0, MAX_SNIPPET_LENGTH).trimEnd()}…` : text
+}
+
+/** One run of a chat list preview. `muted` runs are the word "link" standing in for an address. */
+export interface PreviewPart {
+	text: string
+	muted?: boolean
+}
+
+/** How much of a message the chat list preview reads; the row clamps the rest to two lines. */
+const PREVIEW_SOURCE_LENGTH = 400
+
+/**
+ * A chat's last message as plain words for the list row. A markdown link shows its text (also when
+ * the length limit cut the link in the text or in the address), a bare address shows "link" as a
+ * muted run, and marks (bold, italic, code, headings, list marks) are removed. The "{author}: "
+ * lead is not part of this; the row adds it.
+ */
+export function plainPreview(content: string | null | undefined): PreviewPart[] {
+	if (!content) return []
+	const cut = content.length > PREVIEW_SOURCE_LENGTH
+	const source = content
+		.replaceAll(ADDRESS_MARK, '')
+		.slice(0, PREVIEW_SOURCE_LENGTH)
+		.replace(CUT_LINK_TAIL, '$1')
+		.replace(CUT_LABEL_TAIL, '$1')
+	const pieces = plainLines(source, true).split(ADDRESS_MARK)
+	const parts: PreviewPart[] = []
+	pieces.forEach((text, i) => {
+		if (i > 0) parts.push({ text: 'link', muted: true })
+		if (text) parts.push({ text })
+	})
+	if (cut && parts.length > 0) parts.push({ text: '…' })
+	return parts
 }
 
 /** The longest a name on an inline chip runs before it is cut with an ellipsis. */

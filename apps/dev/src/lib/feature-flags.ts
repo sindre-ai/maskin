@@ -54,15 +54,14 @@ export const FLAGS = {
 	 */
 	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
 	/**
-	 * Gates iOS dictation through the backend transcription route (task
-	 * [iOS dictation: send speech to the backend transcription route](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0a322ceb-338c-4b2d-b796-fcb228d0a7a4)).
-	 * Read by the iPhone app once per launch from GET /api/feature-flags, for the
-	 * signed-in actor. Off means the app dictates with Apple's on-device recogniser
-	 * as before and no audio leaves the phone. On means each phrase is sent to
-	 * POST /transcriptions, and Apple's recogniser takes over if a request fails.
-	 * The route itself is not flagged. Retire once iOS dictation is on for everyone.
+	 * Gates the @ menu in the web search page and the Cmd+K launcher (task
+	 * [Search: filter chats by person or agent](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1cb2e889-5037-4ef8-b449-b84fba4712f3)).
+	 * Read by the web app with useFeatureFlag. Off means no @ menu, no participant pill,
+	 * and a participants param in a search link is ignored. The search endpoint accepts
+	 * the participants param whatever the flag says: it only narrows chats the caller is
+	 * already in, so it is safe to leave unflagged. Retire once the filter is on for everyone.
 	 */
-	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
+	SEARCH_CHAT_PARTICIPANT_FILTER: 'search-chat-participant-filter',
 	/**
 	 * Web chat: images and files on a message sit outside the text bubble (images as their own
 	 * rounded blocks, files as cards), and only the text keeps a bubble. Read once, in
@@ -71,6 +70,16 @@ export const FLAGS = {
 	 * entry) once it is on for everyone.
 	 */
 	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
+	/**
+	 * Agents answer in the main chat and in every thread at the same time (bet
+	 * [Agents answer in the main chat and in every thread at the same time](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/44b1b91c-3902-4fab-99ca-d7db7af4155d)).
+	 * Backend only, per actor, keyed to the person who wrote the message (never the agent). Read once, in
+	 * `deliverTurnToAgent` in `apps/dev/src/services/conversation-responder.ts`, where a thread message
+	 * decides whether to start or reuse a session of its own for that thread. Off means the single-session
+	 * path runs exactly as before. Needs the old per-chat session index dropped before it can go on, see the
+	 * bet's index-drop task. Retire (drop the old path and this entry) once it is on for everyone.
+	 */
+	CHAT_THREAD_SESSIONS: 'chat-thread-sessions',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -9,15 +9,18 @@ import SwiftUI
 /// Triggers are not here: they open from the profile sheet (or from a flow's detail).
 public struct LoopsScreen: View {
 	private let environment: AppEnvironment
+	/// A loop link asks for a flow by id; the screen opens it and resets this to nil.
+	@Binding private var requestedLoopId: String?
 
-	public init(environment: AppEnvironment) {
+	public init(environment: AppEnvironment, requestedLoopId: Binding<String?> = .constant(nil)) {
 		self.environment = environment
+		_requestedLoopId = requestedLoopId
 	}
 
 	public var body: some View {
 		if let workspaceID = environment.workspaceId {
 			// Rebuilt per workspace so nothing from the previous one lingers.
-			LoopsContainer(environment: environment, workspaceID: workspaceID)
+			LoopsContainer(environment: environment, workspaceID: workspaceID, requestedLoopId: $requestedLoopId)
 				.id(workspaceID)
 		} else {
 			NavigationStack {
@@ -31,6 +34,7 @@ public struct LoopsScreen: View {
 private struct LoopsContainer: View {
 	let environment: AppEnvironment
 	let workspaceID: String
+	@Binding var requestedLoopId: String?
 	@State private var loops: LoopsStore
 	@State private var loopSelection: String?
 	@State private var triggersRequest: TriggersRequest?
@@ -41,9 +45,10 @@ private struct LoopsContainer: View {
 	@State private var showMarketplace = false
 	@Environment(\.horizontalSizeClass) private var sizeClass
 
-	init(environment: AppEnvironment, workspaceID: String) {
+	init(environment: AppEnvironment, workspaceID: String, requestedLoopId: Binding<String?>) {
 		self.environment = environment
 		self.workspaceID = workspaceID
+		_requestedLoopId = requestedLoopId
 		_loops = State(
 			initialValue: LoopsStore(
 				api: APILoopsSource(
@@ -75,6 +80,12 @@ private struct LoopsContainer: View {
 			}
 		}
 		.task { await loops.start() }
+		// A loop link: open that flow, then clear the request so it fires once.
+		.onChange(of: requestedLoopId, initial: true) {
+			guard let id = requestedLoopId else { return }
+			loopSelection = id
+			requestedLoopId = nil
+		}
 		.onDisappear { loops.stop() }
 		.sheet(item: $triggersRequest) { request in
 			TriggersSheet(

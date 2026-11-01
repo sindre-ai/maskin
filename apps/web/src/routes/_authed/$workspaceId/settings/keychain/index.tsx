@@ -3,8 +3,10 @@ import { isKeychainCredential } from '@/components/keychain/keychain-parts'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { sortBy } from '@/lib/sort'
@@ -21,6 +23,18 @@ const INTRO =
 	'Credentials your agents use to reach external services. Each key is encrypted at rest, assigned to specific agents or loops, and every use is logged.'
 
 function AddCredentialButton({ workspaceId, label }: { workspaceId: string; label: string }) {
+	const canWrite = useCanWrite()
+	// A link cannot be disabled, so a viewer gets an inert button in its place.
+	if (!canWrite) {
+		return (
+			<ViewerTooltip>
+				<Button size="sm" disabled>
+					<Plus size={14} className="mr-1" />
+					{label}
+				</Button>
+			</ViewerTooltip>
+		)
+	}
 	return (
 		<Button asChild size="sm">
 			<Link to="/$workspaceId/settings/keychain/new" params={{ workspaceId }}>

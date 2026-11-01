@@ -144,6 +144,9 @@ private struct ChatsContainer: View {
 			Task { await startWithChiefOfStaff(text: draft.text) }
 		}
 		.task { await store.start() }
+		.onChange(of: selection != nil || showThreads, initial: true) { _, covered in
+			runtime?.teamPill.isCovered = covered
+		}
 		.onAppear { runtime?.teamPill.attach(store: store, onThreads: { showThreads = true }) }
 		.onDisappear {
 			store.stop()
@@ -190,13 +193,12 @@ private struct ChatsContainer: View {
 }
 
 extension ChatsContainer {
-	/// A live call with `agent` from its page: a fresh one-to-one chat the call runs in. Falls back
-	/// to the new-chat sheet addressed to the agent if the chat can't be created.
+	/// A live call with `agent` from its page: the person's one direct message with the agent, which
+	/// the call runs in. Falls back to the new-chat sheet addressed to the agent if it can't be opened.
 	fileprivate func startLive(with agent: ChatParticipant) async {
 		do {
-			let created = try await store.create(
-				title: ThreadLayout.newChatTitle(for: [agent.name], startsLiveCall: true), participantIDs: [agent.id],
-				firstMessage: nil)
+			let created = try await store.openDirect(
+				with: agent.id, title: ThreadLayout.defaultTitle(for: [agent.name]))
 			selection = created.id
 			liveMeeting.present(.conversation(id: created.id, lead: agent))
 		} catch {

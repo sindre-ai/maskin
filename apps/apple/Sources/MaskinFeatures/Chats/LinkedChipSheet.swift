@@ -6,8 +6,10 @@ import SwiftUI
 /// What a tap on an object chip in a sentence shows: the card, an Open button and a Copy link
 /// button, in a sheet the height of its content. Open closes the sheet, then opens the object.
 struct LinkedChipSheet: View {
-	/// Whether a chip tap shows this sheet. Turn it off and a tap opens the object straight away.
-	static let tapShowsSheet = true
+	/// Whether a chip tap shows this sheet. Off: a tap opens the object straight away. The sheet is
+	/// meant to come from a long-press, but a chip is a link run inside one `Text`, which takes no
+	/// per-link gesture, so for now nothing shows it.
+	static let tapShowsSheet = false
 
 	let object: LinkedObject
 	/// The web address Copy link puts on the pasteboard.

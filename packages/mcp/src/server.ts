@@ -42,6 +42,14 @@ import {
 	toSnapshotAt,
 } from './cursor.js'
 import {
+	type IntegrationRow,
+	integrationSortKey,
+	leanIntegrationRow,
+	matchesIntegrationFilters,
+	summarizeIntegrations,
+} from './integrations-list.js'
+import { buildListPayload, listText } from './list-response.js'
+import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
 	parseApiErrorStatus,
@@ -971,10 +979,20 @@ async function assertLoopTypesValid(
 async function getWorkspace(
 	config: McpConfig,
 	workspaceId: string,
-): Promise<{ id: string; name: string; settings: Record<string, unknown> }> {
+): Promise<{
+	id: string
+	name: string
+	settings: Record<string, unknown>
+	llm_configured?: { anthropic?: boolean; openai?: boolean }
+}> {
 	const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 		skipWorkspace: true,
-	})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+	})) as Array<{
+		id: string
+		name: string
+		settings: Record<string, unknown>
+		llm_configured?: { anthropic?: boolean; openai?: boolean }
+	}>
 	const workspace = workspaces.find((w) => w.id === workspaceId)
 	if (!workspace) throw new Error('Workspace not found')
 	return workspace
@@ -1298,9 +1316,16 @@ function sessionNotStartedResult(
 	}
 }
 
-/** Added to a started session so the caller has something real to quote to the person. */
-function handoffNote(session: { id: string; status?: string }) {
-	return `Started: session ${session.id} is ${session.status ?? 'pending'}. When you tell the person you handed this over, quote this session id or its url, and say it is queued if it has not started running yet. Without one of them, do not say it was handed over.`
+/**
+ * Added to a started session so the caller has something real to quote to the person: the
+ * link to its chat, never the session id.
+ */
+function handoffNote(session: { id: string; status?: string }, url?: unknown) {
+	const status = session.status ?? 'pending'
+	if (typeof url !== 'string' || !url) {
+		return `Started: the session is ${status}. Say it is queued if it has not started running yet. Never show the person a session id.`
+	}
+	return `Started: the session is ${status}. When you tell the person you handed this over, give them this link to its chat as a markdown link: ${url}. Say it is queued if it has not started running yet. Never show the person a session id.`
 }
 
 /**
@@ -1486,9 +1511,9 @@ async function waitForSessionResult(
 
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
-			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. Session id: ${sessionId}. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
 			: stoppedBecause === 'paused'
-				? `The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session. Session id: ${sessionId}.`
+				? 'The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session.'
 				: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
@@ -3335,11 +3360,13 @@ export function createMcpServer(config: McpConfig) {
 			// to a single `unknown` check — surfacing "no LLM keys" as certain
 			// when we actually couldn't check would be a false negative.
 			let sharedWorkspaceSettings: Record<string, unknown> | null = null
+			let sharedWorkspaceLlmConfigured: { anthropic?: boolean; openai?: boolean } | undefined
 			let sharedWorkspaceError: unknown = null
 			if (wsId) {
 				try {
 					const workspace = await getWorkspace(config, wsId)
 					sharedWorkspaceSettings = workspace.settings
+					sharedWorkspaceLlmConfigured = workspace.llm_configured
 				} catch (err) {
 					sharedWorkspaceError = err
 				}
@@ -3413,7 +3440,7 @@ export function createMcpServer(config: McpConfig) {
 								content: (withUrl.content as string | undefined) ?? null,
 								driver: (withUrl.driver as string | undefined) ?? null,
 							},
-							readWorkspaceLlmReadiness(sharedWorkspaceSettings),
+							readWorkspaceLlmReadiness(sharedWorkspaceSettings, sharedWorkspaceLlmConfigured),
 							readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
 						)
 					})
@@ -4286,14 +4313,16 @@ export function createMcpServer(config: McpConfig) {
 				;(result as Record<string, unknown>).workspace_id = bornInWorkspace
 				;(result as Record<string, unknown>).role = 'member'
 			} else if (targetWorkspace && !isAgent && !createBody.auto_create_workspace) {
-				// Humans only: add the new actor as a member
+				// Humans only: a person can't be added by id without accepting, so the
+				// workspace invites them by email and they join when they accept.
 				try {
-					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
-						actor_id: result.id,
+					await apiCall(config, 'POST', '/api/invites', {
+						workspaceId: targetWorkspace,
+						email: createBody.email,
 						role: role ?? 'member',
 					})
 					;(result as Record<string, unknown>).workspace_id = targetWorkspace
-					;(result as Record<string, unknown>).role = role ?? 'member'
+					;(result as Record<string, unknown>).invited_role = role ?? 'member'
 				} catch (error) {
 					;(result as Record<string, unknown>).workspace_membership_error = String(error)
 				}
@@ -4873,19 +4902,18 @@ export function createMcpServer(config: McpConfig) {
 									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
 								},
 							}
+			const payload = buildListPayload({
+				key: 'workspaces',
+				rows: safeRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: rows.length,
+			})
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ workspaces: safeRows }),
-					},
-				],
-				structuredContent: {
-					heroCard,
-					workspaces: safeRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				// The card is presentation only; every datum is in the payload the text carries too.
+				structuredContent: { heroCard, ...payload },
 			}
 		},
 	)
@@ -6897,18 +6925,17 @@ export function createMcpServer(config: McpConfig) {
 					id: loop.id as string,
 				})
 			})
+			const payload = buildListPayload({
+				key: 'loops',
+				rows: enriched,
+				limit: pagination.limit,
+				nextCursor,
+				total: loops.length,
+			})
 			return {
 				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ loops: enriched }),
-					},
-				],
-				structuredContent: {
-					loops: enriched,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7255,18 +7282,17 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.latest_activity_at ?? null,
 				getId: (row) => row.entity_id,
 			})
+			const payload = buildListPayload({
+				key: 'items',
+				rows: pagedItems,
+				limit: pagination.limit,
+				nextCursor,
+				total: items.length,
+			})
 			return {
 				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ items: pagedItems }),
-					},
-				],
-				structuredContent: {
-					items: pagedItems,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -7314,7 +7340,10 @@ export function createMcpServer(config: McpConfig) {
 					content: [
 						{
 							type: 'text' as const,
-							text: JSON.stringify({ ...withUrl, handoff: handoffNote(enriched) }),
+							text: JSON.stringify({
+								...withUrl,
+								handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
+							}),
 						},
 					],
 				}
@@ -7500,6 +7529,44 @@ export function createMcpServer(config: McpConfig) {
 					sent.mode === 'approved_draft'
 						? 'Sent: the email went out exactly as the person approved it. Do not send it again.'
 						: 'Sent. Do not send it again.',
+				)
+			} catch (err) {
+				// The server words every refusal for the agent (what happened, what to do next),
+				// so pass it on as a result instead of a thrown error.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not sent. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'resend_send_email',
+		{
+			description: tools.resend_send_email.description,
+			inputSchema: tools.resend_send_email.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('resend_send_email', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const sent = (await apiCall(
+					config,
+					'POST',
+					'/api/integrations/resend/send',
+					{ object_id: args.object_id },
+					{ workspaceId: args.workspace_id },
+				)) as { email_id: string; from: string }
+				return reply(
+					`Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
 				)
 			} catch (err) {
 				// The server words every refusal for the agent (what happened, what to do next),
@@ -7792,7 +7859,8 @@ export function createMcpServer(config: McpConfig) {
 					} else {
 						messageNote = {
 							message_delivered: false,
-							message_note: `The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is. Session id: ${id}.`,
+							message_note:
+								'The session was resumed but is not running yet, so your message was not delivered. Send it with send_session_message once it is.',
 						}
 					}
 				}
@@ -7905,44 +7973,62 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const input = args as {
+				limit?: number
+				cursor?: string
+				provider?: string
+				status?: string
+				q?: string
+				verbose?: boolean
+				workspace_id?: string
+			}
+			// The whole list is fetched and paged here, so the full page size is available: there is
+			// no "+ 1" sentinel to leave room for.
 			const pagination = resolveListPagination({
-				limit: (args as { limit?: number }).limit,
-				cursor: (args as { cursor?: string }).cursor,
+				limit: input.limit,
+				cursor: input.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
 			})) as unknown
-			const rows = Array.isArray(result)
-				? (result as Array<{
-						id: string
-						createdAt?: string | null
-						provider?: string
-						status?: string
-					}>)
-				: []
+			const allRows = Array.isArray(result) ? (result as IntegrationRow[]) : []
+			// Filters apply before paging, so `total` and `has_more` describe the matches. A row added
+			// after the walk began stays out of every hop of it.
+			const matching = allRows.filter(
+				(row) =>
+					matchesIntegrationFilters(row, input) &&
+					(!row.createdAt || row.createdAt <= pagination.snapshotAt),
+			)
+			// Live connections first, then the newest. The cursor carries that composite key, so the
+			// snapshot check above stands in for the one `paginateClientSide` would do on a timestamp.
 			const { page: pagedRows, nextCursor } = paginateClientSide({
-				rows,
+				rows: matching,
 				limit: pagination.limit,
 				snapshotAt: pagination.snapshotAt,
-				order: pagination.order,
+				order: 'desc',
 				cursor: pagination.cursor,
-				getSortValue: (row) => row.createdAt ?? null,
+				getSortValue: integrationSortKey,
 				getId: (row) => row.id,
+				applySnapshotFilter: false,
 			})
-			const reconnectHint = buildReconnectHint(pagedRows)
-			const listText = buildListContentText({ integrations: pagedRows })
+			const rows = input.verbose ? pagedRows : pagedRows.map(leanIntegrationRow)
+			// Judged over every row, not just this page: a broken connection must not depend on
+			// which page it landed on.
+			const reconnectHint = buildReconnectHint(allRows)
+			const payload = buildListPayload({
+				key: 'integrations',
+				rows,
+				limit: pagination.limit,
+				nextCursor,
+				total: matching.length,
+				extra: { summary: summarizeIntegrations(allRows) },
+				notes: reconnectHint ? [reconnectHint] : [],
+			})
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: reconnectHint ? `${listText}\n\n${reconnectHint}` : listText,
-					},
-				],
-				structuredContent: {
-					integrations: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)
@@ -8076,6 +8162,7 @@ export function createMcpServer(config: McpConfig) {
 						kind: args.kind,
 						...(args.suggested_name ? { suggested_name: args.suggested_name } : {}),
 						...(args.hint ? { hint: args.hint } : {}),
+						...(args.target_agent_ids?.length ? { target_agent_ids: args.target_agent_ids } : {}),
 					},
 					{ workspaceId: args.workspace_id },
 				)
@@ -8617,18 +8704,17 @@ export function createMcpServer(config: McpConfig) {
 				getId: (row) => row.id,
 				applySnapshotFilter: false,
 			})
+			const payload = buildListPayload({
+				key: 'extensions',
+				rows: pagedRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: result.length,
+			})
 			return {
 				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText({ extensions: pagedRows }),
-					},
-				],
-				structuredContent: {
-					extensions: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 			}
 		},
 	)

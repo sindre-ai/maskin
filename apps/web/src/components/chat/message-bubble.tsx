@@ -5,6 +5,8 @@ import {
 	renderLinkedSettingsChip,
 } from '@/components/chat/linked-object-preview'
 import {
+	ObjectReferenceCard,
+	ObjectReferenceChip,
 	OtherWorkspaceLink,
 	useOtherWorkspaceLabel,
 } from '@/components/chat/linked-object-reference'
@@ -13,12 +15,15 @@ import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
+import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useObject } from '@/hooks/use-objects'
@@ -28,9 +33,13 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	type GithubTarget,
+	type OwnCard,
+	type OwnPlacement,
 	type SettingsTarget,
 	githubChipName,
 	githubChipText,
+	isOnlyCard,
+	placeOwnLinks,
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
@@ -50,7 +59,7 @@ import {
 	RotateCcw,
 	Settings as SettingsIcon,
 } from 'lucide-react'
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, type Ref, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { HandedOffStrip } from './handed-off-strip'
@@ -97,6 +106,9 @@ interface MessageBubbleProps {
 	onReplyInThread?: () => void
 }
 
+// With attachments, the fitted own bubble stays this wide so 'ok' does not make a tiny thumbnail.
+const MIN_FIT_WIDTH = 160
+
 // Same raw-button pattern as Copy, but padded to a 32px target on phones and wherever any
 // coarse pointer exists (an iPad with a trackpad reports a fine primary pointer).
 const REPLY_BUTTON_CLASS =
@@ -140,6 +152,8 @@ export function MessageBubble({
 	const canReply = !!onReplyInThread && message.id > 0 && message.kind === 'message'
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState('')
+	// Editing and asking agents again are writes; a viewer keeps the buttons, switched off.
+	const canWrite = useCanWrite()
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	// The one read of this flag: files and images lift out of the text bubble when it is on.
@@ -172,10 +186,27 @@ export function MessageBubble({
 					.map((a) => (answers.length > 1 ? `${a.header}: ` : '') + a.selected.join(', '))
 					.join('\n')
 			: message.content
-	const ownSegments = useMemo(
-		() => (isOwn ? splitOwnLinks(shownContent, workspaceId, enterprise) : []),
-		[isOwn, shownContent, workspaceId, enterprise],
+	const ownParts = useMemo(
+		() =>
+			isOwn
+				? placeOwnLinks(splitOwnLinks(shownContent, workspaceId, enterprise), shownLinkedObjectIds)
+				: [],
+		[isOwn, shownContent, workspaceId, enterprise, shownLinkedObjectIds],
 	)
+	// One card and nothing else (no words, no attachments, not being edited): the card is the message.
+	const cardOnly = isOwn && !editing && attachments.length === 0 && isOnlyCard(ownParts)
+	// A bubble that holds a card is a fixed width so the card has room, instead of the width of its words.
+	const holdsCard = isOwn && !editing && !cardOnly && ownParts.some((p) => p.kind === 'card')
+
+	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
+	// attachments take the same width. Editing, a message with no text and a message with a card
+	// (which has its own width) keep the full layout.
+	const fitText = isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard
+	const { columnRef, plateRef, textRef } = useFitTextWidth({
+		enabled: fitText,
+		minWidth: attachments.length > 0 ? MIN_FIT_WIDTH : 0,
+		contentKey: shownContent,
+	})
 
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
@@ -186,6 +217,7 @@ export function MessageBubble({
 			<MessageAttachments
 				workspaceId={workspaceId}
 				align={isOwn ? 'end' : 'start'}
+				fill={fitText}
 				items={attachments.map((f): MessageAttachmentItem => {
 					const resolved = filesById.get(f.file_id)
 					return {
@@ -261,75 +293,95 @@ export function MessageBubble({
 						/>
 					</div>
 				) : null}
-				{liftedAttachments}
-				{hasPlate ? (
-					<>
-						{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
+				{/* While fitting, the attachments and the bubble share one column, which gets the width of
+				    the text. Otherwise the column adds no box of its own. */}
+				<div
+					ref={columnRef}
+					className={cn(
+						fitText ? 'flex max-w-[min(560px,80%)] flex-col items-end gap-1' : 'contents',
+					)}
+				>
+					{fitText && liftedAttachments ? (
+						<div className={cn('w-full', spawnInfo && 'pr-2')}>{liftedAttachments}</div>
+					) : (
+						liftedAttachments
+					)}
+					{hasPlate ? (
+						<>
+							{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
 				    (`pr-2`) and owns the absolute placement, so the bar sits flush
 				    against the bubble and stays inside the box that measures overflow. */}
-						<div
-							className={cn(
-								'relative max-w-[min(560px,80%)]',
-								spawnInfo && 'pr-2',
-								editing && 'w-full',
-							)}
-						>
-							{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
-							<div className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
-								{fileList}
-								{editing ? (
-									<div className="flex flex-col gap-2">
-										<Textarea
-											value={draft}
-											onChange={(e) => setDraft(e.target.value)}
-											onKeyDown={(e) => {
-												if (e.key === 'Enter' && !e.shiftKey) {
-													e.preventDefault()
-													saveEdit()
-												}
-												if (e.key === 'Escape') {
-													e.preventDefault()
-													setEditing(false)
-												}
-											}}
-											aria-label="Edit message"
-											autoFocus
-											className="bg-background text-foreground"
-										/>
-										<div className="flex justify-end gap-2">
-											<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-												Cancel
-											</Button>
-											<Button size="sm" onClick={saveEdit}>
-												Save
-											</Button>
+							<div
+								className={cn(
+									// While fitting, the column above carries the width cap. A lone card fills the
+									// column up to 460px; a bubble with a card is min(520px, 88% of the column).
+									fitText
+										? 'relative w-full'
+										: cardOnly
+											? 'relative w-full max-w-[460px]'
+											: holdsCard
+												? 'relative w-[min(520px,88%)]'
+												: 'relative max-w-[min(560px,80%)]',
+									spawnInfo && 'pr-2',
+									editing && 'w-full',
+								)}
+							>
+								{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
+								<div
+									ref={plateRef}
+									className={
+										// A message that is only a card has no plate: the card is the message.
+										cardOnly
+											? 'contents'
+											: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
+									}
+								>
+									{fileList}
+									{editing ? (
+										<div className="flex flex-col gap-2">
+											<Textarea
+												value={draft}
+												onChange={(e) => setDraft(e.target.value)}
+												onKeyDown={(e) => {
+													if (e.key === 'Enter' && !e.shiftKey) {
+														e.preventDefault()
+														saveEdit()
+													}
+													if (e.key === 'Escape') {
+														e.preventDefault()
+														setEditing(false)
+													}
+												}}
+												aria-label="Edit message"
+												autoFocus
+												className="bg-background text-foreground"
+											/>
+											<div className="flex justify-end gap-2">
+												<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+													Cancel
+												</Button>
+												<Button size="sm" onClick={saveEdit}>
+													Save
+												</Button>
+											</div>
 										</div>
-									</div>
-								) : message.content.length > 0 ? (
-									// `break-words` is load-bearing next to the column's `min-w-0`:
-									// `min-w-0` bounds the box, this bounds the ink. Without it an
-									// unbroken token (a long URL) raises this span's min-content and
-									// paints past the bubble's `max-w` cap, out to the viewport edge.
-									<span className="whitespace-pre-wrap text-balance break-words">
-										{ownSegments.map((segment, index) =>
-											segment.kind === 'text' ? (
-												// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-												<Fragment key={index}>{segment.text}</Fragment>
-											) : (
-												<OwnLinkChip
-													// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
-													key={index}
-													workspaceId={workspaceId}
-													segment={segment}
-												/>
-											),
-										)}
-									</span>
-								) : null}
+									) : message.content.length > 0 ? (
+										// `break-words` is load-bearing next to the column's `min-w-0`:
+										// `min-w-0` bounds the box, this bounds the ink. Without it an
+										// unbroken token (a long URL) raises this span's min-content and
+										// paints past the bubble's `max-w` cap, out to the viewport edge.
+										<OwnMessageBody
+											parts={ownParts}
+											workspaceId={workspaceId}
+											inBubble={!cardOnly}
+											textRef={fitText ? textRef : undefined}
+										/>
+									) : null}
+								</div>
 							</div>
-						</div>
-					</>
-				) : null}
+						</>
+					) : null}
+				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
 				{/* The actions sit permanently in the timestamp row rather than
 				    revealing on hover — a touch viewport has no hover, and the
@@ -366,28 +418,33 @@ export function MessageBubble({
 					) : null}
 					{canAct && !editing ? (
 						<>
-							<button
-								type="button"
-								onClick={startEditing}
-								aria-label="Edit message"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
-							>
-								<Pencil size={12} aria-hidden />
-							</button>
-							<button
-								type="button"
-								onClick={() =>
-									retryMessage.mutate(
-										{ messageId: message.id },
-										{ onSuccess: () => onRetried?.(message) },
-									)
-								}
-								disabled={retryMessage.isPending}
-								aria-label="Ask agents to respond again"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-							>
-								<RotateCcw size={12} aria-hidden />
-							</button>
+							<ViewerTooltip>
+								<button
+									type="button"
+									onClick={startEditing}
+									disabled={!canWrite}
+									aria-label="Edit message"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<Pencil size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
+							<ViewerTooltip>
+								<button
+									type="button"
+									onClick={() =>
+										retryMessage.mutate(
+											{ messageId: message.id },
+											{ onSuccess: () => onRetried?.(message) },
+										)
+									}
+									disabled={retryMessage.isPending || !canWrite}
+									aria-label="Ask agents to respond again"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<RotateCcw size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
 						</>
 					) : null}
 				</div>
@@ -617,20 +674,22 @@ export function MessageBubble({
 							</button>
 						) : null}
 						{canRetryAgent ? (
-							<button
-								type="button"
-								onClick={() =>
-									retryMessage.mutate(
-										{ messageId: message.id },
-										{ onSuccess: () => onRetried?.(message) },
-									)
-								}
-								disabled={retryMessage.isPending}
-								aria-label="Retry"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-							>
-								<RotateCcw size={12} aria-hidden />
-							</button>
+							<ViewerTooltip>
+								<button
+									type="button"
+									onClick={() =>
+										retryMessage.mutate(
+											{ messageId: message.id },
+											{ onSuccess: () => onRetried?.(message) },
+										)
+									}
+									disabled={retryMessage.isPending || !canWrite}
+									aria-label="Retry"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<RotateCcw size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
 						) : null}
 					</div>
 				) : null}
@@ -650,6 +709,95 @@ function chipTitle(title: string): string {
 
 const OWN_CHIP_CLASS =
 	'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+/**
+ * What you wrote, in order: words, a chip for each link, and a card for an object linked on a
+ * line of its own. In a bubble the cards sit nested under the words they follow; a message that is
+ * only a card has no bubble. Objects open in a new tab.
+ */
+function OwnMessageBody({
+	parts,
+	workspaceId,
+	inBubble,
+	textRef,
+}: {
+	parts: OwnPlacement[]
+	workspaceId: string
+	inBubble: boolean
+	/** The words, measured to fit the bubble to them (only set when the message holds no card). */
+	textRef?: Ref<HTMLSpanElement>
+}) {
+	const runs: Array<{ card: OwnCard } | { inline: OwnPlacement[] }> = []
+	for (const part of parts) {
+		const last = runs[runs.length - 1]
+		if (part.kind === 'card') runs.push({ card: part })
+		else if (last && 'inline' in last) last.inline.push(part)
+		else runs.push({ inline: [part] })
+	}
+	return (
+		<>
+			{runs.map((run, index) =>
+				'card' in run ? (
+					<ObjectReferenceCard
+						// biome-ignore lint/suspicious/noArrayIndexKey: runs are positional by construction
+						key={index}
+						workspaceId={workspaceId}
+						objectId={run.card.id}
+						newTab
+						// In a bubble the card fills it, 8px under the words (the bubble's gap is 6px) and
+						// with a light shadow; a lone card is the message and fills its wrapper.
+						className={cn(
+							'my-0 w-full max-w-full',
+							inBubble && 'shadow-xs',
+							inBubble && index > 0 && 'mt-0.5',
+						)}
+					/>
+				) : (
+					// `break-words` is load-bearing next to the column's `min-w-0`: `min-w-0` bounds the
+					// box, this bounds the ink. Without it an unbroken token (a long URL) raises this
+					// span's min-content and paints past the bubble's `max-w` cap, out to the viewport edge.
+					<span
+						// biome-ignore lint/suspicious/noArrayIndexKey: runs are positional by construction
+						key={index}
+						ref={textRef}
+						className="whitespace-pre-wrap text-balance break-words"
+					>
+						{run.inline.map((part, i) =>
+							part.kind === 'text' ? (
+								// biome-ignore lint/suspicious/noArrayIndexKey: parts are positional by construction
+								<Fragment key={i}>{part.text}</Fragment>
+							) : part.kind === 'other' ? (
+								<OwnLinkChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									segment={part.segment}
+								/>
+							) : part.kind === 'file' ? (
+								<OwnLinkChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									segment={{ kind: 'file', id: part.id }}
+								/>
+							) : (
+								<ObjectReferenceChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									objectId={part.id}
+									newTab
+									cardFollows={false}
+									fallback={part.address}
+								/>
+							),
+						)}
+					</span>
+				),
+			)}
+		</>
+	)
+}
 
 /**
  * A link to an object, file, loop or trigger in your own message, drawn inline where it was typed

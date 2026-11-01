@@ -29,6 +29,10 @@ public final class SearchStore {
 	/// Some sources failed while others answered, so counts may be understated.
 	public private(set) var isPartial = false
 	public private(set) var isOffline = false
+	/// People and agents picked with @. Only chats that contain every one of them are listed.
+	public private(set) var participants: [SearchPerson] = []
+	/// Everyone the @ menu can offer; empty until the first "@" is typed.
+	public private(set) var people: [SearchPerson] = []
 
 	@ObservationIgnored private let remote: any SearchRemote
 	@ObservationIgnored private let recentsStore: SearchRecents
@@ -39,6 +43,8 @@ public final class SearchStore {
 	@ObservationIgnored private var chatsCache: [SearchResult]?
 	@ObservationIgnored private var agentsCache: [SearchResult]?
 	@ObservationIgnored private var flowsCache: [SearchResult]?
+	@ObservationIgnored private var peopleTask: Task<Void, Never>?
+	@ObservationIgnored private let currentActorId: @MainActor () -> String?
 	/// When, and for which workspace, the directory caches were filled.
 	@ObservationIgnored private var cacheStamp: (workspace: String?, at: Date)?
 	@ObservationIgnored private let directoryTTL: TimeInterval
@@ -47,8 +53,10 @@ public final class SearchStore {
 	public init(
 		remote: any SearchRemote, recents: SearchRecents = SearchRecents(),
 		workspaceId: @escaping @MainActor () -> String?, debounce: Duration = .milliseconds(300),
-		directoryTTL: TimeInterval = 60, now: @escaping @MainActor () -> Date = { Date() }
+		directoryTTL: TimeInterval = 60, now: @escaping @MainActor () -> Date = { Date() },
+		currentActorId: @escaping @MainActor () -> String? = { nil }
 	) {
+		self.currentActorId = currentActorId
 		self.directoryTTL = directoryTTL
 		self.now = now
 		self.remote = remote
@@ -73,6 +81,13 @@ public final class SearchStore {
 
 	public var visibleCount: Int { sections.reduce(0) { $0 + $1.results.count } }
 
+	/// The people the @ menu offers for the text typed so far. Empty when the "@" matches nobody,
+	/// in which case it is searched as plain text.
+	public var mentionSuggestions: [SearchPerson] {
+		let others = people.filter { $0.id != currentActorId() }
+		return SearchMention.suggestions(for: query, in: others, excluding: participants)
+	}
+
 	public func count(in scope: SearchScope) -> Int {
 		allResults.filter { scope.includes($0) }.count
 	}
@@ -85,9 +100,32 @@ public final class SearchStore {
 		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard trimmed != query else { return }
 		query = trimmed
+		if trimmed.contains("@") { loadPeopleIfNeeded() }
+		restart()
+	}
+
+	/// An @ suggestion was tapped: it becomes a pill and its "@word" leaves the text.
+	public func pick(_ person: SearchPerson) {
+		guard participants.count < SearchMention.maxPicked,
+			!participants.contains(where: { $0.id == person.id })
+		else { return }
+		query = SearchMention.removingFragment(from: query)
+		participants.append(person)
+		restart()
+	}
+
+	public func removeParticipant(_ person: SearchPerson) {
+		guard participants.contains(where: { $0.id == person.id }) else { return }
+		participants.removeAll { $0.id == person.id }
+		restart()
+	}
+
+	/// Starts a debounced search for the current text and pills, or goes back to the recents
+	/// screen when there is neither.
+	private func restart() {
 		generation += 1
 		task?.cancel()
-		guard !trimmed.isEmpty else {
+		guard !query.isEmpty || !participants.isEmpty else {
 			allResults = []
 			isPartial = false
 			phase = .idle
@@ -96,9 +134,21 @@ public final class SearchStore {
 		}
 		phase = .searching
 		let mine = generation
+		let text = query
 		task = Task { [weak self, debounce] in
 			do { try await Task.sleep(for: debounce) } catch { return }
-			await self?.run(trimmed, generation: mine)
+			await self?.run(text, generation: mine)
+		}
+	}
+
+	private func loadPeopleIfNeeded() {
+		guard peopleTask == nil else { return }
+		let remote = self.remote
+		let startWorkspace = workspaceId()
+		peopleTask = Task { [weak self] in
+			let loaded = try? await remote.people()
+			guard let self, !Task.isCancelled, startWorkspace == self.workspaceId() else { return }
+			if let loaded { self.people = loaded } else { self.peopleTask = nil }
 		}
 	}
 
@@ -121,7 +171,7 @@ public final class SearchStore {
 	public func didOpen(_ result: SearchResult) { remember(query) }
 
 	public func retry() async {
-		guard !query.isEmpty else { return }
+		guard !query.isEmpty || !participants.isEmpty else { return }
 		generation += 1
 		task?.cancel()
 		phase = .searching
@@ -157,6 +207,9 @@ public final class SearchStore {
 		agentsCache = nil
 		flowsCache = nil
 		cacheStamp = nil
+		peopleTask?.cancel()
+		peopleTask = nil
+		people = []
 	}
 
 	/// Drops the directory caches when they belong to another workspace or are older than the TTL.
@@ -178,12 +231,15 @@ public final class SearchStore {
 		let cachedChats = chatsCache
 		let cachedAgents = agentsCache
 		let cachedFlows = flowsCache
+		let picked = participants
+		// With people picked only chats can match, so the other sources are not asked.
+		let chatsOnly = !picked.isEmpty
 
-		async let objects = Self.attempt { try await remote.searchObjects(query: text, limit: limit) }
-		async let files = Self.attempt { try await remote.searchFiles(query: text, limit: limit) }
+		async let objects = Self.attempt { if chatsOnly { return [] }; return try await remote.searchObjects(query: text, limit: limit) }
+		async let files = Self.attempt { if chatsOnly { return [] }; return try await remote.searchFiles(query: text, limit: limit) }
 		async let chats = Self.attempt { if let cachedChats { return cachedChats }; return try await remote.conversations() }
-		async let agents = Self.attempt { if let cachedAgents { return cachedAgents }; return try await remote.agents() }
-		async let flows = Self.attempt { if let cachedFlows { return cachedFlows }; return try await remote.flows() }
+		async let agents = Self.attempt { if chatsOnly { return [] }; if let cachedAgents { return cachedAgents }; return try await remote.agents() }
+		async let flows = Self.attempt { if chatsOnly { return [] }; if let cachedFlows { return cachedFlows }; return try await remote.flows() }
 		let (o, f, c, a, fl) = await (objects, files, chats, agents, flows)
 		// A newer query (or a cancel) started while this one was in flight.
 		guard mine == generation, !Task.isCancelled else { return }
@@ -195,10 +251,23 @@ public final class SearchStore {
 		}
 
 		if case .success(let list) = c { chatsCache = list }
-		if case .success(let list) = a { agentsCache = list }
-		if case .success(let list) = fl { flowsCache = list }
+		// A chats-only search skipped agents and flows, so their empty answers must not be cached.
+		if case .success(let list) = a, !chatsOnly { agentsCache = list }
+		if case .success(let list) = fl, !chatsOnly { flowsCache = list }
 		// A fresh fetch restarts the TTL; a pure cache hit leaves the old stamp alone.
-		if cachedChats == nil || cachedAgents == nil || cachedFlows == nil { cacheStamp = (startWorkspace, now()) }
+		if chatsOnly {
+			if cacheStamp == nil { cacheStamp = (startWorkspace, now()) }
+		} else if cachedChats == nil || cachedAgents == nil || cachedFlows == nil {
+			cacheStamp = (startWorkspace, now())
+		}
+
+		if chatsOnly, case .failure(let error) = c {
+			allResults = []
+			isOffline = error.isOffline
+			isPartial = false
+			phase = .failed(error.message)
+			return
+		}
 
 		// The flow list only supplements the four searched sources: it never decides "nothing could
 		// be searched", but its failure still marks the results partial.
@@ -218,7 +287,7 @@ public final class SearchStore {
 		if case .failure = fl { isPartial = true } else { isPartial = !errors.isEmpty }
 
 		var merged: [SearchResult] = []
-		if case .success(let list) = c { merged += Self.filter(list, text) }
+		if case .success(let list) = c { merged += Self.withParticipants(Self.filter(list, text), picked) }
 		if case .success(let list) = a { merged += Self.filter(list, text) }
 		// The flow list is authoritative for flows; the server's object hits fill in the rest.
 		var flowIds = Set<String>()
@@ -229,8 +298,14 @@ public final class SearchStore {
 		}
 		if case .success(let list) = o { merged += list.filter { !flowIds.contains($0.entityId) } }
 		if case .success(let list) = f { merged += list }
-		allResults = merged
+		allResults = SearchRanking.ordered(merged, query: text)
 		phase = .results
+	}
+
+	/// Chats that contain every picked person or agent. No one picked keeps the list as it is.
+	nonisolated static func withParticipants(_ list: [SearchResult], _ picked: [SearchPerson]) -> [SearchResult] {
+		guard !picked.isEmpty else { return list }
+		return list.filter { result in picked.allSatisfy { result.participantIds.contains($0.id) } }
 	}
 
 	nonisolated static func filter(_ list: [SearchResult], _ text: String) -> [SearchResult] {

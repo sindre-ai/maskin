@@ -150,6 +150,12 @@ export const messageQuestionSchema = z.object({
 	 * this chat: the answer goes to that session's input, not to the chat's agents.
 	 */
 	reply_to_session: z.boolean().optional(),
+	/**
+	 * Where the ask route put this question: the asking session's own chat, the chat a helper
+	 * was started from, or the asking agent's master chat with the person. Backend-owned;
+	 * the delivery readout is one query on this field.
+	 */
+	routed_to: z.enum(['session_chat', 'helper_chat', 'master']).optional(),
 })
 
 /**
@@ -254,6 +260,11 @@ export const messageKeychainRequestSchema = z.object({
 	suggested_name: z.string().min(1).max(80).optional(),
 	/** One line on what the credential is for, shown on the card. */
 	hint: z.string().min(1).max(300).optional(),
+	/** The agents the asker said will use it, resolved by the server. Shown ticked on the card. */
+	target_agents: z
+		.array(z.object({ id: z.string().uuid(), name: z.string() }))
+		.max(10)
+		.optional(),
 })
 
 /**
@@ -625,6 +636,8 @@ export const sessionKeychainCardSchema = z.object({
 	kind: z.enum(KEYCHAIN_REQUEST_KINDS),
 	suggested_name: z.string().trim().min(1).max(80).optional(),
 	hint: z.string().trim().min(1).max(300).optional(),
+	/** Agents that will use it. Ids that are not agents in this workspace are ignored. */
+	target_agent_ids: z.array(z.string().max(64)).max(10).optional(),
 })
 
 /**

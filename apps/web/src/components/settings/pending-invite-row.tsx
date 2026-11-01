@@ -1,5 +1,7 @@
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { PendingInviteListItem } from '@/lib/api'
 import { formatInviteExpiry, inviteRoleLabel } from '@/lib/invite-format'
 import { Mail } from 'lucide-react'
@@ -15,6 +17,7 @@ export function PendingInviteRow({
 	onRevoke: (invite: PendingInviteListItem) => void
 	resending: boolean
 }) {
+	const canWrite = useCanWrite()
 	const expiry = formatInviteExpiry(invite.expiresAt)
 	return (
 		<div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted">
@@ -34,26 +37,31 @@ export function PendingInviteRow({
 				{inviteRoleLabel(invite.role)}
 			</span>
 			<div className="ml-auto flex shrink-0 items-center gap-1">
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					disabled={resending}
-					onClick={() => onResend(invite)}
-					aria-label={`Resend invite to ${invite.email}`}
-				>
-					Resend
-				</Button>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					className="text-error hover:text-error"
-					onClick={() => onRevoke(invite)}
-					aria-label={`Revoke invite to ${invite.email}`}
-				>
-					Revoke
-				</Button>
+				<ViewerTooltip>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						disabled={resending || !canWrite}
+						onClick={() => onResend(invite)}
+						aria-label={`Resend invite to ${invite.email}`}
+					>
+						Resend
+					</Button>
+				</ViewerTooltip>
+				<ViewerTooltip>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="text-error hover:text-error"
+						disabled={!canWrite}
+						onClick={() => onRevoke(invite)}
+						aria-label={`Revoke invite to ${invite.email}`}
+					>
+						Revoke
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)

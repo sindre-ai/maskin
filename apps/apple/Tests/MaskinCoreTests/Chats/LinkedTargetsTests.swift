@@ -62,7 +62,7 @@ struct LinkedTargetsTests {
 	@Test("an id in prose, a link elsewhere or an image is not a target")
 	func notTargets() {
 		#expect(LinkedTarget.extract(from: "The id is \(one) and see https://example.com/page").isEmpty)
-		#expect(LinkedTarget.parse(href: "https://maskin.io/\(ws)/chats/\(one)") == nil)
+		#expect(LinkedTarget.parse(href: "https://maskin.io/\(ws)/loops/\(one)")?.kind == .loop)
 		#expect(LinkedTarget.parse(href: "maskin://\(ws)/files/\(file)")?.kind == .file)
 	}
 
@@ -231,6 +231,21 @@ struct LinkedTargetsTests {
 		let looked = LinkedMessageLayout.lookupTargets(objects + files)
 		#expect(looked.filter { $0.kind == .object } == Array(objects.prefix(10)))
 		#expect(looked.filter { $0.kind == .file } == files)
+	}
+
+	@Test("agent and chat addresses are targets, and count with objects toward the ten lookups")
+	func agentAndChatTargets() {
+		let agent = LinkedTarget.parse(href: "https://maskin.io/\(ws)/agents/\(one)")
+		let chat = LinkedTarget.parse(href: "https://maskin.io/\(ws)/chats/\(two)?thread=4")
+		#expect(agent == LinkedTarget(kind: .agent, uuid: one))
+		#expect(chat == LinkedTarget(kind: .chat, uuid: two))
+		#expect(agent?.key == "agent:\(one)" && chat?.key == "chat:\(two)")
+		// The agents list (no id) is not a target.
+		#expect(LinkedTarget.parse(href: "https://maskin.io/\(ws)/agents") == nil)
+		let objects = (1...8).map { LinkedTarget(kind: .object, uuid: String(format: "%08d-2222-3333-4444-555555555555", $0)) }
+		let more = [LinkedTarget(kind: .agent, uuid: one), LinkedTarget(kind: .chat, uuid: two), LinkedTarget(kind: .agent, uuid: file)]
+		#expect(LinkedMessageLayout.lookupTargets(objects + more) == Array((objects + more).prefix(10)))
+		#expect(LinkedConversationItems.mayLink("see \(chat!.key) /chats/") && !LinkedConversationItems.mayLink("no links"))
 	}
 
 	@Test("only targets that are cards are appended")

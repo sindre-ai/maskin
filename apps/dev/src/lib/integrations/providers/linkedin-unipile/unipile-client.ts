@@ -292,7 +292,11 @@ export type LinkedInPagedResponse = {
 export type LinkedInPublishPostPayload = {
 	account_id: string
 	text: string
-	/** Present when publishing as a business page; a company URN like `urn:li:organization:12345`. */
+	/**
+	 * Present when publishing as a business page. Callers hold the company URN
+	 * (`urn:li:organization:12345`); `publishPost` reduces it to the plain id
+	 * (`12345`) the v2 route takes — see `normalizePostAs`.
+	 */
 	post_as?: string
 	attachments?: unknown[]
 	can_read?: string
@@ -394,6 +398,22 @@ export type LinkedInDeleteAccountPayload = {
  */
 export type LinkedInDeleteAccountResponse = {
 	object?: string
+}
+
+const LINKEDIN_ORGANIZATION_URN_PREFIX = 'urn:li:organization:'
+
+/**
+ * Reduce a company URN to the plain numeric id the v2 create-post route takes
+ * in `post_as` (v2 "Create posts" guide, "Publish on behalf of a company":
+ * `post_as: '123456'`). A plain id passes through. Pure, so the outgoing body
+ * can be asserted directly.
+ */
+export function normalizePostAs(postAs: string): string {
+	const trimmed = postAs.trim()
+	if (trimmed.toLowerCase().startsWith(LINKEDIN_ORGANIZATION_URN_PREFIX)) {
+		return trimmed.slice(LINKEDIN_ORGANIZATION_URN_PREFIX.length)
+	}
+	return trimmed
 }
 
 export interface LinkedInClient {
@@ -696,8 +716,10 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		publishPost(payload) {
 			// POST /v2/{account_id}/posts with {text, post_as?, ...}. Same endpoint
 			// serves personal and business-page publish; `post_as` selects the page
-			// URN when publishing as a page.
-			const { account_id, ...body } = payload
+			// when publishing as a page, as the plain company id, not the URN.
+			// (`as_organization` is the v1.0 field name; v2 does not take it.)
+			const { account_id, post_as, ...rest } = payload
+			const body = post_as ? { ...rest, post_as: normalizePostAs(post_as) } : rest
 			return call('POST', `/v2/${encodeURIComponent(account_id)}/posts`, body)
 		},
 		commentOnPost(payload) {

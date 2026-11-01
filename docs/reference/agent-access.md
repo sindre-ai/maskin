@@ -80,6 +80,15 @@ Google's hosted Gmail tool can only create drafts, so Maskin serves the send its
 - **One approval, one email.** The send claims the approval before calling Gmail (`send_claim` events on the integration, serialised with an advisory lock). Gmail refusing it releases the claim; an unclear failure (5xx, dropped connection) locks it, since sending again could deliver it twice. A direct send is also refused if the same email went out in the last 24 hours.
 - No new OAuth scope: `gmail.compose` is already requested and covers sending.
 
+## Sending email through Resend
+
+Maskin serves the Resend send as well: the `resend_send_email` MCP tool, `POST /api/integrations/resend/send` (`apps/dev/src/routes/integrations-resend.ts`). It works like the Gmail send above, with these differences:
+
+- **Only `object_id`.** The email is the draft object (`metadata.kind = "email"`) as it reads now. A `to`, `subject`, `body` or `from` in the call is refused, not ignored.
+- **The sender is the agent's mailbox, read on the server.** It lives in `actors.metadata.mailbox`. Only a human workspace admin or owner can set it (`PATCH /api/actors/:id` with `mailbox`; an address is one plain address and one agent holds it). The `email` column is not used: any workspace member can change it. No mailbox, no send. The draft cannot name a sender either.
+- **The approval is the idempotency key** (`maskin-email-{object_id}-{approval event id}`), so Resend delivers a retry once. A refusal or an unclear failure releases the approval (`resend_action: send_released` on the integration) and the same call can be made again; a confirmed send locks it.
+- Resend's own send tools through the gateway are held in a separate change; until then they still work for Read & write agents.
+
 ## API
 
 All humans-only, writer role, and only the person who connected the integration or a workspace admin/owner. Each change writes an `events` row (and a `scope_changed` audit row for a Keychain credential).
