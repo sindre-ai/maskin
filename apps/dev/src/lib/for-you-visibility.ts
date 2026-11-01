@@ -1,14 +1,7 @@
 import type { Database } from '@maskin/db'
-import {
-	events,
-	forYouDismissals,
-	notifications,
-	objects,
-	readState,
-	sessions,
-} from '@maskin/db/schema'
+import { events, forYouDismissals, notifications, objects, sessions } from '@maskin/db/schema'
 import { FOR_YOU_KIND, parseCommentDecision, parseForYouMetadata } from '@maskin/shared'
-import { and, eq, gte, inArray, lte, max, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, max, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 
 /**
@@ -174,8 +167,8 @@ export type VisibleForYou = {
  * closed or moved on, or that the viewer already read or answered. Shared with the briefing and
  * lifecycle pushes so a push never counts something the app does not show. A card with a source
  * comment is retired only by a threaded reply to it (an option tap is one), or by Dismiss; the
- * read position and free comments no longer count. A card with no source comment is still
- * retired by reading its object.
+ * read position and free comments no longer count. A card with no source comment is retired
+ * only by Dismiss; reading its object does not retire it.
  */
 export async function loadVisibleForYou(
 	db: Database,
@@ -215,7 +208,7 @@ export async function loadVisibleForYou(
 		...new Set(candidates.flatMap((x) => (x.row.sessionId ? [x.row.sessionId] : []))),
 	]
 
-	const [objectRows, sessionRows, readRows] = await Promise.all([
+	const [objectRows, sessionRows] = await Promise.all([
 		objectIds.length
 			? db
 					.select()
@@ -228,23 +221,9 @@ export async function loadVisibleForYou(
 					.from(sessions)
 					.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.id, sessionIds)))
 			: [],
-		objectIds.length
-			? db
-					.select({ entityId: readState.entityId, lastReadEventId: readState.lastReadEventId })
-					.from(readState)
-					.where(
-						and(
-							eq(readState.workspaceId, workspaceId),
-							eq(readState.actorId, actorId),
-							eq(readState.entityType, 'object'),
-							inArray(readState.entityId, objectIds),
-						),
-					)
-			: [],
 	])
 	const objectById = new Map(objectRows.map((o) => [o.id, o]))
 	const sessionStatusById = new Map(sessionRows.map((s) => [s.id, s.status]))
-	const lastReadByEntity = new Map(readRows.map((r) => [r.entityId, r.lastReadEventId]))
 
 	// Source comments, and any reply by the viewer after them, in two queries.
 	const sourceIds = candidates.flatMap((x) =>
@@ -270,27 +249,11 @@ export async function loadVisibleForYou(
 		findDismissedSourceIds(db, workspaceId, actorId, sourceIds),
 	])
 
-	// A curated item with no source comment cannot be retired by answering a comment. It
-	// counts as handled once the person has read its object past everything that existed
-	// when the Chief of Staff listed it; later activity does not bring it back.
+	// What reading a source-less curated item moves the position to: the newest activity on its
+	// object. Reading does not retire the item; only Dismiss, a closed object or a moved-on
+	// status does.
 	const noSource = candidates.filter(
 		({ row, meta }) => row.objectId && meta.source_comment_id === undefined,
-	)
-	const baselineByNotification = new Map<string, number>()
-	await Promise.all(
-		noSource.map(async ({ row }) => {
-			const [found] = await db
-				.select({ id: max(events.id) })
-				.from(events)
-				.where(
-					and(
-						eq(events.workspaceId, workspaceId),
-						eq(events.entityId, row.objectId as string),
-						row.createdAt ? lte(events.createdAt, row.createdAt) : undefined,
-					),
-				)
-			baselineByNotification.set(row.id, Number(found?.id ?? 0))
-		}),
 	)
 	const newestEventByEntity = new Map<string, number>()
 	if (noSource.length > 0) {
@@ -336,14 +299,12 @@ export async function loadVisibleForYou(
 				const sourceId = meta.source_comment_id
 				if (sourceId !== undefined) {
 					// Only an answer or a Dismiss retires a card that has a source comment. Opening
-					// the page moves the read position, and a free comment is not an answer.
+					// the page moves the read position, and a free comment is not an answer. A card
+					// with no source comment has no answer to give: Dismiss sets its status, which
+					// the query above already filters on.
 					if (dismissedIds.has(sourceId)) return false
 					const source = sourceById.get(sourceId)
 					if (source && isCardAnswered(source, viewerReplies)) return false
-				} else {
-					const baseline = baselineByNotification.get(row.id) ?? 0
-					const lastRead = lastReadByEntity.get(row.objectId) ?? 0
-					if (baseline > 0 && lastRead >= baseline) return false
 				}
 			}
 			return true

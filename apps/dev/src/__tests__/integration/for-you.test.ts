@@ -643,23 +643,39 @@ describe('GET /api/for-you', () => {
 			expect(items[0]?.latest_event_id).toBe(newest)
 		})
 
-		it('drops once the person has read the object, and stays gone when it gets new activity', async () => {
+		it('stays when the person reads its object past everything on it', async () => {
 			const obj = await insertObject(db, workspaceId, humanId, {
 				type: 'task',
 				status: 'in_review',
 			})
-			const before = await comment(obj.id, agentId)
-			await item({ objectId: obj.id }, { headline: 'Graduate 5 wiki pages' })
-			expect(await list()).toHaveLength(1)
-			await db.insert(readState).values({
-				workspaceId,
-				actorId: humanId,
-				entityType: 'object',
-				entityId: obj.id,
-				lastReadEventId: before,
-			})
 			await comment(obj.id, agentId)
+			await item({ objectId: obj.id }, { headline: 'Graduate 5 wiki pages' })
+			const newest = await comment(obj.id, agentId)
+			expect(await list()).toHaveLength(1)
+			await readUpTo(obj.id, newest)
+			expect(await list()).toHaveLength(1)
+		})
+
+		it('goes on Dismiss, stays gone after the page is opened, and comes back on undo', async () => {
+			const obj = await insertObject(db, workspaceId, humanId, {
+				type: 'task',
+				status: 'in_review',
+			})
+			const newest = await comment(obj.id, agentId)
+			const card = await item({ objectId: obj.id }, { headline: 'Set the key in Coolify' })
+			expect(await list()).toHaveLength(1)
+
+			const dismissed = await post('/api/for-you/dismissals', { notification_id: card.id })
+			expect(dismissed.status).toBe(200)
+			const [row] = await db.select().from(notifications).where(eq(notifications.id, card.id))
+			expect(row.status).toBe('dismissed')
 			expect(await list()).toEqual([])
+			await readUpTo(obj.id, newest)
+			expect(await list()).toEqual([])
+
+			const undone = await post('/api/for-you/dismissals/undo', { notification_id: card.id })
+			expect(undone.status).toBe(200)
+			expect(await list()).toHaveLength(1)
 		})
 
 		it('keeps the item when new activity arrives that the person has not read', async () => {
