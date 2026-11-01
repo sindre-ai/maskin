@@ -256,7 +256,7 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 
 	it('PATCH refuses a model the workspace cannot run, and leaves the stored one alone', async () => {
 		const app = createApp()
-		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId(), 'admin')
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId())
 
 		// A Claude model needs a connected subscription; this workspace is not enterprise.
 		const res = await app.request(
@@ -276,7 +276,7 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 
 	it('PATCH accepts a catalog model the workspace can run, and an unchanged stored value', async () => {
 		const app = createApp()
-		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId(), 'admin')
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId())
 
 		const changed = await app.request(
 			jsonRequest(
@@ -942,7 +942,12 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 			const name = `Admin with config ${randomUUID()}`
 
 			const res = await post(
-				{ name, workspace_id: ws.id, tools: fakeTools, llm_config: { model: 'fake-model' } },
+				{
+					name,
+					workspace_id: ws.id,
+					tools: fakeTools,
+					llm_config: { model: 'deepseek/deepseek-v4.1-flash' },
+				},
 				bearer(TEST_ACTOR_KEY),
 			)
 
@@ -950,7 +955,7 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 			const [row] = await agentRowsNamed(name)
 			const mcpServers = (row.tools as { mcpServers: Record<string, unknown> }).mcpServers
 			expect(Object.keys(mcpServers).sort()).toEqual(['fake', 'maskin'])
-			expect(row.llmConfig).toEqual({ model: 'fake-model' })
+			expect(row.llmConfig).toEqual({ model: 'deepseek/deepseek-v4.1-flash' })
 		})
 
 		it('gives a member who sends only name, description and prompt the Maskin MCP alone', async () => {
