@@ -70149,6 +70149,34 @@
 												},
 												"maxItems": 64
 											},
+											"object_type": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"bet",
+													"task",
+													"insight",
+													"knowledge",
+													"company",
+													"contact",
+													"content",
+													"event",
+													"meeting",
+													"loop",
+													"trigger",
+													"skill",
+													"extension",
+													"other"
+												]
+											},
+											"has_cursor": {
+												"type": [
+													"boolean",
+													"null"
+												]
+											},
 											"ok": {
 												"type": "boolean"
 											},
