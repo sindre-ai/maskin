@@ -14,6 +14,7 @@ import {
 	isProviderBlockPage,
 } from '../lib/turn-error-classifier'
 import { reportChatReply } from './chat-reply-tracking'
+import { shareReplyDigest } from './chat-session-context'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
 import { resolveReplyThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
@@ -1184,6 +1185,13 @@ export class InteractiveTurnFinalizer {
 			replyThreadRootId: threadRootId,
 			originMessageId: turnMessageId,
 			source: 'final_output',
+		})
+		shareReplyDigest(this.db, {
+			conversationId,
+			agentId: gate.actorId,
+			sessionId,
+			sessionThreadRootId,
+			content,
 		})
 		const failed =
 			result.isError || 'error_kind' in extraMetadata || 'pseudo_tool_calls' in extraMetadata
