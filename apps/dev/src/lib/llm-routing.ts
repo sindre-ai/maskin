@@ -2,6 +2,11 @@ import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import {
+	API_KEY_CREDIT_MARK_WINDOW_MS,
+	checkApiKeyCreditMark,
+	clearStaleApiKeyCreditMark,
+} from './api-key-credit-mark'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
 import {
 	type SubscriptionProbe,
@@ -667,6 +672,9 @@ export async function resolveLlmRoute(params: {
 	 */
 	let oauthFailureTransient = false
 
+	/** Set when route #4's key was left out because it is marked out of credit. */
+	let apiKeyOutOfCredit = false
+
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior). The
 	//    anthropic branch is a BYO credential, so it's gated like routes 2-4.
@@ -794,14 +802,28 @@ export async function resolveLlmRoute(params: {
 				return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
 			}
 
-			// 4. Workspace anthropic api key
+			// 4. Workspace anthropic api key — left out while it is marked out of
+			//    credit (see api-key-credit-mark.ts), so a key with no credit does
+			//    not take every session the other routes passed over.
 			const storedAnthropic = wsSettings.llm_keys?.anthropic
 			if (storedAnthropic) {
-				const envVars: Record<string, string> = {
-					ANTHROPIC_API_KEY: openSecret(storedAnthropic, 'llm_keys.anthropic'),
-					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+				const mark = checkApiKeyCreditMark(wsSettings, storedAnthropic)
+				if (mark.stale) {
+					void clearStaleApiKeyCreditMark({ db, workspaceId, mark: mark.stale })
 				}
-				return { route: LLM_ROUTE_API_KEY, envVars }
+				if (mark.outOfCredit) {
+					apiKeyOutOfCredit = true
+					logger.warn('Workspace Anthropic API key skipped: marked out of credit', {
+						workspaceId,
+						actorId,
+					})
+				} else {
+					const envVars: Record<string, string> = {
+						ANTHROPIC_API_KEY: openSecret(storedAnthropic, 'llm_keys.anthropic'),
+						ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+					}
+					return { route: LLM_ROUTE_API_KEY, envVars }
+				}
 			}
 		} catch (err) {
 			if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
@@ -823,6 +845,19 @@ export async function resolveLlmRoute(params: {
 			envVars: maskinPlanEnv,
 			modelName: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
 		}
+	}
+
+	if (apiKeyOutOfCredit) {
+		// The key was the one route left and it has no credit. Failing here puts
+		// a clear reason on the session instead of launching it into the same
+		// "Credit balance is too low" on every turn.
+		throw new LlmCredentialsUnavailableError(
+			oauthFailure
+				? `${API_KEY_OUT_OF_CREDIT_DETAIL} Claude subscription: ${oauthFailure}`
+				: API_KEY_OUT_OF_CREDIT_DETAIL,
+			false,
+			{ apiKeyOutOfCredit: true },
+		)
 	}
 
 	if (oauthFailure) {
@@ -881,6 +916,14 @@ export class LlmCredentialsUnavailableError extends Error {
 	 */
 	readonly noCredentialsConfigured: boolean
 
+	/**
+	 * True when the workspace's own Anthropic key was left out because it just
+	 * failed with "Credit balance is too low" and nothing else could carry the
+	 * session. The fix is a top-up (or a Claude subscription), not entering the
+	 * key again.
+	 */
+	readonly apiKeyOutOfCredit: boolean
+
 	constructor(
 		detail: string,
 		transient = false,
@@ -888,6 +931,7 @@ export class LlmCredentialsUnavailableError extends Error {
 			storedKeyUnreadable?: boolean
 			workspaceName?: string | null
 			noCredentialsConfigured?: boolean
+			apiKeyOutOfCredit?: boolean
 		},
 	) {
 		super(detail)
@@ -897,6 +941,7 @@ export class LlmCredentialsUnavailableError extends Error {
 		this.storedKeyUnreadable = options?.storedKeyUnreadable ?? false
 		this.workspaceName = options?.workspaceName?.trim() || null
 		this.noCredentialsConfigured = options?.noCredentialsConfigured ?? false
+		this.apiKeyOutOfCredit = options?.apiKeyOutOfCredit ?? false
 	}
 
 	/** What the user and any agent reading `get_session` see. */
@@ -917,6 +962,16 @@ export class LlmCredentialsUnavailableError extends Error {
 		'This session could not start because the LLM key saved for this workspace cannot be read. Enter the key again in Settings → Keys, then start a new session.'
 
 	toFailureReason(): SessionResultFailureReason {
+		if (this.apiKeyOutOfCredit) {
+			return {
+				provider: 'anthropic',
+				reason_code: 'credit_balance_low',
+				human_message: API_KEY_OUT_OF_CREDIT_HUMAN_MESSAGE,
+				http_status: null,
+				reset_at: null,
+				verbatim_output: this.detail,
+			}
+		}
 		return {
 			provider: 'maskin',
 			reason_code: 'not_logged_in',
@@ -933,6 +988,13 @@ export class LlmCredentialsUnavailableError extends Error {
 		}
 	}
 }
+
+/** Shown when the workspace's Anthropic key is the only route and it has no credit left. */
+const API_KEY_OUT_OF_CREDIT_HUMAN_MESSAGE =
+	"This session could not start because the workspace's Anthropic API key has run out of credit. Add credit to the key or connect a Claude subscription in Settings → Keys, then start a new session. The key is tried again after a short pause."
+
+/** Operator detail for the same case. */
+const API_KEY_OUT_OF_CREDIT_DETAIL = `The workspace Anthropic API key failed with "Credit balance is too low" in the last ${API_KEY_CREDIT_MARK_WINDOW_MS / 60_000} minutes and no other LLM route is configured, so it was left out.`
 
 /** The terminal error for a saved key that cannot be opened. Names the field, never the value. */
 export function unreadableKeyError(err: SecretUnreadableError): LlmCredentialsUnavailableError {

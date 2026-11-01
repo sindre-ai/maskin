@@ -5,6 +5,7 @@ import {
 	classifySessionExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
+	isCreditBalanceLowText,
 } from '../../lib/credit-classifier'
 
 describe('classifyCreditExhaustion', () => {
@@ -463,5 +464,22 @@ describe('classifyBannerResult', () => {
 
 	it('ignores text with no banner', () => {
 		expect(classifyBannerResult('Found 3 gigs')).toBeNull()
+	})
+})
+
+describe('isCreditBalanceLowText', () => {
+	it('matches the credit error the API and the CLI print', () => {
+		expect(isCreditBalanceLowText('Credit balance is too low')).toBe(true)
+		expect(
+			isCreditBalanceLowText(
+				'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}\nCredit balance is too low',
+			),
+		).toBe(true)
+	})
+
+	it('does not match other limit errors', () => {
+		expect(isCreditBalanceLowText("You've hit your weekly limit")).toBe(false)
+		expect(isCreditBalanceLowText('Request rejected (429)')).toBe(false)
+		expect(isCreditBalanceLowText('')).toBe(false)
 	})
 })

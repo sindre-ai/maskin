@@ -74,6 +74,7 @@ import {
 } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
 import {
 	SESSION_OAUTH_EXPIRES_AT_KEY,
@@ -91,6 +92,7 @@ import {
 	classifySessionExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
+	isCreditBalanceLowText,
 } from '../lib/credit-classifier'
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
@@ -161,6 +163,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
@@ -4022,6 +4025,22 @@ ${cont.continues_prompt}
 		return null
 	}
 
+	/**
+	 * A session on the workspace Anthropic API key that ended on "Credit balance
+	 * is too low" marks that key out of credit, so the route picker leaves it
+	 * alone for a while (lib/api-key-credit-mark.ts). Other routes and other
+	 * failures are none of its business.
+	 */
+	private async markApiKeyOutOfCreditOnExit(
+		session: typeof sessions.$inferSelect,
+		failureReason: { verbatim_output: string | null } | null,
+	): Promise<void> {
+		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		if (config.llm_route !== LLM_ROUTE_API_KEY) return
+		if (!isCreditBalanceLowText(failureReason?.verbatim_output ?? '')) return
+		await markApiKeyOutOfCredit({ db: this.db, workspaceId: session.workspaceId })
+	}
+
 	private async maybeRetryClaudeOAuthOnNextSlot(params: {
 		session: typeof sessions.$inferSelect
 		failureReason: { provider: string; reason_code: string } | null
@@ -4296,6 +4315,7 @@ ${cont.continues_prompt}
 		}
 
 		if (status === 'failed' && !userStopped) {
+			await this.markApiKeyOutOfCreditOnExit(session, failureReason)
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
 					logger.warn('Failed to retry Claude OAuth session on backup', {
@@ -6523,6 +6543,7 @@ ${cont.continues_prompt}
 		}
 
 		if (status === 'failed' && !userStopped) {
+			await this.markApiKeyOutOfCreditOnExit(updated, failureReason)
 			await this.maybeRetryClaudeOAuthOnNextSlot({
 				session: updated,
 				failureReason,
