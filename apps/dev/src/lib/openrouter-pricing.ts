@@ -125,6 +125,115 @@ function refreshInBackground(): void {
 	})
 }
 
+/** Per-model endpoint prices (one row per host serving the model), cached like the catalogue. */
+interface EndpointPricing {
+	/** Lower-case host slug, as OpenRouter spells it in provider.only (e.g. "gmicloud"). */
+	provider: string
+	pricing: ModelPricing
+}
+
+const endpointCache = new Map<string, { fetchedAt: number; endpoints: EndpointPricing[] }>()
+
+/**
+ * Parses `GET /api/v1/models/{id}/endpoints`. The host slug is the part of the
+ * endpoint `tag` before the first "/" ("gmicloud/fp8" -> "gmicloud"). Endpoints
+ * without a prompt or completion price are dropped, as in `parseCatalogue`.
+ */
+function parseEndpoints(payload: unknown): EndpointPricing[] | null {
+	if (typeof payload !== 'object' || payload === null) return null
+	const data = (payload as { data?: { endpoints?: unknown } }).data
+	if (!data || !Array.isArray(data.endpoints)) return null
+	const out: EndpointPricing[] = []
+	for (const entry of data.endpoints) {
+		if (typeof entry !== 'object' || entry === null) continue
+		const row = entry as { tag?: unknown; provider_name?: unknown; pricing?: unknown }
+		const slugSource = typeof row.tag === 'string' ? row.tag : row.provider_name
+		if (typeof slugSource !== 'string' || slugSource.length === 0) continue
+		if (typeof row.pricing !== 'object' || row.pricing === null) continue
+		const pricing = row.pricing as Record<string, unknown>
+		const prompt = asPrice(pricing.prompt)
+		const completion = asPrice(pricing.completion)
+		if (prompt === null || completion === null) continue
+		out.push({
+			provider: (slugSource.split('/')[0] ?? '').replace(/\s+/g, '').toLowerCase(),
+			pricing: {
+				prompt,
+				completion,
+				cacheRead: optionalPrice(pricing, 'input_cache_read', 'cache_read'),
+				cacheWrite: optionalPrice(pricing, 'input_cache_write', 'cache_write'),
+			},
+		})
+	}
+	return out.length > 0 ? out : null
+}
+
+async function fetchEndpoints(id: string): Promise<EndpointPricing[] | null> {
+	const controller = new AbortController()
+	const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+	try {
+		const res = await fetch(`${MODELS_ENDPOINT}/${id}/endpoints`, { signal: controller.signal })
+		if (!res.ok) {
+			logger.warn('pricing_endpoints_unavailable', { model: id, status: res.status })
+			return null
+		}
+		return parseEndpoints(await res.json())
+	} catch (err) {
+		logger.warn('pricing_endpoints_unavailable', { model: id, error: String(err) })
+		return null
+	} finally {
+		clearTimeout(timer)
+	}
+}
+
+/** Mean of each price field across the given endpoints. */
+function meanPricing(endpoints: ModelPricing[]): ModelPricing {
+	const mean = (pick: (p: ModelPricing) => number) =>
+		endpoints.reduce((sum, p) => sum + pick(p), 0) / endpoints.length
+	return {
+		prompt: mean((p) => p.prompt),
+		completion: mean((p) => p.completion),
+		cacheRead: mean((p) => p.cacheRead),
+		cacheWrite: mean((p) => p.cacheWrite),
+	}
+}
+
+/**
+ * Per-token pricing for the hosts that actually serve funded requests.
+ *
+ * The catalogue price (`getModelPricing`) is the cheapest host's headline price,
+ * but funded requests are pinned to `provider.only` hosts chosen for speed, and
+ * those bill several times more (DigitalOcean and GMICloud charged about 4x the
+ * catalogue price on uncached input in October 2026). Pricing from the catalogue
+ * therefore under-counted spend by about half against OpenRouter's invoice.
+ *
+ * Returns the mean price over the model's endpoints whose host is in `providers`,
+ * which tracks the observed split between them (requests alternate and fail
+ * over). Falls back to the catalogue price when `providers` is empty, the
+ * endpoint list is unreachable, or none of the hosts serve the model, so a
+ * session is never priced at zero for lack of endpoint data.
+ */
+export async function getServedModelPricing(
+	id: string,
+	providers: string[],
+): Promise<ModelPricing | null> {
+	const wanted = providers.map((p) => p.trim().toLowerCase()).filter(Boolean)
+	if (wanted.length === 0) return getModelPricing(id)
+
+	const now = Date.now()
+	let hit = endpointCache.get(id)
+	if (!hit || now - hit.fetchedAt >= CACHE_TTL_MS) {
+		const endpoints = await fetchEndpoints(id)
+		if (endpoints) {
+			hit = { fetchedAt: now, endpoints }
+			endpointCache.set(id, hit)
+		}
+		// A failed refresh keeps serving the stale list rather than dropping to the catalogue.
+	}
+	const served = hit?.endpoints.filter((e) => wanted.includes(e.provider)) ?? []
+	if (served.length === 0) return getModelPricing(id)
+	return meanPricing(served.map((e) => e.pricing))
+}
+
 /**
  * Returns OpenRouter's per-token pricing for a model id, or null when the
  * catalogue has no entry for it (the caller then prices with the legacy token
@@ -160,4 +269,5 @@ export async function getModelPricing(id: string): Promise<ModelPricing | null> 
 export function resetPricingCache(): void {
 	cache = null
 	inFlight = null
+	endpointCache.clear()
 }

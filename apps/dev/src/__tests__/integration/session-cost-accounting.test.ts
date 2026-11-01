@@ -7,7 +7,11 @@ import { db, getTestActorId } from './global-setup'
 
 const { getModelPricingMock } = vi.hoisted(() => ({ getModelPricingMock: vi.fn() }))
 
-vi.mock('../../lib/openrouter-pricing', () => ({ getModelPricing: getModelPricingMock }))
+vi.mock('../../lib/openrouter-pricing', () => ({
+	getModelPricing: getModelPricingMock,
+	// Served-host pricing shares the catalogue mock's answers in these tests.
+	getServedModelPricing: (id: string) => getModelPricingMock(id),
+}))
 
 function stubStorage(): StorageProvider {
 	return {
