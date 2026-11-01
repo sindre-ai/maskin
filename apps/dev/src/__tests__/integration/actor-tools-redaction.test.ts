@@ -388,3 +388,81 @@ describe('Actor tool config redaction — tokens in args', () => {
 		expect(row.description).not.toBe('should not save')
 	})
 })
+
+// The stored llm_config api key belongs to the stored provider.
+const FAKE_LLM_KEY = 'fake-llm-key-not-a-secret'
+const FAKE_NEW_LLM_KEY = 'fake-new-llm-key-not-a-secret'
+
+async function seedAgentWithLlmKey() {
+	const ws = await insertWorkspace(db, getTestActorId())
+	const target = await insertActor(db, {
+		type: 'agent',
+		name: 'Keyed Agent',
+		llmProvider: 'anthropic',
+		llmConfig: { model: 'fake-model', api_key: FAKE_LLM_KEY },
+	})
+	await addMember(ws.id, target.id, 'member')
+	return { ws, target }
+}
+
+async function storedLlm(id: string) {
+	const [row] = await db
+		.select({ llmProvider: actors.llmProvider, llmConfig: actors.llmConfig })
+		.from(actors)
+		.where(eq(actors.id, id))
+	return row
+}
+
+describe('Actor llm_config key restore — PATCH /api/actors/:id', () => {
+	it('keeps the stored key when the masked key comes back with the same provider', async () => {
+		const { target } = await seedAgentWithLlmKey()
+
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, {
+				llm_provider: 'anthropic',
+				llm_config: { model: 'other-fake-model', api_key: MASKED_VALUE },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await storedLlm(target.id)).toEqual({
+			llmProvider: 'anthropic',
+			llmConfig: { model: 'other-fake-model', api_key: FAKE_LLM_KEY },
+		})
+	})
+
+	it('rejects the masked key when the provider changes and leaves the row unchanged', async () => {
+		const { target } = await seedAgentWithLlmKey()
+
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, {
+				llm_provider: 'openai',
+				llm_config: { model: 'fake-model', api_key: MASKED_VALUE },
+			}),
+		)
+
+		expect(res.status).toBe(400)
+		expect(await res.text()).not.toContain(FAKE_LLM_KEY)
+		expect(await storedLlm(target.id)).toEqual({
+			llmProvider: 'anthropic',
+			llmConfig: { model: 'fake-model', api_key: FAKE_LLM_KEY },
+		})
+	})
+
+	it('saves a new key sent with a changed provider', async () => {
+		const { target } = await seedAgentWithLlmKey()
+
+		const res = await createAppAs(getTestActorId()).request(
+			jsonRequest('PATCH', `/api/actors/${target.id}`, {
+				llm_provider: 'openai',
+				llm_config: { model: 'fake-model', api_key: FAKE_NEW_LLM_KEY },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await storedLlm(target.id)).toEqual({
+			llmProvider: 'openai',
+			llmConfig: { model: 'fake-model', api_key: FAKE_NEW_LLM_KEY },
+		})
+	})
+})
