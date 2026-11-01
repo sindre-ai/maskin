@@ -67,6 +67,13 @@ struct CallActivityMappingTests {
 @MainActor
 @Suite("Call activity controller")
 struct CallActivityControllerTests {
+	@Test("a freshly connected call shows Listening on the card")
+	func startsListeningOnTheCard() {
+		let fresh = LiveCallSnapshot(voicePhase: RealtimeCallMachine().phase, isMuted: false)
+		#expect(fresh.activityPhase == .listening)
+		#expect(fresh.activityPhase.statusText == "Listening")
+	}
+
 	private func start(_ controller: CallActivityController, _ snapshot: LiveCallSnapshot = snap()) {
 		controller.callStarted(
 			callId: "c1", agentName: "Relay", workspaceId: "ws", conversationId: "chat", startedAt: t0,

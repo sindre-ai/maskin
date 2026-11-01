@@ -155,7 +155,7 @@ final class LiveCallCenter {
 			calls: URLSessionVoiceCalls(
 				baseURL: environment.baseURL, clientSource: environment.clientSource,
 				credentials: environment.auth.credentialsProvider),
-			makeTransport: RealtimeVoiceCall.deviceTransport)
+			makeTransport: RealtimeVoiceCall.deviceTransport, chime: CallChime())
 	}
 
 	private func resolve(
