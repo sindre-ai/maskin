@@ -168,8 +168,8 @@ describe('SessionManager.hasChatCapacity — separate aggregate cap for chat ses
 			conversationId: conversation.id,
 			interactive: true,
 		})
-		// A distinct agent for the second session — sessions_conversation_actor_active_uniq
-		// only guards one active session per (conversation, agent) pair, so a second
+		// A distinct agent for the second session — sessions_conversation_actor_thread_active_uniq
+		// only guards one active session per (conversation, agent, thread), so a second
 		// agent replying in the same conversation must go through the aggregate
 		// hasChatCapacity check instead of colliding with that index.
 		const secondAgent = await insertActor(db, { type: 'agent' })

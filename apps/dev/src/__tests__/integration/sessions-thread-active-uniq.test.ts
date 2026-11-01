@@ -5,13 +5,11 @@ import { insertActor, insertConversation, insertSession, insertWorkspace } from 
 import { db, getTestActorId, sql } from './global-setup'
 
 /**
- * Migrations 0119 and 0120: sessions and conversation_pending_turns get a nullable
- * thread_root_id, and sessions gets a second partial unique index on
- * (conversation, agent, COALESCE(thread, 0)) next to the old (conversation, agent) one.
+ * Migrations 0119, 0120 and 0122: sessions and conversation_pending_turns get a nullable
+ * thread_root_id, sessions gets a partial unique index on
+ * (conversation, agent, COALESCE(thread, 0)), and the old (conversation, agent) index is dropped.
  *
- * Each test file runs on its own database, so the old index can be dropped in beforeAll to
- * see the new one on its own, the state after the release that drops it. Mocked-DB tests
- * cannot prove unique-index semantics (.claude/rules/verification.md).
+ * Mocked-DB tests cannot prove unique-index semantics (.claude/rules/verification.md).
  */
 
 const OLD_INDEX = 'sessions_conversation_actor_active_uniq'
@@ -70,28 +68,20 @@ describe('thread_root_id on sessions and conversation_pending_turns', () => {
 		}
 	})
 
-	it("creates the new index with the old index's predicate and keeps the old index", async () => {
+	it('has the per-thread index with the live-session predicate and no longer has the old index', async () => {
 		const rows = await sql<{ indexname: string; indexdef: string }[]>`
 			SELECT indexname, indexdef FROM pg_indexes
 			WHERE schemaname = 'public' AND tablename = 'sessions' AND indexname IN (${OLD_INDEX}, ${NEW_INDEX})
 		`
 		const byName = Object.fromEntries(rows.map((r) => [r.indexname, r.indexdef]))
-		expect(Object.keys(byName).sort()).toEqual([NEW_INDEX, OLD_INDEX].sort())
+		expect(Object.keys(byName)).toEqual([NEW_INDEX])
 		const def = byName[NEW_INDEX] as string
 		expect(def).toMatch(/CREATE UNIQUE INDEX/)
 		expect(def).toMatch(/conversation_id, actor_id, COALESCE\(thread_root_id,/i)
-		// Postgres rewrites IN (...) to = ANY (ARRAY[...]) in indexdef; compare the predicate
-		// of both indexes rather than the text of one shape.
-		const predicate = (d: string) => d.slice(d.indexOf(' WHERE '))
-		expect(predicate(def)).toBe(predicate(byName[OLD_INDEX] as string))
-		expect(predicate(def)).toMatch(/interactive/)
+		expect(def).toMatch(/WHERE .*interactive/)
 	})
 
-	describe('with the old index dropped (after the release that drops it)', () => {
-		beforeAll(async () => {
-			await sql.unsafe(`DROP INDEX IF EXISTS "${OLD_INDEX}"`)
-		})
-
+	describe('one live session per chat, agent and thread', () => {
 		it('rejects two live main-chat sessions for the same agent in one chat', async () => {
 			const { agent, conversationId } = await chat()
 			await insertSession(db, workspaceId, agent.id, ownerId, live(conversationId, null))

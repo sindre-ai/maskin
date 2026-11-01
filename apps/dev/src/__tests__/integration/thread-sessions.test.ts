@@ -7,13 +7,13 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
-import { afterAll, beforeAll, vi } from 'vitest'
+import { afterAll, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { deliverTurnToAgent, evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
-import { db, getTestActorId, sql } from './global-setup'
+import { db, getTestActorId } from './global-setup'
 
 // One session per (chat, agent, thread), behind the chat-thread-sessions flag. Real Postgres and
 // a real SessionManager; only the container launch is switched off (autoStart false), so a
@@ -49,10 +49,6 @@ describe('thread sessions behind the flag (Integration)', () => {
 		process.env.FF_TESTER_FEATURES = on ? 'chat-thread-sessions' : ''
 		_resetFeatureFlagConfig()
 	}
-
-	beforeAll(async () => {
-		await sql`DROP INDEX IF EXISTS sessions_conversation_actor_active_uniq`
-	})
 
 	afterAll(() => {
 		for (const [name, value] of [
