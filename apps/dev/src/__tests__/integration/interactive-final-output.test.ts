@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { events, conversations, messages, sessionLogs, sessions } from '@maskin/db/schema'
+import {
+	events,
+	conversations,
+	messages,
+	sessionLogs,
+	sessions,
+	workspaces,
+} from '@maskin/db/schema'
 import { and, count, desc, eq, sql } from 'drizzle-orm'
 import {
 	InteractiveTurnFinalizer,
@@ -1015,6 +1022,65 @@ ${surviving}
 			expect(
 				(rows[0]?.metadata as { final_output?: { error_kind?: string } })?.final_output?.error_kind,
 			).toBe('permanent')
+		})
+
+		describe('a turn that hits "Credit balance is too low"', () => {
+			async function markOf(): Promise<{ at: number } | undefined> {
+				const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+				return (row?.settings as Record<string, { at: number } | undefined>)
+					?.anthropic_key_out_of_credit
+			}
+
+			beforeEach(async () => {
+				await db
+					.update(workspaces)
+					.set({
+						settings: sql`${workspaces.settings} || '{"llm_keys":{"anthropic":"FAKE-key"}}'::jsonb`,
+					})
+					.where(eq(workspaces.id, workspaceId))
+			})
+
+			it('marks the workspace key out of credit when the session ran on it', async () => {
+				const session = await seedSession({ config: { llm_route: 'workspace_api_key' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(14)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: 'API Error: 400 Credit balance is too low' })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				expect((await markOf())?.at).toBeGreaterThan(0)
+			})
+
+			it('leaves the key alone when the session ran on another route', async () => {
+				const session = await seedSession({ config: { llm_route: 'claude_oauth' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(15)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: 'API Error: 400 Credit balance is too low' })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				expect(await markOf()).toBeUndefined()
+			})
+
+			it('leaves the key alone for a different failure on the workspace key', async () => {
+				const session = await seedSession({ config: { llm_route: 'workspace_api_key' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(16)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				expect(await markOf()).toBeUndefined()
+			})
 		})
 
 		it('moves the workspace to the next subscription when a turn hits a limit', async () => {

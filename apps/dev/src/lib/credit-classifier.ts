@@ -7,6 +7,9 @@ import {
 
 import { parseCliResetBanner, parseRateLimitEventReset } from './subscription-limit-reset'
 
+/** What Anthropic's API (and the CLI that prints it) says when a key has no credit left. */
+export const CREDIT_BALANCE_LOW_BANNER = 'Credit balance is too low'
+
 const CLI_BANNERS: ReadonlyArray<{
 	match: string
 	reasonCode: FailureReasonCode
@@ -43,7 +46,7 @@ const CLI_BANNERS: ReadonlyArray<{
 		humanMessage: 'Claude request rejected — rate limit',
 	},
 	{
-		match: 'Credit balance is too low',
+		match: CREDIT_BALANCE_LOW_BANNER,
 		reasonCode: 'credit_balance_low',
 		humanMessage: 'Claude credit balance is too low',
 	},
@@ -68,6 +71,16 @@ const CLI_BANNERS: ReadonlyArray<{
 			'Claude OAuth token was revoked — moving this workspace to the next connected subscription',
 	},
 ]
+
+/**
+ * True when `text` is the "credit balance is too low" error. The one place that
+ * answers it: the route picker's out-of-credit mark and its callers go through
+ * here, so the wording is matched in a single spot. Pass the text of a failed
+ * turn or the classified banner, not a whole stdout tail.
+ */
+export function isCreditBalanceLowText(text: string): boolean {
+	return text.includes(CREDIT_BALANCE_LOW_BANNER)
+}
 
 /**
  * Inspects the stdout tail from a failed session and returns a typed failure

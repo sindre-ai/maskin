@@ -15,6 +15,7 @@ vi.mock('../../lib/crypto', () => ({
 	encrypt: (input: string) => input,
 }))
 
+import { API_KEY_CREDIT_MARK_WINDOW_MS, fingerprintStoredKey } from '../../lib/api-key-credit-mark'
 import {
 	PRO_HARD_CAP_DEFAULT_USD_CENTS,
 	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
@@ -1011,6 +1012,86 @@ describe('resolveLlmRoute when the Claude OAuth route yields nothing', () => {
 			env: {} as NodeJS.ProcessEnv,
 		})
 		expect(result).toBeNull()
+	})
+})
+
+// Route 4 leaves the workspace Anthropic key alone while it is marked out of
+// credit (api-key-credit-mark.ts). The mark's write is covered against real
+// Postgres in integration/api-key-credit-mark.test.ts; here it is given.
+describe('resolveLlmRoute with a workspace API key marked out of credit', () => {
+	const KEY = 'sk-ant-ws'
+	const MARKED_AT = Date.parse('2026-11-01T12:00:00Z')
+
+	function settingsWithMark(overrides: { at?: number; key?: string } = {}) {
+		const settings = emptySettings() as WorkspaceSettings & Record<string, unknown>
+		settings.llm_keys = { anthropic: KEY }
+		settings.anthropic_key_out_of_credit = {
+			at: overrides.at ?? MARKED_AT,
+			key: overrides.key ?? fingerprintStoredKey(KEY),
+		}
+		return settings as WorkspaceSettings
+	}
+
+	function pick(settings: WorkspaceSettings, now: number, db = dbWithFallbackUsage([])) {
+		vi.useFakeTimers({ toFake: ['Date'] })
+		vi.setSystemTime(now)
+		return resolveLlmRoute({
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: settings,
+			enterprise: true,
+			agent: {},
+			env: {} as NodeJS.ProcessEnv,
+		})
+	}
+
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('skips the key inside the window and fails the start with the credit reason', async () => {
+		const err = await pick(settingsWithMark(), MARKED_AT + 60_000).catch((e) => e)
+		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
+		expect(err.apiKeyOutOfCredit).toBe(true)
+		expect(err.transient).toBe(false)
+		expect(err.noCredentialsConfigured).toBe(false)
+		expect(err.toFailureReason()).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'credit_balance_low',
+		})
+		expect(err.toFailureReason().human_message).toMatch(/run out of credit/i)
+	})
+
+	it('tries the key again once 30 minutes have passed', async () => {
+		const result = await pick(settingsWithMark(), MARKED_AT + API_KEY_CREDIT_MARK_WINDOW_MS + 1)
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_API_KEY).toBe(KEY)
+	})
+
+	it('ignores a mark written for a key that has since been replaced', async () => {
+		const settings = settingsWithMark({ key: fingerprintStoredKey('sk-ant-old') })
+		const result = await pick(settings, MARKED_AT + 60_000)
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+	})
+
+	it('still prefers custom_llm, and uses it while the key is marked', async () => {
+		const settings = settingsWithMark()
+		settings.custom_llm = {
+			enabled: true,
+			base_url: 'https://example.com',
+			api_key: 'sk-cust',
+			model: 'mod',
+		}
+		const result = await pick(settings, MARKED_AT + 60_000)
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+	})
+
+	it('does not touch a workspace whose key has no mark', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: KEY }
+		const result = await pick(settings, MARKED_AT)
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
 	})
 })
 

@@ -4,8 +4,13 @@ import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } from '@maskin/shared'
 import * as Sentry from '@sentry/node'
 import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
-import { classifyBannerResult, classifyCreditExhaustion } from '../lib/credit-classifier'
-import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
+import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
+import {
+	classifyBannerResult,
+	classifyCreditExhaustion,
+	isCreditBalanceLowText,
+} from '../lib/credit-classifier'
+import { LLM_ROUTE_API_KEY, LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
 import {
@@ -1419,6 +1424,11 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} turn failed permanently (log ${logId}): ${detail}`,
 			)
+			// An interactive session does not exit on this either, so the mark the
+			// session-exit path writes for a key with no credit is written from here.
+			if (gate.llmRoute === LLM_ROUTE_API_KEY && isCreditBalanceLowText(detail)) {
+				await markApiKeyOutOfCredit({ db: this.db, workspaceId: gate.workspaceId })
+			}
 			// Session-exit failover never sees an interactive turn (see
 			// turn-error-classifier.ts), so route the same move from here.
 			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
