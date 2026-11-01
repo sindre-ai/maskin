@@ -1997,7 +1997,7 @@ export const tools = {
 	},
 	list_for_you: {
 		description:
-			'The ranked list of what needs one person, exactly as the web For You page shows it for them: cards already filtered (ended session, closed or moved-on object, already read or answered) and sorted by rank, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id. Returns { total, items }: total counts the whole list, and offset pages through it (offset 50 starts at the 51st card). Each item { rank, source (curated or decision), headline, rationale, notification_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card whose due_at is today. object_id, title, type and status are null for a card with no object. Read-only: to answer a card use create_comment, or update_objects to change the object.',
+			'The ranked list of what needs one person, exactly as the web For You page shows it for them: cards already filtered (ended session, closed or moved-on object, already read or answered) and sorted by rank, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id. Returns { total, next_offset, items }: total counts the whole list, offset pages through it (offset 50 starts at the 51st card), and next_offset is the offset of the next page, or null when there are no more cards. Each item { rank, source (curated or decision), headline, rationale, notification_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card whose due_at is today. object_id, title, type and status are null for a card with no object. Read-only: to answer a card use create_comment, or update_objects to change the object.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z
@@ -2021,7 +2021,7 @@ export const tools = {
 				.min(0)
 				.default(0)
 				.describe(
-					'How many cards to skip from the top of the list. Pass 50 with limit 50 to read the next page when total is above 50.',
+					'How many cards to skip from the top of the list. Pass the next_offset from the previous page to read on; stop when it is null.',
 				),
 		}),
 	},
