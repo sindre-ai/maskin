@@ -75,6 +75,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'the one-time code and its PKCE verifier are the credential',
 	],
 	['POST', '/api/integrations/linkedin-unipile/webhook', 'provider webhook, authenticated by HMAC'],
+	[
+		'POST',
+		'/api/integrations/telnyx/webhook',
+		'provider webhook, authenticated by Ed25519 signature',
+	],
+	[
+		'POST',
+		'/api/integrations/telnyx/tools/:toolName',
+		'called by the Telnyx assistant, authenticated by a shared bearer secret',
+	],
 	// Group B leftovers: no handler logic or no workspace data.
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],

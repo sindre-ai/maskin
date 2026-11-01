@@ -15,8 +15,12 @@ import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
+import { TelnyxKnowledgeExporterJob } from './jobs/telnyx-knowledge-exporter'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
+import { VoiceDialerJob } from './jobs/voice-dialer'
+import { VoiceRetentionSweepJob, resolveSweepCron } from './jobs/voice-retention-sweep'
+import { VoiceStaleClaimSweepJob } from './jobs/voice-stale-claim-sweep'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -32,6 +36,7 @@ import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-s
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
 import { logger } from './lib/logger'
+import { configureVoiceArtifactStorage } from './lib/outreach/voice/recordings-hook'
 import { recordDbTime } from './lib/request-timing'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
@@ -61,6 +66,7 @@ import { SessionManager } from './services/session-manager'
 import { SessionRetryScheduler } from './services/session-retry-scheduler'
 import { SessionSelfHealJob } from './services/session-self-heal-job'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
+import { VoiceOptOutListener } from './services/voice-optout-listener'
 import {
 	VoiceSessionTimeoutSweeper,
 	endAllLiveVoiceSessions,
@@ -219,6 +225,11 @@ triggerRunner
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
 
+const telnyxKnowledgeExporter = new TelnyxKnowledgeExporterJob(db, notifyBridge)
+telnyxKnowledgeExporter.start()
+
+const voiceOptOutListener = new VoiceOptOutListener(db, notifyBridge)
+voiceOptOutListener.start()
 const apnsSender = new ApnsSender(db)
 const webPushSender = new WebPushSender(db)
 const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
@@ -336,6 +347,27 @@ const viesSchedulerJob = new ViesSchedulerJob(db)
 viesSchedulerJob.start()
 logger.info('VIES scheduler job started')
 
+// Voice dialer (bet/5b8e-voice-outreach): ~10s tick inside the Copenhagen workday
+// window. Registers unconditionally; the dial itself is behind voice-outreach-autosend.
+const voiceDialerJob = new VoiceDialerJob(db)
+voiceDialerJob.start()
+logger.info('Voice dialer job started')
+// Voice call recordings: daily blob expiry (24 months from last touch) and
+// deleted_by_request erasure. The mirror hook writes through the same provider.
+configureVoiceArtifactStorage(storageProvider)
+const voiceRetentionSweepJob = new VoiceRetentionSweepJob(
+	db,
+	storageProvider,
+	resolveSweepCron(process.env.VOICE_RETENTION_SWEEP_CRON),
+)
+voiceRetentionSweepJob.start()
+logger.info('Voice retention sweep job started')
+
+// Voice stale-claim sweep: once a minute, all day. Ends a voice_dialing contact whose claim
+// was never confirmed by a call.initiated webhook in voice_failed; it never redials.
+const voiceStaleClaimSweepJob = new VoiceStaleClaimSweepJob(db)
+voiceStaleClaimSweepJob.start()
+logger.info('Voice stale-claim sweep job started')
 // Custom MCP servers used to live on each agent. Move them up to the workspace, where grants
 // decide who gets them. Idempotent, and a failure here never blocks startup.
 migrateAgentToolServers(db)
@@ -479,6 +511,10 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	telnyxKnowledgeExporter.stop()
+	voiceDialerJob.stop()
+	voiceRetentionSweepJob.stop()
+	voiceStaleClaimSweepJob.stop()
 	keychainUndoSweeperJob.stop()
 	fileUploadReaperJob.stop()
 	upgradeLegacyCredentialsJob.stop()
