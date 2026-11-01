@@ -8,6 +8,13 @@ import { z } from 'zod'
 export const FOR_YOU_KIND = 'for_you'
 
 /**
+ * An agent that rewrites a card can write a field it has nothing for as an explicit
+ * null. Read that as "not set": a strict optional made the whole card vanish from the
+ * list without an error.
+ */
+const nullAsUnset = (v: unknown) => (v === null ? undefined : v)
+
+/**
  * What the Chief of Staff writes into `notification.metadata` for an item it
  * has decided the human must see. Read back by `GET /api/for-you`, which orders
  * by `rank` and re-checks every item against live state before returning it.
@@ -19,20 +26,22 @@ export const forYouMetadataSchema = z.object({
 		.string()
 		.min(1)
 		.describe('One line saying what is needed from the human, not what happened.'),
-	rationale: z.string().optional().describe('Why the agents could not settle this themselves.'),
+	rationale: z
+		.preprocess(nullAsUnset, z.string().optional())
+		.describe('Why the agents could not settle this themselves.'),
 	// Event ids come back from the API as strings (they are bigints), and an agent
 	// copying one into metadata passes it on as text. Accept digits either way:
 	// a strict number made the whole item vanish from the list without an error.
 	source_comment_id: z
-		.preprocess((v) => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v), z.number().int())
-		.optional()
+		.preprocess(
+			(v) => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : nullAsUnset(v)),
+			z.number().int().optional(),
+		)
 		.describe(
 			'Event id of the comment carrying the ask. The item drops once the human replies to or dismisses that thread.',
 		),
 	only_while_status: z
-		.array(z.string().min(1))
-		.min(1)
-		.optional()
+		.preprocess(nullAsUnset, z.array(z.string().min(1)).min(1).optional())
 		.describe(
 			'The statuses the item\'s object must still be in for the ask to make sense, e.g. ["proposed"] for "move this bet to active". The item drops the moment the object\'s status is anything else, so a card cannot outlive the state it was written about.',
 		),

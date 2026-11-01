@@ -28,4 +28,21 @@ describe('parseForYouMetadata', () => {
 	it('ignores extra keys an agent adds', () => {
 		expect(parseForYouMetadata({ ...base, tags: ['posthog'] })).not.toBeNull()
 	})
+
+	it('reads an explicit null on an optional field as not set, so the card still shows', () => {
+		const meta = parseForYouMetadata({
+			...base,
+			only_while_status: null,
+			rationale: null,
+			source_comment_id: null,
+		})
+		expect(meta).not.toBeNull()
+		expect(meta?.only_while_status).toBeUndefined()
+		expect(meta?.rationale).toBeUndefined()
+		expect(meta?.source_comment_id).toBeUndefined()
+	})
+
+	it('still rejects an empty only_while_status list', () => {
+		expect(parseForYouMetadata({ ...base, only_while_status: [] })).toBeNull()
+	})
 })
