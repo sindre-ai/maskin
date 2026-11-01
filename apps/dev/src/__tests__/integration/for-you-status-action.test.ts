@@ -101,8 +101,8 @@ describe('decision cards with a status button', () => {
 		const res = await appAs(humanId).request(
 			jsonGet('/api/for-you', { 'X-Workspace-Id': workspaceId }),
 		)
-		const body = (await res.json()) as { data: { items: Array<{ entity_id: string }> } }
-		return body.data.items
+		const body = (await res.json()) as { items: Array<{ entity_id: string }> }
+		return body.items
 	}
 	const statusOf = async (id: string) =>
 		(await db.select({ s: objects.status }).from(objects).where(eq(objects.id, id)))[0]?.s
@@ -110,7 +110,7 @@ describe('decision cards with a status button', () => {
 	async function cardOn(entityId: string, decision: Record<string, unknown>) {
 		const res = await agentCard(entityId, decision)
 		expect(res.status).toBe(201)
-		return ((await res.json()) as { data: { id: number } }).data.id
+		return ((await res.json()) as { id: number }).id
 	}
 
 	describe('posting a card', () => {
@@ -210,8 +210,8 @@ describe('decision cards with a status button', () => {
 			const cardId = await cardOn(b.id, withAction())
 			const res = await tap(b.id, cardId)
 			expect(res.status).toBe(201)
-			const body = (await res.json()) as { data: { status_action?: { applied: boolean } } }
-			expect(body.data.status_action?.applied).toBe(true)
+			const body = (await res.json()) as { status_action?: { applied: boolean } }
+			expect(body.status_action?.applied).toBe(true)
 			expect(await statusOf(b.id)).toBe('active')
 			const [change] = await db
 				.select()
@@ -240,9 +240,9 @@ describe('decision cards with a status button', () => {
 			const res = await tap(b.id, cardId)
 			expect(res.status).toBe(201)
 			const body = (await res.json()) as {
-				data: { status_action?: { applied: boolean; reason?: string; current_status?: string } }
+				status_action?: { applied: boolean; reason?: string; current_status?: string }
 			}
-			expect(body.data.status_action).toMatchObject({
+			expect(body.status_action).toMatchObject({
 				applied: false,
 				reason: 'moved_on',
 				current_status: 'paused',
