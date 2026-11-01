@@ -1428,6 +1428,10 @@ export const mcpTelemetry = pgTable(
 		durationMs: integer('duration_ms'),
 		objectType: text('object_type'),
 		mutationKind: text('mutation_kind'),
+		// tool_call rows of the six list-family tools only: whether the call carried a
+		// cursor or offset. Null for every other row. `object_type` on those rows is the
+		// type the call listed (see listCallObjectType in @maskin/shared).
+		hasCursor: boolean('has_cursor'),
 		data: jsonb('data'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},

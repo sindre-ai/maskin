@@ -89,6 +89,8 @@ app.openapi(recordRoute, (async (c) => {
 			sessionId: persistedSessionId,
 			hasRichRender: body.has_rich_render,
 			durationMs: body.duration_ms,
+			objectType: body.object_type ?? null,
+			hasCursor: body.has_cursor ?? null,
 		})
 		// Trace fan-out for stdio clients (Claude Code, Cursor, …), whose calls
 		// only ever reach us through this sink.
