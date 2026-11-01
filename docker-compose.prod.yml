@@ -117,6 +117,16 @@ services:
       FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
       FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
       FF_WORKSPACE_FEATURES: ${FF_WORKSPACE_FEATURES:-}
+      # POST /mcp rate limit (apps/dev/src/lib/mcp-rate-limit.ts). Read once at
+      # boot, so a change needs a restart. MODE is log-only, enforce or off; empty
+      # or anything else is log-only. The boot line mcp_rate_limit_config shows the
+      # resolved values. EXEMPT_ACTOR_IDS is comma separated actor ids.
+      MASKIN_MCP_RATE_LIMIT_MODE: ${MASKIN_MCP_RATE_LIMIT_MODE:-log-only}
+      MASKIN_MCP_RATE_LIMIT_AGENT_PER_MIN: ${MASKIN_MCP_RATE_LIMIT_AGENT_PER_MIN:-600}
+      MASKIN_MCP_RATE_LIMIT_HUMAN_PER_MIN: ${MASKIN_MCP_RATE_LIMIT_HUMAN_PER_MIN:-120}
+      MASKIN_MCP_RATE_LIMIT_UNKNOWN_PER_MIN: ${MASKIN_MCP_RATE_LIMIT_UNKNOWN_PER_MIN:-300}
+      MASKIN_MCP_RATE_LIMIT_WRITE_COST: ${MASKIN_MCP_RATE_LIMIT_WRITE_COST:-3}
+      MASKIN_MCP_RATE_LIMIT_EXEMPT_ACTOR_IDS: ${MASKIN_MCP_RATE_LIMIT_EXEMPT_ACTOR_IDS:-}
       # MCP modern-protocol flag: off or on. Read once at boot, so a change
       # needs a restart. Empty or any other value is treated as off.
       MASKIN_MCP_MODERN: ${MASKIN_MCP_MODERN:-off}
