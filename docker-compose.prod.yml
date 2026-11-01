@@ -108,6 +108,11 @@ services:
       # reaches the container, however it is set in Coolify. The server-side
       # PostHog capture reads this key; empty disables capture.
       POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      # deep_research tool. Same rule as above. Empty uses the code default, but an empty TAVILY_API_KEY means no search.
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-}
+      RESEARCH_MAX_CAP_USD: ${RESEARCH_MAX_CAP_USD:-}
+      RESEARCH_MAX_CONCURRENT_RUNS: ${RESEARCH_MAX_CONCURRENT_RUNS:-}
       # Feature flags (apps/dev/src/lib/feature-flags.ts). Same rule as above:
       # not listed here means never in the container. All three are read once
       # at boot, so a change needs a restart. Empty means every flag is off for
