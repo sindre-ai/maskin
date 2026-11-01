@@ -93,6 +93,7 @@ const ALL_TOOL_NAMES = [
 	'create_notification',
 	'list_notifications',
 	'list_for_you',
+	'withdraw_decision_card',
 	'get_notification',
 	'update_notification',
 	'delete_notification',

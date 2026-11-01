@@ -1,8 +1,9 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, forYouDismissals, notifications } from '@maskin/db/schema'
-import { FOR_YOU_KIND } from '@maskin/shared'
+import { events, forYouDismissals, forYouWithdrawals, notifications } from '@maskin/db/schema'
+import { FOR_YOU_KIND, parseCommentDecision } from '@maskin/shared'
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { findChiefOfStaffId } from '../lib/chief-of-staff'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { buildForYouItems, forYouItemSchema } from '../lib/for-you-items'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -248,6 +249,107 @@ app.openapi(undismissRoute, async (c) => {
 	)
 	if (!ok) return c.json(createApiError('NOT_FOUND', 'Card not found'), 404)
 	return c.json({ ok: true as const }, 200)
+})
+
+const WITHDRAW_REASON_MAX_CHARS = 200
+
+const withdrawBodySchema = z.object({
+	comment_id: z
+		.number()
+		.int()
+		.positive()
+		.describe("The decision card's comment id: latest_mention.event_id in the list."),
+	reason: z
+		.string()
+		.trim()
+		.min(1)
+		.max(WITHDRAW_REASON_MAX_CHARS)
+		.describe('One line saying why the card is dead, up to 200 characters.'),
+})
+
+const withdrawRoute = createRoute({
+	method: 'post',
+	path: '/withdrawals',
+	'x-viewer-policy': 'writer',
+	tags: ['For You'],
+	summary:
+		'Withdraw a decision card that is dead (test card, passed deadline, object already moved on, duplicate). It leaves every list, for everyone. Only the card’s writer or the Chief of Staff.',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: withdrawBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Withdrawn (or already was). Carries the stored reason.',
+			content: {
+				'application/json': {
+					schema: z.object({
+						ok: z.literal(true),
+						comment_id: z.number(),
+						reason: z.string(),
+					}),
+				},
+			},
+		},
+		400: {
+			description:
+				'Missing workspace ID, reason missing or over 200 characters, or the comment is not a decision card',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Only the card’s writer or the Chief of Staff may withdraw it',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No such comment in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(withdrawRoute, async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { comment_id: commentId, reason } = c.req.valid('json')
+
+	// Scoped to the workspace first, so an id from another workspace is a 404 and nothing more.
+	const [comment] = await db
+		.select({ id: events.id, actorId: events.actorId, data: events.data })
+		.from(events)
+		.where(
+			and(
+				eq(events.id, commentId),
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+				eq(events.entityType, 'object'),
+			),
+		)
+		.limit(1)
+	if (!comment) return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404)
+
+	// The caller's identity comes from the server, never the body.
+	if (comment.actorId !== callerId && callerId !== (await findChiefOfStaffId(db, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the card’s writer or the Chief of Staff can withdraw it'),
+			403,
+		)
+	}
+	if (!parseCommentDecision((comment.data as { decision?: unknown } | null)?.decision)) {
+		return c.json(createApiError('BAD_REQUEST', 'That comment is not a decision card'), 400)
+	}
+
+	// Withdrawing twice is fine: the first reason stays, and is what comes back.
+	await db
+		.insert(forYouWithdrawals)
+		.values({ sourceCommentId: commentId, workspaceId, withdrawnBy: callerId, reason })
+		.onConflictDoNothing()
+	const [stored] = await db
+		.select({ reason: forYouWithdrawals.reason })
+		.from(forYouWithdrawals)
+		.where(eq(forYouWithdrawals.sourceCommentId, commentId))
+		.limit(1)
+	return c.json({ ok: true as const, comment_id: commentId, reason: stored?.reason ?? reason }, 200)
 })
 
 export default app

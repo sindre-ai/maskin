@@ -1,5 +1,12 @@
 import type { Database } from '@maskin/db'
-import { events, forYouDismissals, notifications, objects, sessions } from '@maskin/db/schema'
+import {
+	events,
+	forYouDismissals,
+	forYouWithdrawals,
+	notifications,
+	objects,
+	sessions,
+} from '@maskin/db/schema'
 import { FOR_YOU_KIND, parseCommentDecision, parseForYouMetadata } from '@maskin/shared'
 import { and, eq, gte, inArray, max, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
@@ -141,6 +148,28 @@ export async function findDismissedSourceIds(
 	return new Set(rows.map((r) => Number(r.id)))
 }
 
+/**
+ * Source comments whose card was withdrawn, among `sourceIds`. Global, not per person: the
+ * writing agent (or the Chief of Staff) retired the card, so nobody is shown it.
+ */
+export async function findWithdrawnSourceIds(
+	db: Database,
+	workspaceId: string,
+	sourceIds: number[],
+): Promise<Set<number>> {
+	if (sourceIds.length === 0) return new Set()
+	const rows = await db
+		.select({ id: forYouWithdrawals.sourceCommentId })
+		.from(forYouWithdrawals)
+		.where(
+			and(
+				eq(forYouWithdrawals.workspaceId, workspaceId),
+				inArray(forYouWithdrawals.sourceCommentId, sourceIds),
+			),
+		)
+	return new Set(rows.map((r) => Number(r.id)))
+}
+
 /** Whether a comment asks the person for a call: a decision block, which is also where drafts live. */
 function carriesDecision(comment: typeof events.$inferSelect | undefined): boolean {
 	const data = (comment?.data ?? {}) as Record<string, unknown>
@@ -166,7 +195,8 @@ export type VisibleForYou = {
  * `needs_input` rows of kind FOR_YOU_KIND, minus the ones whose session ended (unless the card asks for an approval or carries a draft), whose object is
  * closed or moved on, or that the viewer already read or answered. Shared with the briefing and
  * lifecycle pushes so a push never counts something the app does not show. A card with a source
- * comment is retired only by a threaded reply to it (an option tap is one), or by Dismiss; the
+ * comment is retired only by a threaded reply to it (an option tap is one), by Dismiss, or by a
+ * withdrawal from its writer or the Chief of Staff; the
  * read position and free comments no longer count. A card with no source comment is retired
  * only by Dismiss; reading its object does not retire it.
  */
@@ -238,7 +268,7 @@ export async function loadVisibleForYou(
 	const sourceById = new Map(sourceRows.map((e) => [e.id, e]))
 	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, sourceRows)
 
-	const [viewerReplies, dismissedIds] = await Promise.all([
+	const [viewerReplies, dismissedIds, withdrawnIds] = await Promise.all([
 		findViewerReplies(
 			db,
 			workspaceId,
@@ -247,6 +277,7 @@ export async function loadVisibleForYou(
 			Math.min(...sourceIds, Number.MAX_SAFE_INTEGER),
 		),
 		findDismissedSourceIds(db, workspaceId, actorId, sourceIds),
+		findWithdrawnSourceIds(db, workspaceId, sourceIds),
 	])
 
 	// What reading a source-less curated item moves the position to: the newest activity on its
@@ -282,6 +313,11 @@ export async function loadVisibleForYou(
 				const source =
 					meta.source_comment_id !== undefined ? sourceById.get(meta.source_comment_id) : undefined
 				if (!carriesDecision(source)) return false
+			}
+			// Retired by its writer or the Chief of Staff. Outside the object branch below, so a
+			// card with a source comment but no object is dropped too.
+			if (meta.source_comment_id !== undefined && withdrawnIds.has(meta.source_comment_id)) {
+				return false
 			}
 			// Every message the card offered has been sent or skipped: nothing left to approve.
 			if (meta.source_comment_id !== undefined && finishedDraftCards.has(meta.source_comment_id)) {

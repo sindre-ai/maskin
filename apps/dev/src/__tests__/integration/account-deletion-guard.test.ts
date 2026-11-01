@@ -43,6 +43,8 @@ const KEPT: Record<string, string> = {
 	file_comments: 'content authored by the person is kept',
 	file_uploads:
 		'transient ledger of an in-flight upload; the reaper aborts the stored upload and settles the row when it expires, so erasing it here would strand the stored parts',
+	for_you_withdrawals:
+		'withdrawn_by is who retired a dead card (ON DELETE SET NULL); the row must stay, or the card comes back',
 	workspace_skills: 'created_by on workspace content',
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',

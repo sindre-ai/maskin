@@ -71,7 +71,7 @@ export interface ForYouItemLike {
 	due_at?: string | null
 	entity_id: string | null
 	object?: { title?: string | null; type?: string | null; status?: string | null } | null
-	latest_mention?: { content?: string | null } | null
+	latest_mention?: { event_id?: number | null; content?: string | null } | null
 }
 
 export interface SlimForYouCard {
@@ -80,6 +80,8 @@ export interface SlimForYouCard {
 	headline: string
 	rationale: string | null
 	notification_id: string | null
+	// The card's source comment: what withdraw_decision_card takes. Null when the card has none.
+	comment_id: number | null
 	object_id: string | null
 	title: string | null
 	type: string | null
@@ -112,6 +114,7 @@ export function slimForYouItems(
 				headline: item.headline,
 				rationale: item.rationale,
 				notification_id: item.notification_id,
+				comment_id: item.latest_mention?.event_id ?? null,
 				object_id: item.entity_id,
 				title: item.object?.title ?? null,
 				type: item.object?.type ?? null,

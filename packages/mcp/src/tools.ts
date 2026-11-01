@@ -1997,7 +1997,7 @@ export const tools = {
 	},
 	list_for_you: {
 		description:
-			'The ranked list of what needs one person, exactly as the web For You page shows it for them: cards already filtered (ended session, closed or moved-on object, already read or answered) and sorted by rank, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id. Returns { total, next_offset, items }: total counts the whole list, offset pages through it (offset 50 starts at the 51st card), and next_offset is the offset of the next page, or null when there are no more cards. Each item { rank, source (curated or decision), headline, rationale, notification_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card whose due_at is today. object_id, title, type and status are null for a card with no object. Read-only: to answer a card use create_comment, or update_objects to change the object.',
+			'The ranked list of what needs one person, exactly as the web For You page shows it for them: cards already filtered (ended session, closed or moved-on object, already read or answered) and sorted by rank, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id. Returns { total, next_offset, items }: total counts the whole list, offset pages through it (offset 50 starts at the 51st card), and next_offset is the offset of the next page, or null when there are no more cards. Each item { rank, source (curated or decision), headline, rationale, notification_id, comment_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card whose due_at is today. object_id, title, type and status are null for a card with no object. Read-only: to answer a card use create_comment, or update_objects to change the object; to retire a dead card use withdraw_decision_card with its comment_id.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z
@@ -2023,6 +2023,23 @@ export const tools = {
 				.describe(
 					'How many cards to skip from the top of the list. Pass the next_offset from the previous page to read on; stop when it is null.',
 				),
+		}),
+	},
+	withdraw_decision_card: {
+		description:
+			"Retire a decision card that is dead, so nobody is shown it any more: a test card, a deadline that passed, an object that already moved on, a duplicate. Use this instead of posting a replacement card. The card leaves every list for everyone, the briefing and the pushes. Pass comment_id (the card's comment id, from list_for_you or the id create_comment returned) and a one-line reason of up to 200 characters. Allowed only for the agent or person who wrote the card, or the Chief of Staff for any card; anyone else gets 403. A comment without a decision block gets 400. Calling it again is harmless. Do NOT use it on a card that is still a live ask, or to hide a card the person simply has not answered yet: the person has Dismiss for their own list.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			comment_id: z
+				.number()
+				.int()
+				.positive()
+				.describe("The decision card's comment id (comment_id in list_for_you)."),
+			reason: z
+				.string()
+				.min(1)
+				.max(200)
+				.describe('One line saying why the card is dead, up to 200 characters.'),
 		}),
 	},
 	list_notifications: {

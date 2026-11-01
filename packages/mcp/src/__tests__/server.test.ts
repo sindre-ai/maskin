@@ -6870,7 +6870,11 @@ describe('tool handlers', () => {
 							status: 'proposed',
 							content: bigDraft,
 						},
-			latest_mention: { content: `${'ask '.repeat(100)}`, decision: { draft: { body: bigDraft } } },
+			latest_mention: {
+				event_id: 100 + n,
+				content: `${'ask '.repeat(100)}`,
+				decision: { draft: { body: bigDraft } },
+			},
 		})
 
 		it('asks the For You route for that person and returns a slim card per item', async () => {
@@ -6892,6 +6896,7 @@ describe('tool handlers', () => {
 				source: 'curated',
 				headline: 'Card 1',
 				notification_id: 'n-1',
+				comment_id: 101,
 				object_id: 'obj-1',
 				title: 'Obj 1',
 				type: 'bet',
@@ -7001,6 +7006,30 @@ describe('tool handlers', () => {
 				offset: 10,
 			})) as { content: Array<{ text: string }> }
 			expect(result.content[0].text.length).toBeLessThan(20_000)
+		})
+	})
+
+	describe('withdraw_decision_card handler', () => {
+		it('posts the comment id and reason to the withdrawals route and returns its answer', async () => {
+			mockFetchSuccess({ ok: true, comment_id: 4242, reason: 'Deadline passed' })
+
+			const result = (await getHandler('withdraw_decision_card')({
+				comment_id: 4242,
+				reason: 'Deadline passed',
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/for-you/withdrawals',
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ comment_id: 4242, reason: 'Deadline passed' }),
+				}),
+			)
+			expect(JSON.parse(result.content[0].text)).toEqual({
+				ok: true,
+				comment_id: 4242,
+				reason: 'Deadline passed',
+			})
 		})
 	})
 

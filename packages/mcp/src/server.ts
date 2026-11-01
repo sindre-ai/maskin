@@ -7129,6 +7129,30 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'withdraw_decision_card',
+		{
+			description: tools.withdraw_decision_card.description,
+			inputSchema: tools.withdraw_decision_card.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/for-you/withdrawals', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta(
+					'withdraw_decision_card',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'list_notifications',
 		{
 			description: tools.list_notifications.description,

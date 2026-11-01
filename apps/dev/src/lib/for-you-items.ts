@@ -10,6 +10,7 @@ import {
 	findDismissedSourceIds,
 	findFinishedDraftCards,
 	findViewerReplies,
+	findWithdrawnSourceIds,
 	isCardAnswered,
 	loadVisibleForYou,
 } from './for-you-visibility'
@@ -130,7 +131,7 @@ export async function buildForYouItems(
 
 	const decisionEntityIds = [...latestDecisionByEntity.keys()]
 	const decisionIds = [...latestDecisionByEntity.values()].map((e) => Number(e.id))
-	const [decisionObjects, viewerReplies, dismissedIds] = decisionEntityIds.length
+	const [decisionObjects, viewerReplies, dismissedIds, withdrawnIds] = decisionEntityIds.length
 		? await Promise.all([
 				db
 					.select()
@@ -138,14 +139,18 @@ export async function buildForYouItems(
 					.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, decisionEntityIds))),
 				findViewerReplies(db, workspaceId, actorId, decisionEntityIds, Math.min(...decisionIds)),
 				findDismissedSourceIds(db, workspaceId, actorId, decisionIds),
+				findWithdrawnSourceIds(db, workspaceId, decisionIds),
 			])
-		: [[], [], new Set<number>()]
+		: [[], [], new Set<number>(), new Set<number>()]
 	const decisionObjectById = new Map(decisionObjects.map((o) => [o.id, o]))
 
 	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, [
 		...latestDecisionByEntity.values(),
 	])
 	const liveDecisions = [...latestDecisionByEntity.values()].filter((event) => {
+		// Withdrawn by its writer or the Chief of Staff. Dropped after the newest decision per
+		// object is picked, so an older decision on the same object does not take its place.
+		if (withdrawnIds.has(Number(event.id))) return false
 		const obj = decisionObjectById.get(event.entityId)
 		// Gone or closed (done, discarded, shipped…): the card would only ask about finished work.
 		if (!obj || CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return false

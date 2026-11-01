@@ -180,6 +180,7 @@ const ROWS: Record<string, Row> = {
 	create_notification: row('Create notification'),
 	list_notifications: row('List notifications'),
 	list_for_you: row('List For You'),
+	withdraw_decision_card: row('Withdraw decision card', { idempotent: true }),
 	update_notification: row('Update notification', { idempotent: true }),
 	// Session activity, drafts, mail and access
 	get_session_activity: row('Get session activity'),
