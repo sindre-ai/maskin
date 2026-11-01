@@ -21,6 +21,7 @@ This directory holds one canonical page per Maskin primitive. Each page follows 
 - [relationships.md](./relationships.md) — the relationship primitive: edge types (`breaks_into`, `blocks`, `relates_to`, `informs`, `duplicates`) and how to list and create them.
 - [loops.md](./loops.md) — the loop primitive: persistent multi-agent processes; triggers as steps, `in_loop` membership edges, open vs closed loops, per-loop `closed_statuses`, and the create_loop/update_loop/list_loops MCP tools.
 - [mcp-tools.md](./mcp-tools.md) — the MCP tool surface: which tools exist, what they return, and when to reach for each.
+- [mcp-baseline.md](./mcp-baseline.md) — repeatable, read-only measurements of the MCP surface (scripts/mcp-baseline.mjs), one dated section per run.
 - [notifications.md](./notifications.md) — the notification primitive: `needs_input` vs. informational, @mention semantics, and how sessions get spawned from mentions.
 - [agent-access.md](./agent-access.md) — agent grants: which agents may use an integration or saved credential, and how (read, write, read & write); defaults, enforcement, and the MCP gateway.
 - [drafts.md](./drafts.md) — drafts and previews: an email, LinkedIn message or post, or Slack message as an ordinary object with `metadata.kind`, the `preview` projection, human-only approval bound to a content hash, the For You and chat cards, file previews (HTML, markdown, images), and sending with `object_id`.
