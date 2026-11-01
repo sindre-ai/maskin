@@ -45780,6 +45780,7 @@ public enum Operations {
                     /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                     /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                     /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                    /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                     ///
                     /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                     /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -45831,6 +45832,39 @@ public enum Operations {
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/destructive`.
                             public var destructive: Swift.Bool?
+                            /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status`.
+                            public struct set_statusPayload: Codable, Hashable, Sendable {
+                                /// The status to put the object in, e.g. "active".
+                                ///
+                                /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status/status`.
+                                public var status: Swift.String
+                                /// The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                ///
+                                /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status/object_id`.
+                                public var object_id: Swift.String?
+                                /// Creates a new `set_statusPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - status: The status to put the object in, e.g. "active".
+                                ///   - object_id: The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                public init(
+                                    status: Swift.String,
+                                    object_id: Swift.String? = nil
+                                ) {
+                                    self.status = status
+                                    self.object_id = object_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case status
+                                    case object_id
+                                }
+                            }
+                            /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status`.
+                            public var set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
                             /// Creates a new `optionsPayloadPayload`.
                             ///
                             /// - Parameters:
@@ -45838,22 +45872,26 @@ public enum Operations {
                             ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                             ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                             ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                            ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                             public init(
                                 label: Swift.String,
                                 consequences: [Swift.String],
                                 recommended: Swift.Bool? = nil,
-                                destructive: Swift.Bool? = nil
+                                destructive: Swift.Bool? = nil,
+                                set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
                             ) {
                                 self.label = label
                                 self.consequences = consequences
                                 self.recommended = recommended
                                 self.destructive = destructive
+                                self.set_status = set_status
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case label
                                 case consequences
                                 case recommended
                                 case destructive
+                                case set_status
                             }
                         }
                         /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -45935,6 +45973,39 @@ public enum Operations {
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/only_while_status`.
                         public var only_while_status: [Swift.String]?
+                        /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/no_status_action`.
+                        public var no_status_action: Swift.Bool?
+                        /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp`.
+                        public struct status_stampPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp/status`.
+                            public var status: Swift.String
+                            /// Creates a new `status_stampPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - object_id:
+                            ///   - status:
+                            public init(
+                                object_id: Swift.String,
+                                status: Swift.String
+                            ) {
+                                self.object_id = object_id
+                                self.status = status
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case object_id
+                                case status
+                            }
+                        }
+                        /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp`.
+                        public var status_stamp: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.status_stampPayload?
                         /// Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draft`.
@@ -46009,6 +46080,8 @@ public enum Operations {
                         ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                         ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
                         ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                        ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                        ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
                         ///   - draft: Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.
                         public init(
                             title: Swift.String,
@@ -46017,6 +46090,8 @@ public enum Operations {
                             options: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayload,
                             drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload? = nil,
                             only_while_status: [Swift.String]? = nil,
+                            no_status_action: Swift.Bool? = nil,
+                            status_stamp: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.status_stampPayload? = nil,
                             draft: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftPayload? = nil
                         ) {
                             self.title = title
@@ -46025,6 +46100,8 @@ public enum Operations {
                             self.options = options
                             self.drafts = drafts
                             self.only_while_status = only_while_status
+                            self.no_status_action = no_status_action
+                            self.status_stamp = status_stamp
                             self.draft = draft
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -46034,12 +46111,15 @@ public enum Operations {
                             case options
                             case drafts
                             case only_while_status
+                            case no_status_action
+                            case status_stamp
                             case draft
                         }
                     }
                     /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                     /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                     /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                    /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                     ///
                     /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                     /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -46175,6 +46255,55 @@ public enum Operations {
                         public var unresolved_mentions: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/warning`.
                         public var warning: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action`.
+                        public struct status_actionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/applied`.
+                            public var applied: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/status`.
+                            public var status: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/reason`.
+                            @frozen public enum reasonPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case moved_on = "moved_on"
+                                case not_found = "not_found"
+                                case invalid_status = "invalid_status"
+                            }
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/reason`.
+                            public var reason: Operations.post_sol_api_sol_events.Output.Created.Body.jsonPayload.status_actionPayload.reasonPayload?
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/current_status`.
+                            public var current_status: Swift.String?
+                            /// Creates a new `status_actionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - applied:
+                            ///   - object_id:
+                            ///   - status:
+                            ///   - reason:
+                            ///   - current_status:
+                            public init(
+                                applied: Swift.Bool,
+                                object_id: Swift.String,
+                                status: Swift.String? = nil,
+                                reason: Operations.post_sol_api_sol_events.Output.Created.Body.jsonPayload.status_actionPayload.reasonPayload? = nil,
+                                current_status: Swift.String? = nil
+                            ) {
+                                self.applied = applied
+                                self.object_id = object_id
+                                self.status = status
+                                self.reason = reason
+                                self.current_status = current_status
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case applied
+                                case object_id
+                                case status
+                                case reason
+                                case current_status
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action`.
+                        public var status_action: Operations.post_sol_api_sol_events.Output.Created.Body.jsonPayload.status_actionPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -46189,6 +46318,7 @@ public enum Operations {
                         ///   - description:
                         ///   - unresolved_mentions:
                         ///   - warning:
+                        ///   - status_action:
                         public init(
                             id: Swift.Double,
                             workspaceId: Swift.String,
@@ -46200,7 +46330,8 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             description: Swift.String? = nil,
                             unresolved_mentions: [Swift.String]? = nil,
-                            warning: Swift.String? = nil
+                            warning: Swift.String? = nil,
+                            status_action: Operations.post_sol_api_sol_events.Output.Created.Body.jsonPayload.status_actionPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -46213,6 +46344,7 @@ public enum Operations {
                             self.description = description
                             self.unresolved_mentions = unresolved_mentions
                             self.warning = warning
+                            self.status_action = status_action
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -46226,6 +46358,7 @@ public enum Operations {
                             case description
                             case unresolved_mentions
                             case warning
+                            case status_action
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/application\/json`.
@@ -66812,6 +66945,7 @@ public enum Operations {
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                                 /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -66863,6 +66997,39 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/destructive`.
                                         public var destructive: Swift.Bool?
+                                        /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
+                                        public struct set_statusPayload: Codable, Hashable, Sendable {
+                                            /// The status to put the object in, e.g. "active".
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status/status`.
+                                            public var status: Swift.String
+                                            /// The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status/object_id`.
+                                            public var object_id: Swift.String?
+                                            /// Creates a new `set_statusPayload`.
+                                            ///
+                                            /// - Parameters:
+                                            ///   - status: The status to put the object in, e.g. "active".
+                                            ///   - object_id: The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                            public init(
+                                                status: Swift.String,
+                                                object_id: Swift.String? = nil
+                                            ) {
+                                                self.status = status
+                                                self.object_id = object_id
+                                            }
+                                            public enum CodingKeys: String, CodingKey {
+                                                case status
+                                                case object_id
+                                            }
+                                        }
+                                        /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
+                                        public var set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
@@ -66870,22 +67037,26 @@ public enum Operations {
                                         ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                                        ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
-                                            destructive: Swift.Bool? = nil
+                                            destructive: Swift.Bool? = nil,
+                                            set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
+                                            self.set_status = set_status
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
                                             case consequences
                                             case recommended
                                             case destructive
+                                            case set_status
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -67177,6 +67348,39 @@ public enum Operations {
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
                                     public var only_while_status: [Swift.String]?
+                                    /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/no_status_action`.
+                                    public var no_status_action: Swift.Bool?
+                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
+                                    public struct status_stampPayload: Codable, Hashable, Sendable {
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp/object_id`.
+                                        public var object_id: Swift.String
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp/status`.
+                                        public var status: Swift.String
+                                        /// Creates a new `status_stampPayload`.
+                                        ///
+                                        /// - Parameters:
+                                        ///   - object_id:
+                                        ///   - status:
+                                        public init(
+                                            object_id: Swift.String,
+                                            status: Swift.String
+                                        ) {
+                                            self.object_id = object_id
+                                            self.status = status
+                                        }
+                                        public enum CodingKeys: String, CodingKey {
+                                            case object_id
+                                            case status
+                                        }
+                                    }
+                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
+                                    public var status_stamp: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload?
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft`.
                                     public struct draftPayload: Codable, Hashable, Sendable {
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/id`.
@@ -67461,6 +67665,8 @@ public enum Operations {
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
                                     ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                                    ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -67469,6 +67675,8 @@ public enum Operations {
                                         options: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         only_while_status: [Swift.String]? = nil,
+                                        no_status_action: Swift.Bool? = nil,
+                                        status_stamp: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload? = nil,
                                         draft: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
                                     ) {
                                         self.title = title
@@ -67477,6 +67685,8 @@ public enum Operations {
                                         self.options = options
                                         self.drafts = drafts
                                         self.only_while_status = only_while_status
+                                        self.no_status_action = no_status_action
+                                        self.status_stamp = status_stamp
                                         self.draft = draft
                                     }
                                     public enum CodingKeys: String, CodingKey {
@@ -67486,12 +67696,15 @@ public enum Operations {
                                         case options
                                         case drafts
                                         case only_while_status
+                                        case no_status_action
+                                        case status_stamp
                                         case draft
                                     }
                                 }
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                                 /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -70317,6 +70530,7 @@ public enum Operations {
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                                 /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -70368,6 +70582,39 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/destructive`.
                                         public var destructive: Swift.Bool?
+                                        /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
+                                        public struct set_statusPayload: Codable, Hashable, Sendable {
+                                            /// The status to put the object in, e.g. "active".
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status/status`.
+                                            public var status: Swift.String
+                                            /// The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status/object_id`.
+                                            public var object_id: Swift.String?
+                                            /// Creates a new `set_statusPayload`.
+                                            ///
+                                            /// - Parameters:
+                                            ///   - status: The status to put the object in, e.g. "active".
+                                            ///   - object_id: The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                            public init(
+                                                status: Swift.String,
+                                                object_id: Swift.String? = nil
+                                            ) {
+                                                self.status = status
+                                                self.object_id = object_id
+                                            }
+                                            public enum CodingKeys: String, CodingKey {
+                                                case status
+                                                case object_id
+                                            }
+                                        }
+                                        /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
+                                        public var set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
@@ -70375,22 +70622,26 @@ public enum Operations {
                                         ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                                        ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
-                                            destructive: Swift.Bool? = nil
+                                            destructive: Swift.Bool? = nil,
+                                            set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
+                                            self.set_status = set_status
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
                                             case consequences
                                             case recommended
                                             case destructive
+                                            case set_status
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -70682,6 +70933,39 @@ public enum Operations {
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
                                     public var only_while_status: [Swift.String]?
+                                    /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/no_status_action`.
+                                    public var no_status_action: Swift.Bool?
+                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
+                                    public struct status_stampPayload: Codable, Hashable, Sendable {
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp/object_id`.
+                                        public var object_id: Swift.String
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp/status`.
+                                        public var status: Swift.String
+                                        /// Creates a new `status_stampPayload`.
+                                        ///
+                                        /// - Parameters:
+                                        ///   - object_id:
+                                        ///   - status:
+                                        public init(
+                                            object_id: Swift.String,
+                                            status: Swift.String
+                                        ) {
+                                            self.object_id = object_id
+                                            self.status = status
+                                        }
+                                        public enum CodingKeys: String, CodingKey {
+                                            case object_id
+                                            case status
+                                        }
+                                    }
+                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
+                                    public var status_stamp: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload?
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft`.
                                     public struct draftPayload: Codable, Hashable, Sendable {
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/id`.
@@ -70966,6 +71250,8 @@ public enum Operations {
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
                                     ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                                    ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -70974,6 +71260,8 @@ public enum Operations {
                                         options: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         only_while_status: [Swift.String]? = nil,
+                                        no_status_action: Swift.Bool? = nil,
+                                        status_stamp: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload? = nil,
                                         draft: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
                                     ) {
                                         self.title = title
@@ -70982,6 +71270,8 @@ public enum Operations {
                                         self.options = options
                                         self.drafts = drafts
                                         self.only_while_status = only_while_status
+                                        self.no_status_action = no_status_action
+                                        self.status_stamp = status_stamp
                                         self.draft = draft
                                     }
                                     public enum CodingKeys: String, CodingKey {
@@ -70991,12 +71281,15 @@ public enum Operations {
                                         case options
                                         case drafts
                                         case only_while_status
+                                        case no_status_action
+                                        case status_stamp
                                         case draft
                                     }
                                 }
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                                 /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
