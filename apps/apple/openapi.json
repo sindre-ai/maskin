@@ -12140,7 +12140,6 @@
 		},
 		"/api/actors/{id}/avatar": {
 			"post": {
-				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
