@@ -120,8 +120,12 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 		mcpServers: { fake: { type: 'http', url: 'https://example.invalid/mcp' } },
 	}
 
-	async function seedAgentInWorkspaceOf(ownerId: string, callerRole?: 'member' | 'admin') {
-		const ws = await insertWorkspace(db, ownerId)
+	async function seedAgentInWorkspaceOf(
+		ownerId: string,
+		callerRole?: 'member' | 'admin',
+		workspaceOverrides?: Record<string, unknown>,
+	) {
+		const ws = await insertWorkspace(db, ownerId, workspaceOverrides)
 		const agent = await insertActor(db, {
 			type: 'agent',
 			name: 'Scoped Agent',
@@ -256,9 +260,11 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 
 	it('PATCH refuses a model the workspace cannot run, and leaves the stored one alone', async () => {
 		const app = createApp()
-		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId())
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId(), undefined, {
+			enterpriseGranted: false,
+		})
 
-		// A Claude model needs a connected subscription; this workspace is not enterprise.
+		// A Claude model needs a connected subscription, which only enterprise workspaces have.
 		const res = await app.request(
 			jsonRequest(
 				'PATCH',
@@ -276,7 +282,9 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 
 	it('PATCH accepts a catalog model the workspace can run, and an unchanged stored value', async () => {
 		const app = createApp()
-		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId())
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId(), undefined, {
+			enterpriseGranted: false,
+		})
 
 		const changed = await app.request(
 			jsonRequest(
@@ -747,9 +755,12 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 	const bearer = (key: string) => ({ Authorization: `Bearer ${key}` })
 
 	/** A workspace owned by someone else, with the test actor in it at `role`. */
-	async function workspaceWithTestActor(role: 'admin' | 'member') {
+	async function workspaceWithTestActor(
+		role: 'admin' | 'member',
+		workspaceOverrides?: Record<string, unknown>,
+	) {
 		const owner = await insertActor(db, { type: 'human', name: 'Workspace Owner' })
-		const ws = await insertWorkspace(db, owner.id)
+		const ws = await insertWorkspace(db, owner.id, workspaceOverrides)
 		await db
 			.insert(workspaceMembers)
 			.values({ workspaceId: ws.id, actorId: getTestActorId(), role })
@@ -938,7 +949,7 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 		})
 
 		it('lets a human admin set tools and llm_config, merged over the Maskin MCP', async () => {
-			const ws = await workspaceWithTestActor('admin')
+			const ws = await workspaceWithTestActor('admin', { enterpriseGranted: false })
 			const name = `Admin with config ${randomUUID()}`
 
 			const res = await post(
