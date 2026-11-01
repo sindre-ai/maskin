@@ -120,8 +120,12 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 		mcpServers: { fake: { type: 'http', url: 'https://example.invalid/mcp' } },
 	}
 
-	async function seedAgentInWorkspaceOf(ownerId: string, callerRole?: 'member' | 'admin') {
-		const ws = await insertWorkspace(db, ownerId)
+	async function seedAgentInWorkspaceOf(
+		ownerId: string,
+		callerRole?: 'member' | 'admin',
+		workspaceOverrides?: Record<string, unknown>,
+	) {
+		const ws = await insertWorkspace(db, ownerId, workspaceOverrides)
 		const agent = await insertActor(db, {
 			type: 'agent',
 			name: 'Scoped Agent',
@@ -252,6 +256,57 @@ describe('Actors Integration — by-id routes are scoped to the caller workspace
 		const row = await readAgent(agent.id)
 		expect(row.tools).toMatchObject(fakeTools)
 		expect(row.llmConfig).toEqual({ model: 'changed-model' })
+	})
+
+	it('PATCH refuses a model the workspace cannot run, and leaves the stored one alone', async () => {
+		const app = createApp()
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId(), undefined, {
+			enterpriseGranted: false,
+		})
+
+		// A Claude model needs a connected subscription, which only enterprise workspaces have.
+		const res = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/actors/${agent.id}`,
+				{ llm_config: { model: 'claude-opus-5-5' } },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.message).toContain('deepseek/deepseek-v4.1-flash')
+		expect((await readAgent(agent.id)).llmConfig).toEqual({ model: 'original-model' })
+	})
+
+	it('PATCH accepts a catalog model the workspace can run, and an unchanged stored value', async () => {
+		const app = createApp()
+		const { ws, agent } = await seedAgentInWorkspaceOf(getTestActorId(), undefined, {
+			enterpriseGranted: false,
+		})
+
+		const changed = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/actors/${agent.id}`,
+				{ llm_config: { model: 'deepseek/deepseek-v4.1-flash' } },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+		expect(changed.status).toBe(200)
+		expect((await readAgent(agent.id)).llmConfig).toEqual({ model: 'deepseek/deepseek-v4.1-flash' })
+
+		// Sending the stored value back is not judged again.
+		const unchanged = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/actors/${agent.id}`,
+				{ llm_config: { model: 'deepseek/deepseek-v4.1-flash' } },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+		expect(unchanged.status).toBe(200)
 	})
 
 	it('PATCH refuses when the caller is admin in one workspace and only a member in the one the agent is in', async () => {
@@ -700,9 +755,12 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 	const bearer = (key: string) => ({ Authorization: `Bearer ${key}` })
 
 	/** A workspace owned by someone else, with the test actor in it at `role`. */
-	async function workspaceWithTestActor(role: 'admin' | 'member') {
+	async function workspaceWithTestActor(
+		role: 'admin' | 'member',
+		workspaceOverrides?: Record<string, unknown>,
+	) {
 		const owner = await insertActor(db, { type: 'human', name: 'Workspace Owner' })
-		const ws = await insertWorkspace(db, owner.id)
+		const ws = await insertWorkspace(db, owner.id, workspaceOverrides)
 		await db
 			.insert(workspaceMembers)
 			.values({ workspaceId: ws.id, actorId: getTestActorId(), role })
@@ -891,11 +949,16 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 		})
 
 		it('lets a human admin set tools and llm_config, merged over the Maskin MCP', async () => {
-			const ws = await workspaceWithTestActor('admin')
+			const ws = await workspaceWithTestActor('admin', { enterpriseGranted: false })
 			const name = `Admin with config ${randomUUID()}`
 
 			const res = await post(
-				{ name, workspace_id: ws.id, tools: fakeTools, llm_config: { model: 'fake-model' } },
+				{
+					name,
+					workspace_id: ws.id,
+					tools: fakeTools,
+					llm_config: { model: 'deepseek/deepseek-v4.1-flash' },
+				},
 				bearer(TEST_ACTOR_KEY),
 			)
 
@@ -903,7 +966,7 @@ describe('Actors Integration — POST /api/actors agent creation', () => {
 			const [row] = await agentRowsNamed(name)
 			const mcpServers = (row.tools as { mcpServers: Record<string, unknown> }).mcpServers
 			expect(Object.keys(mcpServers).sort()).toEqual(['fake', 'maskin'])
-			expect(row.llmConfig).toEqual({ model: 'fake-model' })
+			expect(row.llmConfig).toEqual({ model: 'deepseek/deepseek-v4.1-flash' })
 		})
 
 		it('gives a member who sends only name, description and prompt the Maskin MCP alone', async () => {

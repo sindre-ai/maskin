@@ -10,6 +10,7 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 import {
 	approximatePromptTokens,
 	trackAgentSessionStartedWithPrompt,
+	trackSessionLaunchModel,
 } from '../../../lib/analytics/agent-session-events'
 
 beforeEach(() => {
@@ -162,5 +163,53 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 		expect(props.trigger_source).toBe('comment_fallback')
 		expect(props.trigger_type).toBeUndefined()
 		expect(props.trigger_id).toBeUndefined()
+	})
+})
+
+describe('trackSessionLaunchModel', () => {
+	const base = {
+		workspaceId: 'ws-1',
+		sessionId: 'sess-1',
+		agentId: 'agent-1',
+		model: 'claude-opus-5-5',
+		modelSource: 'agent',
+		route: 'claude_oauth',
+	}
+
+	it('puts model, model_source and route on agent_session_started', async () => {
+		await trackSessionLaunchModel(base)
+
+		expect(capturePosthogEventMock).toHaveBeenCalledTimes(1)
+		expect(capturePosthogEventMock).toHaveBeenCalledWith('agent_session_started', 'agent-1', {
+			workspace_id: 'ws-1',
+			session_id: 'sess-1',
+			agent_id: 'agent-1',
+			model: 'claude-opus-5-5',
+			model_source: 'agent',
+			route: 'claude_oauth',
+			emitted_from: 'dev_backend',
+		})
+	})
+
+	it('also fires trigger_fired, with the same three properties, for a trigger-dispatched session', async () => {
+		await trackSessionLaunchModel({ ...base, triggerId: 'trig-1', triggerType: 'cron' })
+
+		expect(capturePosthogEventMock).toHaveBeenCalledTimes(2)
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'trigger_fired',
+			'agent-1',
+			expect.objectContaining({
+				model: 'claude-opus-5-5',
+				model_source: 'agent',
+				route: 'claude_oauth',
+				trigger_id: 'trig-1',
+				trigger_type: 'cron',
+			}),
+		)
+	})
+
+	it('swallows capture failures so session launch is never blocked', async () => {
+		capturePosthogEventMock.mockRejectedValueOnce(new Error('posthog down'))
+		await expect(trackSessionLaunchModel(base)).resolves.toBeUndefined()
 	})
 })

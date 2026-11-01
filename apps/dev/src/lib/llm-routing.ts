@@ -14,6 +14,13 @@ import { isClaudePlatformRefreshEnabled, readClaudeLaunchBufferMs } from './clau
 import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
 import { isEnterprise } from './enterprise'
 import { logger } from './logger'
+import {
+	type CatalogModel,
+	DEFAULT_MODEL_TIER,
+	FUNDED_DEFAULT_MODEL,
+	getCatalogModel,
+	tierModel,
+} from './model-catalog'
 import type { WorkspaceSettings } from './types'
 import { SecretUnreadableError, openSecret } from './workspace-secrets'
 
@@ -24,25 +31,15 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 }
 
 /**
- * Every session on the Claude-subscription route runs this model at this
- * effort, whatever the agent's own `llm_config.model` says. Other routes
- * (custom endpoints, API keys) never receive these — `MASKIN_CLAUDE_EFFORT` is
- * read by docker/agent-base/agent-run.sh and turned into `--effort`. The
- * Maskin-funded route sets its own, lower effort (MASKIN_PLAN_EFFORT).
+ * The Claude-subscription route runs this model at this effort when the agent
+ * names no catalog model (the Standard tier, see model-catalog.ts). Other
+ * routes (custom endpoints, API keys) never receive the effort —
+ * `MASKIN_CLAUDE_EFFORT` is read by docker/agent-base/agent-run.sh and turned
+ * into `--effort`. The Maskin-funded route sets its own, lower effort (see the
+ * DeepSeek entry in model-catalog.ts).
  */
 export const CLAUDE_SUBSCRIPTION_MODEL = 'claude-sonnet-5-5'
 export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
-
-/**
- * Effort for the Maskin-funded DeepSeek route. With the CLI default, about 70%
- * of a session's output was hidden reasoning (Claude: about 30%), one think
- * ran 2m37s with nothing on screen. Effort alone does not fix that: DeepSeek
- * maps low and medium to high, and the CLI still asks for adaptive thinking.
- * MAX_THINKING_TOKENS=0 (set with this effort in the env below) drops the
- * thinking field from the request, which is what stops the reasoning. Low
- * effort stays as the secondary setting.
- */
-export const MASKIN_PLAN_EFFORT = 'low'
 
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
@@ -87,14 +84,23 @@ export interface LlmRoutingResult {
 	 */
 	oauthExpiresAt?: number
 	/**
-	 * OpenRouter model id that will actually run this session. Populated on
-	 * the maskin_plan route (from `MASKIN_FALLBACK_MODEL`) so the caller can
-	 * stamp `sessions.model_name` at spawn; the follow-on local cost resolver
-	 * prices maskin_plan usage from OpenRouter's pricing table keyed on this
-	 * value. Undefined on every other route — Claude Code's own
-	 * `total_cost_usd` stays ground truth for `claude_oauth` and BYO paths.
+	 * The model that will actually run this session, set on every route so the
+	 * caller can stamp `sessions.model_name` at spawn. The local cost resolver
+	 * prices maskin_plan and workspace_custom usage from OpenRouter's pricing
+	 * table keyed on this value; Claude Code's own `total_cost_usd` stays ground
+	 * truth for `claude_oauth` and the API-key routes, whatever is stamped.
 	 */
 	modelName?: string
+	/** Where `modelName` came from: the agent's own setting, the tier default, or workspace config. */
+	modelSource?: ModelSource
+}
+
+export type ModelSource = 'agent' | 'tier' | 'workspace'
+
+/** The model a session started on, handed back in on resume so it never changes mid-session. */
+export interface PinnedModel {
+	model: string
+	source: ModelSource
 }
 
 export interface FallbackConfig {
@@ -529,16 +535,93 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 	}
 }
 
+interface ResolvedModel {
+	model: string
+	source: ModelSource
+	/** The catalog entry whose settings (small model, effort, ...) the route env is built from. */
+	entry: CatalogModel
+}
+
+function requireTierEntry(route: 'subscription' | 'openrouter'): CatalogModel {
+	const entry = tierModel(DEFAULT_MODEL_TIER, route)
+	if (!entry) throw new Error(`model catalog has no ${DEFAULT_MODEL_TIER} entry for ${route}`)
+	return entry
+}
+
+/**
+ * The model for a session on the Claude-subscription route. Order: the model
+ * the session already started on (a resume never changes model), the agent's
+ * own catalog model, then the Standard tier. An agent value the route cannot
+ * run (stale, or a model of another route) is not obeyed and not hidden: the
+ * session runs on the tier default, `source` says 'tier', and a warning names
+ * the value. update_actor refuses such values for new settings.
+ */
+function resolveSubscriptionModel(
+	agentModel: string | null | undefined,
+	pinned: PinnedModel | null | undefined,
+): ResolvedModel {
+	const usable = (id: string | null | undefined) => {
+		const entry = getCatalogModel(id)
+		return entry?.route === 'subscription' ? entry : undefined
+	}
+	const pinnedEntry = usable(pinned?.model)
+	if (pinned && pinnedEntry)
+		return { model: pinnedEntry.id, source: pinned.source, entry: pinnedEntry }
+	const agentEntry = usable(agentModel)
+	if (agentEntry) return { model: agentEntry.id, source: 'agent', entry: agentEntry }
+	if (agentModel) {
+		logger.warn('Agent model cannot run on the Claude subscription route; using the tier default', {
+			agentModel,
+		})
+	}
+	const entry = requireTierEntry('subscription')
+	return { model: entry.id, source: 'tier', entry }
+}
+
+/**
+ * The model for a session on the Maskin-funded route. Same order as the
+ * subscription route; the tier default is the operator-configured
+ * MASKIN_FALLBACK_MODEL, which keeps the profile of the Standard funded entry
+ * when it is not in the catalog itself.
+ */
+function resolveFundedModel(
+	agentModel: string | null | undefined,
+	pinned: PinnedModel | null | undefined,
+	fallback: FallbackConfig,
+): ResolvedModel {
+	const defaultModel = fallback.model ?? FUNDED_DEFAULT_MODEL
+	const defaultEntry = requireTierEntry('openrouter')
+	const entryFor = (id: string | null | undefined): CatalogModel | undefined => {
+		const entry = getCatalogModel(id)
+		if (entry?.route === 'openrouter') return entry
+		return id && id === defaultModel ? defaultEntry : undefined
+	}
+	const pinnedEntry = entryFor(pinned?.model)
+	if (pinned && pinnedEntry)
+		return { model: pinned.model, source: pinned.source, entry: pinnedEntry }
+	const agentEntry = entryFor(agentModel)
+	if (agentModel && agentEntry) return { model: agentModel, source: 'agent', entry: agentEntry }
+	if (agentModel) {
+		logger.warn('Agent model cannot run on the Maskin-funded route; using the tier default', {
+			agentModel,
+		})
+	}
+	return { model: defaultModel, source: 'tier', entry: defaultEntry }
+}
+
 /**
  * Builds the env vars for the Maskin-funded OpenRouter route. Returns null
  * when the workspace is not on a maskin-plan-routed plan or the operator
- * hasn't configured the OR key.
+ * hasn't configured the OR key. The main model, the small fast model and the
+ * effort are all set from the one resolved catalog entry, so a session never
+ * mixes models.
  */
 function buildMaskinPlanEnv(
 	billing: WorkspaceSettings['billing'],
 	fallback: FallbackConfig,
 	enterprise: boolean,
-): Record<string, string> | null {
+	request: { agentModel: string | null | undefined; pinned: PinnedModel | null | undefined },
+): { env: Record<string, string>; resolved: ResolvedModel } | null {
 	// Enterprise is never Maskin-funded, whatever the stored plan says. The plan
 	// alone is not a safe gate: `plan: 'enterprise'` is only written once a BYO
 	// credential is connected (`billingAfterByoTransition`), and an absent
@@ -549,20 +632,27 @@ function buildMaskinPlanEnv(
 	if (enterprise) return null
 	if (!isMaskinPlanRouted(billing)) return null
 	if (!fallback.apiKey) return null
-	const model = fallback.model ?? 'deepseek/deepseek-v4.1-flash'
+	const resolved = resolveFundedModel(request.agentModel, request.pinned, fallback)
+	const { model, entry } = resolved
+	const smallModel =
+		model === (fallback.model ?? FUNDED_DEFAULT_MODEL)
+			? (fallback.smallModel ?? model)
+			: entry.smallFastModel
 	const env: Record<string, string> = {
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
 		ANTHROPIC_MODEL: model,
-		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
-		MASKIN_CLAUDE_EFFORT: MASKIN_PLAN_EFFORT,
-		MAX_THINKING_TOKENS: '0',
+		ANTHROPIC_SMALL_FAST_MODEL: smallModel,
 		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
 		// does not run: the call dies with "search was cut off" and the turn ends
 		// with no visible output. Without it the model uses WebFetch or the browser.
 		MASKIN_DISABLE_WEB_SEARCH: '1',
 	}
+	// Effort and thinking are tuned per model (see the DeepSeek entry in
+	// model-catalog.ts): an entry that sets neither leaves the CLI default.
+	if (entry.effort) env.MASKIN_CLAUDE_EFFORT = entry.effort
+	if (entry.thinkingOff) env.MAX_THINKING_TOKENS = '0'
 	// Decided on the main model only: the small-fast model can differ, and the
 	// proxy strips for the whole session either way.
 	const textOnly = fallback.textOnlyModels ?? DEFAULT_TEXT_ONLY_MODEL_PATTERNS
@@ -572,8 +662,15 @@ function buildMaskinPlanEnv(
 	// The Claude CLI builds its own request body, so the agent-container proxy
 	// injects these into each /v1/messages call (strip-images-proxy.js). Only
 	// routing (allow and block lists) goes here: zdr stays chat-only, as it was
-	// before.
-	const { only, ignore } = buildProviderPrefs({ ...fallback, zdr: false }) ?? {}
+	// before. The allow list is the hosts measured for the default model; a model
+	// whose entry does not opt in is not pinned to them, or OpenRouter would
+	// answer "no endpoints found".
+	const { only, ignore } =
+		buildProviderPrefs({
+			...fallback,
+			zdr: false,
+			onlyProviders: entry.providerAllowList ? fallback.onlyProviders : [],
+		}) ?? {}
 	if (only || ignore) {
 		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ...(only && { only }), ...(ignore && { ignore }) })
 	}
@@ -581,7 +678,7 @@ function buildMaskinPlanEnv(
 	if (fallback.ttftTimeoutMs && fallback.ttftTimeoutMs > 0) {
 		env.MASKIN_TTFT_TIMEOUT_MS = String(fallback.ttftTimeoutMs)
 	}
-	return env
+	return { env, resolved }
 }
 
 /**
@@ -610,10 +707,14 @@ function buildMaskinPlanEnv(
  * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1 and #4
  * (the routes that don't already carry an explicit model of their own). When it
  * is unset they get CLAUDE_SUBSCRIPTION_MODEL instead: the Claude CLI's own
- * default is not Sonnet, and an API key bills per token. Route
- * #2 (Claude subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL
- * at CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
- * workspace/operator config and are left as-is.
+ * default is not Sonnet, and an API key bills per token. Routes #2 (Claude
+ * subscription) and #5 (Maskin-funded) obey a catalog model on their route kind
+ * (model-catalog.ts) and otherwise run the Standard tier; the main model, the
+ * small fast model and the effort are set together from that one entry. Route #3
+ * sources its model from workspace config and is left as-is.
+ *
+ * Every route reports the model it will run on `modelName` and where it came
+ * from on `modelSource`, for `sessions.model_name` and the PostHog events.
  */
 /**
  * Is a Claude OAuth slot configured at all — i.e. does the slot that
@@ -641,6 +742,12 @@ export async function resolveLlmRoute(params: {
 	/** Workspace entitlement to BYO LLM credentials. Defaults false. */
 	enterprise: boolean
 	/**
+	 * The model a resumed session started on. When it is still runnable on the
+	 * route that resolves, it wins over the agent's current setting, so editing
+	 * an agent never switches the model of a session already under way.
+	 */
+	pinned?: PinnedModel | null
+	/**
 	 * Overrides the default `probeClaudeSubscription` probe used by the
 	 * failover path. Only tests
 	 * need to pass this — production callers can omit it and
@@ -654,7 +761,7 @@ export async function resolveLlmRoute(params: {
 	 */
 	env?: NodeJS.ProcessEnv
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe } = params
+	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe, pinned } = params
 
 	/** Set when route #2 failed; folded into the error when nothing else resolves. */
 	let oauthFailure: string | null = null
@@ -677,7 +784,12 @@ export async function resolveLlmRoute(params: {
 					ANTHROPIC_API_KEY: agent.apiKey,
 					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
 				}
-				return { route: LLM_ROUTE_AGENT, envVars }
+				return {
+					route: LLM_ROUTE_AGENT,
+					envVars,
+					modelName: envVars.ANTHROPIC_MODEL,
+					modelSource: agent.model ? 'agent' : 'tier',
+				}
 			}
 		} else {
 			// caller (session-manager) handles OPENAI_API_KEY etc.
@@ -724,11 +836,17 @@ export async function resolveLlmRoute(params: {
 				if (oauthResult.tokens.subscriptionType) {
 					envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
 				}
-				envVars.ANTHROPIC_MODEL = CLAUDE_SUBSCRIPTION_MODEL
-				envVars.MASKIN_CLAUDE_EFFORT = CLAUDE_SUBSCRIPTION_EFFORT
+				// Main model, small fast model and effort come from the one catalog
+				// entry, so the session cannot mix models.
+				const resolved = resolveSubscriptionModel(agent.model, pinned)
+				envVars.ANTHROPIC_MODEL = resolved.model
+				envVars.ANTHROPIC_SMALL_FAST_MODEL = resolved.entry.smallFastModel
+				if (resolved.entry.effort) envVars.MASKIN_CLAUDE_EFFORT = resolved.entry.effort
 				return {
 					route: LLM_ROUTE_OAUTH,
 					envVars,
+					modelName: resolved.model,
+					modelSource: resolved.source,
 					oauthSlot: oauthResult.slot,
 					...(platformRefresh ? { oauthExpiresAt: oauthResult.tokens.expiresAt } : {}),
 				}
@@ -791,7 +909,12 @@ export async function resolveLlmRoute(params: {
 			// 3. Workspace custom_llm
 			const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
 			if (customEnv) {
-				return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
+				return {
+					route: LLM_ROUTE_CUSTOM,
+					envVars: customEnv,
+					modelName: customEnv.ANTHROPIC_MODEL,
+					modelSource: 'workspace',
+				}
 			}
 
 			// 4. Workspace anthropic api key
@@ -801,7 +924,12 @@ export async function resolveLlmRoute(params: {
 					ANTHROPIC_API_KEY: openSecret(storedAnthropic, 'llm_keys.anthropic'),
 					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
 				}
-				return { route: LLM_ROUTE_API_KEY, envVars }
+				return {
+					route: LLM_ROUTE_API_KEY,
+					envVars,
+					modelName: envVars.ANTHROPIC_MODEL,
+					modelSource: agent.model ? 'agent' : 'tier',
+				}
 			}
 		} catch (err) {
 			if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
@@ -815,13 +943,17 @@ export async function resolveLlmRoute(params: {
 	//    The cap check here is defense-in-depth; the pre-flight in `createSession`
 	//    is what surfaces 402 to the user before a session row is created.
 	const fallback = readFallbackConfig(params.env)
-	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise)
-	if (maskinPlanEnv) {
+	const maskinPlan = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise, {
+		agentModel: agent.model,
+		pinned,
+	})
+	if (maskinPlan) {
 		await checkPlanCap({ db, workspaceId, wsSettings, enterprise })
 		return {
 			route: LLM_ROUTE_MASKIN_PLAN,
-			envVars: maskinPlanEnv,
-			modelName: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
+			envVars: maskinPlan.env,
+			modelName: maskinPlan.resolved.model,
+			modelSource: maskinPlan.resolved.source,
 		}
 	}
 
@@ -1037,7 +1169,12 @@ export function preflightLlmCredentials(params: {
 	}
 
 	// 5. Maskin plan.
-	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise) !== null)
+	if (
+		buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise, {
+			agentModel: undefined,
+			pinned: undefined,
+		}) !== null
+	)
 		return null
 
 	// The enterprise wording deliberately does not mention the stored plan: an

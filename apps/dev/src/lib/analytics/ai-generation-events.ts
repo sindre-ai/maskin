@@ -19,7 +19,7 @@ export interface SessionAiGenerationProps {
 	outcome: AiGenerationOutcome
 	/** `sessions.config` — only `llm_route` is read. */
 	config: Record<string, unknown> | null
-	/** `sessions.model_name` — null on every route except maskin_plan. */
+	/** `sessions.model_name` — stamped on every route; null only on sessions that predate that. */
 	modelName: string | null
 	/** Cumulative session totals, as persisted on the `sessions` row. */
 	inputTokens: number | null
@@ -54,9 +54,10 @@ function costBasisForRoute(route: string): string {
 }
 
 /**
- * `sessions.model_name` is only stamped on maskin_plan, so claude_oauth (and
- * the other routes) would otherwise reach PostHog with no model. Fall back to
- * what the route runs by default.
+ * `sessions.model_name` is stamped on every route at launch, so the model here
+ * is the one that ran. The fallbacks below are for sessions that predate that
+ * stamping, and for a launch that failed before it: claude_oauth and
+ * maskin_plan fall back to what the route runs by default.
  *
  * The workspace_api_key, agent_api_key and custom routes have no default: the
  * model depends on the key and the agent, so naming one would present a guess
