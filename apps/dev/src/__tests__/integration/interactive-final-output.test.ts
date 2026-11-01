@@ -654,6 +654,33 @@ ${surviving}
 		expect(posted?.threadAlsoInChannel).toBe(false)
 	})
 
+	it('posts a thread session reply in its own thread, whichever message started the turn', async () => {
+		const [root] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'dry run finished' })
+			.returning()
+		if (!root) throw new Error('no root message')
+		const session = await seedSession({ threadRootId: root.id })
+		if (!session) throw new Error('no session')
+		// The turn was started by a top-level message, so the turn-origin guess would say
+		// main timeline; the session's own thread wins.
+		const [trigger] = await db
+			.insert(messages)
+			.values({ conversationId, actorId: humanId, content: 'an unrelated top level message' })
+			.returning()
+		if (!trigger) throw new Error('no trigger message')
+		await feed(session.id, `${userTurnLine(trigger.id)}\n`)
+		await feed(session.id, `${resultLine()}\n`)
+
+		const [posted] = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.actorId, agentId))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		expect(posted?.threadRootId).toBe(root.id)
+	})
+
 	it('keeps a reply to a top-level message in the main timeline', async () => {
 		const session = await seedSession()
 		if (!session) throw new Error('no session')

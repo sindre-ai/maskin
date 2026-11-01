@@ -218,4 +218,28 @@ describe('Usage is saved when a session closes idle or a helper finishes (Integr
 		expect(row?.outputTokens).toBe(100)
 		expect(Number(row?.totalCostUsd)).toBeCloseTo(0.25, 6)
 	})
+
+	it('settles a chat that ends on a limit error as failed with the reason and no retry time', async () => {
+		const session = await interactiveSession({ config: { interactive: true } })
+		if (!session) throw new Error('no session')
+		await insertSessionLog(db, session.id, { content: turn(1, 0.25) })
+
+		await withManager((manager) =>
+			manager.finishHelperSession(
+				session.id,
+				{
+					isError: true,
+					text: "You've hit your session limit · resets 2:20pm (Europe/Copenhagen)",
+				},
+				{ retry: false },
+			),
+		)
+
+		const row = await readRow(session.id)
+		expect(row?.status).toBe('failed')
+		expect(row?.result).toMatchObject({
+			failure_reason: { provider: 'anthropic', reason_code: 'session_limit' },
+		})
+		expect(row?.retryAt).toBeNull()
+	})
 })

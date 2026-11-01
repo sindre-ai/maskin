@@ -2149,9 +2149,7 @@ export interface CreateInviteInput {
 	role: 'member' | 'viewer'
 }
 
-export type CreateInviteResponse =
-	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
-	| { status: 'pending'; invite: InviteSummary }
+export type CreateInviteResponse = { status: 'pending'; invite: InviteSummary }
 
 export interface DeviceAuthPreview {
 	client: 'tvos'
@@ -2764,6 +2762,8 @@ export interface MessageKeychainRequest {
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
+	/** Agents the asker said will use it; ticked on the card even when not in the chat. */
+	target_agents?: Array<{ id: string; name: string }>
 }
 
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
@@ -3086,6 +3086,8 @@ export interface SessionResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	currentActivity: string | null
+	/** The thread (its root message id) a chat session answers in; null or absent for the main chat. */
+	threadRootId?: number | null
 	// Postgres `numeric` — serialized as a string; null until the session reports a cost.
 	totalCostUsd?: string | number | null
 }

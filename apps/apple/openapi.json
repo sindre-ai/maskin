@@ -7015,7 +7015,7 @@
 					"Briefing"
 				],
 				"summary": "Generate today's brief as spoken prose",
-				"description": "The human-facing brief: the workspace's default agent (its Chief of Staff) writing the same facts as something to listen to, rather than the agent-facing markdown `GET /briefing` returns.\n\nPOST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.",
+				"description": "The human-facing brief: the workspace's default agent (its Chief of Staff) writing the same facts as something to listen to, rather than the agent-facing markdown `GET /briefing` returns.\n\nPOST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.\n\nA read-only viewer is served the day's cached brief, or the deterministic prose when nothing is cached yet. A viewer never triggers a model call or writes the cache.",
 				"parameters": [
 					{
 						"schema": {
@@ -16629,7 +16629,7 @@
 						}
 					},
 					"403": {
-						"description": "Caller is a member but not a human admin or owner, or the workspace has reached its seat cap",
+						"description": "Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -16686,7 +16686,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace not found, caller is not a member of it, or actor not found",
+						"description": "Workspace not found, or the caller is not a member of it",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -20870,7 +20870,7 @@
 					"workspace-invitations"
 				],
 				"summary": "Invite someone to a workspace by email",
-				"description": "If the email belongs to an existing actor who is not yet a member, that actor is added directly (status \"linked\"). Otherwise a pending invite is created and emailed (status \"pending\"). Re-inviting an email with a live pending invite returns that invite unchanged.",
+				"description": "A pending invite is created and emailed (status \"pending\"), whether or not the email already has an account; the person joins by accepting it. Re-inviting an email with a live pending invite returns that invite unchanged.",
 				"requestBody": {
 					"content": {
 						"application/json": {
@@ -20951,93 +20951,53 @@
 						}
 					},
 					"201": {
-						"description": "Actor linked directly, or a new pending invite created and emailed",
+						"description": "A new pending invite was created and emailed",
 						"content": {
 							"application/json": {
 								"schema": {
-									"anyOf": [
-										{
-											"type": "object",
-											"properties": {
-												"status": {
-													"type": "string",
-													"enum": [
-														"linked"
-													]
-												},
-												"member": {
-													"type": "object",
-													"properties": {
-														"workspaceId": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"actorId": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"role": {
-															"type": "string"
-														}
-													},
-													"required": [
-														"workspaceId",
-														"actorId",
-														"role"
-													]
-												}
-											},
-											"required": [
-												"status",
-												"member"
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending"
 											]
 										},
-										{
+										"invite": {
 											"type": "object",
 											"properties": {
-												"status": {
+												"id": {
 													"type": "string",
-													"enum": [
-														"pending"
-													]
+													"format": "uuid"
 												},
-												"invite": {
-													"type": "object",
-													"properties": {
-														"id": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"email": {
-															"type": "string"
-														},
-														"role": {
-															"type": "string"
-														},
-														"expiresAt": {
-															"type": "string"
-														}
-													},
-													"required": [
-														"id",
-														"email",
-														"role",
-														"expiresAt"
-													]
+												"email": {
+													"type": "string"
+												},
+												"role": {
+													"type": "string"
+												},
+												"expiresAt": {
+													"type": "string"
 												}
 											},
 											"required": [
-												"status",
-												"invite"
+												"id",
+												"email",
+												"role",
+												"expiresAt"
 											]
 										}
+									},
+									"required": [
+										"status",
+										"invite"
 									]
 								}
 							}
 						}
 					},
 					"403": {
-						"description": "Caller is not a human owner/admin of the workspace, or the seat cap is reached",
+						"description": "Caller is not a human owner/admin of the workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -39766,6 +39726,26 @@
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 300
+													},
+													"target_agents": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string",
+																	"format": "uuid"
+																},
+																"name": {
+																	"type": "string"
+																}
+															},
+															"required": [
+																"id",
+																"name"
+															]
+														},
+														"maxItems": 10
 													}
 												},
 												"required": [
@@ -42807,6 +42787,26 @@
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 300
+													},
+													"target_agents": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string",
+																	"format": "uuid"
+																},
+																"name": {
+																	"type": "string"
+																}
+															},
+															"required": [
+																"id",
+																"name"
+															]
+														},
+														"maxItems": 10
 													}
 												},
 												"required": [
@@ -48977,6 +48977,14 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 300
+									},
+									"target_agent_ids": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"maxLength": 64
+										},
+										"maxItems": 10
 									}
 								},
 								"required": [

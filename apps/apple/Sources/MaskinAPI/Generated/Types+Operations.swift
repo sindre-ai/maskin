@@ -7661,6 +7661,8 @@ public enum Operations {
     ///
     /// POST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.
     ///
+    /// A read-only viewer is served the day's cached brief, or the deterministic prose when nothing is cached yet. A viewer never triggers a model call or writes the cache.
+    ///
     /// - Remark: HTTP `POST /api/briefing/spoken`.
     /// - Remark: Generated from `#/paths//api/briefing/spoken/post`.
     public enum post_sol_api_sol_briefing_sol_spoken {
@@ -21756,7 +21758,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Caller is a member but not a human admin or owner, or the workspace has reached its seat cap
+            /// Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/403`.
             ///
@@ -21894,7 +21896,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace not found, caller is not a member of it, or actor not found
+            /// Workspace not found, or the caller is not a member of it
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/404`.
             ///
@@ -47352,6 +47354,33 @@ public enum Operations {
                             public var suggested_name: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/hint`.
                             public var hint: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agentsPayload`.
+                            public struct target_agentsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agentsPayload/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agentsPayload/name`.
+                                public var name: Swift.String
+                                /// Creates a new `target_agentsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - name:
+                                public init(
+                                    id: Swift.String,
+                                    name: Swift.String
+                                ) {
+                                    self.id = id
+                                    self.name = name
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case name
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agents`.
+                            public typealias target_agentsPayload = [Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.target_agentsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agents`.
+                            public var target_agents: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.target_agentsPayload?
                             /// Creates a new `keychain_requestPayload`.
                             ///
                             /// - Parameters:
@@ -47360,18 +47389,21 @@ public enum Operations {
                             ///   - kind:
                             ///   - suggested_name:
                             ///   - hint:
+                            ///   - target_agents:
                             public init(
                                 session_id: Swift.String,
                                 reply_to_session: Swift.Bool? = nil,
                                 kind: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.kindPayload,
                                 suggested_name: Swift.String? = nil,
-                                hint: Swift.String? = nil
+                                hint: Swift.String? = nil,
+                                target_agents: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.target_agentsPayload? = nil
                             ) {
                                 self.session_id = session_id
                                 self.reply_to_session = reply_to_session
                                 self.kind = kind
                                 self.suggested_name = suggested_name
                                 self.hint = hint
+                                self.target_agents = target_agents
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
@@ -47379,6 +47411,7 @@ public enum Operations {
                                 case kind
                                 case suggested_name
                                 case hint
+                                case target_agents
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request`.
@@ -52302,6 +52335,33 @@ public enum Operations {
                             public var suggested_name: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/hint`.
                             public var hint: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agentsPayload`.
+                            public struct target_agentsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agentsPayload/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agentsPayload/name`.
+                                public var name: Swift.String
+                                /// Creates a new `target_agentsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - name:
+                                public init(
+                                    id: Swift.String,
+                                    name: Swift.String
+                                ) {
+                                    self.id = id
+                                    self.name = name
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case name
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agents`.
+                            public typealias target_agentsPayload = [Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.target_agentsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agents`.
+                            public var target_agents: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.target_agentsPayload?
                             /// Creates a new `keychain_requestPayload`.
                             ///
                             /// - Parameters:
@@ -52310,18 +52370,21 @@ public enum Operations {
                             ///   - kind:
                             ///   - suggested_name:
                             ///   - hint:
+                            ///   - target_agents:
                             public init(
                                 session_id: Swift.String,
                                 reply_to_session: Swift.Bool? = nil,
                                 kind: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.kindPayload,
                                 suggested_name: Swift.String? = nil,
-                                hint: Swift.String? = nil
+                                hint: Swift.String? = nil,
+                                target_agents: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.target_agentsPayload? = nil
                             ) {
                                 self.session_id = session_id
                                 self.reply_to_session = reply_to_session
                                 self.kind = kind
                                 self.suggested_name = suggested_name
                                 self.hint = hint
+                                self.target_agents = target_agents
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
@@ -52329,6 +52392,7 @@ public enum Operations {
                                 case kind
                                 case suggested_name
                                 case hint
+                                case target_agents
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request`.

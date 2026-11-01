@@ -65,6 +65,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { resolveChatIdleCloseMs } from '../config/session-idle'
 import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
@@ -551,6 +552,14 @@ function classifyExit(args: {
 	return args.failureReason.reason_code === 'plan_cap_exceeded' ? 'plan_cap' : 'credit_exhaustion'
 }
 
+/**
+ * Matches a chat thread on a column holding a thread root id. A null thread is the main
+ * chat, stored as NULL, so it needs IS NULL: `= NULL` never matches.
+ */
+export function matchThread(column: AnyPgColumn, threadRootId: number | null): SQL {
+	return threadRootId === null ? isNull(column) : eq(column, threadRootId)
+}
+
 export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
@@ -733,6 +742,10 @@ export class SessionManager extends EventEmitter {
 			onTurnFinished: (sessionId, outcome) =>
 				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
+			// An interactive CLI stays alive after printing a limit banner as its
+			// final error, so no exit settles the row. Same teardown as a helper.
+			onLimitResult: (sessionId, outcome) =>
+				this.finishHelperSession(sessionId, outcome, { retry: false }),
 		})
 	}
 
@@ -822,6 +835,14 @@ export class SessionManager extends EventEmitter {
 		// "resume conversation from scratch" flow).
 		const conversationMessageId =
 			(config.conversation as { message_id?: number } | undefined)?.message_id ?? null
+		// The thread this chat session answers in; null for the main-chat session. Only a chat
+		// session has one, and only a real message id counts.
+		const rawThreadRootId = (config.conversation as { thread_root_id?: unknown } | undefined)
+			?.thread_root_id
+		const threadRootId =
+			conversationId && typeof rawThreadRootId === 'number' && Number.isSafeInteger(rawThreadRootId)
+				? rawThreadRootId
+				: null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -864,6 +885,7 @@ export class SessionManager extends EventEmitter {
 				config,
 				interactive,
 				conversationId,
+				threadRootId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
 				spawnedBySessionId: params.spawnedBySessionId ?? null,
@@ -914,9 +936,11 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Find a currently-usable interactive session for a (conversation, agent)
-	 * pair — i.e. one that can accept a writeInput() call right now. Fast-path
+	 * pair and thread — i.e. one that can accept a writeInput() call right now. A null
+	 * thread is the main chat; a thread root id is that thread's own session. Fast-path
 	 * optimization for the conversation responder; the DB's
-	 * sessions_conversation_actor_active_uniq partial unique index is the
+	 * sessions_conversation_actor_active_uniq and
+	 * sessions_conversation_actor_thread_active_uniq partial unique indexes are the
 	 * authoritative guard against double-spawn, this just avoids an
 	 * unnecessary createSession attempt in the common case. Only matches
 	 * `running` (not `pending`/`starting`) since writeInput needs a live
@@ -925,6 +949,7 @@ export class SessionManager extends EventEmitter {
 	async findActiveConversationSession(
 		conversationId: string,
 		actorId: string,
+		threadRootId: number | null = null,
 	): Promise<typeof sessions.$inferSelect | null> {
 		const [row] = await this.db
 			.select()
@@ -933,6 +958,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.conversationId, conversationId),
 					eq(sessions.actorId, actorId),
+					matchThread(sessions.threadRootId, threadRootId),
 					eq(sessions.interactive, true),
 					eq(sessions.status, 'running'),
 				),
@@ -950,6 +976,7 @@ export class SessionManager extends EventEmitter {
 	async findConversationSessionAnyActive(
 		conversationId: string,
 		actorId: string,
+		threadRootId: number | null = null,
 	): Promise<typeof sessions.$inferSelect | null> {
 		const [row] = await this.db
 			.select()
@@ -958,6 +985,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.conversationId, conversationId),
 					eq(sessions.actorId, actorId),
+					matchThread(sessions.threadRootId, threadRootId),
 					eq(sessions.interactive, true),
 					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
 				),
@@ -968,7 +996,9 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Delivers every turn buffered in conversation_pending_turns for this
-	 * session's (conversation, agent) pair — messages that arrived while the
+	 * session's (conversation, agent, thread) — the thread is read from the
+	 * session row (null = main chat), so a session never drains another
+	 * thread's turns. Messages that arrived while the
 	 * session was still booting. Rows are claimed atomically with
 	 * DELETE ... RETURNING so a concurrent drain (post-boot hook racing the
 	 * responder's own re-check) can't double-deliver a turn. A turn whose
@@ -983,6 +1013,7 @@ export class SessionManager extends EventEmitter {
 				interactive: sessions.interactive,
 				conversationId: sessions.conversationId,
 				actorId: sessions.actorId,
+				threadRootId: sessions.threadRootId,
 			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
@@ -995,6 +1026,7 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(conversationPendingTurns.conversationId, session.conversationId),
 					eq(conversationPendingTurns.actorId, session.actorId),
+					matchThread(conversationPendingTurns.threadRootId, session.threadRootId),
 				),
 			)
 			.returning()
@@ -1031,6 +1063,7 @@ export class SessionManager extends EventEmitter {
 							conversationId: t.conversationId,
 							actorId: t.actorId,
 							messageId: t.messageId,
+							threadRootId: t.threadRootId,
 							payload: t.payload,
 						})),
 					)
@@ -2139,12 +2172,33 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * How many thread sessions (a session with a thread, not the main-chat one) this agent has
+	 * live in this chat, counting those still on their way up.
+	 */
+	async countActiveThreadSessions(conversationId: string, actorId: string): Promise<number> {
+		const [row] = await this.db
+			.select({ count: countFn() })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, conversationId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					isNotNull(sessions.threadRootId),
+					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
+				),
+			)
+		return Number(row?.count ?? 0)
+	}
+
+	/**
 	 * Separate aggregate cap for chat sessions (see the isChatSession bypass in
 	 * startSession()) — they don't compete with max_concurrent_sessions, but
 	 * still need a ceiling so a workspace with many active conversations can't
-	 * spawn unbounded concurrent containers.
+	 * spawn unbounded concurrent containers. Public so the conversation responder can
+	 * check it before it starts a thread session, which must fall back instead of queueing.
 	 */
-	private async hasChatCapacity(workspaceId: string): Promise<boolean> {
+	async hasChatCapacity(workspaceId: string): Promise<boolean> {
 		const [workspace] = await this.db
 			.select()
 			.from(workspaces)
@@ -4930,10 +4984,15 @@ ${cont.continues_prompt}
 	 * Settled through settleSession like any other end, so the row reads
 	 * completed (or failed), `notify_on_complete` still sends the result back to
 	 * the agent that started it, and `wait: true` callers see it finish.
+	 *
+	 * `retry: false` keeps the failure reason but sets no retry time. A chat that
+	 * ends on a limit uses it: rerunning an idle chat at the reset is a product
+	 * call nobody has made, so only helper and cron sessions are retried.
 	 */
 	async finishHelperSession(
 		sessionId: string,
 		outcome: { isError: boolean; text: string },
+		options: { retry?: boolean } = {},
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -4971,7 +5030,7 @@ ${cont.continues_prompt}
 						reason: outcome.text.slice(0, 300) || 'The helper ended its turn with an error',
 						resultText: outcome.text,
 						failureReason: limitReason ?? undefined,
-						retryAt: scheduledRetryAt ?? undefined,
+						retryAt: options.retry === false ? undefined : (scheduledRetryAt ?? undefined),
 						// Same settle source the idle close uses: the remote stop endpoint
 						// validates it against a fixed list, and this is a close-out of an
 						// idle interactive session.

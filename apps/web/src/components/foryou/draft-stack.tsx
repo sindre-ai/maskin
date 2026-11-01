@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
 import type { LatestMentionDecisionDraft } from '@/lib/api'
 import { Check } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { DraftPreview } from './draft-preview'
 
 export type DraftAction = 'send' | 'skip'
@@ -26,25 +26,42 @@ const keyOf = (draft: LatestMentionDecisionDraft, index: number) => draft.id ?? 
 export function DraftStack({ workspaceId, drafts, onAction, onAllDone }: DraftStackProps) {
 	const [done, setDone] = useState<ReadonlyMap<string, DraftAction>>(new Map())
 	const [confirming, setConfirming] = useState<string | null>(null)
-	const [pending, setPending] = useState<string | null>(null)
+	const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
 	const [failed, setFailed] = useState<string | null>(null)
+	// Two acts on different messages can overlap, so what has been dealt with is
+	// read from a ref (always current) rather than from the render's `done`. A
+	// stale copy dropped one entry and the card never settled.
+	const doneRef = useRef<ReadonlyMap<string, DraftAction>>(done)
+	const inFlight = useRef<Set<string>>(new Set())
+
+	const setPendingKey = (key: string, on: boolean) =>
+		setPending((prev) => {
+			const next = new Set(prev)
+			if (on) next.add(key)
+			else next.delete(key)
+			return next
+		})
 
 	const act = async (draft: LatestMentionDecisionDraft, index: number, action: DraftAction) => {
 		const key = keyOf(draft, index)
-		setPending(key)
+		if (doneRef.current.has(key) || inFlight.current.has(key)) return
+		inFlight.current.add(key)
+		setPendingKey(key, true)
 		setFailed(null)
 		try {
 			await onAction(draft, action)
 		} catch {
+			inFlight.current.delete(key)
 			setFailed(key)
-			setPending(null)
+			setPendingKey(key, false)
 			return
 		}
-		const next = new Map(done).set(key, action)
-		setDone(next)
-		setPending(null)
+		inFlight.current.delete(key)
+		doneRef.current = new Map(doneRef.current).set(key, action)
+		setDone(doneRef.current)
+		setPendingKey(key, false)
 		setConfirming(null)
-		if (next.size === drafts.length) onAllDone()
+		if (doneRef.current.size === drafts.length) onAllDone()
 	}
 
 	return (
@@ -64,7 +81,7 @@ export function DraftStack({ workspaceId, drafts, onAction, onAllDone }: DraftSt
 						</p>
 					)
 				}
-				const busy = pending === key
+				const busy = pending.has(key)
 				return (
 					<div key={key} className="flex flex-col gap-2">
 						<DraftPreview workspaceId={workspaceId} draft={draft} />

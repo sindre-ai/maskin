@@ -1420,7 +1420,7 @@ describe('tool handlers', () => {
 			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
 		})
 
-		it('still signs a human up without a key and adds them with the add-member call', async () => {
+		it('still signs a human up without a key and invites them instead of adding them by id', async () => {
 			const requests = recordRequests()
 
 			const handler = getHandler('create_actor')
@@ -1429,13 +1429,19 @@ describe('tool handlers', () => {
 				name: 'Pat',
 				email: 'pat@example.com',
 				workspace_id: 'ws-123',
-				role: 'admin',
+				role: 'member',
 			})
 
 			const create = requests.find((r) => r.url === 'http://localhost:3000/api/actors')
 			expect(create?.body).not.toHaveProperty('workspace_id')
-			const add = requests.find((r) => r.url.endsWith('/api/workspaces/ws-123/members'))
-			expect(add?.body).toEqual({ actor_id: 'actor-new', role: 'admin' })
+			expect(requests.filter((r) => r.url.includes('/members'))).toHaveLength(0)
+			const invite = requests.find((r) => r.url === 'http://localhost:3000/api/invites')
+			expect(invite?.method).toBe('POST')
+			expect(invite?.body).toEqual({
+				workspaceId: 'ws-123',
+				email: 'pat@example.com',
+				role: 'member',
+			})
 		})
 
 		it('splits the merged llm_config into llm_provider + llm_config on the POST body', async () => {

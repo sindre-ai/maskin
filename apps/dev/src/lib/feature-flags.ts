@@ -70,6 +70,16 @@ export const FLAGS = {
 	 * entry) once it is on for everyone.
 	 */
 	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
+	/**
+	 * Agents answer in the main chat and in every thread at the same time (bet
+	 * [Agents answer in the main chat and in every thread at the same time](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/44b1b91c-3902-4fab-99ca-d7db7af4155d)).
+	 * Backend only, per actor, keyed to the person who wrote the message (never the agent). Read once, in
+	 * `deliverTurnToAgent` in `apps/dev/src/services/conversation-responder.ts`, where a thread message
+	 * decides whether to start or reuse a session of its own for that thread. Off means the single-session
+	 * path runs exactly as before. Needs the old per-chat session index dropped before it can go on, see the
+	 * bet's index-drop task. Retire (drop the old path and this entry) once it is on for everyone.
+	 */
+	CHAT_THREAD_SESSIONS: 'chat-thread-sessions',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

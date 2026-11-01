@@ -54,7 +54,9 @@ struct LinkedSheet: View {
 	}
 
 	private func openAfterClosing(_ target: LinkedTarget) {
-		LinkedOpener.openAfterClosing(target, close: { dismiss() }, runtime: runtime)
+		// A link into another workspace goes through the app's link handler, as a push tap does.
+		LinkedOpener.openAfterClosing(
+			target, close: { dismiss() }, runtime: runtime, elsewhere: store?.otherWorkspaceURL(for: target))
 	}
 
 	private func row(_ entry: LinkedEntry) -> some View {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+	classifyBannerResult,
 	classifyCreditExhaustion,
 	classifySessionExit,
 	endsInClaudeAuthDeath,
@@ -444,5 +445,23 @@ describe('Claude auth death', () => {
 		const clean = `${quoted}\n${resultLine('Invalid API key', false)}\n`
 		expect(classifySessionExit(clean, 1)).toBeNull()
 		expect(classifySessionExit(`${resultLine(DEAD, true)}\n`, 0)).toBeNull()
+	})
+})
+
+describe('classifyBannerResult', () => {
+	it('classifies a result text that opens with a limit banner, keeping the reset time', () => {
+		expect(
+			classifyBannerResult("You've hit your session limit · resets 2:20pm (Europe/Copenhagen)"),
+		).toMatchObject({ reason_code: 'session_limit', provider: 'anthropic' })
+	})
+
+	it('ignores a banner quoted further into the text', () => {
+		expect(
+			classifyBannerResult("Session X failed: You've hit your session limit. Retried."),
+		).toBeNull()
+	})
+
+	it('ignores text with no banner', () => {
+		expect(classifyBannerResult('Found 3 gigs')).toBeNull()
 	})
 })
