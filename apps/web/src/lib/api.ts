@@ -1057,7 +1057,7 @@ export const api = {
 			return all
 		},
 		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
-			request<EventResponse>('/events', {
+			request<CreateCommentResponse>('/events', {
 				method: 'POST',
 				body: data,
 				workspaceId,
@@ -1898,6 +1898,8 @@ export interface LatestMentionDecisionOption {
 	recommended?: boolean
 	/** The option that sends or otherwise reaches real people. */
 	destructive?: boolean
+	/** Tapping this option changes the status of an object (the one the card is on by default). */
+	set_status?: { status: string; object_id?: string }
 }
 
 /**
@@ -3160,6 +3162,17 @@ export interface EventResponse {
 	createdAt: string | null
 	/** Pre-formatted human-readable sentence (populated by /api/objects/:id/graph; absent on other event endpoints). */
 	description?: string
+}
+
+/** `POST /events`: the comment, plus what happened when the reply was a tap on a status button. */
+export interface CreateCommentResponse extends EventResponse {
+	status_action?: {
+		applied: boolean
+		object_id: string
+		status?: string
+		reason?: 'moved_on' | 'not_found' | 'invalid_status'
+		current_status?: string | null
+	}
 }
 
 export interface CreateCommentInput {
