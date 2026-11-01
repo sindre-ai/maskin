@@ -15,8 +15,10 @@ import {
 	type TagSegment,
 	type TagValue,
 	isTagChip,
+	pointAtTextOffset,
 	readTagDom,
 	tagLabel,
+	textOffsetOfPoint,
 } from '@/lib/tag-input-model'
 import {
 	type KeyboardEvent,
@@ -44,6 +46,12 @@ import {
 
 export interface TagInputHandle {
 	focus: () => void
+	/** Replaces everything in the input and reports the new value through `onChange`. */
+	setContent: (segments: TagSegment[]) => void
+	/** The caret as an offset into the plain text (a chip counts as "@Name"), or null when the
+	 *  caret is not in the input. */
+	caretOffset: () => number | null
+	setCaretOffset: (offset: number) => void
 }
 
 export interface TagInputProps {
@@ -54,6 +62,8 @@ export interface TagInputProps {
 	initialSegments: TagSegment[]
 	surface?: TagChipSurface
 	ariaLabel: string
+	ariaDescribedBy?: string
+	ariaActiveDescendant?: string
 	placeholder: string
 	disabled?: boolean
 	autoFocus?: boolean
@@ -80,6 +90,8 @@ export function TagInput({
 	initialSegments,
 	surface = 'card',
 	ariaLabel,
+	ariaDescribedBy,
+	ariaActiveDescendant,
 	placeholder,
 	disabled = false,
 	autoFocus = false,
@@ -136,28 +148,12 @@ export function TagInput({
 	useLayoutEffect(() => {
 		const root = rootRef.current
 		if (!root) return
-		root.replaceChildren()
-		for (const segment of initialSegments) {
-			if (segment.kind === 'chip') {
-				root.appendChild(buildChip(segment.id, segment.label, surface, segment.id === selfActorId))
-			} else {
-				appendText(root, segment.text)
-			}
-		}
+		fillRoot(root, initialSegments, surface, selfActorId)
 		if (autoFocus) {
 			root.focus()
 			placeCaretAtEnd(root)
 		}
 	}, [])
-
-	useImperativeHandle(handleRef, () => ({
-		focus: () => {
-			const root = rootRef.current
-			if (!root) return
-			root.focus()
-			placeCaretAtEnd(root)
-		},
-	}))
 
 	// The picker follows the caret: an `@query` ending at the caret, in the text node it sits in.
 	// A caret outside this input leaves the picker alone, so the phone sheet survives taking focus.
@@ -188,6 +184,43 @@ export function TagInput({
 		onChange(value)
 		syncTrigger()
 	}, [onChange, syncTrigger])
+
+	useImperativeHandle(
+		handleRef,
+		() => ({
+			focus: () => {
+				const root = rootRef.current
+				if (!root) return
+				root.focus()
+				placeCaretAtEnd(root)
+			},
+			setContent: (segments) => {
+				const root = rootRef.current
+				if (!root) return
+				fillRoot(root, segments, surface, selfActorId)
+				emit()
+			},
+			caretOffset: () => {
+				const root = rootRef.current
+				const sel = document.getSelection()
+				if (!root || !sel || sel.rangeCount === 0 || !sel.anchorNode) return null
+				return textOffsetOfPoint(root, sel.anchorNode, sel.anchorOffset)
+			},
+			setCaretOffset: (offset) => {
+				const root = rootRef.current
+				if (!root) return
+				const point = pointAtTextOffset(root, offset)
+				if (!point) return placeCaretAtEnd(root)
+				const range = document.createRange()
+				range.setStart(point.node, point.offset)
+				range.collapse(true)
+				const sel = document.getSelection()
+				sel?.removeAllRanges()
+				sel?.addRange(range)
+			},
+		}),
+		[emit, surface, selfActorId],
+	)
 
 	const commit = useCallback(
 		(actor: MentionPickerActor) => {
@@ -279,6 +312,8 @@ export function TagInput({
 					suppressContentEditableWarning
 					aria-multiline="true"
 					aria-label={ariaLabel}
+					aria-describedby={ariaDescribedBy}
+					aria-activedescendant={ariaActiveDescendant}
 					aria-disabled={disabled || undefined}
 					aria-haspopup="listbox"
 					aria-expanded={open}
@@ -324,6 +359,22 @@ export function TagInput({
 
 function initialIsEmpty(segments: TagSegment[]): boolean {
 	return segments.every((s) => s.kind === 'text' && s.text.length === 0)
+}
+
+function fillRoot(
+	root: HTMLElement,
+	segments: TagSegment[],
+	surface: TagChipSurface,
+	selfActorId: string | null,
+) {
+	root.replaceChildren()
+	for (const segment of segments) {
+		if (segment.kind === 'chip') {
+			root.appendChild(buildChip(segment.id, segment.label, surface, segment.id === selfActorId))
+		} else {
+			appendText(root, segment.text)
+		}
+	}
 }
 
 function buildChip(id: string, label: string, surface: TagChipSurface, isSelf: boolean) {

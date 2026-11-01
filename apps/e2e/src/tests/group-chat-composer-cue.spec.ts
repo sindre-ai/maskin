@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -9,6 +9,9 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const NEUTRAL = 'Message this conversation'
 const HINT_NOBODY = 'No agent will reply. Tag one with @.'
+
+/** The tag input draws its placeholder as a span beside the box, only while the box is empty. */
+const placeholderOf = (box: Locator) => box.locator('xpath=../span[@aria-hidden="true"]')
 
 /** Holds the requests the cue depends on for `ms`, so loading states can be observed. */
 async function throttleCueRequests(page: Page, ms: number) {
@@ -50,7 +53,7 @@ test.describe('Group chat composer cue', () => {
 			await expect(box).toBeVisible({ timeout: 15_000 })
 
 			// Nobody would answer, but nothing is said on arrival: the box is not focused.
-			await expect(box).toHaveAttribute('placeholder', NEUTRAL)
+			await expect(placeholderOf(box)).toHaveText(NEUTRAL)
 			await expect(page.getByText(HINT_NOBODY)).toHaveCount(0)
 
 			await box.click()
@@ -70,11 +73,11 @@ test.describe('Group chat composer cue', () => {
 			const hintBottom = (hintBox?.y ?? 0) + (hintBox?.height ?? 0)
 			expect(Math.round((sendBox?.y ?? 0) - hintBottom)).toBe(8)
 
-			// Picking a tag leaves the box empty, so the cue placeholder shows behind the chip.
+			// Picking a tag leaves the chip in the box, so the placeholder gives way to it.
 			await box.press('@')
 			await page.getByRole('option', { name: /Cue Agent 0/ }).click()
-			await expect(box).toHaveValue('')
-			await expect(box).toHaveAttribute('placeholder', /^Reply to Cue Agent 0/)
+			await expect(box.locator('[data-tag-id]')).toHaveText(/Cue Agent 0/)
+			await expect(placeholderOf(box)).toHaveCount(0)
 		})
 	}
 
@@ -93,15 +96,15 @@ test.describe('Group chat composer cue', () => {
 
 			// While the requests are held: neutral text, no hint, and typing works.
 			await expect(box).toBeEnabled()
-			await expect(box).toHaveAttribute('placeholder', NEUTRAL)
+			await expect(placeholderOf(box)).toHaveText(NEUTRAL)
 			await box.fill('typed while loading')
-			await expect(box).toHaveValue('typed while loading')
+			await expect(box).toHaveText('typed while loading')
 			await expect(page.getByText(HINT_NOBODY)).toHaveCount(0)
 			await expect(page.getByRole('button', { name: 'Send message' })).toBeEnabled()
 
 			// Once the data lands the text is still there and the box is still enabled.
 			await expect(box).toBeEnabled()
-			await expect(box).toHaveValue('typed while loading')
+			await expect(box).toHaveText('typed while loading')
 		}
 	})
 
@@ -126,7 +129,8 @@ test.describe('Group chat composer cue', () => {
 
 		const box = page.getByRole('textbox', { name: NEUTRAL })
 		await box.fill('hello both')
-		await expect(box).toHaveAttribute('placeholder', NEUTRAL)
+		await expect(box).toHaveText('hello both')
+		await expect(page.getByText(/^Reply to /)).toHaveCount(0)
 		await expect(page.getByText(HINT_NOBODY)).toBeVisible()
 	})
 })

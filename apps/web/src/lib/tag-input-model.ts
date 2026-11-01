@@ -139,3 +139,84 @@ export function readTagDom(root: Node): TagValue {
 	walk(root)
 	return { text, ids }
 }
+
+/** Where a point in the editable DOM sits in the plain text `readTagDom` would return. Walks the
+ *  same way, so the two always agree. Null when the point is outside `root`. */
+export function textOffsetOfPoint(root: Node, target: Node, targetOffset: number): number | null {
+	if (!root.contains(target)) return null
+	let text = ''
+	let found: number | null = null
+	const walk = (node: Node): boolean => {
+		const children = Array.from(node.childNodes)
+		for (let i = 0; i <= children.length; i++) {
+			if (node === target && target.nodeType !== 3 && i === targetOffset) {
+				found = text.length
+				return true
+			}
+			const child = children[i]
+			if (!child) break
+			if (child.nodeType === 3) {
+				if (child === target) {
+					found = text.length + targetOffset
+					return true
+				}
+				text += child.textContent ?? ''
+			} else if (isTagChip(child)) {
+				if (child === target || child.contains(target)) {
+					found = text.length
+					return true
+				}
+				text += `@${child.getAttribute(TAG_LABEL_ATTR) ?? ''}`
+			} else if (child.nodeName === 'BR') {
+				text += '\n'
+			} else if (child.nodeType === 1) {
+				const block = child.nodeName === 'DIV' || child.nodeName === 'P'
+				if (block && text.length > 0 && !text.endsWith('\n')) text += '\n'
+				if (walk(child)) return true
+			}
+		}
+		return false
+	}
+	walk(root)
+	return found
+}
+
+/** The DOM point for an offset into the plain text, or null when the text is shorter. A point
+ *  inside a chip's name resolves to the edge of the chip, never into it. */
+export function pointAtTextOffset(
+	root: Node,
+	offset: number,
+): { node: Node; offset: number } | null {
+	let text = ''
+	let found: { node: Node; offset: number } | null = null
+	const walk = (node: Node): boolean => {
+		const children = Array.from(node.childNodes)
+		for (let i = 0; i <= children.length; i++) {
+			if (text.length === offset) {
+				found = { node, offset: i }
+				return true
+			}
+			const child = children[i]
+			if (!child) break
+			if (child.nodeType === 3) {
+				const data = child.textContent ?? ''
+				if (offset > text.length && offset <= text.length + data.length) {
+					found = { node: child, offset: offset - text.length }
+					return true
+				}
+				text += data
+			} else if (isTagChip(child)) {
+				text += `@${child.getAttribute(TAG_LABEL_ATTR) ?? ''}`
+			} else if (child.nodeName === 'BR') {
+				text += '\n'
+			} else if (child.nodeType === 1) {
+				const block = child.nodeName === 'DIV' || child.nodeName === 'P'
+				if (block && text.length > 0 && !text.endsWith('\n')) text += '\n'
+				if (walk(child)) return true
+			}
+		}
+		return false
+	}
+	walk(root)
+	return found
+}
