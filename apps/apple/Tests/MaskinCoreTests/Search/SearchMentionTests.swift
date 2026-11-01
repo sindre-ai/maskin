@@ -160,12 +160,14 @@ struct SearchStoreMentionTests {
 		let store = make(remote)
 		store.setQuery("@product marketing")
 		await untilMenu(store)
+		await store.settle()
+		let askedBeforePick = await remote.objectQueries.count  // the typed text is searched while the menu is open
 		store.pick(marketing)
 		store.setQuery("brief")
 		await store.settle()
 		store.removeParticipant(marketing)
 		await store.settle()
-		#expect(await remote.objectQueries == ["brief"])
+		#expect(await remote.objectQueries.dropFirst(askedBeforePick) == ["brief"])
 		#expect(store.allResults.map(\.id) == ["object:o1"])
 	}
 
