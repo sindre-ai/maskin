@@ -12,8 +12,8 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useForYou } from '@/hooks/use-for-you'
-import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
+import { dismissBodyFor, useDismissForYou, useForYou } from '@/hooks/use-for-you'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -73,7 +73,7 @@ function ForYouFeed() {
 	const { data, isLoading, isError, error, refetch } = useForYou(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
-	const markUnread = useMarkUnread(workspaceId)
+	const dismiss = useDismissForYou(workspaceId)
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [filterPills, setFilterPills] = useState(false)
@@ -284,15 +284,34 @@ function ForYouFeed() {
 		[markRead, restorePending],
 	)
 
-	// Same shared-observer hazard as `markItemRead` — Undo marks a whole batch
-	// unread in a loop, so per-call handling has to hang off the promise.
-	const markItemUnread = useCallback(
-		(item: UnreadItem) => {
-			markUnread
-				.mutateAsync({ entityType: item.entity_type, entityId: item.entity_id })
-				.catch(() => toast.error("Couldn't undo that — the thread stayed read."))
+	// Dismiss is its own record on the server, separate from the read position that opening
+	// a page moves. Returns whether a dismissal was dispatched; a card with nothing to name
+	// (no notification, no source comment) cannot be dismissed, so callers must not hide it.
+	// Same per-call `mutateAsync` as `markItemRead`, for the same shared-observer reason.
+	const dismissItem = useCallback(
+		(item: UnreadItem, onFailed?: () => void) => {
+			const body = dismissBodyFor(item)
+			if (!body) return false
+			dismiss.mutateAsync({ body }).catch(() => {
+				restorePending(feedItemKey(item))
+				onFailed?.()
+				toast.error("Couldn't dismiss that — it's back in your feed.")
+			})
+			return true
 		},
-		[markUnread],
+		[dismiss, restorePending],
+	)
+
+	// Undo of a dismissal. A batch loops over this, so per-call handling hangs off the promise.
+	const undismissItem = useCallback(
+		(item: UnreadItem) => {
+			const body = dismissBodyFor(item)
+			if (!body) return
+			dismiss
+				.mutateAsync({ body, undo: true })
+				.catch(() => toast.error("Couldn't undo that — the card stayed dismissed."))
+		},
+		[dismiss],
 	)
 
 	// Taking an option posts the reply and marks the thread read, which drops
@@ -420,34 +439,34 @@ function ForYouFeed() {
 		[markItemRead],
 	)
 
-	// Dismissing is marking read: the high-water mark moves and the card leaves
-	// the column. The mutation fires immediately — waiting for the Undo toast to
-	// close before mutating meant navigating away during that window silently
-	// dropped the mark-read — and Undo reverses it with a real mark-unread.
+	// Dismissing records a dismissal, not a read: the card leaves the column and stays gone,
+	// while opening its page leaves it standing. The mutation fires immediately — waiting
+	// for the Undo toast to close before mutating meant navigating away during that window
+	// silently dropped the dismissal — and Undo reverses it with a real undismiss.
 	// Cards already answered in this sitting go too, receipt and all, so
 	// "Dismiss all" always empties what the reader can see.
 	const dismissAll = useCallback(
 		(targets: UnreadItem[], label: string) => {
 			if (targets.length === 0) return
-			// Only cards whose mark-read actually went out may be hidden. A card
-			// that couldn't be marked stays in the column rather than vanishing
+			// Only cards whose dismissal actually went out may be hidden. A card
+			// that couldn't be dismissed stays in the column rather than vanishing
 			// and reappearing on the next refetch.
 			//
 			// A dismissed card that already carried a receipt is cleared out of
-			// `decided` below, and the server has already dropped it from unread
-			// — so if the mark-read then fails, nothing else would bring it back.
+			// `decided` below, and the server has already dropped it from the list
+			// — so if the dismissal then fails, nothing else would bring it back.
 			// Restore its receipt alongside the un-hide.
 			const decidedBefore = decided
 			const dismissed = targets.filter((item) => {
-				const marked = markItemRead(item, () => {
+				const marked = dismissItem(item, () => {
 					const key = feedItemKey(item)
 					const decision = decidedBefore.get(key)
 					if (!decision) return
 					setDecided((prev) => (prev.has(key) ? prev : new Map(prev).set(key, decision)))
 				})
-				// One `foryou_card_marked_read` per successfully-marked item —
+				// One `foryou_card_marked_read` per successfully-dismissed item —
 				// bulk dismiss is the reader saying "read" for every card that
-				// actually leaves the column. Skips items that couldn't be marked
+				// actually leaves the column. Skips items that couldn't be dismissed
 				// so the analytics volume matches what the reader actually cleared.
 				if (marked) {
 					trackForyouCardMarkedRead({
@@ -480,7 +499,7 @@ function ForYouFeed() {
 				action: {
 					label: 'Undo',
 					onClick: () => {
-						for (const item of dismissed) markItemUnread(item)
+						for (const item of dismissed) undismissItem(item)
 						setPendingKeys((prev) => {
 							const next = new Set(prev)
 							for (const key of keys) next.delete(key)
@@ -496,7 +515,7 @@ function ForYouFeed() {
 				},
 			})
 		},
-		[decided, repliedKeys, markItemRead, markItemUnread],
+		[decided, repliedKeys, dismissItem, undismissItem],
 	)
 
 	// "Take every suggested option" — the recommended answer on every card that

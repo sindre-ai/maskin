@@ -1295,6 +1295,13 @@ export const api = {
 
 	forYou: {
 		list: (workspaceId: string) => request<ForYouResponse>('/for-you', { workspaceId }),
+		// Dismiss is its own record, separate from the read position: opening a page does not
+		// retire a card, this does. Curated cards go by notification id, decision cards by the
+		// comment that raised them.
+		dismiss: (workspaceId: string, body: ForYouDismissBody) =>
+			request<{ ok: true }>('/for-you/dismissals', { method: 'POST', body, workspaceId }),
+		undismiss: (workspaceId: string, body: ForYouDismissBody) =>
+			request<{ ok: true }>('/for-you/dismissals/undo', { method: 'POST', body, workspaceId }),
 	},
 
 	webPush: {
@@ -1871,7 +1878,9 @@ export interface UnreadItem {
 	latest_mention?: LatestMention
 	// Set for an item the Chief of Staff curated. Its headline and rationale are what the card
 	// shows when there is no source comment to lead with.
-	curated?: { headline: string; rationale: string | null }
+	// notification_id is what Dismiss names for it; absent for a decision card, which is dismissed
+	// by its comment instead.
+	curated?: { headline: string; rationale: string | null; notification_id?: string | null }
 }
 
 export interface LatestMentionDecisionOption {
@@ -1943,6 +1952,11 @@ export interface ForYouItem {
 	session_id: string | null
 	object?: ObjectResponse
 	latest_mention?: LatestMention
+}
+
+export interface ForYouDismissBody {
+	notification_id?: string
+	source_comment_id?: number
 }
 
 export interface ForYouResponse {
