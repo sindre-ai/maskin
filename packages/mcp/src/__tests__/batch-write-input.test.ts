@@ -261,7 +261,8 @@ describe('batch write tools reject bad input instead of returning an empty succe
 			const schema = inputSchemas.get('create_objects')
 			if (!schema) throw new Error('create_objects not registered')
 			const parsed = schema.safeParse({
-				nodes: [{ $id: 'a', type: 'bet' }],
+				workspace_id: WS_ID,
+				nodes: [{ $id: 'a', type: 'bet', status: 'opportunity' }],
 				harmless_extra: true,
 			})
 			expect(parsed.success).toBe(true)
