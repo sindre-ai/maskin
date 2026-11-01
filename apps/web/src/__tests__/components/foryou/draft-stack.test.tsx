@@ -81,7 +81,9 @@ describe('DraftStack', () => {
 		const onAction = vi.fn(() => new Promise<void>((resolve) => resolvers.push(resolve)))
 		const { onAllDone } = setup(onAction)
 		await userEvent.click(screen.getAllByRole('button', { name: 'Skip' })[0])
-		await userEvent.click(screen.getAllByRole('button', { name: 'Skip' })[0])
+		// The first message's buttons are disabled while its call is out, so the second
+		// message is the other Skip in the list.
+		await userEvent.click(screen.getAllByRole('button', { name: 'Skip' })[1])
 		expect(onAction).toHaveBeenCalledTimes(2)
 		await act(async () => {
 			for (const resolve of resolvers) resolve()
