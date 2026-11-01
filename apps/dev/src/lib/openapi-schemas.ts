@@ -202,6 +202,16 @@ export const eventResponseSchema = z.object({
 export const createCommentResponseSchema = eventResponseSchema.extend({
 	unresolved_mentions: z.array(z.string().uuid()).optional(),
 	warning: z.string().optional(),
+	/** Set when the reply was a tap on a status button: whether the status changed, and if not why. */
+	status_action: z
+		.object({
+			applied: z.boolean(),
+			object_id: z.string().uuid(),
+			status: z.string().optional(),
+			reason: z.enum(['moved_on', 'not_found', 'invalid_status']).optional(),
+			current_status: z.string().nullable().optional(),
+		})
+		.optional(),
 })
 
 export const fileSummarySchema = z.object({

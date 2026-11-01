@@ -22,6 +22,7 @@ import {
 import { trackForyouCardMarkedRead } from '@/lib/analytics'
 import {
 	type CreateCommentInput,
+	type CreateCommentResponse,
 	type DisplaySettingsBody,
 	type LatestMentionDecisionDraft,
 	type UnreadItem,
@@ -401,7 +402,19 @@ function ForYouFeed() {
 								...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
 							}),
 				)
-				.then(() => {
+				.then((result) => {
+					// The tap was a status button and the status did not change: say so, or the
+					// card disappears and the person thinks it went through.
+					const statusAction = (
+						result as { status_action?: CreateCommentResponse['status_action'] }
+					)?.status_action
+					if (statusAction && !statusAction.applied) {
+						toast.warning(
+							statusAction.reason === 'moved_on'
+								? `Not changed: it is already ${statusAction.current_status ?? 'in another status'}.`
+								: "Couldn't change the status. Open the item to change it.",
+						)
+					}
 					// A thread with no high-water mark can't be marked read, so the
 					// reply would go out and the card would come back on the next
 					// refetch carrying the reader's own answer. Say so rather than

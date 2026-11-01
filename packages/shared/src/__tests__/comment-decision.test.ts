@@ -3,6 +3,7 @@ import {
 	type CommentDecision,
 	type CommentDecisionOption,
 	commentDecisionSchema,
+	findStatusActionViolations,
 	validateDecisionProse,
 } from '../schemas/comment-decision'
 import { createCommentSchema } from '../schemas/events'
@@ -313,5 +314,52 @@ describe('decision draft', () => {
 		const parsed = commentDecisionSchema.safeParse(buildDecision())
 
 		expect(parsed.success && 'draft' in parsed.data).toBe(false)
+	})
+})
+
+describe('findStatusActionViolations', () => {
+	const statuses = ['opportunity', 'define', 'active', 'live', 'in_progress']
+	const flip = (title: string, extra: Partial<CommentDecision> = {}) =>
+		buildDecision({ title, ...extra })
+
+	it('flags a card that asks to flip a bet to a status and names the fix', () => {
+		const found = findStatusActionViolations(flip('Flip the onboarding bet to active?'), statuses)
+		expect(found).toHaveLength(1)
+		expect(found[0]?.message).toContain('"set_status": { "status": "active" }')
+	})
+
+	it('reads a verb up to five words before the status, and underscore statuses as words', () => {
+		expect(
+			findStatusActionViolations(flip('Promote concurrent-edit bet to define?'), statuses),
+		).toHaveLength(1)
+		expect(
+			findStatusActionViolations(flip('Move this task to in progress?'), statuses),
+		).toHaveLength(1)
+	})
+
+	it('leaves a card alone when no verb sits near a status name', () => {
+		expect(findStatusActionViolations(flip('Park the launch email?'), statuses)).toEqual([])
+		expect(findStatusActionViolations(flip('Is the live demo ready?'), statuses)).toEqual([])
+	})
+
+	it('leaves a card alone when an option already has set_status, a draft, or the opt-out', () => {
+		const title = 'Flip the onboarding bet to active?'
+		const [first, second] = buildDecision().options as [
+			CommentDecisionOption,
+			CommentDecisionOption,
+		]
+		const withButton = flip(title, {
+			options: [{ ...first, set_status: { status: 'active' } }, second],
+		})
+		expect(findStatusActionViolations(withButton, statuses)).toEqual([])
+		expect(
+			findStatusActionViolations(
+				flip(title, { draft: { object_id: crypto.randomUUID() } }),
+				statuses,
+			),
+		).toEqual([])
+		expect(findStatusActionViolations(flip(title, { no_status_action: true }), statuses)).toEqual(
+			[],
+		)
 	})
 })

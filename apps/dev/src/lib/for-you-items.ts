@@ -142,6 +142,34 @@ export async function buildForYouItems(
 		: [[], [], new Set<number>()]
 	const decisionObjectById = new Map(decisionObjects.map((o) => [o.id, o]))
 
+	// A card with a status button also belongs to the object that button moves, which need not be
+	// the one the card sits on.
+	const parsedDecisionById = new Map(
+		[...latestDecisionByEntity.values()].map((event) => [
+			Number(event.id),
+			parseCommentDecision((event.data as { decision?: unknown } | null)?.decision),
+		]),
+	)
+	const stampedIds = [
+		...new Set(
+			[...parsedDecisionById.values()].flatMap((d) =>
+				d?.status_stamp && !decisionObjectById.has(d.status_stamp.object_id)
+					? [d.status_stamp.object_id]
+					: [],
+			),
+		),
+	]
+	const stampedObjects = stampedIds.length
+		? await db
+				.select({ id: objects.id, status: objects.status })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, stampedIds)))
+		: []
+	const stampedStatusById = new Map([
+		...decisionObjects.map((o) => [o.id, o.status] as const),
+		...stampedObjects.map((o) => [o.id, o.status] as const),
+	])
+
 	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, [
 		...latestDecisionByEntity.values(),
 	])
@@ -151,10 +179,13 @@ export async function buildForYouItems(
 		if (!obj || CLOSED_OBJECT_STATUSES.includes(obj.status ?? '')) return false
 		// The ask names the state it assumed ("flip to active" assumes "define"). Once the object
 		// is anywhere else the ask is moot, the same rule curated cards already follow.
-		const assumed = parseCommentDecision(
-			(event.data as { decision?: unknown } | null)?.decision,
-		)?.only_while_status
+		const decision = parsedDecisionById.get(Number(event.id))
+		const assumed = decision?.only_while_status
 		if (assumed && !assumed.includes(obj.status ?? '')) return false
+		// A status button stamps the status of the object it moves. Once that object is anywhere
+		// else, whether a person moved it or the button did, there is nothing left to ask.
+		const stamp = decision?.status_stamp
+		if (stamp && stampedStatusById.get(stamp.object_id) !== stamp.status) return false
 		// Every message it offered has been sent or skipped.
 		if (finishedDraftCards.has(Number(event.id))) return false
 		// The person answered this card with a threaded reply (an option tap is one), or

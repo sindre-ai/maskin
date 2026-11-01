@@ -39044,6 +39044,25 @@
 														"destructive": {
 															"type": "boolean",
 															"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+														},
+														"set_status": {
+															"type": "object",
+															"properties": {
+																"status": {
+																	"type": "string",
+																	"minLength": 1,
+																	"description": "The status to put the object in, e.g. \"active\"."
+																},
+																"object_id": {
+																	"type": "string",
+																	"format": "uuid",
+																	"description": "The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on."
+																}
+															},
+															"required": [
+																"status"
+															],
+															"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
 														}
 													},
 													"required": [
@@ -39109,6 +39128,28 @@
 												"minItems": 1,
 												"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
 											},
+											"no_status_action": {
+												"type": "boolean",
+												"description": "Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example \"Park the launch email?\" on a bet in a status called \"launch\"). Leave it off otherwise."
+											},
+											"status_stamp": {
+												"type": "object",
+												"properties": {
+													"object_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"status": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": [
+													"object_id",
+													"status"
+												],
+												"description": "Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced."
+											},
 											"draft": {
 												"type": "object",
 												"properties": {
@@ -39156,7 +39197,7 @@
 											"ask",
 											"options"
 										],
-										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+										"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 									},
 									"attention": {
 										"type": "integer",
@@ -39227,6 +39268,39 @@
 										},
 										"warning": {
 											"type": "string"
+										},
+										"status_action": {
+											"type": "object",
+											"properties": {
+												"applied": {
+													"type": "boolean"
+												},
+												"object_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"status": {
+													"type": "string"
+												},
+												"reason": {
+													"type": "string",
+													"enum": [
+														"moved_on",
+														"not_found",
+														"invalid_status"
+													]
+												},
+												"current_status": {
+													"type": [
+														"string",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"applied",
+												"object_id"
+											]
 										}
 									},
 									"required": [
@@ -53880,6 +53954,25 @@
 																				"destructive": {
 																					"type": "boolean",
 																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+																				},
+																				"set_status": {
+																					"type": "object",
+																					"properties": {
+																						"status": {
+																							"type": "string",
+																							"minLength": 1,
+																							"description": "The status to put the object in, e.g. \"active\"."
+																						},
+																						"object_id": {
+																							"type": "string",
+																							"format": "uuid",
+																							"description": "The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on."
+																						}
+																					},
+																					"required": [
+																						"status"
+																					],
+																					"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
 																				}
 																			},
 																			"required": [
@@ -54090,6 +54183,28 @@
 																		"minItems": 1,
 																		"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
 																	},
+																	"no_status_action": {
+																		"type": "boolean",
+																		"description": "Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example \"Park the launch email?\" on a bet in a status called \"launch\"). Leave it off otherwise."
+																	},
+																	"status_stamp": {
+																		"type": "object",
+																		"properties": {
+																			"object_id": {
+																				"type": "string",
+																				"format": "uuid"
+																			},
+																			"status": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"object_id",
+																			"status"
+																		],
+																		"description": "Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced."
+																	},
 																	"draft": {
 																		"type": "object",
 																		"properties": {
@@ -54284,7 +54399,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
@@ -57193,6 +57308,25 @@
 																				"destructive": {
 																					"type": "boolean",
 																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
+																				},
+																				"set_status": {
+																					"type": "object",
+																					"properties": {
+																						"status": {
+																							"type": "string",
+																							"minLength": 1,
+																							"description": "The status to put the object in, e.g. \"active\"."
+																						},
+																						"object_id": {
+																							"type": "string",
+																							"format": "uuid",
+																							"description": "The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on."
+																						}
+																					},
+																					"required": [
+																						"status"
+																					],
+																					"description": "Use on the option that moves an object to a new status (\"Go\" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted."
 																				}
 																			},
 																			"required": [
@@ -57403,6 +57537,28 @@
 																		"minItems": 1,
 																		"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
 																	},
+																	"no_status_action": {
+																		"type": "boolean",
+																		"description": "Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example \"Park the launch email?\" on a bet in a status called \"launch\"). Leave it off otherwise."
+																	},
+																	"status_stamp": {
+																		"type": "object",
+																		"properties": {
+																			"object_id": {
+																				"type": "string",
+																				"format": "uuid"
+																			},
+																			"status": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"object_id",
+																			"status"
+																		],
+																		"description": "Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced."
+																	},
 																	"draft": {
 																		"type": "object",
 																		"properties": {
@@ -57597,7 +57753,7 @@
 																	"ask",
 																	"options"
 																],
-																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 3-7 words and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;\nask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. I have drafted the replacement copy and the migration.\",\n  \"ask\": \"This changes what every new customer sees first, so I will not ship it alone.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
 															}
 														},
 														"required": [
