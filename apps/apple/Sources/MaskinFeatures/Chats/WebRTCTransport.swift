@@ -1,6 +1,7 @@
 #if os(iOS) && canImport(WebRTC)
 import AVFoundation
 import Foundation
+import MaskinCore
 import WebRTC
 
 /// The microphone, the speaker and the peer connection to the OpenAI Realtime edge. Audio goes in
@@ -15,6 +16,7 @@ final class WebRTCTransport: RealtimeTransport {
 	private var channel: RTCDataChannel?
 	private var micTrack: RTCAudioTrack?
 	private var audioSessionActive = false
+	private var meterTask: Task<Void, Never>?
 	/// Set by `close()`. An offer still waiting on the permission prompt must not open the
 	/// microphone after the call was hung up.
 	private var isClosed = false
@@ -71,12 +73,44 @@ final class WebRTCTransport: RealtimeTransport {
 		channel.sendData(RTCDataBuffer(data: Data(json.utf8), isBinary: false))
 	}
 
+	/// Read after the audio session is configured, so the route (speaker, headset, earpiece) is the
+	/// one the call starts on.
+	var noiseReduction: VoiceNoiseReduction? {
+		LiveAudioRoute.noiseReduction(for: LiveAudioSession.currentOutput())
+	}
+
+	/// Polls the connection's stats about 20 times a second: `audioLevel` on the inbound audio is the
+	/// agent's voice, on the local audio source is your microphone (it reads 0 while muted).
+	func startMetering(into meter: CallLevelMeter) {
+		meterTask?.cancel()
+		meterTask = Task { [weak self] in
+			while !Task.isCancelled {
+				self?.peer?.statistics { report in
+					var input: Double?
+					var output: Double?
+					for stat in report.statistics.values {
+						guard let level = (stat.values["audioLevel"] as? NSNumber)?.doubleValue else { continue }
+						switch stat.type {
+						case "inbound-rtp": output = max(output ?? 0, level)
+						case "media-source": input = max(input ?? 0, level)
+						default: break
+						}
+					}
+					meter.record(input: input, output: output)
+				}
+				try? await Task.sleep(for: .milliseconds(50))
+			}
+		}
+	}
+
 	func setMicEnabled(_ enabled: Bool) { micTrack?.isEnabled = enabled }
 
 	func restartIce() { peer?.restartIce() }
 
 	func close() {
 		isClosed = true
+		meterTask?.cancel()
+		meterTask = nil
 		bridge.onMessage = nil
 		bridge.onConnection = nil
 		channel?.close()
@@ -95,6 +129,8 @@ final class WebRTCTransport: RealtimeTransport {
 	// MARK: Audio session
 
 	/// Speaker by default (this is a call you hold in front of you, not to your ear), headsets allowed.
+	/// `.voiceChat` is what turns on the hardware echo canceller and gain control; without it the
+	/// agent's own voice would come back through the microphone and cut it off.
 	private func configureAudioSession() throws {
 		let session = AVAudioSession.sharedInstance()
 		do {

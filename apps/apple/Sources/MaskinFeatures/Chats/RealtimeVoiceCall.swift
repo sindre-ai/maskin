@@ -26,6 +26,16 @@ protocol RealtimeTransport: AnyObject {
 	func setMicEnabled(_ enabled: Bool)
 	func restartIce()
 	func close()
+	/// The microphone hint for the offer, read once the audio session is set up (so after
+	/// `makeOffer`). Nil sends none.
+	var noiseReduction: VoiceNoiseReduction? { get }
+	/// Start writing the call's audio levels into `meter` until `close()`.
+	func startMetering(into meter: CallLevelMeter)
+}
+
+extension RealtimeTransport {
+	var noiseReduction: VoiceNoiseReduction? { nil }
+	func startMetering(into meter: CallLevelMeter) {}
 }
 
 /// A live voice call with one agent over the OpenAI Realtime API, through the Maskin server: the
@@ -47,6 +57,10 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 	private(set) var machine = RealtimeCallMachine()
 	private(set) var failure: String?
 	private(set) var isMuted = false
+	/// False until the call is up, and again while it is being recovered: the orb breathes meanwhile.
+	private(set) var isConnected = false
+	/// The live audio levels, read by the call orb every frame. Not observed on purpose.
+	@ObservationIgnored let meter = CallLevelMeter()
 
 	var phase: LiveVoicePhase { machine.phase }
 	var transcript: String { machine.heardText }
@@ -195,9 +209,11 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 				release(reason: .userHangup)
 				return true
 			}
-			let answer = try await calls.offer(voiceSessionID: id, sdp: sdp)
+			let answer = try await calls.offer(
+				voiceSessionID: id, sdp: sdp, noiseReduction: transport.noiseReduction)
 			machine.toolsAvailable = answer.toolsAvailable
 			try await transport.accept(answer: answer.sdp)
+			transport.startMetering(into: meter)
 			transport.setMicEnabled(!isMuted)
 			return true
 		} catch RealtimeTransportError.microphoneDenied {
@@ -274,10 +290,12 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		guard isActive else { return }
 		switch state {
 		case .connected:
+			isConnected = true
 			reconnectTask?.cancel()
 			reconnectTask = nil
 			restartedIce = false
 		case .disconnected, .failed:
+			isConnected = false
 			// One ICE restart per drop, then the call gets a window to recover before it is ended.
 			if state == .failed, !restartedIce {
 				restartedIce = true
@@ -343,6 +361,8 @@ final class RealtimeVoiceCall: LiveVoiceDriving {
 		let input = machine.inputSeconds(at: date)
 		let output = machine.outputSeconds(at: date)
 		machine.connectionEnded(at: date)
+		isConnected = false
+		meter.reset()
 		transport?.close()
 		transport = nil
 		guard let id else { return }

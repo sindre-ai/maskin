@@ -119,7 +119,7 @@ final class LiveAudioSession {
 		try session.setActive(true)
 	}
 
-	nonisolated private static func currentOutput() -> LiveAudioRoute.Output? {
+	nonisolated static func currentOutput() -> LiveAudioRoute.Output? {
 		guard let port = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType else { return nil }
 		switch port {
 		case .builtInReceiver: return .receiver
