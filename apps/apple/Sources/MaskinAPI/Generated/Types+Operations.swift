@@ -45931,6 +45931,10 @@ public enum Operations {
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/drafts`.
                         public var drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload?
+                        /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/only_while_status`.
+                        public var only_while_status: [Swift.String]?
                         /// Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draft`.
@@ -46004,6 +46008,7 @@ public enum Operations {
                         ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                         ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                         ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
+                        ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
                         ///   - draft: Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.
                         public init(
                             title: Swift.String,
@@ -46011,6 +46016,7 @@ public enum Operations {
                             ask: Swift.String,
                             options: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayload,
                             drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload? = nil,
+                            only_while_status: [Swift.String]? = nil,
                             draft: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftPayload? = nil
                         ) {
                             self.title = title
@@ -46018,6 +46024,7 @@ public enum Operations {
                             self.ask = ask
                             self.options = options
                             self.drafts = drafts
+                            self.only_while_status = only_while_status
                             self.draft = draft
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -46026,6 +46033,7 @@ public enum Operations {
                             case ask
                             case options
                             case drafts
+                            case only_while_status
                             case draft
                         }
                     }
@@ -67165,6 +67173,10 @@ public enum Operations {
                                     public typealias draftsPayload = [Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
                                     public var drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
+                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
+                                    public var only_while_status: [Swift.String]?
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft`.
                                     public struct draftPayload: Codable, Hashable, Sendable {
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/id`.
@@ -67448,6 +67460,7 @@ public enum Operations {
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
+                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -67455,6 +67468,7 @@ public enum Operations {
                                         ask: Swift.String,
                                         options: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
+                                        only_while_status: [Swift.String]? = nil,
                                         draft: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
                                     ) {
                                         self.title = title
@@ -67462,6 +67476,7 @@ public enum Operations {
                                         self.ask = ask
                                         self.options = options
                                         self.drafts = drafts
+                                        self.only_while_status = only_while_status
                                         self.draft = draft
                                     }
                                     public enum CodingKeys: String, CodingKey {
@@ -67470,6 +67485,7 @@ public enum Operations {
                                         case ask
                                         case options
                                         case drafts
+                                        case only_while_status
                                         case draft
                                     }
                                 }
@@ -70662,6 +70678,10 @@ public enum Operations {
                                     public typealias draftsPayload = [Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
                                     public var drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
+                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
+                                    public var only_while_status: [Swift.String]?
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft`.
                                     public struct draftPayload: Codable, Hashable, Sendable {
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/id`.
@@ -70945,6 +70965,7 @@ public enum Operations {
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
+                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -70952,6 +70973,7 @@ public enum Operations {
                                         ask: Swift.String,
                                         options: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
+                                        only_while_status: [Swift.String]? = nil,
                                         draft: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
                                     ) {
                                         self.title = title
@@ -70959,6 +70981,7 @@ public enum Operations {
                                         self.ask = ask
                                         self.options = options
                                         self.drafts = drafts
+                                        self.only_while_status = only_while_status
                                         self.draft = draft
                                     }
                                     public enum CodingKeys: String, CodingKey {
@@ -70967,6 +70990,7 @@ public enum Operations {
                                         case ask
                                         case options
                                         case drafts
+                                        case only_while_status
                                         case draft
                                     }
                                 }
