@@ -1045,6 +1045,13 @@ export const messages = pgTable(
 			.on(t.threadRootId, t.id)
 			.where(sql`${t.threadRootId} IS NOT NULL`),
 		index('messages_session_id_idx').on(t.sessionId),
+		// Chat id + trigram index for the chat message-text search (services/search.ts, deepHit).
+		// Migrations 0122 and 0123 (extensions), 0124 (this index, built CONCURRENTLY).
+		index('messages_conv_content_trgm_idx').using(
+			'gin',
+			t.conversationId,
+			t.content.op('gin_trgm_ops'),
+		),
 		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would
