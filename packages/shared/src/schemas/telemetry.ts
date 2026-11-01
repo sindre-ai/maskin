@@ -113,6 +113,101 @@ const mcpProtocolVersionSchema = degradeTo(
 	undefined,
 )
 
+// What a list-family call listed, and whether it was paging, for the list-tools
+// bet's retry-pair measure ("two list calls on the same object type within 5
+// calls, paging excluded"). Stored on the `mcp_telemetry` row, so the 7-day
+// baseline and the after window read the same table.
+//
+// Object type is a fixed vocabulary, never a raw argument: `type` can be a
+// workspace-defined custom type, and a custom type name is workspace-authored
+// text that must not be stored. Anything outside the built-in set is the
+// literal `other`. The cursor flag is a boolean; cursor contents and offset
+// values are never kept.
+export const LIST_CALL_BUILT_IN_OBJECT_TYPES = [
+	'bet',
+	'task',
+	'insight',
+	'knowledge',
+	'company',
+	'contact',
+	'content',
+	'event',
+	'meeting',
+	'loop',
+] as const
+
+// The four list tools whose type is fixed by the tool itself.
+const FIXED_LIST_TOOL_TYPES = {
+	list_triggers: 'trigger',
+	list_loops: 'loop',
+	list_workspace_skills: 'skill',
+	list_extensions: 'extension',
+} as const
+
+export const LIST_CALL_OBJECT_TYPES = [
+	...LIST_CALL_BUILT_IN_OBJECT_TYPES,
+	'trigger',
+	'skill',
+	'extension',
+	'other',
+] as const
+
+export type ListCallObjectType = (typeof LIST_CALL_OBJECT_TYPES)[number]
+
+const BUILT_IN_OBJECT_TYPE_SET: ReadonlySet<string> = new Set(LIST_CALL_BUILT_IN_OBJECT_TYPES)
+
+const TYPED_LIST_TOOLS: ReadonlySet<string> = new Set(['list_objects', 'search_objects'])
+
+/** The six list-family tools. */
+export function isListFamilyTool(toolName: string): boolean {
+	return TYPED_LIST_TOOLS.has(toolName) || toolName in FIXED_LIST_TOOL_TYPES
+}
+
+function argRecord(args: unknown): Record<string, unknown> {
+	return args && typeof args === 'object' && !Array.isArray(args)
+		? (args as Record<string, unknown>)
+		: {}
+}
+
+/**
+ * Object type a list-family call listed. `list_objects` and `search_objects`
+ * read the `type` argument: a built-in type passes through, a missing or empty
+ * one is undefined, anything else (custom type, free text, non-string) is
+ * `other`. The other four tools return their own fixed type. Undefined for
+ * every non-list tool.
+ */
+export function listCallObjectType(
+	toolName: string,
+	args: unknown,
+): ListCallObjectType | undefined {
+	if (toolName in FIXED_LIST_TOOL_TYPES) {
+		return FIXED_LIST_TOOL_TYPES[toolName as keyof typeof FIXED_LIST_TOOL_TYPES]
+	}
+	if (!TYPED_LIST_TOOLS.has(toolName)) return undefined
+	const type = argRecord(args).type
+	if (type === undefined || type === null || type === '') return undefined
+	if (typeof type === 'string' && BUILT_IN_OBJECT_TYPE_SET.has(type)) {
+		return type as ListCallObjectType
+	}
+	return 'other'
+}
+
+/**
+ * Whether a list-family call was paging: it carried a non-empty cursor or an
+ * offset above 0 (`offset: 0` is the first page, not paging). Undefined for
+ * every non-list tool.
+ */
+export function listCallHasCursor(toolName: string, args: unknown): boolean | undefined {
+	if (!isListFamilyTool(toolName)) return undefined
+	const { cursor, offset } = argRecord(args)
+	return (typeof cursor === 'string' && cursor !== '') || (typeof offset === 'number' && offset > 0)
+}
+
+// Optional and degrade-don't-reject, like `arg_keys`: an unexpected value costs
+// the label, never the whole row. An older MCP build sends neither field.
+const listCallObjectTypeSchema = degradeTo(z.enum(LIST_CALL_OBJECT_TYPES).optional(), undefined)
+const listCallHasCursorSchema = degradeTo(z.boolean().optional(), undefined)
+
 export const recordMcpToolCallSchema = z.object({
 	event_type: z.literal('tool_call'),
 	tool_name: toolNameSchema,
@@ -128,6 +223,8 @@ export const recordMcpToolCallSchema = z.object({
 	// events are fire-and-forget and can be ingested out of order.
 	seq: z.number().int().min(1).optional(),
 	arg_keys: argKeysSchema,
+	object_type: listCallObjectTypeSchema,
+	has_cursor: listCallHasCursorSchema,
 	ok: z.boolean().optional(),
 	transport: z.enum(['stdio', 'http']).optional(),
 	// How the client resolved `session_id`. Only the client knows this: a

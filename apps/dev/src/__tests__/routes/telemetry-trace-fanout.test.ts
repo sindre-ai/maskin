@@ -84,6 +84,21 @@ describe('stdio trace fan-out', () => {
 		expect(inserts[0]?.hasRichRender).toBe(true)
 	})
 
+	it('stores the object type and cursor flag of a list call on the row', async () => {
+		const { inserts } = await postCapturing(
+			baseBody({ transport: 'http', object_type: 'insight', has_cursor: true }),
+		)
+
+		expect(inserts[0]).toMatchObject({ objectType: 'insight', hasCursor: true })
+	})
+
+	it('stores null for both on a call that is not a list-family call', async () => {
+		const { inserts } = await postCapturing(baseBody({ tool_name: 'get_objects' }))
+
+		expect(inserts[0]?.objectType).toBeNull()
+		expect(inserts[0]?.hasCursor).toBeNull()
+	})
+
 	it('persists the session id for an attributable source', async () => {
 		const { inserts } = await postCapturing(
 			baseBody({ transport: 'stdio', session_source: 'maskin-session', session_id: 'sess-1' }),
