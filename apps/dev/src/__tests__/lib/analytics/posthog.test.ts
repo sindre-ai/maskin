@@ -303,7 +303,8 @@ describe('capturePosthogEvent shared properties', () => {
 
 	it('turns the profile off for an agent', async () => {
 		configurePosthogPrivacy(dbWithActors({ [AGENT]: 'agent' }).db)
-		const props = await send('agent_comment_posted', AGENT, { workspace_id: 'ws-1' })
+		// agent_session_started is never sampled, so the send is not left to a random draw.
+		const props = await send('agent_session_started', AGENT, { workspace_id: 'ws-1' })
 		expect(props).toMatchObject({ actor_type: 'agent', $process_person_profile: false })
 	})
 
