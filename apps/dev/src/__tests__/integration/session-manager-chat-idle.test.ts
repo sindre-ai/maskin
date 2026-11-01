@@ -277,6 +277,81 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 			expect(logRows.some((r) => r.content.startsWith('Session completed'))).toBe(true)
 		})
 
+		describe('a chat whose turns all hit a credit error', () => {
+			const creditFailed = { final_output: { error_kind: 'permanent', credit_balance_low: true } }
+			const realReply = { final_output: { dedupe_key: 'real-turn' } }
+
+			/** Runs the watchdog over an idle chat holding the given agent messages; returns the session row. */
+			async function closeIdleChat(agentMessages: Array<Record<string, unknown> | null>) {
+				const server = await insertAgentServer()
+				const conversation = await insertConversation(workspaceId, actorId)
+				const human = await insertActor(db, { type: 'human' })
+				const session = await insertSession(db, workspaceId, actorId, actorId, {
+					status: 'running',
+					interactive: true,
+					conversationId: conversation.id,
+					agentServerId: server.id,
+					containerId: 'sandbox-credit-idle-test',
+					startedAt: new Date(Date.now() - 40 * 60 * 1000),
+					timeoutAt: null,
+				})
+				await insertSessionLog(db, session.id, {
+					content: 'last activity',
+					createdAt: new Date(Date.now() - 35 * 60 * 1000),
+				})
+				await db
+					.insert(messages)
+					.values({ conversationId: conversation.id, actorId: human?.id ?? '', content: 'hi' })
+				for (const metadata of agentMessages) {
+					await db.insert(messages).values({
+						conversationId: conversation.id,
+						actorId,
+						content: 'reply',
+						metadata,
+						sessionId: session.id,
+					})
+				}
+				await runWatchdogWithStubbedFetch()
+				const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+				return row
+			}
+
+			it('ends as failed with the credit reason', async () => {
+				const row = await closeIdleChat([creditFailed, creditFailed])
+
+				expect(row?.status).toBe('failed')
+				expect(
+					(row?.result as { failure_reason?: { reason_code?: string } } | null)?.failure_reason
+						?.reason_code,
+				).toBe('credit_balance_low')
+				const eventRows = await db
+					.select()
+					.from(events)
+					.where(eq(events.entityId, row?.id ?? ''))
+				const failed = eventRows.find((e) => e.action === 'session_failed')
+				expect((failed?.data as { classification?: string })?.classification).toBe(
+					'credit_exhaustion',
+				)
+				const logRows = await db
+					.select()
+					.from(sessionLogs)
+					.where(eq(sessionLogs.sessionId, row?.id ?? ''))
+				expect(logRows.some((r) => r.content.startsWith('Session failed'))).toBe(true)
+			})
+
+			it('still ends as completed when one turn did real work', async () => {
+				const row = await closeIdleChat([creditFailed, realReply])
+
+				expect(row?.status).toBe('completed')
+			})
+
+			it('still ends as completed when the agent replied without a tagged turn', async () => {
+				const row = await closeIdleChat([creditFailed, null])
+
+				expect(row?.status).toBe('completed')
+			})
+		})
+
 		it('leaves a recently-active conversation session running', async () => {
 			const server = await insertAgentServer()
 			const conversation = await insertConversation(workspaceId, actorId)

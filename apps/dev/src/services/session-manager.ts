@@ -88,6 +88,7 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import {
+	CREDIT_BALANCE_LOW_BANNER,
 	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	classifySessionExit,
@@ -4900,6 +4901,30 @@ ${cont.continues_prompt}
 	}
 
 	/**
+	 * True when this session has spoken in its conversation and every one of
+	 * those messages is a turn that failed with "Credit balance is too low" (the
+	 * turn finalizer tags them). Such a chat never did any work, so closing it as
+	 * `completed` makes a dead key look like a quiet session. One real reply, by
+	 * the final-output path or by the chat tool, is enough to keep it completed.
+	 */
+	private async onlyCreditErrorTurns(session: typeof sessions.$inferSelect): Promise<boolean> {
+		const [counts] = await this.db
+			.select({
+				total: sql<number>`count(*)::int`,
+				creditFailed: sql<number>`(count(*) FILTER (WHERE (${messages.metadata}->'final_output'->>'credit_balance_low') = 'true'))::int`,
+			})
+			.from(messages)
+			.where(
+				and(
+					eq(messages.sessionId, session.id),
+					eq(messages.actorId, session.actorId),
+					eq(messages.kind, 'message'),
+				),
+			)
+		return (counts?.total ?? 0) > 0 && counts?.total === counts?.creditFailed
+	}
+
+	/**
 	 * Gracefully closes an idle interactive conversation session as
 	 * `completed`. The row is CAS-flipped to terminal BEFORE the container
 	 * teardown, so the local exit watcher (`handleCompletion`) and a remote
@@ -4922,14 +4947,33 @@ ${cont.continues_prompt}
 		// stopSandbox into its post-commit callbacks per §3.1 (folded from
 		// what used to be a mid-function inline `pushAgentFiles` at :3552 and
 		// a per-host `client.stopSession` / `containers.stop` branch below).
+		//
+		// A chat whose every turn failed on a dead key ends as failed, with the
+		// reason the agents page shows, instead of passing as a quiet session.
+		const creditFailure = (await this.onlyCreditErrorTurns(session))
+			? classifyCreditExhaustion(CREDIT_BALANCE_LOW_BANNER, { includeAmbiguousSignals: false })
+			: null
 		const settled = await settleSession(
 			session.id,
-			{
-				kind: 'complete',
-				classification: 'agent_completed',
-				source: 'idle-watcher',
-				resultText: 'Conversation went idle — session closed',
-			},
+			creditFailure
+				? {
+						kind: 'fail',
+						classification: classifyExit({
+							userStopped: false,
+							status: 'failed',
+							failureReason: creditFailure,
+						}),
+						reason: creditFailure.human_message,
+						resultText: 'Every turn failed with a credit error — session closed',
+						failureReason: creditFailure,
+						source: 'idle-watcher',
+					}
+				: {
+						kind: 'complete',
+						classification: 'agent_completed',
+						source: 'idle-watcher',
+						resultText: 'Conversation went idle — session closed',
+					},
 			this.buildSettleDeps(),
 		)
 		if (settled.alreadySettled) return
@@ -4971,16 +5015,21 @@ ${cont.continues_prompt}
 
 		this.telemetry.recordSessionEnded({
 			sessionId: session.id,
-			endReason: 'completed',
+			endReason: creditFailure ? 'failed' : 'completed',
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			contextObjectId: session.initiatedFromObjectId,
 		})
 
-		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
-		// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
-		// routes/sessions.ts).
-		await this.insertSystemLog(session.id, 'Session completed — conversation idle').catch((err) =>
+		// The prefix must stay 'Session completed' or 'Session failed' — the SSE
+		// /logs/stream endpoint matches it to emit its `done` event
+		// (TERMINAL_SYSTEM_LOGS in routes/sessions.ts).
+		await this.insertSystemLog(
+			session.id,
+			creditFailure
+				? 'Session failed — every turn hit a credit error'
+				: 'Session completed — conversation idle',
+		).catch((err) =>
 			logger.warn('Failed to write idle chat close system log', {
 				sessionId: session.id,
 				error: String(err),

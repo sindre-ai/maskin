@@ -1054,6 +1054,43 @@ ${surviving}
 				expect((await markOf())?.at).toBeGreaterThan(0)
 			})
 
+			it('tags the failed turn so the idle close can tell a credit-only chat apart', async () => {
+				const session = await seedSession({ config: { llm_route: 'workspace_api_key' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(17)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: 'API Error: 400 Credit balance is too low' })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				const rows = await messagesFor(conversationId)
+				expect(rows).toHaveLength(1)
+				expect(
+					(rows[0]?.metadata as { final_output?: { credit_balance_low?: boolean } })?.final_output
+						?.credit_balance_low,
+				).toBe(true)
+			})
+
+			it('does not tag a different permanent failure', async () => {
+				const session = await seedSession({ config: { llm_route: 'workspace_api_key' } })
+				if (!session) throw new Error('no session')
+
+				await feed(session.id, `${userTurnLine(18)}\n`)
+				await feed(
+					session.id,
+					`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+				)
+				await finalizer.settlePendingRetries()
+
+				const rows = await messagesFor(conversationId)
+				expect(
+					(rows[0]?.metadata as { final_output?: { credit_balance_low?: boolean } })?.final_output
+						?.credit_balance_low,
+				).toBeUndefined()
+			})
+
 			it('leaves the key alone when the session ran on another route', async () => {
 				const session = await seedSession({ config: { llm_route: 'claude_oauth' } })
 				if (!session) throw new Error('no session')

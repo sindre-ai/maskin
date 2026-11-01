@@ -1441,6 +1441,9 @@ export class InteractiveTurnFinalizer {
 				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(detail),
 				{
 					error_kind: 'permanent',
+					// Lets the idle close tell a chat that only ever hit a dead key from one
+					// that did real work (session-manager onlyCreditErrorTurns).
+					...(isCreditBalanceLowText(detail) ? { credit_balance_low: true } : {}),
 					...(movedTo ? { subscription_moved_to: movedTo } : {}),
 				},
 			)
