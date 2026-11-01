@@ -115,6 +115,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'file_comments',
 	'file_uploads',
 	'files',
+	'for_you_dismissals',
 	'google_meet_space_idempotency',
 	'live_activity_cards',
 	'live_activity_tokens',

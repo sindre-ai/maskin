@@ -12,6 +12,7 @@ const ERASED = new Set([
 	'api_keys',
 	'device_auth_codes',
 	'device_tokens',
+	'for_you_dismissals',
 	'live_activity_cards',
 	'live_activity_tokens',
 	'notification_preferences',

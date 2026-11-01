@@ -876,6 +876,30 @@ export const commentResponderClaims = pgTable(
 	],
 )
 
+// ── For You dismissals ─────────────────────────────────────────────────────
+//
+// One row per person and source comment: the person pressed Dismiss on the For You card
+// that comment raised. Dismissing is its own record because the read position moves on
+// every page open, so it cannot tell "I looked" from "I am done with this". Curated
+// cards carry a status on their notification row; this table is for decision cards,
+// which have no row of their own. Deleting the row is Undo.
+export const forYouDismissals = pgTable(
+	'for_you_dismissals',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		sourceCommentId: bigint('source_comment_id', { mode: 'number' })
+			.references(() => events.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ name: 'for_you_dismissals_pk', columns: [t.actorId, t.sourceCommentId] })],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(
@@ -1045,6 +1069,13 @@ export const messages = pgTable(
 			.on(t.threadRootId, t.id)
 			.where(sql`${t.threadRootId} IS NOT NULL`),
 		index('messages_session_id_idx').on(t.sessionId),
+		// Chat id + trigram index for the chat message-text search (services/search.ts, deepHit).
+		// Migrations 0122 and 0123 (extensions), 0124 (this index, built CONCURRENTLY).
+		index('messages_conv_content_trgm_idx').using(
+			'gin',
+			t.conversationId,
+			t.content.op('gin_trgm_ops'),
+		),
 		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would

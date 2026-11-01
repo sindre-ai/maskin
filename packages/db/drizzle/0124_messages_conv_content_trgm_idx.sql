@@ -1,0 +1,21 @@
+-- Migration: make the message-text search in GET /api/search use an index.
+--
+-- apps/dev/src/services/search.ts asks, per chat and per typed word, whether any message of the
+-- chat matches content ILIKE '%word%'. With no index that reads and decompresses every message of
+-- every chat in the scan cap, once per word: on 23,400 messages (94 MB) it took 0.35 s for one
+-- word, 0.75 s for two, 1.15 s for three. This GIN index answers the same EXISTS in milliseconds
+-- (1 to 110 ms on the same data, common words included) with no change to the query. Words of
+-- fewer than 3 letters cannot use it and still scan, as before.
+--
+-- Why the chat id is in the index: with trigrams alone the planner sometimes chose to fetch every
+-- message holding the word, for every chat, and a word in 10% of messages took 4.8 s (slower than
+-- no index). With the chat id as a second key, one index scan answers one chat.
+--
+-- Alone in its file: CREATE INDEX CONCURRENTLY cannot share a transaction with other statements
+-- (see packages/db/MIGRATIONS.md Rule 1). CONCURRENTLY keeps chat writes flowing during the build.
+-- IF NOT EXISTS lets a retry pass after an interrupted build; drop an INVALID leftover first.
+-- The index is about the size of the message text, and each new message pays a small write cost.
+--
+-- Needs 0122 and 0123. Reversible: drizzle/down/0124_messages_conv_content_trgm_idx_down.sql.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "messages_conv_content_trgm_idx"
+  ON "messages" USING gin ("conversation_id", "content" gin_trgm_ops);

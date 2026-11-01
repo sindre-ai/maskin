@@ -456,12 +456,12 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		await expect(card.getByText('On this object', { exact: true })).toHaveCount(0)
 	})
 
-	test('the per-card mark-as-read takes the card out of the feed', async ({ page, account }) => {
-		let readCalls = 0
-		await page.route('**/api/subscriptions/read', async (route) => {
+	test('the per-card dismiss takes the card out of the feed', async ({ page, account }) => {
+		let dismissCalls = 0
+		await page.route('**/api/for-you/dismissals', async (route) => {
 			if (route.request().method() !== 'POST') return route.fallback()
-			readCalls++
-			await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+			dismissCalls++
+			await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
 		})
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
@@ -472,7 +472,7 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		await expect(
 			page.getByTestId('foryou-feed-card').filter({ hasText: 'Is the feed too long?' }),
 		).toHaveCount(0)
-		expect(readCalls).toBeGreaterThan(0)
+		expect(dismissCalls).toBeGreaterThan(0)
 	})
 
 	test('"Take every suggested option" answers each open card at once', async ({

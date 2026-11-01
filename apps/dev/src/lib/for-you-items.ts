@@ -1,13 +1,16 @@
 import { z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState } from '@maskin/db/schema'
+import { events, objects } from '@maskin/db/schema'
 import { parseCommentDecision } from '@maskin/shared'
-import { and, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { feedDecisionSchema, fillDraftBodies, toLatestMention } from '../routes/subscriptions'
 import { dueAtOf } from '../services/push-policy'
 import {
 	CLOSED_OBJECT_STATUSES,
+	findDismissedSourceIds,
 	findFinishedDraftCards,
+	findViewerReplies,
+	isCardAnswered,
 	loadVisibleForYou,
 } from './for-you-visibility'
 import { objectResponseSchema } from './openapi-schemas'
@@ -103,15 +106,6 @@ export async function buildForYouItems(
 	const decisionRows = await db
 		.select({ event: events })
 		.from(events)
-		.leftJoin(
-			readState,
-			and(
-				eq(readState.workspaceId, events.workspaceId),
-				eq(readState.actorId, actorId),
-				eq(readState.entityType, 'object'),
-				eq(readState.entityId, events.entityId),
-			),
-		)
 		.where(
 			and(
 				eq(events.workspaceId, workspaceId),
@@ -121,7 +115,6 @@ export async function buildForYouItems(
 				sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
 				sql`jsonb_typeof(${events.data}->'decision') = 'object'`,
 				sql`${events.createdAt} >= now() - make_interval(days => ${DECISION_WINDOW_DAYS})`,
-				gt(events.id, sql`coalesce(${readState.lastReadEventId}, 0)`),
 			),
 		)
 		.orderBy(desc(events.id))
@@ -136,29 +129,17 @@ export async function buildForYouItems(
 	}
 
 	const decisionEntityIds = [...latestDecisionByEntity.keys()]
-	const [decisionObjects, decisionReplies] = decisionEntityIds.length
+	const decisionIds = [...latestDecisionByEntity.values()].map((e) => Number(e.id))
+	const [decisionObjects, viewerReplies, dismissedIds] = decisionEntityIds.length
 		? await Promise.all([
 				db
 					.select()
 					.from(objects)
 					.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, decisionEntityIds))),
-				db
-					.select({ entityId: events.entityId, id: events.id })
-					.from(events)
-					.where(
-						and(
-							eq(events.workspaceId, workspaceId),
-							eq(events.action, 'commented'),
-							eq(events.actorId, actorId),
-							inArray(events.entityId, decisionEntityIds),
-							gt(
-								events.id,
-								Math.min(...[...latestDecisionByEntity.values()].map((e) => Number(e.id))),
-							),
-						),
-					),
+				findViewerReplies(db, workspaceId, actorId, decisionEntityIds, Math.min(...decisionIds)),
+				findDismissedSourceIds(db, workspaceId, actorId, decisionIds),
 			])
-		: [[], []]
+		: [[], [], new Set<number>()]
 	const decisionObjectById = new Map(decisionObjects.map((o) => [o.id, o]))
 
 	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, [
@@ -176,8 +157,9 @@ export async function buildForYouItems(
 		if (assumed && !assumed.includes(obj.status ?? '')) return false
 		// Every message it offered has been sent or skipped.
 		if (finishedDraftCards.has(Number(event.id))) return false
-		// The person already answered on this thread.
-		return !decisionReplies.some((r) => r.entityId === event.entityId && r.id > event.id)
+		// The person answered this card with a threaded reply (an option tap is one), or
+		// dismissed it. Reading the object or commenting elsewhere on it does neither.
+		return !isCardAnswered(event, viewerReplies) && !dismissedIds.has(Number(event.id))
 	})
 
 	const rankBase = curatedItems.reduce((max, i) => Math.max(max, i.rank), 0)
