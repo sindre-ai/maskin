@@ -2940,6 +2940,11 @@ export function getServerHandlers(server: McpServer): Map<string, McpToolHandler
 	return serverHandlers.get(server) ?? new Map()
 }
 
+// Tools whose schema rejects a top-level argument name it does not know instead
+// of stripping it. Only tools where a dropped list reads as a finished write;
+// other tools keep stripping, since agents often send harmless extra keys.
+const REJECT_UNKNOWN_KEYS_TOOLS = new Set(['update_objects'])
+
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
 		name: 'maskin',
@@ -2982,27 +2987,31 @@ export function createMcpServer(config: McpConfig) {
 		// SDK validates arguments before our handler runs. A tool with no alias
 		// rows passes through untouched, so its tools/list entry is unchanged.
 		const definition =
-			baseDefinition?.inputSchema && needsNormalise(name)
+			baseDefinition?.inputSchema && (needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name))
 				? {
 						...baseDefinition,
-						inputSchema: wrapInputSchema(baseDefinition.inputSchema, (raw) => {
-							const normalised = normaliseArgs(name, raw)
-							// One event per call that used at least one old name. Here, not in
-							// the handler, so it fires before validation and a call that then
-							// fails validation is still counted. Fire and forget; key names
-							// only. A separate event type from tool_call, so the server-side
-							// trace is not double counted.
-							if (normalised.renames.length > 0) {
-								recordAliasUse(telemetrySink, telemetryTarget, {
-									tool_name: name,
-									workspace_id: extractWorkspaceId(raw),
-									renames: normalised.renames,
-									both_sent: normalised.bothSent,
-									transport: config.transport,
-								})
-							}
-							return normalised.args
-						}),
+						inputSchema: wrapInputSchema(
+							baseDefinition.inputSchema,
+							(raw) => {
+								const normalised = normaliseArgs(name, raw)
+								// One event per call that used at least one old name. Here, not in
+								// the handler, so it fires before validation and a call that then
+								// fails validation is still counted. Fire and forget; key names
+								// only. A separate event type from tool_call, so the server-side
+								// trace is not double counted.
+								if (normalised.renames.length > 0) {
+									recordAliasUse(telemetrySink, telemetryTarget, {
+										tool_name: name,
+										workspace_id: extractWorkspaceId(raw),
+										renames: normalised.renames,
+										both_sent: normalised.bothSent,
+										transport: config.transport,
+									})
+								}
+								return normalised.args
+							},
+							{ rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name) },
+						),
 					}
 				: baseDefinition
 		const defHasRichRender = Boolean(definition?._meta?.ui)
