@@ -1,8 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getModelPricingMock } = vi.hoisted(() => ({ getModelPricingMock: vi.fn() }))
+const { getModelPricingMock, getServedModelPricingMock } = vi.hoisted(() => {
+	const getModelPricingMock = vi.fn()
+	// The served-host lookup shares the catalogue mock's answers; its own calls are asserted separately.
+	const getServedModelPricingMock = vi.fn((id: string, _providers: string[]) =>
+		getModelPricingMock(id),
+	)
+	return { getModelPricingMock, getServedModelPricingMock }
+})
 
-vi.mock('../../lib/openrouter-pricing', () => ({ getModelPricing: getModelPricingMock }))
+vi.mock('../../lib/openrouter-pricing', () => ({
+	getModelPricing: getModelPricingMock,
+	getServedModelPricing: getServedModelPricingMock,
+}))
 
 import {
 	parseAssistantUsageFromLogChunks,
@@ -241,6 +251,7 @@ const usage = (overrides: Partial<SessionUsage> = {}): SessionUsage => ({
 describe('resolveSessionCostUsd', () => {
 	beforeEach(() => {
 		getModelPricingMock.mockReset()
+		getServedModelPricingMock.mockClear()
 	})
 
 	it('passes the CLI-reported cost through untouched on the claude_oauth route', async () => {
@@ -267,7 +278,11 @@ describe('resolveSessionCostUsd', () => {
 		})
 		// 1000*7e-8 + 500*1.4e-7 + 10000*1.4e-8 = 0.00028, ignoring the CLI figure.
 		expect(resolved).toBeCloseTo(0.00028, 12)
-		expect(getModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4-flash')
+		// Priced from the hosts the request is pinned to, not the catalogue's cheapest host.
+		expect(getServedModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4-flash', [
+			'digitalocean',
+			'gmicloud',
+		])
 	})
 
 	it('prices a workspace_custom session from the table, and keeps the CLI figure when the model is unlisted', async () => {
@@ -280,6 +295,8 @@ describe('resolveSessionCostUsd', () => {
 		// 1000*7e-8 + 500*1.4e-7 = 0.00014, ignoring the CLI's $1.91.
 		expect(priced).toBeCloseTo(0.00014, 12)
 		expect(getModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4.1-flash')
+		// A BYO endpoint is not pinned to the funded hosts, so it keeps the catalogue price.
+		expect(getServedModelPricingMock).not.toHaveBeenCalled()
 
 		getModelPricingMock.mockResolvedValueOnce(null)
 		const unlisted = await resolveSessionCostUsd({
