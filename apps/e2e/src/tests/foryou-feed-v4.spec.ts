@@ -496,6 +496,12 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		await page.getByRole('button', { name: 'Feed actions' }).click()
 		await page.getByRole('menuitem', { name: /Take every suggested option/ }).click()
 
+		// The bulk tap opens a confirm step first; nothing is posted until it is taken.
+		const dialog = page.getByRole('dialog', { name: 'Take every suggested option?' })
+		await expect(dialog).toBeVisible()
+		expect(posted.length).toBe(0)
+		await dialog.getByRole('button', { name: 'Answer 3 cards' }).click()
+
 		// Three of the five cards carry an agent-authored decision. The plain
 		// insight and the blocked bet are mentions with nothing to answer.
 		await expect(page.getByTestId('decision-receipt')).toHaveCount(3)
