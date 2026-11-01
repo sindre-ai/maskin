@@ -3,7 +3,6 @@ import {
 	deriveEntryAgentRole,
 	deriveSidebarViewport,
 	trackAgentCreated,
-	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
 	trackAskBannerDecideClicked,
 	trackBetArchived,
@@ -38,8 +37,8 @@ import {
 	trackSindreMessageSent,
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
-	trackTriggerFired,
 	trackTriggerUpdated,
+	trackWorkspaceActiveDay,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
 import { __setInitializedForTesting } from '@/lib/posthog'
@@ -169,55 +168,14 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenCalledWith('bet_archived', expect.objectContaining({ source: 'web' }))
 	})
 
-	it('agent_session_* events use entity_type=session and carry outcome on completion', () => {
+	it('agent_session_started uses entity_type=session', () => {
 		const capture = captureSpy()
 
 		trackAgentSessionStarted({ entity_id: 'sess-1', entity_type: 'session' })
-		trackAgentSessionCompleted({
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'failed',
-			flow_id: 'evt-77',
-		})
 
-		expect(capture).toHaveBeenNthCalledWith(
-			1,
+		expect(capture).toHaveBeenCalledWith(
 			'agent_session_started',
 			expect.objectContaining({ entity_id: 'sess-1', entity_type: 'session' }),
-		)
-		expect(capture).toHaveBeenNthCalledWith(
-			2,
-			'agent_session_completed',
-			expect.objectContaining({ outcome: 'failed', flow_id: 'evt-77' }),
-		)
-	})
-
-	it('agent_session_completed carries G2 trigger provenance and defaults it to null', () => {
-		const capture = captureSpy()
-
-		trackAgentSessionCompleted({
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'completed',
-			flow_id: 'evt-1',
-			trigger_id: 'trig-1',
-			trigger_type: 'cron',
-		})
-		trackAgentSessionCompleted({
-			entity_id: 'sess-2',
-			entity_type: 'session',
-			outcome: 'completed',
-		})
-
-		expect(capture).toHaveBeenNthCalledWith(
-			1,
-			'agent_session_completed',
-			expect.objectContaining({ trigger_id: 'trig-1', trigger_type: 'cron' }),
-		)
-		expect(capture).toHaveBeenNthCalledWith(
-			2,
-			'agent_session_completed',
-			expect.objectContaining({ trigger_id: null, trigger_type: null }),
 		)
 	})
 
@@ -402,15 +360,40 @@ describe('v1 taxonomy helpers', () => {
 		expect(status.value).toBe('in_progress')
 	})
 
-	it('trigger_fired forces source=trigger', () => {
+	it('workspace_active_day sends once per UTC day and workspace, then again the next day', () => {
 		const capture = captureSpy()
+		const day1 = new Date('2026-11-02T08:00:00Z')
 
-		trackTriggerFired({ entity_id: 'trg-1', entity_type: 'trigger' })
+		expect(trackWorkspaceActiveDay('ws-day', day1)).toBe(true)
+		expect(trackWorkspaceActiveDay('ws-day', new Date('2026-11-02T23:59:00Z'))).toBe(false)
+		expect(trackWorkspaceActiveDay('ws-other', day1)).toBe(true)
+		expect(trackWorkspaceActiveDay('ws-day', new Date('2026-11-03T00:01:00Z'))).toBe(true)
 
-		expect(capture).toHaveBeenCalledWith(
-			'trigger_fired',
-			expect.objectContaining({ source: 'trigger', entity_type: 'trigger' }),
-		)
+		expect(capture).toHaveBeenCalledTimes(3)
+		expect(capture).toHaveBeenNthCalledWith(1, 'workspace_active_day', {
+			workspace_id: 'ws-day',
+			utc_day: '2026-11-02',
+		})
+	})
+
+	it('workspace_active_day skips a day already stored by an earlier page load', () => {
+		const capture = captureSpy()
+		localStorage.setItem('maskin-active-day:ws-stored', '2026-11-02')
+
+		expect(trackWorkspaceActiveDay('ws-stored', new Date('2026-11-02T10:00:00Z'))).toBe(false)
+		expect(capture).not.toHaveBeenCalled()
+	})
+
+	it('workspace_active_day still sends once when storage is unavailable', () => {
+		const capture = captureSpy()
+		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('SecurityError')
+		})
+		const now = new Date('2026-11-02T10:00:00Z')
+
+		expect(trackWorkspaceActiveDay('ws-nostorage', now)).toBe(true)
+		expect(trackWorkspaceActiveDay('ws-nostorage', now)).toBe(false)
+		expect(capture).toHaveBeenCalledTimes(1)
 	})
 
 	it('relationship_created records the edge type as a custom prop', () => {
