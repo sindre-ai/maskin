@@ -130,6 +130,15 @@ export function MarkdownFileEditor({
 		[text],
 	)
 
+	const showSaved = save.showSaved && !readOnly
+	// After a review, "Change applied" stands in the status line until the next autosave says "Saved".
+	// Above the viewer early return so the hook count stays the same when the role finishes loading.
+	const showChangeApplied = !!changeApplied?.applied
+	const clearChangeApplied = changeApplied?.clear
+	useEffect(() => {
+		if (showSaved) clearChangeApplied?.()
+	}, [showSaved, clearChangeApplied])
+
 	// Viewers (and anyone whose role is not known yet) get the rendered document.
 	if (!canEdit) {
 		return (
@@ -141,14 +150,6 @@ export function MarkdownFileEditor({
 			</div>
 		)
 	}
-
-	const showSaved = save.showSaved && !readOnly
-	// After a review, "Change applied" stands in the status line until the next autosave says "Saved".
-	const showChangeApplied = !!changeApplied?.applied
-	const clearChangeApplied = changeApplied?.clear
-	useEffect(() => {
-		if (showSaved) clearChangeApplied?.()
-	}, [showSaved, clearChangeApplied])
 
 	return (
 		<div className="space-y-3">
