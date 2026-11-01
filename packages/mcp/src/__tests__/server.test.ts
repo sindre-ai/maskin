@@ -6947,6 +6947,33 @@ describe('tool handlers', () => {
 			expect(ranks).toEqual(Array.from({ length: 76 }, (_, i) => i + 1))
 		})
 
+		it('pages through 120 cards by following next_offset, no gaps or repeats', async () => {
+			const cards = Array.from({ length: 120 }, (_, i) => route(i + 1))
+			const ranks: number[] = []
+			const nextOffsets: Array<number | null> = []
+			let offset: number | null = 0
+			while (offset !== null) {
+				mockFetchSuccess({ items: cards })
+				const page: Page & { next_offset: number | null } = (await readPage({
+					limit: 50,
+					offset,
+				})) as Page & { next_offset: number | null }
+				ranks.push(...page.items.map((i) => i.rank))
+				nextOffsets.push(page.next_offset)
+				offset = page.next_offset
+			}
+
+			expect(ranks).toEqual(Array.from({ length: 120 }, (_, i) => i + 1))
+			expect(nextOffsets).toEqual([50, 100, null])
+		})
+
+		it('gives no next_offset when the page ends exactly at the end of the list', async () => {
+			mockFetchSuccess({ items: Array.from({ length: 50 }, (_, i) => route(i + 1)) })
+			const page = (await readPage({ limit: 50 })) as Page & { next_offset: number | null }
+			expect(page.items).toHaveLength(50)
+			expect(page.next_offset).toBeNull()
+		})
+
 		it('treats a missing offset as 0', async () => {
 			mockFetchSuccess({ items: [1, 2, 3].map(route) })
 			const page = await readPage({ limit: 2 })
