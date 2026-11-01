@@ -49,9 +49,8 @@ describe('parseForYouMetadata', () => {
 	})
 
 	it('still honours a real only_while_status and still rejects a malformed one', () => {
-		expect(parseForYouMetadata({ ...base, only_while_status: ['proposed'] })?.only_while_status).toEqual([
-			'proposed',
-		])
+		const kept = parseForYouMetadata({ ...base, only_while_status: ['proposed'] })
+		expect(kept?.only_while_status).toEqual(['proposed'])
 		expect(parseForYouMetadata({ ...base, only_while_status: [''] })).toBeNull()
 		expect(parseForYouMetadata({ ...base, only_while_status: 'proposed' })).toBeNull()
 	})
