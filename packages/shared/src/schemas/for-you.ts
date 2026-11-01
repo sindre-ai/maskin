@@ -88,10 +88,13 @@ export function slimForYouItems(
 	items: ForYouItemLike[],
 	limit: number = FOR_YOU_TOOL_DEFAULT_LIMIT,
 	offset = 0,
-): { total: number; items: SlimForYouCard[] } {
+): { total: number; next_offset: number | null; items: SlimForYouCard[] } {
+	const end = offset + limit
 	return {
 		total: items.length,
-		items: items.slice(offset, offset + limit).map((item) => {
+		// Where the next page starts, or null when this page reached the end of the list.
+		next_offset: end < items.length ? end : null,
+		items: items.slice(offset, end).map((item) => {
 			const ask = item.latest_mention?.content?.trim()
 			return {
 				rank: item.rank,
