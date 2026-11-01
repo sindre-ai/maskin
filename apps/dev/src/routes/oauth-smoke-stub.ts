@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { Hono } from 'hono'
+import { Hono, type MiddlewareHandler } from 'hono'
 import { _resetFeatureFlagConfig } from '../lib/feature-flags'
 
 // THROWAWAY, never merge. Stands in for the real consent page for the live Claude smoke test
@@ -8,6 +8,43 @@ import { _resetFeatureFlagConfig } from '../lib/feature-flags'
 // tester flag, then redirects back to Claude. Staging only, deleted once the verdict is in.
 
 const app = new Hono()
+
+// One stdout line per call on the authorize and token routes, so the staging log can show who
+// called (Host, Origin, User-Agent, forwarded address) and for which client. Logs only the
+// client_id, redirect_uri and grant_type: never the code, verifier, state or any token.
+export const logOauthCaller: MiddlewareHandler = async (c, next) => {
+	try {
+		const fields = Object.fromEntries(new URL(c.req.url).searchParams)
+		if (c.req.method === 'POST') {
+			const text = await c.req.raw.clone().text()
+			Object.assign(fields, Object.fromEntries(new URLSearchParams(text)))
+		}
+		const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined
+		console.log(
+			JSON.stringify({
+				level: 'info',
+				msg: 'SMOKE oauth caller',
+				timestamp: new Date().toISOString(),
+				method: c.req.method,
+				path: c.req.path,
+				host: c.req.header('Host'),
+				origin: c.req.header('Origin'),
+				user_agent: c.req.header('User-Agent'),
+				x_forwarded_for: c.req.header('X-Forwarded-For'),
+				x_real_ip: c.req.header('X-Real-IP'),
+				socket_address: env?.incoming?.socket?.remoteAddress,
+				client_id: fields.client_id,
+				redirect_uri: fields.redirect_uri,
+				grant_type: fields.grant_type,
+			}),
+		)
+	} catch {
+		// logging must never break the flow
+	}
+	await next()
+}
+app.use('/oauth/authorize', logOauthCaller)
+app.use('/oauth/authorize/stub', logOauthCaller)
 
 const PARAMS = [
 	'response_type',

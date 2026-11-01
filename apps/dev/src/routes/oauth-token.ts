@@ -7,7 +7,7 @@ import { captureTokenRejected } from '../lib/oauth-server/analytics'
 import { requestClientIp } from '../lib/oauth-server/client-ip'
 import { createRateLimiter } from '../lib/oauth-server/rate-limit'
 import { handleTokenRequest, parseTokenForm } from '../lib/oauth-server/token'
-import smokeStub from './oauth-smoke-stub'
+import smokeStub, { logOauthCaller } from './oauth-smoke-stub'
 
 // POST /oauth/token: where Claude trades its one-time code for an access and a refresh token, and
 // later trades the refresh token for a new pair (RFC 6749). Public: the code, its PKCE verifier and
@@ -18,6 +18,7 @@ const app = new Hono<{ Variables: { db: Database } }>()
 
 // THROWAWAY smoke-test stub (never merge): serves GET /oauth/authorize while no consent page exists.
 app.route('/', smokeStub)
+app.use('/oauth/token', logOauthCaller)
 
 /** 30 tries a minute from one address: far more than Claude makes, far less than a guesser needs. */
 const allowToken = createRateLimiter(30, 60_000)
