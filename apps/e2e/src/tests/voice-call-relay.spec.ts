@@ -152,6 +152,9 @@ test.describe('Voice call: server-side tools, captions and post-call toast', () 
 				noise_reduction: expect.stringMatching(/^(near|far)_field$/),
 			})
 
+			// No greeting: once the call is ready it shows Listening until someone speaks.
+			await expect(page.getByText('Listening').first()).toBeVisible()
+
 			// Model asks for a tool: nothing goes from the browser into the session
 			// (the server answers on its own connection).
 			await page.evaluate(() =>

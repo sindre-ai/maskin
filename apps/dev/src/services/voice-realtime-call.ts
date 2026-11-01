@@ -57,6 +57,22 @@ export function resolveRealtimeVoice(env: NodeJS.ProcessEnv = process.env): stri
 	})
 	return VOICE_REALTIME_VOICE
 }
+export type VoiceGreetingMode = 'off' | 'on'
+
+let warnedGreeting = false
+
+/** MASKIN_VOICE_GREETING: 'on' makes the agent speak first on a new call. Default off (the app plays a chime and the person speaks first). */
+export function resolveVoiceGreeting(env: NodeJS.ProcessEnv = process.env): VoiceGreetingMode {
+	const wanted = env.MASKIN_VOICE_GREETING?.trim().toLowerCase()
+	if (!wanted || wanted === 'off') return 'off'
+	if (wanted === 'on') return 'on'
+	if (!warnedGreeting) {
+		warnedGreeting = true
+		logger.warn('MASKIN_VOICE_GREETING must be on or off; using off', { wanted })
+	}
+	return 'off'
+}
+
 export const VOICE_VAD_EAGERNESS_VALUES = ['low', 'medium', 'high', 'auto'] as const
 export type VoiceVadEagerness = (typeof VOICE_VAD_EAGERNESS_VALUES)[number]
 
@@ -937,7 +953,8 @@ export function attachVoiceCall(input: AttachVoiceCallInput): Promise<boolean> {
 				registerLive()
 				startPing()
 				settle(true)
-				// Only the first attach greets; a reconnect goes through the other onOpen above.
+				// Only the first attach can greet, and only when MASKIN_VOICE_GREETING=on; a reconnect goes through the other onOpen above.
+				if (resolveVoiceGreeting() !== 'on') return
 				sendToModel({
 					type: 'conversation.item.create',
 					item: {

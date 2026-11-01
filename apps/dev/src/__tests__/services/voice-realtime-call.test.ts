@@ -35,6 +35,7 @@ const {
 	VOICE_REALTIME_VOICE,
 	VOICE_SOCKET_MAX_RECONNECTS,
 	attachVoiceCall,
+	resolveVoiceGreeting,
 	buildTranscriptionConfig,
 	closeVoiceCall,
 	createRealtimeCall,
@@ -126,6 +127,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.useRealTimers()
 	vi.unstubAllGlobals()
+	vi.unstubAllEnvs()
 })
 
 describe('realtimeSocketUrl', () => {
@@ -137,7 +139,17 @@ describe('realtimeSocketUrl', () => {
 })
 
 describe('attachVoiceCall', () => {
-	it('asks the model to greet the caller once the socket first opens', async () => {
+	it('sends no greeting and no response.create when the socket first opens', async () => {
+		vi.stubEnv('MASKIN_VOICE_GREETING', '')
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+		expect(socket.greeting).toEqual([])
+	})
+
+	it('asks the model to greet the caller once the socket first opens when MASKIN_VOICE_GREETING=on', async () => {
+		vi.stubEnv('MASKIN_VOICE_GREETING', 'on')
 		const socket = fakeSocket()
 		const attached = attach(socket)
 		socket.open()
@@ -153,6 +165,15 @@ describe('attachVoiceCall', () => {
 			},
 			{ type: 'response.create' },
 		])
+	})
+
+	it('treats an invalid MASKIN_VOICE_GREETING value as off', async () => {
+		vi.stubEnv('MASKIN_VOICE_GREETING', 'loud')
+		const socket = fakeSocket()
+		const attached = attach(socket)
+		socket.open()
+		await attached
+		expect(socket.greeting).toEqual([])
 	})
 
 	it('resolves true once the socket opens and connects to the call id', async () => {
@@ -767,6 +788,15 @@ describe('buildTranscriptionConfig', () => {
 	it('sends at most 20 keywords', () => {
 		const names = Array.from({ length: 30 }, (_, n) => `Name${n}`)
 		expect(buildTranscriptionConfig(names).keywords).toHaveLength(20)
+	})
+})
+
+describe('resolveVoiceGreeting', () => {
+	it('is off by default, blank or invalid, and on only for on', () => {
+		expect(resolveVoiceGreeting({})).toBe('off')
+		expect(resolveVoiceGreeting({ MASKIN_VOICE_GREETING: ' ' })).toBe('off')
+		expect(resolveVoiceGreeting({ MASKIN_VOICE_GREETING: 'maybe' })).toBe('off')
+		expect(resolveVoiceGreeting({ MASKIN_VOICE_GREETING: ' ON ' })).toBe('on')
 	})
 })
 

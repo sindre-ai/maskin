@@ -347,6 +347,63 @@ describe('useVoiceCall — server connection and post-call toast', () => {
 		expect(relayOptions?.toolsAvailable).toBe(false)
 	})
 
+	describe('ready sound', () => {
+		const chimes: FakeAudioContext[] = []
+		class FakeAudioContext {
+			sampleRate = 44100
+			destination = {}
+			resume = vi.fn().mockResolvedValue(undefined)
+			close = vi.fn().mockResolvedValue(undefined)
+			sources = 0
+			constructor() {
+				chimes.push(this)
+			}
+			createBuffer() {
+				return { copyToChannel: vi.fn() }
+			}
+			createBufferSource() {
+				this.sources += 1
+				return { buffer: null, connect: vi.fn(), start: vi.fn() }
+			}
+		}
+		const created = JSON.stringify({ type: 'session.created' })
+
+		beforeEach(() => {
+			chimes.length = 0
+			vi.stubGlobal('AudioContext', FakeAudioContext)
+		})
+
+		it('plays one chime when the call becomes ready, and shows Listening', async () => {
+			const hook = await startCall()
+			expect(chimes).toHaveLength(1)
+			expect(chimes[0].sources).toBe(0)
+			act(() => lastPc?.dc.listeners[0]({ data: created }))
+			act(() => lastPc?.dc.listeners[0]({ data: created }))
+			expect(chimes[0].sources).toBe(1)
+			expect(hook.result.current.state).toBe('live-user-speaking')
+		})
+
+		it('plays no chime when the speaker is off', async () => {
+			const hook = await startCall()
+			act(() => hook.result.current.toggleSpeaker())
+			act(() => lastPc?.dc.listeners[0]({ data: created }))
+			expect(chimes[0].sources).toBe(0)
+		})
+
+		it('closes the audio context when the call ends', async () => {
+			const hook = await startCall()
+			await endCall(hook)
+			expect(chimes[0].close).toHaveBeenCalled()
+		})
+
+		it('still connects when Web Audio is missing', async () => {
+			vi.stubGlobal('AudioContext', undefined)
+			const hook = await startCall()
+			expect(() => act(() => lastPc?.dc.listeners[0]({ data: created }))).not.toThrow()
+			expect(hook.result.current.state).toBe('live-user-speaking')
+		})
+	})
+
 	it('feeds Realtime events into the relay', async () => {
 		await startCall()
 		lastPc?.dc.listeners[0]({ data: JSON.stringify({ type: 'response.done' }) })

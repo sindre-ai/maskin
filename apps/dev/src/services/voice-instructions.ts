@@ -83,8 +83,8 @@ export function formatVoiceCallerRules(args: { callerName: string | null; caller
 	return `${who} is signed in (actor id ${args.callerId}); never ask who they are. Use their own items only.`
 }
 
-export const VOICE_ROLE_RULE =
-	'- A workspace agent on a live call with a teammate: act with tools, talk it through.'
+export const VOICE_ROLE_RULE = `- A workspace agent on a live call with a teammate: act with tools, talk it through.
+- The call opens with a short chime from the app, not with you. Wait for the person to speak; then answer directly. Do not greet or recite a briefing unprompted.`
 
 export const VOICE_PERSONALITY_RULE = `- Warm, concise, confident, never fawning: a sharp colleague. Fast, not rushed.
 - Vary your phrasing; never repeat a sentence. Example phrases are only examples.`
