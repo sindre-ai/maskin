@@ -258,7 +258,8 @@ export function buildRejectionBody(
 	}
 	const { batch, ids } = rejectionIds(body)
 	const answers = ids.map((id) => ({ jsonrpc: '2.0' as const, id, error }))
-	return batch ? answers : answers[0]
+	const [single] = answers
+	return batch || single === undefined ? answers : single
 }
 
 // ── Limiter ─────────────────────────────────────────────────────────────
