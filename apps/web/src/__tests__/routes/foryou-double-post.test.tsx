@@ -152,7 +152,7 @@ function buildItem(
 				title,
 				summary: 'Summary',
 				ask: 'Ask',
-				options: [{ label: option.label, consequences: [], recommended: true, ...option }],
+				options: [{ consequences: [], recommended: true, ...option }],
 				...(drafts ? { drafts } : {}),
 			},
 		},
