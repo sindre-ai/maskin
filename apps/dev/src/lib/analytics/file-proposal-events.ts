@@ -30,13 +30,15 @@ interface ChangeReviewedProps {
 	fileName: string
 	proposalId: string
 	changeId: string
-	decision: 'accepted' | 'edited_then_accepted' | 'rejected'
+	decision: 'accepted' | 'edited_then_accepted' | 'rejected' | 'stale'
 }
 
 /**
  * A person decided one proposed change. Sent by the server after the decision
  * has committed, never from the browser, one event per change. A refused call
- * (403, or 409 because a change went stale) sends nothing here.
+ * sends nothing here, except a bulk accept refused with 409 because changes went
+ * stale: that sends one event with decision stale per stale change, and none for
+ * the changes that were still pending.
  */
 export async function trackChangeReviewed(p: ChangeReviewedProps): Promise<void> {
 	await capturePosthogEvent('change_reviewed', p.actorId, {

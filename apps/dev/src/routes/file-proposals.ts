@@ -466,6 +466,7 @@ async function acceptChanges(
 	c: Context<Env>,
 	params: { fileId: string; proposalId: string },
 	items: { changeId: string; appliedText?: string }[],
+	opts: { reportStale?: boolean } = {},
 ) {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
@@ -500,6 +501,20 @@ async function acceptChanges(
 		)
 	} catch (err) {
 		if (err instanceof ChangesStaleError) {
+			// Nothing was applied. A bulk accept reports each stale change; the pending ones
+			// were not decided and send nothing.
+			if (opts.reportStale) {
+				for (const changeId of err.changeIds) {
+					void trackChangeReviewed({
+						workspaceId: file.workspaceId,
+						actorId,
+						fileName: file.name,
+						proposalId: proposal.id,
+						changeId,
+						decision: 'stale',
+					})
+				}
+			}
 			return {
 				status: 409 as const,
 				body: {
@@ -739,7 +754,9 @@ app.openapi(bulkAcceptRoute, (async (c) => {
 	const { id, pid } = c.req.valid('param')
 	const { change_ids } = c.req.valid('json')
 	const items = [...new Set(change_ids)].map((changeId) => ({ changeId }))
-	const result = await acceptChanges(c, { fileId: id, proposalId: pid }, items)
+	const result = await acceptChanges(c, { fileId: id, proposalId: pid }, items, {
+		reportStale: true,
+	})
 	if (result.status !== 200) return c.json(result.body, result.status)
 	return c.json({ changes: result.changes.map((ch) => toChangeDto(ch, null)) }, 200)
 }) as RouteHandler<typeof bulkAcceptRoute, Env>)

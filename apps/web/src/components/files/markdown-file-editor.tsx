@@ -3,6 +3,7 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import { type FileSaveClient, useMarkdownFileSave } from '@/hooks/use-markdown-file-save'
 import { trackEvent } from '@/lib/analytics'
+import { useChangeApplied } from '@/lib/change-applied-context'
 import { captureEditorParseError } from '@/lib/editor-events'
 import { textCommentCardId, useTextComments } from '@/lib/text-comments-context'
 import type {
@@ -84,6 +85,7 @@ export function MarkdownFileEditor({
 	// only draws the highlights and offers the Comment action; the comments
 	// themselves live in the route and the review panel.
 	const textComments = useTextComments()
+	const changeApplied = useChangeApplied()
 	const [compose, setCompose] = useState<CommentRequest | null>(null)
 	const savedHighlights = textComments?.highlights
 	const highlights = useMemo<TextCommentHighlight[] | undefined>(() => {
@@ -128,6 +130,15 @@ export function MarkdownFileEditor({
 		[text],
 	)
 
+	const showSaved = save.showSaved && !readOnly
+	// After a review, "Change applied" stands in the status line until the next autosave says "Saved".
+	// Above the viewer early return so the hook count stays the same when the role finishes loading.
+	const showChangeApplied = !!changeApplied?.applied
+	const clearChangeApplied = changeApplied?.clear
+	useEffect(() => {
+		if (showSaved) clearChangeApplied?.()
+	}, [showSaved, clearChangeApplied])
+
 	// Viewers (and anyone whose role is not known yet) get the rendered document.
 	if (!canEdit) {
 		return (
@@ -139,8 +150,6 @@ export function MarkdownFileEditor({
 			</div>
 		)
 	}
-
-	const showSaved = save.showSaved && !readOnly
 
 	return (
 		<div className="space-y-3">
@@ -158,11 +167,19 @@ export function MarkdownFileEditor({
 				/>
 			)}
 			<div className="flex items-center justify-end gap-2">
-				{showSaved && (
-					<span className="mr-auto flex items-center gap-1 text-xs text-muted-foreground">
-						<Check size={14} /> Saved
-					</span>
-				)}
+				<output className="mr-auto flex items-center gap-1 text-xs text-muted-foreground">
+					{showSaved ? (
+						<>
+							<Check size={14} /> Saved
+						</>
+					) : (
+						showChangeApplied && (
+							<>
+								<Check size={14} /> Change applied
+							</>
+						)
+					)}
+				</output>
 				<ViewToggle mode={mode} onChange={handleModeChange} />
 			</div>
 

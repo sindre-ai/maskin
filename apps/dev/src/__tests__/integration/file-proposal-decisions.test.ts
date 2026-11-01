@@ -489,7 +489,53 @@ describe('Deciding proposed changes (integration)', () => {
 			expect(stored(file)).toBe(DOC)
 			expect((await fileRow(file.id))?.contentHash).toBeNull()
 			for (const ch of changes) expect((await changeRow(ch.id))?.status).toBe('pending')
-			expect(capture).not.toHaveBeenCalled()
+			// One stale event for the stale change, none for the pending one, nothing else.
+			expect(capture).toHaveBeenCalledTimes(1)
+			expect(eventsNamed('change_reviewed')[0]?.[2]).toEqual(
+				expect.objectContaining({
+					workspace_id: workspaceId,
+					actor_id: expect.any(String),
+					file_name: 'plan.md',
+					proposal_id: proposal.id,
+					change_id: changes[1]?.id,
+					decision: 'stale',
+				}),
+			)
+		})
+
+		it('sends one stale change_reviewed per stale change and none for the pending ones', async () => {
+			const file = await insertFile()
+			const { proposal, changes } = await insertProposal(file.id, [
+				{ old: 'The budget is small.', next: 'The budget is tight.' },
+				{ old: 'gone one', next: 'x' },
+				{ old: 'gone two', next: 'y' },
+			])
+			const res = await bulk(
+				'accept',
+				file.id,
+				proposal.id,
+				changes.map((c) => c.id),
+				memberKey,
+			)
+			expect(res.status).toBe(409)
+			expect(stored(file)).toBe(DOC)
+			const reviewed = eventsNamed('change_reviewed')
+			expect(reviewed).toHaveLength(2)
+			expect(reviewed.map((call) => call[2]?.change_id).sort()).toEqual(
+				[changes[1]?.id, changes[2]?.id].sort(),
+			)
+			for (const call of reviewed) expect(call[2]?.decision).toBe('stale')
+			expect(eventsNamed('file_saved')).toHaveLength(0)
+		})
+
+		it('still reports a plain reject of a stale change as rejected', async () => {
+			const file = await insertFile()
+			const { proposal, changes } = await insertProposal(file.id, [
+				{ old: 'text that is gone', next: 'x' },
+			])
+			const res = await reject(file.id, proposal.id, changes[0]?.id ?? '', memberKey)
+			expect(res.status).toBe(200)
+			expect(eventsNamed('change_reviewed').map((call) => call[2]?.decision)).toEqual(['rejected'])
 		})
 
 		it('treats two changes that now overlap as stale instead of corrupting the text', async () => {

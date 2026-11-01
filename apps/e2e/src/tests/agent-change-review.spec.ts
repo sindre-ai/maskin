@@ -104,7 +104,7 @@ test.describe('Agent change review in the file viewer', () => {
 		await expect
 			.poll(async () => (await account.api.getFile(account.workspaceId, file.id)).content)
 			.toBe(TEXT.replace(CHANGES[0].old_text, CHANGES[0].new_text))
-		await expect(page.getByRole('button', { name: 'Accept' })).toHaveCount(1)
+		await expect(page.getByRole('button', { name: 'Accept', exact: true })).toHaveCount(1)
 	})
 
 	test('Reject leaves the file text alone', async ({ page, account }) => {
@@ -128,7 +128,7 @@ test.describe('Agent change review in the file viewer', () => {
 		)
 		await card.getByRole('button', { name: 'Reject' }).click()
 		expect((await decided).status()).toBe(200)
-		await expect(page.getByRole('button', { name: 'Reject' })).toHaveCount(1)
+		await expect(page.getByRole('button', { name: 'Reject', exact: true })).toHaveCount(1)
 
 		const after = await account.api.getFile(account.workspaceId, file.id)
 		expect(after.content).toBe(before.content)

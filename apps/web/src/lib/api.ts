@@ -69,6 +69,8 @@ export class ApiError extends Error {
 	retryAfterMs?: number
 	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
 	retryAfter?: number
+	/** On a 409 from accepting proposed changes: the changes that no longer match the file. */
+	staleChangeIds?: string[]
 
 	constructor(
 		public status: number,
@@ -198,6 +200,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			err.retryAfterSeconds = data.retry_after_seconds
 		}
 		err.retryAfterMs = retryAfterMs
+		if (Array.isArray(data.staleChangeIds)) err.staleChangeIds = data.staleChangeIds
 		const retryAfter = Number(res.headers.get('Retry-After'))
 		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
 		// This is the single chokepoint for every /api call the UI makes, so a
@@ -1408,6 +1411,19 @@ export const api = {
 		reject: (workspaceId: string, fileId: string, proposalId: string, changeId: string) =>
 			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/${changeId}/reject`, {
 				method: 'POST',
+				workspaceId,
+			}),
+		// All or nothing on the server: a stale change refuses the whole accept with a 409.
+		acceptAll: (workspaceId: string, fileId: string, proposalId: string, changeIds: string[]) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/accept`, {
+				method: 'POST',
+				body: { change_ids: changeIds },
+				workspaceId,
+			}),
+		rejectAll: (workspaceId: string, fileId: string, proposalId: string, changeIds: string[]) =>
+			request<unknown>(`/files/${fileId}/proposals/${proposalId}/changes/reject`, {
+				method: 'POST',
+				body: { change_ids: changeIds },
 				workspaceId,
 			}),
 	},
