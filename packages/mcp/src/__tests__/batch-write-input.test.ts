@@ -36,15 +36,21 @@ const OTHER_ID = '22222222-2222-2222-2222-222222222222'
 const FILE_ID = '33333333-3333-3333-3333-333333333333'
 
 type ToolResult = { content: Array<{ text: string }> }
+type ParseOutcome =
+	| { success: true; data: unknown }
+	| { success: false; error: { message: string } }
 
 describe('batch write tools reject bad input instead of returning an empty success', () => {
 	let handlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+	let inputSchemas: Map<string, { safeParse: (raw: unknown) => ParseOutcome }>
 
 	beforeEach(() => {
 		vi.clearAllMocks()
 		handlers = new Map()
-		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+		inputSchemas = new Map()
+		vi.mocked(registerAppTool).mockImplementation((_server, name, def, handler) => {
 			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+			inputSchemas.set(name as string, (def as { inputSchema: never }).inputSchema)
 		})
 		createMcpServer(config)
 
@@ -71,6 +77,20 @@ describe('batch write tools reject bad input instead of returning an empty succe
 	function callUpdateObjects(rawArgs: Record<string, unknown>) {
 		const parsed = tools.update_objects.inputSchema.parse(rawArgs)
 		return getHandler('update_objects')(parsed as Record<string, unknown>)
+	}
+
+	/**
+	 * Runs the schema the server registered with the SDK (the one that wraps the
+	 * alias and unknown-name checks), then the handler, the way the SDK does. A
+	 * failed parse is reported as an error result, as the SDK reports it.
+	 */
+	async function callRegisteredUpdateObjects(rawArgs: Record<string, unknown>) {
+		const schema = inputSchemas.get('update_objects')
+		if (!schema) throw new Error('update_objects not registered')
+		const parsed = schema.safeParse(rawArgs)
+		if (!parsed.success) return { isError: true, text: parsed.error.message }
+		await getHandler('update_objects')(parsed.data as Record<string, unknown>)
+		return { isError: false, text: '' }
 	}
 
 	function apiCalls() {
@@ -182,6 +202,70 @@ describe('batch write tools reject bad input instead of returning an empty succe
 			await callUpdateObjects({ updates: [{ id: OBJ_ID, attach_file_ids: [FILE_ID] }] })
 			expect(writeCallsWith('PATCH')).toHaveLength(0)
 			expect(writeCallsWith('POST')).toHaveLength(1)
+		})
+	})
+
+	describe('update_objects unrecognised argument names', () => {
+		const validUpdates = [{ id: OBJ_ID, status: 'done' }]
+		const validEdges = [{ source_id: OBJ_ID, target_id: OTHER_ID, type: 'relates_to' }]
+
+		it('errors on valid edges plus a misnamed updates list, and writes nothing', async () => {
+			const out = await callRegisteredUpdateObjects({ edges: validEdges, objects: validUpdates })
+			expect(out.isError).toBe(true)
+			expect(out.text).toContain('Unrecognised argument name: objects')
+			expect(out.text).toContain('Accepted names: workspace_id, updates, edges')
+			expect(apiCalls()).toHaveLength(0)
+		})
+
+		it('errors on valid updates plus a misnamed edges list, and writes nothing', async () => {
+			const out = await callRegisteredUpdateObjects({ updates: validUpdates, links: validEdges })
+			expect(out.isError).toBe(true)
+			expect(out.text).toContain('Unrecognised argument name: links')
+			expect(apiCalls()).toHaveLength(0)
+		})
+
+		it('errors on valid edges plus an unknown extra argument, and writes nothing', async () => {
+			const out = await callRegisteredUpdateObjects({ edges: validEdges, dry_run: true })
+			expect(out.isError).toBe(true)
+			expect(out.text).toContain('Unrecognised argument name: dry_run')
+			expect(apiCalls()).toHaveLength(0)
+		})
+
+		it('names every unrecognised argument when there are several', async () => {
+			const out = await callRegisteredUpdateObjects({ edges: validEdges, a: 1, b: 2 })
+			expect(out.isError).toBe(true)
+			expect(out.text).toContain('Unrecognised argument names: a, b')
+			expect(apiCalls()).toHaveLength(0)
+		})
+
+		it('still accepts a valid mixed call with the workspace id', async () => {
+			const out = await callRegisteredUpdateObjects({
+				workspace_id: WS_ID,
+				updates: validUpdates,
+				edges: validEdges,
+			})
+			expect(out.isError).toBe(false)
+			expect(writeCallsWith('PATCH')).toHaveLength(1)
+			expect(writeCalls()).toHaveLength(2)
+		})
+
+		it('still accepts an old spelling the alias layer rewrites (updates.driver_id)', async () => {
+			const out = await callRegisteredUpdateObjects({
+				updates: [{ id: OBJ_ID, driver_id: OTHER_ID }],
+			})
+			expect(out.isError).toBe(false)
+			expect(writeCallsWith('PATCH')).toHaveLength(1)
+		})
+
+		it('does not reject unknown names on other tools (no global strict mode)', () => {
+			const schema = inputSchemas.get('create_objects')
+			if (!schema) throw new Error('create_objects not registered')
+			const parsed = schema.safeParse({
+				workspace_id: WS_ID,
+				nodes: [{ $id: 'a', type: 'bet', status: 'opportunity' }],
+				harmless_extra: true,
+			})
+			expect(parsed.success).toBe(true)
 		})
 	})
 
