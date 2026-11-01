@@ -708,6 +708,7 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'update_file',
 		'update_notification',
 		'update_workspace_field',
+		'withdraw_decision_card',
 	])
 
 	it('puts each tool in exactly one class', async () => {
