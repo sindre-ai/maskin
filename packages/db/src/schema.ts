@@ -647,6 +647,11 @@ export const sessions = pgTable(
 		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
 			onDelete: 'set null',
 		}),
+		// The thread a chat session answers in: the id of the thread's root message in
+		// the same conversation (same type as messages.thread_root_id). NULL = the main
+		// chat, which is every session today. No FK on purpose: a session row outlives
+		// the message and must not cascade with it. Added in migration 0119.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -781,6 +786,13 @@ export const sessions = pgTable(
 		// window between two near-simultaneous replies from the same agent.
 		uniqueIndex('sessions_conversation_actor_active_uniq')
 			.on(t.conversationId, t.actorId)
+			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
+		// Same guard per thread: at most one live interactive session per
+		// (conversation, agent, thread). COALESCE maps the main chat (NULL thread) to 0,
+		// which no message id takes, so two main-chat sessions still collide. Built
+		// CONCURRENTLY in migration 0120; the index above is dropped in a later release.
+		uniqueIndex('sessions_conversation_actor_thread_active_uniq')
+			.on(t.conversationId, t.actorId, sql`(coalesce(${t.threadRootId}, 0))`)
 			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
 		// Backs the session-log retention sweep. Interactive sessions are excluded
 		// from the index entirely — their logs are never pruned, so a chat keeps
@@ -1107,6 +1119,9 @@ export const conversationPendingTurns = pgTable(
 		messageId: bigint('message_id', { mode: 'number' })
 			.references(() => messages.id, { onDelete: 'cascade' })
 			.notNull(),
+		// The thread the turn belongs to, as sessions.thread_root_id; NULL = the main
+		// chat. A session drains only the turns of its own thread. Migration 0119.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }),
 		// The exact stream-json user envelope to deliver via writeInput.
 		payload: jsonb('payload').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
