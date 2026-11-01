@@ -781,16 +781,13 @@ export const sessions = pgTable(
 			.where(sql`${t.conversationId} IS NOT NULL`),
 		// Authoritative concurrency guard, not just an optimization: at most one
 		// interactive session may be actively spawning/running for a given
-		// (conversation, agent) pair. Enforced at the DB layer because the
+		// (conversation, agent, thread). Enforced at the DB layer because the
 		// application-level lookup-then-insert in evaluateAndRespond has a race
 		// window between two near-simultaneous replies from the same agent.
-		uniqueIndex('sessions_conversation_actor_active_uniq')
-			.on(t.conversationId, t.actorId)
-			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
-		// Same guard per thread: at most one live interactive session per
-		// (conversation, agent, thread). COALESCE maps the main chat (NULL thread) to 0,
-		// which no message id takes, so two main-chat sessions still collide. Built
-		// CONCURRENTLY in migration 0120; the index above is dropped in a later release.
+		// COALESCE maps the main chat (NULL thread) to 0, which no message id takes,
+		// so two main-chat sessions still collide. Built CONCURRENTLY in migration 0120;
+		// it replaced the (conversation, agent) index sessions_conversation_actor_active_uniq,
+		// dropped in migration 0122.
 		uniqueIndex('sessions_conversation_actor_thread_active_uniq')
 			.on(t.conversationId, t.actorId, sql`(coalesce(${t.threadRootId}, 0))`)
 			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),

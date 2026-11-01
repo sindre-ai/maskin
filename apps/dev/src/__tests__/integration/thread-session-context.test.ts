@@ -6,7 +6,7 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
-import { afterAll, beforeAll, vi } from 'vitest'
+import { afterAll, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import {
 	THREAD_SEED_MAIN_CHAT_MESSAGES,
@@ -20,7 +20,7 @@ import { deliverTurnToAgent, evaluateAndRespond } from '../../services/conversat
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
-import { db, getTestActorId, sql } from './global-setup'
+import { db, getTestActorId } from './global-setup'
 
 // What a thread session knows about the rest of its chat: the seed it starts with, the note on its
 // sibling sessions, and the one-line digest of their replies. Real Postgres and a real
@@ -56,10 +56,6 @@ describe('thread session seed, sibling note and digest (Integration)', () => {
 		process.env.FF_TESTER_FEATURES = on ? 'chat-thread-sessions' : ''
 		_resetFeatureFlagConfig()
 	}
-
-	beforeAll(async () => {
-		await sql`DROP INDEX IF EXISTS sessions_conversation_actor_active_uniq`
-	})
 
 	afterAll(() => {
 		for (const [name, value] of [

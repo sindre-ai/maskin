@@ -163,7 +163,7 @@ describe('chat capture relaunch: stop, wait for terminal (Integration)', () => {
 		expect(
 			await control.findConversationSessionAnyActive(chat.conversation.id, chat.agent.id),
 		).toBeNull()
-		// What the responder does next. sessions_conversation_actor_active_uniq would raise
+		// What the responder does next. sessions_conversation_actor_thread_active_uniq would raise
 		// 23505 here if the old row were still pending, starting or running.
 		const respawned = await insertSession(db, chat.ws.id, chat.agent.id, chat.human, {
 			conversationId: chat.conversation.id,

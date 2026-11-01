@@ -754,7 +754,7 @@ export async function deliverTurnToAgent(params: {
 			)
 			// The old session is dead (detached stdin, container gone), not
 			// just momentarily busy. Mark it failed now — otherwise it keeps
-			// satisfying sessions_conversation_actor_active_uniq and the
+			// satisfying sessions_conversation_actor_thread_active_uniq and the
 			// fresh createSession() below collides with its own zombie.
 			await sessionManager
 				.markSessionFailedAfterContainerLoss(existing.id, existing.workspaceId)
@@ -826,7 +826,7 @@ async function pickSessionThread(ctx: {
  * Spawns a fresh interactive session for (conversationId, agentId), seeded
  * with the recent conversation history as its first turn. If two replies for
  * the same agent race (both found no existing running session and both try
- * to spawn), the DB's sessions_conversation_actor_active_uniq partial unique
+ * to spawn), the DB's sessions_conversation_actor_thread_active_uniq partial unique
  * index rejects the loser's insert — on that specific failure, look up the
  * race winner's session and join it: via writeInput when it is already
  * `running`, or by buffering the turn in conversation_pending_turns when it

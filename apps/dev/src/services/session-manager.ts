@@ -942,8 +942,7 @@ export class SessionManager extends EventEmitter {
 	 * pair and thread — i.e. one that can accept a writeInput() call right now. A null
 	 * thread is the main chat; a thread root id is that thread's own session. Fast-path
 	 * optimization for the conversation responder; the DB's
-	 * sessions_conversation_actor_active_uniq and
-	 * sessions_conversation_actor_thread_active_uniq partial unique indexes are the
+	 * sessions_conversation_actor_thread_active_uniq partial unique index is the
 	 * authoritative guard against double-spawn, this just avoids an
 	 * unnecessary createSession attempt in the common case. Only matches
 	 * `running` (not `pending`/`starting`) since writeInput needs a live
@@ -1935,7 +1934,7 @@ export class SessionManager extends EventEmitter {
 	 * `ContainerManager.stdinStreams` entry, leaving the row orphaned at
 	 * `running`). Also used directly by callers (e.g. the conversation
 	 * responder) that already know from a failed `writeInput` that a session
-	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
+	 * is dead, so the row stops blocking `sessions_conversation_actor_thread_active_uniq`
 	 * for a fresh session.
 	 */
 	async markSessionFailedAfterContainerLoss(
