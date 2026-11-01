@@ -1761,6 +1761,8 @@ public struct Client: APIProtocol {
     ///
     /// POST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.
     ///
+    /// A read-only viewer is served the day's cached brief, or the deterministic prose when nothing is cached yet. A viewer never triggers a model call or writes the cache.
+    ///
     /// - Remark: HTTP `POST /api/briefing/spoken`.
     /// - Remark: Generated from `#/paths//api/briefing/spoken/post`.
     public func post_sol_api_sol_briefing_sol_spoken(_ input: Operations.post_sol_api_sol_briefing_sol_spoken.Input) async throws -> Operations.post_sol_api_sol_briefing_sol_spoken.Output {
@@ -3277,6 +3279,28 @@ public struct Client: APIProtocol {
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
                     return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.get_sol_api_sol_actors_sol__lcub_actorId_rcub__sol_skills_sol__lcub_skillName_rcub_.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.get_sol_api_sol_actors_sol__lcub_actorId_rcub__sol_skills_sol__lcub_skillName_rcub_.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
                 case 403:
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.get_sol_api_sol_actors_sol__lcub_actorId_rcub__sol_skills_sol__lcub_skillName_rcub_.Output.Forbidden.Body
@@ -3512,6 +3536,28 @@ public struct Client: APIProtocol {
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
                     return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_actors_sol__lcub_actorId_rcub__sol_skills_sol__lcub_skillName_rcub_.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_actors_sol__lcub_actorId_rcub__sol_skills_sol__lcub_skillName_rcub_.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
                 case 403:
                     let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
                     let body: Operations.delete_sol_api_sol_actors_sol__lcub_actorId_rcub__sol_skills_sol__lcub_skillName_rcub_.Output.Forbidden.Body

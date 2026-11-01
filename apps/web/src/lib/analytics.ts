@@ -220,14 +220,32 @@ export function trackAgentSessionCompleted(
 	})
 }
 
+export type CommentLengthBucket = '1-50' | '51-200' | '201-1000' | '1000+'
+
+export interface CommentShape {
+	is_multiline: boolean
+	length_bucket: CommentLengthBucket
+}
+
+// What a comment looks like without what it says: PostHog never gets the text.
+export function commentShape(text: string): CommentShape {
+	const length = text.trim().length
+	return {
+		is_multiline: text.trim().includes('\n'),
+		length_bucket:
+			length <= 50 ? '1-50' : length <= 200 ? '51-200' : length <= 1000 ? '201-1000' : '1000+',
+	}
+}
+
 export function trackCommentPosted(
-	p: BaseProps & { is_reply: boolean; attachment_count: number; content: string },
+	p: BaseProps & CommentShape & { is_reply: boolean; attachment_count: number },
 ): void {
 	trackEvent('comment_posted', {
 		...fillBase(p),
 		is_reply: p.is_reply,
 		attachment_count: p.attachment_count,
-		content: p.content,
+		is_multiline: p.is_multiline,
+		length_bucket: p.length_bucket,
 	})
 }
 
@@ -280,10 +298,8 @@ export function trackObjectAttachedFile(
 // id) to count workspaces where the same mini-app was opened on 7 consecutive
 // days, so exactly-once-per-open emission is enforced at the call site.
 
-export function trackMiniAppFileViewed(
-	p: BaseProps & { entity_type: 'file'; file_name: string },
-): void {
-	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
+export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): void {
+	trackEvent('mini_app_file_viewed', fillBase(p))
 }
 
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
@@ -657,15 +673,16 @@ export function trackSearchResultOpened(
 	})
 }
 
-export type SearchFilterDimension = 'type' | 'status' | 'updated' | 'sort' | 'clear'
+export type SearchFilterDimension = 'type' | 'status' | 'participant' | 'updated' | 'sort' | 'clear'
 export type SearchFilterAction = 'add' | 'remove' | 'set' | 'reset'
 export type SearchFilterKind = 'chip' | 'pill' | 'display_menu' | 'clear_button'
 export type SearchFilterVia = 'click' | 'tab' | 'backspace' | 'typed' | 'keyboard'
 
 // Fires when a person changes a search filter on the v2 page: a chip, a pill, the
 // Display menu or Clear filters. Never fires for a change that comes from the URL
-// (a reload, back, a hand-over). `value` is a type key, a status group key or a
-// sort / updated key, empty for a clear. Never carries the query text.
+// (a reload, back, a hand-over). `value` is a type key, a status group key, an actor id
+// (participant, never sent) or a sort / updated key, empty for a clear. Never carries the query text.
+// For the participant dimension the value is an actor id, so it is dropped here.
 export function trackSearchFilterChanged(p: {
 	surface: SearchSurface
 	dimension: SearchFilterDimension
@@ -674,7 +691,8 @@ export function trackSearchFilterChanged(p: {
 	kind: SearchFilterKind
 	via: SearchFilterVia
 }): void {
-	trackEvent('search_filter_changed', { ...p, ui_version: 'v2', source: 'web' })
+	const value = p.dimension === 'participant' ? undefined : p.value
+	trackEvent('search_filter_changed', { ...p, value, ui_version: 'v2', source: 'web' })
 }
 
 // Ship-metric event for the language-only loop builder bet — fires once when

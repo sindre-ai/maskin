@@ -9,6 +9,7 @@ const mockUseIntegrations = vi.fn()
 const mockUseProviders = vi.fn()
 const mockConnect = vi.fn()
 const mockDisconnect = vi.fn()
+const mockNavigate = vi.fn()
 
 /** Search params the route sees. The page reads `?select_github=<id>` to decide
  *  whether to open the post-authorization org picker. */
@@ -21,6 +22,7 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
+		useNavigate: () => mockNavigate,
 		createFileRoute: () => (options: Record<string, unknown>) => ({
 			...options,
 			useSearch: () => mockSearch(),
@@ -29,7 +31,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -674,6 +678,71 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 
 			expect(screen.queryByText('Choose a GitHub organization')).not.toBeInTheDocument()
+		})
+	})
+
+	// A failed connect redirects back with ?error=<code>. The page turns the code
+	// into one plain dismissible alert and removes the param from the URL.
+	describe('failed connect alert', () => {
+		const seed = (error: string) => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }],
+				isLoading: false,
+			})
+			mockSearch.mockReturnValue({ error })
+		}
+
+		it.each([
+			['token_exchange_failed', /didn't accept the sign-in/i],
+			['people_id_fetch_failed', /account details from Google/i],
+			['post_install_failed', /setting up the connection failed/i],
+		])('shows plain copy for %s', (code, copy) => {
+			seed(code)
+			render(<IntegrationsPage />)
+
+			const alert = screen.getByRole('alert')
+			expect(alert).toHaveTextContent(copy)
+			expect(alert).not.toHaveTextContent(code)
+		})
+
+		it('shows a generic line for an unknown code', () => {
+			seed('something_new')
+			render(<IntegrationsPage />)
+
+			const alert = screen.getByRole('alert')
+			expect(alert).toHaveTextContent("Connecting didn't work. Try again.")
+			expect(alert).not.toHaveTextContent('something_new')
+		})
+
+		it('removes the error param from the URL once the alert shows', () => {
+			seed('token_exchange_failed')
+			render(<IntegrationsPage />)
+
+			expect(mockNavigate).toHaveBeenCalledTimes(1)
+			const { search, replace } = mockNavigate.mock.calls[0][0]
+			expect(replace).toBe(true)
+			expect(search({ error: 'token_exchange_failed', return_to: '/x' })).toEqual({
+				error: undefined,
+				return_to: '/x',
+			})
+		})
+
+		it('hides the alert when dismissed', async () => {
+			seed('token_exchange_failed')
+			render(<IntegrationsPage />)
+
+			await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+		})
+
+		it('shows no alert when there is no error param', () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [], isLoading: false })
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 	})
 

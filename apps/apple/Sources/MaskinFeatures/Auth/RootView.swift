@@ -111,6 +111,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.environment(\.markdownStandaloneLink, { @MainActor [environment] url, _ in
 			LinkedItemStores.standaloneStyle(for: url, environment: environment)
 		})
+		.environment(\.markdownChipPreview, { @MainActor [environment] url in
+			LinkedItemStores.chipPreview(for: url, environment: environment)
+		})
 		.environment(
 			\.attachmentImages,
 			AttachmentImages(

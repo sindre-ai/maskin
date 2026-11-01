@@ -293,7 +293,7 @@ struct DecisionCardView: View {
 					.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .semibold))
 					.foregroundStyle(MaskinColor.ink)
 					.frame(maxWidth: .infinity, alignment: .leading)
-				if !card.body.isEmpty { MarkdownContent(card.body) }
+				if !card.body.isEmpty { MarkdownContent(card.body).environment(\.markdownCards, false) }
 			}
 		}
 		.fixedSize(horizontal: false, vertical: true)

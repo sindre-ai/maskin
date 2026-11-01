@@ -40,7 +40,9 @@ const mockWorkspaceWithRole = {
 	updatedAt: new Date().toISOString(),
 }
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: mockWorkspaceWithRole,
 		workspaceId: mockWorkspaceWithRole.id,

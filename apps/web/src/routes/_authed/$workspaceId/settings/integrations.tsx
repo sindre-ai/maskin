@@ -5,9 +5,11 @@ import {
 	type ResendConnectPrefill,
 } from '@/components/integrations/resend/resend-connect-dialog'
 import { ToolsSection } from '@/components/integrations/tools-section'
+import { EditorBanner } from '@/components/shared/editor-banner'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -16,6 +18,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useGithubPendingSelection,
@@ -28,7 +31,7 @@ import { safeReturnPath } from '@/lib/return-path'
 import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
 	component: IntegrationsPage,
@@ -43,6 +46,18 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/integration
 		return_to: typeof search.return_to === 'string' ? search.return_to : undefined,
 	}),
 })
+
+/** Plain copy for the error codes the connect callback redirects here with.
+ *  The raw code is never shown; anything not listed gets the generic line. */
+const CONNECT_ERROR_COPY: Record<string, string> = {
+	token_exchange_failed:
+		"We couldn't finish connecting. The provider didn't accept the sign-in, so nothing was connected. Try again.",
+	people_id_fetch_failed:
+		"We couldn't read your account details from Google, so nothing was connected. Try again.",
+	post_install_failed:
+		'The sign-in worked, but setting up the connection failed. Try connecting again.',
+}
+const GENERIC_CONNECT_ERROR = "Connecting didn't work. Try again."
 
 function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
@@ -63,7 +78,11 @@ function IntegrationsPage() {
 
 	// A GitHub connect where the user could reach several orgs' installations
 	// comes back here with the pending row id, for them to pick one.
-	const { select_github: selectGithubId, return_to: rawReturnTo } = Route.useSearch()
+	const {
+		select_github: selectGithubId,
+		return_to: rawReturnTo,
+		error: errorCode,
+	} = Route.useSearch()
 	const returnTo = safeReturnPath(rawReturnTo, workspaceId)
 	const navigate = useNavigate({ from: Route.fullPath })
 	const closeGithubSelect = () =>
@@ -71,6 +90,14 @@ function IntegrationsPage() {
 			search: (prev) => ({ ...prev, select_github: undefined, return_to: undefined }),
 			replace: true,
 		})
+	// A failed connect lands here with ?error=<code>. Keep the message in state and
+	// drop the param, so a refresh doesn't bring the alert back.
+	const [connectError, setConnectError] = useState<string | null>(null)
+	useEffect(() => {
+		if (!errorCode) return
+		setConnectError(CONNECT_ERROR_COPY[errorCode] ?? GENERIC_CONNECT_ERROR)
+		navigate({ search: (prev) => ({ ...prev, error: undefined }), replace: true })
+	}, [errorCode, navigate])
 	// The org is bound once picked; send the user on to the chat they started in.
 	const finishGithubSelect = () => {
 		if (returnTo) window.location.assign(returnTo)
@@ -78,7 +105,7 @@ function IntegrationsPage() {
 	}
 
 	const isLoading = integrationsLoading || providersLoading
-	// Slice 2 resend dialog state — only the "Resume connect" affordance below
+	// Slice 2 resend dialog state — only the "Finish setup" affordance below
 	// needs it at page level; a fresh Resend connect is owned by its provider row. `open` alone opens fresh at Step 1; `prefill`
 	// (populated by the Resume affordance) opens straight into Step 3 with the
 	// row's config.resend rehydrated.
@@ -114,6 +141,19 @@ function IntegrationsPage() {
 
 	return (
 		<div>
+			{connectError && (
+				<EditorBanner
+					tone="danger"
+					className="mb-3"
+					actions={
+						<Button size="sm" variant="ghost" onClick={() => setConnectError(null)}>
+							Dismiss
+						</Button>
+					}
+				>
+					{connectError}
+				</EditorBanner>
+			)}
 			{isLoading ? (
 				<ListSkeleton />
 			) : !visibleProviders.length ? (
@@ -158,7 +198,7 @@ function IntegrationsPage() {
 }
 
 /** Renders the row(s) whose resend row is stuck at `awaiting_secret` — usually
- *  one, because a workspace has one resend row. Each carries a Resume connect
+ *  one, because a workspace has one resend row. Each carries a Finish setup
  *  affordance that reopens the dialog directly at Step 3 with the row's
  *  `config.resend` blob rehydrated. */
 function ResendResumeSection({
@@ -168,6 +208,7 @@ function ResendResumeSection({
 	rows: IntegrationResponse[]
 	onResume: (prefill: ResendConnectPrefill) => void
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<div className="space-y-2">
 			<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono pt-2">
@@ -190,9 +231,11 @@ function ResendResumeSection({
 								Awaiting the whsec_… secret. Pick up where you left off in Step 3.
 							</p>
 						</div>
-						<Button size="sm" onClick={() => onResume(prefill)}>
-							Resume connect
-						</Button>
+						<ViewerTooltip>
+							<Button size="sm" disabled={!canWrite} onClick={() => onResume(prefill)}>
+								Finish setup
+							</Button>
+						</ViewerTooltip>
 					</div>
 				)
 			})}
@@ -254,6 +297,7 @@ function SelectGithubInstallationDialog({
 }) {
 	const { data, isLoading } = useGithubPendingSelection(workspaceId, integrationId)
 	const select = useSelectGithubInstallation(workspaceId)
+	const canWrite = useCanWrite()
 	const options = data?.installations ?? []
 
 	return (
@@ -298,7 +342,7 @@ function SelectGithubInstallationDialog({
 											{ onSuccess: onSelected },
 										)
 									}
-									disabled={select.isPending}
+									disabled={select.isPending || !canWrite}
 								>
 									Connect
 								</Button>

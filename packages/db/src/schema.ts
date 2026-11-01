@@ -917,11 +917,19 @@ export const conversations = pgTable(
 		// the workspace. NULL for ordinary chats.
 		subjectType: text('subject_type'),
 		subjectId: uuid('subject_id'),
+		// Marks the one direct message (DM) between two actors: the two actor ids,
+		// lowest first, joined with ':' (directPairKey in services/direct-chat.ts).
+		// NULL for every topical chat, however many people are in it.
+		directPairKey: text('direct_pair_key'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		// One DM per pair of actors in a workspace.
+		uniqueIndex('conversations_direct_pair_uniq')
+			.on(t.workspaceId, t.directPairKey)
+			.where(sql`${t.directPairKey} IS NOT NULL`),
 		// One group chat per subject: asking for it again finds the existing one.
 		uniqueIndex('conversations_subject_uniq')
 			.on(t.workspaceId, t.subjectType, t.subjectId)

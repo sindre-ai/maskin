@@ -4,7 +4,8 @@ import {
 	useConversationMessages,
 } from '@/hooks/use-conversation'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
-import { useEffect, useRef } from 'react'
+import { useMarkNewestRead } from '@/hooks/use-mark-newest-read'
+import { useMemo } from 'react'
 
 /**
  * Marks the newest loaded message read once it is in, mirroring the "open = read"
@@ -17,17 +18,16 @@ export function useMarkConversationRead(conversationId: string, workspaceId: str
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
-	const lastMarkedRef = useRef<number | null>(null)
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: updateMe is a stable mutation handle; including it would rerun this on every render without changing behavior
-	useEffect(() => {
-		if (!conversation) return
+	const newestMessageId = useMemo(() => {
 		const messages = flattenMessagesOldestFirst(messagesData)
-		const newest = messages[messages.length - 1]
-		if (!newest || newest.id <= 0) return
-		if (newest.id === conversation.last_read_message_id) return
-		if (lastMarkedRef.current === newest.id) return
-		lastMarkedRef.current = newest.id
-		updateMe.mutate({ id: conversationId, data: { last_read_message_id: newest.id } })
-	}, [conversation, messagesData, conversationId])
+		return messages[messages.length - 1]?.id ?? 0
+	}, [messagesData])
+	useMarkNewestRead(
+		conversation && newestMessageId > 0 && newestMessageId !== conversation.last_read_message_id
+			? newestMessageId
+			: null,
+		(messageId) =>
+			updateMe.mutateAsync({ id: conversationId, data: { last_read_message_id: messageId } }),
+	)
 }

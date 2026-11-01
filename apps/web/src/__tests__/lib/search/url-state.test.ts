@@ -58,6 +58,26 @@ describe('search url state', () => {
 		expect(parsed).toEqual({ ...EMPTY_URL_STATE, statuses: ['done'] })
 	})
 
+	it('round-trips participants and drops anything that is not an actor id', () => {
+		const a = '00000000-0000-4000-8000-0000000000a1'
+		const b = '00000000-0000-4000-8000-0000000000a2'
+		let parts = { ...EMPTY_PARTS, text: 'pricing' }
+		parts = addPill(parts, { kind: 'participant', value: a })
+		parts = addPill(parts, { kind: 'participant', value: b })
+		const state = urlStateFromParts(parts, '', 'rel')
+		const params = serializeSearchState(state)
+		expect(params).toEqual({ q: 'pricing', participants: `${a},${b}` })
+		expect(parseSearchState(params)).toEqual(state)
+		expect(partsFromUrlState(state).pills.map((p) => `${p.kind}:${p.value}`)).toEqual([
+			`participant:${a}`,
+			`participant:${b}`,
+		])
+		expect(parseSearchState({ participants: `nope,${a}` }).participants).toEqual([a])
+		expect(parseSearchState({ participants: Array(9).fill(a).join(',') }).participants).toEqual([a])
+		const six = Array.from({ length: 6 }, (_, i) => `00000000-0000-4000-8000-00000000010${i}`)
+		expect(parseSearchState({ participants: six.join(',') }).participants).toEqual(six.slice(0, 5))
+	})
+
 	it('caps very long text and keeps type keys it does not know', () => {
 		expect(parseSearchState({ q: 'x'.repeat(500) }).text).toHaveLength(200)
 		expect(parseSearchState({ types: 'loop,future_type' }).types).toEqual(['loop', 'future_type'])

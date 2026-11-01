@@ -2,10 +2,12 @@ import { KeychainBreadcrumb } from '@/components/keychain/keychain-parts'
 import { SecretInput } from '@/components/keychain/secret-input'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateByoApiKey, useCreateByoLogin } from '@/hooks/use-integrations'
 import { ApiError } from '@/lib/api'
@@ -26,6 +28,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keychain/ne
 function AddCredentialPage() {
 	useDocumentTitle('Add a credential')
 	const { workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 	const createKey = useCreateByoApiKey(workspaceId)
 	const createLogin = useCreateByoLogin(workspaceId)
@@ -41,7 +44,7 @@ function AddCredentialPage() {
 	// The same rule the server applies, so the message appears before a request.
 	const nameProblem = name.trim() ? checkCredentialName(name) : null
 	const hasValue = isLogin ? username.trim().length > 0 && password.length > 0 : secret.length > 0
-	const canSave = name.trim().length > 0 && !nameProblem && hasValue && !pending
+	const canSave = canWrite && name.trim().length > 0 && !nameProblem && hasValue && !pending
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
@@ -72,7 +75,7 @@ function AddCredentialPage() {
 					(err.code === 'NAME_TAKEN' || err.code === 'NAME_LOOKS_LIKE_SECRET')
 					? err.message
 					: isLogin
-						? 'Could not save this login. Check the name, username and password, then try again.'
+						? 'Could not save this login. Check the name, username or email, and password, then try again.'
 						: 'Could not save this credential. Check the name and secret, then try again.',
 			)
 		}
@@ -148,9 +151,11 @@ function AddCredentialPage() {
 							Cancel
 						</Link>
 					</Button>
-					<Button type="submit" disabled={!canSave}>
-						{pending ? 'Saving…' : 'Save'}
-					</Button>
+					<ViewerTooltip>
+						<Button type="submit" disabled={!canSave}>
+							{pending ? 'Saving…' : 'Save'}
+						</Button>
+					</ViewerTooltip>
 				</div>
 			</form>
 		</div>

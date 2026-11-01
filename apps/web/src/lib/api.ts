@@ -42,7 +42,7 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
-import type { ObjectPreview, TeachRequest, TeachResponse } from '@maskin/shared'
+import type { ObjectPreview, SessionStatsRow, TeachRequest, TeachResponse } from '@maskin/shared'
 
 export interface DesktopConnectResponse {
 	ticket: string
@@ -748,7 +748,7 @@ export const api = {
 			}),
 		createByoLogin: (
 			workspaceId: string,
-			body: { displayName: string; username: string; password: string },
+			body: { displayName: string; username: string; password: string; email?: string },
 		) =>
 			request<{ integrationId: string }>('/integrations/byo-login', {
 				method: 'POST',
@@ -763,6 +763,7 @@ export const api = {
 				rawSecret?: string
 				username?: string
 				password?: string
+				email?: string
 			},
 		) =>
 			request<{ id: string; renamed: boolean; secretReplaced: boolean }>(
@@ -1027,6 +1028,7 @@ export const api = {
 			const qs = new URLSearchParams(params).toString()
 			return request<SessionUsageResponse>(`/sessions/usage?${qs}`, { workspaceId })
 		},
+		stats: (workspaceId: string) => request<SessionStatsRow[]>('/sessions/stats', { workspaceId }),
 	},
 
 	events: {
@@ -1325,7 +1327,7 @@ export const api = {
 		// Reserves the caller's live-call slot for the caller-agent pair. No vendor
 		// credential comes back: the connection to the vendor is made by the
 		// server when the offer below is posted.
-		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+		create: (workspaceId: string, body: { agent_actor_id: string; conversation_id?: string }) =>
 			request<{ voice_session_id: string }>('/voice-sessions', {
 				method: 'POST',
 				body,
@@ -2093,6 +2095,10 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	/** Whether a BYO key is stored. The keys themselves are never returned. */
+	llm_configured?: { anthropic: boolean; openai: boolean; custom_llm: boolean }
+	/** Last four characters of each stored key, for a workspace admin or owner only. */
+	llm_key_hints?: { anthropic: string | null; openai: string | null; custom_llm: string | null }
 	enterprise: boolean
 	// Single accountable human payer for this workspace's plan — read-only,
 	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
@@ -2134,9 +2140,7 @@ export interface CreateInviteInput {
 	role: 'member' | 'viewer'
 }
 
-export type CreateInviteResponse =
-	| { status: 'linked'; member: { workspaceId: string; actorId: string; role: string } }
-	| { status: 'pending'; invite: InviteSummary }
+export type CreateInviteResponse = { status: 'pending'; invite: InviteSummary }
 
 export interface DeviceAuthPreview {
 	client: 'tvos'
@@ -2749,6 +2753,8 @@ export interface MessageKeychainRequest {
 	kind: 'api_key' | 'login'
 	suggested_name?: string
 	hint?: string
+	/** Agents the asker said will use it; ticked on the card even when not in the chat. */
+	target_agents?: Array<{ id: string; name: string }>
 }
 
 /** An agent's request to use an existing credential, surfaced into chat as an Allow card. */
@@ -3004,6 +3010,8 @@ export interface MessagesListResponse {
 export interface CreateConversationInput {
 	title: string
 	participant_actor_ids: string[]
+	/** Open the pair's one direct message instead of a new topical chat. */
+	direct?: boolean
 	initial_message?: string
 	initial_message_metadata?: MessageMetadata
 }

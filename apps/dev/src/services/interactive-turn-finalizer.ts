@@ -4,7 +4,7 @@ import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } from '@maskin/shared'
 import * as Sentry from '@sentry/node'
 import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
-import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { classifyBannerResult, classifyCreditExhaustion } from '../lib/credit-classifier'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
@@ -15,6 +15,7 @@ import {
 } from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
+import { resolveThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
 
 /**
  * Posts an agent's end-of-turn output into the chat it is talking in.
@@ -37,17 +38,6 @@ import { insertConversationMessage } from './conversation-messages'
 
 const describeError = (err: unknown): string =>
 	err instanceof Error ? err.stack || err.message : String(err)
-
-/**
- * Every complete line in one session_logs row.
- *
- * splitLines drops the trailing partial, which for a stored row is the last
- * envelope when the chunk did not end on a newline — so terminate the row
- * first. A row is only ever a whole number of envelopes by the time it is
- * persisted; the cross-chunk partial is reassembled live by onStdout.
- */
-const splitRowLines = (content: string): string[] =>
-	splitLines(content.endsWith('\n') ? content : `${content}\n`).lines
 
 /** Guards against a stream that never emits a newline eating memory. */
 const MAX_BUFFERED_PARTIAL_BYTES = 256 * 1024
@@ -390,6 +380,13 @@ export type InteractiveTurnFinalizerOptions = {
 	 * the same reason as the options above — no session-manager import here.
 	 */
 	onHelperResult?: (sessionId: string, outcome: { isError: boolean; text: string }) => Promise<void>
+	/**
+	 * Called when a session that is not a helper closes a turn with an error
+	 * result that opens with a limit banner. The CLI stays alive after printing
+	 * it, so no exit will ever settle the row: this ends the session as failed.
+	 * Injected for the same reason as the options above.
+	 */
+	onLimitResult?: (sessionId: string, outcome: { isError: true; text: string }) => Promise<void>
 }
 
 export class InteractiveTurnFinalizer {
@@ -444,6 +441,7 @@ export class InteractiveTurnFinalizer {
 	private readonly onResumeAfterMove?: InteractiveTurnFinalizerOptions['onResumeAfterMove']
 	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
+	private readonly onLimitResult?: InteractiveTurnFinalizerOptions['onLimitResult']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
@@ -454,6 +452,7 @@ export class InteractiveTurnFinalizer {
 		this.fallbackModel = options.fallbackModel ?? null
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onHelperResult = options.onHelperResult
+		this.onLimitResult = options.onLimitResult
 		this.onStopSession = options.onStopSession
 		this.onResumeAfterMove = options.onResumeAfterMove
 		this.onTurnFinished = options.onTurnFinished
@@ -588,6 +587,7 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} produced final output before a conversation was attached; dropping this turn's reply`,
 			)
+			await this.failOnLimitResult(sessionId, result, logId)
 			return
 		}
 
@@ -605,6 +605,7 @@ export class InteractiveTurnFinalizer {
 		// fall back to something they can actually read.
 		if (result.isError) {
 			await this.handleFailedTurn(sessionId, gate, gate.conversationId, result, logId)
+			await this.failOnLimitResult(sessionId, result, logId)
 			return
 		}
 
@@ -684,6 +685,30 @@ export class InteractiveTurnFinalizer {
 			text,
 			recovered ? { recovered: true } : {},
 		)
+	}
+
+	/**
+	 * A turn closed with an error that opens with a limit banner: the session
+	 * can do nothing more, so end it as failed rather than leave it reading
+	 * running. Runs after the chat has been told, and acts only on the newest
+	 * turn, since the agent-server replays old stdout after a restart.
+	 * A banner that is only quoted inside a longer result does not count
+	 * (classifyBannerResult checks the text opens with it).
+	 */
+	private async failOnLimitResult(
+		sessionId: string,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+	): Promise<void> {
+		if (!this.onLimitResult || !result.isError || !classifyBannerResult(result.text)) return
+		try {
+			if (!(await this.isNewestTurn(sessionId, logId))) return
+			await this.onLimitResult(sessionId, { isError: true, text: result.text })
+		} catch (err) {
+			logger.error(
+				`Session ${sessionId} could not be ended after a limit error: ${describeError(err)}`,
+			)
+		}
 	}
 
 	/**
@@ -1912,66 +1937,14 @@ export class InteractiveTurnFinalizer {
 		return rows.length < RECOVERY_SCAN_LIMIT ? { kind: 'empty' } : { kind: 'unknown' }
 	}
 
-	/**
-	 * Which chat message's turn produced this output.
-	 *
-	 * writeInput tags each user turn's persisted envelope with
-	 * `maskin_message_id`; the nearest such envelope before this result is the
-	 * turn that is now closing. Null is fine — a seeded first turn may carry no
-	 * message id, and the frontend anchors those by position instead.
-	 *
-	 * Split into lines for the same reason recoverTurnText does: the tagged
-	 * envelope can share a Docker chunk with its neighbours, and parsing the
-	 * whole row would throw and silently yield an unanchored message.
-	 */
-	/**
-	 * A reply to a message posted inside a thread answers in that thread. The turn's
-	 * triggering message is either the thread's root (which starts the thread) or one
-	 * of its replies; only a reply carries a root, so an agent answering a top-level
-	 * message still posts to the main timeline. Best-effort: a lookup failure posts
-	 * the reply top-level rather than losing it.
-	 */
-	private async resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
-		if (turnMessageId === null) return null
-		try {
-			const [row] = await this.db
-				.select({ threadRootId: messages.threadRootId })
-				.from(messages)
-				.where(eq(messages.id, turnMessageId))
-				.limit(1)
-			return row?.threadRootId ?? null
-		} catch (err) {
-			logger.warn(`Could not resolve thread for message ${turnMessageId}: ${describeError(err)}`)
-			return null
-		}
+	/** The chat message whose turn produced this output; see resolveTurnMessageId. */
+	private resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
+		return resolveTurnMessageId(this.db, sessionId, logId)
 	}
 
-	private async resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
-		const [row] = await this.db
-			.select({ content: sessionLogs.content })
-			.from(sessionLogs)
-			.where(
-				and(
-					eq(sessionLogs.sessionId, sessionId),
-					lte(sessionLogs.id, logId),
-					eq(sessionLogs.stream, 'stdout'),
-					like(sessionLogs.content, '%maskin_message_id%'),
-				),
-			)
-			.orderBy(desc(sessionLogs.id))
-			.limit(1)
-
-		if (!row) return null
-		const lines = splitRowLines(row.content)
-		for (let i = lines.length - 1; i >= 0; i--) {
-			try {
-				const parsed = JSON.parse((lines[i] ?? '').trim()) as { maskin_message_id?: unknown }
-				if (typeof parsed.maskin_message_id === 'number') return parsed.maskin_message_id
-			} catch {
-				// Not JSON, or a partial — keep walking the row's other lines.
-			}
-		}
-		return null
+	/** The thread the turn's triggering message sits in; see resolveThreadRootId. */
+	private resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
+		return resolveThreadRootId(this.db, turnMessageId)
 	}
 
 	private rememberRetry(retryKey: string, count: number): void {

@@ -709,7 +709,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored. The person who asked you gets a "Meet {name}" chat from the new agent automatically, so do not send them a second hello. Pass first_steps with 2 to 3 steps specific to the job the agent was made for, written as things the person can say to the agent. Use action "send" only for a step that reads and reports (a tap sends it as written, so prompt must equal label) and "fill" for everything else: a step that needs words only the person can supply, or that writes, sends, spends or deletes. Pass needed_integrations for the tools the agent cannot do the job without.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, an agent is added as a member in the same step, and a human is sent an email invitation to join (a person joins only by accepting it, as member or viewer) — this is how to add a brand-new actor to a workspace as part of creating them. For agents the membership is written in the same step as the agent, and the role argument is ignored: a new agent is always a member (never admin or owner), and any workspace member, human or agent, can create one. Setting tools or llm_config on a new agent needs a human admin or owner caller; a member or agent caller that sends them gets a 403 and nothing is created, so leave them out to create the agent with the Maskin MCP only and set them afterwards through update_actor. To add an already-existing agent that this workspace created to a workspace, use update_actor with workspace_id/role instead; people have to be invited by email and accept. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, use attach_skill_ids so the agent has its skills from the start; add tools.mcpServers only when the caller is a human admin or owner. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored. The person who asked you gets a "Meet {name}" chat from the new agent automatically, so do not send them a second hello. Pass first_steps with 2 to 3 steps specific to the job the agent was made for, written as things the person can say to the agent. Use action "send" only for a step that reads and reports (a tap sends it as written, so prompt must equal label) and "fill" for everything else: a step that needs words only the person can supply, or that writes, sends, spends or deletes. Pass needed_integrations for the tools the agent cannot do the job without.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -731,7 +731,7 @@ export const tools = {
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe(
-					'Role when adding a human to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write). Ignored for agents, which are always added as member.',
+					'Role of the invitation sent to a human when workspace_id is given: only member (read/write) is offered here; admin and owner are refused (the invitation route itself takes member or viewer). Ignored for agents, which are always added as member.',
 				),
 			description: z
 				.string()
@@ -779,7 +779,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead. Changing the `tools` of another actor needs owner or admin. A `tools` config read back from get_actor can be sent as-is: env and header values shown as `********` keep their stored value, provided the server command, args and url are unchanged.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing agent that was created in this workspace to a workspace (a person or an agent created elsewhere is refused with 403; people join by accepting an email invitation) — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead. Changing the `tools` of another actor needs owner or admin. A `tools` config read back from get_actor can be sent as-is: env and header values shown as `********` keep their stored value, provided the server command, args and url are unchanged.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional().describe('New name for the actor.'),
@@ -1331,7 +1331,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. To answer inside a thread, pass \`thread_root_id\` (the id of the top-level message the thread hangs off; threads do not nest). Use a thread for a side conversation or a long-running piece of work (a review, a research task) so the main chat stays readable; keep \`also_in_channel\` off unless the reply is something the whole chat should see. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. To make another agent participant respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` alone does not wake it. Humans in the conversation see every message without a mention. To answer inside a thread, pass \`thread_root_id\` (the id of the top-level message the thread hangs off; threads do not nest). Use a thread for a side conversation or a long-running piece of work (a review, a research task) so the main chat stays readable; keep \`also_in_channel\` off unless the reply is something the whole chat should see. When you are answering a human who is writing in a thread, your post lands in that thread by itself, so you need no \`thread_root_id\`; pass \`top_level: true\` only when you deliberately want the main timeline. This tool cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected with an error, so never write card text yourself or tell the human a card is shown. To show a Connect card call connect_integration. If a mentioned actor ID matches nobody in the workspace, the response lists it in \`unresolved_mentions\`; the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1365,6 +1365,12 @@ export const tools = {
 				.describe(
 					'With thread_root_id: also show the reply in the main timeline. Leave off unless the whole chat should see it.',
 				),
+			top_level: z
+				.boolean()
+				.optional()
+				.describe(
+					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread. Ignored when thread_root_id or sub_chat_session_id is given.',
+				),
 			wait: z
 				.boolean()
 				.optional()
@@ -1374,7 +1380,7 @@ export const tools = {
 		}),
 	},
 	create_chat: {
-		description: `Start a brand-new top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. Use it for a new topic that deserves its own room. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Start a top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. With one other actor and no subject this opens your direct message with them: every pair has exactly one, so asking again returns it instead of making a new chat. Set \`topical: true\` for a new topic that deserves its own room; with two or more others it is always a new chat. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			title: z.string().min(1).max(CONVERSATION_TITLE_MAX_LENGTH),
@@ -1399,6 +1405,12 @@ export const tools = {
 					'With subject_id: tie the chat to an object (bet, task, insight) or a loop. Asking again returns the chat that already exists for it.',
 				),
 			subject_id: z.string().uuid().optional(),
+			topical: z
+				.boolean()
+				.optional()
+				.describe(
+					'With one other actor: open a new, separate chat for this topic instead of your direct message with them.',
+				),
 			wait: z
 				.boolean()
 				.optional()
@@ -1699,6 +1711,23 @@ export const tools = {
 		description:
 			"Hand a task to another agent from inside the chat you are in. It works in a thread under your reply, not in a new chat: the person sees it as a handoff card with live status, can open it, carry on the conversation with that agent there, and break it out into its own chat. Use this when the work belongs to the conversation you are in; to open a separate top-level chat instead, use create_chat. Returns straight away with the sub-chat's details (its `id` is the `session_id` other chat tools take); set `wait: true` to hold until the agent has finished and get its output. When it finishes, its final message comes back to you as a new turn in your own chat, so you do not need to poll. Check on it with get_chat_activity, stop it with stop_chat_agent, talk to it with send_session_message. Give `action_prompt` a clear first line: it becomes the card's title. Same as create_session, which still works.",
 		inputSchema: startAgentInputSchema,
+	},
+	// Deprecated alias of create_session with wait on, restored after PR 1986 because
+	// stored prompts in other workspaces still tell agents to call it. Registered
+	// like any tool; the handler maps the arguments (see TOOL_NAME_ALIASES).
+	// Minimal on purpose, as every listed alias costs tokens in every tool list.
+	// The keys the old tool took and create_session has no equivalent for (config,
+	// poll_interval_seconds, timeout_seconds, depends_on_session_ids) are stripped
+	// by this schema; their names are read before that, in the registration's
+	// preprocess step in server.ts.
+	run_agent: {
+		description: 'Deprecated, use create_session with wait true.',
+		inputSchema: z.object({
+			workspace_id: z.string().uuid().optional(),
+			actor_id: z.string().uuid(),
+			action_prompt: z.string().min(1),
+			spawned_by_message_id: z.number().int().positive().optional(),
+		}),
 	},
 	list_sessions: {
 		description:
@@ -2082,9 +2111,33 @@ export const tools = {
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
 		description:
-			'List integrations connected to the workspace. Each row includes `defaultAgentAccess` (what agents without their own entry get) and `agentGrants` (the agents with their own access and its level), the same access shown on the Integrations, Keychain and agent pages; change it with `update_integration_access`. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List integrations connected to the workspace, live connections first and the newest first within each group. Dead rows (a connect that never finished, a revoked connection) sort last but are still listed. Every page starts with a `summary` of the whole workspace: how many rows per status and which connections are active, so you can see what is connected without paging. A connection missing from this page is NOT proof it is absent: find it with `provider` (for example "slack"), `status` or `q` (a word of its name), or follow `next_cursor` while `page.has_more` is true. To answer "can I use X?" call `get_actor` on yourself and read `access`. Rows are slim: `defaultAgentAccess` (what agents without their own entry get), `agentGrants` and `chatGrants`; pass `verbose: true` for config, granted scopes and provider-side ids. Change access with `update_integration_access`. Paginated via a snapshot-consistent cursor (default page: 25).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			provider: z
+				.string()
+				.optional()
+				.describe(
+					'Only this provider, for example "slack" or "gmail". Matches exactly, ignoring case.',
+				),
+			status: z
+				.string()
+				.optional()
+				.describe(
+					'Only this status: "active", "pending", "revoked", "undone" or "awaiting_secret". Matches exactly.',
+				),
+			q: z
+				.string()
+				.optional()
+				.describe(
+					'Words to look for in the provider or the saved name, for example "google" or "stripe". Every word must appear.',
+				),
+			verbose: z
+				.boolean()
+				.optional()
+				.describe(
+					'Return full rows (config, granted scopes, provider-side ids). Default false: slim rows.',
+				),
 			limit: z
 				.number()
 				.int()
@@ -2166,6 +2219,19 @@ export const tools = {
 				),
 		}),
 	},
+	resend_send_email: {
+		description:
+			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Resend\'s own send tools are not available to you: this is the only way an email goes out, and nothing is sent until a person has approved that exact email. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same approval.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z
+				.string()
+				.uuid()
+				.describe(
+					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now, if a person approved it.',
+				),
+		}),
+	},
 	approve_object_draft: {
 		description:
 			'A person approves a drafted object (an email, a LinkedIn message) exactly as it reads. Called by the Approve button in the preview card, never by an agent: the server refuses any caller that is not a person, and this tool is hidden from the model.',
@@ -2182,7 +2248,7 @@ export const tools = {
 	},
 	request_keychain_credential: {
 		description:
-			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). If the user offers or asks to give you a login, password or API key ("can I give you my LinkedIn login?", "here is my password"), call this tool right away with kind "login" or "api_key": do not refuse, do not warn about passwords in chat, and do not send them to Settings or an integration instead. This is the safe way to share it, and it applies even when the site also has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for this workspace and shared only with the agents in this chat; the user can change who can use it in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with it: an API key is in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). A login is never in your environment and you never see it: to log in on your computer, type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app (for example an accounting system you must log in to). Use `connect_integration` instead for a provider Maskin integrates with directly (GitHub, Slack, Linear and the like). If the user offers or asks to give you a login, password or API key ("can I give you my LinkedIn login?", "here is my password"), call this tool right away with kind "login" or "api_key": do not refuse, do not warn about passwords in chat, and do not send them to Settings or an integration instead. This is the safe way to share it, and it applies even when the site also has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask the user to paste a secret into the chat. It is saved for the whole workspace but shared only with the agents in this chat, unless you name other agents in `target_agent_ids`: name the agent that will actually use it (get ids from `list_actors`), since it is often not the one in this chat. The user sees who it is shared with on the card and can untick any; they can change it later in Settings → Keychain. After calling this, end your turn without a closing message. The user tells you when it is saved, and you are restarted with it: an API key is in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, where <NAME> is the credential name in capitals with other characters as underscores (e-conomic → E_CONOMIC). A login is never in your environment and you never see it: to log in on your computer, type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			kind: z
@@ -2205,6 +2271,13 @@ export const tools = {
 				.optional()
 				.describe(
 					'One line shown on the card on what you need it for, e.g. "To log in and read the latest invoices."',
+				),
+			target_agent_ids: z
+				.array(z.string())
+				.max(10)
+				.optional()
+				.describe(
+					'Actor ids of the agents that will use the credential, when that is not (only) the agent in this chat. They are shown ticked on the card. Ids that are not agents in this workspace are ignored.',
 				),
 		}),
 	},

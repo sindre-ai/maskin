@@ -1,3 +1,4 @@
+import type { Database } from '@maskin/db'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { capturePosthogEvent } from '../../../analytics/posthog'
@@ -10,6 +11,14 @@ import {
 	slackGet,
 	slackPost,
 } from './client'
+import {
+	DIRECT_EDIT_HELD_MESSAGE,
+	DIRECT_POST_HELD_MESSAGE,
+	SlackSendRefusal,
+	isDirectPostChannel,
+	loadApprovedSlackMessage,
+	recordSlackPost,
+} from './send-object'
 import { SlackApiError } from './slack-api'
 
 const SLACK_API_BASE = 'https://slack.com/api'
@@ -48,6 +57,11 @@ export interface SlackPostContext {
 	 * stash and `resolveExternalId` hasn't backfilled yet.
 	 */
 	slackTeamId?: string
+	/**
+	 * Database handle, needed to send an approved draft (`object_id`). Absent for the
+	 * capability scan, which only lists tools; a send with an `object_id` is refused without it.
+	 */
+	db?: Database
 }
 
 interface SlackPostMessageResponse {
@@ -147,17 +161,26 @@ async function slackPostMessage(
 }
 
 const sendMessageInput = {
+	object_id: z
+		.string()
+		.uuid()
+		.optional()
+		.describe(
+			'The Slack message draft a person approved (an object with `metadata.kind` slack_message and `metadata.channel`). The channel and text come from the draft, so pass nothing else except an optional `thread_ts`. Refused until a person approved this exact text, and once it has been posted.',
+		),
 	channel: z
 		.string()
 		.min(1)
+		.optional()
 		.describe(
-			'Slack channel or DM ID (e.g. `C0123456789`) or `#channel-name`. The bot must be a member.',
+			'Only for the internal channels that stay direct. Every other direct post is refused: draft it and pass `object_id` instead.',
 		),
 	text: z
 		.string()
 		.min(1)
+		.optional()
 		.describe(
-			'Message text. Slack mrkdwn is supported. The post will be attributed to the calling agent — username and avatar are set server-side, do not include them here.',
+			'Message text for a direct post. Slack mrkdwn is supported. The post will be attributed to the calling agent — username and avatar are set server-side, do not include them here.',
 		),
 	thread_ts: z.string().optional().describe('Reply in a thread by passing the parent message ts.'),
 }
@@ -235,6 +258,19 @@ async function resolveChannelId(ctx: SlackPostContext, ref: string): Promise<str
 		)
 	}
 	return match.id
+}
+
+/**
+ * True when a direct post to this channel may skip approval. A channel given by name is
+ * resolved to its id first, so "#development" and its id are treated the same; a name that
+ * cannot be resolved is not exempt.
+ */
+async function isDirectChannel(ctx: SlackPostContext, ref: string): Promise<boolean> {
+	try {
+		return isDirectPostChannel(await resolveChannelId(ctx, ref))
+	} catch {
+		return false
+	}
 }
 
 // ── Read-history + fold-in tool internals ──────────────────────────────────
@@ -353,15 +389,49 @@ export function createSlackMcpServer(
 		'slack_send_message',
 		{
 			description:
-				'Post a message to Slack as Maskin. The calling agent\'s name and the workspace name are appended automatically as the `username` subscript (e.g. "Synthesizer · in mesh-firm") — do not prefix the message text with your own identity.',
+				'Post a message to Slack as Maskin. Posts are held for a person to approve: draft the message (an object with `metadata.kind` slack_message and `metadata.channel`), get it approved, then pass its `object_id`. Only a few internal channels accept a direct `channel` and `text`. The calling agent\'s name and the workspace name are appended automatically as the `username` subscript (e.g. "Synthesizer · in mesh-firm") — do not prefix the message text with your own identity.',
 			inputSchema: sendMessageInput,
 		},
 		async (args) => {
-			const result = await slackPostMessage(ctx, args)
+			let channel: string
+			let text: string
+			let approved: Awaited<ReturnType<typeof loadApprovedSlackMessage>> | undefined
+			try {
+				if (args.object_id) {
+					if (!ctx.db) throw new SlackSendRefusal('Sending a draft is not available here.')
+					approved = await loadApprovedSlackMessage(ctx.db, {
+						workspaceId: ctx.workspaceId,
+						objectId: args.object_id,
+					})
+					channel = await resolveChannelId(ctx, approved.channel)
+					text = approved.preview.body
+				} else {
+					if (!args.channel || !args.text) {
+						throw new SlackSendRefusal(
+							`Give object_id (an approved Slack message draft), or channel and text for a channel that stays direct. ${DIRECT_POST_HELD_MESSAGE}`,
+						)
+					}
+					if (!(await isDirectChannel(ctx, args.channel))) {
+						throw new SlackSendRefusal(DIRECT_POST_HELD_MESSAGE)
+					}
+					channel = args.channel
+					text = args.text
+				}
+			} catch (err) {
+				if (!(err instanceof SlackSendRefusal)) throw err
+				logger.info('Slack post held', {
+					workspaceId: ctx.workspaceId,
+					actorId: ctx.actorId,
+					objectId: args.object_id,
+				})
+				return { isError: true, content: [{ type: 'text' as const, text: err.message }] }
+			}
+
+			const result = await slackPostMessage(ctx, { channel, text, thread_ts: args.thread_ts })
 			logger.info('Slack chat.postMessage succeeded', {
 				workspaceId: ctx.workspaceId,
 				actorId: ctx.actorId,
-				channel: result.channel ?? args.channel,
+				channel: result.channel ?? channel,
 				ts: result.ts,
 				agentLabel: ctx.agentLabel,
 			})
@@ -374,6 +444,19 @@ export function createSlackMcpServer(
 				has_agent_subscript: Boolean(ctx.agentLabel?.trim()),
 				agent_actor_id: ctx.actorId,
 			})
+			// The post is out: recording it never throws, so a bookkeeping failure cannot turn
+			// into an error the agent retries (which would post twice).
+			const closure =
+				approved && ctx.db
+					? await recordSlackPost(ctx.db, {
+							workspaceId: ctx.workspaceId,
+							actorId: ctx.actorId,
+							object: approved.object,
+							contentHash: approved.preview.content_hash,
+							channel: result.channel ?? channel,
+							ts: result.ts,
+						})
+					: undefined
 			return {
 				content: [
 					{
@@ -381,7 +464,8 @@ export function createSlackMcpServer(
 						text: JSON.stringify({
 							ok: true,
 							ts: result.ts,
-							channel: result.channel ?? args.channel,
+							channel: result.channel ?? channel,
+							...(approved && closure ? { object: { id: approved.object.id, ...closure } } : {}),
 						}),
 					},
 				],
@@ -755,12 +839,22 @@ export function createSlackMcpServer(
 		'slack_update_message',
 		{
 			description:
-				"Replace the text of a Slack message the bot previously posted. Slack replaces content in full (not a diff) — pass the complete new text. The bot can only edit its OWN messages: `cant_update_message` is returned if the target wasn't posted by this bot token.",
+				"Replace the text of a Slack message the bot previously posted. Edits are held for a person to approve: draft the new text (an object with `metadata.kind` slack_message and `metadata.channel`), get it approved, then pass its `object_id` and the `ts` of the message to edit. Only a few internal channels accept a direct `channel` and `text`. Slack replaces content in full (not a diff). The bot can only edit its OWN messages: `cant_update_message` is returned if the target wasn't posted by this bot token.",
 			inputSchema: {
+				object_id: z
+					.string()
+					.uuid()
+					.optional()
+					.describe(
+						'The Slack message draft a person approved (an object with `metadata.kind` slack_message and `metadata.channel`). The channel and the new text come from the draft, so pass only `ts` besides this. Refused until a person approved this exact text, and once it has been used.',
+					),
 				channel: z
 					.string()
 					.min(1)
-					.describe('Channel ID (`C0123456789`) or name. Same resolution as slack_send_message.'),
+					.optional()
+					.describe(
+						'Only for the internal channels that stay direct. Every other direct edit is refused: draft it and pass `object_id` instead. Channel ID (`C0123456789`) or name.',
+					),
 				ts: z
 					.string()
 					.min(1)
@@ -771,31 +865,64 @@ export function createSlackMcpServer(
 					.string()
 					.min(1)
 					.max(40000)
+					.optional()
 					.describe(
-						'Replacement message text. Same 40k Slack cap as slack_send_message. Slack replaces the message content in full — pass the complete new text, not a diff.',
+						'Replacement message text for a direct edit. Same 40k Slack cap as slack_send_message. Slack replaces the message content in full — pass the complete new text, not a diff.',
 					),
 			},
 		},
 		async (args) => {
 			assertBotToken(ctx)
-			const channelId = await resolveChannelId(ctx, args.channel)
+			let channelId: string
+			let text: string
+			let approved: Awaited<ReturnType<typeof loadApprovedSlackMessage>> | undefined
+			try {
+				if (args.object_id) {
+					if (!ctx.db) throw new SlackSendRefusal('Editing with a draft is not available here.')
+					approved = await loadApprovedSlackMessage(ctx.db, {
+						workspaceId: ctx.workspaceId,
+						objectId: args.object_id,
+					})
+					channelId = await resolveChannelId(ctx, approved.channel)
+					text = approved.preview.body
+				} else {
+					if (!args.channel || !args.text) {
+						throw new SlackSendRefusal(
+							`Give object_id (an approved Slack message draft), or channel and text for a channel that stays direct. ${DIRECT_EDIT_HELD_MESSAGE}`,
+						)
+					}
+					if (!(await isDirectChannel(ctx, args.channel))) {
+						throw new SlackSendRefusal(DIRECT_EDIT_HELD_MESSAGE)
+					}
+					channelId = await resolveChannelId(ctx, args.channel)
+					text = args.text
+				}
+			} catch (err) {
+				if (!(err instanceof SlackSendRefusal)) throw err
+				logger.info('Slack edit held', {
+					workspaceId: ctx.workspaceId,
+					actorId: ctx.actorId,
+					objectId: args.object_id,
+				})
+				return { isError: true, content: [{ type: 'text' as const, text: err.message }] }
+			}
 			try {
 				await withScopeHint(() =>
 					slackPost('chat.update', ctx.botToken, {
 						channel: channelId,
 						ts: args.ts,
-						text: args.text,
+						text,
 					}),
 				)
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err)
 				if (message.includes('cant_update_message')) {
-					const name = args.channel.trim().replace(/^#/, '')
+					const name = (args.channel ?? approved?.channel ?? channelId).trim().replace(/^#/, '')
 					throw new Error(
 						`Cannot update message ${args.ts} in #${name}: it was not posted by the Maskin bot. slack_update_message can only edit the bot's own messages.`,
 					)
 				}
-				throw rewriteNotInChannel(err, args.channel)
+				throw rewriteNotInChannel(err, args.channel ?? approved?.channel ?? channelId)
 			}
 			logger.info('Slack chat.update succeeded', {
 				workspaceId: ctx.workspaceId,
@@ -803,7 +930,25 @@ export function createSlackMcpServer(
 				channel: channelId,
 				ts: args.ts,
 			})
-			return jsonResult({ channel: channelId, ts: args.ts, updated: true })
+			// The edit is out: recording it never throws, so a bookkeeping failure cannot turn into
+			// an error the agent retries. It marks the draft as used, so one approval is one edit.
+			const closure =
+				approved && ctx.db
+					? await recordSlackPost(ctx.db, {
+							workspaceId: ctx.workspaceId,
+							actorId: ctx.actorId,
+							object: approved.object,
+							contentHash: approved.preview.content_hash,
+							channel: channelId,
+							ts: args.ts,
+						})
+					: undefined
+			return jsonResult({
+				channel: channelId,
+				ts: args.ts,
+				updated: true,
+				...(approved && closure ? { object: { id: approved.object.id, ...closure } } : {}),
+			})
 		},
 	)
 

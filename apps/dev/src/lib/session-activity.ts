@@ -177,7 +177,7 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 						open.steps.push({
 							id,
 							kind: 'thinking',
-							label: redacted ? 'Thinking (redacted)…' : 'Thinking…',
+							label: 'Thinking…',
 							started_at: at,
 							finished_at: at,
 							status: 'completed',

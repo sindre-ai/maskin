@@ -95,6 +95,8 @@ struct MaskinComposer: View {
 
 	@FocusState private var focused: Bool
 	@State private var trayOpen = false
+	/// Where the bar's top edge sits on screen: the + menu may not be taller than the room above it.
+	@State private var barTop: CGFloat = .infinity
 	@State private var dropTargeted = false
 	@State private var showPhotos = false
 	@State private var showFiles = false
@@ -181,6 +183,7 @@ struct MaskinComposer: View {
 		// Spec 7 §1: bar padding 6, gap 8.
 		.padding(MaskinSpace.s3)
 		.background { surface }
+		.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }) { barTop = $0 }
 		.overlay {
 			if isDropTargeted {
 				shape.strokeBorder(
@@ -317,6 +320,9 @@ struct MaskinComposer: View {
 			rotation: isTrayOpen ? 45 : 0
 		) {
 			MaskinHaptics.play(.selection)
+			// Opening the menu puts the keyboard away first: the menu is up to 7 rows tall and floats above
+			// the bar, so with the keyboard up it ran down behind it and lost its lower rows.
+			if !trayOpen { focused = false }
 			withAnimation(reduceMotion ? nil : MaskinMotion.standard) { trayOpen.toggle() }
 		}
 	}
@@ -333,10 +339,16 @@ struct MaskinComposer: View {
 		return actions
 	}
 
+	/// The room above the bar, less the status bar, navigation bar and the 8pt gap. Never under three
+	/// rows, so a short window scrolls the list instead of shrinking it to nothing.
+	private var attachMenuMaxHeight: CGFloat {
+		max(ComposerAttachMenu.contentHeight(rows: 3), barTop - 120)
+	}
+
 	@ViewBuilder
 	private var attachMenu: some View {
 		if isTrayOpen, !isDictating {
-			ComposerAttachMenu(actions: attachActions, onPick: pick)
+			ComposerAttachMenu(actions: attachActions, maxHeight: attachMenuMaxHeight, onPick: pick)
 				.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
 				.transition(.opacity.combined(with: .move(edge: .bottom)))
 		}
@@ -420,7 +432,10 @@ struct MaskinComposer: View {
 
 	#if os(iOS)
 	fileprivate func pasteImage() {
-		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else { return }
+		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
+			model.notice = "Couldn't read an image from the clipboard."
+			return
+		}
 		addFiles([.image(data)])
 	}
 

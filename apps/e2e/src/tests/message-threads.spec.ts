@@ -41,7 +41,7 @@ async function createSecondPerson(account: { api: TestAPI; workspaceId: string; 
 	// A trial workspace allows a single human seat; this needs two.
 	await grantPlanHeadroom(account.apiKey, account.workspaceId)
 	const actor = await createTestActor({ name: `E2E Replier ${Date.now()}` })
-	await account.api.addWorkspaceMember(account.workspaceId, actor.id)
+	await account.api.addHumanByInvite(account.workspaceId, actor)
 	return { id: actor.id, api: new TestAPI(actor.api_key) }
 }
 

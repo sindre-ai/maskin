@@ -5,6 +5,7 @@ import {
 	formFromRecipe,
 } from '@/components/extensions/webhook-form'
 import { FormError } from '@/components/shared/form-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/ui/copy-button'
 import { Input } from '@/components/ui/input'
@@ -17,6 +18,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ExtensionResponse, ExtensionSignatureScheme, VendorRecipe } from '@/lib/api'
 import { RefreshCw, Wand2 } from 'lucide-react'
 
@@ -46,6 +48,7 @@ export function WebhookSection({
 	generatingSecret: boolean
 	onRegenerateToken: () => void
 }) {
+	const canWrite = useCanWrite()
 	const saved = !!ext.webhookConfig
 	const set = <K extends keyof WebhookFormState>(key: K, value: WebhookFormState[K]) =>
 		onChange({ ...form, [key]: value })
@@ -67,9 +70,11 @@ export function WebhookSection({
 							The vendor pushes events into this workspace.
 						</p>
 					</div>
-					<Button variant="secondary" size="sm" onClick={onEdit}>
-						Edit
-					</Button>
+					<ViewerTooltip>
+						<Button variant="secondary" size="sm" disabled={!canWrite} onClick={onEdit}>
+							Edit
+						</Button>
+					</ViewerTooltip>
 				</div>
 
 				<div className="mt-4 grid gap-4">
@@ -84,15 +89,18 @@ export function WebhookSection({
 							)}
 						</div>
 						<div>
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={onRegenerateToken}
-								className="-ml-3 text-muted-foreground"
-							>
-								<RefreshCw size={14} />
-								Regenerate token
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="ghost"
+									size="sm"
+									disabled={!canWrite}
+									onClick={onRegenerateToken}
+									className="-ml-3 text-muted-foreground"
+								>
+									<RefreshCw size={14} />
+									Regenerate token
+								</Button>
+							</ViewerTooltip>
 						</div>
 					</div>
 
@@ -134,7 +142,8 @@ export function WebhookSection({
 				The vendor pushes events into this workspace. The URL is generated when you save.
 			</p>
 
-			<div className="mt-4 grid gap-4">
+			{/* A viewer sees the form filled in but cannot change it. */}
+			<fieldset disabled={!canWrite} className="mt-4 grid min-w-0 gap-4 border-0 p-0">
 				{!saved && recipes.length > 0 && (
 					<div className="grid gap-1.5">
 						<Label htmlFor="recipe">Start from a recipe</Label>
@@ -259,7 +268,7 @@ export function WebhookSection({
 					</p>
 					<FormError error={errors.signingSecret} />
 				</div>
-			</div>
+			</fieldset>
 		</section>
 	)
 }

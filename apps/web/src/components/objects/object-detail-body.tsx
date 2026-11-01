@@ -1,3 +1,4 @@
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -48,17 +49,25 @@ export function ObjectDetailBody({
 					preserveSource
 					surface="description"
 					objectId={object.id}
+					// Links draw as chips here too; in the live editor the one the cursor touches stays plain text.
+					linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
 				/>
 			) : null}
 
-			{fold && <DocumentFold fold={fold} />}
+			{fold && <DocumentFold fold={fold} workspaceId={workspaceId} />}
 
 			{evidence.length > 0 && <ObjectEvidenceBlock evidence={evidence} />}
 		</div>
 	)
 }
 
-function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
+function DocumentFold({
+	fold,
+	workspaceId,
+}: {
+	fold: { title: string; markdown: string }
+	workspaceId: string
+}) {
 	const [open, setOpen] = useState(false)
 
 	return (
@@ -74,7 +83,10 @@ function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
 			</CollapsibleTrigger>
 			<CollapsibleContent>
 				<div className="mt-3">
-					<MarkdownContent content={fold.markdown} />
+					<MarkdownContent
+						content={fold.markdown}
+						linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+					/>
 				</div>
 			</CollapsibleContent>
 		</Collapsible>

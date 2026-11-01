@@ -2,10 +2,13 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildSessionResponse } from '../factories'
 
-const { useActorsMock, useWorkspaceSessionsMock } = vi.hoisted(() => ({
-	useActorsMock: vi.fn(),
-	useWorkspaceSessionsMock: vi.fn(),
-}))
+const { useActorsMock, useWorkspaceSessionsMock, useWorkspaceSessionStatsMock } = vi.hoisted(
+	() => ({
+		useActorsMock: vi.fn(),
+		useWorkspaceSessionsMock: vi.fn(),
+		useWorkspaceSessionStatsMock: vi.fn(),
+	}),
+)
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -15,13 +18,16 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { id: 'ws-1' } }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({ useActors: (wsId?: string) => useActorsMock(wsId) }))
 vi.mock('@/hooks/use-sessions', () => ({
-	useWorkspaceSessions: (wsId?: string) => useWorkspaceSessionsMock(wsId),
+	useWorkspaceSessions: (...args: unknown[]) => useWorkspaceSessionsMock(...args),
+	useWorkspaceSessionStats: (wsId?: string) => useWorkspaceSessionStatsMock(wsId),
 }))
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ title, subtitle }: { title: string; subtitle?: string }) => (
@@ -77,6 +83,8 @@ beforeEach(() => {
 	useActorsMock.mockReset()
 	useWorkspaceSessionsMock.mockReset()
 	useWorkspaceSessionsMock.mockReturnValue({ data: [] })
+	useWorkspaceSessionStatsMock.mockReset()
+	useWorkspaceSessionStatsMock.mockReturnValue({ data: undefined })
 })
 
 describe('AgentsPage', () => {
@@ -126,5 +134,27 @@ describe('AgentsPage', () => {
 		expect(agents.map((a) => a.id).sort()).toEqual(['agent-a', 'agent-b'])
 		expect(props?.workspaceId).toBe('ws-1')
 		expect(props?.sessions).toEqual(sessions)
+	})
+
+	it('reads counts from the stats hook and never walks the session history', () => {
+		const agentA = buildActorListItem({ id: 'agent-a', type: 'agent' })
+		const stats = [
+			{
+				actor_id: 'agent-a',
+				total: 59_500,
+				active: 0,
+				total_cost_usd: 12.5,
+				last_30d_cost_usd: 3,
+				latest_status: 'completed',
+				latest_session_at: '2026-10-29T07:00:00.000Z',
+			},
+		]
+		useActorsMock.mockReturnValue({ data: [agentA], isLoading: false })
+		useWorkspaceSessionStatsMock.mockReturnValue({ data: stats })
+		mount()
+		expect(viewCapture.__agentsViewCapture.lastProps?.stats).toEqual(stats)
+		expect(useWorkspaceSessionStatsMock).toHaveBeenCalledWith('ws-1')
+		// One 100-newest list, no paged option: the page issues a constant number of session requests.
+		for (const call of useWorkspaceSessionsMock.mock.calls) expect(call).toEqual(['ws-1'])
 	})
 })

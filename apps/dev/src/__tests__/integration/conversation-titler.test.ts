@@ -2,6 +2,7 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
 	events,
+	actors,
 	conversationParticipants,
 	conversations,
 	messages,
@@ -214,7 +215,30 @@ describe('Conversation auto-titler Integration', () => {
 		// message was actually about — even though the LLM never answered.
 		// postMessages() appends the row index to `contentPrefix` (i.e. " 0").
 		expect(await readConversation()).toEqual({
-			title: 'the deploy pipeline keeps failing on migrate 0',
+			title: 'the deploy pipeline keeps…',
+			titleAutoState: 'initial',
+		})
+	})
+
+	it('replaces an agent-name title with a first-message-derived one when the LLM call fails', async () => {
+		const [agent] = await db
+			.insert(actors)
+			.values({ type: 'agent', name: 'Developer', createdBy: ownerId })
+			.returning()
+		if (!agent) throw new Error('failed to create agent')
+		await db.insert(conversationParticipants).values({ conversationId, actorId: agent.id })
+		await db
+			.update(conversations)
+			.set({ title: 'Developer' })
+			.where(eq(conversations.id, conversationId))
+		// Short enough to stay intact under any title cap.
+		await postMessages(1, 'deploy keeps failing')
+		chat.mockRejectedValue(new Error('provider is down'))
+
+		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+
+		expect(await readConversation()).toEqual({
+			title: 'deploy keeps failing 0',
 			titleAutoState: 'initial',
 		})
 	})
@@ -285,7 +309,7 @@ describe('Conversation auto-titler Integration', () => {
 		// A workspace routed at a model that just doesn't tool-call still gets
 		// a real title on message #1, matching what the frontend would derive.
 		expect(await readConversation()).toEqual({
-			title: 'Why did trial signups dip last week?',
+			title: 'Why did trial signups dip last…',
 			titleAutoState: 'initial',
 		})
 	})
@@ -327,9 +351,9 @@ describe('Conversation auto-titler Integration', () => {
 		}
 
 		expect(chat).not.toHaveBeenCalled()
-		// The derived title is cut on a word boundary at the 48-character cap.
+		// The derived title is cut on a word boundary at the 32-character cap.
 		expect(await readConversation()).toEqual({
-			title: 'Draft the note to Acme about the retry window…',
+			title: 'Draft the note to Acme about…',
 			titleAutoState: 'initial',
 		})
 	})
@@ -346,7 +370,7 @@ describe('Conversation auto-titler Integration', () => {
 			.where(and(eq(events.entityType, 'conversation'), eq(events.entityId, conversationId)))
 		expect(rows).toHaveLength(1)
 		expect(rows[0]?.data).toMatchObject({
-			title: 'the deploy pipeline keeps failing on migrate 0',
+			title: 'the deploy pipeline keeps…',
 			auto: true,
 			source: 'derived',
 		})

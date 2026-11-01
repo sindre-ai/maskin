@@ -1,0 +1,39 @@
+#!/bin/sh
+# Runs the Biome auto-fix on the files you are committing, so a formatting or
+# import-order error never reaches CI. Lint only, no tests and no typecheck.
+# Skip in an emergency: git commit --no-verify  (or SKIP_BIOME_HOOK=1 git commit ...)
+
+[ -n "$SKIP_BIOME_HOOK" ] && exit 0
+
+root=$(git rev-parse --show-toplevel) || exit 0
+cd "$root" || exit 0
+
+biome="$root/node_modules/.bin/biome"
+if [ ! -x "$biome" ]; then
+	echo "pre-commit: Biome is not installed (run pnpm install), skipping the auto-fix." >&2
+	exit 0
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+# Files that also have unstaged edits are fixed on disk but not re-staged,
+# so the hook never stages changes you left out of the commit on purpose.
+partial=$(git diff --name-only)
+
+"$biome" check --write --staged --no-errors-on-unmatched --files-ignore-unknown=true
+status=$?
+
+echo "$staged" | while IFS= read -r file; do
+	[ -f "$file" ] || continue
+	if echo "$partial" | grep -Fxq -- "$file"; then
+		continue
+	fi
+	git add -- "$file"
+done
+
+if [ "$status" -ne 0 ]; then
+	echo "" >&2
+	echo "pre-commit: Biome found errors it cannot fix. Fix them by hand, or skip with --no-verify." >&2
+	exit "$status"
+fi

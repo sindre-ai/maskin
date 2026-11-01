@@ -1,6 +1,15 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, messages, sessionLogs, sessions, triggers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	integrations,
+	messages,
+	sessionLogs,
+	sessions,
+	triggers,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import {
 	MULTI_INSTALL_PROVIDERS,
 	SESSION_ACTIVITY_SCAN_ROWS,
@@ -28,6 +37,7 @@ import {
 	sessionMcpServerCardSchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
+	sessionStatsResponseSchema,
 	sessionTitleFromPrompt,
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
@@ -69,10 +79,13 @@ import { loadSessionActivity } from '../lib/session-activity-query'
 import { redactSessionConfig } from '../lib/session-config-redaction'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { assertInWorkspace } from '../lib/workspace-scope'
+import { wakeAgentFromCard } from '../services/chat-card-wake'
 import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
-import { ensureChiefOfStaffChat, resolveAskTargetHuman } from '../services/chief-of-staff-chat'
+import { resolveAskTargetHuman } from '../services/chief-of-staff-chat'
 import { insertConversationMessage } from '../services/conversation-messages'
+import { findOrCreateDirectChat } from '../services/direct-chat'
+import { findDirectChatQuestion } from '../services/direct-chat-question'
 import { resolveSpawnLink } from '../services/helper-link'
 import { type HelperReturnOutcome, returnToSender } from '../services/helper-return'
 import { ensureChatForSession } from '../services/session-chat'
@@ -563,6 +576,70 @@ app.openapi(sessionUsageRoute, (async (c) => {
 	return c.json({ buckets, totals })
 }) as RouteHandler<typeof sessionUsageRoute, Env>)
 
+// GET /stats - One row per agent: session count, active count, cost and latest status.
+// The Agents page reads this instead of paging the whole session list to count it.
+// Registered before /{id} so the static `stats` segment wins the match.
+const ACTIVE_SESSION_STATUSES = ['running', 'starting', 'pending']
+
+const sessionStatsRoute = createRoute({
+	method: 'get',
+	path: '/stats',
+	tags: ['Sessions'],
+	summary: 'Per-agent session counts, cost and latest status for the workspace',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionStatsResponseSchema } },
+			description: 'One row per agent with at least one session the caller can read',
+		},
+	},
+})
+
+app.openapi(sessionStatsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const conditions = [eq(sessions.workspaceId, workspaceId)]
+	// Same read rule as the list, so a count never includes a session the caller cannot open.
+	const visibility = await sessionListVisibility(
+		db,
+		workspaceId,
+		c.get('actorId'),
+		c.get('workspaceRole'),
+	)
+	if (visibility) conditions.push(visibility)
+
+	// ISO string + ::timestamptz cast for the same pooler reason as /usage.
+	const windowStartIso = new Date(Date.now() - 30 * DAY_MS).toISOString()
+	const settledAt = sql`COALESCE(${sessions.completedAt}, ${sessions.updatedAt})`
+
+	const rows = await db
+		.select({
+			actorId: sessions.actorId,
+			total: sql<number>`COUNT(*)::int`,
+			active: sql<number>`(COUNT(*) FILTER (WHERE ${inArray(sessions.status, ACTIVE_SESSION_STATUSES)}))::int`,
+			totalCostUsd: sql<number>`COALESCE(SUM(${sessions.totalCostUsd}), 0)::float8`,
+			last30dCostUsd: sql<number>`COALESCE(SUM(${sessions.totalCostUsd}) FILTER (WHERE ${settledAt} >= ${windowStartIso}::timestamptz), 0)::float8`,
+			latestStatus: sql<string>`(ARRAY_AGG(${sessions.status} ORDER BY ${sessions.createdAt} DESC))[1]`,
+			latestSessionAt: sql<Date | string | null>`MAX(${sessions.createdAt})`,
+		})
+		.from(sessions)
+		.where(and(...conditions))
+		.groupBy(sessions.actorId)
+
+	return c.json(
+		rows.map((r) => ({
+			actor_id: r.actorId,
+			total: Number(r.total),
+			active: Number(r.active),
+			total_cost_usd: Number(r.totalCostUsd),
+			last_30d_cost_usd: Number(r.last30dCostUsd),
+			latest_status: r.latestStatus,
+			latest_session_at: r.latestSessionAt ? new Date(r.latestSessionAt).toISOString() : null,
+		})),
+	)
+}) as RouteHandler<typeof sessionStatsRoute, Env>)
+
 // GET /:id - Get session detail
 const getSessionResponseSchema = sessionResponseSchema.extend({
 	// Present only when the caller passed include_logs=true. Ordered newest-first
@@ -1009,6 +1086,53 @@ app.openapi(inputSessionRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
+	// A tapped answer to a question the agent asked in its direct message with the person. That
+	// session has usually ended, or was started by an agent, so there is nothing to type into: the
+	// answer is recorded in the chat and the asking agent gets a turn, as for any card in a chat.
+	// Only for a question in a conversation that carries the direct pair key, in the direct message
+	// of the caller and the asking agent; every other call takes the path below.
+	if (body.question_answer) {
+		const directQuestion = await findDirectChatQuestion(db, {
+			workspaceId,
+			sessionId: session.id,
+			agentId: session.actorId,
+			callerId: actorId,
+			questionMessageId: body.question_answer.question_message_id,
+		})
+		if (directQuestion) {
+			if (directQuestion.answered) {
+				return c.json(createApiError('CONFLICT', 'This question has already been answered'), 409)
+			}
+			const secretRefusal = await refuseRawSecret(db, {
+				content: body.content,
+				workspaceId,
+				actorId,
+				actorType: c.get('actorType'),
+				entityType: 'session',
+				entityId: id,
+			})
+			if (secretRefusal) return c.json(secretRefusal, 400)
+
+			await insertConversationMessage(db, {
+				conversationId: directQuestion.conversationId,
+				workspaceId,
+				actorId,
+				content: body.content,
+				metadata: { question_answer: body.question_answer },
+				sessionId: null,
+			})
+			await wakeAgentFromCard({
+				db,
+				sessionManager: c.get('sessionManager'),
+				workspaceId,
+				callerId: actorId,
+				card: { conversation_id: directQuestion.conversationId, agent_id: session.actorId },
+				instruction: body.content,
+			})
+			return c.json({ ok: true as const })
+		}
+	}
+
 	// The turn is written as the session's user, so only whoever started the
 	// session may add one. Checked before the state gates so a stranger learns
 	// nothing about whether it is running.
@@ -1285,9 +1409,11 @@ const askSessionRoute = createRoute({
 					schema: z.object({
 						message_id: z.number(),
 						posted: z.literal(true),
-						// 'chief_of_staff' means the answer goes to the Chief of Staff's chat,
-						// not back into this session, so the agent must not wait for it.
-						delivered_to: z.enum(['chat', 'chief_of_staff']),
+						// 'master' means the question is in the asking agent's direct message with the
+						// person; the answer wakes the agent there. 'chief_of_staff' is no longer
+						// returned (the Chief of Staff has a direct message like any agent) and stays so
+						// an older client still validates.
+						delivered_to: z.enum(['chat', 'chief_of_staff', 'master']),
 					}),
 				},
 			},
@@ -1332,18 +1458,40 @@ app.openapi(askSessionRoute, (async (c) => {
 
 	// A chat session asks in its own conversation; a helper another agent started
 	// asks in the one it was started from. Anything else (a trigger-driven run, a
-	// session started from the sessions UI) asks in the person's 1-1 with the
-	// Chief of Staff, so every question lands in one thread.
+	// session started from the sessions UI) asks in the asking agent's direct message
+	// with the person (the pair's stored DM, reported as 'master'), so a question never
+	// lands in a chat that merely holds the same two people.
 	let conversationId = session.conversationId ?? helperAskConversationId(session)
-	let deliveredTo: 'chat' | 'chief_of_staff' = 'chat'
-	let cosHumanId: string | null = null
+	let deliveredTo: 'chat' | 'master' = 'chat'
+	const routedTo: 'session_chat' | 'helper_chat' | 'master' = session.conversationId
+		? 'session_chat'
+		: conversationId
+			? 'helper_chat'
+			: 'master'
+	let masterHumanId: string | null = null
 	if (!conversationId) {
 		const humanId = await resolveAskTargetHuman(db, session.workspaceId, session.createdBy)
-		cosHumanId = humanId
-		const cosChat = humanId ? await ensureChiefOfStaffChat(db, session.workspaceId, humanId) : null
-		if (cosChat) {
-			conversationId = cosChat.conversationId
-			deliveredTo = 'chief_of_staff'
+		const [agent] = humanId
+			? await db
+					.select({ name: actors.name })
+					.from(actors)
+					.where(eq(actors.id, session.actorId))
+					.limit(1)
+			: []
+		const directChat =
+			humanId && agent
+				? await findOrCreateDirectChat(db, {
+						workspaceId: session.workspaceId,
+						humanId,
+						agentId: session.actorId,
+						title: agent.name,
+						createdBy: humanId,
+					})
+				: null
+		if (directChat) {
+			conversationId = directChat.id
+			deliveredTo = 'master'
+			masterHumanId = humanId
 		}
 	}
 	if (!conversationId || (deliveredTo === 'chat' && !session.interactive)) {
@@ -1366,7 +1514,8 @@ app.openapi(askSessionRoute, (async (c) => {
 			question: {
 				session_id: session.id,
 				questions,
-				...(isHelper ? { reply_to_session: true } : {}),
+				...(isHelper || deliveredTo === 'master' ? { reply_to_session: true } : {}),
+				routed_to: routedTo,
 			},
 		},
 		sessionId: session.id,
@@ -1401,17 +1550,16 @@ app.openapi(askSessionRoute, (async (c) => {
 			.where(eq(sessions.id, session.id))
 	}
 
-	// Push the person: an agent is blocked on them. Recipients: for the Chief of
-	// Staff 1-1 it is the resolved human (the 1-1's only human); otherwise every
-	// active human in the conversation the question was posted to, because that
-	// chat -- not session.createdBy, which for a helper is the asking agent and
-	// for a chat session is whoever sent the first message -- is where the
-	// answer will be read. Best effort and after the post: it never alters the
-	// response.
+	// Push the person: an agent is blocked on them. Recipients: for the direct message it
+	// is the resolved human (the chat's only human); otherwise every active human
+	// in the conversation the question was posted to, because that chat -- not
+	// session.createdBy, which for a helper is the asking agent and for a chat
+	// session is whoever sent the first message -- is where the answer will be read.
+	// Best effort and after the post: it never alters the response.
 	try {
 		const askTargets =
-			deliveredTo === 'chief_of_staff' && cosHumanId
-				? [cosHumanId]
+			deliveredTo === 'master' && masterHumanId
+				? [masterHumanId]
 				: await humanParticipants(db, conversationId, session.actorId)
 		await notifyAgentQuestion(db, {
 			workspaceId: session.workspaceId,
@@ -1697,7 +1845,12 @@ app.openapi(keychainCardRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { kind, suggested_name: suggestedName, hint } = c.req.valid('json')
+	const {
+		kind,
+		suggested_name: suggestedName,
+		hint,
+		target_agent_ids: targetAgentIds,
+	} = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
@@ -1712,6 +1865,24 @@ app.openapi(keychainCardRoute, (async (c) => {
 	const target = cardTarget(session)
 	if (!target) return c.json(createApiError('CONFLICT', CARD_CONFLICT_TEXT), 409)
 
+	// Ids that are not agents in this workspace are dropped, not an error: the card still posts.
+	const wantedIds = [...new Set(targetAgentIds ?? [])].filter(
+		(wanted) => z.string().uuid().safeParse(wanted).success,
+	)
+	const targetAgents = wantedIds.length
+		? await db
+				.select({ id: actors.id, name: actors.name })
+				.from(actors)
+				.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, session.workspaceId),
+						eq(actors.type, 'agent'),
+						inArray(actors.id, wantedIds),
+					),
+				)
+		: []
+
 	const created = await insertConversationMessage(db, {
 		conversationId: target.conversationId,
 		workspaceId: session.workspaceId,
@@ -1723,6 +1894,7 @@ app.openapi(keychainCardRoute, (async (c) => {
 				kind,
 				...(suggestedName ? { suggested_name: suggestedName } : {}),
 				...(hint ? { hint } : {}),
+				...(targetAgents.length ? { target_agents: targetAgents } : {}),
 				...(target.helper ? { reply_to_session: true } : {}),
 			},
 		},

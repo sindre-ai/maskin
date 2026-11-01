@@ -123,7 +123,7 @@ public enum ActivityLogParser {
 			guard !thought.isEmpty || redacted else { return }
 			append(
 				ActivityStep(
-					id: id, kind: .thinking, label: redacted ? "Thinking (redacted)…" : "Thinking…",
+					id: id, kind: .thinking, label: "Thinking…",
 					detail: thought.isEmpty ? nil : String(collapse(thought).prefix(ToolLabel.maxDetail)),
 					startedAt: date, finishedAt: date), to: &b)
 		case "tool_use":

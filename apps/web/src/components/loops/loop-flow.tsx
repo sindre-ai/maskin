@@ -1,19 +1,10 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { TypeBadge } from '@/components/shared/type-badge'
 import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
-import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
-import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useQueries } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-
-// Relationship lookups are one request per object shown in the pipeline
-// board (no bulk-by-many-ids endpoint exists yet) — capped so a very active
-// loop can't fan out into a request storm.
-const MAX_COMPANION_LOOKUPS = 30
 
 interface StageColumn {
 	value: string
@@ -67,19 +58,6 @@ function buildStageColumns(
 	}))
 }
 
-/** Event triggers with an explicit `from_status` that matches a known stage
- * are placed right after that stage instead of in "Comes in" — mirrors the
- * reference design's mid-flow step rows (e.g. "Quill writes the
- * generalisable version" sitting right after the clustered stage). Cron/
- * reminder triggers and event triggers with no (or unrecognised)
- * `from_status` fall back to "Comes in" / "Runs alongside". */
-function triggerFromStatus(trigger: TriggerResponse): string | null {
-	if (trigger.type !== 'event') return null
-	const config = trigger.config as { from_status?: unknown } | null
-	const fromStatus = config?.from_status
-	return typeof fromStatus === 'string' && fromStatus.length > 0 ? fromStatus : null
-}
-
 function formatDuration(ms: number | null | undefined): string | null {
 	if (!ms || ms <= 0 || !Number.isFinite(ms)) return null
 	const days = Math.round(ms / (24 * 60 * 60 * 1000))
@@ -126,7 +104,7 @@ function StepRow({
 			/>
 			<div className="flex-1 min-w-0 break-words text-[12.5px] leading-relaxed">
 				<span className="font-semibold text-foreground">{agent?.name ?? 'Unknown agent'}</span>{' '}
-				<span className="text-muted-foreground">{trigger.actionPrompt}</span>
+				<span className="text-muted-foreground">{trigger.name}</span>
 			</div>
 			{asksYou && (
 				<span className="shrink-0 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground mt-0.5">
@@ -137,43 +115,6 @@ function StepRow({
 				<span className="text-[10.5px] font-medium text-muted-foreground shrink-0 mt-0.5">off</span>
 			)}
 		</Link>
-	)
-}
-
-function CycleCard({
-	workspaceId,
-	primary,
-	companions,
-}: {
-	workspaceId: string
-	primary: ObjectResponse
-	companions: ObjectResponse[]
-}) {
-	return (
-		<div className="border border-border rounded-lg bg-background p-2.5">
-			<Link
-				to="/$workspaceId/objects/$objectId"
-				params={{ workspaceId, objectId: primary.id }}
-				className="text-[12px] font-semibold text-foreground truncate hover:underline"
-			>
-				{primary.title ?? 'Untitled'}
-			</Link>
-			<div className="flex flex-wrap gap-1.5 mt-2">
-				{companions.map((obj) => (
-					<Link
-						key={obj.id}
-						to="/$workspaceId/objects/$objectId"
-						params={{ workspaceId, objectId: obj.id }}
-						className="flex items-center gap-1.5 rounded-md border border-border bg-card px-1.5 py-1 hover:border-foreground/30 transition-colors min-w-0"
-					>
-						<TypeBadge type={obj.type} />
-						<span className="text-[11px] font-medium text-foreground truncate max-w-[160px]">
-							{obj.title ?? 'Untitled'}
-						</span>
-					</Link>
-				))}
-			</div>
-		</div>
 	)
 }
 
@@ -193,7 +134,6 @@ export function LoopFlow({
 	const [agentFilter, setAgentFilter] = useState<string | null>(null)
 	const { workspace } = useWorkspace()
 	const actorsById = new Map((actors ?? []).map((a) => [a.id, a]))
-	const childrenById = new Map(childObjects.map((c) => [c.id, c]))
 
 	const primaryType = primaryChildType(childObjects)
 	const primaryObjects = primaryType ? childObjects.filter((o) => o.type === primaryType) : []
@@ -202,51 +142,13 @@ export function LoopFlow({
 		[]
 	const columns = primaryType ? buildStageColumns(primaryObjects, configuredStatuses) : []
 
-	// One relationship lookup per primary object — merged below into a
-	// "companions" list (any loop child directly linked to it, any type).
-	const lookupTargets = primaryObjects.slice(0, MAX_COMPANION_LOOKUPS)
-	const relationshipQueries = useQueries({
-		queries: lookupTargets.map((obj) => ({
-			queryKey: queryKeys.relationships.byObject(workspaceId, obj.id),
-			queryFn: () => api.relationships.list(workspaceId, { object_id: obj.id }),
-		})),
-	})
-	const companionsByPrimaryId = new Map<string, ObjectResponse[]>()
-	lookupTargets.forEach((obj, i) => {
-		const rels = relationshipQueries[i]?.data ?? []
-		const seen = new Set<string>()
-		const companions: ObjectResponse[] = []
-		for (const rel of rels) {
-			const otherId = rel.sourceId === obj.id ? rel.targetId : rel.sourceId
-			if (otherId === obj.id || seen.has(otherId)) continue
-			const other = childrenById.get(otherId)
-			if (other) {
-				companions.push(other)
-				seen.add(otherId)
-			}
-		}
-		if (companions.length > 0) companionsByPrimaryId.set(obj.id, companions)
-	})
-
-	const cronTriggers = triggers.filter((t) => t.type === 'cron')
-	const gapTriggersByStatus = new Map<string, TriggerResponse[]>()
-	const comesInTriggers: TriggerResponse[] = []
-	for (const t of triggers) {
-		if (t.type === 'cron') continue
-		const fromStatus = triggerFromStatus(t)
-		if (fromStatus && columns.some((c) => c.value === fromStatus)) {
-			const list = gapTriggersByStatus.get(fromStatus) ?? []
-			list.push(t)
-			gapTriggersByStatus.set(fromStatus, list)
-		} else {
-			comesInTriggers.push(t)
-		}
-	}
+	const routineTriggers = triggers.filter((t) => t.type === 'cron')
+	const eventTriggers = triggers.filter((t) => t.type !== 'cron')
 
 	const distinctAgentIds = Array.from(new Set(triggers.map((t) => t.targetActorId)))
 	const matchesFilter = (t: TriggerResponse) => !agentFilter || t.targetActorId === agentFilter
-	const shownComesIn = comesInTriggers.filter(matchesFilter)
-	const shownAlongside = cronTriggers.filter(matchesFilter)
+	const shownRoutines = routineTriggers.filter(matchesFilter)
+	const shownEvents = eventTriggers.filter(matchesFilter)
 
 	const hasTriggers = triggers.length > 0
 	const hasStages = columns.some((c) => c.total > 0)
@@ -254,16 +156,7 @@ export function LoopFlow({
 
 	// A pill filter that matches nothing renders the mockup's own line rather
 	// than an empty card (mockup 1943–1945).
-	const shownGapTriggerCount = columns.reduce(
-		(sum, column) =>
-			sum + (gapTriggersByStatus.get(column.value) ?? []).filter(matchesFilter).length,
-		0,
-	)
-	const flowEmpty =
-		agentFilter !== null &&
-		shownComesIn.length === 0 &&
-		shownAlongside.length === 0 &&
-		shownGapTriggerCount === 0
+	const flowEmpty = agentFilter !== null && shownRoutines.length === 0 && shownEvents.length === 0
 
 	const asksYou = loop?.pill === 'waiting_on_you'
 
@@ -329,32 +222,8 @@ export function LoopFlow({
 			)}
 
 			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4 shadow-sm">
-				{shownComesIn.length > 0 && (
-					<div>
-						<div className="flex items-baseline gap-2 mb-2">
-							<span className="eyebrow">Comes in</span>
-							<span className="text-[10.5px] text-muted-foreground/70">
-								how work reaches the loop
-							</span>
-						</div>
-						<div className="flex flex-col gap-2.5">
-							{shownComesIn.map((t) => (
-								<StepRow
-									key={t.id}
-									workspaceId={workspaceId}
-									trigger={t}
-									agent={actorsById.get(t.targetActorId)}
-									asksYou={asksYou}
-								/>
-							))}
-						</div>
-					</div>
-				)}
-
 				{columns.map((column) => {
 					const colors = getStatusColor(column.value)
-					const cardObjects = column.objects.filter((o) => companionsByPrimaryId.has(o.id))
-					const gapTriggers = (gapTriggersByStatus.get(column.value) ?? []).filter(matchesFilter)
 					return (
 						<div key={column.value}>
 							<div className="flex items-center gap-2">
@@ -372,31 +241,6 @@ export function LoopFlow({
 									{column.total}
 								</span>
 							</div>
-							{cardObjects.length > 0 && (
-								<div className="flex flex-col gap-2 mt-2 ml-4">
-									{cardObjects.map((obj) => (
-										<CycleCard
-											key={obj.id}
-											workspaceId={workspaceId}
-											primary={obj}
-											companions={companionsByPrimaryId.get(obj.id) ?? []}
-										/>
-									))}
-								</div>
-							)}
-							{gapTriggers.length > 0 && (
-								<div className="flex flex-col gap-2.5 mt-2 ml-4">
-									{gapTriggers.map((t) => (
-										<StepRow
-											key={t.id}
-											workspaceId={workspaceId}
-											trigger={t}
-											agent={actorsById.get(t.targetActorId)}
-											asksYou={asksYou}
-										/>
-									))}
-								</div>
-							)}
 						</div>
 					)
 				})}
@@ -407,25 +251,41 @@ export function LoopFlow({
 					</p>
 				)}
 
-				{shownAlongside.length > 0 && (
-					<div>
-						<div className="flex items-baseline gap-2 mb-2">
-							<span className="eyebrow">Runs alongside</span>
-							<span className="text-[10.5px] text-muted-foreground/70">
-								schedules and safety nets
-							</span>
-						</div>
-						<div className="flex flex-col gap-2.5">
-							{shownAlongside.map((t) => (
-								<StepRow
-									key={t.id}
-									workspaceId={workspaceId}
-									trigger={t}
-									agent={actorsById.get(t.targetActorId)}
-									asksYou={asksYou}
-								/>
-							))}
-						</div>
+				{(shownRoutines.length > 0 || shownEvents.length > 0) && (
+					<div className="flex flex-col gap-3">
+						<span className="text-sm font-semibold text-foreground">Triggers</span>
+						{shownRoutines.length > 0 && (
+							<div>
+								<div className="eyebrow mb-2">Routines</div>
+								<div className="flex flex-col gap-2.5">
+									{shownRoutines.map((t) => (
+										<StepRow
+											key={t.id}
+											workspaceId={workspaceId}
+											trigger={t}
+											agent={actorsById.get(t.targetActorId)}
+											asksYou={asksYou}
+										/>
+									))}
+								</div>
+							</div>
+						)}
+						{shownEvents.length > 0 && (
+							<div>
+								<div className="eyebrow mb-2">Event-based</div>
+								<div className="flex flex-col gap-2.5">
+									{shownEvents.map((t) => (
+										<StepRow
+											key={t.id}
+											workspaceId={workspaceId}
+											trigger={t}
+											agent={actorsById.get(t.targetActorId)}
+											asksYou={asksYou}
+										/>
+									))}
+								</div>
+							</div>
+						)}
 					</div>
 				)}
 			</div>

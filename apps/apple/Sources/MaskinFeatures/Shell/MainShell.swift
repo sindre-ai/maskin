@@ -173,7 +173,7 @@ private struct AdaptiveTabs: View {
 				.presentationDetents([.medium, .large])
 				.environment(\.shellShowsAvatar, false)
 		}
-		.keepTabBarExpanded()
+		.modifier(TeamFoldingTabBar(runtime: runtime))
 	}
 }
 
@@ -242,6 +242,10 @@ private struct PresentationContent: View {
 			DetailSheet { AgentDetailScreen(environment: environment, agentId: id) }
 		case .file(let id):
 			DetailSheet { FileScreen(environment: environment, fileId: id) }
+		case .triggers(let id):
+			if let workspaceID = environment.workspaceId {
+				TriggersSheet(environment: environment, workspaceID: workspaceID, initialSelection: id)
+			}
 		case .profile:
 			ProfileSheet(environment: environment, runtime: runtime)
 		case .files:
@@ -267,7 +271,7 @@ private struct ShellTabContent: View {
 		case .chats:
 			ChatsScreen(
 				environment: environment, requestedConversationId: $runtime.requestedConversationId)
-		case .loops: LoopsScreen(environment: environment)
+		case .loops: LoopsScreen(environment: environment, requestedLoopId: $runtime.requestedLoopId)
 		case .objects: ObjectsScreen(environment: environment)
 		case .search:
 			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
@@ -288,19 +292,6 @@ extension ShellTab {
 		case .chats: return .make(count: badges.unreadChats)
 		default: return .none
 		}
-	}
-}
-
-extension View {
-	/// iOS 26: the tab bar stays expanded, every tab visible, however far the content scrolls.
-	/// No-op elsewhere.
-	fileprivate func keepTabBarExpanded() -> some View {
-		#if os(iOS)
-			if #available(iOS 26, *) {
-				return AnyView(tabBarMinimizeBehavior(.never))
-			}
-		#endif
-		return AnyView(self)
 	}
 }
 

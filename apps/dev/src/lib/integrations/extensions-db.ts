@@ -339,6 +339,7 @@ export async function buildExtensionMcpServers(
 				.set({ mcpLastError: `tool cap exceeded: ${tools.length}/${MAX_EXTENSION_TOOLS}` })
 				.where(eq(extensions.id, entry.extensionId))
 			void capturePosthogEvent('extension_mcp_tool_cap_exceeded', workspaceId, {
+				workspace_id: workspaceId,
 				extension_id: entry.extensionId,
 				slug: entry.slug,
 				tool_count: tools.length,

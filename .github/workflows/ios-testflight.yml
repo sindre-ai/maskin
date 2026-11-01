@@ -16,6 +16,11 @@ name: iOS TestFlight
 # key creates the distribution certificate and App Store profiles for io.maskin.app and its
 # extensions, so no certificate or profile files live in the repo or in secrets.
 #
+# Every run starts on a fresh Mac, and automatic signing mints a new development certificate
+# on it. Apple caps the certificates per account, so a step at the end of the job revokes the
+# development certificates this run created (.github/scripts/asc-dev-certs.mjs). Distribution
+# certificates and profiles are never touched.
+#
 # Build number is a UTC timestamp (yymmddHHMM), always higher than the last upload. The
 # marketing version still comes from project.yml.
 #
@@ -43,7 +48,7 @@ concurrency:
 jobs:
   testflight:
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -89,6 +94,20 @@ jobs:
           mkdir -p "$RUNNER_TEMP/asc"
           printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
           chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+
+      # The certificate clean-up script needs Node; the Mac image does not guarantee it.
+      - uses: actions/setup-node@v6
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          node-version: 20
+
+      - name: Record the development certificates before the archive
+        id: certs_before
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        run: |
+          ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            node .github/scripts/asc-dev-certs.mjs snapshot "$RUNNER_TEMP/dev-certs-before.json"
 
       - name: Archive
         if: steps.gate.outputs.enabled == 'true'
@@ -141,6 +160,15 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/export.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
           echo "Uploaded build $BUILD_NUMBER to App Store Connect."
+
+      # Runs even when the build failed or was cancelled, so a failed run does not leave
+      # certificates behind. Skipped when the snapshot above did not succeed.
+      - name: Revoke the development certificates this run created
+        if: always() && steps.gate.outputs.enabled == 'true' && steps.certs_before.outcome == 'success'
+        continue-on-error: true
+        run: |
+          ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            node .github/scripts/asc-dev-certs.mjs revoke-new "$RUNNER_TEMP/dev-certs-before.json"
 
       - name: Remove the key
         if: always() && steps.gate.outputs.enabled == 'true'

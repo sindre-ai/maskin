@@ -6287,6 +6287,63 @@
 							}
 						}
 					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"404": {
 						"description": "Workspace not found",
 						"content": {
@@ -6950,7 +7007,7 @@
 					"Briefing"
 				],
 				"summary": "Generate today's brief as spoken prose",
-				"description": "The human-facing brief: the workspace's default agent (its Chief of Staff) writing the same facts as something to listen to, rather than the agent-facing markdown `GET /briefing` returns.\n\nPOST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.",
+				"description": "The human-facing brief: the workspace's default agent (its Chief of Staff) writing the same facts as something to listen to, rather than the agent-facing markdown `GET /briefing` returns.\n\nPOST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.\n\nA read-only viewer is served the day's cached brief, or the deterministic prose when nothing is cached yet. A viewer never triggers a model call or writes the cache.",
 				"parameters": [
 					{
 						"schema": {
@@ -8468,6 +8525,14 @@
 												"type": "string"
 											}
 										}
+									},
+									"mailbox": {
+										"type": [
+											"string",
+											"null"
+										],
+										"maxLength": 254,
+										"format": "email"
 									},
 									"default_workspace_id": {
 										"type": [
@@ -12704,6 +12769,63 @@
 							}
 						}
 					},
+					"400": {
+						"description": "Invalid skill name",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
 					"403": {
 						"description": "Not a workspace member",
 						"content": {
@@ -13124,6 +13246,63 @@
 									},
 									"required": [
 										"ok"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid skill name",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
 									]
 								}
 							}
@@ -14736,6 +14915,34 @@
 												"custom_llm"
 											]
 										},
+										"llm_key_hints": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"openai": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"custom_llm": {
+													"type": [
+														"string",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -14998,6 +15205,34 @@
 													},
 													"custom_llm": {
 														"type": "boolean"
+													}
+												},
+												"required": [
+													"anthropic",
+													"openai",
+													"custom_llm"
+												]
+											},
+											"llm_key_hints": {
+												"type": "object",
+												"properties": {
+													"anthropic": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"openai": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"custom_llm": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
@@ -15745,6 +15980,34 @@
 												"custom_llm"
 											]
 										},
+										"llm_key_hints": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"openai": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"custom_llm": {
+													"type": [
+														"string",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -16044,6 +16307,34 @@
 												"custom_llm"
 											]
 										},
+										"llm_key_hints": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"openai": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"custom_llm": {
+													"type": [
+														"string",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
 										"onboardingEnabled": {
 											"type": "boolean"
 										},
@@ -16330,7 +16621,7 @@
 						}
 					},
 					"403": {
-						"description": "Caller is a member but not a human admin or owner, or the workspace has reached its seat cap",
+						"description": "Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -16387,7 +16678,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace not found, caller is not a member of it, or actor not found",
+						"description": "Workspace not found, or the caller is not a member of it",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -16632,6 +16923,34 @@
 												},
 												"custom_llm": {
 													"type": "boolean"
+												}
+											},
+											"required": [
+												"anthropic",
+												"openai",
+												"custom_llm"
+											]
+										},
+										"llm_key_hints": {
+											"type": "object",
+											"properties": {
+												"anthropic": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"openai": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"custom_llm": {
+													"type": [
+														"string",
+														"null"
+													]
 												}
 											},
 											"required": [
@@ -20543,7 +20862,7 @@
 					"workspace-invitations"
 				],
 				"summary": "Invite someone to a workspace by email",
-				"description": "If the email belongs to an existing actor who is not yet a member, that actor is added directly (status \"linked\"). Otherwise a pending invite is created and emailed (status \"pending\"). Re-inviting an email with a live pending invite returns that invite unchanged.",
+				"description": "A pending invite is created and emailed (status \"pending\"), whether or not the email already has an account; the person joins by accepting it. Re-inviting an email with a live pending invite returns that invite unchanged.",
 				"requestBody": {
 					"content": {
 						"application/json": {
@@ -20624,93 +20943,53 @@
 						}
 					},
 					"201": {
-						"description": "Actor linked directly, or a new pending invite created and emailed",
+						"description": "A new pending invite was created and emailed",
 						"content": {
 							"application/json": {
 								"schema": {
-									"anyOf": [
-										{
-											"type": "object",
-											"properties": {
-												"status": {
-													"type": "string",
-													"enum": [
-														"linked"
-													]
-												},
-												"member": {
-													"type": "object",
-													"properties": {
-														"workspaceId": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"actorId": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"role": {
-															"type": "string"
-														}
-													},
-													"required": [
-														"workspaceId",
-														"actorId",
-														"role"
-													]
-												}
-											},
-											"required": [
-												"status",
-												"member"
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending"
 											]
 										},
-										{
+										"invite": {
 											"type": "object",
 											"properties": {
-												"status": {
+												"id": {
 													"type": "string",
-													"enum": [
-														"pending"
-													]
+													"format": "uuid"
 												},
-												"invite": {
-													"type": "object",
-													"properties": {
-														"id": {
-															"type": "string",
-															"format": "uuid"
-														},
-														"email": {
-															"type": "string"
-														},
-														"role": {
-															"type": "string"
-														},
-														"expiresAt": {
-															"type": "string"
-														}
-													},
-													"required": [
-														"id",
-														"email",
-														"role",
-														"expiresAt"
-													]
+												"email": {
+													"type": "string"
+												},
+												"role": {
+													"type": "string"
+												},
+												"expiresAt": {
+													"type": "string"
 												}
 											},
 											"required": [
-												"status",
-												"invite"
+												"id",
+												"email",
+												"role",
+												"expiresAt"
 											]
 										}
+									},
+									"required": [
+										"status",
+										"invite"
 									]
 								}
 							}
 						}
 					},
 					"403": {
-						"description": "Caller is not a human owner/admin of the workspace, or the seat cap is reached",
+						"description": "Caller is not a human owner/admin of the workspace",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -20881,7 +21160,7 @@
 						}
 					},
 					"429": {
-						"description": "This workspace already sent 20 invites in the last 24 hours",
+						"description": "This workspace already sent 20 invites in the last 24 hours, or the caller made too many attempts in the last hour",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -31283,6 +31562,420 @@
 				}
 			}
 		},
+		"/api/integrations/resend/send": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Send an approved email draft from the agent mailbox through Resend",
+				"description": "Needs \"Read & write\" access to Resend, a mailbox recorded for the calling agent, and an email draft a person approved (object_id). Sends once per approval.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"object_id": {
+										"type": "string",
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"object_id"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Sent",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"email_id": {
+											"type": "string"
+										},
+										"from": {
+											"type": "string"
+										},
+										"mode": {
+											"type": "string",
+											"enum": [
+												"approved_draft"
+											]
+										}
+									},
+									"required": [
+										"email_id",
+										"from",
+										"mode"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Conflict",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"422": {
+						"description": "Refused",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Resend error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations": {
 			"get": {
 				"tags": [
@@ -38650,6 +39343,9 @@
 										},
 										"maxItems": 50
 									},
+									"direct": {
+										"type": "boolean"
+									},
 									"initial_message": {
 										"type": "string",
 										"minLength": 1,
@@ -38918,6 +39614,14 @@
 													},
 													"reply_to_session": {
 														"type": "boolean"
+													},
+													"routed_to": {
+														"type": "string",
+														"enum": [
+															"session_chat",
+															"helper_chat",
+															"master"
+														]
 													}
 												},
 												"required": [
@@ -39014,6 +39718,26 @@
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 300
+													},
+													"target_agents": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string",
+																	"format": "uuid"
+																},
+																"name": {
+																	"type": "string"
+																}
+															},
+															"required": [
+																"id",
+																"name"
+															]
+														},
+														"maxItems": 10
 													}
 												},
 												"required": [
@@ -39362,7 +40086,7 @@
 				},
 				"responses": {
 					"200": {
-						"description": "The existing chat for this subject; new participants were added to it",
+						"description": "The existing chat: the chat for this subject (new participants were added to it), or the existing direct message when direct is set",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -41951,6 +42675,14 @@
 													},
 													"reply_to_session": {
 														"type": "boolean"
+													},
+													"routed_to": {
+														"type": "string",
+														"enum": [
+															"session_chat",
+															"helper_chat",
+															"master"
+														]
 													}
 												},
 												"required": [
@@ -42047,6 +42779,26 @@
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 300
+													},
+													"target_agents": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string",
+																	"format": "uuid"
+																},
+																"name": {
+																	"type": "string"
+																}
+															},
+															"required": [
+																"id",
+																"name"
+															]
+														},
+														"maxItems": 10
 													}
 												},
 												"required": [
@@ -42393,6 +43145,9 @@
 										"exclusiveMinimum": 0
 									},
 									"also_in_channel": {
+										"type": "boolean"
+									},
+									"top_level": {
 										"type": "boolean"
 									}
 								},
@@ -43494,8 +44249,8 @@
 				"tags": [
 					"Search"
 				],
-				"summary": "Search chats, loops, agents, objects and automations together",
-				"description": "Every typed word must match (AND). Counts and facets cover the full result set; `results` is capped at `limit`. A source that fails is listed in `partial` and the rest still answer. Chats are limited to the caller's own conversations.",
+				"summary": "Search chats, loops, agents, people, objects and automations together",
+				"description": "Every typed word must match (AND). Counts and facets cover the full result set; `results` is capped at `limit`. A source that fails is listed in `partial` and the rest still answer. Chats are limited to the caller's own conversations. `participants` (actor ids) keeps only chats every listed person or agent is in, and the other sources then return nothing.",
 				"parameters": [
 					{
 						"schema": {
@@ -43538,6 +44293,19 @@
 						},
 						"required": false,
 						"name": "statuses",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"format": "uuid"
+							},
+							"maxItems": 5
+						},
+						"required": false,
+						"name": "participants",
 						"in": "query"
 					},
 					{
@@ -43607,6 +44375,7 @@
 															"chats",
 															"loops",
 															"agents",
+															"people",
 															"objects",
 															"automations"
 														]
@@ -43745,6 +44514,7 @@
 													"chats",
 													"loops",
 													"agents",
+													"people",
 													"objects",
 													"automations"
 												]
@@ -44796,6 +45566,78 @@
 									"required": [
 										"error"
 									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/stats": {
+			"get": {
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Per-agent session counts, cost and latest status for the workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "One row per agent with at least one session the caller can read",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"actor_id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"total": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"active": {
+												"type": "integer",
+												"minimum": 0
+											},
+											"total_cost_usd": {
+												"type": "number"
+											},
+											"last_30d_cost_usd": {
+												"type": "number"
+											},
+											"latest_status": {
+												"type": "string"
+											},
+											"latest_session_at": {
+												"type": [
+													"string",
+													"null"
+												]
+											}
+										},
+										"required": [
+											"actor_id",
+											"total",
+											"active",
+											"total_cost_usd",
+											"last_30d_cost_usd",
+											"latest_status",
+											"latest_session_at"
+										]
+									}
 								}
 							}
 						}
@@ -47474,7 +48316,8 @@
 											"type": "string",
 											"enum": [
 												"chat",
-												"chief_of_staff"
+												"chief_of_staff",
+												"master"
 											]
 										}
 									},
@@ -48126,6 +48969,14 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 300
+									},
+									"target_agent_ids": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"maxLength": 64
+										},
+										"maxItems": 10
 									}
 								},
 								"required": [
@@ -68443,7 +69294,7 @@
 				"tags": [
 					"Telemetry"
 				],
-				"summary": "Record an MCP telemetry event (tool_call, mutation, error, or tool_call_response_size).",
+				"summary": "Record an MCP telemetry event (tool_call, mutation, error, alias_use, or tool_call_response_size).",
 				"parameters": [
 					{
 						"schema": {
@@ -68813,6 +69664,108 @@
 										"required": [
 											"event_type",
 											"kind",
+											"tool_name"
+										]
+									},
+									{
+										"type": "object",
+										"properties": {
+											"event_type": {
+												"type": "string",
+												"enum": [
+													"alias_use"
+												]
+											},
+											"tool_name": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 128,
+												"pattern": "^[A-Za-z0-9_.-]+$"
+											},
+											"session_id": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 128
+											},
+											"session_source": {
+												"type": "string",
+												"enum": [
+													"maskin-session",
+													"process",
+													"unknown"
+												]
+											},
+											"transport": {
+												"type": "string",
+												"enum": [
+													"stdio",
+													"http"
+												]
+											},
+											"renames": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"old": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 64,
+															"pattern": "^[A-Za-z0-9_.-]+$"
+														},
+														"new": {
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 64,
+															"pattern": "^[A-Za-z0-9_.-]+$"
+														}
+													},
+													"required": [
+														"old",
+														"new"
+													]
+												},
+												"maxItems": 64,
+												"default": []
+											},
+											"both_sent": {
+												"type": "boolean",
+												"default": false
+											},
+											"dropped_keys": {
+												"type": "array",
+												"items": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 64,
+													"pattern": "^[A-Za-z0-9_.-]+$"
+												},
+												"maxItems": 16
+											},
+											"tool_alias": {
+												"type": "object",
+												"properties": {
+													"old": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 128,
+														"pattern": "^[A-Za-z0-9_.-]+$"
+													},
+													"new": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 128,
+														"pattern": "^[A-Za-z0-9_.-]+$"
+													}
+												},
+												"required": [
+													"old",
+													"new"
+												]
+											}
+										},
+										"required": [
+											"event_type",
 											"tool_name"
 										]
 									}

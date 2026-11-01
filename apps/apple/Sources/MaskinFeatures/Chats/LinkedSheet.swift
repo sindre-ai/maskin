@@ -54,14 +54,9 @@ struct LinkedSheet: View {
 	}
 
 	private func openAfterClosing(_ target: LinkedTarget) {
-		dismiss()
-		Task {
-			try? await Task.sleep(for: .milliseconds(450))
-			switch target.kind {
-			case .object: runtime?.openObject(target.uuid)
-			case .file: runtime?.openFile(target.uuid)
-			}
-		}
+		// A link into another workspace goes through the app's link handler, as a push tap does.
+		LinkedOpener.openAfterClosing(
+			target, close: { dismiss() }, runtime: runtime, elsewhere: store?.otherWorkspaceURL(for: target))
 	}
 
 	private func row(_ entry: LinkedEntry) -> some View {
@@ -101,7 +96,7 @@ struct LinkedSheet: View {
 		case .unavailable?:
 			// Missing, in another workspace, or not reachable now: still a way to try it.
 			LinkedPlainRow(
-				target: entry.target, title: entry.target.kind == .file ? "Linked file" : "Linked object",
+				target: entry.target, title: "Linked \(entry.target.kind.rawValue)",
 				kindLabel: "Couldn't show a preview", symbol: entry.target.kind == .file ? "doc" : "doc.text")
 		case .loading?, nil:
 			RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)

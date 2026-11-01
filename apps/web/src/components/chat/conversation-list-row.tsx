@@ -3,6 +3,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 
 interface ConversationListRowProps {
@@ -125,7 +126,16 @@ export function ConversationListRow({
 					{conversation.snippet ? (
 						<>
 							{snippetAuthor ? <span className="font-medium">{snippetAuthor}: </span> : null}
-							{conversation.snippet}
+							{plainPreview(conversation.snippet).map((part, index) =>
+								part.muted ? (
+									// biome-ignore lint/suspicious/noArrayIndexKey: parts are rebuilt from the text on every render and never reorder
+									<span key={index} className="opacity-80">
+										{part.text}
+									</span>
+								) : (
+									part.text
+								),
+							)}
 						</>
 					) : (
 						'No messages yet'

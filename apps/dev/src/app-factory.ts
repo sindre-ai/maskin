@@ -66,6 +66,7 @@ import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
+import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import integrationsTelnyxToolsRoutes from './routes/integrations-telnyx-tools'
@@ -493,6 +494,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations', integrationsGatewayRoutes)
 	// Gmail send (the gmail_send_email tool's route), before the generic catch-all.
 	app.route('/api/integrations/gmail', integrationsGmailRoutes)
+	// Resend send (the resend_send_email tool's route); the gateway holds the MCP's own send tools.
+	app.route('/api/integrations/resend', integrationsResendRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations

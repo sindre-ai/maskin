@@ -20,7 +20,7 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('@/components/layout/page-header', () => ({ PageHeader: () => null }))
 
 vi.mock('@/lib/api', () => ({
-	api: { search: { query: vi.fn() } },
+	api: { search: { query: vi.fn() }, actors: { list: vi.fn() } },
 }))
 
 vi.mock('@/hooks/use-objects', () => ({ useObjects: () => ({ data: [] }) }))
@@ -114,7 +114,133 @@ beforeEach(() => {
 	vi.mocked(trackSearchResultOpened).mockClear()
 	vi.mocked(api.search.query).mockReset()
 	vi.mocked(api.search.query).mockResolvedValue(response())
+	vi.mocked(api.actors.list).mockReset()
+	vi.mocked(api.actors.list).mockResolvedValue([])
 	localStorage.clear()
+})
+
+const PM_ID = '00000000-0000-4000-8000-0000000000a1'
+const DEV_ID = '00000000-0000-4000-8000-0000000000a2'
+
+const actor = (id: string, name: string, type = 'agent') => ({
+	id,
+	name,
+	type,
+	email: null,
+	description: null,
+	isSystem: false,
+	agentState: null,
+})
+
+function withParticipantFilter(on = true) {
+	if (on) localStorage.setItem('ff:search-chat-participant-filter', 'on')
+	vi.mocked(api.actors.list).mockResolvedValue([
+		actor(PM_ID, 'Product Marketing'),
+		actor(DEV_ID, 'Developer'),
+	] as never)
+}
+
+const menu = () => screen.queryByRole('listbox', { name: 'People and agents' })
+const lastParams = () => vi.mocked(api.search.query).mock.calls.at(-1)?.[1]
+
+describe('SearchPageV2 @ menu', () => {
+	it('lists people and agents after an @, and Enter turns the pick into a pill that filters', async () => {
+		withParticipantFilter()
+		const user = userEvent.setup()
+		renderPage()
+		await user.type(field(), '@prod')
+
+		const option = await screen.findByRole('option', { name: /Product Marketing/ })
+		expect(menu()).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /Developer/ })).not.toBeInTheDocument()
+		expect(option).toHaveAttribute('aria-selected', 'true')
+
+		await user.keyboard('{Enter}')
+		expect(
+			await screen.findByRole('button', { name: 'Remove filter: @Product Marketing' }),
+		).toBeInTheDocument()
+		expect(field()).toHaveValue('')
+		expect(menu()).not.toBeInTheDocument()
+		await waitFor(() => expect(lastParams()).toEqual({ participants: PM_ID }))
+		expect(trackSearchFilterChanged).toHaveBeenCalledWith(
+			expect.objectContaining({
+				dimension: 'participant',
+				action: 'add',
+				value: PM_ID,
+				via: 'keyboard',
+			}),
+		)
+		// The page says why only chats are left.
+		expect(await screen.findByText(/Showing chats only/)).toBeInTheDocument()
+	})
+
+	it('picks with a click and removes the pill with its button', async () => {
+		withParticipantFilter()
+		const user = userEvent.setup()
+		renderPage()
+		await user.type(field(), '@')
+		await user.click(await screen.findByRole('option', { name: /Developer/ }))
+		await waitFor(() => expect(lastParams()).toEqual({ participants: DEV_ID }))
+
+		await user.click(screen.getByRole('button', { name: 'Remove filter: @Developer' }))
+		expect(screen.queryByRole('button', { name: /Remove filter/ })).not.toBeInTheDocument()
+		expect(trackSearchFilterChanged).toHaveBeenLastCalledWith(
+			expect.objectContaining({ dimension: 'participant', action: 'remove', value: DEV_ID }),
+		)
+	})
+
+	it('keeps an @ that matches nobody as plain words', async () => {
+		withParticipantFilter()
+		const user = userEvent.setup()
+		renderPage()
+		await user.type(field(), '@zzz')
+		await waitFor(() => expect(lastParams()).toEqual({ q: '@zzz' }))
+		expect(menu()).not.toBeInTheDocument()
+		await user.keyboard('{Enter}')
+		expect(screen.queryByRole('button', { name: /Remove filter/ })).not.toBeInTheDocument()
+	})
+
+	it('Esc closes the menu and keeps the typed text', async () => {
+		withParticipantFilter()
+		const user = userEvent.setup()
+		renderPage()
+		await user.type(field(), '@dev')
+		await screen.findByRole('option', { name: /Developer/ })
+		await user.keyboard('{Escape}')
+		expect(menu()).not.toBeInTheDocument()
+		expect(field()).toHaveValue('@dev')
+		expect(historyBackMock).not.toHaveBeenCalled()
+	})
+
+	it('reads the participants from the URL, so a refresh or a shared link keeps the pill', async () => {
+		withParticipantFilter()
+		searchState.current = { participants: PM_ID }
+		renderPage()
+		expect(
+			await screen.findByRole('button', { name: 'Remove filter: @Product Marketing' }),
+		).toBeInTheDocument()
+		await waitFor(() => expect(lastParams()).toEqual({ participants: PM_ID }))
+	})
+
+	it('Clear filters drops the participant too', async () => {
+		withParticipantFilter()
+		searchState.current = { participants: PM_ID }
+		const user = userEvent.setup()
+		renderPage()
+		await user.click(await screen.findByRole('button', { name: 'Clear filters' }))
+		expect(screen.queryByRole('button', { name: /Remove filter/ })).not.toBeInTheDocument()
+	})
+
+	it('does nothing with the flag off: no menu, and a participants link is ignored', async () => {
+		withParticipantFilter(false)
+		searchState.current = { participants: PM_ID }
+		const user = userEvent.setup()
+		renderPage()
+		await user.type(field(), '@prod')
+		expect(menu()).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Remove filter/ })).not.toBeInTheDocument()
+		await waitFor(() => expect(lastParams()).toEqual({ q: '@prod' }))
+	})
 })
 
 describe('SearchPageV2 results', () => {

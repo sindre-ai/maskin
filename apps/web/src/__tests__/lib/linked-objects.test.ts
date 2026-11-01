@@ -1,13 +1,21 @@
 import {
 	CHIP_MAX_LENGTH,
+	chatSummary,
 	cutLabel,
 	extractLinkedFileIds,
 	extractLinkedObjectIds,
 	githubChipName,
 	githubChipText,
 	githubTargetOf,
+	isOnlyCard,
+	isOtherWorkspace,
+	peopleLine,
 	pickFacts,
+	placeOwnLinks,
+	plainPreview,
 	plainSnippet,
+	settingsChipText,
+	settingsTargetOf,
 	shortName,
 	showsObjectCard,
 	splitOwnLinks,
@@ -118,12 +126,32 @@ describe('targetOfHref', () => {
 	it('returns the workspace the address names, for this workspace and for another', () => {
 		const here = 'e2877e32-2c11-489e-96c8-a76200908ed4'
 		const other = '11111111-2222-4333-8444-555555555555'
-		for (const kind of ['objects', 'files', 'loops', 'triggers', 'agents']) {
+		for (const kind of ['objects', 'files', 'loops', 'triggers', 'agents', 'chats']) {
 			const inHere = targetOfHref(`https://maskin.io/${here}/${kind}/${id}`)
 			const inOther = targetOfHref(`https://maskin.io/${other.toUpperCase()}/${kind}/${id}#x`)
 			expect(inHere?.workspaceId).toBe(here)
 			expect(inOther?.workspaceId).toBe(other)
 		}
+	})
+
+	it('reads a chat address, and the workspace it names', () => {
+		const other = '11111111-2222-4333-8444-555555555555'
+		expect(targetOfHref(`https://maskin.io/ws/chats/${id.toUpperCase()}`)).toEqual({
+			kind: 'chat',
+			id,
+			workspaceId: 'ws',
+		})
+		expect(targetOfHref(`/${other}/chats/${id}?thread=7#top`)).toEqual({
+			kind: 'chat',
+			id,
+			workspaceId: other,
+		})
+	})
+
+	it('leaves the chat list, a new chat and a chat id that is not an id as plain links', () => {
+		expect(targetOfHref('/ws/chats')).toBeNull()
+		expect(targetOfHref('/ws/chats/new')).toBeNull()
+		expect(targetOfHref(`/ws/chats/${id}x`)).toBeNull()
 	})
 
 	it('returns no workspace for an address that names none', () => {
@@ -167,7 +195,7 @@ describe('splitOwnLinks', () => {
 	it('keeps the words and the link in the order they were written', () => {
 		expect(splitOwnLinks(`is this done? ${url('objects', A)} thanks`, WS)).toEqual([
 			{ kind: 'text', text: 'is this done? ' },
-			{ kind: 'object', id: A },
+			{ kind: 'object', id: A, address: url('objects', A) },
 			{ kind: 'text', text: ' thanks' },
 		])
 	})
@@ -175,13 +203,15 @@ describe('splitOwnLinks', () => {
 	it('finds a link to a file and leaves the sentence punctuation in the words', () => {
 		expect(splitOwnLinks(`see ${url('files', B)}.`, WS)).toEqual([
 			{ kind: 'text', text: 'see ' },
-			{ kind: 'file', id: B },
+			{ kind: 'file', id: B, address: url('files', B) },
 			{ kind: 'text', text: '.' },
 		])
 	})
 
 	it('is just the link when the message is only the link', () => {
-		expect(splitOwnLinks(url('objects', A), WS)).toEqual([{ kind: 'object', id: A }])
+		expect(splitOwnLinks(url('objects', A), WS)).toEqual([
+			{ kind: 'object', id: A, address: url('objects', A) },
+		])
 	})
 
 	it('keeps every link, including a repeated one', () => {
@@ -191,35 +221,89 @@ describe('splitOwnLinks', () => {
 
 	it('finds a bare address of a loop and of a trigger', () => {
 		expect(splitOwnLinks(`${url('loops', A)} wakes ${url('triggers', B)}`, WS)).toEqual([
-			{ kind: 'loop', id: A },
+			{ kind: 'loop', id: A, address: url('loops', A) },
 			{ kind: 'text', text: ' wakes ' },
-			{ kind: 'trigger', id: B },
+			{ kind: 'trigger', id: B, address: url('triggers', B) },
 		])
 	})
 
 	it('finds a bare address of an agent', () => {
 		expect(splitOwnLinks(`ask ${url('agents', A)} to look`, WS)).toEqual([
 			{ kind: 'text', text: 'ask ' },
-			{ kind: 'agent', id: A },
+			{ kind: 'agent', id: A, address: url('agents', A) },
 			{ kind: 'text', text: ' to look' },
 		])
 	})
 
-	it('leaves an agent address of another workspace as words', () => {
+	it('marks an agent address of another workspace with that workspace', () => {
 		const other = `https://maskin.io/${A}/agents/${B}`
-		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+		expect(splitOwnLinks(other, WS)).toEqual([
+			{ kind: 'agent', id: B, otherWorkspaceId: A, address: other },
+		])
 	})
 
-	it('leaves a loop address of another workspace as words', () => {
-		const other = `https://maskin.io/${A}/loops/${B}`
-		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'text', text: other }])
+	it('marks an object, loop, trigger or chat address of another workspace with that workspace', () => {
+		for (const kind of ['objects', 'loops', 'triggers', 'chats']) {
+			const other = `https://maskin.io/${A.toUpperCase()}/${kind}/${B}`
+			expect(splitOwnLinks(other, WS)).toEqual([
+				{ kind: kind.slice(0, -1), id: B, otherWorkspaceId: A, address: other },
+			])
+		}
 	})
 
-	it('leaves links to another workspace, another site or a non-object page as words', () => {
-		const other = `https://maskin.io/${A}/objects/${B}`
+	it('finds a settings address in your own message, alone or in a sentence', () => {
+		const settings = `https://maskin.io/${WS}/settings/billing`
+		expect(splitOwnLinks(settings, WS)).toEqual([
+			{ kind: 'settings', target: { path: 'billing', label: 'Billing' } },
+		])
+		expect(splitOwnLinks(`open ${settings}, then pay`, WS)).toEqual([
+			{ kind: 'text', text: 'open ' },
+			{ kind: 'settings', target: { path: 'billing', label: 'Billing' } },
+			{ kind: 'text', text: ', then pay' },
+		])
+	})
+
+	it('draws a Keys address in your own message as a chip only in an enterprise workspace', () => {
+		const keys = `https://maskin.io/${WS}/settings/keys`
+		expect(splitOwnLinks(keys, WS, true)).toEqual([
+			{ kind: 'settings', target: { path: 'keys', label: 'Keys', enterpriseOnly: true } },
+		])
+		expect(splitOwnLinks(keys, WS, false)).toEqual([{ kind: 'text', text: keys }])
+		expect(splitOwnLinks(keys, WS)).toEqual([{ kind: 'text', text: keys }])
+	})
+
+	it('leaves an unknown settings section, a deeper one and another workspace as words', () => {
+		for (const text of [
+			`https://maskin.io/${WS}/settings/nope`,
+			`https://maskin.io/${WS}/settings/keychain/new`,
+			`https://maskin.io/${A}/settings/mcp`,
+		]) {
+			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
+		}
+	})
+
+	it('finds a bare address of a chat', () => {
+		expect(splitOwnLinks(`see ${url('chats', A)}.`, WS)).toEqual([
+			{ kind: 'text', text: 'see ' },
+			{ kind: 'chat', id: A, address: url('chats', A) },
+			{ kind: 'text', text: '.' },
+		])
+	})
+
+	it('leaves a file of another workspace, another site or a non-object page as words', () => {
+		const otherFile = `https://maskin.io/${A}/files/${B}`
+		const notAWorkspace = `https://maskin.io/settings/objects/${B}`
 		const elsewhere = `https://example.com/${WS}/objects/${A}`
-		const page = url('chats', A)
-		for (const text of [other, elsewhere, page, 'no links here']) {
+		const elsewhereOther = `https://example.com/${A}/objects/${B}`
+		const page = url('sessions', A)
+		for (const text of [
+			otherFile,
+			notAWorkspace,
+			elsewhere,
+			elsewhereOther,
+			page,
+			'no links here',
+		]) {
 			expect(splitOwnLinks(text, WS)).toEqual([{ kind: 'text', text }])
 		}
 	})
@@ -318,6 +402,179 @@ describe('splitOwnLinks with GitHub addresses', () => {
 	})
 })
 
+describe('settingsTargetOf', () => {
+	const at = (path: string, host = 'https://maskin.io') => `${host}/${WS}/settings${path}`
+
+	it('reads the bare settings address as General', () => {
+		for (const href of [at(''), at('/'), `/${WS}/settings`]) {
+			expect(settingsTargetOf(href, WS)).toEqual({ path: '', label: 'General' })
+		}
+	})
+
+	it('reads each section of the settings menu', () => {
+		const sections = [
+			['objects', 'Objects'],
+			['members', 'Members'],
+			['integrations', 'Integrations'],
+			['extensions', 'Extensions'],
+			['skills', 'Skills'],
+			['mcp', 'MCP'],
+			['billing', 'Billing'],
+			['keychain', 'Keychain'],
+		]
+		for (const [path, label] of sections) {
+			expect(settingsTargetOf(at(`/${path}`), WS)).toEqual({ path, label })
+		}
+		expect(settingsTargetOf(at('/mcp?tab=x#top'), WS)?.label).toBe('MCP')
+	})
+
+	it('reads Keys only in an enterprise workspace, as the settings menu shows it', () => {
+		expect(settingsTargetOf(at('/keys'), WS, true)).toEqual({
+			path: 'keys',
+			label: 'Keys',
+			enterpriseOnly: true,
+		})
+		expect(settingsTargetOf(at('/keys'), WS, false)).toBeNull()
+		expect(settingsTargetOf(at('/keys'), WS)).toBeNull()
+		// Every other section is the same either way.
+		expect(settingsTargetOf(at('/billing'), WS, true)).toEqual({
+			path: 'billing',
+			label: 'Billing',
+		})
+	})
+
+	it('leaves an unknown section, a deeper path and another page as plain links', () => {
+		for (const href of [
+			at('/nope'),
+			at('/general'),
+			at('/billing/invoices'),
+			at('/keychain/new'),
+			at('/objects/priority'),
+			`https://maskin.io/${WS}/agents`,
+		]) {
+			expect(settingsTargetOf(href, WS)).toBeNull()
+		}
+	})
+
+	it('leaves another workspace, another site and a non-address as plain links', () => {
+		for (const href of [
+			at('/mcp', 'https://example.com'),
+			at('/mcp', 'https://maskin.io.evil.com'),
+			`https://maskin.io/${A}/settings/mcp`,
+			undefined,
+			42,
+		]) {
+			expect(settingsTargetOf(href, WS)).toBeNull()
+		}
+	})
+
+	it('words the chip as Settings and the section', () => {
+		expect(settingsChipText({ path: 'mcp', label: 'MCP' })).toBe('Settings: MCP')
+	})
+})
+
+describe('isOtherWorkspace', () => {
+	const other = '11111111-2222-4333-8444-555555555555'
+
+	it('is true for an object, loop, trigger, agent or chat whose address names a different workspace', () => {
+		for (const kind of ['object', 'loop', 'trigger', 'agent', 'chat'] as const) {
+			expect(isOtherWorkspace({ kind, id: A, workspaceId: other }, WS)).toBe(true)
+		}
+	})
+
+	it('is false for this workspace in any letter case, and for an address that names none', () => {
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: WS.toUpperCase() }, WS)).toBe(
+			false,
+		)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: null }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A }, WS)).toBe(false)
+	})
+
+	it('is false for a file, for a segment that is not a workspace id and without a current workspace', () => {
+		expect(isOtherWorkspace({ kind: 'file', id: A, workspaceId: other }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: 'settings' }, WS)).toBe(false)
+		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: other })).toBe(false)
+	})
+})
+
+describe('placeOwnLinks', () => {
+	const url = (kind: string, id: string) => `https://maskin.io/${WS}/${kind}/${id}`
+	const place = (text: string, skip?: ReadonlySet<string>) =>
+		placeOwnLinks(splitOwnLinks(text, WS), skip)
+	const kinds = (text: string, skip?: ReadonlySet<string>) =>
+		place(text, skip).map((p) =>
+			p.kind === 'text'
+				? 'text'
+				: p.kind === 'other'
+					? `other:${p.segment.kind}`
+					: `${p.kind}:${p.id}`,
+		)
+
+	it('makes a card of a link on its own line, and takes the line break next to it', () => {
+		expect(place(`is this done?\n${url('objects', A)}\nthanks`)).toEqual([
+			{ kind: 'text', text: 'is this done?' },
+			{ kind: 'card', id: A, address: url('objects', A) },
+			{ kind: 'text', text: 'thanks' },
+		])
+	})
+
+	it('makes a card of a link that is the whole message', () => {
+		const parts = place(url('objects', A))
+		expect(kinds(url('objects', A))).toEqual([`card:${A}`])
+		expect(isOnlyCard(parts)).toBe(true)
+	})
+
+	it('is not only a card when there are words around it', () => {
+		expect(isOnlyCard(place(`see\n${url('objects', A)}`))).toBe(false)
+	})
+
+	it('makes a chip of a link inside a sentence or after a label on the same line', () => {
+		expect(kinds(`is this done? ${url('objects', A)} thanks`)).toEqual([
+			'text',
+			`chip:${A}`,
+			'text',
+		])
+		expect(kinds(`Draft: ${url('objects', A)}`)).toEqual(['text', `chip:${A}`])
+	})
+
+	it('draws the same object again as a chip', () => {
+		const link = url('objects', A)
+		expect(kinds(`${link}\n${link}`)).toEqual([`card:${A}`, `chip:${A}`])
+	})
+
+	it('draws an object an earlier message shows as a chip', () => {
+		expect(kinds(url('objects', A), new Set([A]))).toEqual([`chip:${A}`])
+	})
+
+	it('gives at most three cards and draws the fourth as a chip', () => {
+		const ids = [A, B, C, 'd0b8f0a2-5b3e-4a39-9d57-6f3c2f0a9b11']
+		const text = ids.map((id) => url('objects', id)).join('\n')
+		expect(kinds(text)).toEqual([`card:${A}`, `card:${B}`, `card:${C}`, `chip:${ids[3]}`])
+	})
+
+	it('keeps a link to a file as a chip, even on its own line', () => {
+		expect(kinds(url('files', B))).toEqual([`file:${B}`])
+	})
+
+	it('leaves every other kind of link, and an object of another workspace, to its own chip', () => {
+		const otherObject = `https://maskin.io/${A}/objects/${B}`
+		expect(kinds(`${url('loops', A)}\n${url('agents', B)}\n${otherObject}`)).toEqual([
+			'other:loop',
+			'text',
+			'other:agent',
+			'text',
+			'other:object',
+		])
+		const settings = `https://maskin.io/${WS}/settings/billing`
+		expect(kinds(`see https://github.com/a/b/pull/4 and ${settings}`)).toEqual([
+			'text',
+			'other:github',
+			'text',
+			'other:settings',
+		])
+	})
+})
+
 describe('plainSnippet', () => {
 	it('turns markdown into plain words on one line', () => {
 		expect(
@@ -336,6 +593,65 @@ describe('plainSnippet', () => {
 		const out = plainSnippet('word '.repeat(200))
 		expect(out.length).toBeLessThanOrEqual(281)
 		expect(out.endsWith('…')).toBe(true)
+	})
+})
+
+describe('plainPreview', () => {
+	const words = (content: string | null) =>
+		plainPreview(content)
+			.map((part) => (part.muted ? `<${part.text}>` : part.text))
+			.join('')
+
+	it('shows a markdown link as its text', () => {
+		expect(words('See [PR 2527](https://github.com/sindre-ai/maskin/pull/2527) now')).toBe(
+			'See PR 2527 now',
+		)
+	})
+
+	it('shows the text of a link cut off in the address', () => {
+		expect(words('See [PR 2527](https://github.com/sindre-ai/maskin/pu')).toBe('See PR 2527')
+		expect(words('See [PR 2527](')).toBe('See PR 2527')
+	})
+
+	it('shows the text of a link cut off in the text', () => {
+		expect(words('See [PR 25')).toBe('See PR 25')
+		expect(words('See [')).toBe('See')
+	})
+
+	it('shows a bare address as a muted "link", keeping the full stop after it', () => {
+		expect(plainPreview('Merged, see https://maskin.io/ws/objects/abc.')).toEqual([
+			{ text: 'Merged, see ' },
+			{ text: 'link', muted: true },
+			{ text: '.' },
+		])
+		expect(words('see <https://x.test/a_b_c> and https://x.test/d')).toBe('see <link> and <link>')
+	})
+
+	it('shows a bare address cut short as "link"', () => {
+		expect(words('see https://maskin.io/e2877e32-2c11')).toBe('see <link>')
+	})
+
+	it('removes bold, italic, code, heading and list marks on one line', () => {
+		expect(words('## Plan\n- Do **the** _thing_\n1. Run `pnpm test`')).toBe(
+			'Plan Do the thing Run pnpm test',
+		)
+	})
+
+	it('leaves a message with no links as it was', () => {
+		expect(words('The retry window is still open on three accounts.')).toBe(
+			'The retry window is still open on three accounts.',
+		)
+	})
+
+	it('is empty for no text', () => {
+		expect(plainPreview(null)).toEqual([])
+		expect(plainPreview('')).toEqual([])
+	})
+
+	it('reads only the start of a long message and ends with an ellipsis', () => {
+		const parts = plainPreview(`${'word '.repeat(200)}[tail](https://x.test)`)
+		expect(parts.at(-1)).toEqual({ text: '…' })
+		expect(words('word '.repeat(200)).length).toBeLessThan(450)
 	})
 })
 
@@ -477,5 +793,45 @@ describe('unavailableCopy', () => {
 			card: 'This bet was deleted',
 			chip: 'Deleted bet',
 		})
+	})
+})
+
+describe('unavailableCopy for a chat', () => {
+	it('reads Chat not available on the card and the chip, never deleted', () => {
+		expect(unavailableCopy('chat')).toEqual({
+			card: 'Chat not available',
+			chip: 'Chat not available',
+		})
+	})
+})
+
+describe('peopleLine', () => {
+	it('lists up to three names', () => {
+		expect(peopleLine(['Ada'])).toBe('Ada')
+		expect(peopleLine(['Ada', 'Forge', 'Lin'])).toBe('Ada, Forge, Lin')
+	})
+
+	it('counts the rest after three names', () => {
+		expect(peopleLine(['Ada', 'Forge', 'Lin', 'Max', 'Sol'])).toBe('Ada, Forge, Lin +2')
+	})
+
+	it('is null when nobody is in the chat', () => {
+		expect(peopleLine([])).toBeNull()
+	})
+})
+
+describe('chatSummary', () => {
+	it('leads the last message with its author', () => {
+		expect(chatSummary('Forge', 'Shipped the **fix**')).toBe('Forge: Shipped the fix')
+	})
+
+	it('shows the words alone when the author is not known', () => {
+		expect(chatSummary(null, 'Shipped')).toBe('Shipped')
+	})
+
+	it('is null for a chat with no message, even with an author', () => {
+		expect(chatSummary('Forge', '')).toBeNull()
+		expect(chatSummary('Forge', null)).toBeNull()
+		expect(chatSummary('Forge', undefined)).toBeNull()
 	})
 })

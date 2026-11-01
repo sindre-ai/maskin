@@ -541,6 +541,7 @@ export function cardTitlesOf(state: VoiceCallState | undefined): ReceiptCardTitl
 export function numbersInWords(
 	n: ReceiptNumbers,
 	titles: ReceiptCardTitles = { rank1: null, first: null },
+	opts: { cards?: boolean } = {},
 ): string {
 	const quoted = (t: string | null) => (t ? `"${t}"` : null)
 	const first =
@@ -570,7 +571,16 @@ export function numbersInWords(
 				.join(' ')
 		: 'No sends.'
 	const ended = END_REASON_WORDS[n.end_reason] ?? n.end_reason
-	return `${first} Cards cleared: ${n.cards_cleared}. ${sends} Call ended by ${ended}.`
+	const cards = opts.cards === false ? '' : `${first} Cards cleared: ${n.cards_cleared}. `
+	return `${cards}${sends} Call ended by ${ended}.`
+}
+
+/**
+ * Whether the call had to do with cards: it showed, opened or changed one, or read the caller's
+ * For You list. A call about something else ends without card statistics.
+ */
+function callTouchedCards(rows: ReceiptRow[], state: VoiceCallState | undefined): boolean {
+	return Boolean(state?.firstCardNamed || state?.forYouRead || rows.some((r) => r.cardId))
 }
 
 const minutesWords = (seconds: number) =>
@@ -658,7 +668,9 @@ export async function postClosingReceipt(
 		}
 
 		const header = `**Call receipt** (${minutesWords(durationSeconds)})`
-		const footer = numbersInWords(numbers, cardTitlesOf(state))
+		const footer = numbersInWords(numbers, cardTitlesOf(state), {
+			cards: callTouchedCards(rows, state),
+		})
 		const body: string[] = []
 		const section = (title: string, lines: string[]) => {
 			if (lines.length === 0) return

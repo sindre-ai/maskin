@@ -1,6 +1,8 @@
 import { McpTag } from '@/components/integrations/drive/mcp-tag'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { DRIVE_SCOPES } from '@/lib/drive-humans'
 import { DRIVE_WIZARD_COPY, DRIVE_WIZARD_SCOPE_DESCRIPTIONS } from '@/lib/drive-wizard-copy'
 
@@ -18,6 +20,7 @@ export function ConnectWizard({
 	onContinue: () => void
 	onCancel: () => void
 }) {
+	const canWrite = useCanWrite()
 	const loading = state === 'loading'
 	return (
 		<section
@@ -99,16 +102,23 @@ export function ConnectWizard({
 				<Button variant="ghost" size="sm" onClick={onCancel} disabled={loading}>
 					{DRIVE_WIZARD_COPY.cancel}
 				</Button>
-				<Button size="sm" onClick={onContinue} disabled={loading} aria-busy={loading}>
-					{loading ? (
-						<>
-							<Spinner aria-hidden="true" />
-							{DRIVE_WIZARD_COPY.loading}
-						</>
-					) : (
-						DRIVE_WIZARD_COPY.continue
-					)}
-				</Button>
+				<ViewerTooltip>
+					<Button
+						size="sm"
+						onClick={onContinue}
+						disabled={loading || !canWrite}
+						aria-busy={loading}
+					>
+						{loading ? (
+							<>
+								<Spinner aria-hidden="true" />
+								{DRIVE_WIZARD_COPY.loading}
+							</>
+						) : (
+							DRIVE_WIZARD_COPY.continue
+						)}
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</section>
 	)

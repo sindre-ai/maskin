@@ -30,6 +30,16 @@ vi.mock('@/components/chat/linked-object-preview', () => ({
 	): ReactNode => <p>{`${context.updated ? 'Updated card' : 'Card'} for ${target.id}`}</p>,
 	renderLinkedChip: (_target: unknown, fallback: ReactNode): ReactNode => fallback,
 	renderLinkedGithubChip: (): ReactNode => null,
+	renderLinkedSettingsChip: (): ReactNode => null,
+}))
+
+// Your own bubble draws its links itself; keep that out of the way of what this test reads.
+vi.mock('@/components/chat/linked-object-reference', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/components/chat/linked-object-reference')>()),
+	ObjectReferenceCard: ({ objectId }: { objectId: string }): ReactNode => (
+		<p>{`Own card for ${objectId}`}</p>
+	),
+	ObjectReferenceChip: ({ fallback }: { fallback: ReactNode }): ReactNode => fallback,
 }))
 
 import { ThreadMessages } from '@/components/chat/thread-messages'
@@ -86,9 +96,9 @@ describe('ThreadMessages: object cards', () => {
 		vi.mocked(api.events.history).mockResolvedValue([])
 	})
 
-	it('draws one card per object, under the first agent message that links it', async () => {
-		// Newest first, the way the API returns them. The person links A first; their own
-		// bubble draws no card, so A's card still goes on the agent's first link to it.
+	it('draws one card per object, under the first message that links it', async () => {
+		// Newest first, the way the API returns them. The person links A first, inside a
+		// sentence, so their own bubble shows it; the agents' later links to A are chips.
 		vi.mocked(api.conversations.messages).mockResolvedValue({
 			messages: [
 				buildMessage(5, { content: `Third look at ${link(A)} today` }),
@@ -110,13 +120,27 @@ describe('ThreadMessages: object cards', () => {
 		})
 
 		expect(await screen.findByText(/Here it is/)).toBeInTheDocument()
-		expect(screen.getAllByText(`Card for ${A}`)).toHaveLength(1)
+		expect(screen.queryByText(`Card for ${A}`)).toBeNull()
 		expect(screen.getAllByText(`Card for ${B}`)).toHaveLength(1)
-		expect(within(messageWith(/Here it is/)).getByText(`Card for ${A}`)).toBeInTheDocument()
 		expect(within(messageWith(/Now also/)).getByText(`Card for ${B}`)).toBeInTheDocument()
-		expect(within(messageWith(/Now also/)).queryByText(`Card for ${A}`)).toBeNull()
-		expect(within(messageWith(/Again/)).queryByText(`Card for ${A}`)).toBeNull()
-		expect(within(messageWith(/Third look/)).queryByText(`Card for ${A}`)).toBeNull()
+	})
+
+	it('draws a chat card for a chat link alone on its line in the Thread pane', async () => {
+		vi.mocked(api.conversations.messages).mockResolvedValue({
+			messages: [
+				buildMessage(1, {
+					content: `Where we talked:\n\n[the chat](https://maskin.io/ws-1/chats/${B})`,
+				}),
+			],
+			has_more: false,
+		} as never)
+
+		render(<ThreadMessages workspaceId="ws-1" conversationId="conv-1" />, {
+			wrapper: TestWrapper,
+		})
+
+		expect(await screen.findByText(/Where we talked/)).toBeInTheDocument()
+		expect(within(messageWith(/Where we talked/)).getByText(`Card for ${B}`)).toBeInTheDocument()
 	})
 
 	describe('a draft linked again', () => {

@@ -22,7 +22,7 @@ import { VoiceDialerJob } from './jobs/voice-dialer'
 import { VoiceRetentionSweepJob, resolveSweepCron } from './jobs/voice-retention-sweep'
 import { VoiceStaleClaimSweepJob } from './jobs/voice-stale-claim-sweep'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
-import { warnIfPosthogKeyUnset } from './lib/analytics/posthog'
+import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
@@ -31,6 +31,7 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { runDraftApprovalSkillBackfillOnBoot } from './lib/draft-approval-skill-boot'
 import { migrateAgentToolServers } from './lib/integrations/migrate-agent-tool-servers'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { assertKeychainKeyConfig } from './lib/keychain-kms'
@@ -88,6 +89,7 @@ const db = createDb(databaseUrl, { onQuery: recordDbTime })
 assertKeychainKeyConfig()
 
 warnIfPosthogKeyUnset()
+configurePosthogPrivacy(db)
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.
@@ -377,6 +379,11 @@ migrateAgentToolServers(db)
 // One-off: gives every existing agent its default Heartbeat. Does nothing unless
 // RUN_HEARTBEAT_BACKFILL=1, runs once per database, and never blocks or fails startup.
 void runDefaultHeartbeatBackfillOnBoot(db)
+
+// One-off: gives existing workspaces the draft-approval-tasks skill (skips any that already
+// have one). Does nothing unless RUN_DRAFT_APPROVAL_SKILL_BACKFILL is 1 (or dry), runs once per
+// database, and never blocks or fails startup.
+void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
 
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()

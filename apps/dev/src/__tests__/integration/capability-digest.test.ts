@@ -14,6 +14,7 @@ import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { runCapabilityDigest } from '../../services/capability-digest'
 import { CapabilityScanner } from '../../services/capability-scanner'
+import { directPairKey } from '../../services/direct-chat'
 import { buildIntegration, insertActor, insertConversation, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -62,7 +63,9 @@ describe('capability digest (integration)', () => {
 
 	/** A 1-1 with Chief of Staff in which the person wrote and has read everything so far. */
 	async function chatFor(humanId: string, opts: { wroteDaysAgo?: number } = {}) {
-		const chat = await insertConversation(db, workspaceId, humanId)
+		const chat = await insertConversation(db, workspaceId, humanId, {
+			directPairKey: directPairKey(humanId, cosId),
+		})
 		const [theirs] = await db
 			.insert(messages)
 			.values({
