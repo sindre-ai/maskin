@@ -68,6 +68,11 @@ export function recommendedAction(item: UnreadItem): CardAction | undefined {
 	return actions.find((action) => action.recommended)
 }
 
+/** Whether taking this option approves a send (the agent marked it destructive). */
+export function isSendingOption(item: UnreadItem, label: string): boolean {
+	return Boolean(decisionOf(item)?.options.some((o) => o.label === label && o.destructive))
+}
+
 /**
  * What the card leads with. Every For You item exists because an agent
  * @-mentioned the reader, so the headline is that ask — the decision's title
