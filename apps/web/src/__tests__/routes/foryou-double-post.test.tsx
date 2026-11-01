@@ -36,6 +36,8 @@ vi.mock('@/hooks/use-for-you', () => ({
 		data: { items: (globalThis as unknown as TestState).__items },
 		isLoading: false,
 	}),
+	useDismissForYou: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) }),
+	dismissBodyFor: () => null,
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({
