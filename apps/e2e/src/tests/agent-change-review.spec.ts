@@ -1,12 +1,15 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Bet "Humans accept, edit or reject an agent's proposed changes": the banner and
 // review view behind the agent-change-review flag. Like markdown-file-editor.spec.ts
 // the file bytes live in S3/SeaweedFS, so this runs against a dev stack with real
-// storage. Accept and reject are covered by the unit tests until the decide
-// endpoints land on the bet branch.
+// storage. Accept and reject run against the real decide endpoints. The proposal
+// is written by an agent, because the author of a proposal cannot decide it.
 
+// Changes land in blocks 2 and 4. The block on each side of a change is context, so
+// the last block is the one run of untouched blocks.
 const TEXT = [
 	'# Launch plan',
 	'',
@@ -15,6 +18,10 @@ const TEXT = [
 	'Owners are still being decided.',
 	'',
 	'Budget is capped at ten thousand euros.',
+	'',
+	'Questions go to the project channel.',
+	'',
+	'Notes are kept in the shared folder.',
 	'',
 ].join('\n')
 
@@ -69,6 +76,64 @@ test.describe('Agent change review in the file viewer', () => {
 			await expect(page.getByRole('region', { name: 'Change 1' })).toBeVisible()
 		})
 	}
+
+	test('Accept applies the change to the file and leaves the other change open', async ({
+		page,
+		account,
+	}) => {
+		const file = await account.api.createFile(account.workspaceId, {
+			name: 'plan.md',
+			mime_type: 'text/markdown',
+			content: TEXT,
+			encoding: 'utf8',
+		})
+		const agent = await account.api.createAgentActor('Ada Atom', account.workspaceId)
+		await new TestAPI(agent.api_key).createFileProposal(account.workspaceId, file.id, CHANGES)
+
+		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await page.getByRole('button', { name: 'Review changes' }).click({ timeout: 10000 })
+		const card = page.getByRole('region', { name: 'Change 1' })
+		await expect(card).toBeVisible()
+
+		const decided = page.waitForResponse(
+			(res) => res.url().includes('/accept') && res.request().method() === 'POST',
+		)
+		await card.getByRole('button', { name: 'Accept' }).click()
+		expect((await decided).status()).toBe(200)
+
+		await expect
+			.poll(async () => (await account.api.getFile(account.workspaceId, file.id)).content)
+			.toBe(TEXT.replace(CHANGES[0].old_text, CHANGES[0].new_text))
+		await expect(page.getByRole('button', { name: 'Accept' })).toHaveCount(1)
+	})
+
+	test('Reject leaves the file text alone', async ({ page, account }) => {
+		const file = await account.api.createFile(account.workspaceId, {
+			name: 'plan.md',
+			mime_type: 'text/markdown',
+			content: TEXT,
+			encoding: 'utf8',
+		})
+		const agent = await account.api.createAgentActor('Ada Atom', account.workspaceId)
+		await new TestAPI(agent.api_key).createFileProposal(account.workspaceId, file.id, CHANGES)
+		const before = await account.api.getFile(account.workspaceId, file.id)
+
+		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await page.getByRole('button', { name: 'Review changes' }).click({ timeout: 10000 })
+		const card = page.getByRole('region', { name: 'Change 1' })
+		await expect(card).toBeVisible()
+
+		const decided = page.waitForResponse(
+			(res) => res.url().includes('/reject') && res.request().method() === 'POST',
+		)
+		await card.getByRole('button', { name: 'Reject' }).click()
+		expect((await decided).status()).toBe(200)
+		await expect(page.getByRole('button', { name: 'Reject' })).toHaveCount(1)
+
+		const after = await account.api.getFile(account.workspaceId, file.id)
+		expect(after.content).toBe(before.content)
+		expect(after.contentHash).toBe(before.contentHash)
+	})
 
 	test('with the flag off the file viewer shows no banner', async ({ page, account }) => {
 		await page.addInitScript(() => localStorage.setItem('ff:agent-change-review', 'off'))
