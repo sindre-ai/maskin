@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import type { Database, Transaction } from '@maskin/db'
+import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
