@@ -106,6 +106,11 @@ const startRoute = createRoute({
 // key column on research_runs.
 const startsInFlight = new Map<string, Promise<{ id: string; status: string }>>()
 
+// The idempotency ledger row is written after this handler returns. A finished
+// start stays shared for this long so a duplicate that passed the ledger lookup
+// before that write landed still gets the same run instead of starting a second.
+const FINISHED_START_SHARED_MS = 60_000
+
 app.openapi(startRoute, async (c) => {
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const db = c.get('db')
@@ -130,7 +135,8 @@ app.openapi(startRoute, async (c) => {
 		})
 		startsInFlight.set(flightKey, start)
 		const forget = () => startsInFlight.delete(flightKey)
-		start.then(forget, forget)
+		// A failed start is forgotten at once so a retry can run.
+		start.then(() => setTimeout(forget, FINISHED_START_SHARED_MS).unref(), forget)
 	}
 
 	try {
