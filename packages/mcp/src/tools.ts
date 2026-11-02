@@ -1553,6 +1553,7 @@ export const tools = {
 					.describe('Only enabled or only disabled triggers. Omit for both.'),
 				q: z
 					.string()
+					.trim()
 					.min(1)
 					.max(200)
 					.optional()
