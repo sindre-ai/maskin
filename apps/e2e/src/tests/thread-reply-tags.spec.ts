@@ -2,7 +2,7 @@ import type { Page, TestInfo } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
-// The picture goes into the HTML report as an attachment, like chat-edit-tags.spec.ts.
+// The picture goes into the HTML report as an attachment, like chat-edit-tags.spec.ts (probe).
 async function picture(page: Page, testInfo: TestInfo, name: string) {
 	await page.waitForTimeout(400)
 	await testInfo.attach(name, {
