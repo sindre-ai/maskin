@@ -25,6 +25,7 @@ import {
 } from '../lib/openapi-schemas'
 import { resolveReplyApprovals } from '../lib/reply-approvals'
 import { serializeArray } from '../lib/serialize'
+import { applyStatusTap, prepareStatusActions, resolveStatusTap } from '../lib/status-actions'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import {
 	type CommentRoutingPlan,
@@ -276,7 +277,12 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	// Validate the target object exists and belongs to this workspace
 	const [object] = await db
-		.select({ workspaceId: objects.workspaceId, title: objects.title, type: objects.type })
+		.select({
+			id: objects.id,
+			workspaceId: objects.workspaceId,
+			title: objects.title,
+			type: objects.type,
+		})
 		.from(objects)
 		.where(eq(objects.id, body.entity_id))
 		.limit(1)
@@ -290,8 +296,17 @@ app.openapi(createCommentRoute, (async (c) => {
 	// prose. Reject it — but report every violated rule at once, each quoting
 	// the offending value, so the agent fixes it in one retry instead of
 	// burning a turn per nit. Comments without a decision never reach here.
+	let decision = body.decision
 	if (body.decision) {
 		const violations = validateDecisionProse(body.decision)
+		// A card that asks to change a status needs a button that does it, or it outlives the
+		// change. Checked here because it needs the object's status names.
+		const statusCheck =
+			violations.length === 0
+				? await prepareStatusActions(db, { workspaceId, object, decision: body.decision })
+				: undefined
+		if (statusCheck && 'decision' in statusCheck) decision = statusCheck.decision
+		violations.push(...(statusCheck && 'violations' in statusCheck ? statusCheck.violations : []))
 		if (violations.length > 0) {
 			return c.json(
 				createApiError(
@@ -388,6 +403,18 @@ app.openapi(createCommentRoute, (async (c) => {
 			? await approvedSendHashFor(db, workspaceId, parentEventId, body.content)
 			: undefined
 
+	// A person tapping a status button on a card changes that status as themselves, in the same
+	// transaction as their reply. Like draft approval, only a person's own client counts.
+	const statusTap = mayApprove
+		? await resolveStatusTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+	let statusAction = undefined as Awaited<ReturnType<typeof applyStatusTap>> | undefined
+
 	const post = (writer: typeof db) =>
 		postComment(writer, {
 			workspaceId,
@@ -398,16 +425,24 @@ app.openapi(createCommentRoute, (async (c) => {
 			parentEventId,
 			attachmentFileIds: body.attachment_file_ids,
 			metadata: body.metadata,
-			decision: body.decision,
+			decision,
 			attention: body.attention,
 			authorSessionId: c.get('maskinSessionId'),
 			approvedSendHash,
 		})
 	const delivery = routing?.delivery
 	const { comment, unresolvedMentions } =
-		replyApprovals.length === 0 && !delivery
+		replyApprovals.length === 0 && !delivery && !statusTap
 			? await post(db)
 			: await db.transaction(async (tx) => {
+					if (statusTap) {
+						statusAction = await applyStatusTap(tx, {
+							tap: statusTap,
+							workspaceId,
+							actorId,
+							sessionId: c.get('maskinSessionId'),
+						})
+					}
 					for (const approval of replyApprovals) {
 						await recordObjectApproval(tx, {
 							workspaceId,
@@ -570,6 +605,8 @@ app.openapi(createCommentRoute, (async (c) => {
 		serialized.unresolved_mentions = unresolvedMentions
 		serialized.warning = `The comment was posted, but ${unresolvedMentions.length} @mention id(s) matched no actor and were ignored, so nobody was notified for them: ${unresolvedMentions.join(', ')}. Do not retype actor UUIDs from memory or from your system prompt — call list_actors to look up the correct id, then post a follow-up comment with the corrected mention.`
 	}
+
+	if (statusAction) serialized.status_action = statusAction
 
 	return c.json(serialized, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)

@@ -115,10 +115,12 @@ export function ThreadMessages({
 				))}
 			</div>
 		) : null
+	// The main chat draws the main sessions only; a thread's session shows in its own pane.
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
 		messages,
+		{ threadRootId: null },
 	)
 	// A turn with no message tag yet hangs under the newest message. A reply that stays in its thread
 	// is not drawn here, so that wait is shown by the thread pane instead.

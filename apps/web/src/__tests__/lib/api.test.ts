@@ -367,3 +367,41 @@ describe('events.historyUpTo', () => {
 		expect(new URL(urls()[1], 'http://x').searchParams.get('limit')).toBe('50')
 	})
 })
+
+describe('api.transcriptions.create', () => {
+	const errorBody = (status: number, code: string, message: string) =>
+		new Response(JSON.stringify({ error: { code, message } }), {
+			status,
+			headers: { 'Content-Type': 'application/json' },
+		})
+
+	it('keeps the route message on a 503 that carries an error code', async () => {
+		fetchSpy.mockResolvedValueOnce(
+			errorBody(503, 'INTERNAL_ERROR', 'Transcription is not available on this server'),
+		)
+		await expect(api.transcriptions.create('ws-1', { audio: 'QUJD' })).rejects.toMatchObject({
+			status: 503,
+			message: 'Transcription is not available on this server',
+		})
+	})
+
+	it('keeps the route message on a 504 timeout', async () => {
+		fetchSpy.mockResolvedValueOnce(
+			errorBody(504, 'INTERNAL_ERROR', 'Transcription timed out, try again'),
+		)
+		await expect(api.transcriptions.create('ws-1', { audio: 'QUJD' })).rejects.toMatchObject({
+			status: 504,
+			message: 'Transcription timed out, try again',
+		})
+	})
+
+	it('still shows the generic text when a gateway answers with no body from our API', async () => {
+		fetchSpy.mockResolvedValueOnce(
+			new Response('<html>Bad Gateway</html>', { status: 502, statusText: 'Bad Gateway' }),
+		)
+		await expect(api.transcriptions.create('ws-1', { audio: 'QUJD' })).rejects.toMatchObject({
+			status: 502,
+			message: 'Service unavailable. Please try again in a minute.',
+		})
+	})
+})

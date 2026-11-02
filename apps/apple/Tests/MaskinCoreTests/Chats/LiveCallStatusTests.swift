@@ -24,6 +24,10 @@ import Testing
 				interruptible: true) == "Speaking. Tap to interrupt")
 	}
 
+	@Test func aFreshCallReadsListening() {
+		#expect(text(RealtimeCallMachine().phase) == "Listening…")
+	}
+
 	@Test func mutedBeatsListeningButNoticesAndFailuresBeatMuted() {
 		#expect(text(muted: true) == "Microphone off")
 		#expect(text(muted: true, notice: "No connection") == "No connection")

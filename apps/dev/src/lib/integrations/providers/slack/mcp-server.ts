@@ -62,6 +62,11 @@ export interface SlackPostContext {
 	 * capability scan, which only lists tools; a send with an `object_id` is refused without it.
 	 */
 	db?: Database
+	/**
+	 * Channel ids that may be posted to without approval, from the Slack integration's saved
+	 * allowlist. Absent means none was saved, and the built-in default applies.
+	 */
+	directPostChannels?: readonly string[]
 }
 
 interface SlackPostMessageResponse {
@@ -267,7 +272,7 @@ async function resolveChannelId(ctx: SlackPostContext, ref: string): Promise<str
  */
 async function isDirectChannel(ctx: SlackPostContext, ref: string): Promise<boolean> {
 	try {
-		return isDirectPostChannel(await resolveChannelId(ctx, ref))
+		return isDirectPostChannel(await resolveChannelId(ctx, ref), ctx.directPostChannels)
 	} catch {
 		return false
 	}

@@ -17,6 +17,13 @@ import { useActiveSessionsForConversation } from './use-sessions'
 export interface MessageTurnActivity {
 	sessionId: string
 	actorId: string
+	/**
+	 * The thread the session that produced this turn belongs to; null or absent
+	 * for the main chat. An agent can run one session per thread next to its main
+	 * one, so this is what keeps one thread's "working" row and Stop button from
+	 * showing up in another.
+	 */
+	threadRootId?: number | null
 	steps: ActivityStep[]
 	/** True for the single most recent turn of a session that hasn't reached a `result` envelope yet. */
 	inProgress: boolean
@@ -107,7 +114,15 @@ export interface ConversationActivity {
 }
 
 /**
- * Segments the conversation's most recent session per agent into per-message
+ * Which part of a conversation a view draws activity for: the main chat
+ * (`threadRootId: null`) or one thread (its root message id).
+ */
+export interface ActivityScope {
+	threadRootId: number | null
+}
+
+/**
+ * Segments the conversation's most recent session per agent and thread into per-message
  * activity turns: a running session's turns are split from its logs and
  * re-anchored to the reply message they produced (see `byReplyMessageId`'s
  * doc comment for why); a failed session — whether it died before ever
@@ -126,28 +141,58 @@ export interface ConversationActivity {
  * preset most agents actually use is HTTP-transport against the shared
  * backend process, where there's no single "current session" to read from
  * `process.env`, so `sessionId` comes back null for those replies. Only one
- * session can be active per (conversation, agent actor) at a time (enforced
- * by `sessions_conversation_actor_active_uniq`), and a new session can only
- * start once the previous one for that pair is terminal — so every message
- * this actor posted at or after `session.startedAt` unambiguously belongs to
- * this session, with no risk of pulling in an older, already-dead session's
- * messages.
+ * session can be active per (conversation, agent actor, thread) at a time (a
+ * thread is its root message id, the main chat is none), and a new session can
+ * only start once the previous one for that triple is terminal — so every
+ * message this actor posted at or after `session.startedAt` in that thread
+ * unambiguously belongs to this session, with no risk of pulling in an older,
+ * already-dead session's messages.
+ *
+ * Activity is therefore keyed by (agent, thread), not by agent alone: the main
+ * chat and each thread keep their own latest session, turns and Stop target.
+ * `scope` picks which of them a view draws — the main chat passes
+ * `{ threadRootId: null }`, a thread pane passes its root id — and no scope
+ * returns all of them. A conversation whose agents each run a single main
+ * session reads exactly as before.
  */
 export function useConversationActivity(
 	workspaceId: string,
 	conversationId: string | null,
 	messages: MessageResponse[],
+	scope?: ActivityScope,
 ): ConversationActivity {
 	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 
+	// The threads each agent runs a session of its own in. A message in one of
+	// those threads is that session's business, not the agent's main session's.
+	const threadsByActor = new Map<string, Set<number>>()
+	for (const session of sessions ?? []) {
+		const thread = sessionThread(session)
+		if (thread === null) continue
+		const threads = threadsByActor.get(session.actorId) ?? new Set<number>()
+		threads.add(thread)
+		threadsByActor.set(session.actorId, threads)
+	}
+	const inScope = (session: SessionResponse): boolean => {
+		if (!scope) return true
+		const thread = sessionThread(session)
+		if (scope.threadRootId === null) return thread === null
+		if (thread === scope.threadRootId) return true
+		// A main session still answers in a thread whose agent has no session of
+		// its own there, as it did before threads had sessions.
+		return thread === null && !threadsByActor.get(session.actorId)?.has(scope.threadRootId)
+	}
+
 	// Sessions come back newest-first (see the route's `orderBy(desc(sessions.createdAt))`)
-	// — keep only the latest session per agent, since that's the one whose
-	// status actually reflects "what's happening now" for that agent. An
-	// older failed attempt for an actor who has since retried (or replied
+	// — keep only the latest session per agent and thread, since that's the one
+	// whose status actually reflects "what's happening now" there. An older
+	// failed attempt for an actor who has since retried (or replied
 	// successfully) shouldn't keep showing a stale failure notice.
 	const latestByActor = new Map<string, SessionResponse>()
 	for (const session of sessions ?? []) {
-		if (!latestByActor.has(session.actorId)) latestByActor.set(session.actorId, session)
+		if (!inScope(session)) continue
+		const key = `${session.actorId}:${sessionThread(session) ?? 'main'}`
+		if (!latestByActor.has(key)) latestByActor.set(key, session)
 	}
 	const latestSessions = [...latestByActor.values()]
 	const activeSessions = latestSessions.filter((s) => s.status === 'running')
@@ -262,6 +307,7 @@ export function useConversationActivity(
 			? {
 					sessionId: session.id,
 					actorId: session.actorId,
+					threadRootId: sessionThread(session),
 					steps: [
 						{
 							id: `${session.id}-stopped`,
@@ -275,6 +321,7 @@ export function useConversationActivity(
 			: {
 					sessionId: session.id,
 					actorId: session.actorId,
+					threadRootId: sessionThread(session),
 					steps: errorText ? [{ id: `${session.id}-error`, kind: 'error', text: errorText }] : [],
 					inProgress: false,
 					failed: true,
@@ -311,7 +358,7 @@ export function useConversationActivity(
 		// *before* the session responding to it starts, so seeding the cutoff
 		// with the start time would exclude the very message being waited on.
 		// With no replies yet, every message in the thread is unanswered.
-		const actorReplies = messagesFromSession(messages, session)
+		const actorReplies = messagesFromSession(messages, session, threadsByActor)
 		let lastReplyAt = Number.NEGATIVE_INFINITY
 		for (const reply of actorReplies) {
 			if (!reply.createdAt) continue
@@ -321,6 +368,7 @@ export function useConversationActivity(
 		const unanswered = messages
 			.flatMap((m) => {
 				if (m.actorId === session.actorId) return []
+				if (!inSessionThread(m, session, threadsByActor)) return []
 				const at = m.createdAt ? new Date(m.createdAt).getTime() : Number.NaN
 				if (Number.isNaN(at)) {
 					// Undated message (mirrors messagesFromSession's leniency). We
@@ -343,6 +391,7 @@ export function useConversationActivity(
 		const turn: MessageTurnActivity = {
 			sessionId: session.id,
 			actorId: session.actorId,
+			threadRootId: sessionThread(session),
 			steps: [
 				{
 					id: `${session.id}-timeout`,
@@ -372,6 +421,7 @@ export function useConversationActivity(
 		const turn: MessageTurnActivity = {
 			sessionId: session.id,
 			actorId: session.actorId,
+			threadRootId: sessionThread(session),
 			steps: [],
 			inProgress: true,
 			starting: true,
@@ -407,6 +457,7 @@ export function useConversationActivity(
 			fallback.push({
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				steps: [
 					{
 						id: `${session.id}-logs-error`,
@@ -422,7 +473,7 @@ export function useConversationActivity(
 		const { segments, unassigned } = segmentActivityByMessage(logs)
 		const idle = !isLive || isSessionIdleAwaitingInput(logs)
 
-		const agentMessages = mcpRepliesFromSession(messages, session)
+		const agentMessages = mcpRepliesFromSession(messages, session, threadsByActor)
 		const replySegments = segments.filter((s) => s.containsReply)
 
 		// Pair closed turns' `result` envelopes with the final_output messages
@@ -431,7 +482,7 @@ export function useConversationActivity(
 		// Ordinal pairing rather than id matching, for the same reason the reply
 		// pairing above uses it: messages.sessionId is null for HTTP-transport MCP.
 		const resultSegments = segments.filter((s) => s.result)
-		const finalOutputMessages = finalOutputsFromSession(messages, session)
+		const finalOutputMessages = finalOutputsFromSession(messages, session, threadsByActor)
 		const persistedFinalCount = finalOutputMessages.length
 		const pairedCount = Math.min(replySegments.length, agentMessages.length)
 		for (let i = 0; i < pairedCount; i++) {
@@ -442,6 +493,7 @@ export function useConversationActivity(
 			list.push({
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				steps: segment.steps,
 				inProgress: false,
 				...pendingFinalOutputFor(
@@ -476,6 +528,7 @@ export function useConversationActivity(
 			const turn: MessageTurnActivity = {
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				steps: segment.steps,
 				inProgress: false,
 				...pending,
@@ -518,6 +571,7 @@ export function useConversationActivity(
 			list.push({
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				// Keep the steps we already have — they're still the best
 				// account of the turn — but stop claiming it's live when we
 				// can no longer read the logs that would prove it.
@@ -556,6 +610,7 @@ export function useConversationActivity(
 			fallback.push({
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				steps: unassigned,
 				inProgress: !logsFailed,
 				...(logsFailed ? { interrupted: true } : {}),
@@ -666,8 +721,35 @@ function pendingFinalOutputFor(
 	}
 }
 
+/** The thread a session belongs to: its root message id, or null for the main chat. */
+function sessionThread(session: SessionResponse): number | null {
+	return session.threadRootId ?? null
+}
+
 /**
- * Messages this actor posted at or after the session started.
+ * Whether a message sits in the part of the conversation this session answers:
+ * a thread session answers its own thread, a main session answers everything
+ * except the threads its agent runs a session of its own in. With no thread
+ * sessions in the conversation every message belongs to the main session, as
+ * it always did.
+ */
+function inSessionThread(
+	message: MessageResponse,
+	session: SessionResponse,
+	threadsByActor: Map<string, Set<number>>,
+): boolean {
+	const own = sessionThread(session)
+	if (own !== null) return message.threadRootId === own || message.id === own
+	const threads = threadsByActor.get(session.actorId)
+	if (!threads) return true
+	return !(
+		(message.threadRootId != null && threads.has(message.threadRootId)) ||
+		threads.has(message.id)
+	)
+}
+
+/**
+ * Messages this actor posted in the session's thread at or after the session started.
  *
  * Scoped by `actorId` + start time rather than `messages.sessionId` for the
  * reason given in useConversationActivity's doc comment — that column is null
@@ -676,10 +758,12 @@ function pendingFinalOutputFor(
 function messagesFromSession(
 	messages: MessageResponse[],
 	session: SessionResponse,
+	threadsByActor: Map<string, Set<number>>,
 ): MessageResponse[] {
 	const startedAt = session.startedAt ? new Date(session.startedAt).getTime() : null
 	return messages.filter((m) => {
 		if (m.actorId !== session.actorId) return false
+		if (!inSessionThread(m, session, threadsByActor)) return false
 		if (startedAt === null || !m.createdAt) return true
 		return new Date(m.createdAt).getTime() >= startedAt
 	})
@@ -697,8 +781,11 @@ function messagesFromSession(
 function mcpRepliesFromSession(
 	messages: MessageResponse[],
 	session: SessionResponse,
+	threadsByActor: Map<string, Set<number>>,
 ): MessageResponse[] {
-	return messagesFromSession(messages, session).filter((m) => m.metadata?.source !== 'final_output')
+	return messagesFromSession(messages, session, threadsByActor).filter(
+		(m) => m.metadata?.source !== 'final_output',
+	)
 }
 
 /**
@@ -720,8 +807,9 @@ function mcpRepliesFromSession(
 function finalOutputsFromSession(
 	messages: MessageResponse[],
 	session: SessionResponse,
+	threadsByActor: Map<string, Set<number>>,
 ): MessageResponse[] {
-	return messagesFromSession(messages, session).filter(
+	return messagesFromSession(messages, session, threadsByActor).filter(
 		(m) =>
 			m.metadata?.source === 'final_output' && m.metadata?.final_output?.retry !== 'unanswered',
 	)

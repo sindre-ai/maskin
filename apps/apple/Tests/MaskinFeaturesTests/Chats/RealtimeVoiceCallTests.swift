@@ -15,6 +15,8 @@ private final class FakeTransport: RealtimeTransport {
 	var micEnabled: [Bool] = []
 	var iceRestarts = 0
 	var closed = 0
+	var noiseReduction: VoiceNoiseReduction? = .nearField
+	var metered = 0
 
 	func makeOffer(
 		onEvent: @escaping @MainActor @Sendable (Data) -> Void,
@@ -30,6 +32,7 @@ private final class FakeTransport: RealtimeTransport {
 	func setMicEnabled(_ enabled: Bool) { micEnabled.append(enabled) }
 	func restartIce() { iceRestarts += 1 }
 	func close() { closed += 1 }
+	func startMetering(into meter: CallLevelMeter) { metered += 1 }
 
 	func receive(_ type: String) { onEvent?(Data(#"{"type":"\#(type)"}"#.utf8)) }
 }
@@ -46,6 +49,7 @@ private actor FakeCalls: VoiceCalling {
 	private(set) var created: [String] = []
 	private(set) var createdFrom: [String?] = []
 	private(set) var offers: [String] = []
+	private(set) var offerHints: [VoiceNoiseReduction?] = []
 	private(set) var hangups: [Hangup] = []
 
 	func failCreate(_ failure: VoiceCallFailure) { createFailure = failure }
@@ -58,9 +62,12 @@ private actor FakeCalls: VoiceCalling {
 		return "vs-1"
 	}
 
-	func offer(voiceSessionID: String, sdp: String) async throws -> VoiceCallAnswer {
+	func offer(voiceSessionID: String, sdp: String, noiseReduction: VoiceNoiseReduction?) async throws
+		-> VoiceCallAnswer
+	{
 		if let offerFailure { throw offerFailure }
 		offers.append(sdp)
+		offerHints.append(noiseReduction)
 		return VoiceCallAnswer(sdp: "answer-sdp", toolsAvailable: toolsAvailable, persistTranscripts: true)
 	}
 
@@ -74,16 +81,22 @@ private actor FakeCalls: VoiceCalling {
 }
 
 @MainActor
+private final class FakeChime: CallChimePlaying {
+	var plays = 0
+	func play() { plays += 1 }
+}
+
+@MainActor
 @Suite("RealtimeVoiceCall") struct RealtimeVoiceCallTests {
 	private func make(
 		calls: FakeCalls = FakeCalls(), transport: FakeTransport = FakeTransport(),
 		conversationID: String? = nil, reconnectWindow: Duration = .seconds(3600),
-		recoveryDelays: [Duration] = [.milliseconds(5)]
+		recoveryDelays: [Duration] = [.milliseconds(5)], chime: FakeChime? = nil
 	) -> (RealtimeVoiceCall, FakeCalls, FakeTransport) {
 		let call = RealtimeVoiceCall(
 			agentID: "agent-1", agentName: "Chief", conversationID: conversationID, calls: calls,
 			makeTransport: { transport },
-			reconnectWindow: reconnectWindow, recoveryDelays: recoveryDelays)
+			reconnectWindow: reconnectWindow, recoveryDelays: recoveryDelays, chime: chime)
 		return (call, calls, transport)
 	}
 
@@ -91,6 +104,73 @@ private actor FakeCalls: VoiceCalling {
 	private func settle() async {
 		for _ in 0..<20 { await Task.yield() }
 		try? await Task.sleep(for: .milliseconds(20))
+	}
+
+	@Test("the call opens listening, with the agent silent until the person speaks")
+	func opensListening() async {
+		let (call, _, transport) = make()
+		call.begin(existing: [])
+		await settle()
+		transport.onConnection?(.connected)
+		transport.receive("session.created")
+		#expect(call.phase == .listening)
+		#expect(call.agentWords == nil)
+	}
+
+	@Test("the ready chime plays once, when the call connects")
+	func chimesOnReady() async {
+		let chime = FakeChime()
+		let (call, _, transport) = make(chime: chime)
+		call.begin(existing: [])
+		await settle()
+		#expect(chime.plays == 0)
+		transport.onConnection?(.connected)
+		#expect(chime.plays == 1)
+	}
+
+	@Test("a second connected report for the same call does not chime again")
+	func noSecondChime() async {
+		let chime = FakeChime()
+		let (call, _, transport) = make(chime: chime)
+		call.begin(existing: [])
+		await settle()
+		transport.onConnection?(.connected)
+		transport.onConnection?(.disconnected)
+		transport.onConnection?(.connected)
+		transport.onConnection?(.connected)
+		#expect(chime.plays == 1)
+	}
+
+	@Test("a call that fails before it is ready does not chime")
+	func noChimeOnFailure() async {
+		let chime = FakeChime()
+		let calls = FakeCalls()
+		await calls.failOffer(.unavailable)
+		let (call, _, transport) = make(calls: calls, chime: chime)
+		call.begin(existing: [])
+		await settle()
+		transport.onConnection?(.connected)
+		#expect(chime.plays == 0)
+	}
+
+	@Test("a recovery that starts a new call chimes once more when it is up")
+	func chimesAfterRecovery() async {
+		let chime = FakeChime()
+		let (call, calls, transport) = make(reconnectWindow: .milliseconds(30), chime: chime)
+		call.begin(existing: [])
+		await settle()
+		transport.onConnection?(.connected)
+		transport.onConnection?(.disconnected)
+		// Wait for the second call instead of guessing how long a loaded runner needs.
+		var polls = 0
+		while polls < 200 {
+			if await calls.created.count == 2 { break }
+			try? await Task.sleep(for: .milliseconds(10))
+			polls += 1
+		}
+		#expect(await calls.created.count == 2)
+		transport.onConnection?(.connected)
+		#expect(chime.plays == 2)
 	}
 
 	@Test("it reserves the call, posts the offer and applies the answer")
@@ -102,6 +182,17 @@ private actor FakeCalls: VoiceCalling {
 		#expect(await calls.offers == ["offer-sdp"])
 		#expect(transport.accepted == ["answer-sdp"])
 		#expect(call.failure == nil)
+	}
+
+	@Test("the offer carries the transport's microphone hint, and metering starts once it is answered")
+	func sendsTheHint() async {
+		let transport = FakeTransport()
+		transport.noiseReduction = .farField
+		let (call, calls, _) = make(transport: transport)
+		call.begin(existing: [])
+		await settle()
+		#expect(await calls.offerHints == [.farField])
+		#expect(transport.metered == 1)
 	}
 
 	@Test("a call started from a chat reserves the call with that chat's id")

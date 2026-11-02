@@ -12,6 +12,10 @@ import {
 	createSlackMcpServer,
 	isSlackBotToken,
 } from '../../../../lib/integrations/providers/slack/mcp-server'
+import {
+	directPostChannelsFromConfig,
+	isDirectPostChannel,
+} from '../../../../lib/integrations/providers/slack/send-object'
 
 describe('isSlackBotToken', () => {
 	it('accepts xoxb- prefixed tokens', () => {
@@ -880,5 +884,95 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 				/channel_not_found/,
 			)
 		})
+	})
+})
+
+describe('direct post allowlist', () => {
+	it('falls back to the built-in default only when no list was saved', () => {
+		expect(isDirectPostChannel('C06LC37JJCS')).toBe(true)
+		expect(isDirectPostChannel('C06LC37JJCS', ['C0AAAAAAAAA'])).toBe(false)
+		expect(isDirectPostChannel('C0AAAAAAAAA', ['C0AAAAAAAAA'])).toBe(true)
+		expect(isDirectPostChannel('C06LC37JJCS', [])).toBe(false)
+	})
+
+	it('reads the saved list from integration config and drops anything that is not a channel id', () => {
+		expect(directPostChannelsFromConfig({})).toBeUndefined()
+		expect(directPostChannelsFromConfig(null)).toBeUndefined()
+		expect(
+			directPostChannelsFromConfig({ slack_direct_post_channels: 'C0AAAAAAAAA' }),
+		).toBeUndefined()
+		expect(directPostChannelsFromConfig({ slack_direct_post_channels: [] })).toEqual([])
+		expect(
+			directPostChannelsFromConfig({
+				slack_direct_post_channels: ['C0AAAAAAAAA', 'D0AAAAAAAAA', '#general', 7, 'G0BBBBBBBBB'],
+			}),
+		).toEqual(['C0AAAAAAAAA', 'G0BBBBBBBBB'])
+	})
+})
+
+describe('createSlackMcpServer — slack_send_message with a saved allowlist', () => {
+	const base = {
+		botToken: 'xoxb-test-token',
+		integrationId: 'int-1',
+		agentLabel: 'Agent · in ws',
+		workspaceId: 'ws-1',
+		actorId: 'actor-1',
+	}
+	let fetchMock: ReturnType<typeof vi.fn>
+
+	beforeEach(() => {
+		fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ ok: true, ts: '1717000000.000100', channel: 'C0AAAAAAAAA' }),
+		} as Response)
+		vi.stubGlobal('fetch', fetchMock)
+		capturePosthogEventMock.mockClear()
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	async function send(directPostChannels: string[] | undefined, channel: string) {
+		const server = createSlackMcpServer({ ...base, directPostChannels })
+		const tool = (
+			server as unknown as {
+				_registeredTools: Record<
+					string,
+					{ handler: (args: unknown, extra: unknown) => Promise<unknown> }
+				>
+			}
+		)._registeredTools.slack_send_message
+		return (await tool.handler({ channel, text: 'status' }, {})) as { isError?: boolean }
+	}
+
+	it('posts directly to a channel on the saved list', async () => {
+		const result = await send(['C0AAAAAAAAA'], 'C0AAAAAAAAA')
+		expect(result.isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+	})
+
+	it('holds a channel that is not on the saved list, and calls Slack not at all', async () => {
+		const result = await send(['C0AAAAAAAAA'], 'C0BBBBBBBBB')
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('holds the built-in channel once a saved list leaves it out', async () => {
+		const result = await send(['C0AAAAAAAAA'], 'C06LC37JJCS')
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('holds everything when the saved list is empty', async () => {
+		const result = await send([], 'C06LC37JJCS')
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('holds a DM even if its id is on the list', async () => {
+		const result = await send(['D0AAAAAAAAA'], 'D0AAAAAAAAA')
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })

@@ -242,7 +242,17 @@ const listTriggersQuerySchema = z.object({
 	snapshot_at: z.string().datetime().optional(),
 	cursor_created_at: z.string().datetime().optional(),
 	cursor_id: z.string().uuid().optional(),
+	// Filters combine with AND and apply to the rows and to X-Total-Count alike.
+	target_actor_id: z.string().uuid().optional(),
+	enabled: z.enum(['true', 'false']).optional(),
+	// Case-insensitive substring of the trigger name.
+	q: z.string().trim().min(1).max(200).optional(),
 })
+
+/** Escape LIKE wildcards (percent, underscore) and the escape character itself. */
+function escapeLike(value: string): string {
+	return value.replace(/[%_\\]/g, '\\$&')
+}
 
 // GET /api/triggers
 const listTriggersRoute = createRoute({
@@ -277,8 +287,19 @@ app.openapi(listTriggersRoute, (async (c) => {
 	const query = c.req.valid('query')
 	const { limit, offset } = query
 
+	const filterConditions = [eq(triggers.workspaceId, workspaceId)]
+	if (query.target_actor_id)
+		filterConditions.push(eq(triggers.targetActorId, query.target_actor_id))
+	if (query.enabled) filterConditions.push(eq(triggers.enabled, query.enabled === 'true'))
+	if (query.q) {
+		filterConditions.push(sql`${triggers.name} ILIKE ${`%${escapeLike(query.q)}%`} ESCAPE '\\'`)
+	}
+
 	if (limit === undefined) {
-		const results = await db.select().from(triggers).where(eq(triggers.workspaceId, workspaceId))
+		const results = await db
+			.select()
+			.from(triggers)
+			.where(and(...filterConditions))
 		c.header('X-Total-Count', String(results.length))
 		return c.json(serializeArray(results) as z.infer<typeof triggerResponseSchema>[])
 	}
@@ -288,9 +309,7 @@ app.openapi(listTriggersRoute, (async (c) => {
 		{ createdAt: triggers.createdAt, id: triggers.id },
 		query,
 	)
-	const listWhere = cursorConditions.length
-		? and(eq(triggers.workspaceId, workspaceId), ...cursorConditions)
-		: eq(triggers.workspaceId, workspaceId)
+	const listWhere = and(...filterConditions, ...cursorConditions)
 
 	const orderBy = cursorOn
 		? query.order === 'asc'
@@ -308,13 +327,13 @@ app.openapi(listTriggersRoute, (async (c) => {
 	// advances.
 	const totalWhere = query.snapshot_at
 		? and(
-				eq(triggers.workspaceId, workspaceId),
+				...filterConditions,
 				...buildCreatedAtCursorConditions(
 					{ createdAt: triggers.createdAt, id: triggers.id },
 					{ snapshot_at: query.snapshot_at },
 				),
 			)
-		: eq(triggers.workspaceId, workspaceId)
+		: and(...filterConditions)
 
 	const [results, totalRow] = await Promise.all([
 		listQueryOrdered.limit(limit).offset(skipOffset ? 0 : (offset ?? 0)),

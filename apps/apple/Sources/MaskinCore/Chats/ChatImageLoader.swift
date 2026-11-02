@@ -20,6 +20,13 @@ final class ThumbnailMemory: @unchecked Sendable {
 			while order.count > capacity { images[order.removeFirst()] = nil }
 		}
 	}
+
+	func removeAll() {
+		lock.withLock {
+			images.removeAll()
+			order.removeAll()
+		}
+	}
 }
 
 /// Fetches the pictures attached to chat messages and hands back bounded thumbnails.
@@ -28,13 +35,21 @@ final class ThumbnailMemory: @unchecked Sendable {
 /// thumbnail is kept: scrolling a thread back over a photo must not download it again. Rows that
 /// ask for the same file while it is loading share one request. A failure is not remembered, so
 /// the next time the photo scrolls into view it is tried again.
+///
+/// Only a few photos load at once: each file is held whole (and again as text) while it is
+/// fetched and decoded, so fast scrolling through a photo-heavy thread must not stack many of those
+/// temporary copies. The rest wait their turn.
 public actor ChatImageLoader {
 	/// Longest side of the kept thumbnail, in pixels: sharp at message size on a 3x screen.
 	public static let thumbnailPixels = 900
+	/// Most photos fetched and decoded at the same time.
+	public static let maxConcurrentLoads = 2
 
 	private let fetch: @Sendable (String) async throws -> Data
 	private let memory: ThumbnailMemory
 	private var inFlight: [String: Task<DecodedImage?, Never>] = [:]
+	private var activeLoads = 0
+	private var waitingLoads: [CheckedContinuation<Void, Never>] = []
 
 	public init(capacity: Int = 60, fetch: @escaping @Sendable (String) async throws -> Data) {
 		self.fetch = fetch
@@ -48,12 +63,18 @@ public actor ChatImageLoader {
 	/// The thumbnail if it has already been loaded; never waits and never starts a fetch.
 	public nonisolated func cachedImage(for fileID: String) -> DecodedImage? { memory.get(fileID) }
 
+	/// Drops every kept thumbnail, for when the system asks apps to give memory back. Photos still
+	/// on screen are fetched again the next time their row asks.
+	public nonisolated func clearMemory() { memory.removeAll() }
+
 	public func image(for fileID: String) async -> DecodedImage? {
 		if let hit = memory.get(fileID) { return hit }
 		if let running = inFlight[fileID] { return await running.value }
 		let fetch = fetch
 		let memory = memory
 		let task = Task<DecodedImage?, Never> {
+			await acquireLoadSlot()
+			defer { releaseLoadSlot() }
 			guard let data = try? await fetch(fileID) else { return nil }
 			// Decode off the actor's executor: ImageIO work on a large photo is not instant.
 			let image = await Task.detached(priority: .userInitiated) {
@@ -68,5 +89,22 @@ public actor ChatImageLoader {
 		let result = await task.value
 		inFlight[fileID] = nil
 		return result
+	}
+
+	private func acquireLoadSlot() async {
+		if activeLoads < Self.maxConcurrentLoads {
+			activeLoads += 1
+			return
+		}
+		await withCheckedContinuation { waitingLoads.append($0) }
+	}
+
+	/// Hands the slot straight to the next waiting photo, so the count never dips in between.
+	private func releaseLoadSlot() {
+		if waitingLoads.isEmpty {
+			activeLoads -= 1
+		} else {
+			waitingLoads.removeFirst().resume()
+		}
 	}
 }

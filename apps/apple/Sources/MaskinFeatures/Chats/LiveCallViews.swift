@@ -115,29 +115,6 @@ private struct CallWaveform: View {
 	}
 }
 
-/// Two rings that swell and fade behind the agent while it speaks.
-private struct CallPulse: View {
-	let active: Bool
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
-	@State private var out = false
-
-	var body: some View {
-		ZStack {
-			ForEach(0..<2, id: \.self) { index in
-				Circle().strokeBorder(MaskinColor.sigInk.opacity(0.55), lineWidth: 1.5)
-					.scaleEffect(active && out ? 1.55 : 0.75)
-					.opacity(active ? (out ? 0 : 0.55) : 0)
-					.animation(
-						active && !reduceMotion
-							? .easeOut(duration: 2.4).repeatForever(autoreverses: false).delay(Double(index) * 1.2) : .default,
-						value: out)
-			}
-		}
-		.onChange(of: active, initial: true) { _, on in out = on && !reduceMotion }
-		.accessibilityHidden(true)
-	}
-}
-
 /// One labelled round control in the dock's bottom row.
 private struct CallControl: View {
 	enum Emphasis { case quiet, on, inverse, danger }
@@ -190,7 +167,7 @@ private struct CallControlLabel: View {
 }
 
 /// The call card: it takes the composer's place at the bottom of the thread while a call runs in it.
-/// Who the call is with (pulsing while they speak), one state line, a waveform and the clock; the
+/// Who the call is with (in an orb that follows the sound), one state line, a waveform and the clock; the
 /// agent's latest words as captions; the Deciding now card; then Mic, Speaker, Captions, Pull up and End
 /// (touch and hold Pull up for invite, pace and the objects mentioned). The chevron folds it
 /// to a pill. The conversation itself is the thread above.
@@ -211,6 +188,11 @@ struct LiveCallPanel: View {
 			}
 		}
 		.animation(MaskinMotion.standard, value: session.isMinimized)
+	}
+
+	private var orbState: CallOrbState {
+		CallOrbState.derive(
+			phase: session.voice.phase, isMuted: session.voice.isMuted, isConnected: session.voice.isConnected)
 	}
 
 	private var speaking: Bool { session.voice.phase == .speaking && !session.voice.isMuted && !session.voice.isYourTurn }
@@ -253,10 +235,10 @@ struct LiveCallPanel: View {
 					session.voice.interrupt()
 				} label: {
 					ZStack {
-						CallPulse(active: speaking).frame(width: callAvatarSize * 0.9, height: callAvatarSize * 0.9)
+						CallOrb(state: orbState, meter: session.voice.levels, size: callAvatarSize)
 						ActorAvatar(
 							name: session.lead.name, kind: session.lead.kind == .agent ? .agent : .human,
-							size: callAvatarSize * 0.9, seed: session.lead.id, working: session.voice.phase == .thinking)
+							size: callAvatarSize * 0.5, seed: session.lead.id, working: session.voice.phase == .thinking)
 					}
 					.frame(width: callAvatarSize, height: callAvatarSize)
 					.contentShape(Circle())

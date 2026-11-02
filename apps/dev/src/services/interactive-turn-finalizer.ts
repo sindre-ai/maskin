@@ -4,8 +4,13 @@ import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } from '@maskin/shared'
 import * as Sentry from '@sentry/node'
 import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
-import { classifyBannerResult, classifyCreditExhaustion } from '../lib/credit-classifier'
-import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
+import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
+import {
+	classifyBannerResult,
+	classifyCreditExhaustion,
+	isCreditBalanceLowText,
+} from '../lib/credit-classifier'
+import { LLM_ROUTE_API_KEY, LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
 import {
@@ -13,9 +18,11 @@ import {
 	extractCloudflareRayId,
 	isProviderBlockPage,
 } from '../lib/turn-error-classifier'
+import { reportChatReply } from './chat-reply-tracking'
+import { shareReplyDigest } from './chat-session-context'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
-import { resolveThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
+import { resolveReplyThreadRootId, resolveTurnMessageId, splitRowLines } from './turn-origin'
 
 /**
  * Posts an agent's end-of-turn output into the chat it is talking in.
@@ -1157,7 +1164,10 @@ export class InteractiveTurnFinalizer {
 		const truncated = text.length > MESSAGE_MAX_LENGTH
 		const content = truncated ? text.slice(0, MESSAGE_MAX_LENGTH) : text
 		const turnMessageId = await this.resolveTurnMessageId(sessionId, logId)
-		const threadRootId = await this.resolveThreadRootId(turnMessageId)
+		const { sessionThreadRootId, threadRootId } = await resolveReplyThreadRootId(this.db, {
+			sessionId,
+			turnMessageId,
+		})
 
 		const created = await insertConversationMessage(this.db, {
 			conversationId,
@@ -1207,6 +1217,22 @@ export class InteractiveTurnFinalizer {
 			)
 			return
 		}
+		reportChatReply(this.db, {
+			workspaceId: gate.workspaceId,
+			conversationId,
+			agentId: gate.actorId,
+			sessionThreadRootId,
+			replyThreadRootId: threadRootId,
+			originMessageId: turnMessageId,
+			source: 'final_output',
+		})
+		shareReplyDigest(this.db, {
+			conversationId,
+			agentId: gate.actorId,
+			sessionId,
+			sessionThreadRootId,
+			content,
+		})
 		const failed =
 			result.isError || 'error_kind' in extraMetadata || 'pseudo_tool_calls' in extraMetadata
 		this.turnFinished(sessionId, failed ? 'failed' : 'done')
@@ -1398,6 +1424,11 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} turn failed permanently (log ${logId}): ${detail}`,
 			)
+			// An interactive session does not exit on this either, so the mark the
+			// session-exit path writes for a key with no credit is written from here.
+			if (gate.llmRoute === LLM_ROUTE_API_KEY && isCreditBalanceLowText(detail)) {
+				await markApiKeyOutOfCredit({ db: this.db, workspaceId: gate.workspaceId })
+			}
 			// Session-exit failover never sees an interactive turn (see
 			// turn-error-classifier.ts), so route the same move from here.
 			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
@@ -1410,6 +1441,9 @@ export class InteractiveTurnFinalizer {
 				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(detail),
 				{
 					error_kind: 'permanent',
+					// Lets the idle close tell a chat that only ever hit a dead key from one
+					// that did real work (session-manager onlyCreditErrorTurns).
+					...(isCreditBalanceLowText(detail) ? { credit_balance_low: true } : {}),
 					...(movedTo ? { subscription_moved_to: movedTo } : {}),
 				},
 			)
@@ -1576,10 +1610,17 @@ export class InteractiveTurnFinalizer {
 		emptyCompletion?: EmptyCompletionMetadata,
 	): Promise<void> {
 		try {
+			// A thread session's notice belongs in its thread too. No turn-origin guess here: a
+			// session with no thread posts the notice top-level, as before.
+			const { sessionThreadRootId } = await resolveReplyThreadRootId(this.db, {
+				sessionId,
+				turnMessageId: null,
+			})
 			const created = await insertConversationMessage(this.db, {
 				conversationId,
 				workspaceId: gate.workspaceId,
 				actorId: gate.actorId,
+				threadRootId: sessionThreadRootId,
 				content,
 				metadata: {
 					source: 'final_output',
@@ -1940,11 +1981,6 @@ export class InteractiveTurnFinalizer {
 	/** The chat message whose turn produced this output; see resolveTurnMessageId. */
 	private resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
 		return resolveTurnMessageId(this.db, sessionId, logId)
-	}
-
-	/** The thread the turn's triggering message sits in; see resolveThreadRootId. */
-	private resolveThreadRootId(turnMessageId: number | null): Promise<number | null> {
-		return resolveThreadRootId(this.db, turnMessageId)
 	}
 
 	private rememberRetry(retryKey: string, count: number): void {

@@ -147,7 +147,13 @@ test.describe('Voice call: server-side tools, captions and post-call toast', () 
 			const offerRequest = page.waitForRequest(`**/api/voice-sessions/${SESSION_ID}/offer`)
 
 			await startCall(page, account.workspaceId, agent.id)
-			expect((await offerRequest).postDataJSON()).toEqual({ sdp: 'v=0 browser offer' })
+			expect((await offerRequest).postDataJSON()).toEqual({
+				sdp: 'v=0 browser offer',
+				noise_reduction: expect.stringMatching(/^(near|far)_field$/),
+			})
+
+			// No greeting: once the call is ready it shows Listening until someone speaks.
+			await expect(page.getByText('Listening').first()).toBeVisible()
 
 			// Model asks for a tool: nothing goes from the browser into the session
 			// (the server answers on its own connection).

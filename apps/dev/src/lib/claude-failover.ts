@@ -17,6 +17,7 @@ import {
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
 	type RefreshBuffer,
+	applyWorkspaceRowTimeouts,
 	decryptOAuthData,
 	refreshSlotSingleFlight,
 	reportClaudeRefreshFailure,
@@ -502,7 +503,7 @@ async function attemptChainHeadRecovery(params: {
  * (AC-T2). The slot flip itself is idempotent — both sessions still land on
  * the same next slot.
  */
-async function recordFailoverTransition(params: {
+export async function recordFailoverTransition(params: {
 	db: Database
 	workspaceId: string
 	actorId: string
@@ -513,6 +514,7 @@ async function recordFailoverTransition(params: {
 }): Promise<void> {
 	const { db, workspaceId, actorId, fromSlot, toSlot, bucket, reason } = params
 	const inserted = await db.transaction(async (tx) => {
+		await applyWorkspaceRowTimeouts(tx)
 		const [latest] = await tx
 			.select()
 			.from(workspaces)

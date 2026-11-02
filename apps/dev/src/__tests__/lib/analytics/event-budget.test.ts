@@ -36,7 +36,6 @@ describe('admitPosthogEvent', () => {
 
 	it('never caps tier 1 events', () => {
 		for (const event of [
-			'agent_session_completed',
 			'agent_session_started',
 			'chat_session_started',
 			'foryou_card_action',
@@ -93,6 +92,22 @@ describe('admitPosthogEvent', () => {
 		it('drops a sampled event when the draw is at or over the rate', () => {
 			vi.spyOn(Math, 'random').mockReturnValue(0.5)
 			expect(admitPosthogEvent('mcp_handshake').send).toBe(false)
+		})
+
+		it.each([
+			['agent_session_completed', 0.25],
+			['mcp_alias_use', 0.1],
+			['comment_responder_resolved', 0.1],
+			['agent_comment_posted', 0.1],
+			['relationship_created', 0.1],
+			['mention_guard_decision', 0.1],
+			['helper_return_skipped', 0.1],
+			['orphan_thread_detected', 0.1],
+		])('samples %s at %s', (event, rate) => {
+			vi.spyOn(Math, 'random').mockReturnValue(0)
+			expect(admitPosthogEvent(event)).toEqual({ send: true, sampleRate: rate })
+			vi.spyOn(Math, 'random').mockReturnValue(0.99)
+			expect(admitPosthogEvent(event).send).toBe(false)
 		})
 
 		it('does not use up the cap on events that were sampled out', () => {
