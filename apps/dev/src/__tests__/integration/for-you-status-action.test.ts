@@ -187,13 +187,6 @@ describe('decision cards with a status button', () => {
 			expect(await list()).toEqual([])
 		})
 
-		it('keeps a card without a status button when the object moves on', async () => {
-			const b = await bet()
-			await cardOn(b.id, { ...FLIP, title: 'Ship the flag at 10%?', no_status_action: true })
-			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, b.id))
-			expect(await list()).toHaveLength(1)
-		})
-
 		it('follows the target object when the card sits on another object', async () => {
 			const loop = await insertObject(db, workspaceId, humanId, { type: 'loop', status: 'running' })
 			const b = await bet()
@@ -201,6 +194,59 @@ describe('decision cards with a status button', () => {
 			expect(await list()).toHaveLength(1)
 			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, b.id))
 			expect(await list()).toEqual([])
+		})
+	})
+
+	describe('a card with no status button', () => {
+		const PLAIN = { ...FLIP, title: 'Ship the flag at 10%?', no_status_action: true }
+		const stampOf = async (id: number) => {
+			const [row] = await db.select().from(events).where(eq(events.id, id))
+			return (row?.data as { decision: { status_stamp?: unknown } }).decision.status_stamp
+		}
+
+		it('stamps the status of the object it sits on, and drops once the object moves on', async () => {
+			const b = await bet()
+			const id = await cardOn(b.id, PLAIN)
+			expect(await stampOf(id)).toEqual({ object_id: b.id, status: 'proposed' })
+			expect((await list()).map((i) => i.entity_id)).toEqual([b.id])
+			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, b.id))
+			expect(await list()).toEqual([])
+		})
+
+		it('does not stamp a card that names the statuses it assumed, and follows those instead', async () => {
+			const b = await bet()
+			const id = await cardOn(b.id, { ...PLAIN, only_while_status: ['proposed', 'active'] })
+			expect(await stampOf(id)).toBeUndefined()
+			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, b.id))
+			expect(await list()).toHaveLength(1)
+			await db.update(objects).set({ status: 'paused' }).where(eq(objects.id, b.id))
+			expect(await list()).toEqual([])
+		})
+
+		it('stays through a status change when it opts out with keep_on_status_change', async () => {
+			const b = await bet()
+			const id = await cardOn(b.id, { ...PLAIN, keep_on_status_change: true })
+			expect(await stampOf(id)).toBeUndefined()
+			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, b.id))
+			expect(await list()).toHaveLength(1)
+		})
+
+		it('keeps an old card with no stamp when the object moves on', async () => {
+			const b = await bet()
+			const [row] = await db
+				.insert(events)
+				.values({
+					workspaceId,
+					actorId: agentId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: b.id,
+					data: { content: 'Ship it?', mentions: [humanId], decision: PLAIN },
+				})
+				.returning()
+			expect(row).toBeDefined()
+			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, b.id))
+			expect(await list()).toHaveLength(1)
 		})
 	})
 

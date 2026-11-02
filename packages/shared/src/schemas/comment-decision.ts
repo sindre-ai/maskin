@@ -230,7 +230,13 @@ export const commentDecisionSchema = z
 			.min(1)
 			.optional()
 			.describe(
-				'The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.',
+				'The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).',
+			),
+		keep_on_status_change: z
+			.boolean()
+			.optional()
+			.describe(
+				'Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.',
 			),
 		expires_at: z
 			.string()
@@ -249,7 +255,7 @@ export const commentDecisionSchema = z
 			.object({ object_id: z.string().uuid(), status: z.string().min(1) })
 			.optional()
 			.describe(
-				'Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.',
+				'Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.',
 			),
 		draft: decisionDraftSchema
 			.optional()
