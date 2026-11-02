@@ -4,6 +4,11 @@ import { events, actors, objects } from '@maskin/db/schema'
 import { type DecisionDraft, commentDecisionSchema, readChanges } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
+import {
+	EmailAttachmentError,
+	loadEmailAttachments,
+	readAttachmentIds,
+} from '../lib/email-attachments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
@@ -66,7 +71,7 @@ type Env = {
 		db: Database
 		actorId: string
 		workspaceRole?: string
-		storageProvider: StorageProvider
+		storageProvider?: StorageProvider
 		maskinSessionId?: string
 	}
 }
@@ -467,6 +472,7 @@ async function loadApproval(
  */
 async function loadObjectEmail(
 	db: Database,
+	storage: StorageProvider | undefined,
 	workspaceId: string,
 	objectId: string,
 ): Promise<
@@ -518,6 +524,22 @@ async function loadObjectEmail(
 		return { failure: sendFailureFor(err) }
 	}
 	const approval = await findCurrentApproval(db, workspaceId, objectId, preview.content_hash)
+	// Files are read only once a person has approved: until then nothing is sent, so nothing is checked.
+	if (approval) {
+		try {
+			email.attachments = await loadEmailAttachments(
+				{ db, storage },
+				{
+					workspaceId,
+					ids: readAttachmentIds(object.metadata),
+					approvedAt: approval.createdAt,
+				},
+			)
+		} catch (err) {
+			if (!(err instanceof EmailAttachmentError)) throw err
+			return { failure: fail(400, 'BAD_REQUEST', err.message) }
+		}
+	}
 	return {
 		email,
 		contentHash: preview.content_hash,
@@ -585,7 +607,7 @@ app.openapi(sendRoute, async (c) => {
 		approvalEventId: number | null
 	} | null = null
 	if (input.object_id) {
-		const loaded = await loadObjectEmail(db, workspaceId, input.object_id)
+		const loaded = await loadObjectEmail(db, c.get('storageProvider'), workspaceId, input.object_id)
 		if ('failure' in loaded) return c.json(loaded.failure.body, loaded.failure.status)
 		email = loaded.email
 		objectDraft = {
@@ -691,6 +713,7 @@ app.openapi(sendRoute, async (c) => {
 						.join(', ')
 						.slice(0, 300),
 					recipients: email.to.length + (email.cc?.length ?? 0),
+					...(email.attachments?.length ? { attachments: email.attachments.length } : {}),
 					...(approvalId ? { approval_comment_id: approvalId } : {}),
 					...(input.draft_id ? { approval_draft_id: input.draft_id } : {}),
 					...(objectDraft ? { object_id: objectDraft.id } : {}),
@@ -856,6 +879,12 @@ app.openapi(saveAttachmentRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 
+	const storage = c.get('storageProvider')
+	if (!storage) {
+		const f = fail(502, 'INTERNAL_ERROR', 'File storage is not configured')
+		return c.json(f.body, f.status)
+	}
+
 	let frontendUrl: string
 	try {
 		frontendUrl = frontendBaseUrl()
@@ -886,10 +915,7 @@ app.openapi(saveAttachmentRoute, async (c) => {
 			input.message_id,
 			input.attachment_id,
 		)
-		const file = await storeAttachmentFile(
-			{ db, storage: c.get('storageProvider') },
-			{ workspaceId, actorId, ...attachment },
-		)
+		const file = await storeAttachmentFile({ db, storage }, { workspaceId, actorId, ...attachment })
 		try {
 			await recordEvent(db, {
 				workspaceId,

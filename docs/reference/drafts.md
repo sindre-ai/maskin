@@ -31,7 +31,7 @@ Agents learn this from the `draft-approval-tasks` skill, which every default age
 
 | `metadata.kind` | Provider | Fields in `metadata` | Text limit | Send tool |
 |---|---|---|---|---|
-| `email` | Gmail | `to` (required), `cc`, `subject` (required) | 100,000 | `gmail_send_email({ object_id })`, or `resend_send_email({ object_id })` from the agent's own mailbox (see agent-access) |
+| `email` | Gmail | `to` (required), `cc`, `subject` (required), `attachment_file_ids` (workspace file ids, a list or comma separated, up to 5 files and 20 MB in total) | 100,000 | `gmail_send_email({ object_id })`, or `resend_send_email({ object_id })` from the agent's own mailbox (see agent-access) |
 | `linkedin_message` | LinkedIn | `to` (recommended): a name or a profile link; `thread_id`, `reply_to`; `recipient_provider_id` (LinkedIn id, for a first message with no `thread_id`); `attachment_file_id` (one workspace PDF, PNG or JPEG up to 10 MB) | 8,000 | `reply({ object_id })` with a `thread_id`, `send_message({ object_id })` for a first message |
 | `linkedin_connection_request` | LinkedIn | `to` (required), `recipient_provider_id` (required, the LinkedIn id the invitation goes to) | 300 | `send_connection_request({ object_id })` |
 | `linkedin_inmail` | LinkedIn | `to` (required), `recipient_provider_id` (required, shown as "LinkedIn id"), `attachment_file_id`; no subject | 1,900 | `send_inmail` |
@@ -44,6 +44,8 @@ Agents learn this from the `draft-approval-tasks` skill, which every default age
 LinkedIn tools are served per identity, so each is prefixed `linkedin-{account}-{identity}__`.
 
 `send_message` and `reply` send through one path: the text, the recipient and the file are read from the approved object, never from the call, and the send is refused until a person has approved exactly this content and refused again once it has gone. `recipient_provider_id` and `attachment_file_id` are detail lines, so changing either withdraws the approval. `send_message` takes no `attachments`: a call that passes them gets `INVALID_INPUT`. A file is checked at send time: it must be in the caller's workspace, typed by its bytes (not its name), at most 10 MB, and not changed after the approval.
+
+An **email with files** (a receipt to forward to an accountant) names workspace files in `attachment_file_ids`: save each with `create_file`, then `metadata: { kind: "email", to, subject, attachment_file_ids: ["<file id>", ...] }`. The ids are a detail line of the preview ("Attachments", shown as file names), so adding, removing or swapping a file changes the content hash and withdraws the approval. Both `gmail_send_email` (a multipart message) and `resend_send_email` (the Resend `attachments` field) read the files from the approved object at send time, never from the call. A send is refused, and nothing goes out or is used up, when the list is over 5 files or 20 MB, an id is not a file of this workspace, or a file was changed after the approval (an approval covers the ids and not what a file holds, so an overwritten file needs a new approval). Only the object route carries files: an approval card (`approval_comment_id`) cannot.
 
 A LinkedIn reply is a task filed with `channel: "linkedin_dm"` (that matches the kind, so `kind` is not needed) and `to` (who it goes to; without it the card warns "To is not filed"), `thread_id` (the conversation) and `reply_to` (the message being answered, shown above the draft):
 
