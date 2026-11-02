@@ -584,6 +584,14 @@ run_agent() {
 
   case "$RUNTIME" in
     claude-code)
+      # The Claude login written by setup_claude_credentials also makes the CLI
+      # load every connector on that Claude account (mcp__claude_ai_<name>__*).
+      # The account has a "Maskin" connector, so each session listed the whole
+      # Maskin tool set twice, next to the one injected as mcp__maskin__. Agents
+      # get their tools from MCP_SERVERS_JSON / AGENT_MCP_JSON, never from the
+      # account, so switch the account connectors off. A session can opt back in
+      # with env_vars ENABLE_CLAUDEAI_MCP_SERVERS=true.
+      export ENABLE_CLAUDEAI_MCP_SERVERS="${ENABLE_CLAUDEAI_MCP_SERVERS:-false}"
       local max_turns="${MAX_TURNS:-5000}"
       local mcp_args=()
       if [ -n "$MCP_CONFIG_FILE" ]; then
