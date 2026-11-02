@@ -2720,6 +2720,15 @@
 							"format": "date-time"
 						},
 						"required": false,
+						"name": "updated_before",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "date-time"
+						},
+						"required": false,
 						"name": "updated_after",
 						"in": "query"
 					},

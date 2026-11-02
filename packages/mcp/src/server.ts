@@ -4129,8 +4129,12 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: listDefinitions.list_objects.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
-		async (args) => {
-			if (listContractOn) return listObjectsPage(config, args, 'list_objects')
+		// The definition is one of two schemas (see listDefinitions), which stops the compiler
+		// inferring the arguments, so they are typed here: the contract's on the way in, the
+		// pre-contract's below.
+		async (contractArgs: z.infer<typeof tools.list_objects.inputSchema>) => {
+			if (listContractOn) return listObjectsPage(config, contractArgs, 'list_objects')
+			const args = contractArgs as z.infer<typeof legacyListTools.list_objects.inputSchema>
 			// Pre-contract handler, kept for the rollback switch.
 			// The API's cursor keyset can seek on either `createdAt` (default) or
 			// `updatedAt` (when `sort` is set) — both are real timestamp columns
