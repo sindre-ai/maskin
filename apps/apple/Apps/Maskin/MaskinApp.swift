@@ -57,7 +57,8 @@ struct MaskinApp: App {
 				baseURL: environment.baseURL, clientSource: environment.clientSource,
 				credentials: environment.auth.credentialsProvider),
 			environment: .detect(), platform: platform,
-			appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+			appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+			network: NWPathNetworkMonitor()
 		)
 		#if os(iOS)
 			Self.setUpLiveActivity(environment: environment, registrar: registrar)
