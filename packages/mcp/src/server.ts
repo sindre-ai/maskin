@@ -1754,6 +1754,115 @@ async function waitForChatReplies(
 	}
 }
 
+interface CommentReplyEvent {
+	id: number
+	actorId: string
+	actorName?: string
+	data?: { content?: string; parentEventId?: number | null } | null
+	createdAt?: string
+}
+
+/**
+ * Holds until each awaited agent has replied in the thread of the comment
+ * `commentId` on `objectId`. A reply is a comment by that agent whose parent is the
+ * comment. An agent that never replies is given up on when it has no live session any
+ * more, so a failed run does not hold the caller for the full wait.
+ */
+async function waitForCommentReplies(
+	config: McpConfig,
+	opts: {
+		workspaceId: string | undefined
+		objectId: string
+		commentId: number
+		awaitedActorIds: string[]
+	},
+) {
+	const wsOpts = { workspaceId: opts.workspaceId }
+	const pending = new Set(opts.awaitedActorIds)
+	const seen = new Map<number, CommentReplyEvent>()
+	const idlePolls = new Map<string, number>()
+	const unanswered = new Set<string>()
+	const deadline = Date.now() + CHAT_WAIT_MAX_MS
+	let attempt = 0
+	let pollFailures = 0
+	let pollError: string | undefined
+
+	while (pending.size > 0 && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(attempt)))
+		attempt += 1
+		try {
+			const query = new URLSearchParams({
+				entity_type: 'object',
+				entity_id: opts.objectId,
+				action: 'commented',
+				since: String(opts.commentId),
+				limit: '100',
+			})
+			const rows = (await apiCall(
+				config,
+				'GET',
+				`/api/events/history?${query}`,
+				undefined,
+				wsOpts,
+			)) as CommentReplyEvent[]
+			pollFailures = 0
+			pollError = undefined
+			for (const row of Array.isArray(rows) ? rows : []) {
+				if (!opts.awaitedActorIds.includes(row.actorId)) continue
+				if (row.data?.parentEventId !== opts.commentId) continue
+				seen.set(row.id, row)
+				pending.delete(row.actorId)
+			}
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) break
+			continue
+		}
+		if (pending.size === 0 || attempt <= CHAT_WAIT_GRACE_POLLS) continue
+
+		for (const actorId of [...pending]) {
+			let hasLiveSession = false
+			try {
+				const sessions = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions?actor_id=${actorId}&limit=5`,
+					undefined,
+					wsOpts,
+				)) as ChatSessionRow[]
+				const live = latestSessionByActor(Array.isArray(sessions) ? sessions : []).get(actorId)
+				hasLiveSession =
+					!!live && !ENDED_SESSION_STATUSES.includes(live.status) && live.status !== 'paused'
+			} catch {
+				// A failed lookup is not evidence the agent is gone: keep waiting.
+				continue
+			}
+			const idle = hasLiveSession ? 0 : (idlePolls.get(actorId) ?? 0) + 1
+			idlePolls.set(actorId, idle)
+			if (idle >= CHAT_WAIT_IDLE_POLLS) {
+				pending.delete(actorId)
+				unanswered.add(actorId)
+			}
+		}
+	}
+	for (const actorId of pending) unanswered.add(actorId)
+
+	const replies = [...seen.values()].sort((a, b) => a.id - b.id)
+	return {
+		settled: unanswered.size === 0,
+		replies,
+		...(unanswered.size > 0
+			? {
+					unanswered_actor_ids: [...unanswered],
+					message:
+						'Some agents did not reply: they have no live session, or the wait ran out. Read the thread with get_comments, or see what they did with get_session_activity.',
+				}
+			: {}),
+		...(pollError ? { poll_error: pollError } : {}),
+	}
+}
+
 /** A participant as the conversation route returns it. */
 interface ChatParticipant {
 	actorId: string
@@ -5737,9 +5846,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, no_thread, ...body } = args as {
+			const { workspace_id, no_thread, wait, ...body } = args as {
 				workspace_id?: string
 				no_thread?: boolean
+				wait?: boolean
 				parent_event_id?: number
 				[key: string]: unknown
 			}
@@ -5762,9 +5872,42 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', '/api/events', body, {
 				workspaceId: workspace_id,
 			})
+			let waitResult:
+				| Awaited<ReturnType<typeof waitForCommentReplies>>
+				| { note: string }
+				| undefined
+			if (wait) {
+				const posted = result as { id?: number; actorId?: string }
+				const mentioned = ((body.mentions as string[] | undefined) ?? []).filter(
+					(id) => id !== posted.actorId,
+				)
+				const agentIds: string[] = []
+				for (const id of mentioned) {
+					try {
+						const actor = (await apiCall(config, 'GET', `/api/actors/${id}`, undefined, {
+							workspaceId: workspace_id,
+						})) as ActorRow
+						if (actor?.type === 'agent') agentIds.push(id)
+					} catch {}
+				}
+				if (typeof posted.id !== 'number' || agentIds.length === 0) {
+					waitResult = { note: 'No agent was mentioned, so there is nothing to wait for.' }
+				} else {
+					waitResult = await waitForCommentReplies(config, {
+						workspaceId: workspace_id,
+						objectId: String(body.entity_id),
+						commentId: posted.id,
+						awaitedActorIds: agentIds,
+					})
+				}
+			}
+			const payload =
+				waitResult && result && typeof result === 'object'
+					? { ...(result as object), wait: waitResult }
+					: result
 			return {
 				_meta: meta('create_comment', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
 			}
 		},
 	)
