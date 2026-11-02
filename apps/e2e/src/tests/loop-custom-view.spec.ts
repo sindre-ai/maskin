@@ -61,8 +61,12 @@ async function seedLoopWithView(account: {
 		const task = await account.api.createObject(account.workspaceId, {
 			type: 'task',
 			title,
-			status,
+			status: 'todo',
 		})
+		// A task cannot be created as done; move it there after.
+		if (status === 'done') {
+			await account.api.updateObject(task.id, account.workspaceId, { status })
+		}
 		if (inLoop) {
 			await account.api.createRelationship(account.workspaceId, {
 				source_type: 'object',

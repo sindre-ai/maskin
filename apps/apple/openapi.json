@@ -25398,6 +25398,175 @@
 				}
 			}
 		},
+		"/api/data/next-change": {
+			"get": {
+				"tags": [
+					"data"
+				],
+				"summary": "When a query next changes through time alone",
+				"description": "For the loop page: the next moment the answer to a query changes with no write (an object ageing out of a rolling window, or a day or hour rolling over), or null. Not part of the agent tools.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 2,
+							"maxLength": 4000,
+							"description": "JSON-encoded query: { scope, type, filters, group_by, aggregate }. See the query_data MCP tool."
+						},
+						"required": true,
+						"name": "spec",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The next time-driven change",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"in_ms": {
+											"type": [
+												"integer",
+												"null"
+											],
+											"minimum": 0
+										}
+									},
+									"required": [
+										"in_ms"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid query",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Loop scope not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/skjald/authorize": {
 			"post": {
 				"x-viewer-policy": "writer",

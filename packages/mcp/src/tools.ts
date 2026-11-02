@@ -1749,22 +1749,13 @@ export const tools = {
 
 	set_loop_view: {
 		description: [
-			'Pin an HTML file to a loop as its custom view, or clear it with file_id null. The loop page shows it in place of the default stats and flow (for viewers with the custom-view feature on). Sets metadata.view_file_id; the same file again is a no-op. Fails if the id is not a loop or the file is not text/html.',
-			'',
-			'How to build a good view. A loop view answers one question: are we reaching the outcome?',
-			'1. Open with the loop outcome in one plain sentence, then where it stands: status and the headline number vs its target.',
-			'2. Then the three to five metrics that matter most for that outcome, never more. Each shows a name, the current value with its unit, a comparison (vs target, vs last week) and where it comes from. No metric without a declared source.',
-			'3. Then what needs a person now, if anything. Cut anything that does not change a decision.',
-			'Build rules: one self-contained HTML file (create_file, mime_type text/html), no network calls, light math in the page is fine, an empty state and an error state for every number (show the error message, never a bare "Could not load"), readable in light and dark. Test every query with query_data before pinning. Queries scan at most 10000 objects and return at most 50 groups; when a result has rows_truncated or groups_truncated true its numbers are partial, so narrow the query (a loop scope, a date bound) rather than showing a total that looks exact. The loop page also shows a "partial" note when that happens.',
-			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>"), which returns a promise. Only declared names are answered; the page can read data, never write it.',
-			'Live: every query runs against the database each time, so numbers are current without anyone rewriting the page. While the page is open it reloads itself when a change to the objects it queries changes one of its numbers, so query once at start and do not poll or add refresh code. Use moving date bounds ("now-7d", "today-30d") in sources, never fixed dates, and group_by "created_at.day" for per-day series, so a pinned view stays correct over time.',
-			'Skeleton:',
-			'<h1 id="outcome">Outcome in one plain sentence</h1>',
-			'<p id="headline">Loading</p>',
-			'<ul id="metrics"><!-- 3 to 5 rows: name, value + unit, vs target, source --></ul>',
-			'<p id="needs">Needs a person: nothing right now</p>',
+			'Pin an HTML file to a loop as its custom view, or clear it with file_id null. The loop page shows it in place of the default stats and flow. Sets metadata.view_file_id. Fails if the id is not a loop or the file is not text/html.',
+			'A view answers one question: are we reaching the outcome? Open with the outcome in one plain sentence and the headline number vs its target, then the three to five metrics that matter most (name, value with unit, comparison, source), then what needs a person now.',
+			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. Test each query with query_data first. Results with rows_truncated or groups_truncated true are partial: narrow the query.',
+			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>") (a promise). The page reloads itself when its numbers change, so query once and never poll. Use moving date bounds ("now-7d", "today-30d"), never fixed dates.',
+			'Example:',
 			'<script id="maskin-sources" type="application/json">{"done":{"scope":"<loop id>","type":"task","filters":{"status":"done"}}}</script>',
-			'<script>maskin.query("done").then(r => { headline.textContent = r.total.count + " tasks done" }).catch(e => { console.error(e); headline.textContent = "Could not load: " + e.message })</script>',
+			'<script>maskin.query("done").then(r => { headline.textContent = r.total.count + " tasks done" }).catch(e => { headline.textContent = "Could not load: " + e.message })</script>',
 		].join('\n'),
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
