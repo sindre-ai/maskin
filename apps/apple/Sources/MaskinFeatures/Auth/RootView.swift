@@ -2,6 +2,10 @@ import MaskinCore
 import MaskinUI
 import SwiftUI
 
+#if os(iOS)
+	import UIKit
+#endif
+
 /// App root: login when signed out, the shell otherwise. Also drives the runtime: restores the
 /// stored session, loads workspaces after sign-in, points the event stream and the notification
 /// inbox at the selected workspace, and routes deep links (held until signed in).
@@ -131,6 +135,11 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
 			runtime.timeZoneDidChange()
 		}
+		#if os(iOS)
+			.onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+				chatImages.clearMemory()
+			}
+		#endif
 		.onChange(of: [auth.session?.actorId ?? "", auth.session?.workspaceId ?? ""]) {
 			widgetReloader.reload()
 		}
