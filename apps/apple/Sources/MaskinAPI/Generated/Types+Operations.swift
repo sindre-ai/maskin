@@ -46414,10 +46414,14 @@ public enum Operations {
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/drafts`.
                         public var drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload?
-                        /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                        /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/only_while_status`.
                         public var only_while_status: [Swift.String]?
+                        /// Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/keep_on_status_change`.
+                        public var keep_on_status_change: Swift.Bool?
                         /// ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/expires_at`.
@@ -46426,7 +46430,7 @@ public enum Operations {
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/no_status_action`.
                         public var no_status_action: Swift.Bool?
-                        /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp`.
                         public struct status_stampPayload: Codable, Hashable, Sendable {
@@ -46451,7 +46455,7 @@ public enum Operations {
                                 case status
                             }
                         }
-                        /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp`.
                         public var status_stamp: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.status_stampPayload?
@@ -46528,10 +46532,11 @@ public enum Operations {
                         ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                         ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                         ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
-                        ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                        ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
+                        ///   - keep_on_status_change: Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
                         ///   - expires_at: ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                         ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
-                        ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        ///   - status_stamp: Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                         ///   - draft: Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.
                         public init(
                             title: Swift.String,
@@ -46540,6 +46545,7 @@ public enum Operations {
                             options: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayload,
                             drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload? = nil,
                             only_while_status: [Swift.String]? = nil,
+                            keep_on_status_change: Swift.Bool? = nil,
                             expires_at: Foundation.Date? = nil,
                             no_status_action: Swift.Bool? = nil,
                             status_stamp: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.status_stampPayload? = nil,
@@ -46551,6 +46557,7 @@ public enum Operations {
                             self.options = options
                             self.drafts = drafts
                             self.only_while_status = only_while_status
+                            self.keep_on_status_change = keep_on_status_change
                             self.expires_at = expires_at
                             self.no_status_action = no_status_action
                             self.status_stamp = status_stamp
@@ -46563,6 +46570,7 @@ public enum Operations {
                             case options
                             case drafts
                             case only_while_status
+                            case keep_on_status_change
                             case expires_at
                             case no_status_action
                             case status_stamp
@@ -67904,10 +67912,14 @@ public enum Operations {
                                     public typealias draftsPayload = [Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
                                     public var drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
-                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
                                     public var only_while_status: [Swift.String]?
+                                    /// Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/keep_on_status_change`.
+                                    public var keep_on_status_change: Swift.Bool?
                                     /// ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/expires_at`.
@@ -67916,7 +67928,7 @@ public enum Operations {
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/no_status_action`.
                                     public var no_status_action: Swift.Bool?
-                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
                                     public struct status_stampPayload: Codable, Hashable, Sendable {
@@ -67941,7 +67953,7 @@ public enum Operations {
                                             case status
                                         }
                                     }
-                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
                                     public var status_stamp: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload?
@@ -68228,10 +68240,11 @@ public enum Operations {
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
-                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
+                                    ///   - keep_on_status_change: Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
                                     ///   - expires_at: ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                                     ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
-                                    ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///   - status_stamp: Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -68240,6 +68253,7 @@ public enum Operations {
                                         options: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         only_while_status: [Swift.String]? = nil,
+                                        keep_on_status_change: Swift.Bool? = nil,
                                         expires_at: Foundation.Date? = nil,
                                         no_status_action: Swift.Bool? = nil,
                                         status_stamp: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload? = nil,
@@ -68251,6 +68265,7 @@ public enum Operations {
                                         self.options = options
                                         self.drafts = drafts
                                         self.only_while_status = only_while_status
+                                        self.keep_on_status_change = keep_on_status_change
                                         self.expires_at = expires_at
                                         self.no_status_action = no_status_action
                                         self.status_stamp = status_stamp
@@ -68263,6 +68278,7 @@ public enum Operations {
                                         case options
                                         case drafts
                                         case only_while_status
+                                        case keep_on_status_change
                                         case expires_at
                                         case no_status_action
                                         case status_stamp
@@ -71556,10 +71572,14 @@ public enum Operations {
                                     public typealias draftsPayload = [Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
                                     public var drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
-                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
                                     public var only_while_status: [Swift.String]?
+                                    /// Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/keep_on_status_change`.
+                                    public var keep_on_status_change: Swift.Bool?
                                     /// ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/expires_at`.
@@ -71568,7 +71588,7 @@ public enum Operations {
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/no_status_action`.
                                     public var no_status_action: Swift.Bool?
-                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
                                     public struct status_stampPayload: Codable, Hashable, Sendable {
@@ -71593,7 +71613,7 @@ public enum Operations {
                                             case status
                                         }
                                     }
-                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
                                     public var status_stamp: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload?
@@ -71880,10 +71900,11 @@ public enum Operations {
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
-                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
+                                    ///   - keep_on_status_change: Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
                                     ///   - expires_at: ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                                     ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
-                                    ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///   - status_stamp: Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -71892,6 +71913,7 @@ public enum Operations {
                                         options: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         only_while_status: [Swift.String]? = nil,
+                                        keep_on_status_change: Swift.Bool? = nil,
                                         expires_at: Foundation.Date? = nil,
                                         no_status_action: Swift.Bool? = nil,
                                         status_stamp: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload? = nil,
@@ -71903,6 +71925,7 @@ public enum Operations {
                                         self.options = options
                                         self.drafts = drafts
                                         self.only_while_status = only_while_status
+                                        self.keep_on_status_change = keep_on_status_change
                                         self.expires_at = expires_at
                                         self.no_status_action = no_status_action
                                         self.status_stamp = status_stamp
@@ -71915,6 +71938,7 @@ public enum Operations {
                                         case options
                                         case drafts
                                         case only_while_status
+                                        case keep_on_status_change
                                         case expires_at
                                         case no_status_action
                                         case status_stamp
