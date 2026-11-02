@@ -57,6 +57,21 @@ export const objectResponseSchema = z.object({
 	// the ring on states where the agent isn't actively working. Null when
 	// there is no active session, or when the session row has been deleted.
 	active_session_state: z.string().nullable().optional(),
+	// Newest session started for this object (failure, origin and Watch/Stop
+	// cards). Detail endpoint only; null when there is no session or the caller
+	// may not read it. failure_reason is a short message, never raw log text.
+	last_session: z
+		.object({
+			id: z.string().uuid(),
+			status: z.string(),
+			agent_id: z.string().uuid(),
+			started_at: z.string().nullable(),
+			failure_reason: z.string().nullable(),
+			chat_id: z.string().uuid().nullable(),
+			created_by_actor_id: z.string().uuid(),
+		})
+		.nullable()
+		.optional(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
