@@ -30,6 +30,13 @@ public struct ForYouScreen: View {
 	@State private var path: [String] = []
 	/// The Undo toast: shared by the cards' gestures and the ⋯ menu's "Take every suggested".
 	@State private var undoOffer: UndoOffer?
+	@State private var showDisplay = false
+
+	/// "Good evening, Sebastian": the large title. Falls back to the tab's name when the greeting
+	/// has no one to address (signed out previews).
+	private var greeting: String {
+		StoryDerivation.greeting(name: environment.auth.session?.name)
+	}
 
 	public var body: some View {
 		NavigationStack(path: $path) {
@@ -133,6 +140,8 @@ struct ForYouFeedView: View {
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
+	/// "Take every suggested option?" is asking for confirmation.
+	@State private var confirmTakeSuggested = false
 
 	private let readableWidth: CGFloat = 680
 	/// Compact width reads as a 680 pt column; the wide feed uses the full width (4-iPad.md).
@@ -157,7 +166,7 @@ struct ForYouFeedView: View {
 						.listRowInsets(EdgeInsets())
 					ForYouHeaderView(
 						dateLine: store.dateLine(at: fixedNow), spokenDate: store.spokenDate(at: fixedNow),
-						summary: store.blockedSummary
+						summary: store.blockedSummary, lead: store.waitingLead, detail: store.blockedDetail
 					)
 					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					if let stories, !stories.cards.isEmpty {
@@ -364,6 +373,29 @@ struct ForYouFeedView: View {
 			laterSection
 			handledSection(entries.filter { $0.bucket == .done })
 		}
+	}
+
+	/// "Needs you 5" with the ⋯ menu: take every suggested option, dismiss all updates.
+	@ViewBuilder private var needsHeader: some View {
+		let count = store.needsCount
+		if count > 0 {
+			SectionHeader(
+				title: "Needs you", count: count,
+				menu: [
+					store.suggestedOptionCount > 0
+						? ("Take every suggested option", { confirmTakeSuggested = true }) : nil,
+					store.entries.contains { $0.bucket == .fyi }
+						? ("Dismiss all updates", { store.dismissAllFYIs() }) : nil,
+				].compactMap { $0 }
+			)
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+		}
+	}
+
+	private func takeSuggested() {
+		MaskinHaptics.play(.success)
+		let batch = withAnimation(MaskinMotion.standard) { store.takeSuggestedOptions() }
+		offerUndo(batch.summary) { withAnimation(MaskinMotion.standard) { store.undo(batch) } }
 	}
 
 	private func groups(of entries: [FeedEntry]) -> [(bucket: FeedBucket, entries: [FeedEntry])] {
@@ -621,6 +653,8 @@ private struct SectionHeader: View {
 	/// What the count reads as ("2 drafts"); the bare number when nil.
 	var countText: String?
 	var action: (title: String, run: () -> Void)?
+	/// A ⋯ menu at the trailing edge (Needs you): bulk actions on the group.
+	var menu: [(title: String, run: () -> Void)] = []
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s3) {

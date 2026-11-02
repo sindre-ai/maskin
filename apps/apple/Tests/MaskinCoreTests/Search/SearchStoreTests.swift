@@ -205,7 +205,7 @@ struct SearchStoreTests {
 
 	@Test("the search tab offers All, Team, Objects, Flows and Agents")
 	func chipOrder() {
-		#expect(SearchScope.chips.map(\.title) == ["All", "Team", "Objects", "Flows", "Agents"])
+		#expect(SearchScope.chips.map(\.title) == ["All", "Items", "Chats", "Flows", "Files"])
 	}
 
 	@Test("one failing source still yields results and flags the list as partial")

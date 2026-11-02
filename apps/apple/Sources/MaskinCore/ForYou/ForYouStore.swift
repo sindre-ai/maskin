@@ -598,6 +598,21 @@ public final class ForYouStore {
 			sender: { [self] in agent(of: $0)?.name ?? senderName(of: $0) })
 	}
 
+	/// "5 decisions are waiting on you." for the bold lead under the greeting. Counts the asks the
+	/// feed ranks as needing the reader, ignoring the intent filter like `blockedSummary`.
+	public var waitingLead: String? {
+		let blocking = build(deferred: false, ignoringIntent: true).filter { $0.bucket == .needs }
+		return ForYouHeader.lead(waiting: blocking.count, loaded: phase == .loaded)
+	}
+
+	/// The sentence after the lead: who needs a call first. Nil when nothing is blocked (the lead
+	/// already says so).
+	public var blockedDetail: String? {
+		let blocking = build(deferred: false, ignoringIntent: true).filter { $0.bucket == .needs }
+		guard !blocking.isEmpty else { return nil }
+		return blockedSummary
+	}
+
 	// MARK: Groups
 
 	/// The "Needs you" list with related approvals folded into groups.

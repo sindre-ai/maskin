@@ -93,6 +93,9 @@ struct ObjectPropertiesCard: View {
 	let store: ObjectDetailStore
 	let object: WorkObject
 	@State private var showAll = false
+	@State private var addingProperty = false
+	@State private var schema: SchemaStore?
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	private static var preview: Int { 6 }
 
@@ -141,7 +144,13 @@ struct ObjectPropertiesCard: View {
 	var body: some View {
 		let all = rows
 		if !all.isEmpty {
-			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			content(all)
+		}
+	}
+
+	@ViewBuilder
+	private func content(_ all: [(key: String, label: String, value: String)]) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 				SectionHeader("Properties")
 				VStack(spacing: MaskinSpace.s6) {
 					ForEach(showAll ? all : Array(all.prefix(Self.preview)), id: \.key) { row in
@@ -161,11 +170,26 @@ struct ObjectPropertiesCard: View {
 						.foregroundStyle(MaskinColor.ink4)
 						.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
 					}
+					if let schema, schema.canEdit {
+						Button { addingProperty = true } label: {
+							Label("Add property", systemImage: "plus")
+								.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
+						}
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink3)
+					}
 				}
 				.padding(MaskinSpace.s9)
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 			}
+		.task {
+			if schema == nil, let environment = runtime?.environment {
+				schema = SettingsServices(environment: environment).schemaStore()
+			}
+		}
+		.sheet(isPresented: $addingProperty) {
+			if let schema { AddPropertySheet(store: store, schema: schema, type: object.type) }
 		}
 	}
 }

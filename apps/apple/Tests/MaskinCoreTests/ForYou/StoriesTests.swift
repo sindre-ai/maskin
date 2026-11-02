@@ -105,6 +105,7 @@ struct StoryDerivationTests {
 		#expect(StoryDerivation.greeting(name: "Sam Lee", now: at(8), calendar: cal) == "Good morning, Sam")
 		#expect(StoryDerivation.greeting(name: nil, now: at(14), calendar: cal) == "Good afternoon")
 		#expect(StoryDerivation.greeting(name: "Sam", now: at(20), calendar: cal) == "Good evening, Sam")
+		#expect(StoryDerivation.greeting(name: "Sam", now: at(3), calendar: cal) == "Good night, Sam")
 	}
 }
 

@@ -47,6 +47,10 @@ public struct SettingsScreen: View {
 							symbol: "person.crop.circle", title: "Your profile",
 							detail: environment.auth.session?.name)
 					}
+					NavigationLink(value: SettingsRoute.workspaces) {
+						SettingsRow(
+							symbol: "square.stack", title: "Workspaces", detail: services.workspace?.name)
+					}
 					NavigationLink(value: SettingsRoute.deleteAccount) {
 						SettingsRow(
 							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
@@ -63,36 +67,59 @@ public struct SettingsScreen: View {
 							SettingsRow(
 								symbol: "building.2", title: "Workspace name", detail: services.workspace?.name)
 						}
+						NavigationLink(value: SettingsRoute.members) {
+							SettingsRow(
+								symbol: "person.2", title: "Members",
+								detail: services.workspace.map { "\($0.memberCount)" })
+						}
+						NavigationLink(value: SettingsRoute.integrations) {
+							SettingsRow(symbol: "link", title: "Integrations")
+						}
 						NavigationLink(value: SettingsRoute.skills) {
 							SettingsRow(symbol: "wand.and.stars", title: "Skills")
 						}
+						NavigationLink(value: SettingsRoute.keys) {
+							SettingsRow(symbol: "key", title: "Keys and MCP")
+						}
+						NavigationLink(value: SettingsRoute.triggers) {
+							SettingsRow(symbol: "bolt", title: "Triggers")
+						}
 						NavigationLink(value: SettingsRoute.objectTypes) {
-							SettingsRow(symbol: "square.stack.3d.up", title: "Object types")
+							SettingsRow(symbol: "square.stack.3d.up", title: "Item types")
 						}
-						Button {
-							if let url = services.webURL("extensions") { openURL(url) }
-						} label: {
-							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions", detail: "Opens in browser")
+						NavigationLink(value: SettingsRoute.extensions) {
+							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions")
 						}
-						NavigationLink(value: SettingsRoute.deleteWorkspace) {
-							SettingsRow(symbol: "trash", title: "Delete workspace", destructive: true)
+						NavigationLink(value: SettingsRoute.claudeImport) {
+							SettingsRow(symbol: "arrow.down.circle", title: "Import from Claude")
+						}
+						NavigationLink(value: SettingsRoute.billing) {
+							SettingsRow(symbol: "creditcard", title: "Billing")
 						}
 					} header: {
 						Text("Setup")
-					} footer: {
-						Text("Members, integrations, billing and keys are under your profile.")
 					}
 				}
-				if let appLock, appLock.availability != .unavailable || appLock.isEnabled {
-					Section {
-						Toggle(isOn: appLockBinding(appLock)) {
-							SettingsRow(symbol: "lock", title: "App lock")
+				Section {
+					NavigationLink(value: SettingsRoute.deviceSignIn) {
+						SettingsRow(symbol: "tv", title: "Sign in a device")
+					}
+					if let appLock, appLock.availability != .unavailable || appLock.isEnabled {
+						NavigationLink(value: SettingsRoute.appLock) {
+							SettingsRow(
+								symbol: "lock", title: "App lock", detail: appLock.isEnabled ? "On" : "Off")
 						}
-						.disabled(appLock.isAuthenticating)
-					} header: {
-						Text("Security")
-					} footer: {
-						Text(Self.appLockFooter(appLock.availability))
+					}
+				} header: {
+					Text("Security")
+				} footer: {
+					Text("Sign in a device approves the code your Apple TV or Mac shows.")
+				}
+				if services.workspaceId != nil {
+					Section {
+						NavigationLink(value: SettingsRoute.deleteWorkspace) {
+							SettingsRow(symbol: "trash", title: "Delete workspace", destructive: true)
+						}
 					}
 				}
 				Section("About") {
@@ -135,6 +162,38 @@ public struct SettingsScreen: View {
 						currentName: services.workspace?.name ?? "", role: services.role)
 				case .skills: SkillsView(store: services.skillsStore())
 				case .objectTypes: ObjectTypesView(store: services.schemaStore())
+				case .workspaces:
+					WorkspacesPage(workspaces: environment.workspaces, creator: services.workspaceStore())
+				case .members:
+					MembersView(store: services.membersStore())
+				case .integrations:
+					IntegrationsView(
+						store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
+				case .billing:
+					BillingView(
+						store: services.billingStore(),
+						manageURL: services.role == .owner ? services.webURL("billing") : nil)
+				case .keys:
+					KeysPage(
+						store: services.apiKeyStore(), mcp: services.mcpStore(),
+						workspaceId: services.workspaceId ?? "", apiKey: services.apiKey,
+						toolServers: HTTPToolServersSource(http: services.http))
+				case .triggers:
+					if let workspaceID = services.workspaceId {
+						TriggersPage(environment: environment, workspaceID: workspaceID)
+					}
+				case .extensions:
+					ExtensionsPage(store: services.extensionsStore(), webURL: services.webURL("extensions"))
+				case .claudeImport:
+					ClaudeImportPage(
+						store: services.claudeConnectionStore(), webURL: services.webURL("keys"),
+						canManage: services.role.canManage)
+				case .deviceSignIn:
+					DeviceSignInPage(
+						store: services.deviceApprovalStore(), account: environment.auth.session?.email,
+						workspaceName: services.workspace?.name)
+				case .appLock:
+					if let appLock { AppLockSettingsPage(lock: appLock) }
 				case .deleteAccount:
 					DeleteAccountView(
 						store: services.accountDeletionStore { [environment, runtime] in

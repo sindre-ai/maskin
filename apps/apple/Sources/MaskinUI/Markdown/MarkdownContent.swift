@@ -229,7 +229,11 @@ private struct MarkdownBlockView: View {
 				MarkdownBlocksView(blocks: inner).foregroundStyle(onInverse ? primary.opacity(0.8) : MaskinColor.ink3)
 			}
 		case .codeBlock(let language, let code):
-			MarkdownCodeBlock(language: language, code: code, showsHeader: style == .chat)
+			if language?.lowercased() == "chart" {
+				MarkdownChartBlock(source: code)
+			} else {
+				MarkdownCodeBlock(language: language, code: code, showsHeader: style == .chat)
+			}
 		case .table(let header, let alignments, let rows):
 			MarkdownTable(header: header, alignments: alignments, rows: rows)
 		case .thematicBreak:

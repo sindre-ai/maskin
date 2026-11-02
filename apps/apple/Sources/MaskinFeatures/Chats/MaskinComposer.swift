@@ -30,13 +30,17 @@ public struct MaskinComposerConfig {
 	public var roster: MentionRoster? = nil
 	/// Told when the field gains or loses focus (For you hides its quick-question chips while typing).
 	public var onFocusChange: ((Bool) -> Void)? = nil
+	/// What `/` lists and creates. Nil: `/` is plain text.
+	public var slash: SlashSource? = nil
 
 	public init(
 		variant: MaskinComposerVariant = .floating, placeholder: String, showsAttach: Bool = true,
 		showsMic: Bool = true, showsSend: Bool = true, goLive: (() -> Void)? = nil,
 		suggestions: @escaping (String) -> [ChatParticipant] = { _ in [] }, inConversation: Set<String> = [],
-		roster: MentionRoster? = nil, onFocusChange: ((Bool) -> Void)? = nil
+		roster: MentionRoster? = nil, onFocusChange: ((Bool) -> Void)? = nil,
+		slash: SlashSource? = nil
 	) {
+		self.slash = slash
 		self.variant = variant
 		self.placeholder = placeholder
 		self.showsAttach = showsAttach
@@ -402,6 +406,28 @@ struct MaskinComposer: View {
 					focused = true
 				}
 			)
+			.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
+			.transition(.opacity.combined(with: .move(edge: .bottom)))
+		} else if !isDictating, let source = config.slash, let match = SlashTrigger.find(in: model.text) {
+			SlashSuggestions(
+				items: source.rows(query: match.query), isRecent: match.query.isEmpty, query: match.query,
+				onPick: { item in
+					model.pickSlash(
+						markdown: SlashReference.markdown(
+							title: item.title, workspaceID: source.workspaceID, objectID: item.id))
+					focused = true
+				},
+				onCreate: { type in
+					let query = match.query
+					Task {
+						if let link = await source.create(type, title: query) {
+							model.pickSlash(markdown: link)
+							focused = true
+						}
+					}
+				}
+			)
+			.task(id: match.query) { await source.refresh(query: match.query) }
 			.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
 			.transition(.opacity.combined(with: .move(edge: .bottom)))
 		} else if let match = EmojiTrigger.find(in: model.text) {

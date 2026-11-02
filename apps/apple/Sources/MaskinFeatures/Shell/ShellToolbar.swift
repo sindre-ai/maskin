@@ -35,6 +35,8 @@ public struct ShellActions {
 	public var displayToggle: (() -> Void)?
 	/// The Display menu's glyph: three lines (filter / sort) or sliders (display options).
 	public var displaySymbol: String
+	/// The toggle button's accessibility label ("Filter", or "Display" when it opens a sheet).
+	public var displayToggleLabel: String
 	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
 	public var displayActive: Bool
 	/// Hides the profile avatar on this screen (Team).
@@ -46,11 +48,13 @@ public struct ShellActions {
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
 		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol,
 		displayActive: Bool = false, displayToggle: (() -> Void)? = nil,
+		displayToggleLabel: String = "Filter",
 		hidesAvatar: Bool = false, newAlwaysVisible: Bool = false
 	) {
 		self.hidesAvatar = hidesAvatar
 		self.newAlwaysVisible = newAlwaysVisible
 		self.displayToggle = displayToggle
+		self.displayToggleLabel = displayToggleLabel
 		self.displaySymbol = displaySymbol
 		self.new = new
 		self.newLabel = newLabel
@@ -125,13 +129,15 @@ private struct ShellToolbarModifier: ViewModifier {
 					}
 					if actions.display == nil, let toggle = actions.displayToggle {
 						Button(action: toggle) {
-							Label("Filter", systemImage: actions.displaySymbol)
+							Label(actions.displayToggleLabel, systemImage: actions.displaySymbol)
 								.foregroundStyle(actions.displayActive ? MaskinColor.sigInk : MaskinColor.ink)
 								.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
 								.background(
 									Circle().fill(actions.displayActive ? MaskinColor.sigTint : Color.clear))
 						}
-						.accessibilityLabel(actions.displayActive ? "Filter, shown" : "Filter")
+						.accessibilityLabel(
+							actions.displayActive
+								? "\(actions.displayToggleLabel), options changed" : actions.displayToggleLabel)
 					}
 					// Live sits before the avatar, which stays last (as in the v6 bar).
 					if actions.live {

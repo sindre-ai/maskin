@@ -59,3 +59,59 @@ struct RequestCardSettled: View {
 		.accessibilityElement(children: .combine)
 	}
 }
+
+/// A request card's heading: the ask as a headline over one quieter line (v3 cards 4a to 4c).
+struct RequestCardTitle: View {
+	let title: String
+	var subtitle: String?
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+			Text(title)
+				.maskinText(.headline).foregroundStyle(MaskinColor.ink)
+				.fixedSize(horizontal: false, vertical: true)
+			if let subtitle, !subtitle.isEmpty {
+				Text(subtitle)
+					.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+					.fixedSize(horizontal: false, vertical: true)
+			}
+		}
+		.accessibilityElement(children: .combine)
+		.accessibilityAddTraits(.isHeader)
+	}
+}
+
+/// One labelled fact in a request card ("Access", "Lasts", "Shared"): a small label over its value,
+/// with room for a trailing control. Rows stack under a hairline.
+struct RequestCardRow<Trailing: View>: View {
+	let label: String
+	let value: String
+	var monospaced = false
+	@ViewBuilder var trailing: Trailing
+
+	var body: some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				Text(label).maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
+				Text(value)
+					.maskinText(.subhead)
+					.monospaced(monospaced)
+					.foregroundStyle(MaskinColor.ink2)
+					.fixedSize(horizontal: false, vertical: true)
+					.textSelection(.enabled)
+			}
+			Spacer(minLength: MaskinSpace.s3)
+			trailing
+		}
+		.padding(.vertical, MaskinSpace.s4)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.overlay(alignment: .top) { MaskinSurface.line.frame(height: 1) }
+		.accessibilityElement(children: .combine)
+	}
+}
+
+extension RequestCardRow where Trailing == EmptyView {
+	init(label: String, value: String, monospaced: Bool = false) {
+		self.init(label: label, value: value, monospaced: monospaced) { EmptyView() }
+	}
+}

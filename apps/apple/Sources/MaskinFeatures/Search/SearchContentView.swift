@@ -12,19 +12,29 @@ struct SearchNeedsYou: Identifiable, Equatable {
 	let type: String?
 }
 
+/// What the Create rows under the results can start.
+enum SearchCreate: CaseIterable {
+	case chat, flow
+
+	var title: String { self == .chat ? "New chat" : "New flow" }
+	var symbol: String { self == .chat ? "bubble.left" : "arrow.triangle.2.circlepath" }
+}
+
 /// The search tab's content for a given store state, in a scroll view.
 struct SearchContentView: View {
 	let store: SearchStore
 	var needsYou: [SearchNeedsYou] = []
 	var onOpenNeedsYou: (String) -> Void = { _ in }
 	var onAskChiefOfStaff: (String) -> Void = { _ in }
+	/// The Create rows under the results; nil hides that row.
+	var onCreate: (SearchCreate, String) -> Void = { _, _ in }
 	let onSelect: (SearchResult) -> Void
 
 	var body: some View {
 		ScrollView {
 			SearchContentBody(
 				store: store, onSelect: onSelect, showsChips: true, needsYou: needsYou,
-				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff)
+				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff, onCreate: onCreate)
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s5)
 				.frame(maxWidth: 760)
@@ -44,6 +54,9 @@ struct SearchContentBody: View {
 	var needsYou: [SearchNeedsYou] = []
 	var onOpenNeedsYou: (String) -> Void = { _ in }
 	var onAskChiefOfStaff: (String) -> Void = { _ in }
+	var onCreate: ((SearchCreate, String) -> Void)?
+
+	private var typed: String { store.query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
@@ -51,7 +64,9 @@ struct SearchContentBody: View {
 			SearchParticipantPills(store: store)
 			let suggestions = store.mentionSuggestions
 			if suggestions.isEmpty {
+				if !typed.isEmpty, askRowShows { askRow }
 				phaseContent
+				if !typed.isEmpty, onCreate != nil, store.phase == .results { createSection }
 			} else {
 				mentionMenu(suggestions)
 			}
@@ -75,6 +90,58 @@ struct SearchContentBody: View {
 			}
 		case .searching, .results:
 			results
+		}
+	}
+
+	private var askRowShows: Bool {
+		switch store.phase {
+		case .searching, .results: true
+		default: false
+		}
+	}
+
+	/// "Ask Chief of Staff" over the results: hands the typed words to a chat (v3 card 1c).
+	private var askRow: some View {
+		Button { onAskChiefOfStaff(typed) } label: {
+			HStack(spacing: MaskinSpace.s5) {
+				Image(systemName: "sparkles")
+					.maskinSymbol(MaskinFontSize.t16)
+					.foregroundStyle(MaskinColor.ink)
+					.frame(width: MaskinSpace.s13, height: MaskinSpace.s13)
+					.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.input, style: .continuous))
+					.accessibilityHidden(true)
+				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+					Text("Ask Chief of Staff").maskinText(.headline).foregroundStyle(MaskinColor.ink)
+					Text("\u{201C}\(typed)\u{201D}").maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				Image(systemName: "chevron.right").foregroundStyle(MaskinColor.ink5).accessibilityHidden(true)
+			}
+			.padding(.horizontal, MaskinSpace.s7)
+			.padding(.vertical, MaskinSpace.s5)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+	}
+
+	/// New chat and New flow, carrying what was typed, under the results.
+	private var createSection: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			MonoLabel("Create").accessibilityAddTraits(.isHeader)
+			card {
+				ForEach(Array(SearchCreate.allCases.enumerated()), id: \.element) { index, create in
+					if index > 0 { Divider() }
+					Button { onCreate?(create, typed) } label: {
+						Label(create.title, systemImage: create.symbol)
+							.maskinText(.body).foregroundStyle(MaskinColor.ink)
+							.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin, alignment: .leading)
+							.contentShape(Rectangle())
+					}
+					.buttonStyle(.maskinPressed)
+				}
+			}
 		}
 	}
 

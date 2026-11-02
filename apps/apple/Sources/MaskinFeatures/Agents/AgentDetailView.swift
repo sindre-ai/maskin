@@ -23,6 +23,10 @@ struct AgentDetailView: View {
 	@State private var confirmDelete = false
 	@State private var sessionToStop: AgentSession?
 	@State private var logSession: AgentSession?
+	@State private var showInstructions = false
+	#if os(iOS)
+	@State private var showComputer = false
+	#endif
 
 	/// Agents are changed by talking to someone, not through a form.
 	private func changeInChat() {
@@ -52,6 +56,8 @@ struct AgentDetailView: View {
 						onStop: { sessionToStop = $0 },
 						onOpenLog: runtime == nil ? nil : { logSession = $0 },
 						onChangeInChat: { changeInChat() },
+						onEditInstructions: { showInstructions = true },
+						onOpenComputer: computerAction,
 						objects: objects, onOpenObject: { runtime?.openObject($0) })
 				} else {
 					placeholder
@@ -74,6 +80,15 @@ struct AgentDetailView: View {
 					Button { startChat(live: false) } label: { Image(systemName: "plus") }
 						.accessibilityLabel("New chat with \(store.profile?.name ?? "agent")")
 					Menu {
+						if AgentActions.canPause(store.status) {
+							Button { Task { await store.pause() } } label: {
+								Label("Disable agent", systemImage: "pause.circle")
+							}
+							.disabled(!store.canPause)
+						} else if store.status == .paused {
+							Button { runTapped() } label: { Label("Enable agent", systemImage: "play.circle") }
+								.disabled(!store.canRun)
+						}
 						if store.canReset {
 							Button { confirmReset = true } label: { Label("Reset to defaults", systemImage: "arrow.counterclockwise") }
 						}
@@ -109,6 +124,21 @@ struct AgentDetailView: View {
 				.presentationDetents([.large])
 			}
 		}
+		.sheet(isPresented: $showInstructions) {
+			InstructionsEditorSheet(
+				agentName: store.profile?.name ?? "this agent", initial: store.profile?.systemPrompt ?? ""
+			) { text in await store.save(AgentEdit(systemPrompt: text)) }
+			.presentationDetents([.large])
+		}
+		#if os(iOS)
+		.fullScreenCover(isPresented: $showComputer) {
+			if let runtime, let profile = store.profile {
+				ComputerScreen(
+					agentName: profile.name, agentID: profile.id, environment: runtime.environment,
+					onDone: {})
+			}
+		}
+		#endif
 		.sheet(isPresented: $showNewTrigger) {
 			if let triggers {
 				NewTriggerSheet(store: triggers, onCreated: { _ in }, presetAgentID: store.profile?.id)
@@ -147,6 +177,15 @@ struct AgentDetailView: View {
 		} message: {
 			Text(store.notice ?? "")
 		}
+	}
+
+	/// The page menu's Computer row: iPhone and iPad only, where the live view exists.
+	private var computerAction: (() -> Void)? {
+		#if os(iOS)
+		runtime == nil ? nil : { showComputer = true }
+		#else
+		nil
+		#endif
 	}
 
 	/// Resuming a paused agent needs no prompt; a fresh run asks what to do.
@@ -188,6 +227,10 @@ struct AgentDetailContent: View {
 	/// Nil hides the log link on a session row (previews, snapshots).
 	var onOpenLog: ((AgentSession) -> Void)?
 	var onChangeInChat: () -> Void = {}
+	/// Nil hides the instructions Edit action (previews, snapshots).
+	var onEditInstructions: (() -> Void)?
+	/// Nil hides the Computer row (no runtime, or a platform without the live view).
+	var onOpenComputer: (() -> Void)?
 	/// The objects this agent drives, and what tapping one does.
 	var objects: [WorkObject] = []
 	var onOpenObject: (String) -> Void = { _ in }
@@ -199,6 +242,7 @@ struct AgentDetailContent: View {
 		case triggers = "Triggers"
 		case objects = "Objects"
 		case sessions = "Sessions"
+		case computer = "Computer"
 		var id: String { rawValue }
 
 		var symbol: String {
@@ -207,29 +251,105 @@ struct AgentDetailContent: View {
 			case .triggers: "bolt"
 			case .objects: "square.stack"
 			case .sessions: "clock.arrow.circlepath"
+			case .computer: "desktopcomputer"
 			}
 		}
 	}
 
 	var body: some View {
 		hero
-		if let live = store.liveSession {
-			card("Now") { LiveSessionRow(session: live) { onStop(live) } }
+		if store.status == .paused {
+			note("Disabled. Running sessions were held where they stopped. Enable the agent to continue.")
 		}
+		if store.status == .failed, let failed = store.sessions.first(where: \.isFailure) {
+			failedCard(failed)
+		}
+		if let live = store.liveSession {
+			card("Working now") { LiveSessionRow(session: live) { onStop(live) } }
+		}
+		stats
 		VStack(spacing: 0) {
-			ForEach(Page.allCases) { page in
-				NavigationLink {
-					subpage(page)
-				} label: {
-					pageRow(page)
+			ForEach(pages) { page in
+				if page == .computer {
+					Button { onOpenComputer?() } label: { pageRow(page) }
+						.buttonStyle(.plain)
+				} else {
+					NavigationLink {
+						subpage(page)
+					} label: {
+						pageRow(page)
+					}
+					.buttonStyle(.plain)
 				}
-				.buttonStyle(.plain)
-				if page != Page.allCases.last { Divider().overlay(MaskinSurface.separator) }
+				if page != pages.last { Divider().overlay(MaskinSurface.separator) }
 			}
 		}
 		.padding(.horizontal, MaskinSpace.s10)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.agentSurface()
+	}
+
+	/// The page menu; Computer only where the live view can open.
+	private var pages: [Page] {
+		Page.allCases.filter { $0 != .computer || onOpenComputer != nil }
+	}
+
+	/// A short grey notice under the hero (the disabled state).
+	private func note(_ text: String) -> some View {
+		Text(text)
+			.maskinText(.subhead)
+			.foregroundStyle(MaskinColor.ink4)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(MaskinSpace.s8)
+			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+	}
+
+	/// The last run failed: say so, with Retry and See log.
+	private func failedCard(_ session: AgentSession) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			HStack(spacing: MaskinSpace.s4) {
+				Circle().fill(MaskinStatus.colors(for: AgentStatus.failed.badgeKey).fg)
+					.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+				Text("\(profile.name) stopped on its last run").maskinText(.headline).foregroundStyle(MaskinColor.ink)
+			}
+			if !session.prompt.isEmpty {
+				Text(session.prompt).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(2)
+			}
+			HStack(spacing: MaskinSpace.s9) {
+				Button("Retry", action: onRun)
+				if let onOpenLog { Button("See log") { onOpenLog(session) } }
+			}
+			.maskinText(.subhead).fontWeight(.semibold)
+			.foregroundStyle(MaskinColor.ink)
+			.padding(.top, MaskinSpace.s2)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(MaskinSpace.s8)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+	}
+
+	/// Sessions, how many finished well, flows and items, as four big numbers.
+	private var stats: some View {
+		let finished = store.sessions.filter { !$0.isActive && !$0.isPaused }
+		let done = finished.filter { $0.status == "completed" }.count
+		return HStack(alignment: .top) {
+			stat("\(store.sessions.count)", "Sessions")
+			Spacer(minLength: MaskinSpace.s3)
+			stat(finished.isEmpty ? "-" : "\(done)/\(finished.count)", "Finished well")
+			Spacer(minLength: MaskinSpace.s3)
+			stat("\(flows.count)", flows.count == 1 ? "Flow" : "Flows")
+			Spacer(minLength: MaskinSpace.s3)
+			stat("\(objects.count)", "Items")
+		}
+		.padding(.horizontal, MaskinSpace.s2)
+		.accessibilityElement(children: .combine)
+	}
+
+	private func stat(_ value: String, _ label: String) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+			Text(value).maskinText(.title).foregroundStyle(MaskinColor.ink)
+			Text(label).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+		}
 	}
 
 	private func summary(_ page: Page) -> String {
@@ -238,6 +358,7 @@ struct AgentDetailContent: View {
 		case .triggers: triggers.isEmpty ? "None" : "\(triggers.count)"
 		case .objects: objects.isEmpty ? "None" : "\(objects.count)"
 		case .sessions: store.sessions.isEmpty ? "No runs yet" : "\(store.sessions.count) recent"
+		case .computer: "Live view"
 		}
 	}
 
@@ -267,6 +388,7 @@ struct AgentDetailContent: View {
 				case .triggers: triggerCards
 				case .objects: objectCards
 				case .sessions: sessionCards
+				case .computer: EmptyView()
 				}
 			}
 			.padding(MaskinSpace.s9)
@@ -319,7 +441,8 @@ struct AgentDetailContent: View {
 	}
 
 	@ViewBuilder private var setupCards: some View {
-		card("Instructions", action: ("Change in chat", "bubble.left", onChangeInChat)) {
+		card("Instructions", action: ("Change in chat", "bubble.left", onChangeInChat),
+			secondary: onEditInstructions.map { ("Edit", "pencil", $0) }) {
 			if let prompt = profile.systemPrompt, !prompt.isEmpty {
 				Text(prompt)
 					.maskinText(.subhead)
@@ -477,50 +600,30 @@ struct AgentDetailContent: View {
 				AgentStatusLabel(status: store.status).padding(.top, MaskinSpace.s2)
 			}
 			.accessibilityElement(children: .combine)
-			actions
 		}
 		.frame(maxWidth: .infinity)
 		.padding(.vertical, MaskinSpace.s9)
 	}
 
-	private var actions: some View {
-		ViewThatFits(in: .horizontal) {
-			HStack(spacing: MaskinSpace.s5) { actionButtons }
-			VStack(spacing: MaskinSpace.s5) { actionButtons }
-		}
-		.frame(maxWidth: 420)
-	}
-
-	@ViewBuilder
-	private var actionButtons: some View {
-		runPauseButton
-	}
-
-	@ViewBuilder
-	private var runPauseButton: some View {
-		if AgentActions.canPause(store.status) {
-			Button(action: onPause) { Label(store.busy == .pause ? "Pausing…" : "Pause", systemImage: "pause.fill") }
-				.buttonStyle(.primaryAction)
-				.disabled(!store.canPause)
-		} else if store.status == .paused {
-			// No "Run now": work starts from Chat, Live or a trigger. Only a paused agent resumes here.
-			Button(action: onRun) {
-				Label(store.busy == .run ? "Starting…" : "Resume", systemImage: "play.fill")
-			}
-			.buttonStyle(.primaryAction)
-			.disabled(!store.canRun)
-		}
-	}
-
 	private func card<Content: View>(
 		_ title: String, action: (title: String, symbol: String, run: () -> Void)? = nil,
+		secondary: (title: String, symbol: String, run: () -> Void)? = nil,
 		@ViewBuilder content: () -> Content
 	) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			HStack(alignment: .firstTextBaseline) {
 				SectionHeader(title)
-				if let action {
+				if let secondary {
 					Spacer(minLength: 0)
+					Button(action: secondary.run) {
+						Label(secondary.title, systemImage: secondary.symbol).labelStyle(.titleOnly)
+					}
+					.maskinText(.caption)
+					.foregroundStyle(MaskinColor.ink3)
+					.accessibilityLabel("\(secondary.title) \(title.lowercased())")
+				}
+				if let action {
+					if secondary == nil { Spacer(minLength: 0) }
 					Button(action: action.run) {
 						Label(action.title, systemImage: action.symbol).labelStyle(.titleOnly)
 					}
@@ -610,5 +713,52 @@ extension View {
 					.strokeBorder(MaskinSurface.line)
 			)
 			.clipShape(RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+	}
+}
+
+/// The full-screen instructions editor (design 6e): one big text field, Save in the bar.
+struct InstructionsEditorSheet: View {
+	let agentName: String
+	let initial: String
+	/// Returns whether the save was accepted; the sheet stays open, keeping the text, if not.
+	let onSave: (String) async -> Bool
+
+	@Environment(\.dismiss) private var dismiss
+	@State private var text = ""
+	@State private var isSaving = false
+
+	var body: some View {
+		NavigationStack {
+			TextEditor(text: $text)
+				.maskinText(.body)
+				.scrollContentBackground(.hidden)
+				.padding(MaskinSpace.s6)
+				.background(MaskinSurface.grouped)
+				.navigationTitle("Instructions")
+				#if os(iOS)
+				.navigationBarTitleDisplayMode(.inline)
+				#endif
+				.toolbar {
+					ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+					ToolbarItem(placement: .confirmationAction) {
+						Button("Save") { Task { await save() } }
+							.disabled(isSaving || text == initial)
+					}
+				}
+				.overlay { if isSaving { ProgressView() } }
+		}
+		.onAppear { text = initial }
+		.accessibilityLabel("Instructions for \(agentName)")
+	}
+
+	private func save() async {
+		isSaving = true
+		defer { isSaving = false }
+		if await onSave(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+			MaskinHaptics.play(.success)
+			dismiss()
+		} else {
+			MaskinHaptics.play(.error)
+		}
 	}
 }

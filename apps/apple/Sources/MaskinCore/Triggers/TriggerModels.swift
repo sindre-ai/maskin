@@ -181,6 +181,18 @@ public struct TriggerDraft: Equatable, Sendable {
 		}
 	}
 
+	/// The rule as one sentence, "Runs every day at 9:00 AM, run Strategist." Nil until both halves
+	/// are set, so the sheet never reads back half a rule.
+	public func readBack(agentName: String?) -> String? {
+		guard hasWhen, let agentName, !agentName.isEmpty else { return nil }
+		let when: String
+		switch whenKind {
+		case .schedule: when = "Every time the schedule fires (\(schedule.summary))"
+		case .event: when = "When \(event?.plainName.lowercased() ?? "")"
+		}
+		return "\(when), run \(agentName)."
+	}
+
 	/// A stable fingerprint of the When, so a retried create reuses its idempotency key.
 	public var whenFingerprint: String {
 		switch whenKind {
@@ -277,5 +289,67 @@ public struct TriggerEdit: Equatable, Sendable {
 			patch.kind = .cron
 		}
 		return patch
+	}
+}
+
+/// One line of an event trigger's filters, in plain words: `label`, `value`.
+public struct TriggerFilterRow: Identifiable, Equatable, Sendable {
+	public var label: String
+	public var value: String
+	public var id: String { label }
+	public init(label: String, value: String) {
+		self.label = label
+		self.value = value
+	}
+}
+
+extension TriggerDescriber {
+	/// The filters on an event trigger as read-only rows. People resolve through `name`; an id that
+	/// can't be resolved reads "Someone specific", and a provider list (Slack channels) shows only
+	/// its size, so no raw id ever reaches the screen.
+	public static func filters(config: JSONValue, name: (String) -> String? = { _ in nil }) -> [TriggerFilterRow] {
+		var rows: [TriggerFilterRow] = []
+		if config["action"]?.stringValue == "status_changed" {
+			let (from, to) = statusTransition(config)
+			if from != anyStatus || to != anyStatus {
+				let f = from == anyStatus ? "any" : from.replacingOccurrences(of: "_", with: " ")
+				let t = to == anyStatus ? "any" : to.replacingOccurrences(of: "_", with: " ")
+				rows.append(TriggerFilterRow(label: "Status", value: "from \(f) to \(t)"))
+			}
+		}
+		if case .object(let filter)? = config["filter"] {
+			for key in filter.keys.sorted() where key != "status" {
+				guard let value = filter[key] else { continue }
+				switch key {
+				case "on_target_type":
+					if let type = value.stringValue {
+						rows.append(TriggerFilterRow(label: "On items of type", value: type.prefix(1).uppercased() + type.dropFirst()))
+					}
+				case "actorId":
+					if let id = value.stringValue {
+						rows.append(TriggerFilterRow(label: "From", value: name(id) ?? "Someone specific"))
+					}
+				case "attention":
+					if case .number(let n) = value { rows.append(TriggerFilterRow(label: "Attention", value: "level \(Int(n))")) }
+				case "parentEventId":
+					break
+				default:
+					if case .array(let items) = value, !items.isEmpty {
+						rows.append(TriggerFilterRow(label: key.replacingOccurrences(of: "_", with: " ").capitalized, value: "\(items.count) selected"))
+					}
+				}
+			}
+		}
+		if case .array(let conditions)? = config["conditions"] {
+			for condition in conditions {
+				guard let field = condition["field"]?.stringValue, let value = condition["value"]?.stringValue else { continue }
+				if field == "mentions" {
+					rows.append(TriggerFilterRow(label: "Mentions", value: name(value) ?? "Someone specific"))
+				} else if !["channel", "user", "team", "id"].contains(where: { field.lowercased().contains($0) }) {
+					rows.append(TriggerFilterRow(label: "\(field.replacingOccurrences(of: "_", with: " ").capitalized) contains", value: value))
+				}
+			}
+		}
+		return rows
 	}
 }

@@ -78,6 +78,7 @@ struct ChatThreadView: View {
 	/// The thread opened on its NEW divider, so new arrivals leave the reader where they are.
 	@State private var openedOnUnread = false
 	@State private var renaming = false
+	@State private var exporting = false
 	/// A secret caught in the message box before sending; the sheet offers the Keychain.
 	@State private var caughtSecret: CaughtSecret?
 	@State private var secretStore: KeychainStore?
@@ -166,6 +167,8 @@ struct ChatThreadView: View {
 		{
 			return "Type your answer…"
 		}
+		// A new chat invites either: type, or press Live (live meeting handoff, step 1).
+		if store.messages.isEmpty, call == nil, liveLead != nil { return "Ask \(leadName), or start talking." }
 		return "Message \(leadName)"
 	}
 
@@ -261,6 +264,12 @@ struct ChatThreadView: View {
 						})
 						.linkedItems(runtime)
 				}
+				.sheet(isPresented: $exporting) {
+					ChatExportSheet(
+						title: store.title, messages: store.allMessages, participants: store.participants,
+						link: chatLink)
+						.presentationDetents([.medium])
+				}
 				.alert("Rename conversation", isPresented: $renaming) {
 					TextField("Title", text: $newTitle)
 					Button("Cancel", role: .cancel) {}
@@ -343,6 +352,16 @@ struct ChatThreadView: View {
 				} label: {
 					Label("Rename", systemImage: "pencil")
 				}
+				Button { exporting = true } label: {
+					Label("Export chat", systemImage: "square.and.arrow.up")
+				}
+				if let conversations, let row = conversations.conversation(id: store.conversationID), !row.isUnread {
+					Button {
+						Task { _ = await conversations.markUnread(row.id) }
+					} label: {
+						Label("Mark as unread", systemImage: "envelope.badge")
+					}
+				}
 				if !store.idleSessions().isEmpty {
 					Button(role: .destructive) {
 						let ids = store.idleSessions().map(\.id)
@@ -364,14 +383,6 @@ struct ChatThreadView: View {
 			} label: {
 				Label("Chat options", systemImage: "ellipsis")
 					.foregroundStyle(MaskinColor.ink)
-			}
-			if let lead = liveLead, !isRoom, call == nil {
-				Button {
-					liveMeeting.present(.thread(chat: store, lead: lead))
-				} label: {
-					ShellInkCircle(symbol: "waveform", label: "Live")
-				}
-				.buttonStyle(.maskinPressed)
 			}
 		}
 	}
@@ -770,7 +781,8 @@ struct ChatThreadView: View {
 			model: composer,
 			config: MaskinComposerConfig(
 				variant: .floating, placeholder: placeholder, showsMic: !isRoom,
-				goLive: isRoom ? liveLead.map { lead in { liveMeeting.present(.thread(chat: store, lead: lead)) } } : nil,
+				goLive: call == nil
+					? liveLead.map { lead in { liveMeeting.present(.thread(chat: store, lead: lead)) } } : nil,
 				suggestions: { query in
 					MentionTrigger.candidates(
 						query: query, participants: store.participants, workspace: store.workspaceActors,
@@ -778,11 +790,18 @@ struct ChatThreadView: View {
 				},
 				inConversation: Set(store.participants.map(\.id)),
 				roster: runtime?.mentionRoster()?.roster,
-				onFocusChange: { focused in if focused { quickRepliesHidden = false } }),
+				onFocusChange: { focused in if focused { quickRepliesHidden = false } },
+				slash: slashSource),
 			busy: busy,
 			onStop: { Task { await store.stopLiveSessions() } },
 			onSend: send
 		)
+	}
+
+	/// The `/` picker's items for this workspace.
+	private var slashSource: SlashSource? {
+		guard let env = runtime?.environment, let workspaceID = env.workspaceId else { return nil }
+		return SlashSources.source(for: env, workspaceID: workspaceID)
 	}
 
 	/// Send, or — while the composer holds an edit — save the new text over the original message.

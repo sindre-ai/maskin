@@ -14,9 +14,12 @@ struct MembersView: View {
 	let agents: AgentsStore?
 	var onOpenAgent: (String) -> Void = { _ in }
 	var onHire: () -> Void = {}
-	@State private var actionTarget: WorkspaceMember?
-	@State private var pendingRemoval: WorkspaceMember?
 	@State private var showAdd = false
+	/// Pending invitations (owners and admins only). Built on appear from the running app.
+	@State private var invites: PendingInvitesStore?
+	@State private var memberDetail: String?
+	@State private var inviteDetail: String?
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	init(
 		store: MembersStore, agents: AgentsStore? = nil, onOpenAgent: @escaping (String) -> Void = { _ in },
@@ -46,56 +49,51 @@ struct MembersView: View {
 				PageGroupLabel(text: "People · \(groups.people.count)")
 				PageCard(rows: groups.people.map(row))
 			}
+			if let invites, !invites.invites.isEmpty {
+				PageGroupLabel(text: "Pending · \(invites.invites.count)")
+				PageCard(
+					rows: invites.invites.map { invite in
+						PageRowModel(
+							id: "invite-\(invite.id)", title: invite.email,
+							subtitle: "\(invite.sentText()) \u{00B7} \(invite.role.label)",
+							accessory: .state(PageState("Pending", .notice)), showsChevron: true,
+							action: { inviteDetail = invite.id })
+					})
+			}
 			PageGroupLabel(text: "Agents · \(groups.agents.count)")
 			PageCard(rows: groups.agents.map(agentRow) + [hireRow])
 			if let error = store.actionError { FormError(error) }
 			PageFootnote(
 				text: store.canAdd
-					? "Tap an agent to see what it is doing or pause it. To add someone, ask them for the ID on their profile."
+					? "Tap a person for their role and access, or an agent to see what it is doing. To add someone, ask them for the ID on their profile."
 					: "Tap an agent to see what it is doing. Only owners and admins can add people.")
 			if store.canAdd {
 				Button("Add someone") { showAdd = true }.buttonStyle(.primaryAction)
 			}
 		}
 		.sheet(isPresented: $showAdd) { AddMemberSheet(store: store) }
-		.task { await store.load() }
+		.navigationDestination(item: $memberDetail) { MemberDetailPage(store: store, memberID: $0) }
+		.navigationDestination(item: $inviteDetail) { id in
+			if let invites { InvitationDetailPage(store: invites, inviteID: id) }
+		}
+		.task {
+			if invites == nil, let runtime {
+				invites = PendingInvitesStore(
+					api: HTTPPendingInvitesSource(http: SettingsServices(environment: runtime.environment).http),
+					canManage: store.canAdd)
+			}
+			await store.load()
+			await invites?.load()
+		}
 		.refreshable {
 			await store.load()
+			await invites?.load()
 			if let agents { await agents.refresh() }
-		}
-		.confirmationDialog(
-			actionTarget?.name ?? "Member",
-			isPresented: Binding(get: { actionTarget != nil }, set: { if !$0 { actionTarget = nil } }),
-			titleVisibility: .visible, presenting: actionTarget
-		) { member in
-			if store.canChangeRole(of: member) {
-				ForEach([MemberRole.admin, .member].filter { $0 != member.role }, id: \.self) { role in
-					Button("Make \(role.label.lowercased())") {
-						Task { await store.setRole(role, for: member) }
-					}
-				}
-			}
-			if store.canRemove(member) {
-				Button("Remove from workspace", role: .destructive) { pendingRemoval = member }
-			}
-		}
-		.confirmationDialog(
-			pendingRemoval.map { "Remove \($0.name)?" } ?? "Remove member?",
-			isPresented: Binding(
-				get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
-			titleVisibility: .visible, presenting: pendingRemoval
-		) { member in
-			Button("Remove from workspace", role: .destructive) {
-				Task { await store.remove(member) }
-			}
-		} message: { member in
-			Text("\(member.name) loses access to this workspace right away.")
 		}
 	}
 
 	private func row(_ member: WorkspaceMember) -> PageRowModel {
 		let isYou = member.actorId == store.currentActorId
-		let manageable = store.canChangeRole(of: member) || store.canRemove(member)
 		return PageRowModel(
 			id: member.id, title: member.name,
 			subtitle: WorkspacePageState.memberSubtitle(
@@ -104,7 +102,8 @@ struct MembersView: View {
 			accessory: .state(
 				store.busyIDs.contains(member.id)
 					? PageState("Updating", .muted) : WorkspacePageState.member(role: member.role)),
-			action: manageable ? { actionTarget = member } : nil)
+			showsChevron: !member.isAgent,
+			action: member.isAgent ? nil : { memberDetail = member.id })
 	}
 
 	/// An agent: its role under the name, Working in Patina or Idle / Paused in grey, opens the agent.

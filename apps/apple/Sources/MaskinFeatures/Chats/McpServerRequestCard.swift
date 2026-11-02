@@ -96,36 +96,18 @@ struct McpServerRequestCard: View {
 
 	@ViewBuilder
 	private var form: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			Text("Add the \(request.name) tool server?")
-				.maskinText(.headline).foregroundStyle(MaskinColor.ink)
-				.fixedSize(horizontal: false, vertical: true)
-			Text(
-				(request.hint.map { $0 + " " } ?? "")
-					+ "It is saved for this workspace and given to this agent only, with read and write access. You can change that in Settings."
-			)
-			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-			.fixedSize(horizontal: false, vertical: true)
-		}
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+		RequestCardTitle(title: "Add the \(request.name) tool server?", subtitle: request.hint)
+		VStack(alignment: .leading, spacing: 0) {
 			if let commandLine = request.commandLine {
-				Text("Runs this command inside the agent").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-				Text(commandLine)
-					.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
-					.textSelection(.enabled)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Runs inside the agent", value: commandLine, monospaced: true)
 			}
 			if let url = request.url {
-				Text("Connects to").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-				Text(url)
-					.maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink2)
-					.textSelection(.enabled)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Connects to", value: url, monospaced: true)
 			}
 			ForEach(request.givenValues, id: \.self) { line in
-				Text(line).maskinText(.caption).monospaced().foregroundStyle(MaskinColor.ink4)
-					.fixedSize(horizontal: false, vertical: true)
+				RequestCardRow(label: "Given", value: line, monospaced: true)
 			}
+			RequestCardRow(label: "Access", value: "Read and write, this agent only")
 		}
 		if savedServerID != nil {
 			Text("The server is added. Give it to this agent to finish; nothing more to type.")

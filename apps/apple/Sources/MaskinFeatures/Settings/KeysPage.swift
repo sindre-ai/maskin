@@ -20,10 +20,22 @@ struct KeysPage: View {
 	@State private var confirming = false
 	@State private var copied = false
 	@State private var copiedLabel: String?
+	@State private var showAddServer = false
+	@State private var addedServer = false
+	/// Nil hides the Tool servers group (previews, no workspace).
+	var toolServers: (any ToolServersAPI)?
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	private var servers: (any ToolServersAPI)? {
+		toolServers ?? runtime.map { HTTPToolServersSource(http: SettingsServices(environment: $0.environment).http) }
+	}
 	@State private var pendingDisconnect: MCPClient?
 	@Environment(\.scenePhase) private var scenePhase
 
-	init(store: APIKeyStore, mcp: MCPStore, workspaceId: String, apiKey: @escaping @MainActor () -> SecretValue?) {
+	init(
+		store: APIKeyStore, mcp: MCPStore, workspaceId: String, apiKey: @escaping @MainActor () -> SecretValue?,
+		toolServers: (any ToolServersAPI)? = nil
+	) {
+		self.toolServers = toolServers
 		_store = State(initialValue: store)
 		_mcp = State(initialValue: mcp)
 		self.workspaceId = workspaceId
@@ -35,6 +47,17 @@ struct KeysPage: View {
 			PageGroupLabel(text: "MCP server")
 			PageCard(rows: serverRows + clientRows)
 			PageFootnote(text: serverFootnote)
+			if let servers, mcp.canManage {
+				PageGroupLabel(text: "Tool servers")
+				Button("Add server") { showAddServer = true }.buttonStyle(.secondaryAction)
+				PageFootnote(
+					text: addedServer
+						? "Server added. Give it to an agent from the agent's page."
+						: "Add your own MCP server for agents to use.")
+					.sheet(isPresented: $showAddServer) {
+						ToolServerSheet(api: servers, onAdded: { addedServer = true })
+					}
+			}
 			PageGroupLabel(text: "API keys")
 			PageCard(rows: [
 				PageRowModel(

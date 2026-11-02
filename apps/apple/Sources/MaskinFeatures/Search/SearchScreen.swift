@@ -55,7 +55,7 @@ private struct SearchScreenContent: View {
 		NavigationStack(path: $path) {
 			SearchContentView(
 				store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
-				onAskChiefOfStaff: askChiefOfStaff, onSelect: select
+				onAskChiefOfStaff: askChiefOfStaff, onCreate: create, onSelect: select
 			)
 				.shellToolbar(environment: environment, title: "Search")
 				.searchable(
@@ -92,6 +92,14 @@ private struct SearchScreenContent: View {
 	/// person picks Chief of Staff there.
 	private func askChiefOfStaff(_ query: String) {
 		runtime?.buildInChat("Can you look into “\(query)”? ")
+	}
+
+	/// A new chat, or a flow set up with the Chief of Staff, starting from what was typed.
+	private func create(_ kind: SearchCreate, _ query: String) {
+		switch kind {
+		case .chat: runtime?.requestNewConversation()
+		case .flow: runtime?.buildInChat("I'd like a new flow about “\(query)”. ")
+		}
 	}
 
 	private func select(_ result: SearchResult) {

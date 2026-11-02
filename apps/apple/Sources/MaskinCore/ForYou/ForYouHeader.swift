@@ -25,6 +25,17 @@ public enum ForYouHeader {
 		return formatter.string(from: date)
 	}
 
+	/// The bold first sentence under the greeting: "5 decisions are waiting on you." Nothing is said
+	/// until the feed has loaded; with no open ask it reads "Nothing is blocked on you."
+	public static func lead(waiting count: Int, loaded: Bool) -> String? {
+		guard loaded else { return nil }
+		switch count {
+		case 0: return "Nothing is blocked on you."
+		case 1: return "1 decision is waiting on you."
+		default: return "\(count) decisions are waiting on you."
+		}
+	}
+
 	/// What is blocked on the reader, in one sentence.
 	/// - Nothing is said until the feed has loaded, so a slow start never claims "Nothing is blocked".
 	/// - With no open ask: "Nothing is blocked on you."

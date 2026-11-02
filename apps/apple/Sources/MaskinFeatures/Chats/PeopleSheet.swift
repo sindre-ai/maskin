@@ -68,6 +68,8 @@ struct PeopleSheet: View {
 	@State private var memberRoles: [String: String] = [:]
 	@State private var confirmingLeave = false
 	@State private var adding: Bool
+	/// Which kind the add list shows: agents (Add agent), people (Invite person), or both.
+	@State private var addingKind: ChatParticipant.Kind?
 	@State private var selection: Set<String> = []
 	@State private var query = ""
 	@State private var removeTarget: ChatParticipant?
@@ -87,16 +89,16 @@ struct PeopleSheet: View {
 			List {
 				if adding {
 					ActorPickerList(
-						actors: conversations.actors, excluding: Set(chat.participants.map(\.id)),
+						actors: conversations.actors.filter { addingKind == nil || $0.participant.kind == addingKind },
+						excluding: Set(chat.participants.map(\.id)),
 						selection: $selection, query: query)
 				} else {
 					Section {
 						ForEach(chat.participants) { person in row(person) }
-						Button {
-							adding = true
-						} label: {
-							Label("Add someone", systemImage: "person.badge.plus")
-						}
+					}
+					Section("Add") {
+						addRow("Add agent", symbol: "sparkles", detail: agentHint, kind: .agent)
+						addRow("Invite person", symbol: "person.badge.plus", detail: "Members and guests", kind: .human)
 					}
 					if canLeave {
 						Section {
@@ -142,7 +144,7 @@ struct PeopleSheet: View {
 			#endif
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
-					Button(adding ? "Back" : "Done") { if adding { adding = false } else { dismiss() } }
+					Button(adding ? "Back" : "Done") { if adding { adding = false; addingKind = nil } else { dismiss() } }
 				}
 				if adding {
 					ToolbarItem(placement: .confirmationAction) {
@@ -151,6 +153,7 @@ struct PeopleSheet: View {
 								await chat.addParticipants(Array(selection))
 								selection = []
 								adding = false
+								addingKind = nil
 							}
 						}
 						.disabled(selection.isEmpty)
@@ -191,14 +194,49 @@ struct PeopleSheet: View {
 				Text(roleLine(person)).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 			Spacer(minLength: 0)
+			if !isSelf {
+				Button("Remove") { removeTarget = person }
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
+					.buttonStyle(.borderless)
+			}
 		}
-		.accessibilityElement(children: .combine)
+		.accessibilityElement(children: .contain)
 		.swipeActions(edge: .trailing, allowsFullSwipe: false) {
 			if !isSelf { Button("Remove", role: .destructive) { removeTarget = person } }
 		}
 	}
 
+	private func addRow(_ title: String, symbol: String, detail: String, kind: ChatParticipant.Kind) -> some View {
+		Button {
+			addingKind = kind
+			adding = true
+		} label: {
+			HStack(spacing: MaskinSpace.s7) {
+				Image(systemName: symbol).foregroundStyle(MaskinColor.ink2)
+					.frame(width: MaskinSpace.s14 + MaskinSpace.s3).accessibilityHidden(true)
+				VStack(alignment: .leading, spacing: 0) {
+					Text(title).maskinText(.body).foregroundStyle(MaskinColor.ink)
+					Text(detail).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				}
+				Spacer(minLength: 0)
+			}
+		}
+	}
+
+	/// "Chief of Staff, Code Reviewer, +3": agents in the workspace that are not in this chat yet.
+	private var agentHint: String {
+		let here = Set(chat.participants.map(\.id))
+		let names = conversations.actors.filter { $0.participant.kind == .agent && !here.contains($0.id) }
+			.map(\.participant.name)
+		guard !names.isEmpty else { return "Agents of this workspace" }
+		let shown = names.prefix(2).joined(separator: ", ")
+		return names.count > 2 ? "\(shown), +\(names.count - 2)" : shown
+	}
+
 	private func roleLine(_ person: ChatParticipant) -> String {
+		if person.kind == .agent, let state = chat.agentStates[person.id], state != .unknown {
+			return state == .running ? "Working now" : "Idle"
+		}
 		PersonRoleLabel.label(
 			for: person, memberRole: memberRoles[person.id],
 			agentSummary: chat.workspaceActors.first { $0.id == person.id }?.summary)

@@ -23,6 +23,15 @@ struct IntegrationAccessCard: View {
 	@State private var declinedNow = false
 	@State private var allowedNow = false
 	@State private var stillRunning = false
+	/// What will be allowed: what was asked for, lowered to Read before Allow if the person wants.
+	@State private var level: IntegrationAccessRequest.Level?
+
+	/// The request as it will be answered, at the chosen level.
+	private var effective: IntegrationAccessRequest {
+		var copy = request
+		if let level { copy.level = level }
+		return copy
+	}
 
 	private var declined: Bool { declinedNow || answered == .declined }
 
@@ -35,12 +44,10 @@ struct IntegrationAccessCard: View {
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}
 			} else {
-				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-					Text("Let this agent have \(request.level.words) to \(request.displayName)?")
-						.maskinText(.headline).foregroundStyle(MaskinColor.ink)
-						.fixedSize(horizontal: false, vertical: true)
-					Text(explanation).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-						.fixedSize(horizontal: false, vertical: true)
+				RequestCardTitle(title: "Allow \(request.displayName)?", subtitle: subtitle)
+				VStack(spacing: 0) {
+					accessRow
+					RequestCardRow(label: "Lasts", value: "Until you remove it")
 				}
 				if let error { Text(error).maskinText(.caption).foregroundStyle(MaskinColor.ink3) }
 				VStack(spacing: MaskinSpace.s4) {
@@ -53,10 +60,27 @@ struct IntegrationAccessCard: View {
 		.task(id: request.integrationID) { await refresh() }
 	}
 
-	private var explanation: String {
-		let reason = request.reason.map { $0 + " " } ?? ""
-		let what = request.level == .readWrite ? "look things up and make changes there" : "look things up there"
-		return reason + "It can \(what), in any chat or run, until you remove it in Settings → Integrations."
+	private var subtitle: String {
+		(request.reason.map { $0 + " " } ?? "") + "For this agent. Remove it any time in Settings → Integrations."
+	}
+
+	/// What the agent gets. When it asked for read and write, the person can lower that to Read.
+	@ViewBuilder
+	private var accessRow: some View {
+		let current = level ?? request.level
+		RequestCardRow(
+			label: "Access", value: current == .readWrite ? "Read and write" : "Read"
+		) {
+			if request.level == .readWrite {
+				Button(current == .readWrite ? "Lower to Read" : "Read and write") {
+					level = current == .readWrite ? .read : .readWrite
+				}
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.sigInk)
+				.buttonStyle(.maskinPressed)
+				.disabled(busy)
+			}
+		}
 	}
 
 	private var settledLine: String? {
@@ -88,14 +112,14 @@ struct IntegrationAccessCard: View {
 		error = nil
 		defer { busy = false }
 		do {
-			let result = try await access.allow(request)
+			let result = try await access.allow(effective)
 			allowedNow = true
 			if result.changed, !result.relaunched {
 				// The idle session could not be stopped, so it still has the old access.
 				stillRunning = true
 				return
 			}
-			let reply = request.allowedReply(changed: result.changed)
+			let reply = effective.allowedReply(changed: result.changed)
 			if request.replyToSession {
 				do {
 					// Stopped to take the new access, so its follow-up carries on; not stopped, so write into it.

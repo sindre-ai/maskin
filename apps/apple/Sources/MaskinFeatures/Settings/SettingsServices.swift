@@ -6,6 +6,8 @@ import SwiftUI
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
 	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case workspaces, members, integrations, billing, keys, triggers, extensions, claudeImport
+	case deviceSignIn, appLock
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -133,6 +135,16 @@ struct SettingsServices {
 	}
 
 	func billingStore() -> BillingStore { BillingStore(api: source ?? NoSettingsSource()) }
+
+	func extensionsStore() -> ExtensionsStore { ExtensionsStore(api: HTTPExtensionsSource(http: http)) }
+
+	func deviceApprovalStore() -> DeviceApprovalStore {
+		DeviceApprovalStore(api: HTTPDeviceApprovalSource(http: http))
+	}
+
+	func claudeConnectionStore() -> ClaudeConnectionStore {
+		ClaudeConnectionStore(api: HTTPClaudeConnectionSource(http: http))
+	}
 
 	func schemaStore() -> SchemaStore { SchemaStore(api: source ?? NoSettingsSource(), currentRole: role) }
 

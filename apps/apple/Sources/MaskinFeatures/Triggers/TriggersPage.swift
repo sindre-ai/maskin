@@ -90,9 +90,21 @@ struct TriggerDetailPage: View {
 			PageGroupLabel(text: "When")
 			PageCard(rows: [
 				PageRowModel(
-					id: "when", title: store.trigger.kind.label, subtitle: store.trigger.summary,
+					id: "when", title: store.trigger.kind.label,
+					subtitle: [store.trigger.summary, lastFired].compactMap { $0 }.joined(separator: "\n"),
 					accessory: .state(WorkspacePageState.trigger(enabled: store.trigger.enabled)))
 			])
+			if store.trigger.kind != .cron {
+				PageGroupLabel(text: "Filters")
+				let filters = TriggerDescriber.filters(
+					config: store.trigger.config, name: { store.directory.name($0) })
+				if filters.isEmpty {
+					PageStatus(text: "No filters. Every matching event runs this trigger.")
+				} else {
+					PageCard(rows: filters.map { PageRowModel(id: $0.id, title: $0.label, subtitle: $0.value) })
+				}
+				PageFootnote(text: "Edit this rule on the web.")
+			}
 			PageGroupLabel(text: "Then")
 			PageCard(rows: [
 				PageRowModel(
@@ -121,6 +133,12 @@ struct TriggerDetailPage: View {
 		.onChange(of: store.isDeleted) { _, gone in if gone { onGone() } }
 		.task { await store.start() }
 		.onDisappear { store.stop() }
+	}
+
+	/// "Last fired Yesterday 14:02", from the newest run.
+	private var lastFired: String? {
+		guard let at = store.runs.first?.at else { return nil }
+		return "Last fired \(at.formatted(date: .abbreviated, time: .shortened))"
 	}
 
 	private func runRow(_ run: TriggerRun) -> PageRowModel {

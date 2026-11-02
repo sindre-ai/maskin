@@ -20,7 +20,11 @@ struct GlanceRoot<Content: View>: View {
 			if auth.session != nil {
 				content(forYou)
 			} else {
-				GlanceLogin(auth: auth)
+				#if os(tvOS)
+					TVSignIn(auth: auth)
+				#else
+					GlanceLogin(auth: auth)
+				#endif
 			}
 		}
 		.task(id: auth.session?.apiKey) { await environment.workspaces.refresh() }

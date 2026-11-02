@@ -58,4 +58,14 @@ struct ForYouHeaderTests {
 		let blocking = [FeedEntry(card: card("a"), bucket: .needs)]
 		#expect(ForYouHeader.summary(blocking: blocking, loaded: true, sender: { _ in nil }) == nil)
 	}
+
+	@Test func leadCountsTheDecisionsWaiting() {
+		#expect(ForYouHeader.lead(waiting: 5, loaded: true) == "5 decisions are waiting on you.")
+		#expect(ForYouHeader.lead(waiting: 1, loaded: true) == "1 decision is waiting on you.")
+		#expect(ForYouHeader.lead(waiting: 0, loaded: true) == "Nothing is blocked on you.")
+	}
+
+	@Test func leadIsSilentBeforeTheFeedHasLoaded() {
+		#expect(ForYouHeader.lead(waiting: 0, loaded: false) == nil)
+	}
 }

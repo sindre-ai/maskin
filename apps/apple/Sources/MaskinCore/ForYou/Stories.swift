@@ -147,7 +147,7 @@ public enum StoryDerivation {
 
 	public static func greeting(name: String?, now: Date = Date(), calendar: Calendar = .current) -> String {
 		let hour = calendar.component(.hour, from: now)
-		let part = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
+		let part = hour < 5 ? "Good night" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
 		let first = name?.split(separator: " ").first.map(String.init)
 		return first.map { "\(part), \($0)" } ?? part
 	}

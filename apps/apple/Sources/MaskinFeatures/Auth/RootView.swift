@@ -48,7 +48,8 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		let lock = appLock ?? AppLockController(authenticator: LocalAuthenticator())
 		_appLock = State(initialValue: lock)
 		#if os(iOS)
-			_appLockWindow = State(initialValue: AppLockWindowPresenter(lock: lock))
+			_appLockWindow = State(initialValue: AppLockWindowPresenter(
+					lock: lock, workspaceName: { [environment] in environment.workspaces.selected?.name }))
 		#endif
 		_runtime = State(initialValue: AppRuntime(environment: environment, push: push))
 		_invites = State(initialValue: Self.makeInvites(environment))
@@ -77,7 +78,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 			}
 		}
 		.animation(reduceMotion ? nil : .default, value: auth.session != nil)
-		.appLockCover(appLock)
+		.appLockCover(appLock, workspaceName: environment.workspaces.selected?.name)
 		.environment(appLock)
 		.onChange(of: auth.session != nil, initial: true) { _, hasSession in
 			appLock.sessionChanged(hasSession: hasSession)

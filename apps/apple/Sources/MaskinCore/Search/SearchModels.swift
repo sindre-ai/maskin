@@ -12,10 +12,10 @@ public enum SearchGroup: String, Sendable, Equatable, Hashable, CaseIterable {
 
 	public var title: String {
 		switch self {
-		case .team: "Team"
+		case .team: "Chats"
 		case .agents: "Agents"
 		case .flows: "Flows"
-		case .objects: "Objects"
+		case .objects: "Items"
 		case .files: "Files"
 		}
 	}
@@ -24,22 +24,23 @@ public enum SearchGroup: String, Sendable, Equatable, Hashable, CaseIterable {
 }
 
 /// The scope chips: everything, or one of Team, Objects, Flows, Agents. Objects narrow further by
-/// type through `SearchScope.objectTypes(in:)` (the sub-chips). Files appear under All only.
+/// type through `SearchScope.objectTypes(in:)` (the sub-chips). Files have their own chip (v3 card 1d); Agents appear under All only.
 public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Identifiable {
-	case all, team, objects, flows, agents
+	case all, team, objects, flows, agents, files
 
 	public var id: String { rawValue }
 
 	/// The chips the search tab offers, in order.
-	public static let chips: [SearchScope] = [.all, .team, .objects, .flows, .agents]
+	public static let chips: [SearchScope] = [.all, .objects, .team, .flows, .files]
 
 	public var title: String {
 		switch self {
 		case .all: "All"
-		case .team: "Team"
-		case .objects: "Objects"
+		case .team: "Chats"
+		case .objects: "Items"
 		case .flows: "Flows"
 		case .agents: "Agents"
+		case .files: "Files"
 		}
 	}
 
@@ -49,6 +50,7 @@ public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Id
 		case .all: true
 		case .team: result.group == .team
 		case .agents: result.group == .agents
+		case .files: result.group == .files
 		case .flows: result.group == .flows
 		case .objects:
 			result.group == .objects && (objectType == nil || result.detail == objectType)

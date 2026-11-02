@@ -125,4 +125,11 @@ struct AppLockTests {
 		lock.sessionChanged(hasSession: true)
 		#expect(lock.isLocked)
 	}
+
+	@Test func biometryNameFollowsTheDevice() {
+		let (lock, auth, _, _) = make()
+		#expect(lock.biometryName == "Face ID")
+		auth.availability = .passcodeOnly
+		#expect(lock.biometryName == nil)
+	}
 }

@@ -93,7 +93,7 @@ struct ConversationListView: View {
 					}
 					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				} header: {
-					TeamSectionHeader(label: "Pinned", count: nil)
+					TeamSectionHeader(label: "Pinned", count: layout.tiles.count)
 				}
 			}
 			ForEach(layout.sections) { section in
@@ -472,7 +472,7 @@ extension View {
 	}
 }
 
-/// A section header in the Team list: a mono label, its count and an optional action.
+/// A section header in the Team list: a sentence-case label, its count and an optional action (v3).
 struct TeamSectionHeader<Trailing: View>: View {
 	let label: String
 	let count: Int?
@@ -481,8 +481,15 @@ struct TeamSectionHeader<Trailing: View>: View {
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-			MonoLabel(label, color: MaskinColor.ink5, size: .section)
-			if let count { MonoLabel("\(count)", color: countColor, size: .section) }
+			Text(label)
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink3)
+			if let count {
+				Text("\(count)")
+					.maskinText(.subhead)
+					.monospacedDigit()
+					.foregroundStyle(countColor)
+			}
 			Spacer(minLength: 0)
 			trailing
 		}
