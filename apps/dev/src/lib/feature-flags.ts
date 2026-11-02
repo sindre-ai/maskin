@@ -70,7 +70,6 @@ export const FLAGS = {
 	 * entry) once it is on for everyone.
 	 */
 	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
-	IOS_BACKEND_DICTATION: 'ios-backend-dictation',
 	/**
 	 * Custom agent-built view on the loop page (task
 	 * [Prototype: agent-built custom view on the loop page (HTML + data bridge)](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c9d7469b-7922-4123-8681-925bd7f30044)).
