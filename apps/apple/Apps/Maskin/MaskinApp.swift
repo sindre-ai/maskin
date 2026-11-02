@@ -101,6 +101,7 @@ struct MaskinApp: App {
 					watchBridge.publish(session)
 					Task { await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: session?.workspaceId) }
 					Task { await CycleActivityController.shared?.workspaceChanged(session?.workspaceId) }
+					Task { await FollowActivityController.shared?.workspaceChanged(session?.workspaceId) }
 				}
 			#endif
 		}
@@ -132,9 +133,15 @@ struct MaskinApp: App {
 								.init(apiKey: $0.apiKey, workspaceId: $0.workspaceId)
 							}
 						}
-					}))
+					}),
+				// v3: no automatic Agents card. The coordinator still folds the working agents; the
+				// opt-in follow activity listens to them.
+				startsAutomatically: false)
 			AgentsActivityCoordinator.shared = coordinator
 			host.attach(coordinator)
+			let follow = FollowActivityController(host: FollowActivityHost())
+			FollowActivityController.shared = follow
+			coordinator.onWorkingChanged = { agents in await follow.workingChanged(agents) }
 			AgentsActivityRuntime.shared = AgentsActivityRuntime(environment: environment, coordinator: coordinator)
 			CycleActivityController.shared = CycleActivityController(host: CycleActivityHost())
 			MeetingActivityController.shared = MeetingActivityController(host: MeetingActivityHost())
@@ -148,6 +155,7 @@ struct MaskinApp: App {
 				Task {
 					await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: nil)
 					await CycleActivityController.shared?.workspaceChanged(nil)
+					await FollowActivityController.shared?.workspaceChanged(nil)
 					await coordinator.signedOut(credentials: creds)
 				}
 			}

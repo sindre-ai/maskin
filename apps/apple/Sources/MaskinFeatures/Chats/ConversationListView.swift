@@ -89,7 +89,7 @@ struct ConversationListView: View {
 						},
 						onMove: { id, before in store.movePin(id, before: before, tiles: layout.tiles.map(\.id)) }
 					) { tile in
-						TeamRowMenuItems(actions: actions(for: tile))
+						TeamRowMenuItems(actions: actions(for: tile, among: layout.tiles.map(\.id)))
 					}
 					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				} header: {
@@ -303,11 +303,17 @@ struct ConversationListView: View {
 		}
 	}
 
-	private func actions(for tile: TeamLayout.Tile) -> TeamRowActions {
+	private func actions(for tile: TeamLayout.Tile, among ids: [String]) -> TeamRowActions {
+		var base: TeamRowActions
 		switch tile.kind {
-		case .conversation(let c): actions(for: c)
-		case .flow(let f): actions(for: f)
+		case .conversation(let c): base = actions(for: c)
+		case .flow(let f): base = actions(for: f)
 		}
+		if let i = ids.firstIndex(of: tile.id) {
+			if i > 0 { base.moveEarlier = { store.movePin(tile.id, before: ids[i - 1], tiles: ids) } }
+			if i < ids.count - 1 { base.moveLater = { store.movePin(tile.id, before: ids[i + 1], tiles: ids) } }
+		}
+		return base
 	}
 
 	private func actions(for c: ConversationSummary) -> TeamRowActions {

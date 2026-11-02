@@ -105,7 +105,7 @@ struct CallActivityControllerTests {
 
 	@Test func phaseChangesInsideTheIntervalAreHeldAndTheLastOneLands() async throws {
 		let host = RecordingCallHost()
-		let controller = CallActivityController(host: host, minInterval: 0.05)
+		let controller = CallActivityController(host: host, minInterval: 1)
 		start(controller)
 		controller.sync(snap(.thinking))
 		controller.sync(snap(.speaking))
@@ -113,7 +113,7 @@ struct CallActivityControllerTests {
 		#expect(host.updates.isEmpty)
 		// Wait for the held update to land instead of sleeping a fixed time: a slow runner can take
 		// longer than any fixed sleep, and the update still lands.
-		let deadline = ContinuousClock.now + .seconds(3)
+		let deadline = ContinuousClock.now + .seconds(10)
 		while host.updates.isEmpty, ContinuousClock.now < deadline {
 			try await Task.sleep(for: .milliseconds(20))
 		}

@@ -534,6 +534,7 @@ targets:
         UIAppFonts:
           - Fonts/SchibstedGrotesk.ttf
           - Fonts/JetBrainsMono.ttf
+        NSMicrophoneUsageDescription: Maskin listens when you tap the microphone, so you can ask your Chief of Staff by voice.
         NSUserActivityTypes: [io.maskin.app.open-object]
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
         NSAppTransportSecurity:

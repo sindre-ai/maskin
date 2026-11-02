@@ -186,6 +186,55 @@
 		}
 	}
 
+	/// Starts, updates and ends the opt-in "Following an agent" cards, one per followed session.
+	/// Local only: the app has no push path for it, so a card is kept current while the app runs
+	/// and reads stale after 15 minutes without an update.
+	@MainActor
+	final class FollowActivityHost: FollowActivityHosting {
+		private func activity(sessionId: String) -> Activity<MaskinFollowAttributes>? {
+			Activity<MaskinFollowAttributes>.activities.first { $0.attributes.target.sessionId == sessionId }
+		}
+
+		private static func content(_ state: FollowActivityState) -> ActivityContent<FollowActivityState> {
+			ActivityContent(
+				state: state, staleDate: Date().addingTimeInterval(FollowActivityState.staleAfter))
+		}
+
+		func start(_ target: FollowTarget, state: FollowActivityState) {
+			guard ActivityAuthorizationInfo().areActivitiesEnabled, activity(sessionId: target.sessionId) == nil
+			else { return }
+			_ = try? Activity.request(
+				attributes: MaskinFollowAttributes(target: target), content: Self.content(state), pushType: nil)
+		}
+
+		func update(sessionId: String, state: FollowActivityState) async {
+			await activity(sessionId: sessionId)?.update(Self.content(state))
+		}
+
+		func end(sessionId: String, state: FollowActivityState?, dismissAfter: TimeInterval) async {
+			guard let activity = activity(sessionId: sessionId) else { return }
+			let content = state.map { ActivityContent(state: $0, staleDate: nil) }
+			if dismissAfter > 0 {
+				await activity.end(content, dismissalPolicy: .after(Date().addingTimeInterval(dismissAfter)))
+			} else {
+				await activity.end(content, dismissalPolicy: .immediate)
+			}
+		}
+
+		func activeSessionIds() -> Set<String> {
+			Set(
+				Activity<MaskinFollowAttributes>.activities
+					.filter { $0.activityState == .active || $0.activityState == .stale }
+					.map { $0.attributes.target.sessionId })
+		}
+
+		func endAll() async {
+			for activity in Activity<MaskinFollowAttributes>.activities {
+				await activity.end(nil, dismissalPolicy: .immediate)
+			}
+		}
+	}
+
 	extension Data {
 		fileprivate var pushTokenHex: String { map { String(format: "%02x", $0) }.joined() }
 	}

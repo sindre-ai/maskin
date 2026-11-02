@@ -7,7 +7,7 @@ import SwiftUI
 /// Done button.
 ///
 /// ACCOUNT: your profile. NOTIFICATIONS: push permission, preferences and Lock Screen flows
-/// (`NotificationsPage`). SETUP: the workspace's name, skills, object types and extensions (web).
+/// (`NotificationsPage`). SETUP: the workspace's name, skills, item types (with their extensions) and sign-in for another device.
 /// Members (with Invite people), Integrations, Files, Skills, Autonomy, Keys and MCP, Triggers, Item types
 /// and Billing all open from SETUP (v19), with a figure beside a row only when it is known. DANGER ZONE holds both delete actions. Log out at the end.
 public struct SettingsScreen: View {
@@ -23,6 +23,7 @@ public struct SettingsScreen: View {
 	@State private var path: [SettingsRoute]
 	@State private var counts: SettingsCountsStore?
 	@State private var showInvite = false
+	@State private var invitations: InvitationsStore?
 	/// Present inside the signed-in app; nil in previews, which hides the Security section.
 	@Environment(AppLockController.self) private var appLock: AppLockController?
 
@@ -67,8 +68,13 @@ public struct SettingsScreen: View {
 							SettingsRow(
 								symbol: "person.2", title: "Members", detail: SettingsCountsStore.detail(counts?.members))
 						}
-						Button { showInvite = true } label: {
-							SettingsRow(symbol: "person.badge.plus", title: "Invite people")
+						if services.role.canManage {
+							Button {
+								invitations = services.invitationsStore()
+								showInvite = true
+							} label: {
+								SettingsRow(symbol: "person.badge.plus", title: "Invite people")
+							}
 						}
 						NavigationLink(value: SettingsRoute.integrations) {
 							SettingsRow(
@@ -98,10 +104,8 @@ public struct SettingsScreen: View {
 						NavigationLink(value: SettingsRoute.billing) {
 							SettingsRow(symbol: "creditcard", title: "Billing", detail: counts?.plan)
 						}
-						Button {
-							if let url = services.webURL("extensions") { openURL(url) }
-						} label: {
-							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions", detail: "Opens in browser")
+						NavigationLink(value: SettingsRoute.deviceSignIn) {
+							SettingsRow(symbol: "appletv", title: "Sign in a device")
 						}
 					}
 				} header: {
@@ -154,7 +158,7 @@ public struct SettingsScreen: View {
 			.settingsListStyle()
 			.task { await loadCounts() }
 			.sheet(isPresented: $showInvite) {
-				AddMemberSheet(store: services.membersStore())
+				if let invitations { InviteByEmailSheet(store: invitations) }
 			}
 			.navigationTitle("Settings")
 			#if os(iOS)
@@ -165,7 +169,19 @@ public struct SettingsScreen: View {
 					ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
 				}
 			}
-			.navigationDestination(for: SettingsRoute.self) { route in
+			.navigationDestination(for: SettingsRoute.self) { destination($0) }
+			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+				Button("Log out", role: .destructive) {
+					dismiss()
+					if let runtime { Task { await runtime.signOut() } } else { environment.signOut() }
+				}
+			} message: {
+				Text("You will need your email and password to sign back in.")
+			}
+		}
+	}
+
+	@ViewBuilder private func destination(_ route: SettingsRoute) -> some View {
 				switch route {
 				case .profile: ProfileView(store: services.profileStore())
 				case .notifications: SettingsNotificationsPage(environment: environment)
@@ -173,13 +189,17 @@ public struct SettingsScreen: View {
 					WorkspaceSettingsView(
 						store: services.workspaceStore(), workspaceId: services.workspaceId ?? "",
 						currentName: services.workspace?.name ?? "", role: services.role)
-				case .members: MembersView(store: services.membersStore())
+				case .members:
+					MembersView(store: services.membersStore(), invitations: services.invitationsStore())
 				case .integrations:
 					IntegrationsView(
-						store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
+						store: services.integrationsStore(), webSetupURL: services.webURL("integrations"),
+						services: services)
 				case .files: FilesListScreen(environment: environment)
 				case .skills: SkillsView(store: services.skillsStore())
-				case .objectTypes: ObjectTypesView(store: services.schemaStore())
+				case .objectTypes:
+					ObjectTypesView(store: services.schemaStore(), extensions: services.extensionsStore())
+				case .deviceSignIn: DeviceSignInView(store: services.deviceSignInStore())
 				case .autonomy:
 					AutonomyView(
 						store: AutonomyStore(
@@ -204,16 +224,6 @@ public struct SettingsScreen: View {
 					DeleteWorkspaceView(
 						store: services.workspaceDeletionStore(workspaceId: services.workspaceId ?? ""))
 				}
-			}
-			.confirmationDialog("Log out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
-				Button("Log out", role: .destructive) {
-					dismiss()
-					if let runtime { Task { await runtime.signOut() } } else { environment.signOut() }
-				}
-			} message: {
-				Text("You will need your email and password to sign back in.")
-			}
-		}
 	}
 
 	private func loadCounts() async {

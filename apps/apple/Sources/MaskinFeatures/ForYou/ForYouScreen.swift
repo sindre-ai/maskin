@@ -30,6 +30,7 @@ public struct ForYouScreen: View {
 	@State private var path: [String] = []
 	/// The Undo toast: shared by the cards' gestures and the ⋯ menu's "Take every suggested".
 	@State private var undoOffer: UndoOffer?
+	@State private var showDisplay = false
 
 	public var body: some View {
 		NavigationStack(path: $path) {
@@ -50,8 +51,12 @@ public struct ForYouScreen: View {
 		.shellToolbar(
 			environment: environment,
 			title: ForYouHeader.greeting(name: environment.auth.session?.name, at: Date()),
-			actions: ShellActions(live: true)
+			actions: ShellActions(
+				live: true, displaySymbol: ShellActions.slidersSymbol,
+				displayActive: !runtime.store.options.isDefaultDisplay,
+				displayToggle: { showDisplay = true })
 		)
+		.sheet(isPresented: $showDisplay) { ForYouDisplaySheet(store: runtime.store) }
 		.task(id: environment.workspaceId) {
 			Perf.event("foryou.screen.task")
 			async let feed: Void = runtime.store.load()

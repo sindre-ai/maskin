@@ -3,8 +3,8 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One agent: a hero with its editable identity, what it is doing now, and four tabs (Overview,
-/// Sessions, Setup, Triggers, plus Computer while it has one). Name, what it owns, instructions
+/// One agent: a hero with its editable identity, what it is doing now, and a vertical page menu (Setup,
+/// Triggers, Objects, Sessions, plus Computer while it has one). Name, what it owns, instructions
 /// and tools are editable here; everything saves optimistically and rolls back with a notice if
 /// the server refuses.
 struct AgentDetailView: View {
@@ -47,8 +47,6 @@ struct AgentDetailView: View {
 						triggers: triggers?.triggers.filter { $0.targetActorID == profile.id } ?? [],
 						onToggleTrigger: { id, on in Task { await triggers?.setEnabled(id, on) } },
 						onNewTrigger: triggers == nil ? nil : { showNewTrigger = true },
-						onReset: { confirmReset = true },
-						onDelete: { confirmDelete = true },
 						onStop: { sessionToStop = $0 },
 						onRetry: { session in Task { await store.retry(session) } },
 						onOpenLog: runtime == nil ? nil : { logSession = $0 },
@@ -76,13 +74,18 @@ struct AgentDetailView: View {
 						.accessibilityLabel("Message \(store.profile?.name ?? "agent")")
 					Button { startChat(live: true) } label: { Image(systemName: "waveform") }
 						.accessibilityLabel("Live with \(store.profile?.name ?? "agent")")
-					if store.canEnable {
-						Button("Enable") { Task { await store.enable() } }
-							.accessibilityLabel("Enable agent")
-					} else if store.canDisable {
-						Button("Disable") { Task { await store.disable() } }
-							.accessibilityLabel("Disable agent")
-					}
+					Menu {
+						if store.canEnable {
+							Button("Enable agent") { Task { await store.enable() } }
+						} else if store.canDisable {
+							Button("Disable agent") { Task { await store.disable() } }
+						}
+						if store.canReset { Button("Reset to defaults") { confirmReset = true } }
+						if store.canDelete {
+							Button("Delete agent", role: .destructive) { confirmDelete = true }
+						}
+					} label: { Image(systemName: "ellipsis") }
+						.accessibilityLabel("More for \(store.profile?.name ?? "agent")")
 				}
 			}
 		}
@@ -179,8 +182,6 @@ struct AgentDetailContent: View {
 	var onToggleTrigger: (String, Bool) -> Void = { _, _ in }
 	/// Nil hides "New trigger" (previews, or no trigger store).
 	var onNewTrigger: (() -> Void)?
-	var onReset: () -> Void = {}
-	var onDelete: () -> Void = {}
 	var onStop: (AgentSession) -> Void = { _ in }
 	var onRetry: (AgentSession) -> Void = { _ in }
 	/// Nil hides the log links (previews, snapshots).
@@ -196,9 +197,10 @@ struct AgentDetailContent: View {
 
 	enum Tab: String, CaseIterable, Identifiable {
 		case overview = "Overview"
-		case sessions = "Sessions"
 		case setup = "Setup"
 		case triggers = "Triggers"
+		case objects = "Objects"
+		case sessions = "Sessions"
 		case computer = "Computer"
 		var id: String { rawValue }
 	}
@@ -212,21 +214,47 @@ struct AgentDetailContent: View {
 	@State private var instructionsDraft = ""
 	@FocusState private var focus: Field?
 
-	private var tabs: [Tab] {
-		Tab.allCases.filter { $0 != .computer || (onOpenComputer != nil && store.liveSession != nil) }
+	/// The pages the menu offers; Computer only while the agent has a live one.
+	private var pages: [Tab] {
+		Tab.allCases.filter {
+			$0 != .overview && ($0 != .computer || (onOpenComputer != nil && store.liveSession != nil))
+		}
 	}
 
 	var body: some View {
-		hero
-		banner
-		statsRow
-		tabBar
-		switch tab {
-		case .overview: overview
-		case .sessions: sessions
-		case .setup: setup
-		case .triggers: triggersTab
-		case .computer: computer
+		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+			if tab == .overview {
+				hero
+				banner
+				statsRow
+				pageMenu
+			} else {
+				pageHeader
+				banner
+				switch tab {
+				case .setup: setup
+				case .triggers: triggersTab
+				case .objects: objectsPage
+				case .sessions: sessions
+				case .computer: computer
+				case .overview: EmptyView()
+				}
+			}
+		}
+		.onChange(of: profile.name, initial: true) { _, name in if focus != .name { nameDraft = name } }
+		.onChange(of: profile.description, initial: true) { _, text in
+			if focus != .owns { ownsDraft = text ?? "" }
+		}
+		.onChange(of: profile.systemPrompt, initial: true) { _, text in
+			if focus != .instructions { instructionsDraft = text ?? "" }
+		}
+		.onChange(of: focus) { old, _ in
+			switch old {
+			case .name: commitName()
+			case .owns: commitOwns()
+			case .instructions: commitInstructions()
+			case nil: break
+			}
 		}
 	}
 
@@ -269,21 +297,6 @@ struct AgentDetailContent: View {
 						}
 					}
 				}
-			}
-		}
-		.onChange(of: profile.name, initial: true) { _, name in if focus != .name { nameDraft = name } }
-		.onChange(of: profile.description, initial: true) { _, text in
-			if focus != .owns { ownsDraft = text ?? "" }
-		}
-		.onChange(of: profile.systemPrompt, initial: true) { _, text in
-			if focus != .instructions { instructionsDraft = text ?? "" }
-		}
-		.onChange(of: focus) { old, _ in
-			switch old {
-			case .name: commitName()
-			case .owns: commitOwns()
-			case .instructions: commitInstructions()
-			case nil: break
 			}
 		}
 	}
@@ -412,88 +425,99 @@ struct AgentDetailContent: View {
 		.accessibilityElement(children: .combine)
 	}
 
-	private func count(_ tab: Tab) -> Int? {
-		switch tab {
-		case .sessions: store.sessions.isEmpty ? nil : store.sessions.count
-		case .triggers: triggers.isEmpty ? nil : triggers.count
-		default: nil
+	private func summary(_ page: Tab) -> String {
+		switch page {
+		case .setup: "Instructions, tools, skills"
+		case .triggers: triggers.isEmpty ? "None" : "\(triggers.count)"
+		case .objects: objects.isEmpty ? "None" : "\(objects.count)"
+		case .sessions: store.sessions.isEmpty ? "No runs yet" : "\(store.sessions.count) recent"
+		case .computer: "Live view"
+		case .overview: ""
 		}
 	}
 
-	private var tabBar: some View {
+	private func icon(_ page: Tab) -> String {
+		switch page {
+		case .setup: "slider.horizontal.3"
+		case .triggers: "bolt"
+		case .objects: "square.stack.3d.up"
+		case .sessions: "clock"
+		case .computer: "display"
+		case .overview: "circle"
+		}
+	}
+
+	/// The vertical page menu under the hero: one row per page, each with its own summary.
+	private var pageMenu: some View {
 		VStack(spacing: 0) {
-			ScrollView(.horizontal, showsIndicators: false) {
-				HStack(spacing: MaskinSpace.s11) {
-					ForEach(tabs) { item in
-						let selected = item == tab
-						Button {
-							MaskinHaptics.play(.selection)
-							tab = item
-						} label: {
-							VStack(spacing: MaskinSpace.s3) {
-								HStack(spacing: MaskinSpace.s2) {
-									Text(item.rawValue).fontWeight(selected ? .bold : .semibold)
-									if let n = count(item) { Text("\(n)").foregroundStyle(MaskinColor.ink5) }
-								}
-								.maskinText(.body)
-								.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
-								Rectangle().fill(selected ? MaskinColor.ink : .clear).frame(height: 2)
-							}
-							.frame(minHeight: MaskinSpace.touchMin)
-							.contentShape(Rectangle())
-						}
-						.buttonStyle(.plain)
-						.accessibilityAddTraits(selected ? .isSelected : [])
+			ForEach(pages) { page in
+				Button {
+					MaskinHaptics.play(.selection)
+					tab = page
+				} label: {
+					HStack(spacing: MaskinSpace.s7) {
+						Image(systemName: icon(page)).font(.body).foregroundStyle(MaskinColor.ink3)
+							.frame(width: MaskinSpace.s12).accessibilityHidden(true)
+						Text(page.rawValue).maskinText(.body).foregroundStyle(MaskinColor.ink)
+						Spacer(minLength: MaskinSpace.s3)
+						Text(summary(page)).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+						Image(systemName: "chevron.right")
+							.font(.footnote.weight(.semibold)).foregroundStyle(MaskinColor.ink5)
+							.accessibilityHidden(true)
 					}
+					.frame(minHeight: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
 				}
+				.buttonStyle(.plain)
+				Divider().overlay(MaskinSurface.separator)
 			}
-			Divider().overlay(MaskinSurface.separator)
 		}
 	}
 
-	// MARK: - Overview
+	/// A sub-page's header: back to the overview, then the page's name.
+	private var pageHeader: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			Button {
+				MaskinHaptics.play(.selection)
+				focus = nil
+				tab = .overview
+			} label: {
+				Label(profile.name, systemImage: "chevron.left")
+					.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.sigInk)
+					.frame(minHeight: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			Text(tab.rawValue).maskinText(.title).foregroundStyle(MaskinColor.ink)
+		}
+	}
 
-	@ViewBuilder private var overview: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s11) {
-			if !store.sessions.isEmpty {
-				VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-					SectionHeader("Recent sessions") {
-						Button("See all") { tab = .sessions }
-							.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.sigInk)
-					}
-					ForEach(store.sessions.prefix(3)) { session in
-						sessionRow(session, actions: false)
-						Divider().overlay(MaskinSurface.separator)
-					}
-				}
-			}
-			if !objects.isEmpty {
-				VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-					SectionHeader("Driving")
-					ForEach(objects) { object in
-						Button { onOpenObject(object.id) } label: {
-							HStack(spacing: MaskinSpace.s5) {
-								Text(object.title ?? "Untitled")
-									.maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(2)
-									.multilineTextAlignment(.leading)
-								Spacer(minLength: MaskinSpace.s3)
-								Text(MaskinStatus.label(for: object.status).capitalized)
-									.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-								Image(systemName: "chevron.right")
-									.font(.footnote.weight(.semibold)).foregroundStyle(MaskinColor.ink5)
-									.accessibilityHidden(true)
-							}
-							.frame(minHeight: MaskinSpace.touchMin)
-							.contentShape(Rectangle())
-						}
-						.buttonStyle(.plain)
-						Divider().overlay(MaskinSurface.separator)
-					}
-				}
-			}
-			if store.sessions.isEmpty && objects.isEmpty {
+	// MARK: - Objects
+
+	@ViewBuilder private var objectsPage: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			if objects.isEmpty {
 				Text("Nothing yet. Message \(profile.name) to give it work.")
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			}
+			ForEach(objects) { object in
+				Button { onOpenObject(object.id) } label: {
+					HStack(spacing: MaskinSpace.s5) {
+						Text(object.title ?? "Untitled")
+							.maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(2)
+							.multilineTextAlignment(.leading)
+						Spacer(minLength: MaskinSpace.s3)
+						Text(MaskinStatus.label(for: object.status).capitalized)
+							.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+						Image(systemName: "chevron.right")
+							.font(.footnote.weight(.semibold)).foregroundStyle(MaskinColor.ink5)
+							.accessibilityHidden(true)
+					}
+					.frame(minHeight: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+				Divider().overlay(MaskinSurface.separator)
 			}
 		}
 	}
@@ -632,12 +656,6 @@ struct AgentDetailContent: View {
 				}
 				.frame(minHeight: MaskinSpace.touchMin)
 				.accessibilityElement(children: .combine)
-			}
-			if store.canReset || store.canDelete {
-				HStack(spacing: MaskinSpace.s5) {
-					if store.canReset { outlinedButton("Reset to defaults", tint: MaskinColor.ink, action: onReset) }
-					if store.canDelete { outlinedButton("Delete agent", tint: MaskinColor.danger, action: onDelete) }
-				}
 			}
 		}
 	}

@@ -31,6 +31,20 @@ public struct ForYouDisplayOptions: Sendable, Equatable, Codable {
 		self.showsHandled = showsHandled
 	}
 
+	/// Layout, sort, filter bar and Handled today are all at their defaults (the intent pill is a
+	/// filter, not a display option, so it does not count). Drives the Display button tint and Reset.
+	public var isDefaultDisplay: Bool {
+		mode == .cards && sort == .attention && !filterBarOn && showsHandled
+	}
+
+	/// Puts the four Display settings back; the chosen intent stays.
+	public mutating func resetDisplay() {
+		mode = .cards
+		sort = .attention
+		filterBarOn = false
+		showsHandled = true
+	}
+
 	// Hand-written so options saved before these existed (with a `typeFilter`) still decode.
 	public init(from decoder: any Decoder) throws {
 		let c = try decoder.container(keyedBy: CodingKeys.self)

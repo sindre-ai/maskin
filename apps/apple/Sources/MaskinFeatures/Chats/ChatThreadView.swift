@@ -342,6 +342,16 @@ struct ChatThreadView: View {
 						Label("Copy link", systemImage: "link")
 					}
 				}
+				if let text = exportText {
+					ShareLink(item: text, subject: Text(store.title)) { Label("Export chat", systemImage: "square.and.arrow.up") }
+				}
+				if let conversations, let row = conversations.conversation(id: store.conversationID), row.unreadCount == 0 {
+					Button {
+						Task { _ = await conversations.markUnread(row.id) }
+					} label: {
+						Label("Mark as unread", systemImage: "envelope.badge")
+					}
+				}
 				Button {
 					newTitle = store.title
 					renaming = true
@@ -421,6 +431,13 @@ struct ChatThreadView: View {
 		} else {
 			scroll(to: message.id, proxy: proxy)
 		}
+	}
+
+	/// The chat as Markdown text for the Export chat share sheet. Nil while there is nothing to export.
+	private var exportText: String? {
+		let messages = store.allMessages
+		guard !ChatMarkdownExport.summary(of: messages).hasPrefix("0 ") else { return nil }
+		return ChatMarkdownExport.markdown(title: store.title, messages: messages)
 	}
 
 	/// The web link to this conversation, for Copy link.
@@ -1086,7 +1103,9 @@ struct ThreadTranscript: View {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
 						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) },
-						sentAt: store.awaitingReplySince, startedAt: session?.startedAt)
+						sentAt: store.awaitingReplySince, startedAt: session?.startedAt,
+						isFollowing: session.map { followController?.isFollowing($0.id) ?? false } ?? false,
+						onToggleFollow: session.flatMap { toggleFollow(session: $0, agent: row.agent) })
 				}
 			}
 			.padding(.top, Self.listGap)
@@ -1102,6 +1121,25 @@ struct ThreadTranscript: View {
 				Task { await store.resumeSession(stalled.id) }
 			}
 			.padding(.top, Self.listGap)
+		}
+	}
+
+	private var followController: FollowActivityController? { FollowActivityController.shared }
+
+	/// Follow / Stop following for the agent's working card; nil where Live Activities don't exist.
+	private func toggleFollow(session: ChatAgentSession, agent: ChatParticipant) -> (() -> Void)? {
+		guard let controller = followController else { return nil }
+		return {
+			MaskinHaptics.play(.selection)
+			if controller.isFollowing(session.id) {
+				Task { await controller.stopFollowing(sessionId: session.id) }
+			} else {
+				controller.follow(
+					WorkingAgent(
+						id: agent.id, sessionId: session.id, name: agent.name, doing: session.currentActivity,
+						startedAt: session.startedAt ?? Date(), conversationId: store.conversationID,
+						topic: store.title))
+			}
 		}
 	}
 
