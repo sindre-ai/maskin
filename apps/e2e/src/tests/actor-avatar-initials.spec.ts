@@ -86,6 +86,7 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			// The comment persists, so its avatar returns with the timeline — but
 			// the timeline loads after the heading, so wait for it before reading
 			// the computed colour.
+			await expect(page.getByText('Avatar slot check')).toBeVisible({ timeout: 10000 })
 			const avatarAfterReload = page.locator('main .rounded-full[title^="E2E "]').first()
 			await expect(avatarAfterReload).toBeVisible({ timeout: 10000 })
 			const secondColor = await avatarAfterReload.evaluate(
