@@ -24689,6 +24689,13 @@
 															"type": "string"
 														}
 													},
+													"driverId": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
 													"inProgressCount": {
 														"type": "integer",
 														"minimum": 0
@@ -24804,6 +24811,7 @@
 													"entryCondition",
 													"closeCondition",
 													"tags",
+													"driverId",
 													"inProgressCount",
 													"closedCount",
 													"medianTimeToCloseMs",

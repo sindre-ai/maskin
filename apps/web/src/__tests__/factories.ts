@@ -227,6 +227,7 @@ export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSumm
 		entryCondition: null,
 		closeCondition: null,
 		tags: [],
+		driverId: null,
 		inProgressCount: 0,
 		closedCount: 0,
 		medianTimeToCloseMs: null,
