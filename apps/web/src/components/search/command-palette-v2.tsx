@@ -812,7 +812,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 									onMouseMove={() => setActiveId(row.id)}
 									onClick={row.run}
 									className={cn(
-										'group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 max-[1024.02px]:min-h-11',
+										'group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 max-lg:min-h-11 pointer-coarse:min-h-11',
 										row.id === activeId && 'bg-secondary',
 									)}
 								>

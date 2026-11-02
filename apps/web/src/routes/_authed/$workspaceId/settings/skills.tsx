@@ -318,7 +318,7 @@ function SkillsPage() {
 					{...dropHandlers}
 					className={cn(
 						'rounded-lg border-2 border-dashed transition-colors',
-						isDragging ? 'border-accent bg-accent/5' : 'border-border',
+						isDragging ? 'border-brand bg-brand-subtle' : 'border-border',
 						isUploading && 'pointer-events-none opacity-50',
 					)}
 				>

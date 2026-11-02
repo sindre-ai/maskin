@@ -4,6 +4,7 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { COMPACT_CAPTURE_DELAY_MS, reportRouteError } from '@/components/shared/route-error'
 import {
 	DecidedFold,
 	findDecisionAnswer,
@@ -19,6 +20,7 @@ import { useObjectGraph } from '@/hooks/use-objects'
 import { useSession } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import { trackMarkReadClicked } from '@/lib/analytics'
+import { ApiError } from '@/lib/api'
 import type { ActorListItem, EventResponse, GraphFileSummary, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { hasDecision } from '@/lib/comment-decision'
@@ -324,8 +326,18 @@ export function TimelineTab({
 		data: graph,
 		isLoading: isGraphLoading,
 		isError: isGraphError,
+		error: graphError,
 		refetch: refetchGraph,
 	} = useObjectGraph(workspaceId, object.id)
+	// The card below replaces QueryStateError, so it reports the way RouteError's compact
+	// variant does: after the same delay, and not at all if a refetch resolves it first.
+	const graphFailed = isGraphError && !graph
+	useEffect(() => {
+		if (!graphFailed || !graphError) return
+		const timer = window.setTimeout(() => reportRouteError(graphError), COMPACT_CAPTURE_DELAY_MS)
+		return () => window.clearTimeout(timer)
+	}, [graphFailed, graphError])
+	const graphNetworkError = graphError instanceof ApiError && graphError.code === 'NETWORK_ERROR'
 	const events = useMemo(() => {
 		const base = graph?.events ?? []
 		if (!additionalEvents || additionalEvents.length === 0) return base
@@ -794,7 +806,11 @@ export function TimelineTab({
 				// list area carries the error.
 				<EmptyState
 					title="Activity did not load"
-					description="Your connection dropped. Nothing was lost."
+					description={
+						graphNetworkError
+							? 'Your connection dropped. Nothing was lost.'
+							: 'Something went wrong on our side. Nothing was lost.'
+					}
 					className="py-8"
 					action={
 						<Button variant="outline" size="sm" onClick={() => refetchGraph()}>

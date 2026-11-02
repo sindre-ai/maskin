@@ -641,7 +641,7 @@ function CommentInputForm({
 		<div
 			className={cn(
 				'relative rounded-md transition-colors',
-				isDraggingFile && 'bg-accent/5 ring-1 ring-accent/40',
+				isDraggingFile && 'bg-brand-subtle ring-1 ring-brand/40',
 			)}
 			onDragOver={(e) => {
 				if (!e.dataTransfer.types.includes('Files')) return

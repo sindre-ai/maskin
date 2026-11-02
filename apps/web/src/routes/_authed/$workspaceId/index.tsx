@@ -36,10 +36,17 @@ import { cn } from '@/lib/cn'
 import {
 	cardHeadline,
 	classifyCardKind,
+	isInformational,
 	isSendingOption,
 	recommendedAction,
 } from '@/lib/foryou-card-kind'
-import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
+import {
+	type FeedBucket,
+	bucketRank,
+	dismissableItems,
+	feedItemKey,
+	feedTailLabel,
+} from '@/lib/foryou-feed'
 import {
 	type LaterOption,
 	addLater,
@@ -293,8 +300,9 @@ function ForYouFeed() {
 			if (decided.has(key)) return 'done'
 			if (isSetAside(laterEntries[key], item.latest_event_id, laterClock)) return 'later'
 			if (repliedKeys.has(key)) return 'waiting'
-			// Only an ask with options is something to decide; a plain mention is an update.
-			return classifyCardKind(item) === 'decision' ? 'needs' : 'fyi'
+			// A mention that may be a question stays under the decisions; only a card that
+			// asks nothing of the person is an update.
+			return isInformational(item) ? 'fyi' : 'needs'
 		},
 		[decided, repliedKeys, laterEntries, laterClock],
 	)
@@ -714,6 +722,12 @@ function ForYouFeed() {
 		}
 	}, [bulkConfirm, bucketOf, handleDecide])
 
+	// A bulk dismiss never takes a card that is waiting on the person.
+	const dismissable = useMemo(
+		() => dismissableItems(orderedCards, bucketOf),
+		[orderedCards, bucketOf],
+	)
+
 	const bulkActions: ForYouBulkAction[] = [
 		{
 			id: 'suggested',
@@ -726,8 +740,8 @@ function ForYouFeed() {
 		{
 			id: 'all',
 			label: 'Dismiss all',
-			count: orderedCards.length,
-			onSelect: () => dismissAll(orderedCards, 'All caught up'),
+			count: dismissable.length,
+			onSelect: () => dismissAll(dismissable, 'All caught up'),
 		},
 	]
 
@@ -737,11 +751,11 @@ function ForYouFeed() {
 		function onKeydown(event: KeyboardEvent) {
 			if (!isMarkAllReadShortcut(event)) return
 			event.preventDefault()
-			dismissAll(orderedCards, 'All caught up')
+			dismissAll(dismissable, 'All caught up')
 		}
 		window.addEventListener('keydown', onKeydown)
 		return () => window.removeEventListener('keydown', onKeydown)
-	}, [dismissAll, orderedCards])
+	}, [dismissAll, dismissable])
 
 	if (isLoading) {
 		return (

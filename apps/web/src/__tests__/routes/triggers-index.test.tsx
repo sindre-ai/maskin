@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const updateMutate = vi.fn()
 let triggers: unknown[] = []
 let loops: unknown[] = []
+let loopsFailed = false
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -23,7 +24,13 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [{ id: 'ag-1', name: 'SEO Researcher', type: 'agent' }] }),
 }))
 vi.mock('@/hooks/use-loops', () => ({
-	useLoops: () => ({ data: loops, isLoading: false }),
+	useLoops: () => ({
+		data: loopsFailed ? undefined : loops,
+		isLoading: false,
+		isError: loopsFailed,
+		error: loopsFailed ? new Error('boom') : null,
+		refetch: vi.fn(),
+	}),
 }))
 vi.mock('@/hooks/use-triggers', () => ({
 	useTriggers: () => ({ data: triggers, isLoading: false, isError: false }),
@@ -58,6 +65,7 @@ describe('/$workspaceId/triggers', () => {
 		vi.clearAllMocks()
 		triggers = [trigger('t-1', 'Weekly report'), trigger('t-2', 'Ranking drop')]
 		loops = [{ triggerIds: ['t-1'] }]
+		loopsFailed = false
 	})
 
 	it('lists flow triggers and standalone triggers under their own headings', () => {
@@ -66,6 +74,14 @@ describe('/$workspaceId/triggers', () => {
 		expect(screen.getByRole('heading', { name: 'Not tied to a flow' })).toBeInTheDocument()
 		expect(screen.getByText('Weekly report')).toBeInTheDocument()
 		expect(screen.getByText('Ranking drop')).toBeInTheDocument()
+	})
+
+	it('does not call every trigger standalone when the flows failed to load', () => {
+		loopsFailed = true
+		render(<TriggersPage />)
+		// The mocked RouteError stands in for the error card.
+		expect(screen.getByText('Error')).toBeInTheDocument()
+		expect(screen.queryByText('Not tied to a flow')).not.toBeInTheDocument()
 	})
 
 	it('says so when every trigger belongs to a flow', () => {

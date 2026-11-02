@@ -325,7 +325,7 @@
 	   and --border, nearer the surface. */
 	--border-subtle: #eef0f4;
 	--input: #e5e8ec;
-	--ring: #8f9aae;
+	--ring: #7e89a0;
 
 	/* Brand — the indigo used for links and primary actions on light surfaces */
 	--brand: #2545c8;
@@ -414,7 +414,7 @@
 	--st-qualified-bg: #e0f2fe;
 	--st-qualified-text: #0369a1;
 	--st-define-bg: #fef3c7;
-	--st-define-text: #a16207;
+	--st-define-text: #92560a;
 	--st-live-bg: #dff1e8;
 	--st-live-text: #166a49;
 	--st-scored-bg: #fae8ff;
@@ -452,7 +452,7 @@
 	--sidebar-accent: #e9ecf0;
 	--sidebar-accent-foreground: #10131a;
 	--sidebar-border: #e5e8ec;
-	--sidebar-ring: #8f9aae;
+	--sidebar-ring: #7e89a0;
 }
 
 .dark {
@@ -486,7 +486,7 @@
 	   than one step down from --background. */
 	--border-subtle: #1a1d23;
 	--input: #23272e;
-	--ring: #4a5260;
+	--ring: #5b6577;
 
 	/* Brand stays indigo but shifts one stop lighter so it reads on dark. */
 	--brand: #6a8cff;
@@ -591,7 +591,7 @@
 	--sidebar-accent: #181b21;
 	--sidebar-accent-foreground: #e8eaee;
 	--sidebar-border: #23272e;
-	--sidebar-ring: #4a5260;
+	--sidebar-ring: #5b6577;
 }
 
 @layer base {

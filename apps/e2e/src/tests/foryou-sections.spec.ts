@@ -65,7 +65,7 @@ function curatedItem(workspaceId: string, seed: Seed, index: number) {
 	}
 }
 
-async function mockFeed(page: Page, workspaceId: string) {
+async function mockFeed(page: Page, workspaceId: string, seeds: Seed[] = SEEDS) {
 	const dismissed = new Set<string>()
 	await page.route('**/api/files**', (route) =>
 		route.request().method() === 'GET'
@@ -79,9 +79,9 @@ async function mockFeed(page: Page, workspaceId: string) {
 	})
 	await page.route('**/api/for-you*', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback()
-		const items = SEEDS.map((seed, index) => curatedItem(workspaceId, seed, index)).filter(
-			(item) => !dismissed.has(item.notification_id),
-		)
+		const items = seeds
+			.map((seed, index) => curatedItem(workspaceId, seed, index))
+			.filter((item) => !dismissed.has(item.notification_id))
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -144,5 +144,30 @@ test.describe('For You sections', () => {
 		await page.reload()
 		await expect(page.getByRole('heading', { name: /^Decisions\s*2$/ })).toBeVisible()
 		await expect(page.getByRole('heading', { name: /Updates for you/ })).toHaveCount(0)
+	})
+
+	test('a plain mention that asks something stays under Decisions and survives Mark all read', async ({
+		page,
+		account,
+	}) => {
+		await mockFeed(page, account.workspaceId, [
+			{ id: 'ask-a', title: 'Which brief should go first?', decision: false },
+			{ id: 'update-a', title: 'The nightly import finished', decision: false },
+		])
+		await page.goto(`/${account.workspaceId}`)
+
+		await expect(page.getByRole('heading', { name: /^Decisions\s*1$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: /^Updates for you\s*1$/ })).toBeVisible()
+		await expect(page.getByTestId('foryou-greeting')).toContainText(
+			'One decision is waiting on you',
+		)
+
+		await page.getByRole('button', { name: 'Mark all read' }).click()
+		await expect(page.getByRole('heading', { name: /Updates for you/ })).toHaveCount(0)
+		await expect(page.getByRole('heading', { name: /^Decisions\s*1$/ })).toBeVisible()
+
+		// Alt+U never takes the open question either.
+		await page.keyboard.press('Alt+u')
+		await expect(page.getByRole('heading', { name: /^Decisions\s*1$/ })).toBeVisible()
 	})
 })

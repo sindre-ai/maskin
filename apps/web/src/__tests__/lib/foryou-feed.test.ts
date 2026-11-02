@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
-import { bucketRank, compactTime, feedItemKey, feedTailLabel, heldNote } from '@/lib/foryou-feed'
+import {
+	type FeedBucket,
+	bucketRank,
+	compactTime,
+	dismissableItems,
+	feedItemKey,
+	feedTailLabel,
+	heldNote,
+} from '@/lib/foryou-feed'
+import { leadLine } from '@/routes/_authed/$workspaceId/index'
 
 const NOW = Date.parse('2026-08-19T12:00:00.000Z')
 
@@ -67,5 +76,28 @@ describe('feedTailLabel', () => {
 	it('explains an empty feed differently when a filter is on', () => {
 		expect(feedTailLabel({ filtered: false })).toBe('Feed cleared')
 		expect(feedTailLabel({ filtered: true })).toBe('Nothing of this kind in the feed')
+	})
+})
+
+describe('dismissableItems', () => {
+	it('leaves every card that is waiting on the person out of a bulk dismiss', () => {
+		const buckets: Record<string, FeedBucket> = {
+			a: 'needs',
+			b: 'fyi',
+			c: 'waiting',
+			d: 'done',
+			e: 'needs',
+		}
+		const items = Object.keys(buckets)
+		expect(dismissableItems(items, (id) => buckets[id] as FeedBucket)).toEqual(['b', 'c', 'd'])
+	})
+})
+
+describe('leadLine', () => {
+	it('counts decisions only, and never says nothing to decide while one is open', () => {
+		expect(leadLine(1, 3)).toBe('One decision is waiting on you')
+		expect(leadLine(4, 0)).toBe('4 decisions are waiting on you')
+		expect(leadLine(0, 2)).toBe('Nothing to decide, 2 updates for you')
+		expect(leadLine(0, 0)).toBe('You are clear')
 	})
 })

@@ -119,7 +119,7 @@ function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 			aria-selected={active}
 			onClick={() => onOpen(row)}
 			className={cn(
-				'flex w-full cursor-pointer items-center gap-3 border-t border-border px-1 py-2.5 text-left transition-colors hover:bg-secondary max-[1024.02px]:min-h-11',
+				'flex w-full cursor-pointer items-center gap-3 border-t border-border px-1 py-2.5 text-left transition-colors hover:bg-secondary max-lg:min-h-11 pointer-coarse:min-h-11',
 				active && 'bg-secondary',
 			)}
 		>

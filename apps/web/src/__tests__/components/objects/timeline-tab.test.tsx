@@ -1,10 +1,16 @@
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead } from '@/hooks/use-subscriptions'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { ApiError } from '@/lib/api'
+import { pushFaroError } from '@/lib/faro'
+import { captureException } from '@/lib/sentry'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse, buildObjectResponse, buildRelationshipResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
+
+vi.mock('@/lib/sentry', () => ({ captureException: vi.fn() }))
+vi.mock('@/lib/faro', () => ({ pushFaroError: vi.fn() }))
 
 // D8 (bet/d166-loops-v4-polish) analytics helper — mocked here so the polish
 // variant's `mark_read_clicked` fire is observable without pulling posthog-js
@@ -422,11 +428,54 @@ describe('TimelineTab', () => {
 
 		expect(screen.queryByText('No activity yet.')).not.toBeInTheDocument()
 		expect(screen.getByText('Activity did not load')).toBeInTheDocument()
-		expect(screen.getByText('Your connection dropped. Nothing was lost.')).toBeInTheDocument()
+		expect(
+			screen.getByText('Something went wrong on our side. Nothing was lost.'),
+		).toBeInTheDocument()
 		// Filters stay visible on the error state.
 		expect(screen.getByRole('button', { name: /^All \(/ })).toBeInTheDocument()
 		fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
 		expect(refetch).toHaveBeenCalledTimes(1)
+	})
+
+	it('says the connection dropped only for a network error', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const error = new ApiError(0, 'Service unavailable.')
+		error.code = 'NETWORK_ERROR'
+		vi.mocked(useObjectGraph).mockReturnValue({
+			data: undefined,
+			isError: true,
+			error,
+			refetch: vi.fn(),
+		} as never)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.getByText('Your connection dropped. Nothing was lost.')).toBeInTheDocument()
+	})
+
+	it('reports a failed activity load to Sentry and Faro after the compact delay', () => {
+		vi.useFakeTimers()
+		try {
+			const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+			const error = new Error('boom')
+			vi.mocked(useObjectGraph).mockReturnValue({
+				data: undefined,
+				isError: true,
+				error,
+				refetch: vi.fn(),
+			} as never)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			expect(captureException).not.toHaveBeenCalled()
+			act(() => {
+				vi.advanceTimersByTime(3000)
+			})
+			expect(captureException).toHaveBeenCalledWith(error)
+			expect(pushFaroError).toHaveBeenCalledWith(error)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it('falls back to a denormalized title when the linked object is not in the graph', () => {

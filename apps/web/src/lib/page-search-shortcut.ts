@@ -44,8 +44,26 @@ export function focusField(input: HTMLInputElement | null | undefined): boolean 
 	return true
 }
 
+// A modal on top: the palette (aria-modal), a Radix dialog or sheet (data-state="open"), an
+// alert dialog. The inline, non-modal role=dialog cards (the link preview, the secret card)
+// do not count, and neither does one that is hidden.
+const MODAL_SELECTOR =
+	'[role="alertdialog"], [role="dialog"][aria-modal="true"], [role="dialog"][data-state="open"]'
+
 function dialogIsOpen(): boolean {
-	return document.querySelector('[role="dialog"], [role="alertdialog"]') !== null
+	return Array.from(document.querySelectorAll<HTMLElement>(MODAL_SELECTOR)).some(isRendered)
+}
+
+// Where the person is typing prose or code, or reading a chat: Cmd+F is the browser's find
+// there (a thread has its own in-page search to reach). The page search field itself is an
+// input, so it is not in this list.
+function ownsFind(event: KeyboardEvent): boolean {
+	const target = event.target
+	if (target instanceof HTMLElement) {
+		if (target instanceof HTMLTextAreaElement || target.isContentEditable) return true
+		if (target.closest('.cm-editor, [contenteditable="true"]')) return true
+	}
+	return /\/chats\/[^/]+/.test(window.location.pathname)
 }
 
 /** The keydown handler. Calls preventDefault only when a page search took the key. */
@@ -55,6 +73,7 @@ export function handlePageSearchKeydown(event: KeyboardEvent): void {
 	if (event.defaultPrevented) return
 	// A palette, sheet or dialog on top owns the keyboard.
 	if (dialogIsOpen()) return
+	if (ownsFind(event)) return
 	if (focusPageSearch()) event.preventDefault()
 }
 

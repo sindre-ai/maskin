@@ -94,7 +94,7 @@ function MultiRow({
 				e.preventDefault()
 				onToggle()
 			}}
-			className="max-[1024.02px]:min-h-11"
+			className="max-lg:min-h-11 pointer-coarse:min-h-11"
 		>
 			{leading}
 			<span className="truncate">{label}</span>
@@ -235,7 +235,7 @@ export function RadioFilter<T extends string>({
 						<DropdownMenuRadioItem
 							key={o.value || 'any'}
 							value={o.value || 'any'}
-							className="max-[1024.02px]:min-h-11"
+							className="max-lg:min-h-11 pointer-coarse:min-h-11"
 						>
 							{o.label}
 						</DropdownMenuRadioItem>

@@ -106,7 +106,14 @@ describe('MobileNav', () => {
 		mockUseEnabledModules.mockReturnValue([])
 		mockMatch.mockImplementation(({ to }) => to === '/$workspaceId/chats')
 		render(<MobileNav />)
-		expect(screen.getByRole('link', { name: 'Chats, current page' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Chats, current page' })).toHaveAttribute(
+			'aria-current',
+			'page',
+		)
+		expect(screen.getByRole('link', { name: 'For you, navigate to' })).not.toHaveAttribute(
+			'aria-current',
+		)
+		expect(screen.getByRole('button', { name: 'More' })).toHaveAttribute('aria-haspopup', 'dialog')
 		expect(screen.getByRole('link', { name: 'For you, navigate to' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Flows, navigate to' })).toBeInTheDocument()
 	})

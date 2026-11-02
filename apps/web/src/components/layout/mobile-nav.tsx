@@ -88,6 +88,7 @@ export function MobileNav() {
 							search={{} as never}
 							onClick={() => trackNavItemClicked({ item_key: item.key, source: 'bottom-nav' })}
 							aria-label={`${item.label}, ${isActive ? 'current page' : 'navigate to'}`}
+							aria-current={isActive ? 'page' : undefined}
 							className={cn(
 								'flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-1.5 text-[11px] font-medium transition-colors duration-150',
 								isActive ? 'text-foreground' : 'text-muted-foreground',
@@ -102,6 +103,7 @@ export function MobileNav() {
 					type="button"
 					onClick={() => setOpenMobile(true)}
 					aria-label="More"
+					aria-haspopup="dialog"
 					className="flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors duration-150"
 				>
 					<MoreHorizontal size={18} aria-hidden />

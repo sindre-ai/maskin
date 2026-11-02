@@ -70,3 +70,11 @@ export function feedItemKey(item: UnreadItem): string {
 export function feedTailLabel({ filtered }: { filtered: boolean }): string {
 	return filtered ? 'Nothing of this kind in the feed' : 'Feed cleared'
 }
+
+/**
+ * What a bulk dismiss ("Dismiss all", Alt+U) may touch: never a card that is
+ * waiting on a decision or an answer from the person.
+ */
+export function dismissableItems<T>(items: readonly T[], bucketOf: (item: T) => FeedBucket): T[] {
+	return items.filter((item) => bucketOf(item) !== 'needs')
+}

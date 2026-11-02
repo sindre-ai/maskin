@@ -143,7 +143,7 @@ export function ListRow({
 				// hanging off the list's left edge.
 				// Touch puts the checkbox back in the star's slot, so the lane is dead
 				// space there — hand those pixels back to the title.
-				'pl-9 max-[1024.02px]:pl-3 pointer-coarse:pl-3',
+				'pl-9 max-lg:pl-3 pointer-coarse:pl-3',
 				'cursor-pointer transition-colors hover:bg-muted/40',
 				'data-[state=selected]:bg-muted',
 				isArchived && 'opacity-[0.62] hover:opacity-90',
@@ -156,7 +156,7 @@ export function ListRow({
 			    the star's tap area ends inside its own box (an overflowing child is
 			    what the mobile-QA scrollWidth gate flags); the -mr-3 hands those 12px
 			    back out of the row's gap-3, so the title column keeps its width. */}
-			<span className="grid size-[26px] shrink-0 place-items-center self-center max-[1024.02px]:flex max-[1024.02px]:w-13 max-[1024.02px]:-mr-3 max-[1024.02px]:gap-2 pointer-coarse:flex pointer-coarse:w-13 pointer-coarse:-mr-3 pointer-coarse:gap-2">
+			<span className="grid size-[26px] shrink-0 place-items-center self-center max-lg:flex max-lg:w-13 max-lg:-mr-3 max-lg:gap-2 pointer-coarse:flex pointer-coarse:w-13 pointer-coarse:-mr-3 pointer-coarse:gap-2">
 				{showStar && (
 					<button
 						type="button"

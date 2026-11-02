@@ -23,6 +23,7 @@ import { useContinueSession, useSendSessionInput } from '@/hooks/use-sessions'
 import { ApiError, type MessageKeychainRequest, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { queryKeys } from '@/lib/query-keys'
+import { useWorkspace } from '@/lib/workspace-context'
 import {
 	CREDENTIAL_NAME_MAX_LENGTH,
 	checkCredentialName,
@@ -91,6 +92,7 @@ export function KeychainRequestCard({
 	const sendInput = useSendSessionInput(workspaceId)
 	// Saving writes to the workspace, which a viewer cannot do.
 	const canWrite = useCanWrite()
+	const { workspace } = useWorkspace()
 	// The Keychain pages only exist behind this flag, so the link and the pointer would dead-end.
 
 	const targetIds = useMemo(
@@ -209,8 +211,17 @@ export function KeychainRequestCard({
 	}
 
 	const me = getStoredActor()
-	const canUndo = canWrite && me?.type === 'human'
 	const keyId = savedId ?? savedEarlier?.id ?? null
+	// The server lets only the person who saved a key, or a workspace admin or owner, take it
+	// back out (POST /integrations/:id/remove answers 403 otherwise). A key saved in this card
+	// was saved by the person looking at it; one found afterwards has its creator on the row.
+	const canUndo =
+		canWrite &&
+		me?.type === 'human' &&
+		(!!savedId ||
+			savedEarlier?.createdBy === me.id ||
+			workspace.role === 'owner' ||
+			workspace.role === 'admin')
 
 	// Undo takes the key back out of the vault. The agent was already restarted with it, which
 	// is the same as removing it from the Keychain page: the secret is destroyed at once.

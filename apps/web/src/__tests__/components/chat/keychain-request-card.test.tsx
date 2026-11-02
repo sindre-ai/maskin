@@ -3,7 +3,7 @@ import { ApiError } from '@/lib/api'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { TestWrapper } from '../../setup'
+import { createWorkspaceWrapper } from '../../setup'
 
 const mockChatCapture = vi.fn()
 const mockRemove = vi.fn()
@@ -54,9 +54,13 @@ function request(overrides: Partial<MessageKeychainRequest> = {}): MessageKeycha
 	return { session_id: SESSION_ID, kind: 'login', suggested_name: 'e-conomic', ...overrides }
 }
 
-function renderCard(req: MessageKeychainRequest = request()) {
+function renderCard(
+	req: MessageKeychainRequest = request(),
+	role: 'owner' | 'admin' | 'member' = 'member',
+) {
+	const Wrapper = createWorkspaceWrapper({ role })
 	return render(
-		<TestWrapper>
+		<Wrapper>
 			<KeychainRequestCard
 				workspaceId="ws-1"
 				conversationId="conv-1"
@@ -65,7 +69,7 @@ function renderCard(req: MessageKeychainRequest = request()) {
 				askingAgentId={ASKING_AGENT}
 				request={req}
 			/>
-		</TestWrapper>,
+		</Wrapper>,
 	)
 }
 
@@ -391,6 +395,46 @@ describe('KeychainRequestCard: answers', () => {
 		expect(await screen.findByText(/from the Keychain\./)).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
 		localStorage.removeItem('maskin-actor')
+	})
+
+	describe('Undo on a key found after a reload', () => {
+		function savedBy(createdBy: string) {
+			integrations = [
+				{
+					id: 'int-1',
+					source: 'chat_capture',
+					originSessionId: SESSION_ID,
+					providerMode: 'byo_login',
+					status: 'active',
+					displayName: 'e-conomic',
+					createdAt: '2026-10-19T10:01:00.000Z',
+					createdBy,
+				} as unknown as IntegrationResponse,
+			]
+		}
+
+		it('is offered to the person who saved it', () => {
+			localStorage.setItem('maskin-actor', JSON.stringify({ id: 'human-1', type: 'human' }))
+			savedBy('human-1')
+			renderCard()
+			expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
+			localStorage.removeItem('maskin-actor')
+		})
+
+		it('is hidden from another member, whom the server would refuse', () => {
+			localStorage.setItem('maskin-actor', JSON.stringify({ id: 'human-2', type: 'human' }))
+			savedBy('human-1')
+			renderCard()
+			expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+			localStorage.removeItem('maskin-actor')
+		})
+
+		it('is offered to a workspace admin or owner', () => {
+			localStorage.setItem('maskin-actor', JSON.stringify({ id: 'human-2', type: 'human' }))
+			savedBy('human-1')
+			renderCard(request(), 'admin')
+			expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
+		})
 	})
 
 	it('gives a viewer an action instead of a disabled form', () => {

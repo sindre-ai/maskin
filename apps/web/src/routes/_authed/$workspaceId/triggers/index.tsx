@@ -34,7 +34,8 @@ function TriggersRoute() {
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const triggersQuery = useTriggers(workspaceId)
-	const { data: loops, isLoading: loopsLoading } = useLoops(workspaceId)
+	const loopsQuery = useLoops(workspaceId)
+	const { data: loops, isLoading: loopsLoading } = loopsQuery
 	const { data: actors } = useActors(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createOpen, setCreateOpen] = useState(false)
@@ -67,7 +68,7 @@ function TriggersRoute() {
 	const loading = triggersQuery.isLoading || loopsLoading
 
 	return (
-		<div className="mx-auto w-full max-w-[760px]">
+		<div className="mx-auto w-full max-w-190">
 			<PageHeader
 				title="Triggers"
 				crumb={{
@@ -95,6 +96,13 @@ function TriggersRoute() {
 					title="Couldn't load triggers"
 					error={triggersQuery.error ?? new Error('Something went wrong.')}
 					onRetry={() => triggersQuery.refetch()}
+				/>
+			) : loopsQuery.isError ? (
+				// Without the flows every trigger would read as "not tied to a flow".
+				<QueryStateError
+					title="Couldn't load flows"
+					error={loopsQuery.error ?? new Error('Something went wrong.')}
+					onRetry={() => loopsQuery.refetch()}
 				/>
 			) : (
 				<div className="flex flex-col gap-8">

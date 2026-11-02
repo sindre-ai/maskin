@@ -188,7 +188,7 @@ function UploadStep({
 		<div
 			className={cn(
 				'flex flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed p-8 transition-colors',
-				isDragging ? 'border-accent bg-accent/5' : 'border-border',
+				isDragging ? 'border-brand bg-brand-subtle' : 'border-border',
 				isLoading && 'pointer-events-none opacity-50',
 			)}
 			onDragOver={(e) => {
@@ -601,7 +601,7 @@ function MappingStep({
 				<div className="flex items-center justify-between w-full px-3 py-2 text-sm font-medium">
 					<button
 						type="button"
-						className="flex items-center gap-2 hover:text-accent transition-colors"
+						className="flex items-center gap-2 hover:text-foreground transition-colors"
 						onClick={() => setRelSectionOpen((prev) => !prev)}
 					>
 						{relSectionOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
