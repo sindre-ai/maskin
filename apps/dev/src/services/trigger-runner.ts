@@ -32,7 +32,11 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
-import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
+import {
+	CredentialResolutionTimeoutError,
+	LlmCredentialsUnavailableError,
+	PlanCapExceededError,
+} from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import { returnsToChatByDefault } from './chat-origin-routing'
@@ -571,7 +575,13 @@ export class TriggerRunner {
 		// workspace is misconfigured. Pausing on that would take a workspace's
 		// automations offline for an hour over a network blip, so let those fall
 		// through to the error branch and retry on the next tick.
-		if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
+		// A resolution timeout is not a verdict on the credentials either: it
+		// fails the session, not the workspace's automations.
+		if (
+			err instanceof LlmCredentialsUnavailableError &&
+			!err.transient &&
+			!(err instanceof CredentialResolutionTimeoutError)
+		) {
 			await this.suppressWorkspace(
 				workspaceId,
 				credentialsSuppression(now, err.noCredentialsConfigured),
