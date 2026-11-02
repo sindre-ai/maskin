@@ -211,7 +211,7 @@ describe('useCreateSession — agent_session_started', () => {
 })
 
 describe('useCreateComment — comment_posted', () => {
-	it('emits comment_posted with is_reply, attachment_count, and content derived from variables', async () => {
+	it('emits comment_posted with is_reply, attachment_count, is_multiline and length_bucket derived from variables', async () => {
 		vi.mocked(api.events.create).mockResolvedValue({} as never)
 		const { Wrapper, queryClient } = makeWrapper()
 		queryClient.setQueryData(
@@ -234,7 +234,8 @@ describe('useCreateComment — comment_posted', () => {
 			entity_type: 'bet',
 			is_reply: true,
 			attachment_count: 0,
-			content: 'first line\nsecond line',
+			is_multiline: true,
+			length_bucket: '1-50',
 			flow_id: null,
 		})
 	})

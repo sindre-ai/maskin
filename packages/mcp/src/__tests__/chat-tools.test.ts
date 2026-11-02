@@ -408,6 +408,122 @@ describe('chat tools', () => {
 		})
 	})
 
+	describe('create_comment wait', () => {
+		const objectId = '66666666-6666-4666-8666-666666666666'
+
+		it('holds until the mentioned agent replies in the comment thread', async () => {
+			vi.useFakeTimers()
+			responses['POST /api/events'] = { id: 200, actorId: meId }
+			responses[`GET /api/actors/${agentA}`] = { id: agentA, type: 'agent', name: 'Strategist' }
+			responses['GET /api/events/history'] = [
+				{ id: 203, actorId: agentA, data: { content: 'Plan', parentEventId: 200 } },
+				{ id: 202, actorId: agentB, data: { content: 'Not asked', parentEventId: 200 } },
+				{ id: 201, actorId: agentA, data: { content: 'Elsewhere', parentEventId: 150 } },
+			]
+			const pending = call('create_comment', {
+				workspace_id: wsId,
+				entity_id: objectId,
+				content: 'Please plan',
+				mentions: [agentA],
+				wait: true,
+			})
+			await vi.advanceTimersByTimeAsync(6_000)
+			const result = parsed(await pending) as {
+				id: number
+				wait: { settled: boolean; replies: Array<{ id: number }> }
+			}
+			expect(result.id).toBe(200)
+			expect(result.wait.settled).toBe(true)
+			expect(result.wait.replies.map((r) => r.id)).toEqual([203])
+			expect(callsTo('GET', '/api/events/history')[0]?.search.get('since')).toBe('200')
+			// The wait flag is for the tool, not the API.
+			expect(callsTo('POST', '/api/events')[0]?.body).not.toHaveProperty('wait')
+		})
+
+		it('counts a reply the server stored under the thread root when the comment is itself a reply', async () => {
+			vi.useFakeTimers()
+			// The server collapses a reply to the thread root (150), so the posted comment
+			// carries parentEventId 150 and the agent's answer does too, not 200.
+			responses['POST /api/events'] = {
+				id: 200,
+				actorId: meId,
+				data: { parentEventId: 150 },
+			}
+			responses[`GET /api/actors/${agentA}`] = { id: agentA, type: 'agent', name: 'Strategist' }
+			responses['GET /api/events/history'] = [
+				{ id: 203, actorId: agentA, data: { content: 'Plan', parentEventId: 150 } },
+				{ id: 202, actorId: agentB, data: { content: 'Not asked', parentEventId: 150 } },
+				{ id: 190, actorId: agentA, data: { content: 'Before the ask', parentEventId: 150 } },
+				{ id: 204, actorId: agentA, data: { content: 'Other thread', parentEventId: 99 } },
+			]
+			const pending = call('create_comment', {
+				workspace_id: wsId,
+				entity_id: objectId,
+				content: 'Please plan',
+				mentions: [agentA],
+				parent_event_id: 150,
+				wait: true,
+			})
+			await vi.advanceTimersByTimeAsync(6_000)
+			const result = parsed(await pending) as {
+				wait: { settled: boolean; replies: Array<{ id: number }> }
+			}
+			expect(result.wait.settled).toBe(true)
+			expect(result.wait.replies.map((r) => r.id)).toEqual([203])
+		})
+
+		it('gives up on an agent that has no live session', async () => {
+			vi.useFakeTimers()
+			responses['POST /api/events'] = { id: 200, actorId: meId }
+			responses[`GET /api/actors/${agentA}`] = { id: agentA, type: 'agent', name: 'Strategist' }
+			responses['GET /api/events/history'] = []
+			responses['GET /api/sessions'] = [{ id: 's1', actorId: agentA, status: 'completed' }]
+			const pending = call('create_comment', {
+				workspace_id: wsId,
+				entity_id: objectId,
+				content: 'Please plan',
+				mentions: [agentA],
+				wait: true,
+			})
+			await vi.advanceTimersByTimeAsync(120_000)
+			const result = parsed(await pending) as {
+				wait: { settled: boolean; unanswered_actor_ids: string[] }
+			}
+			expect(result.wait.settled).toBe(false)
+			expect(result.wait.unanswered_actor_ids).toEqual([agentA])
+		})
+
+		it('does not wait when only a human is mentioned', async () => {
+			responses['POST /api/events'] = { id: 200, actorId: meId }
+			responses[`GET /api/actors/${humanId}`] = { id: humanId, type: 'human', name: 'Magnus' }
+			const result = parsed(
+				await call('create_comment', {
+					workspace_id: wsId,
+					entity_id: objectId,
+					content: 'FYI',
+					mentions: [humanId],
+					wait: true,
+				}),
+			) as { wait: { note: string } }
+			expect(result.wait.note).toMatch(/No agent/)
+			expect(callsTo('GET', '/api/events/history')).toHaveLength(0)
+		})
+
+		it('posts and returns at once when wait is not set', async () => {
+			responses['POST /api/events'] = { id: 200, actorId: meId }
+			const result = parsed(
+				await call('create_comment', {
+					workspace_id: wsId,
+					entity_id: objectId,
+					content: 'Heads up',
+					mentions: [agentA],
+				}),
+			)
+			expect(result.wait).toBeUndefined()
+			expect(calls).toHaveLength(1)
+		})
+	})
+
 	describe('post_conversation_message to a sub-chat', () => {
 		it('replies in the thread the sub-chat hangs from', async () => {
 			responses['GET /api/sessions/sub1'] = { id: 'sub1', spawnedByMessageId: 42 }

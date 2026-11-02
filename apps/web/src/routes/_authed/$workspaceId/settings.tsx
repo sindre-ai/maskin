@@ -21,7 +21,7 @@ const settingsNav = [
 
 // Keys is listed only for workspaces holding the `byollm_allowed` ops grant —
 // for everyone else the page has no content to show. It stays a real route
-// regardless, because onboarding and `session-errors.ts` both deep-link it.
+// regardless, because onboarding and the failed-session card both deep-link it.
 const keysNavItem = {
 	label: 'Keys',
 	to: '/$workspaceId/settings/keys' as const,

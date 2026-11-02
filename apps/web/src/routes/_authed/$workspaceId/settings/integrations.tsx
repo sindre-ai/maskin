@@ -9,6 +9,7 @@ import { EditorBanner } from '@/components/shared/editor-banner'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -17,6 +18,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useGithubPendingSelection,
@@ -202,6 +204,7 @@ function ResendResumeSection({
 	rows: IntegrationResponse[]
 	onResume: (prefill: ResendConnectPrefill) => void
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<div className="space-y-2">
 			<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono pt-2">
@@ -224,9 +227,11 @@ function ResendResumeSection({
 								Awaiting the whsec_… secret. Pick up where you left off in Step 3.
 							</p>
 						</div>
-						<Button size="sm" onClick={() => onResume(prefill)}>
-							Finish setup
-						</Button>
+						<ViewerTooltip>
+							<Button size="sm" disabled={!canWrite} onClick={() => onResume(prefill)}>
+								Finish setup
+							</Button>
+						</ViewerTooltip>
 					</div>
 				)
 			})}
@@ -288,6 +293,7 @@ function SelectGithubInstallationDialog({
 }) {
 	const { data, isLoading } = useGithubPendingSelection(workspaceId, integrationId)
 	const select = useSelectGithubInstallation(workspaceId)
+	const canWrite = useCanWrite()
 	const options = data?.installations ?? []
 
 	return (
@@ -332,7 +338,7 @@ function SelectGithubInstallationDialog({
 											{ onSuccess: onSelected },
 										)
 									}
-									disabled={select.isPending}
+									disabled={select.isPending || !canWrite}
 								>
 									Connect
 								</Button>

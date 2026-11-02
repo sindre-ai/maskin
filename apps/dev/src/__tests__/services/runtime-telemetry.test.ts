@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { __resetPosthogEventBudgetForTesting } from '../../lib/analytics/event-budget'
 import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
 
 function makeFakeClient(overrides: Partial<TelemetryClient> = {}) {
@@ -9,6 +10,12 @@ function makeFakeClient(overrides: Partial<TelemetryClient> = {}) {
 }
 
 describe('RuntimeTelemetry', () => {
+	beforeEach(() => {
+		// The gauge is sampled; 0 is always under the rate, so every tick is sent.
+		vi.spyOn(Math, 'random').mockReturnValue(0)
+		__resetPosthogEventBudgetForTesting()
+	})
+
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
@@ -33,6 +40,8 @@ describe('RuntimeTelemetry', () => {
 				agent_server_url: 'local-docker',
 				session_start_latency_ms: 1234,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -57,6 +66,8 @@ describe('RuntimeTelemetry', () => {
 				duration_ms: 5000,
 				agent_server_url: 'local-docker',
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -79,6 +90,8 @@ describe('RuntimeTelemetry', () => {
 				agent_server_url: 'local-docker',
 				host_isolation_ok: true,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -98,7 +111,10 @@ describe('RuntimeTelemetry', () => {
 			properties: {
 				agent_server_url: 'https://agent-server-finland.maskin.internal',
 				concurrent_count: 47,
+				sample_rate: 0.1,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -227,6 +243,8 @@ describe('RuntimeTelemetry', () => {
 				end_reason: 'user_stopped',
 				duration_ms: 8,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})

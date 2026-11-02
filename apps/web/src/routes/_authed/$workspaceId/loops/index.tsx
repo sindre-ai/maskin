@@ -8,10 +8,12 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { TriggerRow } from '@/components/triggers/trigger-row'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useBillingUsage } from '@/hooks/use-billing'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoops } from '@/hooks/use-loops'
@@ -60,6 +62,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 function LoopsRoute() {
 	useDocumentTitle('Loops')
 	const { workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const {
 		data: loops,
 		isLoading: loopsLoading,
@@ -210,11 +213,19 @@ function LoopsRoute() {
 								description="Loops are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
 								action={
 									<div className="flex items-center gap-2">
-										<Button size="sm" asChild>
-											<Link to="/$workspaceId/loops/new" params={{ workspaceId }}>
-												Start a loop
-											</Link>
-										</Button>
+										{canWrite ? (
+											<Button size="sm" asChild>
+												<Link to="/$workspaceId/loops/new" params={{ workspaceId }}>
+													Start a loop
+												</Link>
+											</Button>
+										) : (
+											<ViewerTooltip>
+												<Button size="sm" disabled>
+													Start a loop
+												</Button>
+											</ViewerTooltip>
+										)}
 										<Button size="sm" variant="outline" asChild>
 											<Link to="/$workspaceId/marketplace" params={{ workspaceId }}>
 												Browse the Marketplace
@@ -252,9 +263,10 @@ function LoopsRoute() {
 											agentType={agent?.type}
 											agentName={agent?.name ?? 'Unknown'}
 											isToggling={updateTrigger.isPending}
-											onToggleEnabled={(next) =>
+											onToggleEnabled={(next) => {
+												if (!canWrite) return
 												updateTrigger.mutate({ id: trigger.id, data: { enabled: next } })
-											}
+											}}
 											v4Polish
 										/>
 									)

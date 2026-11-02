@@ -204,8 +204,8 @@ describe('linkedin publish_post with workspace file ids', () => {
 	})
 })
 
-describe('linkedin publish_post tool with the removed raw attachments field', () => {
-	it('refuses a call that still sends attachments and posts nothing', async () => {
+describe('linkedin publish_post tool without an approved draft', () => {
+	it('refuses a call that still sends the post text and attachments and posts nothing', async () => {
 		const { actorId, ws, integration } = await setup()
 		const publishPost = stubbedClient()
 		const cfg = {
@@ -235,7 +235,7 @@ describe('linkedin publish_post tool with the removed raw attachments field', ()
 		const text = (result.content as Array<{ text?: string }>).map((c) => c.text ?? '').join('')
 		expect(result.isError).toBe(true)
 		expect(text).toContain('INVALID_INPUT')
-		expect(text).toContain('attachment_file_ids')
+		expect(text).toContain('held for a person')
 		expect(publishPost).not.toHaveBeenCalled()
 	})
 })

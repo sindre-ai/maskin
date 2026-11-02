@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { CLAUDE_OAUTH_CLIENT_ID, CLAUDE_TOKEN_URL } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
@@ -314,6 +314,30 @@ export function preserveSlotLabels(
 }
 
 /**
+ * Ceilings for the transactions that take a row lock on `workspaces` to write
+ * OAuth slot state. Normal holds last milliseconds, so these only ever fire on
+ * a stuck holder. Both sit under the 30s launch guard
+ * (`CREDENTIAL_RESOLUTION_TIMEOUT_MS`) so the slot write gives up first and the
+ * launch fails with a database error rather than only the generic timeout.
+ * `lock_timeout` bounds the wait for the row; `statement_timeout` bounds any
+ * single statement, including one that is slow after the lock is granted.
+ */
+export const WORKSPACE_ROW_LOCK_TIMEOUT_MS = 5_000
+export const WORKSPACE_ROW_STATEMENT_TIMEOUT_MS = 10_000
+
+/**
+ * Apply the ceilings above to the current transaction (`set_config(..., true)`
+ * is `SET LOCAL`, so they end with the transaction). Run it before the
+ * `SELECT ... FOR UPDATE`. A wait that exceeds `lock_timeout` raises SQLSTATE
+ * 55P03; one that exceeds `statement_timeout` raises 57014.
+ */
+export async function applyWorkspaceRowTimeouts(tx: Pick<Database, 'execute'>): Promise<void> {
+	await tx.execute(
+		sql`SELECT set_config('lock_timeout', ${`${WORKSPACE_ROW_LOCK_TIMEOUT_MS}ms`}, true), set_config('statement_timeout', ${`${WORKSPACE_ROW_STATEMENT_TIMEOUT_MS}ms`}, true)`,
+	)
+}
+
+/**
  * Persist a freshly-refreshed encrypted token blob into the given slot on a
  * workspace, without clobbering any other slot or failover state a concurrent
  * refresh may have written. Wraps the read-modify-write in a transaction with
@@ -330,6 +354,7 @@ export async function persistRefreshedSlot(
 	encrypted: EncryptedOAuthData,
 ): Promise<void> {
 	await db.transaction(async (tx) => {
+		await applyWorkspaceRowTimeouts(tx)
 		const [latest] = await tx
 			.select()
 			.from(workspaces)

@@ -1,7 +1,9 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, describeLoopPlan, summariseLoopPlan } from '@/lib/loop-plan'
@@ -55,6 +57,7 @@ export function LoopPlanCard({
 	createdId,
 	workspaceId,
 }: LoopPlanCardProps) {
+	const canWrite = useCanWrite()
 	const title = created ? 'Loop created' : defaultLoopName(plan)
 	return (
 		<div className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
@@ -237,16 +240,18 @@ export function LoopPlanCard({
 						<Button size="sm" variant="ghost" onClick={onStartOver} disabled={creating}>
 							Start over
 						</Button>
-						<Button size="sm" onClick={onCreate} disabled={creating}>
-							{creating ? (
-								'Creating…'
-							) : (
-								<>
-									<Plus size={14} className="mr-1" aria-hidden />
-									Create loop
-								</>
-							)}
-						</Button>
+						<ViewerTooltip>
+							<Button size="sm" onClick={onCreate} disabled={creating || !canWrite}>
+								{creating ? (
+									'Creating…'
+								) : (
+									<>
+										<Plus size={14} className="mr-1" aria-hidden />
+										Create loop
+									</>
+								)}
+							</Button>
+						</ViewerTooltip>
 					</>
 				)}
 			</div>

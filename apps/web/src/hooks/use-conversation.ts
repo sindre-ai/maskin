@@ -11,6 +11,7 @@ import { api } from '../lib/api'
 import { getStoredActor } from '../lib/auth'
 import { threadRootOfQueryKey } from '../lib/message-threads'
 import { queryKeys } from '../lib/query-keys'
+import { isViewerRefusal } from '../lib/workspace-role'
 
 const MESSAGES_PAGE_SIZE = 50
 
@@ -283,8 +284,9 @@ export function useRetryMessage(id: string, workspaceId: string) {
 		onSuccess: () => {
 			toast.success('Asked the agents to respond')
 		},
-		onError: () => {
-			toast.error('Failed to retry')
+		onError: (error) => {
+			// A viewer's refused retry already got the shared message.
+			if (!isViewerRefusal(error)) toast.error('Failed to retry')
 		},
 	})
 }

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createWorkspaceWrapper } from '../setup'
 
 const mockUseWorkspaceMembers = vi.fn()
 const mockUpdateRoleMutateAsync = vi.fn().mockResolvedValue({})
@@ -20,7 +21,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { name: 'Værksted' } }),
 }))
 
@@ -310,5 +313,34 @@ describe('MembersPage', () => {
 
 			expect(mockNavigate).not.toHaveBeenCalled()
 		})
+	})
+})
+
+describe('MembersPage write controls by workspace role', () => {
+	const people = [
+		{ actorId: 'a1', name: 'Alice', type: 'human', role: 'member', joinedAt: null },
+		{ actorId: 'a2', name: 'Bob', type: 'human', role: 'member', joinedAt: null },
+	]
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mockSearch = {}
+		mockUseWorkspaceInvites.mockReturnValue({ data: [] })
+		mockUseWorkspaceMembers.mockReturnValue({ data: people, isLoading: false })
+	})
+
+	it('disables add, role change and remove for a viewer, but still lists the members', () => {
+		render(<MembersPage />, { wrapper: createWorkspaceWrapper({ role: 'viewer' }) })
+		expect(screen.getAllByText('Alice').length).toBeGreaterThanOrEqual(1)
+		expect(screen.getByRole('button', { name: /Add member/ })).toBeDisabled()
+		expect(screen.getByRole('combobox', { name: /Role for Alice/i })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /Remove Alice/ })).toBeDisabled()
+	})
+
+	it('leaves add, role change and remove enabled for a member', () => {
+		render(<MembersPage />, { wrapper: createWorkspaceWrapper({ role: 'member' }) })
+		expect(screen.getByRole('button', { name: /Add member/ })).toBeEnabled()
+		expect(screen.getByRole('combobox', { name: /Role for Alice/i })).toBeEnabled()
+		expect(screen.getByRole('button', { name: /Remove Alice/ })).toBeEnabled()
 	})
 })

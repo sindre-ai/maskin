@@ -75,6 +75,9 @@ export const updateActorSchema = z.object({
 	memory: z.record(z.unknown()).optional(),
 	llm_provider: z.string().optional(),
 	llm_config: llmConfigSchema.optional(),
+	// The address an agent sends email from (resend_send_email). Only a human workspace admin
+	// may set it; null clears it. Not an `email` column write: that one is open to members.
+	mailbox: z.string().email().max(254).nullable().optional(),
 	// The caller's own default workspace; null clears it. Only accepted when the
 	// target actor is the caller, and only for a workspace the caller belongs to.
 	default_workspace_id: z.string().uuid().nullable().optional(),

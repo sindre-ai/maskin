@@ -54,6 +54,25 @@ export function openSecret(stored: string, field = 'secret'): string {
 	}
 }
 
+/** Shortest plain key that gets a hint. A shorter one would give away too much of itself. */
+const MIN_HINTED_LENGTH = 12
+
+/**
+ * Last four characters of a stored secret, for the settings screen ("ends in
+ * 1234"). Null when the plain key is shorter than {@link MIN_HINTED_LENGTH} or
+ * cannot be opened. Never the whole value.
+ */
+export function hintOf(stored: unknown): string | null {
+	if (typeof stored !== 'string' || stored === '') return null
+	let plain: string
+	try {
+		plain = openSecret(stored)
+	} catch {
+		return null
+	}
+	return plain.length >= MIN_HINTED_LENGTH ? plain.slice(-4) : null
+}
+
 /** Applies `fn` to each secret string in settings, on a copy. Null and empty values pass through. */
 function mapSecrets(settings: unknown, fn: (value: string, field: string) => string | undefined) {
 	if (!isRecord(settings)) return settings

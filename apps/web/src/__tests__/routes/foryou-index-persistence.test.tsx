@@ -8,7 +8,7 @@ import type { UnreadItem } from '@/lib/api'
 // Routes are tested by extracting the component from the file route and
 // rendering it directly, mirroring objects-index-persistence.test.tsx. The
 // For You page keeps a local `sort` (session-only, out of scope) but persists
-// `mode` through the `__chrome__` display-settings row. These tests guard the
+// `mode` through the `__chrome__` display settings row. These tests guard the
 // hydrate (persisted list -> list rows) and write-through (toggle -> upsert
 // with foryouViewMode + unrelated settings preserved) directions.
 vi.mock('@tanstack/react-router', async () => {
@@ -31,11 +31,13 @@ type FeedState = {
 const feedState = globalThis as unknown as FeedState
 feedState.__foryouItems = []
 
-vi.mock('@/hooks/use-for-you', () => ({
+vi.mock('@/hooks/use-for-you', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-for-you')>()),
 	useForYou: () => ({
 		data: { items: (globalThis as unknown as FeedState).__foryouItems },
 		isLoading: false,
 	}),
+	useDismissForYou: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) }),
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({

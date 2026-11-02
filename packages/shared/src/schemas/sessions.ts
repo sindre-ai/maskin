@@ -222,6 +222,8 @@ export const sessionLeanRowSchema = z.object({
 	title: z.string(),
 	status: sessionStatusSchema,
 	updated_at: z.string().datetime().nullable(),
+	// Short failure line (200 characters at most), set only when status is failed.
+	failure_reason: z.string().nullable(),
 })
 export type SessionLeanRow = z.infer<typeof sessionLeanRowSchema>
 

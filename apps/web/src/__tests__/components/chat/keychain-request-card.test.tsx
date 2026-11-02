@@ -93,6 +93,35 @@ describe('KeychainRequestCard', () => {
 		expect(screen.queryByRole('checkbox', { name: 'Magnus' })).not.toBeInTheDocument()
 	})
 
+	it('lists a named target that is not in the chat as ticked, and unticks the chat agents that are not named', async () => {
+		const user = userEvent.setup()
+		renderCard(request({ target_agents: [{ id: 'agent-9', name: 'Infra & DevOps' }] }))
+
+		expect(screen.getByRole('checkbox', { name: 'Infra & DevOps' })).toBeChecked()
+		// The asker stays ticked; the other chat agent starts unticked but can be ticked.
+		expect(screen.getByRole('checkbox', { name: 'Bookkeeper' })).toBeChecked()
+		expect(screen.getByRole('checkbox', { name: 'Analyst' })).not.toBeChecked()
+		await user.click(screen.getByRole('checkbox', { name: 'Analyst' }))
+		expect(screen.getByRole('checkbox', { name: 'Analyst' })).toBeChecked()
+
+		await user.click(screen.getByRole('checkbox', { name: 'Infra & DevOps' }))
+		expect(screen.getByRole('checkbox', { name: 'Infra & DevOps' })).not.toBeChecked()
+	})
+
+	it('shares with the named target after Save', async () => {
+		const user = userEvent.setup()
+		renderCard(request({ target_agents: [{ id: 'agent-9', name: 'Infra & DevOps' }] }))
+		await fillLogin(user)
+
+		await user.click(screen.getByRole('button', { name: 'Save to Keychain' }))
+
+		await waitFor(() => expect(mockChatCapture).toHaveBeenCalledTimes(1))
+		expect(mockChatCapture).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({ agentIds: [ASKING_AGENT, 'agent-9'] }),
+		)
+	})
+
 	it('asks for a single secret, not a username, when an API key was requested', () => {
 		renderCard(request({ kind: 'api_key', suggested_name: 'Stripe' }))
 

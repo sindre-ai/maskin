@@ -30,12 +30,21 @@ enum LinkedItemStores {
 		let remote = APIObjectsRemote(
 			client: environment.client, credentials: credentials, baseURL: environment.baseURL,
 			clientSource: environment.clientSource)
+		// Loops and triggers come from the same lists the Flows and Triggers screens read.
+		let loops = APILoopsSource(client: environment.client, workspaceID: workspaceId)
+		let triggers = APITriggersSource(client: environment.client, workspaceID: workspaceId)
 		let store = LinkedItemStore(
 			objects: remote,
 			files: APIFilesRemote(client: environment.client, credentials: credentials),
 			actors: { try await remote.actors() },
 			places: APILinkedPlacesRemote(client: environment.client, workspaceID: workspaceId),
-			workspaceID: { [weak environment] in environment?.workspaceId })
+			loops: { try await loops.loops() },
+			triggers: { try await triggers.listPage() },
+			workspaceID: { [weak environment] in environment?.workspaceId },
+			// The workspace switcher's list: a workspace the reader is not in has no name here.
+			workspaceName: { [weak environment] id in
+				environment?.workspaces.workspaces.first { $0.id.lowercased() == id.lowercased() }?.name
+			})
 		cache[key] = store
 		return store
 	}
@@ -49,6 +58,11 @@ extension View {
 }
 
 extension EnvironmentValues {
+	/// The card sits inside a message bubble, where its summary is one line (stand-alone it is two).
+	@Entry var linkedInBubble: Bool = false
+}
+
+extension EnvironmentValues {
 	/// How a card opens its object or file. The Linked sheet sets it to close itself first: the
 	/// shell presents objects and files from above everything, and cannot while a sheet is up.
 	@Entry var linkedOpen: ((LinkedTarget) -> Void)? = nil
@@ -58,6 +72,7 @@ extension EnvironmentValues {
 @MainActor
 struct LinkedOpener: DynamicProperty {
 	@Environment(\.linkedOpen) private var custom
+	@Environment(\.linkedItems) private var store
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	func callAsFunction(_ target: LinkedTarget) {
@@ -65,9 +80,16 @@ struct LinkedOpener: DynamicProperty {
 			custom(target)
 			return
 		}
+		// A link into another workspace goes where a push notification would: the app's link handler.
+		if let url = store?.otherWorkspaceURL(for: target) {
+			runtime?.open(url)
+			return
+		}
 		switch target.kind {
 		case .object: runtime?.openObject(target.uuid)
 		case .file: runtime?.openFile(target.uuid)
+		case .loop: runtime?.openLoop(target.uuid)
+		case .trigger: runtime?.openTrigger(target.uuid)
 		case .agent: runtime?.openAgent(target.uuid)
 		case .chat: runtime?.openChat(target.uuid)
 		}
@@ -75,13 +97,21 @@ struct LinkedOpener: DynamicProperty {
 
 	/// Closes the sheet the caller is in, waits for it to finish, then opens the target: the shell
 	/// presents from above everything and cannot while a sheet is up.
-	static func openAfterClosing(_ target: LinkedTarget, close: () -> Void, runtime: AppRuntime?) {
+	static func openAfterClosing(
+		_ target: LinkedTarget, close: () -> Void, runtime: AppRuntime?, elsewhere: URL? = nil
+	) {
 		close()
 		Task {
 			try? await Task.sleep(for: .milliseconds(450))
+			if let elsewhere {
+				runtime?.open(elsewhere)
+				return
+			}
 			switch target.kind {
 			case .object: runtime?.openObject(target.uuid)
 			case .file: runtime?.openFile(target.uuid)
+			case .loop: runtime?.openLoop(target.uuid)
+			case .trigger: runtime?.openTrigger(target.uuid)
 			case .agent: runtime?.openAgent(target.uuid)
 			case .chat: runtime?.openChat(target.uuid)
 			}

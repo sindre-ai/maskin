@@ -8,6 +8,7 @@ import {
 	checkBet,
 	checkLoop,
 	findMentionedProviders,
+	readWorkspaceLlmReadiness,
 	toNextSteps,
 	toProseBlock,
 } from '../setup-guidance'
@@ -44,6 +45,22 @@ function ctx(fields: Partial<LoopCheckContext> = {}): LoopCheckContext {
 		...fields,
 	}
 }
+
+describe('readWorkspaceLlmReadiness', () => {
+	it('counts a key as set when llm_configured says one is stored, without any key in settings', () => {
+		expect(readWorkspaceLlmReadiness({}, { anthropic: true, openai: false }).hasLlmKey).toBe(true)
+		expect(readWorkspaceLlmReadiness({}, { anthropic: false, openai: true }).hasLlmKey).toBe(true)
+	})
+
+	it('reports no key when llm_configured is all false and settings hold none', () => {
+		expect(readWorkspaceLlmReadiness({}, { anthropic: false, openai: false }).hasLlmKey).toBe(false)
+		expect(readWorkspaceLlmReadiness({}).hasLlmKey).toBe(false)
+	})
+
+	it('still reads llm_keys from settings for a server that does not send llm_configured', () => {
+		expect(readWorkspaceLlmReadiness({ llm_keys: { anthropic: 'sk-fake' } }).hasLlmKey).toBe(true)
+	})
+})
 
 describe('checkLoop — first-test fixture (bet DoD #8)', () => {
 	it('produces steps_have_agents:fail (first) and connectors_connected:warn with connect_integration fix', () => {

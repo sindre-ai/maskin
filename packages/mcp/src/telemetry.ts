@@ -1,4 +1,10 @@
-import type { McpEra, McpProtocolVersionLabel } from '@maskin/shared'
+import {
+	type ListCallObjectType,
+	type McpEra,
+	type McpProtocolVersionLabel,
+	listCallHasCursor,
+	listCallObjectType,
+} from '@maskin/shared'
 import { measureResponseShape } from './response-shape'
 
 /**
@@ -111,6 +117,10 @@ export interface ToolCallEvent {
 	seq?: number
 	/** Sorted argument key NAMES. Never values — see `recordToolCall`. */
 	arg_keys?: string[]
+	/** Object type a list-family call listed, from a fixed vocabulary. Absent otherwise. */
+	object_type?: ListCallObjectType
+	/** Whether a list-family call carried a cursor or offset. Absent for other tools. */
+	has_cursor?: boolean
 	/** False when the handler threw. */
 	ok?: boolean
 	/** Which transport the emitting server is exposed over. */
@@ -316,6 +326,8 @@ export function recordToolCall(
 			duration_ms: Math.max(0, Math.round(event.duration_ms)),
 			seq: toolCallSeq,
 			arg_keys: argKeys(event.args),
+			object_type: listCallObjectType(event.tool_name, event.args),
+			has_cursor: listCallHasCursor(event.tool_name, event.args),
 			ok: event.ok ?? true,
 			transport: event.transport,
 			session_source: session.source,
@@ -555,10 +567,13 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
 	gmail_send_email: 'gmail_email_send',
+	resend_send_email: 'resend_email_send',
 	update_integration_access: 'integration_access_update',
 	// Sessions
 	create_session: 'session_create',
 	create_sub_chat: 'session_create',
+	// For You
+	withdraw_decision_card: 'for_you_withdraw',
 	// Chats
 	create_chat: 'chat_create',
 	add_chat_participant: 'chat_participant_add',

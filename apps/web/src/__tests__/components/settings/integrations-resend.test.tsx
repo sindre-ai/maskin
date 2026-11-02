@@ -17,7 +17,9 @@ vi.mock('@/components/integrations/resend/resend-connect-dialog', () => ({
 		open ? <div data-testid="resend-dialog" data-prefill={prefill ? 'true' : 'false'} /> : null,
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 

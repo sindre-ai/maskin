@@ -11,6 +11,7 @@ struct LinkedObjectCard: View {
 	@Environment(\.linkedItems) private var store
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.dynamicTypeSize) private var typeSize
+	@Environment(\.linkedInBubble) private var inBubble
 	@State private var folded: Bool
 	/// The card as the preview sheet shows it: no fold button, and the face does not open the object
 	/// (the sheet has its own Open).
@@ -83,7 +84,7 @@ struct LinkedObjectCard: View {
 					Text(summary)
 						.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
 						.foregroundStyle(MaskinColor.ink3)
-						.lineLimit(2).multilineTextAlignment(.leading)
+						.lineLimit(inBubble ? 1 : 2).multilineTextAlignment(.leading)
 				}
 			}
 			if let priority = object.priority { fact(label: "Priority", value: priority) }

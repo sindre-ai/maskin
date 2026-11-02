@@ -253,6 +253,10 @@ describe('group_chat_message_routed', () => {
 			code: '23505',
 			constraint_name: 'sessions_conversation_actor_active_uniq',
 		})
+		const raceOnThreadIndex = Object.assign(new Error('duplicate'), {
+			code: '23505',
+			constraint_name: 'sessions_conversation_actor_thread_active_uniq',
+		})
 
 		it.each([
 			['started_new_session when no session exists', () => {}, 'started_new_session'],
@@ -280,6 +284,16 @@ describe('group_chat_message_routed', () => {
 				'joined_race_winner when the start loses the race',
 				(sm: ReturnType<typeof makeSessionManager>) => {
 					sm.createSession.mockRejectedValue(race)
+					sm.findConversationSessionAnyActive
+						.mockResolvedValueOnce(null)
+						.mockResolvedValue(session('running'))
+				},
+				'joined_race_winner',
+			],
+			[
+				'joined_race_winner when the start loses the race on the per-thread index',
+				(sm: ReturnType<typeof makeSessionManager>) => {
+					sm.createSession.mockRejectedValue(raceOnThreadIndex)
 					sm.findConversationSessionAnyActive
 						.mockResolvedValueOnce(null)
 						.mockResolvedValue(session('running'))

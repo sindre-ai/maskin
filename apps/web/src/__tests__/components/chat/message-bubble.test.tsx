@@ -1,5 +1,5 @@
 import type { MessageResponse } from '@/lib/api'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -10,7 +10,9 @@ vi.mock('@tanstack/react-router', async () => {
 
 const workspaceState = vi.hoisted(() => ({ enterprise: false }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: {
 			enterprise: workspaceState.enterprise,
@@ -34,15 +36,13 @@ vi.mock('@/hooks/use-linked-chat', () => ({
 	}),
 }))
 
-const objectState = vi.hoisted(() => ({ title: 'Retry window' }))
-
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({
 		data: {
 			id: 'obj-1',
 			workspaceId: 'ws-1',
 			type: 'bet',
-			title: objectState.title,
+			title: 'Retry window',
 			status: 'active',
 			content: 'The retry window text.',
 			metadata: { channel: 'linkedin_dm', priority: 'P1' },
@@ -164,23 +164,81 @@ describe('MessageBubble', () => {
 		expect(screen.queryByText('Me')).not.toBeInTheDocument()
 	})
 
-	it('draws a link to an object in your own message inline, as a chip with its title', () => {
+	describe('a link to an object in your own message', () => {
 		const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
 		const address = `https://maskin.io/ws-1/objects/${id}`
-		const { container } = renderBubble(
-			buildMessage({
-				actorId: 'me',
-				actorName: 'Me',
-				actorType: 'human',
-				content: `is this done? ${address}`,
-			}),
-		)
-		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
-		const chip = screen.getByRole('link', { name: 'Retry window' })
-		// Inside the same plate and the same line of words, not a box under it.
-		const plate = container.querySelector('.bg-primary')
-		expect(plate).toContainElement(chip)
-		expect(plate?.textContent).toContain('is this done?')
+
+		it('is a chip inside the sentence, in the same plate, opening in a new tab', () => {
+			const { container } = renderBubble(
+				buildMessage({
+					actorId: 'me',
+					actorName: 'Me',
+					actorType: 'human',
+					content: `is this done? ${address} thanks`,
+				}),
+			)
+			expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+			const chip = screen.getByRole('link', { name: /Retry window/ })
+			const plate = container.querySelector('.bg-primary')
+			expect(plate).toContainElement(chip)
+			expect(plate?.textContent).toContain('is this done?')
+			expect(plate?.textContent).toContain('thanks')
+			expect(chip).toHaveAttribute('target', '_blank')
+			expect(container.querySelector('[data-linked-card]')).toBeNull()
+		})
+
+		it('is a card nested under the words in the same plate when it stands on its own line', () => {
+			const { container } = renderBubble(
+				buildMessage({
+					actorId: 'me',
+					actorName: 'Me',
+					actorType: 'human',
+					content: `is this done?\n${address}`,
+				}),
+			)
+			const plate = container.querySelector('.bg-primary')
+			const card = container.querySelector('[data-linked-card]')
+			expect(card).not.toBeNull()
+			expect(plate).toContainElement(card as HTMLElement)
+			expect(plate?.textContent).toContain('is this done?')
+			expect(card).toHaveTextContent('Retry window')
+			expect(card?.querySelector('a')).toHaveAttribute('target', '_blank')
+			expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
+		})
+
+		it('is the message itself, with no plate, when the message is only the link', () => {
+			const { container } = renderBubble(
+				buildMessage({
+					actorId: 'me',
+					actorName: 'Me',
+					actorType: 'human',
+					content: address,
+				}),
+			)
+			expect(container.querySelector('[data-linked-card]')).not.toBeNull()
+			expect(container.querySelector('.bg-primary')).toBeNull()
+		})
+
+		it('sets the width by what the message holds: a bubble with a card is min(520px, 88%), a lone card up to 460px, words fit their text', () => {
+			const holder = (content: string) => {
+				const { container } = renderBubble(
+					buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content }),
+				)
+				return (
+					container.querySelector('[data-linked-card]')?.parentElement?.closest('.relative') ?? null
+				)
+			}
+			expect(holder(`is this done?\n${address}`)).toHaveClass('w-[min(520px,88%)]')
+			cleanup()
+			expect(holder(address)).toHaveClass('w-full', 'max-w-[460px]')
+			cleanup()
+			const { container } = renderBubble(
+				buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content: 'just words' }),
+			)
+			const words = container.querySelector('.bg-primary')?.parentElement
+			expect(words).not.toHaveClass('w-[min(520px,88%)]')
+			expect(words).not.toHaveClass('max-w-[460px]')
+		})
 	})
 
 	it('draws a GitHub pull request and issue in your own message as chips that open GitHub', () => {
@@ -269,24 +327,6 @@ describe('MessageBubble', () => {
 		expect(container.querySelectorAll('[data-linked-card]')).toHaveLength(1)
 		expect(screen.getByText('Chat', { selector: '.eyebrow' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Chat: Launch plan' })).toBeInTheDocument()
-	})
-
-	it('cuts the title in a chip at 30 characters', () => {
-		objectState.title = 'A very long title for an object that goes on and on'
-		try {
-			const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
-			renderBubble(
-				buildMessage({
-					actorId: 'me',
-					actorName: 'Me',
-					actorType: 'human',
-					content: `https://maskin.io/ws-1/objects/${id}`,
-				}),
-			)
-			expect(screen.getByText('A very long title for an objec…')).toBeInTheDocument()
-		} finally {
-			objectState.title = 'Retry window'
-		}
 	})
 
 	it('renders another actor as an avatar + name with no card wrapper', () => {
@@ -579,5 +619,67 @@ describe('MessageBubble — Reply in thread', () => {
 		renderWithReply(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
 		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
 		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+})
+
+describe('MessageBubble — own bubble fits its text', () => {
+	const NATURAL_WIDTH = 560
+	const WIDEST_LINE = 200
+	const originalRects = Range.prototype.getClientRects
+	const originalBox = HTMLElement.prototype.getBoundingClientRect
+
+	beforeEach(() => {
+		// jsdom has no layout: the column is 560px wide until it is given a width, and the
+		// widest line of text ends at 200px.
+		Range.prototype.getClientRects = () =>
+			[{ left: 0, right: WIDEST_LINE, width: WIDEST_LINE }] as unknown as DOMRectList
+		HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+			const width = Number.parseFloat(this.style.width) || NATURAL_WIDTH
+			return { left: 0, right: width, width, top: 0, bottom: 0, height: 0 } as DOMRect
+		}
+	})
+	afterEach(() => {
+		Range.prototype.getClientRects = originalRects
+		HTMLElement.prototype.getBoundingClientRect = originalBox
+		flagState.lifted = false
+	})
+
+	const own = (overrides: Partial<MessageResponse> = {}) =>
+		buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', ...overrides })
+	const columnOf = (container: HTMLElement) =>
+		container.querySelector<HTMLElement>('.bg-primary')?.closest<HTMLElement>('[style]')
+
+	it('gives the column the width of the widest line of text', () => {
+		const { container } = renderBubble(own({ content: 'a long line\nand a shorter one' }))
+		// jsdom applies no stylesheet, so the plate has no padding to add here.
+		expect(columnOf(container)?.style.width).toBe(`${WIDEST_LINE}px`)
+	})
+
+	it('keeps lifted attachments as wide as the bubble, and not narrower than the minimum', () => {
+		flagState.lifted = true
+		Range.prototype.getClientRects = () =>
+			[{ left: 0, right: 40, width: 40 }] as unknown as DOMRectList
+		const { container } = renderBubble(
+			own({
+				content: 'ok',
+				metadata: { attachments: [{ file_id: 'img-1', name: 'shot.png', mime_type: 'image/png' }] },
+			}),
+		)
+		const column = columnOf(container)
+		expect(column?.style.width).toBe('160px')
+		expect(column).toContainElement(screen.getByLabelText('Attached files'))
+	})
+
+	it('leaves the full width while the message is being edited', () => {
+		const { container } = renderBubble(own({ content: 'a long line' }))
+		expect(columnOf(container)?.style.width).toBe(`${WIDEST_LINE}px`)
+		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
+		// Leaving the fit clears the width but keeps an empty style attribute behind.
+		expect(columnOf(container)?.style.width ?? '').toBe('')
+	})
+
+	it('does not fit a message from someone else', () => {
+		const { container } = renderBubble(buildMessage({ content: 'a long line' }))
+		expect(container.querySelector('[style*="width"]')).toBeNull()
 	})
 })

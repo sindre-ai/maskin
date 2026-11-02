@@ -9,6 +9,7 @@ reader is a widget and a notification, never a Live Activity.
 | **Agents working** (aggregate, one per device) | `MaskinAgentsAttributes` | the workspace's running sessions + the open thread, in the foreground | live, this document |
 | Flow cycle running | `MaskinCycleAttributes` | the flow list (`LoopsStore`), for flows the person follows | `CycleActivityController`, foreground only |
 | Live meeting | `MaskinMeetingAttributes` | the live call (`LiveMeetingScreen`) | `MeetingActivityController`; Mute and End act on the call |
+| Live call with an agent | `LiveCallActivityAttributes` | `LiveCallCenter` (the running call, polled once a second) | `CallActivityController`; Mute and End are `ToggleCallMuteIntent` / `EndCallIntent` (`Apps/LiveActivityShared/CallIntents.swift`) acting through `LiveCallControl`. Local only: no push. Card removed by the system or swiped away stays gone for the rest of the call; stale cards are ended at launch |
 
 **Needs real-device verification**: the simulator renders the UI but does not deliver Live
 Activity pushes, and ActivityKit token callbacks only fire on hardware.

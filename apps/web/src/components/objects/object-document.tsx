@@ -7,6 +7,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useIsDesktopViewport, useIsMobile } from '@/hooks/use-mobile'
 import {
@@ -145,6 +146,7 @@ export function ObjectDocumentView({
 	contentLoaded = true,
 	heroIdentityRef,
 }: ObjectDocumentViewProps) {
+	const canWrite = useCanWrite()
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 	// Reset the local title draft when navigating to a different object — this
 	// component instance is reused across route param changes, so the useState
@@ -243,6 +245,7 @@ export function ObjectDocumentView({
 						onBlur={handleTitleBlur}
 						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 						placeholder="Untitled"
+						readOnly={!canWrite}
 						rows={1}
 						className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 						ref={(el) => {

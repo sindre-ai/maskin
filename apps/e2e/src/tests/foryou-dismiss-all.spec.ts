@@ -72,7 +72,7 @@ test('the ··· menu\u2019s "Dismiss all" really marks every card read', async 
 
 	const readFailures: string[] = []
 	page.on('response', async (response) => {
-		if (response.url().includes('/api/subscriptions/read') && !response.ok()) {
+		if (response.url().includes('/api/for-you/dismissals') && !response.ok()) {
 			readFailures.push(`${response.status()} ${await response.text().catch(() => '')}`)
 		}
 	})
@@ -81,10 +81,10 @@ test('the ··· menu\u2019s "Dismiss all" really marks every card read', async 
 	await page.getByRole('menuitem', { name: /^Dismiss all( \d+)?$/ }).click()
 
 	await expect(page.getByTestId('foryou-feed-card')).toHaveCount(0)
-	// Dismissing is marking read, so it survives a reload — a card that comes
+	// Dismissing is recorded on the server, so it survives a reload — a card that comes
 	// back is the mutation having failed behind an optimistic hide.
 	await page.reload()
 	await expect(page.getByText('Feed cleared')).toBeVisible()
 	await expect(page.getByTestId('foryou-feed-card')).toHaveCount(0)
-	expect(readFailures, `mark-read calls failed: ${readFailures.join(' | ')}`).toEqual([])
+	expect(readFailures, `dismiss calls failed: ${readFailures.join(' | ')}`).toEqual([])
 })

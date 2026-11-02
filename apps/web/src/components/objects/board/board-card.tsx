@@ -4,6 +4,8 @@ import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getTypeColor } from '@/lib/constants'
@@ -38,6 +40,7 @@ export function BoardCard({
 	onAdvance,
 	advanceLabel,
 }: BoardCardProps) {
+	const canWrite = useCanWrite()
 	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const availableProperties =
 		columns.length > 0
@@ -82,19 +85,22 @@ export function BoardCard({
 				{onAdvance && (
 					// Always rendered at full opacity — a hover-only reveal would be
 					// unreachable on touch (see .claude/rules/verification.md).
-					<button
-						type="button"
-						title={advanceLabel}
-						aria-label={advanceLabel ?? 'Move to next column'}
-						onClick={(event) => {
-							event.preventDefault()
-							event.stopPropagation()
-							onAdvance()
-						}}
-						className="grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
-					>
-						<ArrowRight size={12} aria-hidden="true" />
-					</button>
+					<ViewerTooltip>
+						<button
+							type="button"
+							title={advanceLabel}
+							aria-label={advanceLabel ?? 'Move to next column'}
+							disabled={!canWrite}
+							onClick={(event) => {
+								event.preventDefault()
+								event.stopPropagation()
+								onAdvance()
+							}}
+							className="grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							<ArrowRight size={12} aria-hidden="true" />
+						</button>
+					</ViewerTooltip>
 				)}
 			</div>
 

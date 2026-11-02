@@ -16,6 +16,7 @@ const base: GroupChatMessageRoutedProps = {
 	workspaceId: 'ws-1',
 	conversationId: 'conv-1',
 	messageId: 42,
+	threadRootId: 40,
 	trigger: 'new_message',
 	flagOn: true,
 	rule: 'tagged',
@@ -50,6 +51,7 @@ describe('trackGroupChatMessageRouted', () => {
 		expect([event, distinctId]).toEqual(['group_chat_message_routed', 'human-1'])
 		expect(props).toMatchObject({
 			message_id: 42,
+			thread_root_id: 40,
 			trigger: 'new_message',
 			flag_on: true,
 			rule: 'tagged',

@@ -22,4 +22,16 @@ public enum LiveAudioRoute {
 	public static func needsSpeakerOverride(wantsSpeaker: Bool, output: Output?) -> Bool {
 		wantsSpeaker && output == .receiver
 	}
+
+	/// The microphone hint the server tunes noise reduction with. A headset, earbuds, a car or a
+	/// phone held to the face have the mic close to the mouth (`near_field`); the loudspeaker means
+	/// the phone is held out or set down, so the mic is further away (`far_field`). With no route
+	/// known there is no hint, and the server uses its own default.
+	public static func noiseReduction(for output: Output?) -> VoiceNoiseReduction? {
+		switch output {
+		case .receiver, .other: .nearField
+		case .speaker: .farField
+		case nil: nil
+		}
+	}
 }
