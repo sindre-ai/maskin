@@ -2281,6 +2281,18 @@ export const tools = {
 				),
 		}),
 	},
+	gmail_save_attachment: {
+		description:
+			'Save one attachment of a Gmail message as a workspace file. Google\'s hosted Gmail tools return no attachment bytes, so this is the way a receipt or document in a mail becomes a file you can use. Pass the message id and the attachment id from the message you read (attachment ids can change between reads, so use the ones from your latest read). It reads that one attachment of the connected account and nothing else; the file name and type come from the message. Needs "Read" or "Read & write" access to Gmail. Max 20 MB. Returns file_id, name, mime_type, size_bytes and a url. To send it on, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), then have a person approve it and call gmail_send_email.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			message_id: z.string().min(1).describe('The Gmail message id the attachment belongs to.'),
+			attachment_id: z
+				.string()
+				.min(1)
+				.describe('The Gmail attachment id, as the message lists it (body.attachmentId).'),
+		}),
+	},
 	resend_send_email: {
 		description:
 			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Resend\'s own send tools are not available to you: this is the only way an email goes out, and nothing is sent until a person has approved that exact email. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. To send files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (at most 5 files, 20 MB in total); changing the list withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same approval.',

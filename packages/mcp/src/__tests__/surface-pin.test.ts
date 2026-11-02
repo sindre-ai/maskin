@@ -341,7 +341,7 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send mail only', () => {
+		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send or read mail only', () => {
 			const expected = [
 				'create_session',
 				'create_sub_chat',
@@ -353,6 +353,7 @@ describe('MCP surface pin', () => {
 				'disconnect_integration',
 				'approve_object_draft',
 				'gmail_send_email',
+				'gmail_save_attachment',
 				'resend_send_email',
 				'update_integration_access',
 			].sort()

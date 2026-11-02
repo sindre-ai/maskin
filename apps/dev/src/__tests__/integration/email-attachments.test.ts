@@ -35,7 +35,12 @@ const json = (body: unknown) =>
 	})
 
 const blobs = new Map<string, Buffer>()
-const storage = { get: async (key: string) => blobs.get(key) as Buffer } as StorageProvider
+const storage = {
+	get: async (key: string) => blobs.get(key) as Buffer,
+	put: async (key: string, bytes: Buffer) => {
+		blobs.set(key, bytes)
+	},
+} as unknown as StorageProvider
 const PDF = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(32, 7)])
 
 function appFor(actorId: string) {
@@ -169,6 +174,42 @@ describe('gmail_send_email: an approved email with a file', () => {
 		expect(res.status).toBe(200)
 		const mime = sentMime()
 		expect(mime).toContain('multipart/mixed')
+		expect(mime).toContain('filename="receipt.pdf"')
+		expect(mime).toContain(PDF.toString('base64'))
+	})
+
+	it('carries a file saved from a Gmail attachment, the two steps one after the other', async () => {
+		const s = await setup('gmail')
+		fetchMock
+			.mockResolvedValueOnce(
+				json({
+					payload: {
+						mimeType: 'multipart/mixed',
+						parts: [
+							{
+								mimeType: 'application/pdf',
+								filename: 'receipt.pdf',
+								body: { attachmentId: 'ATT-1', size: PDF.length },
+							},
+						],
+					},
+				}),
+			)
+			.mockResolvedValueOnce(json({ size: PDF.length, data: PDF.toString('base64url') }))
+		const saved = await appFor(s.agent.id).request('/api/integrations/gmail/save-attachment', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': s.workspace.id },
+			body: JSON.stringify({ message_id: 'msg1', attachment_id: 'ATT-1' }),
+		})
+		expect(saved.status).toBe(201)
+		const { file_id } = (await saved.json()) as { file_id: string }
+
+		const email = await emailWith(s, [file_id])
+		fetchMock.mockResolvedValueOnce(json({ id: 'sent-1', threadId: 't1' }))
+		const res = await post('gmail', s, email.id)
+
+		expect(res.status).toBe(200)
+		const mime = sentMime()
 		expect(mime).toContain('filename="receipt.pdf"')
 		expect(mime).toContain(PDF.toString('base64'))
 	})
