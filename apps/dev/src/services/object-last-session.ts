@@ -2,8 +2,7 @@ import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, desc, eq } from 'drizzle-orm'
 import { canReadSession } from '../lib/session-access'
-
-const FAILURE_REASON_MAX_CHARS = 200
+import { sessionFailureReason } from '../lib/session-failure-reason'
 
 export interface ObjectLastSession {
 	id: string
@@ -19,20 +18,6 @@ export interface ObjectLastSession {
 
 function stringOrNull(value: unknown): string | null {
 	return typeof value === 'string' && value.length > 0 ? value : null
-}
-
-/**
- * One line, trimmed. Prefers the classified human message over the free-text
- * error; the verbatim provider output is never read.
- */
-function shortFailureReason(result: typeof sessions.$inferSelect.result): string | null {
-	const text = (result?.failure_reason?.human_message || result?.error || '')
-		.replace(/\s+/g, ' ')
-		.trim()
-	if (!text) return null
-	return text.length > FAILURE_REASON_MAX_CHARS
-		? `${text.slice(0, FAILURE_REASON_MAX_CHARS - 1)}…`
-		: text
 }
 
 /**
@@ -70,7 +55,7 @@ export async function loadObjectLastSession(
 		status: row.status,
 		agent_id: row.actorId,
 		started_at: row.startedAt?.toISOString() ?? null,
-		failure_reason: row.status === 'failed' ? shortFailureReason(row.result) : null,
+		failure_reason: sessionFailureReason(row.status, row.result),
 		chat_id:
 			row.conversationId ??
 			stringOrNull(config.origin_conversation_id) ??
