@@ -411,7 +411,7 @@ describe('GET /api/for-you', () => {
 			expect(await list()).toEqual([])
 		})
 
-		it('keeps a card that names no assumed status when the object moves on', async () => {
+		it('keeps a card with no stamp and no assumed status when the object moves on', async () => {
 			const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'define' })
 			await decisionComment(obj.id)
 			await db.update(objects).set({ status: 'active' }).where(eq(objects.id, obj.id))
