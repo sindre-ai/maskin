@@ -186,6 +186,7 @@ const ROWS: Record<string, Row> = {
 	get_session_activity: row('Get session activity'),
 	approve_object_draft: row('Approve object draft', { openWorld: true }),
 	gmail_send_email: row('Send Gmail email', { openWorld: true }),
+	gmail_save_attachment: row('Save Gmail attachment', { openWorld: true }),
 	resend_send_email: row('Send Resend email', { openWorld: true }),
 	update_integration_access: row('Update integration access', {
 		idempotent: true,

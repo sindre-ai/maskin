@@ -32,10 +32,17 @@ private final class FakeDevices: DeviceRegistering, @unchecked Sendable {
 	var unregisteredWhileSignedIn: [Bool] { lock.withLock { _unregistered } }
 
 	func register(
-		token: String, environment: PushEnvironment, platform: DevicePlatform, appVersion: String?
+		token: String, environment: PushEnvironment, platform: DevicePlatform, appVersion: String?,
+		unregisterSecret: String
 	) async throws -> String { "device-1" }
 
-	func unregister(deviceId: String) async throws {
+	func unregister(deviceId: String) async throws { try await record() }
+
+	func unregister(token: String, environment: PushEnvironment, secret: String) async throws {
+		try await record()
+	}
+
+	private func record() async throws {
 		if hang { try await Task.sleep(for: .seconds(60)) }
 		let was = await signedIn()
 		lock.withLock { _unregistered.append(was) }
@@ -147,7 +154,8 @@ struct AppRuntimeBadgeTests {
 		let devices = FakeDevices { true }
 		let push = PushRegistrar(
 			system: system, devices: devices, environment: .sandbox, platform: .ios,
-			pendingStore: InMemoryPendingUnregisterStore())
+			registrationStore: InMemoryDeviceRegistrationStore(),
+			pendingStore: InMemoryDeviceRegistrationStore())
 		let (runtime, _) = await makeRuntime(push: push)
 		runtime.updateBadge()
 		#expect(system.badges.last == 0)
@@ -190,7 +198,8 @@ struct AppRuntimePushPermissionTests {
 		system.permission = permission
 		let push = PushRegistrar(
 			system: system, devices: FakeDevices { true }, environment: .sandbox, platform: .ios,
-			pendingStore: InMemoryPendingUnregisterStore())
+			registrationStore: InMemoryDeviceRegistrationStore(),
+			pendingStore: InMemoryDeviceRegistrationStore())
 		let environment = AppEnvironment.preview(signedIn: true)
 		await environment.workspaces.refresh()
 		let prefs = FakePreferences(timezone: serverTimezone)
@@ -283,7 +292,8 @@ struct AppRuntimeSignOutTests {
 		let system = FakeSystem()
 		let push = PushRegistrar(
 			system: system, devices: devices, environment: .sandbox, platform: .ios,
-			pendingStore: InMemoryPendingUnregisterStore())
+			registrationStore: InMemoryDeviceRegistrationStore(),
+			pendingStore: InMemoryDeviceRegistrationStore())
 		await push.actorChanged("actor-1")
 		await push.didReceive(deviceToken: Data(repeating: 1, count: 32))
 		let dir = tempDirectory()
@@ -427,7 +437,8 @@ struct AppRuntimeSignOutTests {
 		devices.hang = true
 		let push = PushRegistrar(
 			system: FakeSystem(), devices: devices, environment: .sandbox, platform: .ios,
-			pendingStore: InMemoryPendingUnregisterStore())
+			registrationStore: InMemoryDeviceRegistrationStore(),
+			pendingStore: InMemoryDeviceRegistrationStore())
 		await push.actorChanged("actor-1")
 		await push.didReceive(deviceToken: Data(repeating: 2, count: 32))
 		let runtime = AppRuntime(

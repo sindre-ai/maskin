@@ -87,6 +87,10 @@ const SUBJECT_LINE = /^subject:[ \t]*(\S.*?)[ \t]*(?:\r?\n|$)/i
 
 function stringField(metadata: Record<string, unknown>, key: string): string {
 	const value = metadata[key]
+	// A list of ids (attachment_file_ids) reads like the comma separated string.
+	if (Array.isArray(value)) {
+		return value.flatMap((v) => (typeof v === 'string' && v.trim() ? [v.trim()] : [])).join(', ')
+	}
 	return typeof value === 'string' ? value.trim() : ''
 }
 

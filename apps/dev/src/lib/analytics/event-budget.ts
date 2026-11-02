@@ -26,8 +26,12 @@ const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_']
 // agent_session_completed is sampled, not tier 1: the sessions table holds every
 // completion, and a count is read as `count / sample_rate`. The other 0.1 rows
 // are high-volume diagnostics (1 Nov 2026: each sent 300 to 1,500 a day).
+// mcp_tool_call is sampled because the ceiling alone did not hold it: production
+// runs one replica but redeploys about 25 times a day, and every restart resets
+// the in-memory count (1 Nov 2026: 9.3k sent against a ceiling of 2.5k).
 const SAMPLE_RATES: Record<string, number> = {
 	provenance_edge_written: 0,
+	mcp_tool_call: 0.25,
 	mcp_tool_call_response_size: 0.1,
 	mcp_handshake: 0.1,
 	trigger_match_failed: 0.2,

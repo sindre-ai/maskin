@@ -120,7 +120,12 @@ function ChatsLayout() {
 				query={query}
 				onQueryChange={setQuery}
 			/>
-			<ConversationList workspaceId={workspaceId} filter={filter} query={query} />
+			<ConversationList
+				workspaceId={workspaceId}
+				filter={filter}
+				query={query}
+				hideStartLink={isDraft}
+			/>
 		</>
 	)
 
@@ -155,7 +160,7 @@ function ChatsLayout() {
 			{hasThread ? null : <ChatsListTitle />}
 			<div className={cn('flex min-h-0 flex-1', SHELL_BLEED)}>
 				{wide || listAside ? null : (
-					<div className="hidden shrink-0 flex-col border-r border-border md:flex md:w-70 lg:w-100">
+					<div className="hidden shrink-0 flex-col border-r border-border bg-surface-sunken md:flex md:w-70 lg:w-100">
 						{listColumn}
 					</div>
 				)}

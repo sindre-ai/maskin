@@ -247,11 +247,11 @@ function PrivacySection() {
 	return (
 		<SettingsSection
 			title="Privacy and data"
-			intro="Usage events feed the Synthesizer so the team sees how the workspace is really used. No item titles, no content, no PII."
+			intro="Helps the Maskin team see how Maskin is used. The content of your work is never included."
 		>
 			<SettingsRow
 				title="Share product usage with Maskin"
-				description="Bet lifecycle, agent sessions, trigger fires. No content, no PII."
+				description="Shares which features you use and how many agent runs happen, with your name and email unless Anonymize is on. The Maskin team sees it. It never includes the content of your work."
 			>
 				<ViewerTooltip>
 					<Switch
@@ -264,7 +264,7 @@ function PrivacySection() {
 			</SettingsRow>
 			<SettingsRow
 				title="Anonymize this workspace"
-				description="Rotate workspace and actor IDs into hashes before events leave the browser."
+				description="Leaves your name and email out of usage data."
 			>
 				<ViewerTooltip>
 					<Switch

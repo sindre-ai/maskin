@@ -6,8 +6,9 @@ import {
 	LEGACY_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
+	readFallbackConfig,
 } from '../lib/llm-routing'
-import { getModelPricing } from '../lib/openrouter-pricing'
+import { getModelPricing, getServedModelPricing } from '../lib/openrouter-pricing'
 
 export type SessionUsage = {
 	totalCostUsd: number | null
@@ -368,7 +369,8 @@ export interface SessionCostInput {
  * keys) and wrong for `maskin_plan`, whose sessions are routed through
  * OpenRouter to a non-Anthropic model. For `maskin_plan` the reported
  * `total_cost_usd` is therefore discarded and the cost is computed locally
- * from token counts and OpenRouter's published per-token prices.
+ * from token counts and the per-token prices of the hosts the request is pinned
+ * to (`getServedModelPricing`).
  *
  * Never returns a silent zero for real usage: when the model has no published
  * price (or no model name was recorded), it bills the tokens at the legacy
@@ -394,7 +396,12 @@ export async function resolveSessionCostUsd({
 	const cacheWriteTokens = usage.cacheCreationInputTokens ?? 0
 
 	if (modelName) {
-		const pricing = await getModelPricing(modelName)
+		// maskin_plan requests are pinned to provider.only hosts, which bill well above the
+		// catalogue's cheapest-host price; a BYO endpoint has no such pin, so keeps the catalogue.
+		const pricing =
+			route === LLM_ROUTE_MASKIN_PLAN
+				? await getServedModelPricing(modelName, readFallbackConfig().onlyProviders)
+				: await getModelPricing(modelName)
 		if (pricing) {
 			return (
 				inputTokens * pricing.prompt +

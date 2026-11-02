@@ -78,7 +78,7 @@ export function NotificationInput({ metadata, onSubmit }: NotificationInputProps
 	const placeholder = metadata.placeholder as string | undefined
 	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
 		capture('editor_markdown_parse_error', {
-			error_message: info.errorMessage,
+			error_class: info.errorClass,
 			variant: info.variant,
 			surface: info.surface,
 			object_id: info.objectId,

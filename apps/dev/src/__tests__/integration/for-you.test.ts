@@ -387,6 +387,30 @@ describe('GET /api/for-you', () => {
 			expect(await list()).toEqual([])
 		})
 
+		it('hides a decision card whose expires_at has passed and keeps one that has not', async () => {
+			const past = new Date(Date.now() - 60_000).toISOString()
+			const future = new Date(Date.now() + 3_600_000).toISOString()
+			const expired = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
+			await decisionComment(expired.id, { decision: { ...DECISION, expires_at: past } })
+			expect(await list()).toEqual([])
+
+			const open = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
+			await decisionComment(open.id, { decision: { ...DECISION, expires_at: future } })
+			const plain = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
+			await decisionComment(plain.id)
+			expect(await list()).toHaveLength(2)
+		})
+
+		it('hides a curated card whose source comment has an expired decision', async () => {
+			const past = new Date(Date.now() - 60_000).toISOString()
+			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'todo' })
+			const source = await decisionComment(obj.id, {
+				decision: { ...DECISION, expires_at: past },
+			})
+			await item({ objectId: obj.id }, { source_comment_id: source, headline: 'expired ask' })
+			expect(await list()).toEqual([])
+		})
+
 		it('keeps a card that names no assumed status when the object moves on', async () => {
 			const obj = await insertObject(db, workspaceId, humanId, { type: 'bet', status: 'define' })
 			await decisionComment(obj.id)

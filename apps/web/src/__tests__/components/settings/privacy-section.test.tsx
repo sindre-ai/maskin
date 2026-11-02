@@ -55,7 +55,7 @@ describe('Settings > General > Privacy & data', () => {
 		renderPage()
 
 		expect(screen.getByRole('heading', { name: 'Privacy and data' })).toBeInTheDocument()
-		expect(screen.getByText(/Usage events feed the Synthesizer/)).toBeInTheDocument()
+		expect(screen.getByText(/Helps the Maskin team see how Maskin is used/)).toBeInTheDocument()
 		expect(
 			screen.getByRole('switch', { name: 'Share product usage with Maskin' }),
 		).toBeInTheDocument()

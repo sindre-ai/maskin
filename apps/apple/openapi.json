@@ -892,6 +892,57 @@
 												"null"
 											]
 										},
+										"last_session": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"status": {
+													"type": "string"
+												},
+												"agent_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"started_at": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"chat_id": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												},
+												"created_by_actor_id": {
+													"type": "string",
+													"format": "uuid"
+												}
+											},
+											"required": [
+												"id",
+												"status",
+												"agent_id",
+												"started_at",
+												"failure_reason",
+												"chat_id",
+												"created_by_actor_id"
+											]
+										},
 										"createdBy": {
 											"type": "string",
 											"format": "uuid"
@@ -1607,6 +1658,57 @@
 												"type": [
 													"string",
 													"null"
+												]
+											},
+											"last_session": {
+												"type": [
+													"object",
+													"null"
+												],
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"status": {
+														"type": "string"
+													},
+													"agent_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"started_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"failure_reason": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"chat_id": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"created_by_actor_id": {
+														"type": "string",
+														"format": "uuid"
+													}
+												},
+												"required": [
+													"id",
+													"status",
+													"agent_id",
+													"started_at",
+													"failure_reason",
+													"chat_id",
+													"created_by_actor_id"
 												]
 											},
 											"createdBy": {
@@ -2894,6 +2996,57 @@
 													"null"
 												]
 											},
+											"last_session": {
+												"type": [
+													"object",
+													"null"
+												],
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"status": {
+														"type": "string"
+													},
+													"agent_id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"started_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"failure_reason": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"chat_id": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"created_by_actor_id": {
+														"type": "string",
+														"format": "uuid"
+													}
+												},
+												"required": [
+													"id",
+													"status",
+													"agent_id",
+													"started_at",
+													"failure_reason",
+													"chat_id",
+													"created_by_actor_id"
+												]
+											},
 											"createdBy": {
 												"type": "string",
 												"format": "uuid"
@@ -3241,6 +3394,57 @@
 														"null"
 													]
 												},
+												"last_session": {
+													"type": [
+														"object",
+														"null"
+													],
+													"properties": {
+														"id": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"status": {
+															"type": "string"
+														},
+														"agent_id": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"started_at": {
+															"type": [
+																"string",
+																"null"
+															]
+														},
+														"failure_reason": {
+															"type": [
+																"string",
+																"null"
+															]
+														},
+														"chat_id": {
+															"type": [
+																"string",
+																"null"
+															],
+															"format": "uuid"
+														},
+														"created_by_actor_id": {
+															"type": "string",
+															"format": "uuid"
+														}
+													},
+													"required": [
+														"id",
+														"status",
+														"agent_id",
+														"started_at",
+														"failure_reason",
+														"chat_id",
+														"created_by_actor_id"
+													]
+												},
 												"createdBy": {
 													"type": "string",
 													"format": "uuid"
@@ -3559,6 +3763,57 @@
 														"type": [
 															"string",
 															"null"
+														]
+													},
+													"last_session": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"status": {
+																"type": "string"
+															},
+															"agent_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"started_at": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"failure_reason": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"chat_id": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"created_by_actor_id": {
+																"type": "string",
+																"format": "uuid"
+															}
+														},
+														"required": [
+															"id",
+															"status",
+															"agent_id",
+															"started_at",
+															"failure_reason",
+															"chat_id",
+															"created_by_actor_id"
 														]
 													},
 													"createdBy": {
@@ -4258,6 +4513,57 @@
 												"null"
 											]
 										},
+										"last_session": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"status": {
+													"type": "string"
+												},
+												"agent_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"started_at": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"chat_id": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												},
+												"created_by_actor_id": {
+													"type": "string",
+													"format": "uuid"
+												}
+											},
+											"required": [
+												"id",
+												"status",
+												"agent_id",
+												"started_at",
+												"failure_reason",
+												"chat_id",
+												"created_by_actor_id"
+											]
+										},
 										"createdBy": {
 											"type": "string",
 											"format": "uuid"
@@ -4637,6 +4943,57 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"last_session": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"status": {
+													"type": "string"
+												},
+												"agent_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"started_at": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"chat_id": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												},
+												"created_by_actor_id": {
+													"type": "string",
+													"format": "uuid"
+												}
+											},
+											"required": [
+												"id",
+												"status",
+												"agent_id",
+												"started_at",
+												"failure_reason",
+												"chat_id",
+												"created_by_actor_id"
 											]
 										},
 										"createdBy": {
@@ -5141,6 +5498,57 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"last_session": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"status": {
+													"type": "string"
+												},
+												"agent_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"started_at": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"chat_id": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												},
+												"created_by_actor_id": {
+													"type": "string",
+													"format": "uuid"
+												}
+											},
+											"required": [
+												"id",
+												"status",
+												"agent_id",
+												"started_at",
+												"failure_reason",
+												"chat_id",
+												"created_by_actor_id"
 											]
 										},
 										"createdBy": {
@@ -5665,6 +6073,57 @@
 											"type": [
 												"string",
 												"null"
+											]
+										},
+										"last_session": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"status": {
+													"type": "string"
+												},
+												"agent_id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"started_at": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"failure_reason": {
+													"type": [
+														"string",
+														"null"
+													]
+												},
+												"chat_id": {
+													"type": [
+														"string",
+														"null"
+													],
+													"format": "uuid"
+												},
+												"created_by_actor_id": {
+													"type": "string",
+													"format": "uuid"
+												}
+											},
+											"required": [
+												"id",
+												"status",
+												"agent_id",
+												"started_at",
+												"failure_reason",
+												"chat_id",
+												"created_by_actor_id"
 											]
 										},
 										"createdBy": {
@@ -10379,6 +10838,301 @@
 				}
 			}
 		},
+		"/api/actors/{id}/enable": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Actors"
+				],
+				"summary": "Enable a paused agent without starting a session",
+				"description": "Clears the pause so chat messages, @mentions and triggers reach the agent again. Unlike /run it never starts or resumes a session: a paused session stays paused. An agent that is not paused is returned unchanged.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Agent enabled",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"type": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"email": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"description": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"system_prompt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"tools": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"memory": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"llm_provider": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"llm_config": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"isSystem": {
+											"type": "boolean"
+										},
+										"agentState": {
+											"type": "string",
+											"enum": [
+												"idle",
+												"running",
+												"paused",
+												"failed"
+											]
+										},
+										"agentStateUpdatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"installedLoopId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
+										},
+										"skills": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"name"
+												]
+											}
+										},
+										"role": {
+											"type": [
+												"string",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"id",
+										"type",
+										"name",
+										"email",
+										"description",
+										"system_prompt",
+										"tools",
+										"memory",
+										"llm_provider",
+										"llm_config",
+										"isSystem",
+										"agentState",
+										"agentStateUpdatedAt",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Cannot enable agent",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Actor not found in workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/auth/login": {
 			"post": {
 				"tags": [
@@ -12140,7 +12894,6 @@
 		},
 		"/api/actors/{id}/avatar": {
 			"post": {
-				"x-viewer-policy": "writer",
 				"tags": [
 					"Actors"
 				],
@@ -22644,6 +23397,9 @@
 														"required": [
 															"entity_type"
 														]
+													},
+													"skip_when_idle": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -23101,6 +23857,37 @@
 							"type": "string",
 							"format": "uuid"
 						},
+						"required": false,
+						"name": "target_actor_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"true",
+								"false"
+							]
+						},
+						"required": false,
+						"name": "enabled",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 200
+						},
+						"required": false,
+						"name": "q",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
 						"required": true,
 						"name": "x-workspace-id",
 						"in": "header"
@@ -23324,6 +24111,9 @@
 														"required": [
 															"entity_type"
 														]
+													},
+													"skip_when_idle": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -31570,6 +32360,489 @@
 				}
 			}
 		},
+		"/api/integrations/gmail/save-attachment": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Save one Gmail attachment as a workspace file",
+				"description": "Reads one attachment of one message of the connected Gmail account and stores it as a workspace file. Needs \"Read\" or \"Read & write\" access to Gmail. The name and type come from the message, not the caller.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"message_id": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									},
+									"attachment_id": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 4096
+									}
+								},
+								"required": [
+									"message_id",
+									"attachment_id"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"file_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"mime_type": {
+											"type": "string"
+										},
+										"size_bytes": {
+											"type": "integer"
+										},
+										"url": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"file_id",
+										"name",
+										"mime_type",
+										"size_bytes",
+										"url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Conflict",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"413": {
+						"description": "Too large",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"422": {
+						"description": "Refused",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Gmail error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/resend/send": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -39128,6 +40401,11 @@
 												"minItems": 1,
 												"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
 											},
+											"expires_at": {
+												"type": "string",
+												"format": "date-time",
+												"description": "ISO 8601 date-time after which the ask is moot, e.g. \"2026-10-29T17:00:00Z\". Set it whenever an option or the ask names a date or a deadline (\"this week\", \"before Thursday\"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline."
+											},
 											"no_status_action": {
 												"type": "boolean",
 												"description": "Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example \"Park the launch email?\" on a bet in a status called \"launch\"). Leave it off otherwise."
@@ -45062,6 +46340,12 @@
 												"string",
 												"null"
 											]
+										},
+										"failure_reason": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -45385,6 +46669,12 @@
 															"string",
 															"null"
 														]
+													},
+													"failure_reason": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
@@ -45443,13 +46733,20 @@
 															"null"
 														],
 														"format": "date-time"
+													},
+													"failure_reason": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
 													"id",
 													"title",
 													"status",
-													"updated_at"
+													"updated_at",
+													"failure_reason"
 												]
 											}
 										}
@@ -45884,6 +47181,12 @@
 												"null"
 											]
 										},
+										"failure_reason": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"logs": {
 											"type": "array",
 											"items": {
@@ -46211,6 +47514,12 @@
 												"null"
 											]
 										},
+										"failure_reason": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"notify_on_complete": {
 											"type": "string",
 											"enum": [
@@ -46488,6 +47797,12 @@
 											]
 										},
 										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"failure_reason": {
 											"type": [
 												"string",
 												"null"
@@ -46820,6 +48135,12 @@
 												"string",
 												"null"
 											]
+										},
+										"failure_reason": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -47144,6 +48465,12 @@
 											]
 										},
 										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"failure_reason": {
 											"type": [
 												"string",
 												"null"
@@ -53694,6 +55021,57 @@
 																	"null"
 																]
 															},
+															"last_session": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"properties": {
+																	"id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"status": {
+																		"type": "string"
+																	},
+																	"agent_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"started_at": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"failure_reason": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"chat_id": {
+																		"type": [
+																			"string",
+																			"null"
+																		],
+																		"format": "uuid"
+																	},
+																	"created_by_actor_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	}
+																},
+																"required": [
+																	"id",
+																	"status",
+																	"agent_id",
+																	"started_at",
+																	"failure_reason",
+																	"chat_id",
+																	"created_by_actor_id"
+																]
+															},
 															"createdBy": {
 																"type": "string",
 																"format": "uuid"
@@ -54182,6 +55560,11 @@
 																		},
 																		"minItems": 1,
 																		"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
+																	},
+																	"expires_at": {
+																		"type": "string",
+																		"format": "date-time",
+																		"description": "ISO 8601 date-time after which the ask is moot, e.g. \"2026-10-29T17:00:00Z\". Set it whenever an option or the ask names a date or a deadline (\"this week\", \"before Thursday\"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline."
 																	},
 																	"no_status_action": {
 																		"type": "boolean",
@@ -57296,6 +58679,57 @@
 																	"null"
 																]
 															},
+															"last_session": {
+																"type": [
+																	"object",
+																	"null"
+																],
+																"properties": {
+																	"id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"status": {
+																		"type": "string"
+																	},
+																	"agent_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	},
+																	"started_at": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"failure_reason": {
+																		"type": [
+																			"string",
+																			"null"
+																		]
+																	},
+																	"chat_id": {
+																		"type": [
+																			"string",
+																			"null"
+																		],
+																		"format": "uuid"
+																	},
+																	"created_by_actor_id": {
+																		"type": "string",
+																		"format": "uuid"
+																	}
+																},
+																"required": [
+																	"id",
+																	"status",
+																	"agent_id",
+																	"started_at",
+																	"failure_reason",
+																	"chat_id",
+																	"created_by_actor_id"
+																]
+															},
 															"createdBy": {
 																"type": "string",
 																"format": "uuid"
@@ -57785,6 +59219,11 @@
 																		"minItems": 1,
 																		"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
 																	},
+																	"expires_at": {
+																		"type": "string",
+																		"format": "date-time",
+																		"description": "ISO 8601 date-time after which the ask is moot, e.g. \"2026-10-29T17:00:00Z\". Set it whenever an option or the ask names a date or a deadline (\"this week\", \"before Thursday\"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline."
+																	},
 																	"no_status_action": {
 																		"type": "boolean",
 																		"description": "Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example \"Park the launch email?\" on a bet in a status called \"launch\"). Leave it off otherwise."
@@ -58207,6 +59646,57 @@
 														"type": [
 															"string",
 															"null"
+														]
+													},
+													"last_session": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"status": {
+																"type": "string"
+															},
+															"agent_id": {
+																"type": "string",
+																"format": "uuid"
+															},
+															"started_at": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"failure_reason": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"chat_id": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
+															},
+															"created_by_actor_id": {
+																"type": "string",
+																"format": "uuid"
+															}
+														},
+														"required": [
+															"id",
+															"status",
+															"agent_id",
+															"started_at",
+															"failure_reason",
+															"chat_id",
+															"created_by_actor_id"
 														]
 													},
 													"createdBy": {
@@ -70148,6 +71638,34 @@
 													"pattern": "^[A-Za-z0-9_.-]+$"
 												},
 												"maxItems": 64
+											},
+											"object_type": {
+												"type": [
+													"string",
+													"null"
+												],
+												"enum": [
+													"bet",
+													"task",
+													"insight",
+													"knowledge",
+													"company",
+													"contact",
+													"content",
+													"event",
+													"meeting",
+													"loop",
+													"trigger",
+													"skill",
+													"extension",
+													"other"
+												]
+											},
+											"has_cursor": {
+												"type": [
+													"boolean",
+													"null"
+												]
 											},
 											"ok": {
 												"type": "boolean"

@@ -35,6 +35,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/voice-sessions/:id/hangup',
 		'ends the caller’s own call; a member demoted to viewer mid-call must still be able to hang up, or the call keeps running and billing',
 	],
+	[
+		'POST',
+		'/api/actors/:id/avatar',
+		'a viewer may set their own picture; setting anyone else’s needs a workspace admin, checked in the handler',
+	],
 	['POST', '/api/webhooks/:provider', 'provider webhook, authenticated by signature'],
 	['POST', '/api/webhooks/google-drive', 'provider webhook, authenticated by channel token'],
 	['POST', '/api/webhooks/resend/:token', 'provider webhook, authenticated by token'],
@@ -195,6 +200,11 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'MCP endpoint, tools read as the workspace',
 	],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
+	[
+		'PUT',
+		'/api/integrations/slack/direct-post-channels',
+		'human admin or owner only, checked in the handler (a viewer gets 403)',
+	],
 	[
 		'POST',
 		'/api/integrations/:provider/gateway',

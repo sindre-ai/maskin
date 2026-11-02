@@ -57,6 +57,9 @@ interface ConversationListProps {
 	/** True when the list owns the whole content width (no thread open) — the
 	 *  rows then centre on a 900px column instead of stretching edge to edge. */
 	expanded?: boolean
+	/** Hide the "Start a new one" link in the empty state — set beside the new
+	 *  chat screen, where the link would point at the page the reader is on. */
+	hideStartLink?: boolean
 }
 
 const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = {
@@ -101,6 +104,7 @@ function ChatConversationList({
 	query,
 	className,
 	expanded,
+	hideStartLink,
 }: ConversationListProps) {
 	// Omit `archived` unless it's the active filter — the backend already
 	// defaults the list to non-archived conversations (see
@@ -249,11 +253,13 @@ function ChatConversationList({
 								// the reader is looking at. Clearing the filter is the only
 								// action that shows anything.
 								filter === 'all' ? (
-									<Button asChild variant="link" size="sm">
-										<Link to="/$workspaceId/chats/new" params={{ workspaceId }}>
-											Start a new one →
-										</Link>
-									</Button>
+									hideStartLink ? undefined : (
+										<Button asChild variant="link" size="sm">
+											<Link to="/$workspaceId/chats/new" params={{ workspaceId }}>
+												Start a new one →
+											</Link>
+										</Button>
+									)
 								) : (
 									<Button asChild variant="link" size="sm">
 										<Link

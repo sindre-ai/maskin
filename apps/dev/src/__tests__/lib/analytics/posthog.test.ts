@@ -286,12 +286,15 @@ describe('capturePosthogEvent shared properties', () => {
 		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
 		vi.stubGlobal('fetch', fetchMock)
 		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		// A draw of 0 always passes the sampler, so sampled event names are still sent.
+		vi.spyOn(Math, 'random').mockReturnValue(0)
 	})
 
 	afterEach(() => {
 		__resetPosthogPrivacyForTesting()
 		vi.unstubAllGlobals()
 		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
 	})
 
 	it('gives a human surface backend and no profile flag', async () => {
@@ -303,7 +306,8 @@ describe('capturePosthogEvent shared properties', () => {
 
 	it('turns the profile off for an agent', async () => {
 		configurePosthogPrivacy(dbWithActors({ [AGENT]: 'agent' }).db)
-		const props = await send('agent_comment_posted', AGENT, { workspace_id: 'ws-1' })
+		// agent_session_started is never sampled, so the send is not left to a random draw.
+		const props = await send('agent_session_started', AGENT, { workspace_id: 'ws-1' })
 		expect(props).toMatchObject({ actor_type: 'agent', $process_person_profile: false })
 	})
 

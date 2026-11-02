@@ -165,6 +165,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	CredentialResolutionTimeoutError,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
@@ -181,6 +182,7 @@ import {
 	preflightLlmCredentials,
 	resolveLlmRoute,
 	unreadableKeyError,
+	withCredentialResolutionTimeout,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -2583,18 +2585,23 @@ ${cont.continues_prompt}
 		let oauthExpiresAtTaken: number | undefined
 		let routeModelName: string | undefined
 		try {
-			const resolved = await resolveLlmRoute({
-				db: this.db,
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				wsSettings,
-				enterprise,
-				agent: {
-					provider: agent.llmProvider,
-					apiKey: (llmConfig.api_key as string | undefined) ?? null,
-					model: (llmConfig.model as string | undefined)?.trim() || null,
-				},
-			})
+			// Bounded by wall-clock: the fetch timeouts inside resolution cover
+			// sockets only, so a stuck DB step would otherwise leave the row in
+			// `starting` until the 10 minute reaper.
+			const resolved = await withCredentialResolutionTimeout(
+				resolveLlmRoute({
+					db: this.db,
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					wsSettings,
+					enterprise,
+					agent: {
+						provider: agent.llmProvider,
+						apiKey: (llmConfig.api_key as string | undefined) ?? null,
+						model: (llmConfig.model as string | undefined)?.trim() || null,
+					},
+				}),
+			)
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
@@ -2608,6 +2615,15 @@ ${cont.continues_prompt}
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
+			if (err instanceof CredentialResolutionTimeoutError) {
+				logger.error('Launch credential resolution timed out', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					step: 'resolveLlmRoute',
+					timeoutMs: err.timeoutMs,
+				})
+			}
 			if (err instanceof PlanCapExceededError) {
 				logger.warn('Maskin plan cap exceeded', {
 					sessionId: session.id,

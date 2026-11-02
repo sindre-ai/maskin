@@ -602,7 +602,7 @@ function useReferenceSearch({
 	useEffect(() => {
 		if (query$.error) {
 			const err = query$.error instanceof Error ? query$.error : new Error('Search failed')
-			trackChatSlashPickerError({ message: err.message })
+			trackChatSlashPickerError({ errorClass: err.name })
 			onError?.(err)
 		}
 	}, [query$.error, onError])
