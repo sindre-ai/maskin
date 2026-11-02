@@ -440,6 +440,38 @@ describe('chat tools', () => {
 			expect(callsTo('POST', '/api/events')[0]?.body).not.toHaveProperty('wait')
 		})
 
+		it('counts a reply the server stored under the thread root when the comment is itself a reply', async () => {
+			vi.useFakeTimers()
+			// The server collapses a reply to the thread root (150), so the posted comment
+			// carries parentEventId 150 and the agent's answer does too, not 200.
+			responses['POST /api/events'] = {
+				id: 200,
+				actorId: meId,
+				data: { parentEventId: 150 },
+			}
+			responses[`GET /api/actors/${agentA}`] = { id: agentA, type: 'agent', name: 'Strategist' }
+			responses['GET /api/events/history'] = [
+				{ id: 203, actorId: agentA, data: { content: 'Plan', parentEventId: 150 } },
+				{ id: 202, actorId: agentB, data: { content: 'Not asked', parentEventId: 150 } },
+				{ id: 190, actorId: agentA, data: { content: 'Before the ask', parentEventId: 150 } },
+				{ id: 204, actorId: agentA, data: { content: 'Other thread', parentEventId: 99 } },
+			]
+			const pending = call('create_comment', {
+				workspace_id: wsId,
+				entity_id: objectId,
+				content: 'Please plan',
+				mentions: [agentA],
+				parent_event_id: 150,
+				wait: true,
+			})
+			await vi.advanceTimersByTimeAsync(6_000)
+			const result = parsed(await pending) as {
+				wait: { settled: boolean; replies: Array<{ id: number }> }
+			}
+			expect(result.wait.settled).toBe(true)
+			expect(result.wait.replies.map((r) => r.id)).toEqual([203])
+		})
+
 		it('gives up on an agent that has no live session', async () => {
 			vi.useFakeTimers()
 			responses['POST /api/events'] = { id: 200, actorId: meId }

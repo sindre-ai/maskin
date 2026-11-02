@@ -1764,9 +1764,11 @@ interface CommentReplyEvent {
 
 /**
  * Holds until each awaited agent has replied in the thread of the comment
- * `commentId` on `objectId`. A reply is a comment by that agent whose parent is the
- * comment. An agent that never replies is given up on when it has no live session any
- * more, so a failed run does not hold the caller for the full wait.
+ * `commentId` on `objectId`. A reply is a later comment by that agent whose parent is
+ * `threadRootId`: the server collapses every reply to the thread root, so for a comment
+ * posted inside a thread that is the comment's own parent, not the comment itself. An
+ * agent that never replies is given up on when it has no live session any more, so a
+ * failed run does not hold the caller for the full wait.
  */
 async function waitForCommentReplies(
 	config: McpConfig,
@@ -1774,6 +1776,7 @@ async function waitForCommentReplies(
 		workspaceId: string | undefined
 		objectId: string
 		commentId: number
+		threadRootId: number
 		awaitedActorIds: string[]
 	},
 ) {
@@ -1809,7 +1812,7 @@ async function waitForCommentReplies(
 			pollError = undefined
 			for (const row of Array.isArray(rows) ? rows : []) {
 				if (!opts.awaitedActorIds.includes(row.actorId)) continue
-				if (row.data?.parentEventId !== opts.commentId) continue
+				if (row.id <= opts.commentId || row.data?.parentEventId !== opts.threadRootId) continue
 				seen.set(row.id, row)
 				pending.delete(row.actorId)
 			}
@@ -5874,31 +5877,48 @@ export function createMcpServer(config: McpConfig) {
 			})
 			let waitResult:
 				| Awaited<ReturnType<typeof waitForCommentReplies>>
-				| { note: string }
+				| { note: string; lookup_errors?: string[] }
 				| undefined
 			if (wait) {
-				const posted = result as { id?: number; actorId?: string }
+				const posted = result as {
+					id?: number
+					actorId?: string
+					data?: { parentEventId?: number | null } | null
+				}
 				const mentioned = ((body.mentions as string[] | undefined) ?? []).filter(
 					(id) => id !== posted.actorId,
 				)
 				const agentIds: string[] = []
+				const lookupErrors: string[] = []
 				for (const id of mentioned) {
 					try {
 						const actor = (await apiCall(config, 'GET', `/api/actors/${id}`, undefined, {
 							workspaceId: workspace_id,
 						})) as ActorRow
 						if (actor?.type === 'agent') agentIds.push(id)
-					} catch {}
+					} catch (err) {
+						lookupErrors.push(`${id}: ${err instanceof Error ? err.message : String(err)}`)
+					}
 				}
 				if (typeof posted.id !== 'number' || agentIds.length === 0) {
-					waitResult = { note: 'No agent was mentioned, so there is nothing to wait for.' }
+					waitResult = {
+						note:
+							lookupErrors.length > 0
+								? 'No agent could be confirmed, so nothing was waited for: looking up some mentioned actors failed (see lookup_errors).'
+								: 'No agent was mentioned, so there is nothing to wait for.',
+						...(lookupErrors.length > 0 ? { lookup_errors: lookupErrors } : {}),
+					}
 				} else {
-					waitResult = await waitForCommentReplies(config, {
+					const replies = await waitForCommentReplies(config, {
 						workspaceId: workspace_id,
 						objectId: String(body.entity_id),
 						commentId: posted.id,
+						// The server stores a reply under the thread root, and replies to it likewise.
+						threadRootId: posted.data?.parentEventId ?? posted.id,
 						awaitedActorIds: agentIds,
 					})
+					waitResult =
+						lookupErrors.length > 0 ? { ...replies, lookup_errors: lookupErrors } : replies
 				}
 			}
 			const payload =
