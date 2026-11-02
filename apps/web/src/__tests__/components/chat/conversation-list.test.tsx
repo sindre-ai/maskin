@@ -99,6 +99,17 @@ describe('ConversationList', () => {
 		expect(screen.getByRole('link', { name: 'View all chats →' })).toBeInTheDocument()
 	})
 
+	it('shows the Start a new one link in the empty list, and hides it when asked to', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({ conversations: [], has_more: false })
+		const { unmount } = render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		expect(await screen.findByRole('link', { name: 'Start a new one →' })).toBeInTheDocument()
+		unmount()
+
+		render(<ConversationList workspaceId="ws-1" hideStartLink />, { wrapper: TestWrapper })
+		expect(await screen.findByText('No conversations here')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: 'Start a new one →' })).not.toBeInTheDocument()
+	})
+
 	it('shows the generic empty copy for a filter with no matches', async () => {
 		vi.mocked(api.conversations.list).mockResolvedValue({ conversations: [], has_more: false })
 		render(<ConversationList workspaceId="ws-1" filter="pinned" />, { wrapper: TestWrapper })
