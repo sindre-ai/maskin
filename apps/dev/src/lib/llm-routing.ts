@@ -989,6 +989,72 @@ export class LlmCredentialsUnavailableError extends Error {
 	}
 }
 
+/**
+ * Wall-clock ceiling for the whole `resolveLlmRoute` call at session launch.
+ * The 15s fetch timeout (`CLAUDE_CREDENTIAL_TIMEOUT_MS`) only covers sockets;
+ * a stuck database step (pool wait, a held row lock on `workspaces`) is not
+ * bounded by it. Two network calls can legitimately take 15s each on the
+ * refresh + probe path, so 30s leaves a slow-but-working launch alone and still
+ * fails a hung one in seconds instead of waiting for the 10 minute reaper.
+ */
+export const CREDENTIAL_RESOLUTION_TIMEOUT_MS = 30_000
+
+/**
+ * Credential resolution did not return in time. A subclass so every existing
+ * `instanceof LlmCredentialsUnavailableError` launch-failure path (the local
+ * catch in `launchContainer`, the dispatcher's permanent failure) treats it
+ * the same way. Not transient on purpose: the dispatcher must fail the row now,
+ * not requeue it behind the same stuck step.
+ *
+ * It is not a verdict on the credentials, so `toFailureReason` does not say
+ * `not_logged_in` (which pauses a workspace's triggers for an hour) and does
+ * not tell the user to reconnect anything.
+ */
+export class CredentialResolutionTimeoutError extends LlmCredentialsUnavailableError {
+	readonly timeoutMs: number
+
+	constructor(timeoutMs: number = CREDENTIAL_RESOLUTION_TIMEOUT_MS) {
+		super(
+			`Credential resolution (resolveLlmRoute) did not finish within ${timeoutMs}ms; the launch was failed instead of waiting for the startup reaper.`,
+		)
+		this.name = 'CredentialResolutionTimeoutError'
+		this.timeoutMs = timeoutMs
+	}
+
+	override toFailureReason(): SessionResultFailureReason {
+		return {
+			provider: 'maskin',
+			reason_code: 'startup_stalled',
+			human_message: `This session could not start because looking up the LLM credentials for this workspace took longer than ${Math.round(this.timeoutMs / 1000)} seconds. Your credentials were not rejected. Start a new session; if it keeps happening, tell the Maskin team.`,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: this.detail,
+		}
+	}
+}
+
+/**
+ * Race `work` against a wall-clock timer. On expiry rejects with
+ * `CredentialResolutionTimeoutError`; the underlying promise cannot be
+ * cancelled, so it is left to settle on its own (its late result or rejection
+ * is swallowed here so it never becomes an unhandled rejection).
+ */
+export async function withCredentialResolutionTimeout<T>(
+	work: Promise<T>,
+	timeoutMs: number = CREDENTIAL_RESOLUTION_TIMEOUT_MS,
+): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const timeout = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new CredentialResolutionTimeoutError(timeoutMs)), timeoutMs)
+	})
+	work.catch(() => {})
+	try {
+		return await Promise.race([work, timeout])
+	} finally {
+		clearTimeout(timer)
+	}
+}
+
 /** Shown when the workspace's Anthropic key is the only route and it has no credit left. */
 const API_KEY_OUT_OF_CREDIT_HUMAN_MESSAGE =
 	"This session could not start because the workspace's Anthropic API key has run out of credit. Add credit to the key or connect a Claude subscription in Settings → Keys, then start a new session. The key is tried again after a short pause."
