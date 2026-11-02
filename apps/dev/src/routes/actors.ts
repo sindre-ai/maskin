@@ -1768,7 +1768,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteActorRoute, Env>)
 
-// Returning shape used by /pause, /run, and /voice-mode handlers — full actor
+// Returning shape used by /pause, /run, /enable, and /voice-mode handlers — full actor
 // row. voice_enabled is projected off the metadata JSONB so the wire shape
 // stays flat and callers never reach into raw metadata.
 const actorReturningCols = {
@@ -2073,5 +2073,113 @@ app.openapi(runAgentRoute, (async (c) => {
 		}) as z.infer<typeof actorResponseSchema>,
 	)
 }) as RouteHandler<typeof runAgentRoute, Env>)
+
+// POST /:id/enable - Lift a person's pause without starting anything
+const enableAgentRoute = createRoute({
+	method: 'post',
+	path: '/{id}/enable',
+	'x-viewer-policy': 'writer',
+	tags: ['Actors'],
+	summary: 'Enable a paused agent without starting a session',
+	description:
+		'Clears the pause so chat messages, @mentions and triggers reach the agent again. Unlike /run it never starts or resumes a session: a paused session stays paused. An agent that is not paused is returned unchanged.',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Agent enabled',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Cannot enable agent',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in workspace',
+		},
+	},
+})
+
+app.openapi(enableAgentRoute, (async (c) => {
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	// Same membership-before-type order as /pause and /run, so a member of one
+	// workspace can't probe actors in another.
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
+	}
+
+	// Only a paused agent changes. Compare-and-set on the state so a session that
+	// finished and wrote its own state meanwhile is not overwritten.
+	const [liveSession] = await db
+		.select({ id: sessions.id })
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.actorId, id),
+				eq(sessions.workspaceId, workspaceId),
+				inArray(sessions.status, RUNNING_SESSION_STATUSES),
+			),
+		)
+		.limit(1)
+
+	const [updated] = await db
+		.update(actors)
+		.set({
+			agentState: liveSession ? 'running' : 'idle',
+			agentStateUpdatedAt: new Date(),
+			metadata: withoutHumanPauseMarker,
+			updatedAt: new Date(),
+		})
+		.where(and(eq(actors.id, id), eq(actors.agentState, 'paused')))
+		.returning(actorReturningCols)
+
+	if (updated) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'agent_enabled',
+			entityType: 'actor',
+			entityId: id,
+			data: {},
+		})
+	}
+
+	const row =
+		updated ??
+		(await db.select(actorReturningCols).from(actors).where(eq(actors.id, id)).limit(1))[0]
+	if (!row) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const tools = await redactActorToolsForCaller(db, actorId, id, row.tools)
+	return c.json(
+		serialize({
+			...row,
+			tools,
+			llm_config: maskLlmConfigSecrets(row.llm_config),
+		}) as z.infer<typeof actorResponseSchema>,
+	)
+}) as RouteHandler<typeof enableAgentRoute, Env>)
 
 export default app

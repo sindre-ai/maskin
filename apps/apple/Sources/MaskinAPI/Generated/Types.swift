@@ -714,7 +714,7 @@ public protocol APIProtocol: Sendable {
     func post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup(_ input: Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Input) async throws -> Operations.post_sol_api_sol_voice_hyphen_sessions_sol__lcub_id_rcub__sol_hangup.Output
     /// Transcribe a short voice recording (chat dictation)
     ///
-    /// Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused.
+    /// Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused. Upstream failures are told apart: 429 busy, 503 provider account or key refused (401/402), 504 timeout or no answer, 502 any other provider error.
     ///
     /// - Remark: HTTP `POST /api/transcriptions`.
     /// - Remark: Generated from `#/paths//api/transcriptions/post`.
@@ -2524,7 +2524,7 @@ extension APIProtocol {
     }
     /// Transcribe a short voice recording (chat dictation)
     ///
-    /// Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused.
+    /// Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused. Upstream failures are told apart: 429 busy, 503 provider account or key refused (401/402), 504 timeout or no answer, 502 any other provider error.
     ///
     /// - Remark: HTTP `POST /api/transcriptions`.
     /// - Remark: Generated from `#/paths//api/transcriptions/post`.

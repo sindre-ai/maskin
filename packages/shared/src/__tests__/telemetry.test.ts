@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
 	alignTopFields,
+	listCallHasCursor,
+	listCallObjectType,
 	recordMcpAliasUseSchema,
 	recordMcpTelemetrySchema,
 	recordMcpToolCallResponseSizeSchema,
@@ -272,5 +274,95 @@ describe('recordMcpTelemetrySchema — alias_use', () => {
 
 	it('is a member of the discriminated telemetry union', () => {
 		expect(recordMcpTelemetrySchema.safeParse(aliasEvent()).success).toBe(true)
+	})
+})
+
+describe('listCallObjectType', () => {
+	it('passes a built-in type through for list_objects and search_objects', () => {
+		expect(listCallObjectType('list_objects', { type: 'bet' })).toBe('bet')
+		expect(listCallObjectType('search_objects', { type: 'knowledge', q: 'x' })).toBe('knowledge')
+	})
+
+	it('turns a custom type or free text into other, never the text itself', () => {
+		expect(listCallObjectType('list_objects', { type: 'acme_deal' })).toBe('other')
+		expect(listCallObjectType('search_objects', { type: 'Acquire the Nakatomi account' })).toBe(
+			'other',
+		)
+		expect(listCallObjectType('list_objects', { type: 42 })).toBe('other')
+	})
+
+	it('is undefined when the call has no type argument', () => {
+		expect(listCallObjectType('list_objects', {})).toBeUndefined()
+		expect(listCallObjectType('list_objects', { type: '' })).toBeUndefined()
+		expect(listCallObjectType('list_objects', undefined)).toBeUndefined()
+	})
+
+	it('returns the fixed type for the other four list tools, whatever the arguments', () => {
+		expect(listCallObjectType('list_triggers', {})).toBe('trigger')
+		expect(listCallObjectType('list_loops', { type: 'bet' })).toBe('loop')
+		expect(listCallObjectType('list_workspace_skills', undefined)).toBe('skill')
+		expect(listCallObjectType('list_extensions', {})).toBe('extension')
+	})
+
+	it('is undefined for every other tool', () => {
+		expect(listCallObjectType('get_objects', { type: 'bet' })).toBeUndefined()
+		expect(listCallObjectType('list_actors', {})).toBeUndefined()
+	})
+})
+
+describe('listCallHasCursor', () => {
+	const LIST_TOOLS = [
+		'list_objects',
+		'search_objects',
+		'list_triggers',
+		'list_loops',
+		'list_workspace_skills',
+		'list_extensions',
+	]
+
+	it('is true for a cursor and for an offset, on every list-family tool', () => {
+		for (const tool of LIST_TOOLS) {
+			expect(listCallHasCursor(tool, { cursor: 'abc' })).toBe(true)
+			expect(listCallHasCursor(tool, { offset: 25 })).toBe(true)
+		}
+	})
+
+	it('is false for a first-page call, including offset 0 and an empty cursor', () => {
+		for (const tool of LIST_TOOLS) {
+			expect(listCallHasCursor(tool, { limit: 25 })).toBe(false)
+			expect(listCallHasCursor(tool, { offset: 0, cursor: '' })).toBe(false)
+			expect(listCallHasCursor(tool, undefined)).toBe(false)
+		}
+	})
+
+	it('is undefined for every other tool', () => {
+		expect(listCallHasCursor('get_comments', { cursor: 'abc' })).toBeUndefined()
+	})
+})
+
+describe('recordMcpToolCallSchema: list-call fields', () => {
+	it('accepts a known object type and a cursor flag', () => {
+		const parsed = recordMcpToolCallSchema.parse(
+			baseEvent({ object_type: 'task', has_cursor: true }),
+		)
+		expect(parsed.object_type).toBe('task')
+		expect(parsed.has_cursor).toBe(true)
+	})
+
+	it('is optional: an older MCP build sends neither', () => {
+		const parsed = recordMcpToolCallSchema.parse(baseEvent())
+		expect(parsed.object_type).toBeUndefined()
+		expect(parsed.has_cursor).toBeUndefined()
+	})
+
+	it('drops free text instead of rejecting the whole event', () => {
+		const result = recordMcpToolCallSchema.safeParse(
+			baseEvent({ object_type: 'Acquire the Nakatomi account', has_cursor: 'yes' }),
+		)
+		expect(result.success).toBe(true)
+		if (result.success) {
+			expect(result.data.object_type).toBeUndefined()
+			expect(result.data.has_cursor).toBeUndefined()
+		}
 	})
 })

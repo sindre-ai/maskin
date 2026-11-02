@@ -145,13 +145,13 @@ describe('capturePosthogEvent workspace privacy', () => {
 
 	it('sends nothing when the workspace has share-usage off', async () => {
 		configurePosthogPrivacy(fakeDb({ privacy: { share_usage: false } }).db)
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('sends as before when the workspace has no privacy block (defaults: share on, anonymise off)', async () => {
 		configurePosthogPrivacy(fakeDb({}).db)
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
 		expect(body.distinct_id).toBe('actor-1')
 		expect(body.properties).toEqual({
@@ -166,7 +166,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 		configurePosthogPrivacy(
 			fakeDb({ privacy: { share_usage: true, anonymize_workspace: true } }).db,
 		)
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
 		// SHA-256 of 'actor-1', the same treatment as the web's hashDistinctId.
 		expect(body.distinct_id).toBe(createHash('sha256').update('actor-1').digest('hex'))
@@ -184,20 +184,20 @@ describe('capturePosthogEvent workspace privacy', () => {
 	it('sends nothing when the setting cannot be read (fails closed)', async () => {
 		configurePosthogPrivacy(fakeDb(new Error('db down')).db)
 		await expect(
-			capturePosthogEvent('agent_session_completed', 'actor-1', props),
+			capturePosthogEvent('agent_session_started', 'actor-1', props),
 		).resolves.toBeUndefined()
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('sends nothing when the workspace row is missing', async () => {
 		configurePosthogPrivacy(fakeDb(null).db)
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('sends nothing for a workspace event before the lookup is wired', async () => {
 		__resetPosthogPrivacyForTesting()
-		await capturePosthogEvent('agent_session_completed', 'actor-1', props)
+		await capturePosthogEvent('agent_session_started', 'actor-1', props)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
@@ -249,7 +249,7 @@ describe('capturePosthogEvent workspace privacy', () => {
 			vi.stubEnv('POSTHOG_EVENT_DAILY_CAP', '2')
 			vi.spyOn(logger, 'warn').mockImplementation(() => {})
 			for (let i = 0; i < 4; i++) await capturePosthogEvent('file_saved', 'actor-1', {})
-			await capturePosthogEvent('agent_session_completed', 'actor-1', {})
+			await capturePosthogEvent('agent_session_started', 'actor-1', {})
 			expect(fetchMock).toHaveBeenCalledTimes(3)
 		})
 	})
@@ -286,12 +286,15 @@ describe('capturePosthogEvent shared properties', () => {
 		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
 		vi.stubGlobal('fetch', fetchMock)
 		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		// A draw of 0 always passes the sampler, so sampled event names are still sent.
+		vi.spyOn(Math, 'random').mockReturnValue(0)
 	})
 
 	afterEach(() => {
 		__resetPosthogPrivacyForTesting()
 		vi.unstubAllGlobals()
 		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
 	})
 
 	it('gives a human surface backend and no profile flag', async () => {
@@ -303,7 +306,8 @@ describe('capturePosthogEvent shared properties', () => {
 
 	it('turns the profile off for an agent', async () => {
 		configurePosthogPrivacy(dbWithActors({ [AGENT]: 'agent' }).db)
-		const props = await send('agent_comment_posted', AGENT, { workspace_id: 'ws-1' })
+		// agent_session_started is never sampled, so the send is not left to a random draw.
+		const props = await send('agent_session_started', AGENT, { workspace_id: 'ws-1' })
 		expect(props).toMatchObject({ actor_type: 'agent', $process_person_profile: false })
 	})
 

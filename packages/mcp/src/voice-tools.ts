@@ -52,6 +52,45 @@ export interface VoiceToolkit {
 	close: () => Promise<void>
 }
 
+/**
+ * The tools a Live call pins on the Realtime model itself. Everything else is reached through
+ * `ask_workspace` (apps/dev/src/services/voice-delegate.ts), which runs the full toolkit with a
+ * stronger text model: a realtime model given 90+ schemas starts slower, picks the wrong tool more
+ * and follows its instructions less. Keep this to what a spoken turn needs without a second model.
+ * voice-tools.test.ts fails if a name here stops existing, so a rename cannot silently drop one.
+ */
+export const VOICE_CORE_TOOLS: readonly string[] = [
+	// What needs the person: the ranked list a call opens on (the prompt tells the model to read it).
+	'list_for_you',
+	// Unread and notifications: "anything new?", and clearing what was just discussed.
+	'list_unread',
+	'list_notifications',
+	'mark_read',
+	// Finding and reading cards, tasks, bets and insights by name or id.
+	'search_objects',
+	'get_objects',
+	'list_objects',
+	// The everyday writes: record a note, change a status or owner, open a new item.
+	'create_objects',
+	'update_objects',
+	'create_comment',
+	'get_comments',
+	// "Is Slack connected?" is asked often and the prompt routes it here.
+	'list_integrations',
+	// Saying something in the call's chat thread (held: it reaches other people).
+	'post_conversation_message',
+]
+
+/** The Realtime tools for a call: the core set only, or all of them when the mode is `full`. */
+export function selectVoiceRealtimeTools(
+	tools: VoiceRealtimeTool[],
+	mode: 'core' | 'full',
+): VoiceRealtimeTool[] {
+	if (mode === 'full') return tools
+	const core = new Set(VOICE_CORE_TOOLS)
+	return tools.filter((tool) => core.has(tool.name))
+}
+
 /** How long one extra server gets to connect and list its tools. */
 export const VOICE_EXTERNAL_MCP_CONNECT_TIMEOUT_MS = 5000
 /** The Realtime API limits a function name to this many characters. */

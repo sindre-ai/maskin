@@ -253,6 +253,8 @@ describe('posthog helper', () => {
 				api_host: 'https://eu.i.posthog.com',
 				person_profiles: 'identified_only',
 				capture_pageview: true,
+				capture_pageleave: false,
+				capture_performance: false,
 				autocapture: false,
 				before_send: withSharedProperties,
 			})

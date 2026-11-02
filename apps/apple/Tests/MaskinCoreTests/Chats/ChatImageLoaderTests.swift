@@ -28,6 +28,14 @@ private final class Counter: @unchecked Sendable {
 	func count(_ id: String) -> Int { lock.withLock { counts[id] ?? 0 } }
 }
 
+private final class PeakTracker: @unchecked Sendable {
+	private let lock = NSLock()
+	private var current = 0
+	private(set) var peak = 0
+	func enter() { lock.withLock { current += 1; peak = max(peak, current) } }
+	func leave() { lock.withLock { current -= 1 } }
+}
+
 @Suite("ChatImageLoader") struct ChatImageLoaderTests {
 	@Test("a photo is fetched once and then served from memory")
 	func cachesDecodedImages() async {
@@ -93,5 +101,43 @@ private final class Counter: @unchecked Sendable {
 		#expect(counter.count("a") == 2)
 		_ = await loader.image(for: "c")
 		#expect(counter.count("c") == 1)
+	}
+
+	@Test("only a couple of photos load at once, the rest wait and still arrive")
+	func capsConcurrentLoads() async {
+		let tracker = PeakTracker()
+		let data = png()
+		let loader = ChatImageLoader { _ in
+			tracker.enter()
+			defer { tracker.leave() }
+			try await Task.sleep(for: .milliseconds(30))
+			return data
+		}
+		let ids = (0..<8).map { "f\($0)" }
+		let results = await withTaskGroup(of: DecodedImage?.self) { group in
+			for id in ids { group.addTask { await loader.image(for: id) } }
+			var all: [DecodedImage?] = []
+			for await image in group { all.append(image) }
+			return all
+		}
+		#expect(results.count == 8)
+		#expect(results.allSatisfy { $0 != nil })
+		#expect(tracker.peak <= ChatImageLoader.maxConcurrentLoads)
+	}
+
+	@Test("clearing memory drops every kept photo and they load again on demand")
+	func clearMemoryDropsThumbnails() async {
+		let counter = Counter()
+		let data = png()
+		let loader = ChatImageLoader { id in
+			_ = counter.hit(id)
+			return data
+		}
+		_ = await loader.image(for: "a")
+		#expect(loader.cachedImage(for: "a") != nil)
+		loader.clearMemory()
+		#expect(loader.cachedImage(for: "a") == nil)
+		#expect(await loader.image(for: "a") != nil)
+		#expect(counter.count("a") == 2)
 	}
 }

@@ -647,6 +647,11 @@ export const sessions = pgTable(
 		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
 			onDelete: 'set null',
 		}),
+		// The thread a chat session answers in: the id of the thread's root message in
+		// the same conversation (same type as messages.thread_root_id). NULL = the main
+		// chat, which is every session today. No FK on purpose: a session row outlives
+		// the message and must not cascade with it. Added in migration 0119.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -776,11 +781,15 @@ export const sessions = pgTable(
 			.where(sql`${t.conversationId} IS NOT NULL`),
 		// Authoritative concurrency guard, not just an optimization: at most one
 		// interactive session may be actively spawning/running for a given
-		// (conversation, agent) pair. Enforced at the DB layer because the
+		// (conversation, agent, thread). Enforced at the DB layer because the
 		// application-level lookup-then-insert in evaluateAndRespond has a race
 		// window between two near-simultaneous replies from the same agent.
-		uniqueIndex('sessions_conversation_actor_active_uniq')
-			.on(t.conversationId, t.actorId)
+		// COALESCE maps the main chat (NULL thread) to 0, which no message id takes,
+		// so two main-chat sessions still collide. Built CONCURRENTLY in migration 0120;
+		// it replaced the (conversation, agent) index sessions_conversation_actor_active_uniq,
+		// dropped in migration 0122.
+		uniqueIndex('sessions_conversation_actor_thread_active_uniq')
+			.on(t.conversationId, t.actorId, sql`(coalesce(${t.threadRootId}, 0))`)
 			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
 		// Backs the session-log retention sweep. Interactive sessions are excluded
 		// from the index entirely — their logs are never pruned, so a chat keeps
@@ -863,6 +872,49 @@ export const commentResponderClaims = pgTable(
 		),
 	],
 )
+
+// ── For You dismissals ─────────────────────────────────────────────────────
+//
+// One row per person and source comment: the person pressed Dismiss on the For You card
+// that comment raised. Dismissing is its own record because the read position moves on
+// every page open, so it cannot tell "I looked" from "I am done with this". Curated
+// cards carry a status on their notification row; this table is for decision cards,
+// which have no row of their own. Deleting the row is Undo.
+export const forYouDismissals = pgTable(
+	'for_you_dismissals',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		sourceCommentId: bigint('source_comment_id', { mode: 'number' })
+			.references(() => events.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ name: 'for_you_dismissals_pk', columns: [t.actorId, t.sourceCommentId] })],
+)
+
+// ── For You withdrawals ────────────────────────────────────────────────────
+//
+// One row per withdrawn decision card, keyed on the card's source comment. The agent that wrote
+// the comment, or the Chief of Staff, retires a card that is dead (a test card, a passed
+// deadline, a duplicate). Global: the card leaves every list that reads the For You loaders.
+// withdrawn_by is SET NULL, not cascade: removing the withdrawer must not bring the card back.
+// Deleting the row is the undo.
+export const forYouWithdrawals = pgTable('for_you_withdrawals', {
+	sourceCommentId: bigint('source_comment_id', { mode: 'number' })
+		.primaryKey()
+		.references(() => events.id, { onDelete: 'cascade' }),
+	workspaceId: uuid('workspace_id')
+		.references(() => workspaces.id, { onDelete: 'cascade' })
+		.notNull(),
+	withdrawnBy: uuid('withdrawn_by').references(() => actors.id, { onDelete: 'set null' }),
+	reason: text('reason').notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
 
 // ── Session Logs ───────────────────────────────────────────────────────────
 
@@ -1033,6 +1085,13 @@ export const messages = pgTable(
 			.on(t.threadRootId, t.id)
 			.where(sql`${t.threadRootId} IS NOT NULL`),
 		index('messages_session_id_idx').on(t.sessionId),
+		// Chat id + trigram index for the chat message-text search (services/search.ts, deepHit).
+		// Migrations 0122 and 0123 (extensions), 0124 (this index, built CONCURRENTLY).
+		index('messages_conv_content_trgm_idx').using(
+			'gin',
+			t.conversationId,
+			t.content.op('gin_trgm_ops'),
+		),
 		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would
@@ -1107,6 +1166,9 @@ export const conversationPendingTurns = pgTable(
 		messageId: bigint('message_id', { mode: 'number' })
 			.references(() => messages.id, { onDelete: 'cascade' })
 			.notNull(),
+		// The thread the turn belongs to, as sessions.thread_root_id; NULL = the main
+		// chat. A session drains only the turns of its own thread. Migration 0119.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }),
 		// The exact stream-json user envelope to deliver via writeInput.
 		payload: jsonb('payload').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1426,6 +1488,10 @@ export const mcpTelemetry = pgTable(
 		durationMs: integer('duration_ms'),
 		objectType: text('object_type'),
 		mutationKind: text('mutation_kind'),
+		// tool_call rows of the six list-family tools only: whether the call carried a
+		// cursor or offset. Null for every other row. `object_type` on those rows is the
+		// type the call listed (see listCallObjectType in @maskin/shared).
+		hasCursor: boolean('has_cursor'),
 		data: jsonb('data'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},

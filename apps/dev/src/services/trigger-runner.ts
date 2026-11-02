@@ -14,7 +14,7 @@ import {
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
-import { type SQL, and, eq, gt, inArray, lt, sql } from 'drizzle-orm'
+import { type SQL, and, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { isActorHumanPaused, isHumanPaused } from '../lib/agent-pause'
 import {
 	type CommentResponderCase,
@@ -32,7 +32,11 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
-import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
+import {
+	CredentialResolutionTimeoutError,
+	LlmCredentialsUnavailableError,
+	PlanCapExceededError,
+} from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import { returnsToChatByDefault } from './chat-origin-routing'
@@ -571,7 +575,13 @@ export class TriggerRunner {
 		// workspace is misconfigured. Pausing on that would take a workspace's
 		// automations offline for an hour over a network blip, so let those fall
 		// through to the error branch and retry on the next tick.
-		if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
+		// A resolution timeout is not a verdict on the credentials either: it
+		// fails the session, not the workspace's automations.
+		if (
+			err instanceof LlmCredentialsUnavailableError &&
+			!err.transient &&
+			!(err instanceof CredentialResolutionTimeoutError)
+		) {
 			await this.suppressWorkspace(
 				workspaceId,
 				credentialsSuppression(now, err.noCredentialsConfigured),
@@ -1244,6 +1254,26 @@ export class TriggerRunner {
 		}
 
 		const config = (trigger.config as Record<string, unknown>) ?? {}
+
+		// Opt-in guard: a scheduled sweep in a workspace nobody has touched since
+		// the last run would only burn allowance. Like the scope check below, it
+		// returns before the `trigger_fired` event and the session. It fails open:
+		// if the check cannot run, the trigger fires as it always did.
+		if (config.skip_when_idle === true) {
+			const idle = await isWorkspaceIdleSinceLastRun(this.db, trigger).catch((err) => {
+				logger.warn(
+					`Cron trigger '${trigger.name}' idle check failed — firing anyway: ${String(err)}`,
+				)
+				return false
+			})
+			if (idle) {
+				logger.info(
+					`Cron trigger '${trigger.name}' skipped — no human activity in workspace ${trigger.workspaceId} since its last run`,
+				)
+				return
+			}
+		}
+
 		const scope = parseCronScope(config.scope)
 
 		// When a scope filter is present, the trigger only fires if the query
@@ -1626,6 +1656,64 @@ export class TriggerRunner {
 
 		this.reminderTimeouts.set(trigger.id, timeout)
 	}
+}
+
+/**
+ * True when no person has acted in the trigger's workspace since the trigger
+ * last fired (or since it was created, if it never has). A person acting is a
+ * human-authored event, or a session a person started themselves (a chat
+ * message starts one but is authored by the agent, so events alone miss it).
+ * Agent and trigger activity does not count: that is exactly the spend this
+ * guard exists to stop.
+ */
+export async function isWorkspaceIdleSinceLastRun(
+	db: Database,
+	trigger: Pick<typeof triggers.$inferSelect, 'id' | 'workspaceId' | 'createdAt'>,
+): Promise<boolean> {
+	const [lastFired] = await db
+		.select({ createdAt: events.createdAt })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, trigger.workspaceId),
+				eq(events.entityId, trigger.id),
+				eq(events.action, 'trigger_fired'),
+			),
+		)
+		.orderBy(desc(events.id))
+		.limit(1)
+	const since = lastFired?.createdAt ?? trigger.createdAt
+	// No reference point means we cannot tell, so do not skip.
+	if (!since) return false
+
+	const [humanEvent] = await db
+		.select({ id: events.id })
+		.from(events)
+		.innerJoin(actors, eq(actors.id, events.actorId))
+		.where(
+			and(
+				eq(events.workspaceId, trigger.workspaceId),
+				gt(events.createdAt, since),
+				eq(actors.type, 'human'),
+			),
+		)
+		.limit(1)
+	if (humanEvent) return false
+
+	const [humanSession] = await db
+		.select({ id: sessions.id })
+		.from(sessions)
+		.innerJoin(actors, eq(actors.id, sessions.createdBy))
+		.where(
+			and(
+				eq(sessions.workspaceId, trigger.workspaceId),
+				isNull(sessions.triggerId),
+				gt(sessions.createdAt, since),
+				eq(actors.type, 'human'),
+			),
+		)
+		.limit(1)
+	return !humanSession
 }
 
 export interface CronScope {

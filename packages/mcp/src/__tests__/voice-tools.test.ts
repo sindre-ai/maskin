@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, expect, it, vi } from 'vitest'
 import { createMcpServer } from '../server'
-import { createVoiceToolkit } from '../voice-tools'
+import { VOICE_CORE_TOOLS, createVoiceToolkit, selectVoiceRealtimeTools } from '../voice-tools'
 
 const config = {
 	apiBaseUrl: 'http://localhost:0',
@@ -174,5 +174,28 @@ describe('createVoiceToolkit — agent MCP servers', () => {
 			listTools.mockRestore()
 			close.mockRestore()
 		}
+	})
+})
+
+describe('VOICE_CORE_TOOLS', () => {
+	it('names only tools the real tool list has, once each', async () => {
+		const { tools } = await createVoiceToolkit(config)
+		const real = new Set(tools.map((t) => t.name))
+		expect(VOICE_CORE_TOOLS.filter((name) => !real.has(name))).toEqual([])
+		expect(new Set(VOICE_CORE_TOOLS).size).toBe(VOICE_CORE_TOOLS.length)
+	})
+
+	it('stays a handful, not the whole toolkit', () => {
+		expect(VOICE_CORE_TOOLS.length).toBeLessThanOrEqual(15)
+	})
+
+	it('selects the core set in core mode and everything in full mode', async () => {
+		const { tools } = await createVoiceToolkit(config)
+		expect(
+			selectVoiceRealtimeTools(tools, 'core')
+				.map((t) => t.name)
+				.sort(),
+		).toEqual([...VOICE_CORE_TOOLS].sort())
+		expect(selectVoiceRealtimeTools(tools, 'full')).toBe(tools)
 	})
 })

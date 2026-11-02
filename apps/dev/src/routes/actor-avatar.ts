@@ -40,7 +40,6 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 const uploadAvatarRoute = createRoute({
 	method: 'post',
 	path: '/{id}/avatar',
-	'x-viewer-policy': 'writer',
 	tags: ['Actors'],
 	summary: 'Upload an actor avatar (PNG or JPG, up to 2 MB)',
 	request: {

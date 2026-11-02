@@ -57,6 +57,21 @@ export const objectResponseSchema = z.object({
 	// the ring on states where the agent isn't actively working. Null when
 	// there is no active session, or when the session row has been deleted.
 	active_session_state: z.string().nullable().optional(),
+	// Newest session started for this object (failure, origin and Watch/Stop
+	// cards). Detail endpoint only; null when there is no session or the caller
+	// may not read it. failure_reason is a short message, never raw log text.
+	last_session: z
+		.object({
+			id: z.string().uuid(),
+			status: z.string(),
+			agent_id: z.string().uuid(),
+			started_at: z.string().nullable(),
+			failure_reason: z.string().nullable(),
+			chat_id: z.string().uuid().nullable(),
+			created_by_actor_id: z.string().uuid(),
+		})
+		.nullable()
+		.optional(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -202,6 +217,16 @@ export const eventResponseSchema = z.object({
 export const createCommentResponseSchema = eventResponseSchema.extend({
 	unresolved_mentions: z.array(z.string().uuid()).optional(),
 	warning: z.string().optional(),
+	/** Set when the reply was a tap on a status button: whether the status changed, and if not why. */
+	status_action: z
+		.object({
+			applied: z.boolean(),
+			object_id: z.string().uuid(),
+			status: z.string().optional(),
+			reason: z.enum(['moved_on', 'not_found', 'invalid_status']).optional(),
+			current_status: z.string().nullable().optional(),
+		})
+		.optional(),
 })
 
 export const fileSummarySchema = z.object({
@@ -344,6 +369,8 @@ export const sessionResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	// Short failure line (200 characters at most), set only when status is failed.
+	failure_reason: z.string().nullable().optional(),
 })
 
 // PATCH /sessions/:id answer when notify_on_complete was requested: what happened

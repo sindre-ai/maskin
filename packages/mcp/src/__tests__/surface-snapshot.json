@@ -91,6 +91,7 @@
 			"close_condition",
 			"closed_statuses",
 			"content",
+			"driver_id",
 			"entry_condition",
 			"name",
 			"object_ids",
@@ -276,7 +277,7 @@
 			"verbose",
 			"workspace_id"
 		],
-		"list_triggers": ["cursor", "limit", "workspace_id"],
+		"list_triggers": ["agent_id", "compact", "cursor", "limit", "q", "status", "workspace_id"],
 		"list_unread": ["cursor", "entity_type", "limit", "workspace_id"],
 		"list_workspace_skills": ["cursor", "limit", "workspace_id"],
 		"list_workspaces": ["cursor", "limit"],
@@ -468,6 +469,7 @@
 			"close_condition",
 			"closed_statuses",
 			"content",
+			"driver_id",
 			"entry_condition",
 			"id",
 			"name",
@@ -539,6 +541,7 @@
 			"values",
 			"workspace_id"
 		],
-		"update_workspace_skill": ["content", "name", "workspace_id"]
+		"update_workspace_skill": ["content", "name", "workspace_id"],
+		"withdraw_decision_card": ["comment_id", "reason", "workspace_id"]
 	}
 }

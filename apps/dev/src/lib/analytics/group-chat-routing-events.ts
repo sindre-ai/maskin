@@ -37,6 +37,8 @@ export interface GroupChatMessageRoutedProps {
 	workspaceId: string
 	conversationId: string
 	messageId: number
+	/** The thread the routed message sits in; null for a message in the main chat. */
+	threadRootId: number | null
 	trigger: GroupChatRoutingTrigger
 	flagOn: boolean
 	rule: GroupChatRoutingRule
@@ -67,6 +69,7 @@ export async function trackGroupChatMessageRouted(p: GroupChatMessageRoutedProps
 			workspace_id: p.workspaceId,
 			conversation_id: p.conversationId,
 			message_id: p.messageId,
+			thread_root_id: p.threadRootId,
 			trigger: p.trigger,
 			flag_on: p.flagOn,
 			rule: p.rule,

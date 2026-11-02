@@ -165,7 +165,8 @@ public struct AuthView: View {
 			}
 		case .role:
 			AuthField(
-				label: "Role", problem: model.message(for: .role), isFocused: focus == .role
+				label: "Role", help: Self.organizationRoleHelp, problem: model.message(for: .role),
+				isFocused: focus == .role
 			) {
 				TextField("What you do", text: $model.role)
 					.focused($focus, equals: .role)
@@ -297,6 +298,11 @@ public struct AuthView: View {
 				.fixedSize(horizontal: false, vertical: true)
 		}
 	}
+
+	/// Shown under the Role field, which sits right below Organization, so one line covers both.
+	/// Matches the web sign-up and what the first-workspace research reads.
+	static let organizationRoleHelp =
+		"We use Organization and Role to prepare your first workspace. We may look up you and your organization from public sources."
 
 	static func legalText(terms: URL?, privacy: URL?) -> AttributedString? {
 		var parts: [AttributedString] = []
