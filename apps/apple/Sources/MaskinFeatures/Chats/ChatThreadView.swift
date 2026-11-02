@@ -342,8 +342,8 @@ struct ChatThreadView: View {
 						Label("Copy link", systemImage: "link")
 					}
 				}
-				if let text = exportText {
-					ShareLink(item: text, subject: Text(store.title)) { Label("Export chat", systemImage: "square.and.arrow.up") }
+				if let item = exportItem {
+					ShareLink(item: item, preview: SharePreview(item.fileName)) { Label("Export chat", systemImage: "square.and.arrow.up") }
 				}
 				if let conversations, let row = conversations.conversation(id: store.conversationID), row.unreadCount == 0 {
 					Button {
@@ -433,11 +433,13 @@ struct ChatThreadView: View {
 		}
 	}
 
-	/// The chat as Markdown text for the Export chat share sheet. Nil while there is nothing to export.
-	private var exportText: String? {
-		let messages = store.allMessages
-		guard !ChatMarkdownExport.summary(of: messages).hasPrefix("0 ") else { return nil }
-		return ChatMarkdownExport.markdown(title: store.title, messages: messages)
+	/// The chat as a lazily built Markdown file: the text is only made when the person shares it.
+	private var exportItem: ExportedChat? {
+		guard !store.allMessages.isEmpty else { return nil }
+		let title = store.title
+		return ExportedChat(fileName: ChatMarkdownExport.fileName(title: title)) { [store] in
+			ChatMarkdownExport.markdown(title: title, messages: store.allMessages)
+		}
 	}
 
 	/// The web link to this conversation, for Copy link.
@@ -1128,7 +1130,7 @@ struct ThreadTranscript: View {
 
 	/// Follow / Stop following for the agent's working card; nil where Live Activities don't exist.
 	private func toggleFollow(session: ChatAgentSession, agent: ChatParticipant) -> (() -> Void)? {
-		guard let controller = followController else { return nil }
+		guard let controller = followController, controller.canFollow else { return nil }
 		return {
 			MaskinHaptics.play(.selection)
 			if controller.isFollowing(session.id) {
@@ -1440,5 +1442,18 @@ extension View {
 		} else {
 			simultaneousGesture(DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in action() })
 		}
+	}
+}
+
+/// Export chat's payload. Transferable builds the file on demand, so redrawing the menu costs nothing.
+struct ExportedChat: Transferable {
+	let fileName: String
+	let build: @MainActor @Sendable () -> String
+
+	static var transferRepresentation: some TransferRepresentation {
+		DataRepresentation(exportedContentType: .plainText) { item in
+			await MainActor.run { Data(item.build().utf8) }
+		}
+		.suggestedFileName { $0.fileName }
 	}
 }

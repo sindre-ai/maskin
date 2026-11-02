@@ -142,6 +142,16 @@ struct InvitationsTests {
 		#expect(store.pending.isEmpty)
 	}
 
+	@MainActor @Test func clearErrorDropsTheStaleMessage() async {
+		let api = FakeInvites()
+		api.failure = SettingsError("Nope")
+		let store = InvitationsStore(api: api, workspaceId: "w", canManage: true)
+		_ = await store.invite(email: "a@b.co")
+		#expect(store.actionError == "Nope")
+		store.clearError()
+		#expect(store.actionError == nil)
+	}
+
 	@MainActor @Test func cancelRemovesTheRowOnlyOnSuccess() async {
 		let api = FakeInvites()
 		let item = PendingInvitation(id: "i1", email: "a@b.co", role: "member", expiresAt: nil)
@@ -208,6 +218,14 @@ struct ExtensionsTests {
 
 @Suite("Tool servers and Claude")
 struct ToolServerTests {
+	@Test func aKeyNeedsHTTPS() {
+		let plain = ToolServerDraft(name: "n", url: "http://x.io", key: "k")
+		#expect(!plain.isValid)
+		#expect(plain.keyProblem != nil)
+		#expect(ToolServerDraft(name: "n", url: "https://x.io", key: "k").isValid)
+		#expect(ToolServerDraft(name: "n", url: "http://x.io").isValid)
+	}
+
 	@Test func draftValidation() {
 		#expect(ToolServerDraft(name: "linear-mcp", url: "https://mcp.linear.app/mcp").isValid)
 		#expect(!ToolServerDraft(name: "", url: "https://x.io").isValid)
@@ -251,8 +269,15 @@ struct ToolServerTests {
 private final class FakeAccess: IntegrationAccessAPI, @unchecked Sendable {
 	var current = IntegrationGrants(defaultAccess: .read, byAgent: ["b": .readWrite])
 	var failure: SettingsError?
+	/// When set, the write for this actor parks on `gate`, then fails with `failure`.
+	var parkedActor: String?
+	var gate: Gate?
 	func grants(integrationId: String) async throws -> IntegrationGrants { current }
 	func setGrant(integrationId: String, actorId: String, access: AgentAccess, idempotencyKey: String) async throws {
+		if actorId == parkedActor {
+			await gate?.wait()
+			throw SettingsError("Refused")
+		}
 		if let failure { throw failure }
 	}
 }
@@ -280,6 +305,24 @@ struct IntegrationAccessTests {
 		await store.set(.none, for: agents[1])
 		#expect(store.access(for: "a") == .read)
 		#expect(store.actionError == "Only a person can change agent access")
+	}
+
+	@MainActor @Test func aFailedWriteOnlyRevertsItsOwnAgent() async {
+		let api = FakeAccess()
+		let gate = Gate()
+		api.parkedActor = "a"
+		api.gate = gate
+		let store = IntegrationAccessStore(api: api, integrationId: "i", agents: agents, canManage: true)
+		await store.load()
+		let first = Task { await store.set(.none, for: agents[1]) }
+		await gate.waitUntilStarted()
+		await store.set(.read, for: agents[0])
+		#expect(store.access(for: "b") == .read)
+		await gate.release()
+		await first.value
+		#expect(store.access(for: "a") == .read)
+		#expect(store.access(for: "b") == .read)
+		#expect(store.grants.byAgent["b"] == .read)
 	}
 
 	@MainActor @Test func readersCannotChange() async {

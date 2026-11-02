@@ -27,7 +27,21 @@ public struct ToolServerDraft: Equatable, Sendable {
 		return true
 	}
 
-	public var isValid: Bool { !trimmedName.isEmpty && trimmedName.count <= 60 && urlIsValid }
+	public var hasKey: Bool { !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+	/// A key is only ever sent over https; plain http would put it on the wire in the clear.
+	public var keyNeedsHTTPS: Bool {
+		hasKey && URLComponents(string: trimmedURL)?.scheme?.lowercased() != "https"
+	}
+
+	/// The sentence shown beside the form when the key and the URL do not go together.
+	public var keyProblem: String? {
+		keyNeedsHTTPS ? "A key can only be sent to an https address." : nil
+	}
+
+	public var isValid: Bool {
+		!trimmedName.isEmpty && trimmedName.count <= 60 && urlIsValid && !keyNeedsHTTPS
+	}
 
 	func requestBody() throws -> Data {
 		struct Server: Encodable {

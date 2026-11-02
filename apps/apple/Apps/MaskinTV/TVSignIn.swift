@@ -1,6 +1,7 @@
 import MaskinCore
 import MaskinDesign
 import SwiftUI
+import UIKit
 
 /// Apple TV sign-in without typing: the TV shows a short code, the reader types it at the address
 /// below on a phone or computer and approves it there. The email-and-password form stays one
@@ -14,9 +15,10 @@ struct TVSignIn: View {
 		self.auth = auth
 		_store = State(
 			initialValue: TVDeviceCodeStore(
-				source: APITVDeviceCodeSource(baseURL: GlanceConfig.apiBaseURL),
+				// The name the approver sees next to "Apple TV" (the API allows up to 60 characters).
+				source: APITVDeviceCodeSource(baseURL: GlanceConfig.apiBaseURL, deviceName: UIDevice.current.name),
 				onApproved: { login in
-					try? auth.adopt(
+					try auth.adopt(
 						StoredSession(
 							apiKey: login.apiKey, actorId: login.actorId, name: login.name, email: login.email,
 							workspaceId: login.workspaceId))

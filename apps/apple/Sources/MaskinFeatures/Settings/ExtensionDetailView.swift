@@ -32,7 +32,7 @@ struct ExtensionDetailView: View {
 				}
 				if ext.hasWebhook {
 					Section("Webhook") {
-						if let url = ext.webhookURL {
+						if store.canManage, let url = ext.webhookURL {
 							Button {
 								PlainPasteboard.copy(url)
 							} label: {

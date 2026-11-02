@@ -64,6 +64,7 @@ struct WhatNeedsMeSnippetIntent: AppIntent {
 	/// Decision titles are private: neither spoken nor shown on a locked device.
 	static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
+	@MainActor
 	func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog & ShowsSnippetView {
 		let summary = await MaskinIntentsContext.whatNeedsMe()
 		return .result(

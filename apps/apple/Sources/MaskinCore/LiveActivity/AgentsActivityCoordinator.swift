@@ -74,7 +74,7 @@ public final class AgentsActivityCoordinator {
 	private let now: () -> Date
 	private let sleep: Sleep
 	private let minUpdateInterval: TimeInterval
-	private let startsAutomatically: Bool
+	public let startsAutomatically: Bool
 
 	/// Called with every working agent (merged feed and open thread, no cap) whenever that set may
 	/// have changed. The opt-in follow activity listens here.
@@ -314,7 +314,13 @@ public final class AgentsActivityCoordinator {
 
 	private func flush() async {
 		guard let device = deviceId else { return }
-		if let token = pushToStartToken, needsRegistration("start", token: token, device: device) {
+		// Without the automatic card nothing can start from a push: drop a token registered by an
+		// earlier build and register none.
+		if !startsAutomatically, let entry = registered["start"] {
+			registered["start"] = nil
+			try? await tokens.unregister(tokenId: entry.id, credentials: nil)
+		}
+		if startsAutomatically, let token = pushToStartToken, needsRegistration("start", token: token, device: device) {
 			if let id = try? await tokens.register(
 				kind: .pushToStart, deviceId: device, sessionId: nil, token: token)
 			{

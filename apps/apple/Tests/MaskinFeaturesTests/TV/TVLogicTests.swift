@@ -69,6 +69,9 @@ struct TVCardOptionsTests {
 private actor ScriptedSource: TVDeviceCodeSource {
 	var prompts: [TVDeviceCodePrompt]
 	var outcomes: [TVDeviceCodeOutcome]
+	/// Polls that throw before the scripted outcomes are used.
+	var pollErrors: [TVDeviceCodeError] = []
+	func failNextPolls(_ errors: [TVDeviceCodeError]) { pollErrors = errors }
 	private(set) var starts = 0
 	private(set) var polled: [String] = []
 
@@ -85,6 +88,7 @@ private actor ScriptedSource: TVDeviceCodeSource {
 
 	func poll(userCode: String) async throws -> TVDeviceCodeOutcome {
 		polled.append(userCode)
+		if !pollErrors.isEmpty { throw pollErrors.removeFirst() }
 		return outcomes.isEmpty ? .pending : outcomes.removeFirst()
 	}
 }
@@ -135,6 +139,52 @@ struct TVDeviceCodeTests {
 		await store.run()
 		#expect(box.value == nil)
 		#expect(store.phase == .denied)
+	}
+
+	@MainActor
+	@Test func aWifiBlipDuringPollingDoesNotCostTheCode() async {
+		let t0 = Date(timeIntervalSinceReferenceDate: 800_000_000)
+		let login = LoginResult(apiKey: "ank_x", actorId: "a", name: "S", email: nil, workspaceId: nil)
+		let source = ScriptedSource(prompts: [prompt("BCDF-2345", from: t0)], outcomes: [.approved(login)])
+		await source.failNextPolls(Array(repeating: TVDeviceCodeError("offline", isTransient: true), count: 2))
+		let box = LoginBox()
+		let store = TVDeviceCodeStore(source: source, now: { t0 }, sleep: { _ in }) { box.value = $0 }
+		await store.run()
+		#expect(box.value == login)
+		#expect(await source.starts == 1)
+	}
+
+	@MainActor
+	@Test func manyFailedPollsInARowGiveUp() async {
+		let t0 = Date(timeIntervalSinceReferenceDate: 800_000_000)
+		let source = ScriptedSource(prompts: [prompt("BCDF-2345", from: t0)], outcomes: [])
+		await source.failNextPolls(
+			Array(repeating: TVDeviceCodeError("offline", isTransient: true), count: TVDeviceCodeStore.maxPollFailures))
+		let store = TVDeviceCodeStore(source: source, now: { t0 }, sleep: { _ in }) { _ in }
+		await store.run()
+		#expect(store.phase == .failed("offline"))
+	}
+
+	@MainActor
+	@Test func aPollErrorThatIsNotTransientStopsAtOnce() async {
+		let t0 = Date(timeIntervalSinceReferenceDate: 800_000_000)
+		let source = ScriptedSource(prompts: [prompt("BCDF-2345", from: t0)], outcomes: [])
+		await source.failNextPolls([TVDeviceCodeError("bad reply")])
+		let store = TVDeviceCodeStore(source: source, now: { t0 }, sleep: { _ in }) { _ in }
+		await store.run()
+		#expect(store.phase == .failed("bad reply"))
+		#expect(await source.polled.count == 1)
+	}
+
+	@MainActor
+	@Test func approvedButUnsavableShowsAnError() async {
+		struct Refused: Error {}
+		let t0 = Date(timeIntervalSinceReferenceDate: 800_000_000)
+		let login = LoginResult(apiKey: "ank_x", actorId: "a", name: "S", email: nil, workspaceId: nil)
+		let source = ScriptedSource(prompts: [prompt("BCDF-2345", from: t0)], outcomes: [.approved(login)])
+		let store = TVDeviceCodeStore(source: source, now: { t0 }, sleep: { _ in }) { _ in throw Refused() }
+		await store.run()
+		if case .failed = store.phase {} else { Issue.record("expected a failure") }
 	}
 
 	@MainActor

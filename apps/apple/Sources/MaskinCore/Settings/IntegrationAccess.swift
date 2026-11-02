@@ -86,7 +86,7 @@ public final class IntegrationAccessStore {
 	/// Optimistic; put back if the server refuses.
 	public func set(_ access: AgentAccess, for agent: AgentRef) async {
 		guard canManage, !busyIDs.contains(agent.id), self.access(for: agent.id) != access else { return }
-		let before = grants
+		let before = grants.byAgent[agent.id]
 		grants.byAgent[agent.id] = access
 		busyIDs.insert(agent.id)
 		actionError = nil
@@ -96,7 +96,8 @@ public final class IntegrationAccessStore {
 				integrationId: integrationId, actorId: agent.id, access: access,
 				idempotencyKey: UUID().uuidString)
 		} catch {
-			grants = before
+			// Only this agent's entry goes back; another agent's change may be in flight.
+			grants.byAgent[agent.id] = before
 			actionError = (error as? SettingsError)?.message ?? "Couldn't change that agent's access."
 		}
 	}

@@ -11,9 +11,12 @@ private final class FakeFollowHost: FollowActivityHosting {
 	var states: [FollowActivityState] = []
 	var existing: Set<String> = []
 
-	func start(_ target: FollowTarget, state: FollowActivityState) {
+	var isAvailable = true
+	func start(_ target: FollowTarget, state: FollowActivityState) -> Bool {
+		guard isAvailable else { return false }
 		log.append("start:\(target.sessionId)")
 		states.append(state)
+		return true
 	}
 	func update(sessionId: String, state: FollowActivityState) async {
 		log.append("update:\(sessionId)")
@@ -105,6 +108,38 @@ struct FollowActivityControllerTests {
 		#expect(host.log.last == "end:s-developer:900")
 		#expect(host.states.last?.phase == .finished)
 		#expect(!controller.isFollowing("s-developer"))
+	}
+
+	@Test("A refused card is not reported as followed")
+	func refused() async {
+		let host = FakeFollowHost()
+		host.isAvailable = false
+		let controller = FollowActivityController(host: host)
+		await controller.workspaceChanged("w")
+		controller.follow(agent("developer"))
+		#expect(!controller.isFollowing("s-developer"))
+		#expect(!controller.canFollow)
+	}
+
+	@Test("A session still running keeps its card even when the list no longer shows it")
+	func stillRunning() async {
+		let host = FakeFollowHost()
+		let controller = FollowActivityController(host: host, isStillRunning: { _ in true })
+		await controller.workspaceChanged("w")
+		controller.follow(agent("developer"))
+		await controller.workingChanged([])
+		#expect(controller.isFollowing("s-developer"))
+		#expect(host.log == ["start:s-developer"])
+	}
+
+	@Test("If the status cannot be read the card stays")
+	func unknownStatus() async {
+		let host = FakeFollowHost()
+		let controller = FollowActivityController(host: host, isStillRunning: { _ in nil })
+		await controller.workspaceChanged("w")
+		controller.follow(agent("developer"))
+		await controller.workingChanged([])
+		#expect(controller.isFollowing("s-developer"))
 	}
 
 	@Test("Stop following removes the card at once")

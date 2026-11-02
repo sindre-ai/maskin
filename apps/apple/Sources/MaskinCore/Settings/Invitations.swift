@@ -121,6 +121,9 @@ public final class InvitationsStore {
 		}
 	}
 
+	/// Called when the invite sheet closes, so its error does not linger on the Members page.
+	public func clearError() { actionError = nil }
+
 	public func dismissMessages() {
 		actionError = nil
 		notice = nil

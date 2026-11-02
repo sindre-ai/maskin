@@ -25,6 +25,7 @@ struct AddToolServerView: View {
 			PageTextField(title: "Bearer key", text: $store.draft.key, mono: true, isURL: true, secure: true)
 			PageFootnote(
 				text: "The key is stored encrypted and never shown again. No agent can use the server until you give it access.")
+			if let problem = store.draft.keyProblem { FormError(problem) }
 			if let error = store.error { FormError(error) }
 			Button("Add server") {
 				Task {

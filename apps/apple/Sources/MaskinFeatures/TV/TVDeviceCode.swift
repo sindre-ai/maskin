@@ -45,7 +45,12 @@ public protocol TVDeviceCodeSource: Sendable {
 
 public struct TVDeviceCodeError: Error, Equatable, Sendable {
 	public var message: String
-	public init(_ message: String) { self.message = message }
+	/// A blip worth retrying (no connection, a 5xx), as opposed to a refusal or a bad reply.
+	public var isTransient: Bool
+	public init(_ message: String, isTransient: Bool = false) {
+		self.message = message
+		self.isTransient = isTransient
+	}
 }
 
 /// The live source. It keeps the secret `device_code` to itself: the screen only ever sees the
@@ -151,14 +156,15 @@ public actor APITVDeviceCodeSource: TVDeviceCodeSource {
 		do {
 			return try await send(request)
 		} catch {
-			throw TVDeviceCodeError("Can't reach Maskin. Check the connection and try again.")
+			throw TVDeviceCodeError("Can't reach Maskin. Check the connection and try again.", isTransient: true)
 		}
 	}
 
 	static func error(_ status: Int) -> TVDeviceCodeError {
 		status == 429
 			? TVDeviceCodeError("Too many tries. Wait a minute and try again.")
-			: TVDeviceCodeError("Maskin is having trouble (error \(status)). Try again in a moment.")
+			: TVDeviceCodeError(
+				"Maskin is having trouble (error \(status)). Try again in a moment.", isTransient: status >= 500)
 	}
 }
 
@@ -178,7 +184,9 @@ public final class TVDeviceCodeStore {
 	public private(set) var phase: Phase = .starting
 
 	@ObservationIgnored private let source: any TVDeviceCodeSource
-	@ObservationIgnored private let onApproved: @MainActor (LoginResult) -> Void
+	@ObservationIgnored private let onApproved: @MainActor (LoginResult) throws -> Void
+	/// Failed polls in a row before the screen gives up (a Wi-Fi blip should not cost the code).
+	public static let maxPollFailures = 5
 	@ObservationIgnored private let now: () -> Date
 	@ObservationIgnored private let sleep: @Sendable (TimeInterval) async -> Void
 	@ObservationIgnored private var task: Task<Void, Never>?
@@ -186,7 +194,7 @@ public final class TVDeviceCodeStore {
 	public init(
 		source: any TVDeviceCodeSource, now: @escaping () -> Date = Date.init,
 		sleep: @escaping @Sendable (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
-		onApproved: @escaping @MainActor (LoginResult) -> Void
+		onApproved: @escaping @MainActor (LoginResult) throws -> Void
 	) {
 		self.source = source
 		self.now = now
@@ -214,7 +222,12 @@ public final class TVDeviceCodeStore {
 				phase = .showing(prompt)
 				switch try await wait(for: prompt) {
 				case .approved(let login):
-					onApproved(login)
+					do {
+						try onApproved(login)
+					} catch {
+						// The server approved, but this TV could not keep the session.
+						phase = .failed("Approved, but the TV couldn't save the sign-in. Try again.")
+					}
 					return
 				case .denied:
 					phase = .denied
@@ -231,10 +244,19 @@ public final class TVDeviceCodeStore {
 	}
 
 	private func wait(for prompt: TVDeviceCodePrompt) async throws -> TVDeviceCodeOutcome {
+		var failures = 0
 		while !Task.isCancelled, now() < prompt.expiresAt {
 			await sleep(prompt.pollInterval)
 			if Task.isCancelled { break }
-			let outcome = try await source.poll(userCode: prompt.userCode)
+			let outcome: TVDeviceCodeOutcome
+			do {
+				outcome = try await source.poll(userCode: prompt.userCode)
+				failures = 0
+			} catch let error as TVDeviceCodeError where error.isTransient {
+				failures += 1
+				if failures >= Self.maxPollFailures { throw error }
+				continue
+			}
 			if outcome != .pending { return outcome }
 		}
 		return .expired

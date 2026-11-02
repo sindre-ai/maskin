@@ -45,6 +45,7 @@ struct InviteByEmailSheet: View {
 			}
 			.overlay { if store.isInviting { ProgressView() } }
 			.onAppear { store.dismissMessages() }
+			.onDisappear { store.clearError() }
 		}
 		.presentationDetents([.medium, .large])
 	}

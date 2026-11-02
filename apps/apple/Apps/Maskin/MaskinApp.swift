@@ -139,7 +139,16 @@ struct MaskinApp: App {
 				startsAutomatically: false)
 			AgentsActivityCoordinator.shared = coordinator
 			host.attach(coordinator)
-			let follow = FollowActivityController(host: FollowActivityHost())
+			let follow = FollowActivityController(host: FollowActivityHost()) { sessionId in
+				// The working list leaves out chat sessions; ask the sessions list itself.
+				let source = await MainActor.run {
+					environment.workspaceId.map { APIAgentsSource(client: environment.client, workspaceID: $0) }
+				}
+				guard let source,
+					let sessions = try? await source.recentSessions(limit: WorkingAgentsFeed.sessionWindow)
+				else { return nil }
+				return sessions.first { $0.id == sessionId }?.isActive ?? false
+			}
 			FollowActivityController.shared = follow
 			coordinator.onWorkingChanged = { agents in await follow.workingChanged(agents) }
 			AgentsActivityRuntime.shared = AgentsActivityRuntime(environment: environment, coordinator: coordinator)
