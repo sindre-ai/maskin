@@ -722,7 +722,7 @@ describe('list_workspace_skills — cursor walk returns every row once', () => {
 		_meta: { truncated?: boolean }
 		structuredContent: {
 			skills: Array<{ id: string }>
-			page: { limit: number; returned: number; next_cursor?: string }
+			page: { limit: number; returned: number; has_more: boolean }
 			next_cursor?: string
 		}
 	}
@@ -765,7 +765,7 @@ describe('list_workspace_skills — cursor walk returns every row once', () => {
 				const { page, skills, next_cursor } = p.structuredContent
 				expect(page.limit).toBe(limit)
 				expect(page.returned).toBe(skills.length)
-				expect(page.next_cursor).toBe(next_cursor)
+				expect(page.has_more).toBe(i !== pages.length - 1)
 				expect(next_cursor === undefined).toBe(i === pages.length - 1)
 			})
 		},
