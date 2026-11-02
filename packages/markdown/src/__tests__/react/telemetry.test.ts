@@ -135,7 +135,7 @@ describe('createEditorTelemetry', () => {
 		})
 	})
 
-	it('emits editor_markdown_parse_error and truncates the message at 500 chars', () => {
+	it('emits editor_markdown_parse_error with the error class and no message', () => {
 		const capture = vi.fn()
 		const telemetry = createEditorTelemetry({
 			capture,
@@ -144,34 +144,10 @@ describe('createEditorTelemetry', () => {
 			objectId: 'obj_bet_1',
 		})
 
-		const longMessage = 'x'.repeat(600)
-		telemetry.emitParseError({ errorMessage: longMessage })
-
-		expect(capture).toHaveBeenCalledTimes(1)
-		const [event, props] = vi.mocked(capture).mock.calls[0] as [string, Record<string, unknown>]
-		expect(event).toBe('editor_markdown_parse_error')
-		expect(props.variant).toBe('document')
-		expect(props.surface).toBe('bet')
-		expect(props.object_id).toBe('obj_bet_1')
-		expect(typeof props.error_message).toBe('string')
-		// 500 chars of `x` plus the trailing ellipsis — matches editor.tsx's
-		// existing truncation rule.
-		expect(props.error_message).toBe(`${'x'.repeat(500)}…`)
-	})
-
-	it('emits editor_markdown_parse_error without truncation for messages ≤500 chars', () => {
-		const capture = vi.fn()
-		const telemetry = createEditorTelemetry({
-			capture,
-			variant: 'document',
-			surface: 'bet',
-			objectId: 'obj_bet_1',
-		})
-
-		telemetry.emitParseError({ errorMessage: 'short error' })
+		telemetry.emitParseError({ errorClass: 'RangeError' })
 
 		expect(capture).toHaveBeenCalledWith('editor_markdown_parse_error', {
-			error_message: 'short error',
+			error_class: 'RangeError',
 			variant: 'document',
 			surface: 'bet',
 			object_id: 'obj_bet_1',
@@ -179,6 +155,8 @@ describe('createEditorTelemetry', () => {
 			cause: undefined,
 			construct: undefined,
 		})
+		const props = vi.mocked(capture).mock.calls[0]?.[1] as Record<string, unknown>
+		expect(props).not.toHaveProperty('error_message')
 	})
 
 	it('carries reason, cause and construct on editor_markdown_parse_error', () => {
@@ -191,13 +169,13 @@ describe('createEditorTelemetry', () => {
 		})
 
 		telemetry.emitParseError({
-			errorMessage: 'opened read-only',
+			errorClass: 'opened_read_only',
 			reason: 'read_only_fallback',
 			cause: 'front_matter',
 		})
 
 		expect(capture).toHaveBeenCalledWith('editor_markdown_parse_error', {
-			error_message: 'opened read-only',
+			error_class: 'opened_read_only',
 			variant: 'document',
 			surface: 'file',
 			object_id: 'file_1',
@@ -224,7 +202,7 @@ describe('createEditorTelemetry', () => {
 		expect(() => telemetry.emitToolbarAction({ action: 'italic' })).not.toThrow()
 		expect(() => telemetry.emitShortcut({ shortcut: 'mod+i' })).not.toThrow()
 		expect(() => telemetry.emitSaved({ contentLength: 1, saveTrigger: 'blur' })).not.toThrow()
-		expect(() => telemetry.emitParseError({ errorMessage: 'x' })).not.toThrow()
+		expect(() => telemetry.emitParseError({ errorClass: 'x' })).not.toThrow()
 		expect(() => telemetry.emitSlashCommand({ commandId: 'heading_1' })).not.toThrow()
 	})
 

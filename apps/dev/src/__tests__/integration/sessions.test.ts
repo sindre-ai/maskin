@@ -370,7 +370,13 @@ describe('Sessions Integration', () => {
 				expect(leanRes.status).toBe(200)
 				const leanBody = (await leanRes.json()) as Array<Record<string, unknown>>
 				expect(leanBody).toHaveLength(1)
-				expect(Object.keys(leanBody[0]).sort()).toEqual(['id', 'status', 'title', 'updated_at'])
+				expect(Object.keys(leanBody[0]).sort()).toEqual([
+					'failure_reason',
+					'id',
+					'status',
+					'title',
+					'updated_at',
+				])
 				expect(leanBody[0].status).toBe('running')
 
 				const verboseRes = await app.request(jsonGet('/api/sessions?verbose=true', headers))

@@ -43,6 +43,7 @@ private struct LoopsContainer: View {
 	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var showMarketplace = false
+	@State private var showDisplay = false
 	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	init(environment: AppEnvironment, workspaceID: String, requestedLoopId: Binding<String?>) {
@@ -57,7 +58,7 @@ private struct LoopsContainer: View {
 					objects: APIObjectsRemote(
 						client: environment.client, credentials: environment.auth.credentialsProvider)),
 				events: environment.events, cache: environment.snapshotCache,
-				sortStorage: UserDefaultsLoopsSortStorage()))
+				sortStorage: UserDefaultsLoopsSortStorage(), displayStorage: UserDefaultsLoopsDisplayStorage()))
 	}
 
 	var body: some View {
@@ -119,10 +120,14 @@ private struct LoopsContainer: View {
 		.flowsSearch(text: $search, isPresented: $searchPresented)
 		// Closing the field can't leave a stale query behind.
 		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
-		// Flows carry no tags, so there is no filter bar: the one Display item is the sort.
+		// Flows carry no tags, so there is no tag filter bar; Display holds the sort, filter and Summary.
 		.shellToolbar(
 			environment: environment, title: "Flows",
-			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }))
+			actions: ShellActions(
+				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
+				displayToggle: { showDisplay = true })
+		)
+		.sheet(isPresented: $showDisplay) { FlowsDisplaySheet(store: loops) }
 	}
 
 	@ViewBuilder
@@ -197,13 +202,29 @@ private struct LoopDetailHost: View {
 	}
 }
 
-/// The Flows Display menu in the shell's pill: Recent or Name. Remembered on this device.
-struct FlowsDisplayMenu: View {
+/// The Flows Display sheet: Sort by and Order, the Show filter and the Summary property. Flows carry
+/// no tags, so there is no Tags chip. Remembered on this device.
+struct FlowsDisplaySheet: View {
 	@Bindable var store: LoopsStore
 
 	var body: some View {
-		Picker("Sort", selection: $store.sort) {
-			ForEach(LoopsSort.allCases) { Text($0.title).tag($0) }
+		DisplaySheet(canReset: store.isDisplayCustomised, onReset: { store.resetDisplay() }) {
+			DisplaySection(title: "Ordering", showsDivider: false) {
+				DisplayChoice(
+					label: "Sort by", options: LoopsSort.allCases.map { ($0, $0.title) }, selection: $store.sort)
+				DisplayChoice(
+					label: "Order", options: [(false, "Normal"), (true, "Reversed")],
+					selection: $store.display.reversed)
+			}
+			DisplaySection(title: "Filters") {
+				DisplayChoice(
+					label: "Show", options: LoopsFilter.allCases.map { ($0, $0.title) }, selection: $store.filter)
+			}
+			DisplaySection(title: "Properties") {
+				DisplayToggles(
+					label: "Show",
+					items: [.init(id: "summary", title: "Summary", isOn: $store.display.showsSummary)])
+			}
 		}
 	}
 }

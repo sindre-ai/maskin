@@ -282,7 +282,12 @@ struct ChatThreadView: View {
 	private var toolbarContent: some ToolbarContent {
 		ToolbarItem(placement: .principal) {
 			ThreadNavTitle(
-				title: navTitle, status: navStatus, onTap: titleAction)
+				title: navTitle, status: navStatus,
+				onTap: titleAction ?? {
+					newTitle = store.title
+					renaming = true
+				},
+				hint: titleAction == nil ? "Renames the chat" : nil)
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
@@ -335,6 +340,16 @@ struct ChatThreadView: View {
 						MaskinHaptics.play(.success)
 					} label: {
 						Label("Copy link", systemImage: "link")
+					}
+				}
+				if let item = exportItem {
+					ShareLink(item: item, preview: SharePreview(item.fileName)) { Label("Export chat", systemImage: "square.and.arrow.up") }
+				}
+				if let conversations, let row = conversations.conversation(id: store.conversationID), row.unreadCount == 0 {
+					Button {
+						Task { _ = await conversations.markUnread(row.id) }
+					} label: {
+						Label("Mark as unread", systemImage: "envelope.badge")
 					}
 				}
 				Button {
@@ -415,6 +430,15 @@ struct ChatThreadView: View {
 			}
 		} else {
 			scroll(to: message.id, proxy: proxy)
+		}
+	}
+
+	/// The chat as a lazily built Markdown file: the text is only made when the person shares it.
+	private var exportItem: ExportedChat? {
+		guard !store.allMessages.isEmpty else { return nil }
+		let title = store.title
+		return ExportedChat(fileName: ChatMarkdownExport.fileName(title: title)) { [store] in
+			ChatMarkdownExport.markdown(title: title, messages: store.allMessages)
 		}
 	}
 
@@ -528,6 +552,7 @@ struct ChatThreadView: View {
 		}
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
+			onJumpToMessage: { scroll(to: $0, proxy: proxy) },
 			onOpenThread: { message in
 				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
@@ -809,7 +834,7 @@ struct ChatThreadView: View {
 	}
 
 	private func reply(to message: ChatMessage) {
-		composer.reply(to: message.actorName, text: message.content)
+		composer.reply(to: message.actorName, text: message.content, serverID: message.serverID)
 	}
 
 	/// Edit loads the text into the composer under the "Editing message" quote; sending replaces it.
@@ -987,6 +1012,8 @@ struct ThreadTranscript: View {
 	var onReply: (ChatMessage) -> Void = { _ in }
 	/// An intro's fill step: put its prompt in the composer.
 	var onFillStep: (String) -> Void = { _ in }
+	/// A tap on a reply's quote: scroll to the message with this id.
+	var onJumpToMessage: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
@@ -1078,7 +1105,9 @@ struct ThreadTranscript: View {
 					LiveActivityView(
 						agent: row.agent, fallbackActivity: session?.currentActivity,
 						turn: session.flatMap { store.trace?.liveTurn(sessionID: $0.id) },
-						sentAt: store.awaitingReplySince, startedAt: session?.startedAt)
+						sentAt: store.awaitingReplySince, startedAt: session?.startedAt,
+						isFollowing: session.map { followController?.isFollowing($0.id) ?? false } ?? false,
+						onToggleFollow: session.flatMap { toggleFollow(session: $0, agent: row.agent) })
 				}
 			}
 			.padding(.top, Self.listGap)
@@ -1094,6 +1123,25 @@ struct ThreadTranscript: View {
 				Task { await store.resumeSession(stalled.id) }
 			}
 			.padding(.top, Self.listGap)
+		}
+	}
+
+	private var followController: FollowActivityController? { FollowActivityController.shared }
+
+	/// Follow / Stop following for the agent's working card; nil where Live Activities don't exist.
+	private func toggleFollow(session: ChatAgentSession, agent: ChatParticipant) -> (() -> Void)? {
+		guard let controller = followController, controller.canFollow else { return nil }
+		return {
+			MaskinHaptics.play(.selection)
+			if controller.isFollowing(session.id) {
+				Task { await controller.stopFollowing(sessionId: session.id) }
+			} else {
+				controller.follow(
+					WorkingAgent(
+						id: agent.id, sessionId: session.id, name: agent.name, doing: session.currentActivity,
+						startedAt: session.startedAt ?? Date(), conversationId: store.conversationID,
+						topic: store.title))
+			}
 		}
 	}
 
@@ -1148,6 +1196,14 @@ struct ThreadTranscript: View {
 		return actions
 	}
 
+	/// The message a reply's quote points at, when it is in the loaded chat.
+	private func quoteTarget(of message: ChatMessage) -> ChatMessage? {
+		guard let quote = message.quotedReply else { return nil }
+		var quotedID: Int?
+		if case .number(let n)? = message.metadata?["quoted_message_id"] { quotedID = Int(n) }
+		return QuoteJump.original(of: quote, replyID: message.id, quotedID: quotedID, in: store.messages)
+	}
+
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
@@ -1191,6 +1247,8 @@ struct ThreadTranscript: View {
 				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: message.content.isEmpty ? nil : { onReply(message) },
+				onQuoteTap: message.quotedReply == nil
+					? nil : { if let target = quoteTarget(of: message) { onJumpToMessage(target.id) } },
 				threadSummary: store.threadSummary(for: message),
 				onOpenThread: { onOpenThread(message) },
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
@@ -1384,5 +1442,18 @@ extension View {
 		} else {
 			simultaneousGesture(DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in action() })
 		}
+	}
+}
+
+/// Export chat's payload. Transferable builds the file on demand, so redrawing the menu costs nothing.
+struct ExportedChat: Transferable {
+	let fileName: String
+	let build: @MainActor @Sendable () -> String
+
+	static var transferRepresentation: some TransferRepresentation {
+		DataRepresentation(exportedContentType: .plainText) { item in
+			await MainActor.run { Data(item.build().utf8) }
+		}
+		.suggestedFileName { $0.fileName }
 	}
 }

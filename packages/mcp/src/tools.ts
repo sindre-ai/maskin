@@ -1083,12 +1083,10 @@ export const tools = {
 	},
 	get_workspace_skill: {
 		description:
-			'Get a shared workspace skill by name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
+			'Get a shared workspace skill by id or name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe(
-				'Skill name. Lowercase letters, numbers, and hyphens only; max 64 chars.',
-			),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 		}),
 	},
 	create_workspace_skill: {
@@ -1109,10 +1107,10 @@ export const tools = {
 	},
 	update_workspace_skill: {
 		description:
-			'Replace the content of an existing shared workspace skill. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
+			'Replace the content of an existing shared workspace skill, found by id or name. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe('Name of the workspace skill to update.'),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 			content: z
 				.string()
 				.min(1)
@@ -1121,10 +1119,10 @@ export const tools = {
 	},
 	delete_workspace_skill: {
 		description:
-			'Delete a shared workspace skill. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
+			'Delete a shared workspace skill, found by id or name. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe('Name of the workspace skill to delete.'),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 		}),
 	},
 	// ─── Files ───────────────────────────────────────────────
@@ -1287,6 +1285,12 @@ export const tools = {
 				.optional()
 				.describe(
 					'Set to true to force a new top-level comment on `entity_id`, opting out of the automatic reply-in-thread default. Only use when you deliberately want to open a new topic rather than reply inside the thread that dispatched this session. Ignored if `parent_event_id` is also set — an explicit parent always wins.',
+				),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Hold until each agent in `mentions` has replied to this comment (in its thread) and return the replies. Ends early with settled false if an agent never starts or the wait runs out. Nothing is waited for when no agent is mentioned.',
 				),
 		}),
 	},
@@ -2250,7 +2254,7 @@ export const tools = {
 	},
 	gmail_send_email: {
 		description:
-			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail AND a person\'s approval of that exact email; with "Read" or no access you cannot send. PREFERRED: keep the email as an object. create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content`, then mention the person with create_comment (no `decision` needed). They approve the exact text from the preview; any edit withdraws the approval. Then call this tool with only `object_id`: it sends the object as it reads now, once. If it is refused because no one approved it, end your turn; you will be woken after approval. Older route: a comment with `decision` whose `draft` holds the email (real address in `to`, first line "Subject: ...", then the body) and exactly one destructive send option; once the person chose it, call this tool with only `approval_comment_id` (plus `draft_id` when the card holds several drafts in `decision.drafts`). Never pass `to`, `subject` or `body`: a new email cannot be sent directly. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
+			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail AND a person\'s approval of that exact email; with "Read" or no access you cannot send. PREFERRED: keep the email as an object. create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content`, then mention the person with create_comment (no `decision` needed). They approve the exact text from the preview; any edit withdraws the approval. To attach files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (max 5 files, 20 MB total); changing the list withdraws the approval. Then call this tool with only `object_id`: it sends the object as it reads now, once. If it is refused because no one approved it, end your turn; you will be woken after approval. Older route: a comment with `decision` whose `draft` holds the email (real address in `to`, first line "Subject: ...", then the body) and exactly one destructive send option; once the person chose it, call this tool with only `approval_comment_id` (plus `draft_id` when the card holds several drafts in `decision.drafts`). Never pass `to`, `subject` or `body`: a new email cannot be sent directly. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			to: z
@@ -2291,9 +2295,21 @@ export const tools = {
 				),
 		}),
 	},
+	gmail_save_attachment: {
+		description:
+			'Save one attachment of a Gmail message as a workspace file. Google\'s hosted Gmail tools return no attachment bytes, so this is the way a receipt or document in a mail becomes a file you can use. Pass the message id and the attachment id from the message you read (attachment ids can change between reads, so use the ones from your latest read). It reads that one attachment of the connected account and nothing else; the file name and type come from the message. Needs "Read" or "Read & write" access to Gmail. Max 20 MB. Returns file_id, name, mime_type, size_bytes and a url. To send it on, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), then have a person approve it and call gmail_send_email.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			message_id: z.string().min(1).describe('The Gmail message id the attachment belongs to.'),
+			attachment_id: z
+				.string()
+				.min(1)
+				.describe('The Gmail attachment id, as the message lists it (body.attachmentId).'),
+		}),
+	},
 	resend_send_email: {
 		description:
-			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Resend\'s own send tools are not available to you: this is the only way an email goes out, and nothing is sent until a person has approved that exact email. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same approval.',
+			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Resend\'s own send tools are not available to you: this is the only way an email goes out, and nothing is sent until a person has approved that exact email. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. To send files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (at most 5 files, 20 MB in total); changing the list withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same approval.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z

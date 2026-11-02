@@ -109,8 +109,8 @@ public struct IntegrationProvider: Identifiable, Sendable, Equatable {
 	}
 }
 
-public struct ConnectedIntegration: Identifiable, Sendable, Equatable {
-	public enum State: Sendable, Equatable {
+public struct ConnectedIntegration: Identifiable, Sendable, Hashable {
+	public enum State: Sendable, Hashable {
 		/// Credentials are live.
 		case connected
 		/// Live, but its token predates scopes the provider now needs.
@@ -129,17 +129,23 @@ public struct ConnectedIntegration: Identifiable, Sendable, Equatable {
 	/// (`IntegrationProvider.showsEmail`) and an opaque id for the rest, so views must go through
 	/// `IntegrationsStore.accountLabel(for:)` and never print it directly.
 	public var externalId: String?
+	/// The name a person gave it. Only tool servers carry one that is shown; for every other
+	/// provider the provider's own name is used.
+	public var displayName: String?
 
-	public init(id: String, provider: String, state: State, externalId: String? = nil) {
+	public init(
+		id: String, provider: String, state: State, externalId: String? = nil, displayName: String? = nil
+	) {
 		self.id = id
 		self.provider = provider
 		self.state = state
 		self.externalId = externalId
+		self.displayName = displayName
 	}
 
 	public init(
 		id: String, provider: String, status: String, externalId: String?, missingScopes: Int,
-		needsReconnect: Bool
+		needsReconnect: Bool, displayName: String? = nil
 	) {
 		let state: State
 		switch status {
@@ -147,7 +153,8 @@ public struct ConnectedIntegration: Identifiable, Sendable, Equatable {
 		case "pending", "awaiting_secret": state = .incomplete
 		default: state = .disconnected
 		}
-		self.init(id: id, provider: provider, state: state, externalId: externalId)
+		self.init(
+			id: id, provider: provider, state: state, externalId: externalId, displayName: displayName)
 	}
 }
 

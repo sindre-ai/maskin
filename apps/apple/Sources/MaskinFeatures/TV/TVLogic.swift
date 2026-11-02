@@ -106,45 +106,6 @@ public struct TVHandoff: Equatable, Sendable {
 	}
 }
 
-// MARK: Device-code sign-in seam
-
-/// What the TV shows while the reader approves the sign-in on their iPhone.
-public struct TVDeviceCodePrompt: Equatable, Sendable {
-	public var userCode: String
-	public var verificationURL: URL
-	public var expiresAt: Date
-	public var pollInterval: TimeInterval
-
-	public init(userCode: String, verificationURL: URL, expiresAt: Date, pollInterval: TimeInterval = 5) {
-		self.userCode = userCode
-		self.verificationURL = verificationURL
-		self.expiresAt = expiresAt
-		self.pollInterval = pollInterval
-	}
-}
-
-public enum TVDeviceCodeOutcome: Equatable, Sendable {
-	case pending
-	case approved(apiKey: String, workspaceId: String)
-	case denied
-	case expired
-}
-
-/// The sign-in that avoids typing a password on a TV. The backend endpoint it needs does not exist
-/// yet (a separate change); until it does, `TVDeviceCodeUnavailable` is the only conformer and the
-/// app keeps using `GlanceLogin`. Wire a real `APITVDeviceCodeSource` here when the endpoint ships.
-public protocol TVDeviceCodeSource: Sendable {
-	func start() async throws -> TVDeviceCodePrompt
-	func poll(userCode: String) async throws -> TVDeviceCodeOutcome
-}
-
-public struct TVDeviceCodeUnavailable: TVDeviceCodeSource {
-	public struct Unavailable: Error, Equatable {}
-	public init() {}
-	public func start() async throws -> TVDeviceCodePrompt { throw Unavailable() }
-	public func poll(userCode: String) async throws -> TVDeviceCodeOutcome { throw Unavailable() }
-}
-
 /// The "held 2d" tag on a decision that has been waiting a while.
 public enum TVDecisionAge {
 	public static func heldTag(since date: Date, now: Date = Date()) -> String? {

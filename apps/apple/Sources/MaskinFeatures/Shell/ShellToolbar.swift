@@ -7,7 +7,7 @@ import SwiftUI
 /// avatar (which every root screen gets).
 ///
 ///     .shellToolbar(
-///         environment: environment, title: "Objects",
+///         environment: environment, title: "Items",
 ///         actions: ShellActions(
 ///             display: ShellDisplayMenu {
 ///                 Picker("Sort", selection: $sort) { ... }
@@ -125,13 +125,13 @@ private struct ShellToolbarModifier: ViewModifier {
 					}
 					if actions.display == nil, let toggle = actions.displayToggle {
 						Button(action: toggle) {
-							Label("Filter", systemImage: actions.displaySymbol)
+							Label("Display", systemImage: actions.displaySymbol)
 								.foregroundStyle(actions.displayActive ? MaskinColor.sigInk : MaskinColor.ink)
 								.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
 								.background(
 									Circle().fill(actions.displayActive ? MaskinColor.sigTint : Color.clear))
 						}
-						.accessibilityLabel(actions.displayActive ? "Filter, shown" : "Filter")
+						.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
 					}
 					// Live sits before the avatar, which stays last (as in the v6 bar).
 					if actions.live {
@@ -168,8 +168,9 @@ private struct ShellToolbarModifier: ViewModifier {
 	}
 }
 
-/// A solid ink circle with a white glyph: the primary action of a bar (Live, New). It sits inside
-/// the bar's glass capsule rather than being a glass button of its own.
+/// A plain ink glyph: the actions of a bar (Live, New). v15 draws them without a disc; the filled
+/// accent disc is the profile avatar. It sits inside the bar's glass capsule rather than being a
+/// glass button of its own.
 struct ShellInkCircle: View {
 	let symbol: String
 	let label: String
@@ -177,16 +178,15 @@ struct ShellInkCircle: View {
 	var body: some View {
 		Image(systemName: symbol)
 			.maskinSymbol(16, weight: .semibold)
-			.foregroundStyle(MaskinSurface.onNavInk)
+			.foregroundStyle(MaskinColor.ink)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-			.background(Circle().fill(MaskinSurface.navInk))
 			.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
 			.contentShape(Circle())
 			.accessibilityLabel(label)
 	}
 }
 
-/// The profile button in the bar: a Patina tint disc with a thin ring and the person's one initial.
+/// The profile button in the bar: a filled accent disc (v15) with the person's one initial.
 struct ShellNavAvatar: View {
 	let name: String
 	/// The person's actor id, to show their picture over the initial once it has loaded.
@@ -200,9 +200,9 @@ struct ShellNavAvatar: View {
 	var body: some View {
 		Text(initial)
 			.maskinSymbol(17, weight: .bold)
-			.foregroundStyle(MaskinColor.sigInk)
+			.foregroundStyle(MaskinSurface.onNavInk)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-			.background(Circle().fill(MaskinColor.sigTint))
+			.background(Circle().fill(MaskinSurface.navInk))
 			.overlay {
 				if let actorID, let url = pictures.url(actorID) {
 					AsyncImage(url: url) { phase in
@@ -211,7 +211,6 @@ struct ShellNavAvatar: View {
 					.clipShape(Circle())
 				}
 			}
-			.overlay(Circle().strokeBorder(MaskinColor.sig.opacity(0.3), lineWidth: 1))
 			.accessibilityHidden(true)
 	}
 }

@@ -566,6 +566,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
 	gmail_send_email: 'gmail_email_send',
+	gmail_save_attachment: 'gmail_attachment_save',
 	resend_send_email: 'resend_email_send',
 	update_integration_access: 'integration_access_update',
 	// Sessions
