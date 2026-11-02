@@ -69,7 +69,7 @@ import type {
 	LinkedInListConversationsResponse,
 	LinkedInSendMessageResponse,
 } from './unipile-client'
-import { createLinkedInHttpClient } from './unipile-client'
+import { buildPeopleSearchUrl, createLinkedInHttpClient } from './unipile-client'
 import { buildLinkedInClientForWebhook, handleUnipileAccountReconnect } from './webhook'
 
 /**
@@ -1051,12 +1051,12 @@ function toExperience(raw: unknown): LinkedInPosition[] | null {
 	return positions
 }
 
-function normalizePeople(
+function parsePeoplePage(
 	body: unknown,
 	what: string,
 	/** Relations nest the person under `user`; search returns it flat. */
 	unwrap?: (item: unknown) => unknown,
-): { people: LinkedInPerson[]; next_cursor?: string } {
+): { people: LinkedInPerson[]; next_cursor?: string; dropped: number } {
 	const { items, nextCursor } = readPage(body, what)
 	const people: LinkedInPerson[] = []
 	let skipped = 0
@@ -1074,7 +1074,18 @@ function normalizePeople(
 			total: items.length,
 		})
 	}
-	return nextCursor ? { people, next_cursor: nextCursor } : { people }
+	return nextCursor
+		? { people, next_cursor: nextCursor, dropped: skipped }
+		: { people, dropped: skipped }
+}
+
+function normalizePeople(
+	body: unknown,
+	what: string,
+	unwrap?: (item: unknown) => unknown,
+): { people: LinkedInPerson[]; next_cursor?: string } {
+	const { dropped: _dropped, ...page } = parsePeoplePage(body, what, unwrap)
+	return page
 }
 
 type SendPayload = {
@@ -1425,6 +1436,20 @@ export async function listLinkedInConnections(
 	)
 }
 
+/** What `search_people` returns: the people plus enough context to read an empty page. */
+export type LinkedInPeopleSearchResult = {
+	people: LinkedInPerson[]
+	next_cursor?: string
+	/** The LinkedIn search URL actually used; open it in a browser to compare. */
+	search_url: string
+	/** Rows LinkedIn returned that we could not parse. Present only when above zero. */
+	dropped_rows?: number
+	/** True when `dropped_rows` is set: `people` is missing rows LinkedIn did return. */
+	is_partial?: true
+	/** Present when the call worked but LinkedIn returned no rows at all. */
+	empty_reason?: 'upstream_returned_no_rows'
+}
+
 /**
  * Open people search across LinkedIn.
  *
@@ -1432,11 +1457,16 @@ export async function listLinkedInConnections(
  * member — subject to their visibility — so most hits are 2nd/3rd degree and
  * NOT directly messageable. `network_distance` on each result is what tells
  * the agent that, which is why it is on the shared person shape.
+ *
+ * An empty `people` is never left to speak for itself: every result carries the
+ * `search_url` that was actually run, rows we could not parse are counted in
+ * `dropped_rows` with `is_partial`, and an empty page with nothing dropped says
+ * `empty_reason` so a caller can tell a genuine zero from a lost row.
  */
 export async function searchLinkedInPeople(
 	ctx: LinkedInOperationContext,
 	input: { keywords?: unknown; search_url?: unknown; limit?: number; cursor?: string },
-): Promise<{ people: LinkedInPerson[]; next_cursor?: string }> {
+): Promise<LinkedInPeopleSearchResult> {
 	const keywords = typeof input.keywords === 'string' ? input.keywords.trim() : ''
 	const searchUrl = typeof input.search_url === 'string' ? input.search_url.trim() : ''
 	if (!keywords && !searchUrl) {
@@ -1463,7 +1493,19 @@ export async function searchLinkedInPeople(
 			cursor: input.cursor,
 		}),
 	)
-	return normalizePeople(upstream.body, 'people search')
+	const { dropped, ...page } = parsePeoplePage(upstream.body, 'people search')
+	const result: LinkedInPeopleSearchResult = {
+		...page,
+		// Same precedence as the client: a caller-supplied URL wins over keywords.
+		search_url: searchUrl || buildPeopleSearchUrl(keywords),
+	}
+	if (dropped > 0) {
+		result.dropped_rows = dropped
+		result.is_partial = true
+	} else if (page.people.length === 0) {
+		result.empty_reason = 'upstream_returned_no_rows'
+	}
+	return result
 }
 
 /**
