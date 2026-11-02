@@ -286,7 +286,7 @@ describe('list_objects schema', () => {
 	})
 
 	it('rejects unknown sort values', () => {
-		expect(() => schema.parse({ workspace_id: uuid, sort: 'created_at_asc' })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, sort: 'name_asc' })).toThrow()
 	})
 
 	it('accepts metadata_eq as a field->value record', () => {

@@ -681,10 +681,13 @@ describe('MASKIN_MCP_LIST_CONTRACT rollback switch', () => {
 			expect(raw.isError).toBe(false)
 			expect(raw.requests.some((r) => r.path.startsWith('/api/objects/search?'))).toBe(true)
 			expect(pageOf(raw)).toEqual({ limit: 5, offset: 0, returned: 5 })
-			// Not an alias any more: the old rename still counts, the tool alias does not.
+			// Not a tool alias any more: the two argument renames (query, driver_id) still count,
+			// one event per rename row, and none of them carries a tool alias.
 			const uses = events.filter((e) => e.event_type === 'alias_use')
-			expect(uses).toHaveLength(1)
-			expect(uses[0]).not.toHaveProperty('tool_alias', expect.anything())
+			expect(uses).toHaveLength(2)
+			for (const use of uses) {
+				expect(use).not.toHaveProperty('tool_alias', expect.anything())
+			}
 		} finally {
 			await harness.close()
 		}
