@@ -56321,6 +56321,8 @@ public enum Operations {
                             public var createdAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/updatedAt`.
                             public var updatedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/failure_reason`.
+                            public var failure_reason: Swift.String?
                             /// Creates a new `Value1PayloadPayload`.
                             ///
                             /// - Parameters:
@@ -56342,6 +56344,7 @@ public enum Operations {
                             ///   - createdBy:
                             ///   - createdAt:
                             ///   - updatedAt:
+                            ///   - failure_reason:
                             public init(
                                 id: Swift.String,
                                 workspaceId: Swift.String,
@@ -56360,7 +56363,8 @@ public enum Operations {
                                 timeoutAt: Swift.String? = nil,
                                 createdBy: Swift.String,
                                 createdAt: Swift.String? = nil,
-                                updatedAt: Swift.String? = nil
+                                updatedAt: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil
                             ) {
                                 self.id = id
                                 self.workspaceId = workspaceId
@@ -56380,6 +56384,7 @@ public enum Operations {
                                 self.createdBy = createdBy
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
+                                self.failure_reason = failure_reason
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
@@ -56400,6 +56405,7 @@ public enum Operations {
                                 case createdBy
                                 case createdAt
                                 case updatedAt
+                                case failure_reason
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value1`.
@@ -56430,6 +56436,8 @@ public enum Operations {
                             public var status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload
                             /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/updated_at`.
                             public var updated_at: Foundation.Date?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/failure_reason`.
+                            public var failure_reason: Swift.String?
                             /// Creates a new `Value2PayloadPayload`.
                             ///
                             /// - Parameters:
@@ -56437,22 +56445,26 @@ public enum Operations {
                             ///   - title:
                             ///   - status:
                             ///   - updated_at:
+                            ///   - failure_reason:
                             public init(
                                 id: Swift.String,
                                 title: Swift.String,
                                 status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload,
-                                updated_at: Foundation.Date? = nil
+                                updated_at: Foundation.Date? = nil,
+                                failure_reason: Swift.String? = nil
                             ) {
                                 self.id = id
                                 self.title = title
                                 self.status = status
                                 self.updated_at = updated_at
+                                self.failure_reason = failure_reason
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
                                 case title
                                 case status
                                 case updated_at
+                                case failure_reason
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value2`.
@@ -57169,6 +57181,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -57190,6 +57204,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -57208,7 +57223,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -57228,6 +57244,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -57248,6 +57265,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/application\/json`.
@@ -57620,6 +57638,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload`.
                         public struct logsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload/id`.
@@ -57686,6 +57706,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         ///   - logs:
                         public init(
                             id: Swift.String,
@@ -57706,6 +57727,7 @@ public enum Operations {
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil,
                             logs: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.logsPayload? = nil
                         ) {
                             self.id = id
@@ -57726,6 +57748,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                             self.logs = logs
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -57747,6 +57770,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                             case logs
                         }
                     }
@@ -58267,6 +58291,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_on_complete`.
                         @frozen public enum notify_on_completePayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case registered = "registered"
@@ -58298,6 +58324,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         ///   - notify_on_complete:
                         ///   - notify_skip_reason:
                         public init(
@@ -58319,6 +58346,7 @@ public enum Operations {
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil,
                             notify_on_complete: Operations.patch_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.notify_on_completePayload? = nil,
                             notify_skip_reason: Swift.String? = nil
                         ) {
@@ -58340,6 +58368,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                             self.notify_on_complete = notify_on_complete
                             self.notify_skip_reason = notify_skip_reason
                         }
@@ -58362,6 +58391,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                             case notify_on_complete
                             case notify_skip_reason
                         }
@@ -58851,6 +58881,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -58872,6 +58904,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -58890,7 +58923,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -58910,6 +58944,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -58930,6 +58965,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/application\/json`.
@@ -59555,6 +59591,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -59576,6 +59614,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -59594,7 +59633,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -59614,6 +59654,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -59634,6 +59675,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/application\/json`.
@@ -60259,6 +60301,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -60280,6 +60324,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -60298,7 +60343,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -60318,6 +60364,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -60338,6 +60385,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/application\/json`.
