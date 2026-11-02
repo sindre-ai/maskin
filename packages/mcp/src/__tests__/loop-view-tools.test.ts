@@ -87,14 +87,14 @@ describe('loop view MCP tools', () => {
 			})
 		})
 
-		it('echoes a five-line checklist when a view is pinned, and none when it is cleared', async () => {
+		it('echoes a six-line checklist when a view is pinned, and none when it is cleared', async () => {
 			const pinned = await handlers.set_loop_view({
 				workspace_id: wsId,
 				loop_id: loopId,
 				file_id: fileId,
 			})
 			const checklist = JSON.parse(pinned.content[0].text ?? '{}').checklist as string[]
-			expect(checklist).toHaveLength(5)
+			expect(checklist).toHaveLength(6)
 			expect(checklist.join(' ')).toMatch(/outcome/i)
 			expect(checklist.join(' ')).toMatch(/maskin-sources/)
 

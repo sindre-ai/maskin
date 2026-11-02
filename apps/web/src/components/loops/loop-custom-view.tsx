@@ -16,6 +16,9 @@ const MAX_TIMER_MS = 2_000_000_000
 /** Times a view that navigates away from its srcdoc is reset before we give up on it. */
 const MAX_FRAME_RESETS = 3
 const MIN_HEIGHT = 160
+/** A failed live-refresh check or next-change lookup is retried this many times, backing off, before the view is flagged as possibly out of date. */
+const MAX_REFRESH_RETRIES = 5
+const REFRESH_RETRY_MS = 5_000
 
 interface LoopCustomViewProps {
 	workspaceId: string
@@ -65,6 +68,10 @@ function ViewFrame({
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const [height, setHeight] = useState(MIN_HEIGHT)
+	// Shown by the host, outside the frame, so a view cannot hide it: an answer that hit the
+	// server's row/group cap is partial, and a view whose live refresh keeps failing is stale.
+	const [partial, setPartial] = useState(false)
+	const [stale, setStale] = useState(false)
 	const [frameKey, setFrameKey] = useState(0)
 	const loadsRef = useRef(0)
 	const resetsRef = useRef(0)
@@ -90,6 +97,7 @@ function ViewFrame({
 					run: async (spec) => {
 						const result = await api.data.query(workspaceId, spec)
 						lastResultsRef.current.set(JSON.stringify(spec), JSON.stringify(result))
+						if (result.rows_truncated || result.groups_truncated) setPartial(true)
 						return result
 					},
 					post: (message) => iframeRef.current?.contentWindow?.postMessage(message, '*'),
@@ -113,13 +121,14 @@ function ViewFrame({
 		const dirty = new Set<string>()
 		let timer: ReturnType<typeof setTimeout> | undefined
 		let checking = false
+		let failures = 0
 
-		function schedule() {
+		function schedule(delay = SETTLE_MS) {
 			if (timer !== undefined) return
 			timer = setTimeout(() => {
 				timer = undefined
 				void check()
-			}, SETTLE_MS)
+			}, delay)
 		}
 
 		async function check() {
@@ -128,23 +137,34 @@ function ViewFrame({
 			checking = true
 			const keys = new Set(dirty)
 			dirty.clear()
+			let retryIn = SETTLE_MS
 			try {
 				for (const spec of sourcesRef.current.values()) {
 					const key = JSON.stringify(spec)
 					const before = lastResultsRef.current.get(key)
 					if (!keys.has(key) || before === undefined) continue
 					const after = JSON.stringify(await api.data.query(workspaceId, spec))
+					failures = 0
+					setStale(false)
 					if (after !== before) {
 						lastResultsRef.current.delete(key)
 						setFrameKey((k) => k + 1)
 						return
 					}
 				}
-			} catch {
-				// A failed check leaves the view as it is; the next relevant event tries again.
+			} catch (err) {
+				// Keep the keys so the check is retried, backing off; after repeated failures say so.
+				failures += 1
+				console.error('[loop-custom-view] live refresh check failed', err)
+				if (failures <= MAX_REFRESH_RETRIES) {
+					for (const key of keys) dirty.add(key)
+					retryIn = REFRESH_RETRY_MS * 2 ** (failures - 1)
+				} else {
+					setStale(true)
+				}
 			} finally {
 				checking = false
-				if (dirty.size > 0) schedule()
+				if (dirty.size > 0) schedule(retryIn)
 			}
 		}
 
@@ -173,20 +193,36 @@ function ViewFrame({
 	useEffect(() => {
 		let cancelled = false
 		let timer: ReturnType<typeof setTimeout> | undefined
-		void (async () => {
-			try {
-				const answers = await Promise.all(
-					[...sourcesRef.current.values()].map((spec) => api.data.nextChange(workspaceId, spec)),
-				)
-				if (cancelled) return
-				const waits = answers.flatMap((a) => (a.in_ms === null ? [] : [a.in_ms]))
-				if (waits.length === 0) return
-				const wait = Math.min(Math.min(...waits) + WAKE_MARGIN_MS, MAX_TIMER_MS)
-				timer = setTimeout(() => setFrameKey((k) => k + 1), wait)
-			} catch {
-				// No timer this time; the view still updates on writes.
+
+		async function arm(attempt: number) {
+			// One failing source must not take the others' timers down with it.
+			const settled = await Promise.allSettled(
+				[...sourcesRef.current.values()].map((spec) => api.data.nextChange(workspaceId, spec)),
+			)
+			if (cancelled) return
+			const waits: number[] = []
+			let failed = false
+			for (const outcome of settled) {
+				if (outcome.status === 'rejected') {
+					failed = true
+					console.error('[loop-custom-view] next-change lookup failed', outcome.reason)
+				} else if (outcome.value.in_ms !== null) {
+					waits.push(outcome.value.in_ms)
+				}
 			}
-		})()
+			const wait =
+				waits.length > 0
+					? Math.min(Math.min(...waits) + WAKE_MARGIN_MS, MAX_TIMER_MS)
+					: Number.POSITIVE_INFINITY
+			const retryIn = REFRESH_RETRY_MS * (attempt + 1)
+			if (failed && attempt < MAX_REFRESH_RETRIES && retryIn < wait) {
+				// A source we could not read may change sooner than the ones we could; look again.
+				timer = setTimeout(() => void arm(attempt + 1), retryIn)
+			} else if (wait !== Number.POSITIVE_INFINITY) {
+				timer = setTimeout(() => setFrameKey((k) => k + 1), wait)
+			}
+		}
+		arm(0).catch((err) => console.error('[loop-custom-view] next-change setup failed', err))
 		return () => {
 			cancelled = true
 			if (timer !== undefined) clearTimeout(timer)
@@ -217,15 +253,24 @@ function ViewFrame({
 	}
 
 	return (
-		<iframe
-			key={frameKey}
-			ref={iframeRef}
-			title="Custom loop view"
-			srcDoc={srcDoc}
-			sandbox="allow-scripts"
-			onLoad={handleLoad}
-			style={{ height }}
-			className="block w-full rounded-md border border-border bg-background"
-		/>
+		<>
+			{(partial || stale) && (
+				<p className="mb-2 text-xs text-muted-foreground">
+					{partial &&
+						'Some numbers in this view are partial: the data hit its size limit, so counts may be lower than the real totals. '}
+					{stale && 'Live updates are failing, so this view may be out of date.'}
+				</p>
+			)}
+			<iframe
+				key={frameKey}
+				ref={iframeRef}
+				title="Custom loop view"
+				srcDoc={srcDoc}
+				sandbox="allow-scripts"
+				onLoad={handleLoad}
+				style={{ height }}
+				className="block w-full rounded-md border border-border bg-background"
+			/>
+		</>
 	)
 }

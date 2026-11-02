@@ -420,7 +420,8 @@ function workspaceSetupHint(config: McpConfig): string {
 const LOOP_VIEW_CHECKLIST = [
 	'Opens with the loop outcome in one plain sentence and where it stands against it.',
 	'Three to five metrics at most, each with a value and unit, a comparison and its source.',
-	'Every number has a declared source in maskin-sources and an empty and an error state.',
+	'Every number has a declared source in maskin-sources and an empty and an error state that shows the message.',
+	'No query is truncated (rows_truncated and groups_truncated false), or the view says its numbers are partial.',
 	'Says what needs a person now, if anything. Nothing that does not change a decision.',
 	'One self-contained file, no network calls, readable in light and dark.',
 ]
