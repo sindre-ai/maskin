@@ -94,7 +94,9 @@ A draft with no `kind` still shows its text. It just has no recipient lines and 
 
 A card can also be about a **file** instead of text: `draft: { file_id, label }`. The feed returns the file's name, type and size as `draft.file`, and the card draws the file itself, open, above the buttons (see Files). A `file_id` from another workspace, or a deleted file, shows nothing (the stored `body`, if any, is used instead).
 
-A card disappears when its task reaches `done`, `archived`, `dismissed` or `discarded`, when the person replies, or when the notification's `only_while_status` no longer holds.
+A card disappears when its task reaches `done`, `archived`, `dismissed` or `discarded`, when the person replies, when the notification's `only_while_status` no longer holds, or when the decision's `expires_at` has passed.
+
+`expires_at` is an optional ISO 8601 date-time on the `decision` block. Agents set it whenever an option or the ask names a date ("this week", "before Thursday"). It must be in the future when the comment is posted, or the API rejects the card. After it passes the card is hidden from For You, the briefing and the lifecycle pushes. A card without it is unchanged.
 
 ## In chat
 

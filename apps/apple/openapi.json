@@ -40401,6 +40401,11 @@
 												"minItems": 1,
 												"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
 											},
+											"expires_at": {
+												"type": "string",
+												"format": "date-time",
+												"description": "ISO 8601 date-time after which the ask is moot, e.g. \"2026-10-29T17:00:00Z\". Set it whenever an option or the ask names a date or a deadline (\"this week\", \"before Thursday\"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline."
+											},
 											"no_status_action": {
 												"type": "boolean",
 												"description": "Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example \"Park the launch email?\" on a bet in a status called \"launch\"). Leave it off otherwise."
@@ -55556,6 +55561,11 @@
 																		"minItems": 1,
 																		"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
 																	},
+																	"expires_at": {
+																		"type": "string",
+																		"format": "date-time",
+																		"description": "ISO 8601 date-time after which the ask is moot, e.g. \"2026-10-29T17:00:00Z\". Set it whenever an option or the ask names a date or a deadline (\"this week\", \"before Thursday\"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline."
+																	},
 																	"no_status_action": {
 																		"type": "boolean",
 																		"description": "Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example \"Park the launch email?\" on a bet in a status called \"launch\"). Leave it off otherwise."
@@ -59208,6 +59218,11 @@
 																		},
 																		"minItems": 1,
 																		"description": "The statuses the object this comment is on must still be in for the ask to make sense, e.g. [\"define\"] for \"flip this bet to active\". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status."
+																	},
+																	"expires_at": {
+																		"type": "string",
+																		"format": "date-time",
+																		"description": "ISO 8601 date-time after which the ask is moot, e.g. \"2026-10-29T17:00:00Z\". Set it whenever an option or the ask names a date or a deadline (\"this week\", \"before Thursday\"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline."
 																	},
 																	"no_status_action": {
 																		"type": "boolean",
