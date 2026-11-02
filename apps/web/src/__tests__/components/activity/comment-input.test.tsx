@@ -82,9 +82,9 @@ describe('CommentInput', () => {
 
 		expect(screen.getByText('Enter to send · @ to mention · + to attach')).toBeInTheDocument()
 
-		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		await user.click(screen.getByRole('button', { name: 'Add a file, item, or mention' }))
 		expect(await screen.findByText('Attach a file')).toBeInTheDocument()
-		expect(screen.getByText('Reference an object')).toBeInTheDocument()
+		expect(screen.getByText('Reference an item')).toBeInTheDocument()
 		expect(screen.getByText('Mention an agent')).toBeInTheDocument()
 		// Options for the reader to pick from are a `decision`, which only an
 		// agent authors. The composer used to offer a second, weaker way here.
@@ -95,8 +95,8 @@ describe('CommentInput', () => {
 		const user = userEvent.setup()
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
-		await user.click(await screen.findByText('Reference an object'))
+		await user.click(screen.getByRole('button', { name: 'Add a file, item, or mention' }))
+		await user.click(await screen.findByText('Reference an item'))
 		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
 
 		await user.type(
@@ -120,8 +120,8 @@ describe('CommentInput', () => {
 		const user = userEvent.setup()
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
-		await user.click(await screen.findByText('Reference an object'))
+		await user.click(screen.getByRole('button', { name: 'Add a file, item, or mention' }))
+		await user.click(await screen.findByText('Reference an item'))
 		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
 
 		const send = screen.getByRole('button', { name: /send/i })

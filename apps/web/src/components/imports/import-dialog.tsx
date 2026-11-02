@@ -47,7 +47,7 @@ const NO_MATCH = '__none__'
 
 const ON_MATCH_OPTIONS = [
 	{ value: 'skip', label: 'Skip it' },
-	{ value: 'update', label: 'Update the existing object' },
+	{ value: 'update', label: 'Update the existing item' },
 ]
 
 const ENCODING_OPTIONS = [
@@ -127,11 +127,10 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
 			<ResponsiveDialogContent className="overflow-y-auto md:max-w-2xl md:max-h-[80vh]">
 				<ResponsiveDialogHeader>
-					<ResponsiveDialogTitle>Import Objects</ResponsiveDialogTitle>
+					<ResponsiveDialogTitle>Import Items</ResponsiveDialogTitle>
 					<ResponsiveDialogDescription>
-						{step === 'upload' &&
-							'Upload a CSV or JSON file to import objects into your workspace.'}
-						{step === 'mapping' && 'Review and adjust how columns map to object fields.'}
+						{step === 'upload' && 'Upload a CSV or JSON file to import items into your workspace.'}
+						{step === 'mapping' && 'Review and adjust how columns map to item fields.'}
 					</ResponsiveDialogDescription>
 				</ResponsiveDialogHeader>
 
@@ -550,7 +549,7 @@ function MappingStep({
 			{/* Type mappings */}
 			<div className="space-y-3">
 				<div className="flex items-center justify-between">
-					<span className="text-sm font-medium">Object Types</span>
+					<span className="text-sm font-medium">Item Types</span>
 					<Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={handleAddType}>
 						<Plus size={12} />
 						Add type
@@ -577,11 +576,11 @@ function MappingStep({
 
 				{anyMatchKey && (
 					<div className="flex flex-col gap-2 rounded-lg border px-3 py-2 text-sm sm:flex-row sm:items-center">
-						<span className="text-muted-foreground">If a row matches an existing object:</span>
+						<span className="text-muted-foreground">If a row matches an existing item:</span>
 						<Select value={onMatch} onValueChange={(v) => setOnMatch(v as 'skip' | 'update')}>
 							<SelectTrigger
 								className="w-full sm:w-fit"
-								aria-label="If a row matches an existing object"
+								aria-label="If a row matches an existing item"
 							>
 								<SelectValue />
 							</SelectTrigger>

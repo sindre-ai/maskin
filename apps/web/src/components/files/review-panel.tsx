@@ -872,12 +872,12 @@ function deriveDisabledReason(
 	target: AttachingObject | null,
 	unsentCount: number,
 ): string | null {
-	if (provenance.variant === 'zero') return "This file isn't attached to any object"
-	if (provenance.variant === 'archived') return 'The attached object is archived'
-	if (provenance.variant === 'orphaned') return 'The attached object was archived mid-review'
-	if (provenance.send === 'picker-required') return 'Pick a target object first'
+	if (provenance.variant === 'zero') return "This file isn't attached to any item"
+	if (provenance.variant === 'archived') return 'The attached item is archived'
+	if (provenance.variant === 'orphaned') return 'The attached item was archived mid-review'
+	if (provenance.send === 'picker-required') return 'Pick a target item first'
 	if (unsentCount === 0) return 'Nothing to send yet'
-	if (!target) return 'No target object'
+	if (!target) return 'No target item'
 	return null
 }
 

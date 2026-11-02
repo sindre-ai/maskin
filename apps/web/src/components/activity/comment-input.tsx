@@ -127,11 +127,11 @@ function CommentInputForm({
 	const [mentionFilter, setMentionFilter] = useState('')
 	const [selectedIndex, setSelectedIndex] = useState(0)
 	const [isDraggingFile, setIsDraggingFile] = useState(false)
-	// "Reference an object" reuses the composer's own picker rather than a
+	// "Reference an item" reuses the composer's own picker rather than a
 	// second search UI; the pick is inserted as the canonical markdown object
 	// link the comment API documents (`[title](/<ws>/objects/<id>)`).
 	const [objectPickerOpen, setObjectPickerOpen] = useState(false)
-	// Objects picked from "Reference an object" ride the comment as chips and
+	// Objects picked from "Reference an item" ride the comment as chips and
 	// land on the timeline as real references (mockup `refList`).
 	const [references, setReferences] = useState<Array<{ id: string; title: string; type: string }>>(
 		[],
@@ -521,7 +521,7 @@ function CommentInputForm({
 						size="icon"
 						variant="outline"
 						className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
-						aria-label="Add a file, object, or mention"
+						aria-label="Add a file, item, or mention"
 					>
 						<Plus size={15} aria-hidden />
 					</Button>
@@ -541,7 +541,7 @@ function CommentInputForm({
 						onSelect={() => window.setTimeout(() => setObjectPickerOpen(true), 0)}
 					>
 						<Box size={15} aria-hidden />
-						Reference an object
+						Reference an item
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={startMention}>
 						<AtSign size={15} aria-hidden />

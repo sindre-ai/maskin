@@ -413,7 +413,7 @@ describe('settingsTargetOf', () => {
 
 	it('reads each section of the settings menu', () => {
 		const sections = [
-			['objects', 'Objects'],
+			['objects', 'Items'],
 			['members', 'Members'],
 			['integrations', 'Integrations'],
 			['extensions', 'Extensions'],

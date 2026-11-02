@@ -105,7 +105,7 @@ export const LoopUtteranceInput = forwardRef<
 						onRemoveObject={() => {}}
 						onRemoveNotification={() => {}}
 						onRemoveFile={() => {}}
-						textareaLabel="Say what should change about this loop"
+						textareaLabel="Say what should change about this flow"
 					/>
 				</ViewerTooltip>
 			</div>

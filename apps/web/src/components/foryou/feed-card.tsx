@@ -474,7 +474,7 @@ function TimelineHistory({
 		<div className="order-last w-full basis-full">
 			<div className="flex flex-col gap-[9px] rounded-xl border border-muted bg-secondary/40 px-[13px] pb-2.5 pt-[11px]">
 				<div className="flex items-center gap-2.5">
-					<span className="eyebrow shrink-0">On this object</span>
+					<span className="eyebrow shrink-0">On this item</span>
 					<div className="h-px flex-1 bg-muted" />
 					<button
 						type="button"

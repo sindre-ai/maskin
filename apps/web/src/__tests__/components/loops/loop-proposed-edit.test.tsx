@@ -33,7 +33,7 @@ describe('readStoredPlan', () => {
 		['a json null', 'null'],
 		['an array', '[]'],
 		['objectTypes only', '{"objectTypes":[]}'],
-		['an object type with no state chain', '{"objectTypes":[{}],"triggers":[],"agents":[]}'],
+		['an item type with no state chain', '{"objectTypes":[{}],"triggers":[],"agents":[]}'],
 		['triggers of the wrong type', '{"objectTypes":[],"triggers":"nope","agents":[]}'],
 	])('returns null for %s', (_label, raw) => {
 		expect(readStoredPlan({ plan: raw })).toBeNull()
@@ -59,7 +59,7 @@ describe('diffLoopPlans', () => {
 			before: 'never',
 			after: 'before publishing',
 		})
-		expect(labels).not.toContain('OBJECT TYPE')
+		expect(labels).not.toContain('ITEM TYPE')
 	})
 
 	it('returns nothing when the utterance restates the same loop', () => {

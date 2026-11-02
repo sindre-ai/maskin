@@ -321,7 +321,7 @@ function ChipPreview({
 					// biome-ignore lint/a11y/useSemanticElements: a non-modal popup anchored under the chip; native <dialog> is against project convention (apps/web/CLAUDE.md) and would need showModal or top-layer positioning
 					<span
 						role="dialog"
-						aria-label="Object preview"
+						aria-label="Item preview"
 						data-linked-preview=""
 						style={{
 							...(place.alignEnd ? { right: place.shift } : { left: place.shift }),
@@ -372,7 +372,7 @@ function ChipSheet({
 				side="bottom"
 				hideCloseButton
 				aria-modal="true"
-				aria-label="Object preview"
+				aria-label="Item preview"
 				aria-describedby={undefined}
 				overlayClassName="bg-foreground/40 chip-sheet-fade"
 				className="chip-sheet-rise flex flex-col gap-3 rounded-t-2xl bg-popover p-4 pb-6 motion-reduce:animate-none"
@@ -381,7 +381,7 @@ function ChipSheet({
 					returnFocus()
 				}}
 			>
-				<SheetTitle className="sr-only">Object preview</SheetTitle>
+				<SheetTitle className="sr-only">Item preview</SheetTitle>
 				<span aria-hidden="true" className="mx-auto h-1 w-9 rounded-full bg-border-strong" />
 				{card}
 				<div className="mt-1 flex items-center gap-2">
@@ -1077,14 +1077,14 @@ export function LoopReferenceChip({
 		)
 	}
 
-	const name = loop.name?.trim() || 'Untitled loop'
+	const name = loop.name?.trim() || 'Untitled flow'
 	const state = LOOP_PILL_STYLES[loop.pill].label.toLowerCase()
 	return (
 		<ChipPreview card={card} sheet={sheet} enabled>
 			<Link
 				to="/$workspaceId/loops/$loopId"
 				params={{ workspaceId, loopId: loop.id }}
-				aria-label={`Loop, ${state}: ${name}`}
+				aria-label={`Flow, ${state}: ${name}`}
 				className={CHIP}
 			>
 				<ChipText
@@ -1135,11 +1135,11 @@ export function LoopReferenceCard({
 		...(agentNames ? [{ label: 'Agents', value: agentNames }] : []),
 		...(activity ? [{ label: 'Activity', value: activity }] : []),
 	]
-	const name = loop.name?.trim() || 'Untitled loop'
+	const name = loop.name?.trim() || 'Untitled flow'
 	const head = (
 		<span className={KIND_TAG}>
 			<RefreshCw size={11} aria-hidden />
-			Loop
+			Flow
 		</span>
 	)
 	const state = (
@@ -1158,7 +1158,7 @@ export function LoopReferenceCard({
 			<LinkedCardFace
 				icon={<RefreshCw size={14} aria-hidden />}
 				tile={KIND_TILE}
-				eyebrow="Loop"
+				eyebrow="Flow"
 				state={state}
 				trailing={preview || sheet ? null : <OpenArrow />}
 				title={name}
@@ -1540,8 +1540,8 @@ export function AgentReferenceCard({
 type OtherWorkspaceKind = 'object' | 'loop' | 'trigger' | 'agent' | 'chat'
 
 const OTHER_WORKSPACE_KIND: Record<OtherWorkspaceKind, string> = {
-	object: 'Object',
-	loop: 'Loop',
+	object: 'Item',
+	loop: 'Flow',
 	trigger: 'Trigger',
 	agent: 'Agent',
 	chat: 'Chat',

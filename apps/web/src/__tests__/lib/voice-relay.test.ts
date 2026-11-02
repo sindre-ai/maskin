@@ -22,13 +22,13 @@ const searchCall = {
 	type: 'response.function_call_arguments.done',
 	call_id: 'c1',
 	name: 'search_objects',
-	arguments: '{"q":"loops v4 bet"}',
+	arguments: '{"q":"flows v4 bet"}',
 }
 
 describe('describeToolCall', () => {
 	it('tags a search with its query and anything else generically', () => {
-		expect(describeToolCall('search_objects', '{"q":"loops v4 bet"}')).toBe(
-			'searching for loops v4 bet…',
+		expect(describeToolCall('search_objects', '{"q":"flows v4 bet"}')).toBe(
+			'searching for flows v4 bet…',
 		)
 		expect(describeToolCall('search_objects', 'not json')).toBe('running search_objects…')
 		expect(describeToolCall('get_objects', '{}')).toBe('running get_objects…')
@@ -39,7 +39,7 @@ describe('voice relay: tool calls', () => {
 	it('tags the transcript pane and leaves the answer to the server when tools are available', () => {
 		const h = setup()
 		h.relay.handleRealtimeEvent(searchCall)
-		expect(h.lines).toEqual([{ id: 1, kind: 'tool', text: 'searching for loops v4 bet…' }])
+		expect(h.lines).toEqual([{ id: 1, kind: 'tool', text: 'searching for flows v4 bet…' }])
 		expect(h.toModel()).toEqual([])
 	})
 

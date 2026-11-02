@@ -60,7 +60,7 @@ test.describe('Loop detail page', () => {
 			await expect(stats.getByText('Median cycle time')).toBeVisible()
 			await expect(stats.getByText('Asks waiting')).toBeVisible()
 			await expect(stats.getByText('Next fire')).toBeVisible()
-			await expect(page.getByText('The loop, right now')).toBeVisible()
+			await expect(page.getByText('The flow, right now')).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
 			await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible()
 			// Step rows show the trigger's title, not its action prompt (#2777).
@@ -153,7 +153,7 @@ test.describe('Loop detail page', () => {
 			const heading = page.getByRole('heading', { name: 'Renewals loop' })
 			await expect(heading).toBeVisible({ timeout: 10000 })
 			await heading.click()
-			const titleField = page.getByLabel('Loop title')
+			const titleField = page.getByLabel('Flow title')
 			await titleField.fill('Renewals loop v2')
 			await titleField.press('Enter')
 			await expect(page.getByRole('heading', { name: 'Renewals loop v2' })).toBeVisible()
@@ -173,7 +173,7 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByText('two weeks')).toBeVisible()
 
 			// The pre-v2 edit affordance is gone — the page itself is the editor.
-			await expect(page.getByRole('button', { name: 'Edit this loop' })).toHaveCount(0)
+			await expect(page.getByRole('button', { name: 'Edit this flow' })).toHaveCount(0)
 			await expect(page.getByText('say what should change — no builder')).toHaveCount(0)
 		})
 	}
@@ -223,7 +223,7 @@ test.describe('Loop detail page', () => {
 		// Exact — the v2 header's split New button adds a "More ways to start"
 		// control, which a substring match would also pick up.
 		await page.getByRole('button', { name: 'More', exact: true }).click()
-		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
+		await page.getByRole('menuitem', { name: 'Pause flow' }).click()
 
 		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })
 	})
@@ -268,18 +268,18 @@ test.describe('Loop detail page', () => {
 			// Pause/Resume. Exact — the app-shell also renders a "More ways to
 			// start" control that a substring match would also pick up.
 			await page.getByRole('button', { name: 'More', exact: true }).click()
-			await page.getByRole('menuitem', { name: 'Delete loop' }).click()
+			await page.getByRole('menuitem', { name: 'Delete flow' }).click()
 
 			// Inline confirm mirrors PR #1667 — Cancel is a real escape hatch, the
 			// pill and dropdown come back afterwards.
-			await expect(page.getByText('Delete this loop?')).toBeVisible()
+			await expect(page.getByText('Delete this flow?')).toBeVisible()
 			await page.getByRole('button', { name: 'Cancel' }).click()
 			await expect(page.getByTestId('loop-pill')).toBeVisible()
 
 			// Confirming actually removes the loop and lands back on the /loops
 			// index without it in the list.
 			await page.getByRole('button', { name: 'More', exact: true }).click()
-			await page.getByRole('menuitem', { name: 'Delete loop' }).click()
+			await page.getByRole('menuitem', { name: 'Delete flow' }).click()
 			await page.getByRole('button', { name: 'Confirm' }).click()
 
 			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops/?$`), {

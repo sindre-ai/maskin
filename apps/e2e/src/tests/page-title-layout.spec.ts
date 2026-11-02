@@ -10,8 +10,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const SCREENS = [
 	{ path: '', heading: /^Good (night|morning|afternoon|evening)/ },
-	{ path: '/loops', heading: 'Loops' },
-	{ path: '/objects', heading: 'Objects' },
+	{ path: '/loops', heading: 'Flows' },
+	{ path: '/objects', heading: 'Items' },
 	{ path: '/marketplace', heading: 'Marketplace' },
 	{ path: '/agents', heading: 'Agents' },
 ] as const
@@ -125,7 +125,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			test(`the title is legible in ${scheme} mode`, async ({ page, account }) => {
 				await page.emulateMedia({ colorScheme: scheme })
 				await page.goto(`/${account.workspaceId}/loops`)
-				const h1 = page.getByRole('heading', { level: 1, name: 'Loops', exact: true })
+				const h1 = page.getByRole('heading', { level: 1, name: 'Flows', exact: true })
 				await expect(h1).toBeVisible({ timeout: 15_000 })
 				const color = await h1.evaluate((el) => window.getComputedStyle(el).color)
 				const bg = await page.evaluate(() => window.getComputedStyle(document.body).backgroundColor)

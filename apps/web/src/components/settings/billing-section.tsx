@@ -126,7 +126,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		eyebrow: 'TEAM',
 		price: '$200',
 		priceSuffix: '/mo',
-		tagline: 'Heavier loops, volume rates, one invoice.',
+		tagline: 'Heavier flows, volume rates, one invoice.',
 		features: [
 			`${formatCredits(CAP_DEFAULTS.team)} of usage included each month`,
 			formatOwnershipCap(OWNERSHIP_CAPS.team),

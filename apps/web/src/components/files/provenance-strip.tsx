@@ -150,9 +150,9 @@ function renderStripContent({
 							variant="ghost"
 							size="sm"
 							className="h-6 gap-1 px-2 text-xs"
-							aria-label="Pick target object for the review round"
+							aria-label="Pick target item for the review round"
 						>
-							{picked ? picked.title : `${resolved.pickerOptions.length} objects`}
+							{picked ? picked.title : `${resolved.pickerOptions.length} items`}
 							<ChevronDown size={12} />
 						</Button>
 					</DropdownMenuTrigger>

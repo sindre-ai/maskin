@@ -23,7 +23,7 @@ const SETTINGS_SECTIONS = [
 	'Extensions',
 	'Billing',
 	'Skills',
-	'Objects',
+	'Item types',
 	'MCP',
 	'Keychain',
 ]
@@ -31,7 +31,7 @@ const RETIRED_LABELS = ['LLM']
 
 const DEEP_LINKS: Array<{ label: string; path: string }> = [
 	{ label: 'General', path: '' },
-	{ label: 'Objects', path: '/objects' },
+	{ label: 'Item types', path: '/objects' },
 	{ label: 'Members', path: '/members' },
 	{ label: 'Integrations', path: '/integrations' },
 	{ label: 'Keychain', path: '/keychain' },

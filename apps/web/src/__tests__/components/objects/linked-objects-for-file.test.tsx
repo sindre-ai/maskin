@@ -63,7 +63,7 @@ describe('LinkedObjectsForFile', () => {
 
 		await waitFor(() => expect(screen.getByText('Linked (1)')).toBeInTheDocument())
 		expect(screen.getByText('Anchor bet')).toBeInTheDocument()
-		// The `+` menu's primary CTA is `Link to object` on file-detail —
+		// The `+` menu's primary CTA is `Link to item` on file-detail —
 		// inverse of the object-detail default (`Link to file`).
 		expect(screen.queryByRole('menuitem', { name: /Link to file/ })).toBeNull()
 	})
@@ -81,15 +81,15 @@ describe('LinkedObjectsForFile', () => {
 		})
 
 		// No picker in the DOM yet.
-		expect(screen.queryByPlaceholderText(/Search objects/)).toBeNull()
+		expect(screen.queryByPlaceholderText(/Search items/)).toBeNull()
 
-		// Bump the signal — simulates the file-detail page's `Link to object`
+		// Bump the signal — simulates the file-detail page's `Link to item`
 		// button click. The picker opens with the Objects tab pressed.
 		rerender(
 			<LinkedObjectsForFile fileId={FILE_ID} openPickerSignal={{ kind: 'object', nonce: 1 }} />,
 		)
-		await waitFor(() => expect(screen.getByPlaceholderText(/Search objects/)).toBeInTheDocument())
-		expect(screen.getByRole('button', { name: /Objects/ })).toHaveAttribute('aria-pressed', 'true')
+		await waitFor(() => expect(screen.getByPlaceholderText(/Search items/)).toBeInTheDocument())
+		expect(screen.getByRole('button', { name: /Items/ })).toHaveAttribute('aria-pressed', 'true')
 		// User can still switch to Files — the tab strip is unchanged; the
 		// file-detail wrapper only flips the initial default.
 		await user.click(screen.getByRole('button', { name: /Files/ }))

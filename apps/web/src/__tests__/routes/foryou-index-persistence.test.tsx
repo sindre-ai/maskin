@@ -79,7 +79,7 @@ vi.mock('@/lib/api', () => {
 				list: async () => ({ items: [] }),
 				get: async () => {
 					const settings = state.__dsPersisted
-					if (settings === null) throw new ApiError(404, 'No display settings for this object type')
+					if (settings === null) throw new ApiError(404, 'No display settings for this item type')
 					return {
 						object_type: '__chrome__',
 						name: 'default',

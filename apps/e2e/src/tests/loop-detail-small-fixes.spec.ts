@@ -41,7 +41,7 @@ test.describe('Loop detail — post-ship small defects', () => {
 			// The leaf crumb must name the loop itself.
 			await expect(breadcrumb.getByText('Renewal risk loop')).toBeVisible()
 			// The defect: the leaf fell back to the route's static label.
-			await expect(page.getByText('Loop Details')).toHaveCount(0)
+			await expect(page.getByText('Flow Details')).toHaveCount(0)
 		}
 	})
 

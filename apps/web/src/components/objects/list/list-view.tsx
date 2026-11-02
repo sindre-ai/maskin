@@ -393,7 +393,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	if (isError && isEmpty) {
 		return (
 			<QueryStateError
-				title="Couldn't load objects"
+				title="Couldn't load items"
 				error={error instanceof Error ? error : new Error('Unknown error')}
 			/>
 		)
@@ -408,7 +408,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
 				{hasActiveFilters ? (
 					<EmptyState
-						title={emptyTitle ?? 'No objects match these filters.'}
+						title={emptyTitle ?? 'No items match these filters.'}
 						action={
 							onClearFilters ? (
 								<Button variant="outline" size="sm" onClick={onClearFilters}>
@@ -419,8 +419,8 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 					/>
 				) : (
 					<EmptyState
-						title={emptyTitle ?? 'No objects found'}
-						description="Create your first object to get started"
+						title={emptyTitle ?? 'No items found'}
+						description="Create your first item to get started"
 					/>
 				)}
 				<div ref={sentinelRef} className="h-1" />
@@ -435,7 +435,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 
 	return (
 		<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
-			<ul className="m-0 list-none p-0" aria-label="Objects">
+			<ul className="m-0 list-none p-0" aria-label="Items">
 				{groups === null
 					? renderRows(rows)
 					: groups.map((group) => {

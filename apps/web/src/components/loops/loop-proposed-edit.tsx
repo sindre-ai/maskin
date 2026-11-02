@@ -34,7 +34,7 @@ const NONE = 'nothing'
 function planFields(plan: LoopPlan): Record<string, string> {
 	const primary = plan.objectTypes[0]
 	return {
-		'OBJECT TYPE': primary?.name ?? NONE,
+		'ITEM TYPE': primary?.name ?? NONE,
 		STATES: primary?.stateChain?.join(' → ') || NONE,
 		TRIGGERS: plan.triggers.map((t) => t.whenClause).join(' · ') || NONE,
 		AGENTS: plan.agents.map((a) => a.name).join(', ') || NONE,

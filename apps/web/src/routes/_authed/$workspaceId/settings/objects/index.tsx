@@ -168,7 +168,7 @@ function ObjectsPage() {
 			{currentFields.length === 0 ? (
 				<EmptyState
 					title={`No properties for ${activeType}s`}
-					description="Create a property to add structured data to your objects"
+					description="Create a property to add structured data to your items"
 				/>
 			) : (
 				<div className="space-y-2">

@@ -471,10 +471,10 @@ describe('ObjectsPage — pinned filter chips', () => {
 })
 
 describe('ObjectsPage — published screen identity', () => {
-	it('publishes the Objects title and the type-tab strip, with no separate count', () => {
+	it('publishes the Items title and the type-tab strip, with no separate count', () => {
 		facetsState.data = buildFacets()
 		render(<ObjectsPage />)
-		expect(screen.getByRole('heading', { name: 'Objects' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Items' })).toBeInTheDocument()
 		// No count beside the <h1> — the active type tab carries it instead.
 		expect(screen.getByTestId('page-subtitle')).toBeEmptyDOMElement()
 		expect(screen.getByRole('group', { name: 'Type filter' })).toBeInTheDocument()
@@ -523,7 +523,7 @@ describe('ObjectsPage — board single-card advance', () => {
 	it('toasts when the response omits the advanced id entirely', () => {
 		const [, opts] = advance()
 		opts.onSuccess?.({ results: [{ id: 'other', ok: true }] })
-		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
+		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move item')
 	})
 
 	it('stays silent when the server confirms the move', () => {
@@ -535,7 +535,7 @@ describe('ObjectsPage — board single-card advance', () => {
 	it('toasts when the mutation itself rejects', () => {
 		const [, opts] = advance()
 		opts.onError?.(new Error('Network blew up'))
-		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
+		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move item')
 	})
 })
 

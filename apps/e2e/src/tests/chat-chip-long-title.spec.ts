@@ -247,7 +247,7 @@ test.describe('Chat — a chip is a plate of text that wraps with the sentence',
 		await chips.short.hover()
 		await expect.poll(async () => (await measure(chips.short)).background).not.toBe(before)
 		await chips.short.click()
-		await expect(page.getByRole('dialog', { name: 'Object preview' })).toBeVisible()
+		await expect(page.getByRole('dialog', { name: 'Item preview' })).toBeVisible()
 		await expect(page).toHaveURL(chatUrl)
 	})
 })

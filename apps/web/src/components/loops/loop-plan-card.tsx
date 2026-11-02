@@ -12,8 +12,8 @@ import { Link } from '@tanstack/react-router'
 import { Check, Plus } from 'lucide-react'
 
 export function defaultLoopName(plan: LoopPlan): string {
-	const base = plan.objectTypes[0]?.name ?? 'Loop'
-	return `${base} loop`
+	const base = plan.objectTypes[0]?.name ?? 'Flow'
+	return `${base} flow`
 }
 
 function SectionLabel({ children, className }: { children: string; className?: string }) {
@@ -26,7 +26,7 @@ function SectionLabel({ children, className }: { children: string; className?: s
 // running: a loop with no trigger attached will never fire, and
 // `LoopFirstRunBanner` on the detail page says exactly that.
 const CREATED_DESCRIPTION =
-	'Saved, along with the plan it was drawn from. Nothing fires yet — the object types, triggers and agents above are still a preview until they are attached to the loop.'
+	'Saved, along with the plan it was drawn from. Nothing fires yet — the item types, triggers and agents above are still a preview until they are attached to the flow.'
 
 /** `NEW TYPE` / `JUST ADDED` — the brand-tinted "this doesn't exist yet" marker
  *  (mockup 2168, 2197–2198). Distinct from a trigger's `kindLabel`. */
@@ -58,13 +58,13 @@ export function LoopPlanCard({
 	workspaceId,
 }: LoopPlanCardProps) {
 	const canWrite = useCanWrite()
-	const title = created ? 'Loop created' : defaultLoopName(plan)
+	const title = created ? 'Flow created' : defaultLoopName(plan)
 	return (
 		<div className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
 			<div className="flex flex-col gap-2 border-b border-border px-5 py-4">
 				<div className="flex items-center gap-2">
 					{created ? <Check size={14} className="shrink-0 text-success" aria-hidden /> : null}
-					<SectionLabel>{created ? 'LOOP CREATED' : 'PROPOSED LOOP'}</SectionLabel>
+					<SectionLabel>{created ? 'FLOW CREATED' : 'PROPOSED FLOW'}</SectionLabel>
 					<span className="ml-auto text-[11px] text-muted-foreground">
 						{created ? 'created' : 'not created yet'}
 					</span>
@@ -77,11 +77,11 @@ export function LoopPlanCard({
 
 			<div className="flex max-h-[50vh] flex-col gap-5 overflow-y-auto px-5 py-4 lg:max-h-[60vh]">
 				<section>
-					<SectionLabel>OBJECT TYPES</SectionLabel>
+					<SectionLabel>ITEM TYPES</SectionLabel>
 					<div className="mt-2.5 flex flex-col gap-2">
 						{plan.objectTypes.length === 0 ? (
 							<p className="text-sm text-muted-foreground">
-								No objects detected yet. Describe what should be tracked.
+								No items detected yet. Describe what should be tracked.
 							</p>
 						) : (
 							plan.objectTypes.map((t, i) => (
@@ -127,7 +127,7 @@ export function LoopPlanCard({
 					<SectionLabel>TRIGGERS</SectionLabel>
 					<div className="mt-2.5 flex flex-col gap-2">
 						{plan.triggers.length === 0 ? (
-							<p className="text-sm text-muted-foreground">Nothing triggers the loop yet.</p>
+							<p className="text-sm text-muted-foreground">Nothing triggers the flow yet.</p>
 						) : (
 							plan.triggers.map((t, i) => (
 								<div
@@ -227,7 +227,7 @@ export function LoopPlanCard({
 								to="/$workspaceId/loops/$loopId"
 								params={{ workspaceId, loopId: createdId ?? '' }}
 							>
-								Open loop
+								Open flow
 							</Link>
 						</Button>
 						<Button size="sm" variant="ghost" onClick={onStartOver}>
@@ -247,7 +247,7 @@ export function LoopPlanCard({
 								) : (
 									<>
 										<Plus size={14} className="mr-1" aria-hidden />
-										Create loop
+										Create flow
 									</>
 								)}
 							</Button>
@@ -390,5 +390,5 @@ function buildConnectSentence(missingDisplayNames: string[]): string {
 			: `${missingDisplayNames.slice(0, -1).join(', ')} and ${
 					missingDisplayNames[missingDisplayNames.length - 1]
 				}`
-	return `Connect ${list} to enable this loop.`
+	return `Connect ${list} to enable this flow.`
 }

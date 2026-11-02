@@ -47,7 +47,7 @@ describe('viewer fixture: write controls are disabled, not hidden', () => {
 
 	it('disables the New button', () => {
 		render(<NewMenu onNewChat={vi.fn()} primaryKind="object" />, { wrapper: viewer() })
-		expect(screen.getByRole('button', { name: 'New object' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'New item' })).toBeDisabled()
 		expect(screen.getByRole('button', { name: 'More ways to start' })).toBeDisabled()
 	})
 
@@ -127,7 +127,7 @@ describe('member fixture: nothing changes', () => {
 			{ wrapper: member() },
 		)
 		for (const picker of screen.getAllByRole('combobox')) expect(picker).toBeEnabled()
-		expect(screen.getByRole('button', { name: 'New object' })).toBeEnabled()
+		expect(screen.getByRole('button', { name: 'New item' })).toBeEnabled()
 		expect(screen.getByRole('button', { name: 'Go' })).toBeEnabled()
 	})
 })

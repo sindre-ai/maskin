@@ -58,7 +58,7 @@ export function RelationshipsTable({
 	}, [relationships, objectId, objectsById])
 
 	if (grouped.length === 0) {
-		return <p className="text-sm text-muted-foreground py-4 text-center">No related objects yet</p>
+		return <p className="text-sm text-muted-foreground py-4 text-center">No related items yet</p>
 	}
 
 	return (

@@ -257,7 +257,7 @@ function subscriberReason(
 	currentActorId: string | undefined,
 ): string {
 	if (actorId === currentActorId) return 'you own the outcome'
-	if (actorId === object.driver) return 'drives this object'
+	if (actorId === object.driver) return 'drives this item'
 	if (actorId === object.createdBy) return 'created it'
 	return 'posts to this timeline'
 }

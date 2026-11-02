@@ -121,7 +121,7 @@ describe('ObjectReferenceChip', () => {
 		for (const data of [undefined, objectRow({ workspaceId: 'other' })]) {
 			useObject.mockReturnValue({ data, isLoading: false })
 			const { unmount } = renderChip()
-			expect(screen.getByText('Deleted object')).toBeInTheDocument()
+			expect(screen.getByText('Deleted item')).toBeInTheDocument()
 			unmount()
 		}
 	})
@@ -248,7 +248,7 @@ describe('ObjectReferenceChip plate', () => {
 	it('draws the deleted chip with a trash icon and a dashed border at the sentence size', () => {
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderChip()
-		const chip = screen.getByText('Deleted object')
+		const chip = screen.getByText('Deleted item')
 		expect(chip.className).toContain('border-dashed')
 		expect(chip.className).not.toMatch(/text-\[/)
 		expect(chip.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
@@ -331,7 +331,7 @@ describe('ObjectReferenceCard face', () => {
 	it('says an object was deleted, with a trash icon, in the dashed look', () => {
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderCard()
-		const card = screen.getByText('This object was deleted')
+		const card = screen.getByText('This item was deleted')
 		expect(card).toHaveClass('border-dashed', 'italic')
 		expect(card.querySelector('svg')?.getAttribute('class')).toContain('lucide-trash')
 	})
@@ -471,7 +471,7 @@ describe('ObjectReferenceChip preview', () => {
 		const user = userEvent.setup()
 		renderChip()
 		await user.hover(chip())
-		const dialog = screen.getByRole('dialog', { name: 'Object preview' })
+		const dialog = screen.getByRole('dialog', { name: 'Item preview' })
 		expect(dialog).toBe(preview())
 		expect(dialog).not.toHaveAttribute('aria-hidden')
 		expect(dialog).not.toHaveAttribute('aria-modal')
@@ -481,7 +481,7 @@ describe('ObjectReferenceChip preview', () => {
 		const user = userEvent.setup()
 		renderChip()
 		await user.hover(chip())
-		const dialog = screen.getByRole('dialog', { name: 'Object preview' })
+		const dialog = screen.getByRole('dialog', { name: 'Item preview' })
 		expect(dialog).toHaveTextContent('Chat preview cards')
 		expect(dialog.querySelectorAll('a')).toHaveLength(1)
 		expect(screen.getByRole('link', { name: 'Open' })).toBeInTheDocument()
@@ -546,7 +546,7 @@ describe('ObjectReferenceChip preview', () => {
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderChip()
 		act(() => {
-			fireEvent.mouseEnter(screen.getByText('Deleted object'))
+			fireEvent.mouseEnter(screen.getByText('Deleted item'))
 		})
 		expect(preview()).toBeNull()
 	})
@@ -750,7 +750,7 @@ describe('ObjectReferenceChip sheet', () => {
 		const user = userEvent.setup()
 		useObject.mockReturnValue({ data: undefined, isLoading: false })
 		renderChip()
-		await user.click(screen.getByText('Deleted object'))
+		await user.click(screen.getByText('Deleted item'))
 		expect(sheet()).toBeNull()
 	})
 

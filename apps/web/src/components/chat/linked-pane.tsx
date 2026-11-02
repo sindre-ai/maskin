@@ -194,7 +194,7 @@ export function LinkedPane({
 				) : (
 					<EmptyState
 						title="Nothing here yet"
-						description="Objects and files that messages link to, or that agents produce in this chat, will appear here."
+						description="Items and files that messages link to, or that agents produce in this chat, will appear here."
 					/>
 				)
 			) : (

@@ -104,6 +104,8 @@ interface PaletteCommand {
 	id: string
 	title: string
 	sub?: string
+	/** Extra words that find this row, e.g. the pre-rename name ("loop" for Flows). */
+	keywords?: string[]
 	icon: LucideIcon
 	run: () => void
 }
@@ -119,12 +121,27 @@ function GlyphTile({ icon: Icon }: { icon: LucideIcon }) {
 	)
 }
 
-const VIEWS: { title: string; path: (workspaceId: string) => string; icon: LucideIcon }[] = [
+const VIEWS: {
+	title: string
+	path: (workspaceId: string) => string
+	icon: LucideIcon
+	keywords?: string[]
+}[] = [
 	{ title: 'For you', path: (w) => `/${w}`, icon: CircleDot },
 	{ title: 'Chats', path: (w) => `/${w}/chats`, icon: MessagesSquare },
-	{ title: 'Loops', path: (w) => `/${w}/loops`, icon: RefreshCw },
+	{
+		title: 'Flows',
+		path: (w) => `/${w}/loops`,
+		icon: RefreshCw,
+		keywords: ['loop', 'loops'],
+	},
 	{ title: 'Agents', path: (w) => `/${w}/agents`, icon: Bot },
-	{ title: 'Objects', path: (w) => `/${w}/objects`, icon: Table2 },
+	{
+		title: 'Items',
+		path: (w) => `/${w}/objects`,
+		icon: Table2,
+		keywords: ['object', 'objects'],
+	},
 	{ title: TRIGGERS_PAGE.title, path: (w) => `/${w}/${TRIGGERS_PAGE.path}`, icon: Zap },
 	{ title: 'Marketplace', path: (w) => `/${w}/marketplace`, icon: Store },
 	{ title: 'Settings', path: (w) => `/${w}/settings`, icon: Settings },
@@ -136,9 +153,14 @@ const VIEWS: { title: string; path: (workspaceId: string) => string; icon: Lucid
  * group name or a row's description anywhere would put every command above the result for
  * a short query.
  */
-function matchesRow(query: string, title: string, groupName: string): boolean {
+function matchesRow(
+	query: string,
+	title: string,
+	groupName: string,
+	keywords: string[] = [],
+): boolean {
 	return (
-		matches(query, title) ||
+		matches(query, title, ...keywords) ||
 		initialsMatch(query, title) ||
 		(query.length >= 3 && groupName.startsWith(query.toLowerCase()))
 	)
@@ -244,7 +266,8 @@ export function CommandPaletteV2() {
 			})),
 			{
 				id: 'new-loop',
-				title: 'New loop',
+				title: 'New flow',
+				keywords: ['loop', 'new loop'],
 				sub: 'describe it and Maskin wires it',
 				icon: RefreshCw,
 				run: () => navigateTo(`/${workspaceId}/loops/new`),
@@ -558,7 +581,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 			groups.push({
 				label: 'Commands',
 				rows: rankTitleMatchesFirst(
-					commands.filter((c) => matchesRow(query, c.title, 'command')),
+					commands.filter((c) => matchesRow(query, c.title, 'command', c.keywords)),
 					query,
 				).map((c) => ({
 					id: c.id,
@@ -571,7 +594,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 				})),
 			})
 			const views = rankTitleMatchesFirst(
-				VIEWS.filter((view) => matchesRow(query, view.title, 'go to')),
+				VIEWS.filter((view) => matchesRow(query, view.title, 'go to', view.keywords)),
 				query,
 			).map((view) => ({
 				id: `go-${view.title}`,

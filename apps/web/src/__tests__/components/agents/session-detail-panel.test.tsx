@@ -719,7 +719,7 @@ describe('SessionDetailPanel Restart button', () => {
 // is renamed to Produced, and grows a Files sub-group that hides entirely when
 // its count is zero. `<h5>Files · 0</h5>` never appears on a text-only session.
 describe('SessionDetailPanel Produced section', () => {
-	it('renders under the Produced heading (not "Objects affected")', () => {
+	it('renders under the Produced heading (not "Items affected")', () => {
 		renderPanel(buildSessionResponse({ status: 'completed' }))
 		expect(screen.getByRole('heading', { level: 4, name: /Produced/i })).toBeInTheDocument()
 		expect(screen.queryByText('Objects affected')).not.toBeInTheDocument()
@@ -730,7 +730,7 @@ describe('SessionDetailPanel Produced section', () => {
 			{ entityId: 'obj-a', entityType: 'bet', title: 'Bet A', actions: ['created'] },
 		]
 		renderPanel(buildSessionResponse({ status: 'completed' }))
-		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
+		expect(screen.getByText('Items · 1')).toBeInTheDocument()
 	})
 
 	it('renders the Files sub-group when files count > 0', () => {
@@ -749,7 +749,7 @@ describe('SessionDetailPanel Produced section', () => {
 		renderPanel(buildSessionResponse({ status: 'completed' }))
 		expect(screen.queryByText(/Files · 0/)).not.toBeInTheDocument()
 		// Sanity — the Objects sub-group still renders alone.
-		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
+		expect(screen.getByText('Items · 1')).toBeInTheDocument()
 	})
 
 	it('shows a "Nothing produced yet" fallback when both counts are 0', () => {

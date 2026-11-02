@@ -135,7 +135,7 @@ beforeEach(() => {
 			? response([needsYouRow])
 			: response([
 					row({}),
-					row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Hans loop' }),
+					row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Hans flow' }),
 				]),
 	)
 	localStorage.clear()
@@ -342,7 +342,7 @@ describe('launcher with words and pills', () => {
 					title: 'Pricing page',
 					snippet: 'We agreed the hans discount applies from March',
 				}),
-				row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Hans loop' }),
+				row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Hans flow' }),
 			]),
 		)
 		const user = userEvent.setup()
@@ -350,7 +350,7 @@ describe('launcher with words and pills', () => {
 		await user.type(field(), 'hans')
 		const withSnippet = await screen.findByRole('option', { name: /Pricing page/ })
 		expect(withSnippet).toHaveTextContent('We agreed the hans discount applies from March')
-		const without = screen.getByRole('option', { name: /Hans loop/ })
+		const without = screen.getByRole('option', { name: /Hans flow/ })
 		expect(without).not.toHaveTextContent('We agreed')
 	})
 

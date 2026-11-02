@@ -185,7 +185,7 @@ describe('ActorAvatar', () => {
 			// The avatar itself keeps its own name; only the wrapper announces
 			// the working state — the SPEC's split between "avatar keeps its
 			// existing name" and container "aria-label='Agent working…'".
-			expect(ring?.getAttribute('aria-label')).toBe('Agent working on this object')
+			expect(ring?.getAttribute('aria-label')).toBe('Agent working on this item')
 			expect(screen.getByTitle('Alice')).toBeInTheDocument()
 		})
 

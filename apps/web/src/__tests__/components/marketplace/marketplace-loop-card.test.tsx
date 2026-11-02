@@ -70,7 +70,7 @@ describe('MarketplaceLoopCard', () => {
 		})
 		expect(screen.getByRole('button', { name: /^install$/i })).toBeInTheDocument()
 		// Multi-type loops read as a bundle; the label is colour-coded per kind.
-		expect(screen.getByText('Loop')).toBeInTheDocument()
+		expect(screen.getByText('Flow')).toBeInTheDocument()
 		expect(screen.queryByText(/Managed/)).not.toBeInTheDocument()
 		expect(screen.queryByText(/Forked from/)).not.toBeInTheDocument()
 		expect(screen.queryByText('Installed')).not.toBeInTheDocument()

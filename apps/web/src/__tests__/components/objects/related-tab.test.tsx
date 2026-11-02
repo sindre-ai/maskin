@@ -92,7 +92,7 @@ describe('RelatedTab', () => {
 
 		render(<RelatedTab object={owner} />, { wrapper: createWorkspaceWrapper() })
 
-		const linkCtas = screen.getAllByRole('button', { name: /Link an object as /i })
+		const linkCtas = screen.getAllByRole('button', { name: /Link an item as /i })
 		const uploadCtas = screen.getAllByRole('button', { name: /Upload a file as /i })
 		expect(linkCtas.length).toBeGreaterThan(0)
 		expect(linkCtas.length).toBe(uploadCtas.length)
@@ -105,9 +105,9 @@ describe('RelatedTab', () => {
 
 		render(<RelatedTab object={owner} />, { wrapper: createWorkspaceWrapper() })
 
-		await user.click(screen.getAllByRole('button', { name: /Link an object as /i })[0])
+		await user.click(screen.getAllByRole('button', { name: /Link an item as /i })[0])
 
-		expect(screen.getByPlaceholderText(/Search objects/i)).toBeInTheDocument()
+		expect(screen.getByPlaceholderText(/Search items/i)).toBeInTheDocument()
 	})
 
 	it('fires the remove mutation when the row remove button is clicked', () => {
@@ -139,7 +139,7 @@ describe('RelatedTab', () => {
 			wrapper: createWorkspaceWrapper(),
 		})
 
-		expect(screen.queryByText(/No related objects yet/)).toBeNull()
+		expect(screen.queryByText(/No related items yet/)).toBeNull()
 		// The v2 tab has no "Related (N)" heading of its own — the count lives in
 		// the segmented control above it — so the skeleton is what marks the
 		// pending state here.
@@ -158,7 +158,7 @@ describe('RelatedTab', () => {
 			wrapper: createWorkspaceWrapper(),
 		})
 
-		expect(screen.queryByText('No related objects yet')).toBeNull()
-		expect(screen.getByText("Couldn't load related objects")).toBeInTheDocument()
+		expect(screen.queryByText('No related items yet')).toBeNull()
+		expect(screen.getByText("Couldn't load related items")).toBeInTheDocument()
 	})
 })

@@ -47,7 +47,7 @@ export function AgentDetailHeader({
 		() =>
 			(loops ?? [])
 				.filter((loop) => loop.agentIds.includes(agent.id))
-				.map((loop) => ({ id: loop.id, name: loop.name?.trim() || 'Untitled loop' }))
+				.map((loop) => ({ id: loop.id, name: loop.name?.trim() || 'Untitled flow' }))
 				.sort((a, b) =>
 					a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }),
 				),

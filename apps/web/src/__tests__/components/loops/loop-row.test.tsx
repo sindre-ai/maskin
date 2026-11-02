@@ -157,10 +157,10 @@ describe('LoopRow', () => {
 		expect(screen.getByText('+2')).toBeInTheDocument()
 	})
 
-	it('renders "Untitled loop" when name is null', () => {
+	it('renders "Untitled flow" when name is null', () => {
 		render(<LoopRow loop={buildLoop({ name: null })} actors={[]} />)
 
-		expect(screen.getByText('Untitled loop')).toBeInTheDocument()
+		expect(screen.getByText('Untitled flow')).toBeInTheDocument()
 	})
 
 	it('links to the dedicated loop detail route, not the generic object page', () => {

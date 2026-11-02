@@ -51,10 +51,10 @@ function ObjectDetailPage() {
 				title: data.title,
 				status: getDefaultStatus(data.type),
 			})
-			toast.success('Object created')
+			toast.success('Item created')
 		} catch (err) {
 			isCreatedRef.current = false
-			toast.error(err instanceof Error ? err.message : 'Failed to create object')
+			toast.error(err instanceof Error ? err.message : 'Failed to create item')
 		}
 	}
 
@@ -87,7 +87,7 @@ function ObjectDetailPage() {
 		return (
 			<div className="max-w-3xl mx-auto">
 				<QueryStateError
-					title="Couldn't load this object"
+					title="Couldn't load this item"
 					error={nonNotFoundError}
 					onRetry={() => refetch()}
 				/>

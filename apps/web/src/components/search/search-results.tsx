@@ -10,10 +10,10 @@ import { statusDotClass } from './search-chips'
 
 export const GROUP_LABEL: Record<SearchSourceGroup, string> = {
 	chats: 'Chats',
-	loops: 'Loops',
+	loops: 'Flows',
 	agents: 'Agents',
 	people: 'People',
-	objects: 'Objects',
+	objects: 'Items',
 	automations: 'Automations',
 }
 

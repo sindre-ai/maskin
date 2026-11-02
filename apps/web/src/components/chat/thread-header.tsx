@@ -277,7 +277,7 @@ export function ThreadHeader({
 								<button
 									type="button"
 									onClick={handleLoopChipClick}
-									aria-label={`Loop: ${loopName ?? loopLabel}`}
+									aria-label={`Flow: ${loopName ?? loopLabel}`}
 									className="hidden h-[22px] shrink-0 items-center rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground hover:border-[color:var(--border-strong)] hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:inline-flex"
 								>
 									{loopLabel}

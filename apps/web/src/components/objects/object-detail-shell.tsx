@@ -105,7 +105,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// Memoised so the published crumb keeps a stable identity across renders.
 	const crumb = useMemo(
 		() => ({
-			parentLabel: 'Objects',
+			parentLabel: 'Items',
 			parentTo: '/$workspaceId/objects',
 			parentParams: { workspaceId },
 			label: object.title ?? 'Untitled',
@@ -132,7 +132,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		if (!liveAsk) return undefined
 		return {
 			label: 'Answer this ask',
-			ariaLabel: 'Answer the pending ask on this object',
+			ariaLabel: 'Answer the pending ask on this item',
 			title: 'Answer this ask — jump to the composer at the pending ask',
 			icon: <Pencil aria-hidden className="size-[13px]" />,
 			onClick: handleAnswerLatestAsk,

@@ -132,7 +132,7 @@ function NewChatRoute() {
 		const missing = referencedIds.length - referencedObjects.length
 		if (missing > 0) {
 			toast.warning(
-				`${missing} of ${referencedIds.length} objects couldn't be attached — they may have been deleted.`,
+				`${missing} of ${referencedIds.length} items couldn't be attached — they may have been deleted.`,
 			)
 		}
 	}, [referencedIds, referencedObjects])
@@ -574,7 +574,7 @@ function NewChatRoute() {
 						What are we working on?
 					</h2>
 					<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
-						Your agents are already inside the work — the loops they run, the objects they keep
+						Your agents are already inside the work — the flows they run, the items they keep
 						current, the sessions live right now. You don't have to paste any of it in.
 					</p>
 				</div>

@@ -326,7 +326,7 @@ describe('ReviewPanel — Slice 4 viewer states', () => {
 		expect(container.querySelector('[data-viewer-state="archived-parent"]')).not.toBeNull()
 		const send = screen.getByTestId('panel-send-round')
 		expect(send).toBeDisabled()
-		expect(send).toHaveAttribute('title', 'The attached object is archived')
+		expect(send).toHaveAttribute('title', 'The attached item is archived')
 	})
 
 	// State: post-send with an agent driver — the sent lock reads

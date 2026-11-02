@@ -438,7 +438,7 @@ export function BulkActionBar({
 					<DialogHeader>
 						<DialogTitle>Delete {selectedCount} selected?</DialogTitle>
 						<DialogDescription>
-							This permanently removes the selected objects. This action cannot be undone.
+							This permanently removes the selected items. This action cannot be undone.
 						</DialogDescription>
 					</DialogHeader>
 					<DialogFooter>

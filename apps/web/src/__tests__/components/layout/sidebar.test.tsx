@@ -84,8 +84,8 @@ describe('AppSidebar', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('For you')).toBeInTheDocument()
 		expect(screen.getByText('Chats')).toBeInTheDocument()
-		expect(screen.getByText('Loops')).toBeInTheDocument()
-		expect(screen.getByText('Objects')).toBeInTheDocument()
+		expect(screen.getByText('Flows')).toBeInTheDocument()
+		expect(screen.getByText('Items')).toBeInTheDocument()
 	})
 
 	// v2 reaches Agents through the working-agents card and triggers through the
@@ -108,15 +108,15 @@ describe('AppSidebar', () => {
 		).toBeTruthy()
 	})
 
-	it('shows Objects nav item when object types are enabled', () => {
+	it('shows Items nav item when object types are enabled', () => {
 		render(<AppSidebar />)
-		expect(screen.getByText('Objects')).toBeInTheDocument()
+		expect(screen.getByText('Items')).toBeInTheDocument()
 	})
 
-	it('hides Objects when no object types enabled', () => {
+	it('hides Items when no object types enabled', () => {
 		vi.mocked(useEnabledModules).mockReturnValue([])
 		render(<AppSidebar />)
-		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
+		expect(screen.queryByText('Items')).not.toBeInTheDocument()
 	})
 
 	// The release note is gone from the sidebar (and from For You),

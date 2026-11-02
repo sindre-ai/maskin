@@ -130,10 +130,10 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 	})
 })
 
-test.describe('"Create an object" section in the header New menu', () => {
+test.describe('"Create an item" section in the header New menu', () => {
 	// The object page carries the same split New button as every other screen
 	// (mockup 925–946), so its menu offers the same sections — the earlier
-	// contract that hid "Create an object" here is superseded.
+	// contract that hid "Create an item" here is superseded.
 	test('is present on /objects/:id and on /objects', async ({ page, account }) => {
 		await page.setViewportSize(WIDE_DESKTOP)
 
@@ -153,12 +153,12 @@ test.describe('"Create an object" section in the header New menu', () => {
 		const newButton = newMenuTrigger(page.locator('main header').first())
 		await expect(newButton).toBeVisible()
 		await newButton.click()
-		await expect(page.getByText('Create an object')).toBeVisible()
+		await expect(page.getByText('Create an item')).toBeVisible()
 		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/objects`)
 		await newMenuTrigger(page.locator('header')).click()
-		await expect(page.getByText('Create an object')).toBeVisible()
+		await expect(page.getByText('Create an item')).toBeVisible()
 	})
 
 	test('is present on /agents and /triggers list surfaces', async ({ page, account }) => {
@@ -166,11 +166,11 @@ test.describe('"Create an object" section in the header New menu', () => {
 
 		await page.goto(`/${account.workspaceId}/agents`)
 		await newMenuTrigger(page.locator('header')).click()
-		await expect(page.getByText('Create an object')).toBeVisible()
+		await expect(page.getByText('Create an item')).toBeVisible()
 		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/triggers`)
 		await newMenuTrigger(page.locator('header')).click()
-		await expect(page.getByText('Create an object')).toBeVisible()
+		await expect(page.getByText('Create an item')).toBeVisible()
 	})
 })

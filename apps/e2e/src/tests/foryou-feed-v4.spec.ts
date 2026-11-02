@@ -459,14 +459,14 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		expect(historyRequests).toBe(0)
 
 		await card.getByRole('button', { name: /Show timeline history/ }).click()
-		await expect(card.getByText('On this object', { exact: true })).toBeVisible({ timeout: 10_000 })
+		await expect(card.getByText('On this item', { exact: true })).toBeVisible({ timeout: 10_000 })
 		await expect(card.getByText('Second pass: both blockers hold.')).toBeVisible({
 			timeout: 10_000,
 		})
 		expect(historyRequests).toBeGreaterThan(0)
 
 		await card.getByRole('button', { name: 'Hide' }).click()
-		await expect(card.getByText('On this object', { exact: true })).toHaveCount(0)
+		await expect(card.getByText('On this item', { exact: true })).toHaveCount(0)
 	})
 
 	test('the per-card dismiss takes the card out of the feed', async ({ page, account }) => {

@@ -53,14 +53,14 @@ describe('AgentLoopsSection', () => {
 	it('renders one row per loop the agent runs and links it to the loop', async () => {
 		listLoops.mockResolvedValue({
 			loops: [
-				buildLoopSummary({ id: 'loop-mine', name: 'Feedback loop', agentIds: ['agent-1'] }),
+				buildLoopSummary({ id: 'loop-mine', name: 'Feedback flow', agentIds: ['agent-1'] }),
 				buildLoopSummary({ id: 'loop-other', name: 'Someone else', agentIds: ['agent-2'] }),
 			],
 		})
 
 		render(<AgentLoopsSection agent={agent()} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(await screen.findByText('Feedback loop')).toBeInTheDocument()
+		expect(await screen.findByText('Feedback flow')).toBeInTheDocument()
 		expect(screen.queryByText('Someone else')).not.toBeInTheDocument()
 		expect(screen.getAllByRole('listitem')).toHaveLength(1)
 		expect(screen.getByRole('link')).toHaveAttribute('href', '/ws-1/loops/loop-mine')

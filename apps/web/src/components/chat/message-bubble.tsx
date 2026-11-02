@@ -501,7 +501,7 @@ export function MessageBubble({
 						{/* `renderVisuals` turns a ```chart fenced block into the bounded
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
-						    parser backs object comments — no new payload, just the render
+						    parser backs item comments — no new payload, just the render
 						    path the chat surface was missing. `linkedCards` draws a link on its own
 						    line as a card where it stands (a draft can be approved without leaving
 						    the chat) and a link in a sentence as a chip; an id another message holds
@@ -930,7 +930,7 @@ function OwnLoopChip({ workspaceId, id }: { workspaceId: string; id: string }) {
 			className={OWN_CHIP_CLASS}
 		>
 			<Link2 size={12} aria-hidden className="shrink-0" />
-			<span className="truncate">{name ? chipTitle(name) : 'Loop'}</span>
+			<span className="truncate">{name ? chipTitle(name) : 'Flow'}</span>
 		</Link>
 	)
 }
@@ -1010,7 +1010,7 @@ function OwnObjectOrFileChip({
 	const { data: object } = useObject(segment.id, { enabled: isObject })
 	const { data: files } = useFiles(workspaceId, { ids: isObject ? [] : [segment.id] })
 	const name = (isObject ? object?.title : files?.[0]?.name)?.trim()
-	const label = name ? chipTitle(name) : isObject ? 'Object' : 'File'
+	const label = name ? chipTitle(name) : isObject ? 'Item' : 'File'
 	const className = OWN_CHIP_CLASS
 	const content = (
 		<>

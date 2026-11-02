@@ -13,7 +13,7 @@ test.describe('Loops list page', () => {
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
-			await expect(page.getByText('No loops running here yet')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('No flows running here yet')).toBeVisible({ timeout: 10000 })
 		})
 
 		test(`renders a loop row with derived stats at ${viewport.label}`, async ({
@@ -155,7 +155,7 @@ test.describe('Loops list page', () => {
 
 			// The v2 sidebar has no Triggers entry — the bookmark must land on Loops.
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops$`), { timeout: 10000 })
-			await expect(page.getByText('Not tied to a loop')).toBeVisible()
+			await expect(page.getByText('Not tied to a flow')).toBeVisible()
 			await expect(page.getByText('Nightly sweep', { exact: true })).toBeVisible()
 		})
 
@@ -182,7 +182,7 @@ test.describe('Loops list page', () => {
 			await expect(page.getByText('Unattached watcher', { exact: true })).toBeVisible({
 				timeout: 10000,
 			})
-			await expect(page.getByText('No loops running here yet')).toBeVisible()
+			await expect(page.getByText('No flows running here yet')).toBeVisible()
 		})
 	}
 
@@ -209,7 +209,7 @@ test.describe('Loops list page', () => {
 		})
 		// Its breadcrumb now hangs off Loops, not a page that would bounce.
 		await expect(
-			page.getByRole('navigation', { name: 'breadcrumb' }).getByText('Loops', { exact: true }),
+			page.getByRole('navigation', { name: 'breadcrumb' }).getByText('Flows', { exact: true }),
 		).toBeVisible()
 	})
 
@@ -217,7 +217,7 @@ test.describe('Loops list page', () => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}`)
 
-		await page.getByRole('link', { name: 'Loops' }).click()
+		await page.getByRole('link', { name: 'Flows' }).click()
 
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops`), { timeout: 10000 })
 	})
@@ -332,16 +332,16 @@ test.describe('Loops list page', () => {
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
-			await expect(page.getByText("Couldn't load loops")).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText("Couldn't load flows")).toBeVisible({ timeout: 10000 })
 			// The empty state would claim the workspace has no loops — it must not
 			// stand in for a fetch that failed.
-			await expect(page.getByText('No loops running here yet')).toBeHidden()
+			await expect(page.getByText('No flows running here yet')).toBeHidden()
 
 			// The retry control is reachable on touch and reads in both modes.
 			const retry = page.getByRole('button', { name: /try again|retry/i })
 			await expect(retry).toBeVisible()
 			await page.emulateMedia({ colorScheme: 'dark' })
-			await expect(page.getByText("Couldn't load loops")).toBeVisible()
+			await expect(page.getByText("Couldn't load flows")).toBeVisible()
 			await page.emulateMedia({ colorScheme: 'light' })
 		})
 
@@ -356,7 +356,7 @@ test.describe('Loops list page', () => {
 
 			// /triggers redirects here, so this list is the only way in — the two
 			// sections must announce themselves even with nothing in them.
-			await expect(page.getByText('Not tied to a loop')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Not tied to a flow')).toBeVisible({ timeout: 10000 })
 			await expect(page.getByText('No workspace-wide automations yet')).toBeVisible()
 			await expect(page.getByText('Assigned in chat')).toBeVisible()
 			await expect(page.getByText('Nothing handed to an agent in chat')).toBeVisible()
@@ -369,7 +369,7 @@ test.describe('Loops list page', () => {
 		const agent = await account.api.createAgentActor('Relay')
 		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 		const trigger = await account.api.createTrigger(account.workspaceId, {
-			name: 'Feeds the loop',
+			name: 'Feeds the flow',
 			type: 'event',
 			action_prompt: 'Watch for new insights',
 			target_actor_id: agent.id,

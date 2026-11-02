@@ -54,7 +54,7 @@ describe('SettingsLayout', () => {
 			'Extensions',
 			'Billing',
 			'Skills',
-			'Objects',
+			'Item types',
 			'MCP',
 			'Keychain',
 		])

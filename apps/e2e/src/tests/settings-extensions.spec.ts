@@ -46,7 +46,7 @@ test.describe('Settings — Extensions page', () => {
 
 			// The section and its helper text render.
 			await expect(
-				page.getByText('Extensions add object types and tabs for this workspace').first(),
+				page.getByText('Extensions add item types and tabs for this workspace').first(),
 			).toBeVisible()
 
 			// The registered modules are listed with their names.
@@ -87,7 +87,7 @@ test.describe('Settings — Extensions page', () => {
 			// …and survives a full page reload.
 			await page.reload()
 			await expect(
-				page.getByText('Extensions add object types and tabs for this workspace').first(),
+				page.getByText('Extensions add item types and tabs for this workspace').first(),
 			).toBeVisible({ timeout: 10000 })
 			await expect(moduleSwitch(page, 'CRM')).not.toBeChecked()
 
@@ -115,7 +115,7 @@ test.describe('Settings — Extensions page', () => {
 			}
 
 			await expect(
-				page.getByText('Extensions add object types and tabs for this workspace').first(),
+				page.getByText('Extensions add item types and tabs for this workspace').first(),
 			).toBeVisible()
 			await expect(moduleSwitch(page, 'Work')).toBeChecked()
 			await expect(moduleSwitch(page, 'CRM')).toBeChecked()

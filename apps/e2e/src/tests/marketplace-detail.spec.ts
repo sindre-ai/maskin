@@ -16,7 +16,7 @@ test.describe('Marketplace detail pages', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			const firstCard = loopsSection.locator('article').first()
@@ -42,7 +42,7 @@ test.describe('Marketplace detail pages', () => {
 			// operator, so only the sections that always render from real data are
 			// asserted here — the "asks you" classifier is covered by unit tests.
 			const detail = page.getByRole('main')
-			await expect(detail.getByText('The loop, once installed')).toBeVisible()
+			await expect(detail.getByText('The flow, once installed')).toBeVisible()
 			await expect(detail.getByText('What it brings')).toBeVisible()
 			await expect(detail.getByText('How it runs')).toBeVisible()
 			await expect(detail.getByText('Version')).toBeVisible()
@@ -67,13 +67,13 @@ test.describe('Marketplace detail pages', () => {
 		await page.emulateMedia({ colorScheme: 'dark' })
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 		const firstCard = loopsSection.locator('article').first()
 		await firstCard.getByRole('link').click({ position: { x: 10, y: 10 } })
 
 		const detail = page.getByRole('main')
-		await expect(detail.getByText('The loop, once installed')).toBeVisible({ timeout: 20000 })
+		await expect(detail.getByText('The flow, once installed')).toBeVisible({ timeout: 20000 })
 		await expect(detail.getByText('How it runs')).toBeVisible()
 		await expect(detail.getByText('Permissions')).toBeVisible()
 	})
@@ -190,7 +190,7 @@ test.describe('Marketplace detail pages', () => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 		const firstCard = loopsSection.locator('article').first()
@@ -211,7 +211,7 @@ test.describe('Marketplace detail pages', () => {
 		const detail = page.getByRole('main')
 		await detail.getByRole('button', { name: /^install$/i }).click()
 
-		const overflowButton = detail.getByRole('button', { name: 'Loop actions' })
+		const overflowButton = detail.getByRole('button', { name: 'Flow actions' })
 		await expect(overflowButton).toBeVisible({ timeout: 20000 })
 
 		expect(await page.getByRole('dialog').count()).toBe(0)

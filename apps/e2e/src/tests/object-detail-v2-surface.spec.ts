@@ -42,7 +42,7 @@ test.describe('Object detail — v2 surface', () => {
 			// The detail bar drops the workspace search but keeps the split New
 			// button every screen carries, ordered ⋯ → properties → New.
 			const bar = page.locator('main header').first()
-			await expect(bar.getByRole('link', { name: 'Objects' })).toBeVisible()
+			await expect(bar.getByRole('link', { name: 'Items' })).toBeVisible()
 			await expect(bar.getByText(TITLE)).toBeVisible()
 			await expect(bar.getByRole('button', { name: /more actions/i })).toBeVisible()
 			await expect(bar.getByRole('button', { name: 'Properties', exact: true })).toBeVisible()
@@ -85,7 +85,7 @@ test.describe('Object detail — v2 surface', () => {
 			await expect(page.getByRole('link', { name: 'Linked task' })).toBeVisible()
 			// D11 renders one CTA pair per relationship type, so these are
 			// deliberate multi-matches — pin the first rather than the only.
-			await expect(page.getByRole('button', { name: /Link an object/ }).first()).toBeVisible()
+			await expect(page.getByRole('button', { name: /Link an item/ }).first()).toBeVisible()
 			await expect(page.getByRole('button', { name: /Upload a file/ }).first()).toBeVisible()
 
 			// No horizontal page scroll at this ship-gate viewport.
@@ -117,9 +117,9 @@ test.describe('Object detail — v2 surface', () => {
 		await expect(heading).toHaveText('Before rename', { timeout: 15000 })
 
 		// At rest the title is a real heading — the field only appears on click.
-		await expect(page.getByLabel('Object title')).toHaveCount(0)
+		await expect(page.getByLabel('Item title')).toHaveCount(0)
 		await heading.click()
-		const titleField = page.getByLabel('Object title')
+		const titleField = page.getByLabel('Item title')
 		await expect(titleField).toBeVisible()
 		await titleField.fill('After rename')
 		await titleField.press('Enter')
@@ -144,7 +144,7 @@ test.describe('Object detail — v2 surface', () => {
 		await expect(page.getByText('Rewritten body.')).toBeVisible()
 	})
 
-	// "Reference an object" attaches removable chips that post as real
+	// "Reference an item" attaches removable chips that post as real
 	// references on the timeline.
 	test('the composer references an object and it lands on the timeline', async ({
 		page,
@@ -167,8 +167,8 @@ test.describe('Object detail — v2 surface', () => {
 			timeout: 15000,
 		})
 
-		await page.getByRole('button', { name: /Add a file, object, or mention/i }).click()
-		await page.getByRole('menuitem', { name: /Reference an object/i }).click()
+		await page.getByRole('button', { name: /Add a file, item, or mention/i }).click()
+		await page.getByRole('menuitem', { name: /Reference an item/i }).click()
 		await page.getByPlaceholder('Search items…').fill('Referenced task')
 		await page.getByRole('option').filter({ hasText: 'Referenced task' }).first().click()
 
@@ -237,7 +237,7 @@ test.describe('Object detail — v2 surface', () => {
 			})
 
 			const bar = page.locator('main header').first()
-			await expect(bar.getByRole('link', { name: 'Objects' })).toBeVisible()
+			await expect(bar.getByRole('link', { name: 'Items' })).toBeVisible()
 			await expect(bar.getByRole('button', { name: 'Properties', exact: true })).toBeVisible()
 			await expect(page.locator('[data-hero-status-trigger]')).toBeVisible()
 			await expect(page.getByPlaceholder('Comment — / commands, @ mentions')).toBeVisible()

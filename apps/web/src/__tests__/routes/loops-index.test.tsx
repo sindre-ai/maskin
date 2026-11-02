@@ -222,7 +222,7 @@ describe('LoopsPage', () => {
 	it('renders the empty state when there are no loops', () => {
 		render(<LoopsPage />)
 
-		expect(screen.getByText('No loops running here yet')).toBeInTheDocument()
+		expect(screen.getByText('No flows running here yet')).toBeInTheDocument()
 	})
 
 	it('lists standalone triggers for a workspace that has triggers but no loops', () => {
@@ -233,10 +233,10 @@ describe('LoopsPage', () => {
 
 		render(<LoopsPage />)
 
-		expect(screen.getByText('Not tied to a loop')).toBeInTheDocument()
+		expect(screen.getByText('Not tied to a flow')).toBeInTheDocument()
 		expect(screen.getByText('Nightly sweep')).toBeInTheDocument()
 		// The loops empty state renders inline as a section, not as the whole page.
-		expect(screen.getByText('No loops running here yet')).toBeInTheDocument()
+		expect(screen.getByText('No flows running here yet')).toBeInTheDocument()
 	})
 
 	it('shows an attention chip that narrows the list to loops waiting on you', async () => {
@@ -244,7 +244,7 @@ describe('LoopsPage', () => {
 		mockUseLoops.mockReturnValue({
 			data: [
 				buildLoop({ id: 'l-wait', name: 'Needs a decision', pill: 'waiting_on_you' }),
-				buildLoop({ id: 'l-calm', name: 'Calm loop' }),
+				buildLoop({ id: 'l-calm', name: 'Calm flow' }),
 			],
 			isLoading: false,
 		})
@@ -252,15 +252,15 @@ describe('LoopsPage', () => {
 
 		await user.click(screen.getByRole('button', { name: /1 needs you/ }))
 		expect(screen.getByText('Needs a decision')).toBeInTheDocument()
-		expect(screen.queryByText('Calm loop')).not.toBeInTheDocument()
+		expect(screen.queryByText('Calm flow')).not.toBeInTheDocument()
 	})
 
 	it('groups loops under their first tag, A to Z, untagged last', () => {
 		mockUseLoops.mockReturnValue({
 			data: [
-				buildLoop({ id: 'l1', name: 'Seo loop', tags: ['Marketing'] }),
-				buildLoop({ id: 'l2', name: 'Delivery loop', tags: ['Product'] }),
-				buildLoop({ id: 'l3', name: 'Loose loop', tags: [] }),
+				buildLoop({ id: 'l1', name: 'Seo flow', tags: ['Marketing'] }),
+				buildLoop({ id: 'l2', name: 'Delivery flow', tags: ['Product'] }),
+				buildLoop({ id: 'l3', name: 'Loose flow', tags: [] }),
 			],
 			isLoading: false,
 		})
@@ -272,9 +272,9 @@ describe('LoopsPage', () => {
 
 	describe('search and Display filters', () => {
 		const loops = () => [
-			buildLoop({ id: 'l1', name: 'Seo loop', tags: ['Marketing'], content: 'Ranks pages' }),
-			buildLoop({ id: 'l2', name: 'Delivery loop', tags: ['Product'] }),
-			buildLoop({ id: 'l3', name: 'Loose loop', tags: [] }),
+			buildLoop({ id: 'l1', name: 'Seo flow', tags: ['Marketing'], content: 'Ranks pages' }),
+			buildLoop({ id: 'l2', name: 'Delivery flow', tags: ['Product'] }),
+			buildLoop({ id: 'l3', name: 'Loose flow', tags: [] }),
 		]
 
 		it('narrows the list by every typed word, in name, description or tag', async () => {
@@ -286,9 +286,9 @@ describe('LoopsPage', () => {
 				screen.getAllByRole('searchbox', { name: 'Search flows' })[0],
 				'ranks marketing',
 			)
-			expect(screen.getByText('Seo loop')).toBeInTheDocument()
-			expect(screen.queryByText('Delivery loop')).not.toBeInTheDocument()
-			expect(screen.queryByText('Loose loop')).not.toBeInTheDocument()
+			expect(screen.getByText('Seo flow')).toBeInTheDocument()
+			expect(screen.queryByText('Delivery flow')).not.toBeInTheDocument()
+			expect(screen.queryByText('Loose flow')).not.toBeInTheDocument()
 		})
 
 		it('says so when nothing matches', async () => {
@@ -314,16 +314,16 @@ describe('LoopsPage', () => {
 			render(<LoopsPage />)
 
 			await user.click(screen.getByRole('button', { name: 'Area: Product' }))
-			expect(screen.getByText('Delivery loop')).toBeInTheDocument()
-			expect(screen.queryByText('Seo loop')).not.toBeInTheDocument()
+			expect(screen.getByText('Delivery flow')).toBeInTheDocument()
+			expect(screen.queryByText('Seo flow')).not.toBeInTheDocument()
 
 			await user.click(screen.getByRole('button', { name: 'Area: Product' }))
-			expect(screen.getByText('Seo loop')).toBeInTheDocument()
+			expect(screen.getByText('Seo flow')).toBeInTheDocument()
 		})
 
 		it('has no Area row while no flow carries a tag', () => {
 			mockUseLoops.mockReturnValue({
-				data: [buildLoop({ id: 'l3', name: 'Loose loop', tags: [] })],
+				data: [buildLoop({ id: 'l3', name: 'Loose flow', tags: [] })],
 				isLoading: false,
 			})
 			render(<LoopsPage />)
@@ -335,7 +335,7 @@ describe('LoopsPage', () => {
 			mockUseLoops.mockReturnValue({
 				data: [
 					buildLoop({ id: 'l-wait', name: 'Needs a decision', pill: 'waiting_on_you' }),
-					buildLoop({ id: 'l-calm', name: 'Calm loop' }),
+					buildLoop({ id: 'l-calm', name: 'Calm flow' }),
 				],
 				isLoading: false,
 			})
@@ -343,7 +343,7 @@ describe('LoopsPage', () => {
 
 			await user.click(screen.getByRole('button', { name: 'Show: Needs you' }))
 			expect(screen.getByText('Needs a decision')).toBeInTheDocument()
-			expect(screen.queryByText('Calm loop')).not.toBeInTheDocument()
+			expect(screen.queryByText('Calm flow')).not.toBeInTheDocument()
 		})
 	})
 
@@ -363,7 +363,7 @@ describe('LoopsPage', () => {
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
 		// The section always renders — /triggers redirects here, so it is the only
 		// way in; with nothing standalone it shows its own empty state.
-		expect(screen.getByText('Not tied to a loop')).toBeInTheDocument()
+		expect(screen.getByText('Not tied to a flow')).toBeInTheDocument()
 		expect(screen.getByText('No workspace-wide automations yet')).toBeInTheDocument()
 	})
 
@@ -383,7 +383,7 @@ describe('LoopsPage', () => {
 
 		render(<LoopsPage />)
 
-		expect(screen.getByText('Not tied to a loop')).toBeInTheDocument()
+		expect(screen.getByText('Not tied to a flow')).toBeInTheDocument()
 		expect(screen.getByText('Shared agent sweep')).toBeInTheDocument()
 	})
 
@@ -446,7 +446,7 @@ describe('LoopsPage', () => {
 		mockUseLoops.mockReturnValue({ data: undefined, isLoading: true })
 
 		const { container } = render(<LoopsPage />)
-		expect(screen.queryByText('No loops running here yet')).not.toBeInTheDocument()
+		expect(screen.queryByText('No flows running here yet')).not.toBeInTheDocument()
 		expect(container.querySelector('.animate-pulse')).toBeInTheDocument()
 	})
 
@@ -461,8 +461,8 @@ describe('LoopsPage', () => {
 
 		render(<LoopsPage />)
 
-		expect(screen.getByText("Couldn't load loops")).toBeInTheDocument()
-		expect(screen.queryByText('No loops running here yet')).not.toBeInTheDocument()
+		expect(screen.getByText("Couldn't load flows")).toBeInTheDocument()
+		expect(screen.queryByText('No flows running here yet')).not.toBeInTheDocument()
 	})
 
 	it('names the loop an assigned-in-chat row feeds, via the agent that runs it', () => {

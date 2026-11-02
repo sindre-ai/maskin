@@ -19,7 +19,7 @@ export function AgentLoopsSection({ agent }: { agent: ActorResponse }) {
 		() =>
 			(loops ?? [])
 				.filter((loop) => loop.agentIds.includes(agent.id))
-				.map((loop) => ({ loop, name: loop.name?.trim() || 'Untitled loop' }))
+				.map((loop) => ({ loop, name: loop.name?.trim() || 'Untitled flow' }))
 				.sort((a, b) =>
 					a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }),
 				),

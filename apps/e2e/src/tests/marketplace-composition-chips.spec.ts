@@ -20,7 +20,7 @@ test.describe('Marketplace composition chip row', () => {
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
 			// Wait for the Loops section (bundle-card container) to render.
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			// AC: every bundle card shows the composition chip row. The Loops
@@ -75,7 +75,7 @@ test.describe('Marketplace composition chip row', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			// Mockup 2593: a loop card that has no bundle composition to show
@@ -122,7 +122,7 @@ test.describe('Marketplace composition chip row', () => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 		const firstChip = loopsSection.locator(CHIP_ROW).first().locator('> *').first()

@@ -45,7 +45,7 @@ const TYPE_VALUES = new Set<FilterValue>(['loops', 'actor', 'trigger', 'skill', 
 const TYPE_ITEMS: FilterItem[] = [
 	{ value: 'actor', label: 'Agents' },
 	{ value: 'integration', label: 'Integrations' },
-	{ value: 'loops', label: 'Loops' },
+	{ value: 'loops', label: 'Flows' },
 	{ value: 'skill', label: 'Skills' },
 	{ value: 'trigger', label: 'Triggers' },
 ]
@@ -235,7 +235,7 @@ function MarketplaceRoute() {
 					</div>
 				) : isMarketplaceEmpty ? (
 					<EmptyState
-						title="No loops yet"
+						title="No flows yet"
 						description="Check back once Maskin publishes the first one."
 					/>
 				) : isFilterEmpty ? (

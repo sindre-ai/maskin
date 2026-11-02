@@ -229,7 +229,7 @@ describe('AgentSessionsSection', () => {
 	})
 
 	it('has no dropdown: Open shows the run in the side panel and closing it removes the panel', async () => {
-		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Loop hygiene' }])
+		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Flow hygiene' }])
 		const agent = buildActorResponse({ id: 'agent-exp', type: 'agent' })
 		sessionsData.mockReturnValue([
 			buildSessionResponse({
@@ -245,15 +245,15 @@ describe('AgentSessionsSection', () => {
 		expect(screen.queryByRole('button', { name: /view details|full log/i })).not.toBeInTheDocument()
 		expect(screen.queryByText(/Panel for/)).not.toBeInTheDocument()
 
-		await userEvent.click(screen.getByRole('button', { name: 'Open Loop hygiene' }))
-		expect(screen.getByText('Panel for s-live titled Loop hygiene')).toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Open Flow hygiene' }))
+		expect(screen.getByText('Panel for s-live titled Flow hygiene')).toBeInTheDocument()
 
 		await userEvent.click(screen.getByRole('button', { name: 'Close panel' }))
 		expect(screen.queryByText(/Panel for/)).not.toBeInTheDocument()
 	})
 
 	it('titles a triggered session with the trigger name and restarts it with the full prompt', async () => {
-		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Loop hygiene' }])
+		triggersData.mockReturnValue([{ id: 'trg-1', name: 'Flow hygiene' }])
 		const agent = buildActorResponse({ id: 'agent-t', type: 'agent' })
 		const prompt = '**Loop hygiene — first step**\nEnsure this task is linked.'
 		sessionsData.mockReturnValue([
@@ -267,7 +267,7 @@ describe('AgentSessionsSection', () => {
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(screen.getByText('Loop hygiene')).toBeInTheDocument()
+		expect(screen.getByText('Flow hygiene')).toBeInTheDocument()
 		expect(screen.queryByText(/first step/)).not.toBeInTheDocument()
 
 		await userEvent.click(screen.getAllByRole('button', { name: /restart/i })[0])

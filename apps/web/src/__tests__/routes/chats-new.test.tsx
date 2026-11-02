@@ -154,7 +154,7 @@ describe('New chat', () => {
 	it('does not render the removed CHAT_SUGGESTIONS list', () => {
 		render(<NewChatPage />)
 		expect(screen.queryByText('What needs a decision from me today?')).not.toBeInTheDocument()
-		expect(screen.queryByText('Summarise what the loops did overnight')).not.toBeInTheDocument()
+		expect(screen.queryByText('Summarise what the flows did overnight')).not.toBeInTheDocument()
 	})
 
 	it('seeds the workspace default chat agent as an initial chip', async () => {

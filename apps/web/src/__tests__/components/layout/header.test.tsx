@@ -137,7 +137,7 @@ describe('Header', () => {
 		render(<Header />)
 
 		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
-		await user.click(screen.getByRole('menuitem', { name: /new loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /new flow/i }))
 
 		expect(screen.getByTestId('create-picker')).toHaveAttribute('data-type', 'loop')
 	})
@@ -308,11 +308,11 @@ describe('Header', () => {
 		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
 
 		expect(screen.getByRole('menuitem', { name: /new chat/i })).toBeInTheDocument()
-		expect(screen.queryByText('Create an object')).not.toBeInTheDocument()
+		expect(screen.queryByText('Create an item')).not.toBeInTheDocument()
 		expect(screen.queryByRole('menuitem', { name: /new insight/i })).not.toBeInTheDocument()
 	})
 
-	it('keeps the "Create an object" section on the objects list surface', async () => {
+	it('keeps the "Create an item" section on the objects list surface', async () => {
 		vi.mocked(useMatches).mockReturnValue([
 			{
 				routeId: '/_authed/$workspaceId/objects/',
@@ -341,7 +341,7 @@ describe('Header', () => {
 		render(<Header />)
 		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
 
-		expect(screen.getByText('Create an object')).toBeInTheDocument()
+		expect(screen.getByText('Create an item')).toBeInTheDocument()
 		expect(screen.getByRole('menuitem', { name: /new insight/i })).toBeInTheDocument()
 	})
 

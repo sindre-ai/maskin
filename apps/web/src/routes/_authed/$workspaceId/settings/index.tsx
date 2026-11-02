@@ -217,7 +217,7 @@ function PrivacySection() {
 	return (
 		<SettingsSection
 			title="Privacy and data"
-			intro="Usage events feed the Synthesizer so the team sees how the workspace is really used. No object titles, no content, no PII."
+			intro="Usage events feed the Synthesizer so the team sees how the workspace is really used. No item titles, no content, no PII."
 		>
 			<SettingsRow
 				title="Share product usage with Maskin"

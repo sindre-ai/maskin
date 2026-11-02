@@ -30,9 +30,9 @@ interface RouteConfig {
 const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/': { label: 'For you' },
 	'/_authed/$workspaceId/search': { label: 'Search' },
-	'/_authed/$workspaceId/objects/': { label: 'Objects', primary: 'object' },
+	'/_authed/$workspaceId/objects/': { label: 'Items', primary: 'object' },
 	'/_authed/$workspaceId/objects/$objectId': {
-		label: 'Object Details',
+		label: 'Item Details',
 		parent: '/_authed/$workspaceId/objects/',
 		primary: 'object',
 	},
@@ -79,7 +79,7 @@ const routeConfig: Record<string, RouteConfig> = {
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/objects/': {
-		label: 'Objects',
+		label: 'Item types',
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/objects/$propertyName': {
@@ -99,14 +99,14 @@ const routeConfig: Record<string, RouteConfig> = {
 	// route, which cannot know either. A hardcoded middle crumb would be wrong on
 	// every loop-owned trigger, so the chain stays `Loops › name`. Restoring it
 	// means letting the page publish its own crumb, since only it has the loop.
-	'/_authed/$workspaceId/loops/': { label: 'Loops', primary: 'loop' },
+	'/_authed/$workspaceId/loops/': { label: 'Flows', primary: 'loop' },
 	'/_authed/$workspaceId/loops/new': {
-		label: 'New loop',
+		label: 'New flow',
 		parent: '/_authed/$workspaceId/loops/',
 		primary: 'loop',
 	},
 	'/_authed/$workspaceId/loops/$loopId': {
-		label: 'Loop Details',
+		label: 'Flow Details',
 		parent: '/_authed/$workspaceId/loops/',
 		primary: 'loop',
 	},

@@ -627,9 +627,9 @@ export function SessionDetailPanel({
 							) : (
 								<div className="flex flex-col gap-3">
 									{producedObjects.length > 0 ? (
-										<section aria-label={`Objects · ${producedObjects.length}`}>
+										<section aria-label={`Items · ${producedObjects.length}`}>
 											<h5 className="mb-1.5 text-[10.5px] font-mono uppercase tracking-[0.09em] text-muted-foreground">
-												Objects · {producedObjects.length}
+												Items · {producedObjects.length}
 											</h5>
 											<div className="space-y-1">
 												{producedObjects.map((obj) => (

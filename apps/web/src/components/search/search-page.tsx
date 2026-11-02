@@ -107,7 +107,7 @@ export function SearchPageV2() {
 	const typeOptions = useMemo<TypeOption[]>(
 		() => [
 			{ key: 'chat', label: 'Chats' },
-			{ key: 'loop', label: 'Loops' },
+			{ key: 'loop', label: 'Flows' },
 			{ key: 'agent', label: 'Agents' },
 			{ key: 'person', label: 'People' },
 			...objectTypes
@@ -453,7 +453,7 @@ export function SearchPageV2() {
 							) : null}
 							{participants.length > 0 ? (
 								<p className="text-[11.5px] text-muted-foreground">
-									Showing chats only. Loops, agents and objects have no people to filter by.
+									Showing chats only. Flows, agents and items have no people to filter by.
 								</p>
 							) : null}
 							{filtersActive ? (
@@ -602,7 +602,7 @@ function SearchIdleState({
 				emphasis="page"
 				className="py-0"
 				title="Search the workspace"
-				description="Chats, loops, agents, people, objects and automations, everything you and the agents have touched, in one result list you can filter."
+				description="Chats, flows, agents, people, items and automations, everything you and the agents have touched, in one result list you can filter."
 				action={
 					<div className="flex flex-col items-center gap-4">
 						{recentSearches.length > 0 ? (
@@ -625,7 +625,7 @@ function SearchIdleState({
 						) : null}
 						<p className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-dashed border-input px-3 py-2 text-[11.5px] text-muted-foreground">
 							<span>
-								Type a word like “loop” or “done”, then{' '}
+								Type a word like “flow” or “done”, then{' '}
 								{/* A phone has no Tab key: the suggestion that appears is the tap target. */}
 								<span className="max-sm:hidden pointer-coarse:hidden">press Tab</span>
 								<span className="hidden max-sm:inline pointer-coarse:inline">
@@ -642,8 +642,8 @@ function SearchIdleState({
 			/>
 
 			{recentObjects.length > 0 ? (
-				<section aria-label="Recent objects" className="w-full max-w-[520px]">
-					<h2 className="eyebrow pb-2">Recent objects</h2>
+				<section aria-label="Recent items" className="w-full max-w-[520px]">
+					<h2 className="eyebrow pb-2">Recent items</h2>
 					<ul className="flex flex-col">
 						{recentObjects.map((obj, index) => (
 							<li key={obj.id}>

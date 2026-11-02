@@ -51,7 +51,7 @@ interface NewMenuProps {
 	// Only step that varies by page — the global header opens the docked chat
 	// panel, the For You page opens its own inline conversation composer.
 	onNewChat: () => void
-	// Object-detail pages drop the "Create an object" section — landing users
+	// Object-detail pages drop the "Create an item" section — landing users
 	// on the generic object picker is disorienting when they're mid-edit on a
 	// specific object. New chat/loop/agent/search stay.
 	hideObjectSection?: boolean
@@ -77,8 +77,8 @@ export type PrimaryKind = 'chat' | 'object' | 'loop' | 'agent'
 // contextual behaviour — E2E specs target the primary half by these names.
 const PRIMARY_LABEL: Record<PrimaryKind, string> = {
 	chat: 'New chat',
-	object: 'New object',
-	loop: 'New loop',
+	object: 'New item',
+	loop: 'New flow',
 	agent: 'New agent',
 }
 
@@ -87,7 +87,7 @@ const PRIMARY_LABEL: Record<PrimaryKind, string> = {
 const PRIMARY_TITLE: Record<PrimaryKind, string> = {
 	chat: 'New chat — your agents already have the context',
 	object: 'New insight — capture what you noticed',
-	loop: 'New loop — describe it in a sentence',
+	loop: 'New flow — describe it in a sentence',
 	agent: 'New agent — describe what it should own',
 }
 
@@ -202,7 +202,7 @@ export function NewMenu({
 							{!hideObjectSection && (
 								<>
 									<DropdownMenuSeparator />
-									<div className="eyebrow px-2 py-1">Create an object</div>
+									<div className="eyebrow px-2 py-1">Create an item</div>
 									{objectTypes.map((item) => {
 										const description = objectTypeDescriptions[item.value]
 										return (
@@ -233,7 +233,7 @@ export function NewMenu({
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'loop' })}>
 								<RefreshCw size={14} className="text-muted-foreground" />
-								New loop
+								New flow
 							</DropdownMenuItem>
 							<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'agent' })}>
 								<Bot size={14} className="text-muted-foreground" />

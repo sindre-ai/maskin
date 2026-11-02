@@ -58,7 +58,7 @@ describe('ListRow select affordance', () => {
 	// Mockup 756–758: a star at rest, a checkbox once anything is selected.
 	it('shows the resting star alongside a hover-revealed checkbox when nothing is selected', () => {
 		renderRow({ anySelected: false, isSelected: false })
-		expect(screen.getByRole('button', { name: 'Star this object' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Star this item' })).toBeInTheDocument()
 		const checkbox = screen.getByRole('checkbox', { name: 'Select row' })
 		expect(checkbox).toHaveAttribute('data-state', 'unchecked')
 		expect(checkbox.className).toContain('opacity-0')
@@ -76,7 +76,7 @@ describe('ListRow select affordance', () => {
 		const wrapper = checkbox.parentElement
 		expect(wrapper?.className).toContain('max-[1024.02px]:p-3.5')
 		expect(wrapper?.className).toContain('max-[1024.02px]:-m-3.5')
-		const star = screen.getByRole('button', { name: 'Star this object' })
+		const star = screen.getByRole('button', { name: 'Star this item' })
 		expect(star.className).not.toContain('max-[1024.02px]:hidden')
 		expect(star.className).not.toContain('pointer-coarse:hidden')
 		expect(star.className).not.toContain('after:')
@@ -111,7 +111,7 @@ describe('ListRow select affordance', () => {
 	it('drops opacity to 60% while the server round-trip is in flight', () => {
 		mockStarState = { isStarred: false, isSaving: true }
 		renderRow({ anySelected: false, isSelected: false })
-		const star = screen.getByRole('button', { name: 'Star this object' })
+		const star = screen.getByRole('button', { name: 'Star this item' })
 		expect(star.className).toContain('opacity-60')
 	})
 
@@ -209,12 +209,12 @@ describe('ListRow pending ask', () => {
 describe('ListRow D1 · loop chip', () => {
 	it('renders a "↺ Loop · {name}" chip after the title when the row is in a loop', () => {
 		renderRow({ loop: { id: 'loop-1', name: 'signal-triage' } })
-		expect(screen.getByText(/↺ Loop · signal-triage/)).toBeInTheDocument()
+		expect(screen.getByText(/↺ Flow · signal-triage/)).toBeInTheDocument()
 	})
 
 	it('renders no chip (and reserves no space) when the row is in no loop', () => {
 		renderRow({ loop: undefined })
-		expect(screen.queryByText(/↺ Loop/)).toBeNull()
+		expect(screen.queryByText(/↺ Flow/)).toBeNull()
 	})
 })
 

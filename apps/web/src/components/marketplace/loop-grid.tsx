@@ -42,7 +42,7 @@ export function LoopGrid({
 }) {
 	const filter = typeFilter ?? 'all'
 
-	// Multi-type loops (bundles) go in the "Loops" section.
+	// Multi-type loops (bundles) go in the "Flows" section.
 	// Single-type loops go in their matching typed section as loop cards.
 	const multiTypeLoops = loops.filter((l) => l.item_types.length > 1)
 	const singleTypeLoops = loops.filter((l) => l.item_types.length === 1)
@@ -72,8 +72,8 @@ export function LoopGrid({
 	return (
 		<div className={cn('space-y-8', className)}>
 			{hasLoops && (
-				<section className="space-y-3" aria-label="Loops">
-					<h2 className="text-sm font-semibold text-foreground">Loops</h2>
+				<section className="space-y-3" aria-label="Flows">
+					<h2 className="text-sm font-semibold text-foreground">Flows</h2>
 					<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))]">
 						{multiTypeLoops.map((loop) => (
 							<MarketplaceLoopCard

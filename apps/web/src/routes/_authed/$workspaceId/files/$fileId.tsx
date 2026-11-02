@@ -622,7 +622,7 @@ function FileViewerPage() {
 			)}
 			<Sheet open={linkedOpen} onOpenChange={setLinkedOpen}>
 				<SheetContent side="right" className="w-[640px] max-w-full overflow-y-auto sm:max-w-none">
-					<SheetTitle className="sr-only">Linked objects and files</SheetTitle>
+					<SheetTitle className="sr-only">Linked items and files</SheetTitle>
 					<div className="pt-12">
 						<LinkedObjectsForFile fileId={file.id} />
 					</div>
@@ -696,12 +696,7 @@ function TopBarActions({
 			>
 				<Download size={14} />
 			</Button>
-			<Button
-				variant="ghost"
-				size="sm"
-				onClick={onOpenLinked}
-				aria-label="Linked objects and files"
-			>
+			<Button variant="ghost" size="sm" onClick={onOpenLinked} aria-label="Linked items and files">
 				<Link2 size={14} />
 				<span className="hidden md:inline">Linked</span>
 			</Button>

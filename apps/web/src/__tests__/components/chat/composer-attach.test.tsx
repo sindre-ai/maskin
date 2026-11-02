@@ -79,7 +79,7 @@ describe('Composer file-attach input', () => {
 		renderComposer()
 		expect(screen.getByRole('button', { name: 'Attach file' })).toBeInTheDocument()
 		expect(
-			screen.queryByRole('button', { name: 'Add an object, file, or mention' }),
+			screen.queryByRole('button', { name: 'Add an item, file, or mention' }),
 		).not.toBeInTheDocument()
 	})
 

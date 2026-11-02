@@ -334,12 +334,12 @@ function GalleryPage() {
 				<Section
 					eyebrow="Patterns · Cards"
 					title="Cards, empty states, loading"
-					lead="The card pattern the Objects list and For-you feed both compose against."
+					lead="The card pattern the Items list and For-you feed both compose against."
 				>
 					<div className="grid gap-4 md:grid-cols-2">
 						<Card>
 							<CardHeader>
-								<CardTitle>Objects list row</CardTitle>
+								<CardTitle>Items list row</CardTitle>
 								<CardDescription>
 									Compact card used by list surfaces to hold a title, chips, and trailing metadata.
 								</CardDescription>
@@ -381,7 +381,7 @@ function GalleryPage() {
 						<MenuItem label="Filter pills" trailing="✓" />
 						<div className="my-1 h-px bg-border" />
 						<div className="eyebrow px-2.5 pb-1 pt-2">Show</div>
-						<MenuItem label="All objects" count={128} trailing="✓" />
+						<MenuItem label="All items" count={128} trailing="✓" />
 						<MenuItem label="Bets" count={12} />
 						<MenuItem label="Tasks" count={64} />
 						<div className="my-1 h-px bg-border" />

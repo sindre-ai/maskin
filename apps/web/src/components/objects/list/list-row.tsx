@@ -168,7 +168,7 @@ export function ListRow({
 				{showStar && (
 					<button
 						type="button"
-						aria-label={isStarred ? 'Starred (click to remove)' : 'Star this object'}
+						aria-label={isStarred ? 'Starred (click to remove)' : 'Star this item'}
 						aria-pressed={isStarred}
 						onClick={(e) => {
 							e.preventDefault()
@@ -292,7 +292,7 @@ export function ListRow({
 								'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
 							)}
 						>
-							↺ Loop · {loop.name}
+							↺ Flow · {loop.name}
 						</Link>
 					)}
 					{betStatus && showBetStatusIndicator && (

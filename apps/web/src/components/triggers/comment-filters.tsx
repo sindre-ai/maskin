@@ -39,7 +39,7 @@ export interface CommentFilterState {
 	/** Mentioned actor id, or null for "Anyone or nobody". Writes a `contains` condition on `mentions`. */
 	mentionedActorId: string | null
 	/**
-	 * Target object type: 'bet' | 'task' | 'insight' | 'any'. 'any' means the
+	 * Target item type: 'bet' | 'task' | 'insight' | 'any'. 'any' means the
 	 * `filter.on_target_type` key is not written at all — the matcher then
 	 * ignores target-type entirely.
 	 */
@@ -66,7 +66,7 @@ const TARGET_TYPE_OPTIONS: {
 	{ value: 'bet', label: 'Bet', dot: 'bet' },
 	{ value: 'task', label: 'Task', dot: 'task' },
 	{ value: 'insight', label: 'Insight', dot: 'insight' },
-	{ value: 'any', label: 'Any object', dot: 'any' },
+	{ value: 'any', label: 'Any item', dot: 'any' },
 ]
 
 const ATTENTION_LEVELS = [1, 2, 3, 4, 5] as const
@@ -419,7 +419,7 @@ function TargetTypePills({
 		<div
 			id={id}
 			role="radiogroup"
-			aria-label="Target object type"
+			aria-label="Target item type"
 			className="flex flex-wrap items-center gap-2"
 		>
 			{TARGET_TYPE_OPTIONS.map((option) => {

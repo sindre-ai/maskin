@@ -216,7 +216,7 @@ function LoopDetailRoute() {
 			{
 				onSuccess: () => {
 					setProposedEdit(null)
-					toast.success('Loop updated')
+					toast.success('Flow updated')
 				},
 				onError: () => toast.error('Could not apply that change'),
 			},
@@ -238,7 +238,7 @@ function LoopDetailRoute() {
 		return (
 			<div className="max-w-3xl mx-auto">
 				<QueryStateError
-					title="Couldn't load loop"
+					title="Couldn't load flow"
 					error={loopError ?? new Error('Something went wrong.')}
 					onRetry={() => refetchLoop()}
 				/>
@@ -250,8 +250,8 @@ function LoopDetailRoute() {
 		return (
 			<div className="max-w-3xl mx-auto">
 				<EmptyState
-					title="Loop not found"
-					description="This loop may have been deleted or you don't have access to it."
+					title="Flow not found"
+					description="This flow may have been deleted or you don't have access to it."
 				/>
 			</div>
 		)
@@ -260,7 +260,7 @@ function LoopDetailRoute() {
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
 	// D3 AskBanner content sourcing: the banner names the loop's first agent.
 	const askAgentActor = firstAgentActor ?? null
-	const askAgentName = askAgentActor?.name ?? 'This loop'
+	const askAgentName = askAgentActor?.name ?? 'This flow'
 	// Copy pattern per SPEC: `{agentName} asks — {askText}`.
 	const askText = 'is waiting on your input.'
 	const askAvatarType = firstAgentActor?.type
@@ -306,14 +306,14 @@ function LoopDetailRoute() {
 	return (
 		<>
 			<PageHeader
-				title={loop.name ?? 'Untitled loop'}
+				title={loop.name ?? 'Untitled flow'}
 				actions={
 					confirmDelete ? (
 						// Inline confirm mirrors the agent-detail delete affordance
 						// (PR #1667) — a Radix Dialog would collide with the
 						// LoopUtteranceInput at the bottom of the page on mobile.
 						<div className="flex items-center gap-2">
-							<span className="text-xs text-error">Delete this loop?</span>
+							<span className="text-xs text-error">Delete this flow?</span>
 							<ViewerTooltip>
 								<Button
 									variant="destructive"
@@ -368,11 +368,11 @@ function LoopDetailRoute() {
 									>
 										{isPaused ? (
 											<>
-												<Play size={14} /> Resume loop
+												<Play size={14} /> Resume flow
 											</>
 										) : (
 											<>
-												<Pause size={14} /> Pause loop
+												<Pause size={14} /> Pause flow
 											</>
 										)}
 									</DropdownMenuItem>
@@ -381,7 +381,7 @@ function LoopDetailRoute() {
 										disabled={!canWrite}
 										className="text-error focus:text-error"
 									>
-										<Trash2 size={14} /> Delete loop
+										<Trash2 size={14} /> Delete flow
 									</DropdownMenuItem>
 								</DropdownMenuContent>
 							</DropdownMenu>
@@ -394,8 +394,8 @@ function LoopDetailRoute() {
 					value={loop.name}
 					entityId={loop.id}
 					onChange={object && canWrite ? handleUpdateTitle : undefined}
-					ariaLabel="Loop title"
-					placeholder="Untitled loop"
+					ariaLabel="Flow title"
+					placeholder="Untitled flow"
 				/>
 
 				{/* The loop's promise, written the same way an object's document body

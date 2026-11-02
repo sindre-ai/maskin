@@ -20,7 +20,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keychain/')
 })
 
 const INTRO =
-	'Credentials your agents use to reach external services. Each key is encrypted at rest, assigned to specific agents or loops, and every use is logged.'
+	'Credentials your agents use to reach external services. Each key is encrypted at rest, assigned to specific agents or flows, and every use is logged.'
 
 function AddCredentialButton({ workspaceId, label }: { workspaceId: string; label: string }) {
 	const canWrite = useCanWrite()

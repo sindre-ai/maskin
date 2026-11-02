@@ -67,7 +67,7 @@ describe('LoopGrid', () => {
 			item_types: ['actor', 'trigger'],
 		})
 		render(<LoopGrid loops={[loop]} workspaceId="ws-1" />, { wrapper: TestWrapper })
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent('Multi-element bundle')
+		expect(screen.getByRole('region', { name: 'Flows' })).toHaveTextContent('Multi-element bundle')
 		expect(screen.queryByRole('region', { name: 'Agents' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
 	})
@@ -85,7 +85,7 @@ describe('LoopGrid', () => {
 		render(<LoopGrid loops={[loop]} items={items} workspaceId="ws-1" />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent('Multi-element bundle')
+		expect(screen.getByRole('region', { name: 'Flows' })).toHaveTextContent('Multi-element bundle')
 		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('My Agent')
 		expect(screen.getByRole('region', { name: 'Triggers' })).toHaveTextContent('My Trigger')
 		// The bundle itself should not appear in typed sections
@@ -111,7 +111,7 @@ describe('LoopGrid', () => {
 		})
 		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('My Agent')
 		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('region', { name: 'Loops' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'Flows' })).not.toBeInTheDocument()
 	})
 
 	it('renders only the Loops section when typeFilter is loops', () => {
@@ -123,7 +123,7 @@ describe('LoopGrid', () => {
 		render(<LoopGrid loops={[loop]} typeFilter="loops" workspaceId="ws-1" />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent('Multi-element bundle')
+		expect(screen.getByRole('region', { name: 'Flows' })).toHaveTextContent('Multi-element bundle')
 		expect(screen.queryByRole('region', { name: 'Agents' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
 	})

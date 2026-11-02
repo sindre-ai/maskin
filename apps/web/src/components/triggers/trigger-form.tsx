@@ -212,7 +212,7 @@ const TRIGGER_TYPE_INFO: Record<
 		icon: Zap,
 		label: 'Event',
 		description:
-			'Fires when something happens — e.g., an object is created, updated, or changes status.',
+			'Fires when something happens — e.g., an item is created, updated, or changes status.',
 		tagline: 'Something happens',
 	},
 	cron: {
@@ -248,6 +248,10 @@ export function readEventStatusTransition(config: Record<string, unknown> | null
 		}
 	}
 	return { fromStatus, toStatus: '__any__' }
+}
+
+function withArticle(word: string): string {
+	return `${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word}`
 }
 
 function buildTriggerSummary({
@@ -307,11 +311,11 @@ function buildTriggerSummary({
 			}
 			return `When a comment is posted ${clauses.join(' ')}, ${agent} will be prompted to act.`
 		}
-		let when = `a ${entityType ?? 'object'} is ${action ?? 'modified'}`
+		let when = `${withArticle(entityType ?? 'item')} is ${action ?? 'modified'}`
 		if (action === 'status_changed') {
 			const from = fromStatus && fromStatus !== '__any__' ? fromStatus : 'any status'
 			const to = toStatus && toStatus !== '__any__' ? toStatus : 'any status'
-			when = `a ${entityType ?? 'object'} changes from ${from} to ${to}`
+			when = `${withArticle(entityType ?? 'item')} changes from ${from} to ${to}`
 		}
 		return `When ${when}, ${agent} will be prompted to act.`
 	}
@@ -978,7 +982,7 @@ export function TriggerForm({
 							<RelativeTime date={initialValues.updatedAt} />
 						</>
 					)}
-					{' · not tied to a loop'}
+					{' · not tied to a flow'}
 				</span>
 			</div>
 
@@ -1071,11 +1075,11 @@ export function TriggerForm({
 								{isCommentedAction ? (
 									<div
 										id="trigger-subject"
-										title="Comment triggers fire on any object type; use the on-target-type filter below to narrow."
-										aria-label="Subject pinned to Any object"
+										title="Comment triggers fire on any item type; use the on-target-type filter below to narrow."
+										aria-label="Subject pinned to Any item"
 										className="flex min-h-11 w-full items-center rounded-md border border-border bg-muted px-3 text-[12.5px] font-semibold text-muted-foreground sm:min-h-9"
 									>
-										Any object
+										Any item
 									</div>
 								) : (
 									<Select value={entityType} onValueChange={handleEntityTypeChange}>

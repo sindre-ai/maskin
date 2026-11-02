@@ -196,7 +196,7 @@ export function ObjectDetailIdentity({
 				value={object.title}
 				entityId={object.id}
 				onChange={onTitleChange}
-				ariaLabel="Object title"
+				ariaLabel="Item title"
 				className="mt-2.5"
 			/>
 		</div>

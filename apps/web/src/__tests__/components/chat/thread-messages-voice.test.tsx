@@ -89,13 +89,13 @@ describe('ThreadMessages — voice call boundaries', () => {
 				actorId: 'me',
 				actorName: 'Me',
 				actorType: 'human',
-				content: 'search for the loops v4 bet',
+				content: 'search for the flows v4 bet',
 				metadata: voice(),
 				createdAt: '2026-09-30T10:05:00.000Z',
 			}),
 			buildMessage({
 				id: 3,
-				content: 'The top hit is Loops v4 polish.',
+				content: 'The top hit is Flows v4 polish.',
 				metadata: voice(),
 				createdAt: '2026-09-30T10:07:14.000Z',
 			}),
@@ -123,7 +123,7 @@ describe('ThreadMessages — voice call boundaries', () => {
 		expect(within(rows[2] as HTMLElement).getByText('Call ended')).toBeInTheDocument()
 		expect(within(rows[0] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
 		expect(within(rows[3] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
-		expect(screen.getByText('search for the loops v4 bet')).toBeInTheDocument()
+		expect(screen.getByText('search for the flows v4 bet')).toBeInTheDocument()
 	})
 
 	it('tags each spoken line of a call without receipts with the "voice" meta tag, and only those', async () => {

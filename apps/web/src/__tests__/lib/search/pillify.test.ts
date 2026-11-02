@@ -17,19 +17,19 @@ const typed = (text: string, base: SearchParts = EMPTY_PARTS) => typeText(base, 
 
 describe('suggest and accept', () => {
 	it('offers a type for the last word and keeps the word on the pill after Tab', () => {
-		const parts = typed('hans loop')
-		expect(suggest(parts, vocab)).toMatchObject({ kind: 'type', value: 'loop', word: 'loop' })
+		const parts = typed('hans flow')
+		expect(suggest(parts, vocab)).toMatchObject({ kind: 'type', value: 'loop', word: 'flow' })
 
 		const accepted = acceptSuggestion(parts, vocab)
-		expect(accepted?.pills).toEqual([{ kind: 'type', value: 'loop', word: 'loop' }])
+		expect(accepted?.pills).toEqual([{ kind: 'type', value: 'loop', word: 'flow' }])
 		expect(queryText(accepted as SearchParts)).toBe('hans')
 	})
 
 	it('Backspace at the start of the input puts the word back into the text', () => {
-		const accepted = acceptSuggestion(typed('hans loop'), vocab) as SearchParts
+		const accepted = acceptSuggestion(typed('hans flow'), vocab) as SearchParts
 		const reverted = backspaceToWord(accepted) as SearchParts
 		expect(reverted.pills).toEqual([])
-		expect(queryText(reverted)).toBe('hans loop')
+		expect(queryText(reverted)).toBe('hans flow')
 	})
 
 	it('does nothing on Backspace when there is no pill, so the key is left alone', () => {
@@ -37,7 +37,7 @@ describe('suggest and accept', () => {
 	})
 
 	it('never converts on its own: typing a type word only produces a suggestion', () => {
-		const parts = typed('hans loop ')
+		const parts = typed('hans flow ')
 		expect(parts.pills).toEqual([])
 		expect(suggest(parts, vocab)).not.toBeNull()
 	})
@@ -85,42 +85,42 @@ describe('suggest and accept', () => {
 
 describe('quoted words, reverted words and dismissal', () => {
 	it('never suggests a quoted word', () => {
-		expect(suggest(typed('"loop"'), vocab)).toBeNull()
+		expect(suggest(typed('"flow"'), vocab)).toBeNull()
 		expect(suggest(typed("'done'"), vocab)).toBeNull()
 		expect(suggest(typed('"in" progress'), vocab)).toBeNull()
 	})
 
 	it('does not suggest a reverted word again until it is edited', () => {
-		const accepted = acceptSuggestion(typed('hans loop'), vocab) as SearchParts
+		const accepted = acceptSuggestion(typed('hans flow'), vocab) as SearchParts
 		const reverted = backspaceToWord(accepted) as SearchParts
 		expect(suggest(reverted, vocab)).toBeNull()
 
 		// Typing more elsewhere keeps the word, so it stays quiet.
-		expect(suggest(setText(reverted, `${reverted.text} x loop`), vocab)).toBeNull()
+		expect(suggest(setText(reverted, `${reverted.text} x flow`), vocab)).toBeNull()
 
 		// Editing the word out lifts the suppression.
 		const edited = setText(reverted, 'hans')
 		expect(edited.suppressed).toBe('')
-		expect(suggest(setText(edited, 'hans loop'), vocab)).not.toBeNull()
+		expect(suggest(setText(edited, 'hans flow'), vocab)).not.toBeNull()
 	})
 
 	it('Esc hides the suggestion until the word is edited', () => {
-		const parts = typed('hans loop')
+		const parts = typed('hans flow')
 		const dismissed = dismissSuggestion(parts, vocab) as SearchParts
 		expect(suggest(dismissed, vocab)).toBeNull()
 		expect(dismissSuggestion(dismissed, vocab)).toBeNull()
 
 		// Retyping the same word without editing it out stays quiet.
-		expect(suggest(setText(dismissed, 'hans loop'), vocab)).toBeNull()
+		expect(suggest(setText(dismissed, 'hans flow'), vocab)).toBeNull()
 
 		// Editing the word out lifts the suppression, so typing it again suggests it.
 		const edited = setText(dismissed, 'hans')
 		expect(suggest(edited, vocab)).toBeNull()
-		expect(suggest(setText(edited, 'hans loop'), vocab)).not.toBeNull()
+		expect(suggest(setText(edited, 'hans flow'), vocab)).not.toBeNull()
 	})
 
 	it('skips detection while an IME composition is active', () => {
-		const parts = typed('hans loop')
+		const parts = typed('hans flow')
 		expect(suggest(parts, vocab, { composing: true })).toBeNull()
 		const explicit = typeText(EMPTY_PARTS, 'type:loop ', vocab, { composing: true })
 		expect(explicit.pills).toEqual([])
@@ -138,7 +138,7 @@ describe('pills made from chips', () => {
 	})
 
 	it('dropPill by value never gives a word back, even for a typed pill', () => {
-		const accepted = acceptSuggestion(typed('hans loop'), vocab) as SearchParts
+		const accepted = acceptSuggestion(typed('hans flow'), vocab) as SearchParts
 		const dropped = dropPill(accepted, 'type', 'loop')
 		expect(dropped.pills).toEqual([])
 		expect(queryText(dropped)).toBe('hans')
@@ -151,7 +151,7 @@ describe('pills made from chips', () => {
 	})
 
 	it('does not suggest a pill that is already there', () => {
-		const parts = addPill(typed('hans loop'), { kind: 'type', value: 'loop' })
+		const parts = addPill(typed('hans flow'), { kind: 'type', value: 'loop' })
 		expect(suggest(parts, vocab)).toBeNull()
 		expect(acceptSuggestion(parts, vocab)).toBeNull()
 	})

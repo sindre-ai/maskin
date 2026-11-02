@@ -97,7 +97,7 @@ export function useCreateRelationship(workspaceId: string, objectId: string) {
 			})
 		},
 		onError: () => {
-			toast.error('Failed to link objects')
+			toast.error('Failed to link items')
 		},
 	})
 }

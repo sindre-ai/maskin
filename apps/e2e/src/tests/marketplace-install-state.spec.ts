@@ -23,7 +23,7 @@ test.describe('Marketplace install state', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			const card = loopsSection.locator('article').first()
@@ -46,7 +46,7 @@ test.describe('Marketplace install state', () => {
 			// The state is server-backed, not local: it survives a reload.
 			await page.reload()
 			const reloadedCard = page
-				.getByRole('region', { name: 'Loops' })
+				.getByRole('region', { name: 'Flows' })
 				.locator('article')
 				.filter({ has: page.getByRole('heading', { name: loopName ?? '', level: 3 }) })
 			await expect(reloadedCard.getByText('Installed')).toBeVisible({ timeout: 20000 })
@@ -64,7 +64,7 @@ test.describe('Marketplace install state', () => {
 			const actionBarCrumbs = detail.getByRole('navigation', { name: 'breadcrumb' }).last()
 			const crumb = actionBarCrumbs.getByRole('link', { name: 'Marketplace', exact: true })
 			await expect(crumb).toBeVisible({ timeout: 20000 })
-			const overflow = detail.getByRole('button', { name: 'Loop actions' })
+			const overflow = detail.getByRole('button', { name: 'Flow actions' })
 			await expect(overflow).toBeVisible()
 			await expect(detail.getByRole('link', MANAGE)).toBeVisible()
 
@@ -100,7 +100,7 @@ test.describe('Marketplace install state', () => {
 
 			await page.goto(`/${account.workspaceId}/marketplace`)
 			const revertedCard = page
-				.getByRole('region', { name: 'Loops' })
+				.getByRole('region', { name: 'Flows' })
 				.locator('article')
 				.filter({ has: page.getByRole('heading', { name: loopName ?? '', level: 3 }) })
 			await expect(revertedCard.getByRole('button', { name: /^install$/i })).toBeVisible({
@@ -120,7 +120,7 @@ test.describe('Marketplace install state', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 		const card = loopsSection.locator('article').first()
 		await card.getByRole('button', { name: /^install$/i }).click()
@@ -128,7 +128,7 @@ test.describe('Marketplace install state', () => {
 
 		await card.getByRole('link', { name: /^Open / }).click({ position: { x: 10, y: 10 } })
 		const detail = page.getByRole('main')
-		await expect(detail.getByText('The loop, once installed')).toBeVisible({ timeout: 20000 })
+		await expect(detail.getByText('The flow, once installed')).toBeVisible({ timeout: 20000 })
 
 		for (const scheme of ['light', 'dark'] as const) {
 			await page.emulateMedia({ colorScheme: scheme })
@@ -154,7 +154,7 @@ test.describe('Marketplace install state', () => {
 
 		// Leave the workspace as we found it.
 		await page.emulateMedia({ colorScheme: 'light' })
-		await detail.getByRole('button', { name: 'Loop actions' }).click()
+		await detail.getByRole('button', { name: 'Flow actions' }).click()
 		await page.getByRole('menuitem', { name: 'Remove from workspace' }).click()
 		await page.getByRole('dialog').getByRole('button', { name: 'Remove' }).click()
 		await expect(detail.getByRole('button', { name: /^install$/i })).toBeVisible({

@@ -35,7 +35,7 @@ const WORKSPACE_NAV: SettingsNavItem[] = [
 ]
 const AGENTS_NAV: SettingsNavItem[] = [
 	{ label: 'Skills', to: '/$workspaceId/settings/skills' },
-	{ label: 'Objects', to: '/$workspaceId/settings/objects' },
+	{ label: 'Item types', to: '/$workspaceId/settings/objects' },
 ]
 const ACCESS_NAV: SettingsNavItem[] = [{ label: 'MCP', to: '/$workspaceId/settings/mcp' }]
 

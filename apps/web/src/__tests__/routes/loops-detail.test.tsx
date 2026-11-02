@@ -172,14 +172,14 @@ describe('LoopDetailRoute — delete affordance', () => {
 		await user.click(screen.getByRole('button', { name: 'More' }))
 	}
 
-	it('opens an inline confirm when Delete loop is selected', async () => {
+	it('opens an inline confirm when Delete flow is selected', async () => {
 		const user = userEvent.setup()
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 
-		expect(screen.getByText(/Delete this loop\?/i)).toBeInTheDocument()
+		expect(screen.getByText(/Delete this flow\?/i)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
 		expect(mockDeleteObject).not.toHaveBeenCalled()
@@ -193,7 +193,7 @@ describe('LoopDetailRoute — delete affordance', () => {
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 		await user.click(screen.getByRole('button', { name: 'Confirm' }))
 
 		expect(mockDeleteObject).toHaveBeenCalledWith('loop-1', expect.any(Object))
@@ -208,10 +208,10 @@ describe('LoopDetailRoute — delete affordance', () => {
 		render(<LoopDetailRoute />)
 
 		await openMenu(user)
-		await user.click(screen.getByRole('menuitem', { name: /Delete loop/i }))
+		await user.click(screen.getByRole('menuitem', { name: /Delete flow/i }))
 		await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
-		expect(screen.queryByText(/Delete this loop\?/i)).not.toBeInTheDocument()
+		expect(screen.queryByText(/Delete this flow\?/i)).not.toBeInTheDocument()
 		expect(mockDeleteObject).not.toHaveBeenCalled()
 		expect(mockNavigate).not.toHaveBeenCalled()
 	})

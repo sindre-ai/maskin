@@ -77,7 +77,7 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 			// The detail bar is the content area's own header — the sidebar also
 			// carries an "Objects" link, so the crumb is scoped to the bar.
 			const detailBar = page.locator('main header').first()
-			await expect(detailBar.getByRole('link', { name: 'Objects' })).toBeVisible()
+			await expect(detailBar.getByRole('link', { name: 'Items' })).toBeVisible()
 			await expect(detailBar.getByText(HEADER_TITLE)).toBeVisible()
 			// The bar replaces the search + New cluster on this route.
 			await expect(detailBar.getByRole('button', { name: /^New$/ })).toHaveCount(0)

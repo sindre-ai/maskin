@@ -18,7 +18,7 @@ export const Route = createFileRoute('/login')({
 			{
 				name: 'description',
 				content:
-					'Sign in to your Maskin workspace to run bets, loops, and agents that make your company AI-native.',
+					'Sign in to your Maskin workspace to run bets, flows, and agents that make your company AI-native.',
 			},
 		],
 	}),

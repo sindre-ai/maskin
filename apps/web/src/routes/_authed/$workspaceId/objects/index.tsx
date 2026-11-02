@@ -177,7 +177,7 @@ const DEFAULT_PINNED_FILTERS = ['quick:fresh', 'quick:starred']
 function ObjectsRoute() {
 	// Below md the Display control is its icon, so the title keeps its room.
 	const isMobile = useIsMobile()
-	useDocumentTitle('Objects')
+	useDocumentTitle('Items')
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })
@@ -198,7 +198,12 @@ function ObjectsRoute() {
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
 	// `none` is the URL's way of saying "explicitly ungrouped".
-	const groupBy = groupByParam === 'none' ? undefined : groupByParam
+	// Nothing saved and no display intent in the URL: the list opens grouped by
+	// Status. Held in state, never written to the URL, so the first render does
+	// not navigate (a navigation remounts the list and breaks Back restoration).
+	const [defaultGrouped, setDefaultGrouped] = useState(false)
+	const groupBy =
+		groupByParam === 'none' ? (defaultGrouped ? DEFAULT_GROUP_BY : undefined) : groupByParam
 	const fresh = freshParam === 1
 	const starred = starredParam === 1
 	// Per the task scope, the "Show" section (with the Include archived toggle)
@@ -276,9 +281,14 @@ function ObjectsRoute() {
 	// page (scroll) before actually restoring.
 	const shouldRestoreScrollRef = useRef(false)
 	const shouldRestoreExpandedRef = useRef(false)
+	// Classified at the first render, not in the mount effect: the back-nav
+	// tracker only counts a popstate from the last 100 ms, and the effect runs
+	// after the whole list (cached rows included) has rendered, which can take
+	// longer than that on a back landing.
+	const [arrivalNavType] = useState(consumeArrivalNavType)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: mount-once event
 	useEffect(() => {
-		const navType = consumeArrivalNavType()
+		const navType = arrivalNavType
 		if (navType === 'back') {
 			shouldRestoreScrollRef.current = true
 			shouldRestoreExpandedRef.current = true
@@ -833,6 +843,7 @@ function ObjectsRoute() {
 	// (status/driver/metadata) cleared, archived hidden, columns back to the
 	// default set. `view` and `q` are deliberately untouched (separate surfaces).
 	const handleResetToDefault = useCallback(() => {
+		setDefaultGrouped(false)
 		const cleared: Record<string, string | undefined> = {
 			sort: DEFAULT_SORT,
 			order: DEFAULT_ORDER,
@@ -937,9 +948,10 @@ function ObjectsRoute() {
 			// The v11 handoff opens Items grouped by Status. Only when nothing is
 			// saved and the URL carries no display intent of its own: a chosen
 			// "None" is persisted as the `none` sentinel, so it is never overridden.
-			if (urlIsInDefaultShape) updateSearch({ groupBy: DEFAULT_GROUP_BY })
+			setDefaultGrouped(urlIsInDefaultShape)
 			return
 		}
+		setDefaultGrouped(false)
 		const s = persisted.settings
 		// View hydrates regardless of urlIsInDefaultShape: `view` is route-local
 		// (not in the URL), so the URL's shape can't conflict with it.
@@ -1418,7 +1430,7 @@ function ObjectsRoute() {
 
 	// Filtered-empty sentence, built from what is actually applied (mockup 1021).
 	const filteredEmptyTitle = useMemo(() => {
-		if (!hasAnyActiveFilter) return 'No objects found'
+		if (!hasAnyActiveFilter) return 'No items found'
 		const noun = typeFilter ? `${typeFilter}s` : 'objects'
 		const clauses: string[] = []
 		if (attention === 'waiting') clauses.push('waiting on you')
@@ -1475,9 +1487,9 @@ function ObjectsRoute() {
 						const result = Array.isArray(data?.results)
 							? data.results.find((item) => item.id === objectId)
 							: undefined
-						if (!result?.ok) toast.error(result?.error ?? 'Failed to move object')
+						if (!result?.ok) toast.error(result?.error ?? 'Failed to move item')
 					},
-					onError: () => toast.error('Failed to move object'),
+					onError: () => toast.error('Failed to move item'),
 				},
 			)
 		},
@@ -1503,7 +1515,7 @@ function ObjectsRoute() {
 						retainOnlyFailed(data)
 						reportBulkResult(data, ids.length, 'updated')
 					},
-					onError: () => toast.error('Failed to update objects'),
+					onError: () => toast.error('Failed to update items'),
 				},
 			)
 		},
@@ -1521,7 +1533,7 @@ function ObjectsRoute() {
 						retainOnlyFailed(data)
 						reportBulkResult(data, ids.length, 'updated')
 					},
-					onError: () => toast.error('Failed to update objects'),
+					onError: () => toast.error('Failed to update items'),
 				},
 			)
 		},
@@ -1541,7 +1553,7 @@ function ObjectsRoute() {
 					retainOnlyFailed(data)
 					reportBulkResult(data, ids.length, 'updated')
 				},
-				onError: () => toast.error('Failed to archive objects'),
+				onError: () => toast.error('Failed to archive items'),
 			},
 		)
 	}, [selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed])
@@ -1577,7 +1589,7 @@ function ObjectsRoute() {
 		const carried = selectedIds.slice(0, MAX_CHAT_OBJECT_REFERENCES)
 		if (selectedIds.length > carried.length) {
 			toast.warning(
-				`Only the first ${carried.length} of ${selectedIds.length} selected objects were attached to the chat.`,
+				`Only the first ${carried.length} of ${selectedIds.length} selected items were attached to the chat.`,
 			)
 		}
 		navigate({
@@ -1820,7 +1832,10 @@ function ObjectsRoute() {
 		order,
 		onOrderChange: (value) => updateSearch({ order: value }),
 		groupBy,
-		onGroupByChange: (value) => updateSearch({ groupBy: value ?? 'none' }),
+		onGroupByChange: (value) => {
+			setDefaultGrouped(false)
+			updateSearch({ groupBy: value ?? 'none' })
+		},
 		includeArchived: supportsIncludeArchived ? includeArchived : undefined,
 		archivedCount,
 		onIncludeArchivedChange: supportsIncludeArchived
@@ -1884,7 +1899,7 @@ function ObjectsRoute() {
 			    active type tab (`All 1,063`), not beside the <h1> — printing it in
 			    both places states the same number twice, three characters apart. */}
 			<PageHeader
-				title="Objects"
+				title="Items"
 				actions={
 					<>
 						{/* The page's own search (wires the URL `q`); the workspace search

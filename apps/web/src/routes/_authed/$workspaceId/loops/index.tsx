@@ -88,7 +88,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 
 function LoopsRoute() {
 	const isMobile = useIsMobile()
-	useDocumentTitle('Loops')
+	useDocumentTitle('Flows')
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const {
@@ -188,7 +188,7 @@ function LoopsRoute() {
 		const map = new Map<string, string>()
 		for (const loop of loops ?? []) {
 			for (const agentId of loop.agentIds) {
-				if (!map.has(agentId)) map.set(agentId, loop.name ?? 'Untitled loop')
+				if (!map.has(agentId)) map.set(agentId, loop.name ?? 'Untitled flow')
 			}
 		}
 		return map
@@ -282,7 +282,7 @@ function LoopsRoute() {
 	return (
 		<div>
 			<PageHeader
-				title="Loops"
+				title="Flows"
 				subtitle={String(loops?.length ?? 0)}
 				actions={
 					<>
@@ -336,7 +336,7 @@ function LoopsRoute() {
 				// A failed fetch must not fall through to "No loops running here
 				// yet" — that would claim the workspace is empty when it isn't.
 				<QueryStateError
-					title="Couldn't load loops"
+					title="Couldn't load flows"
 					error={loopsError ?? new Error('Something went wrong.')}
 					onRetry={() => refetchLoops()}
 				/>
@@ -370,20 +370,20 @@ function LoopsRoute() {
 						) : (
 							<EmptyState
 								icon={<RefreshCw size={22} aria-hidden="true" />}
-								title="No loops running here yet"
-								description="Loops are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
+								title="No flows running here yet"
+								description="Flows are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
 								action={
 									<div className="flex items-center gap-2">
 										{canWrite ? (
 											<Button size="sm" asChild>
 												<Link to="/$workspaceId/loops/new" params={{ workspaceId }}>
-													Start a loop
+													Start a flow
 												</Link>
 											</Button>
 										) : (
 											<ViewerTooltip>
 												<Button size="sm" disabled>
-													Start a loop
+													Start a flow
 												</Button>
 											</ViewerTooltip>
 										)}
@@ -400,7 +400,7 @@ function LoopsRoute() {
 
 					<section>
 						<header className="flex items-center gap-2.5 px-1">
-							<h2 className="text-sm font-bold text-foreground">Not tied to a loop</h2>
+							<h2 className="text-sm font-bold text-foreground">Not tied to a flow</h2>
 							<p className="text-[11px] text-muted-foreground">
 								workspace-wide automations that run on their own
 							</p>
@@ -409,7 +409,7 @@ function LoopsRoute() {
 						{standaloneTriggers.length === 0 ? (
 							<EmptyState
 								title="No workspace-wide automations yet"
-								description="Automations that run on their own — outside any loop — show up here."
+								description="Automations that run on their own — outside any flow — show up here."
 							/>
 						) : (
 							<div className="flex flex-col gap-2 pt-3">

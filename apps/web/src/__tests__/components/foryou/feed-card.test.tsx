@@ -364,7 +364,7 @@ ${tail}`,
 		await waitFor(() =>
 			expect(mockUseEntityEvents).toHaveBeenLastCalledWith('ws-1', 'task-1', { enabled: true }),
 		)
-		expect(screen.getByText('On this object')).toBeInTheDocument()
+		expect(screen.getByText('On this item')).toBeInTheDocument()
 	})
 })
 

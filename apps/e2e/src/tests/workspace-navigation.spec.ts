@@ -8,7 +8,7 @@ test.describe('Workspace Navigation', () => {
 		await expect(page).toHaveURL(new RegExp(account.workspaceId), { timeout: 10000 })
 
 		// Navigate to Objects
-		await page.getByRole('link', { name: 'Objects' }).click()
+		await page.getByRole('link', { name: 'Items' }).click()
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/objects`))
 
 		// Navigate to Agents. The v2 shell drops Agents from the nav list — the

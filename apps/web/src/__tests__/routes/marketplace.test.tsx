@@ -81,7 +81,7 @@ describe('MarketplacePage', () => {
 		render(<MarketplacePage />)
 		// Sum of by_type counts (5 + 2 + 6 + 3 = 16), not COUNTS.total (4 loops).
 		expect(screen.getByRole('button', { name: /^All \(16\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Loops \(4\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Flows \(4\)$/ })).toBeInTheDocument()
 	})
 
 	it('clicking a chip marks it active', async () => {
@@ -141,7 +141,7 @@ describe('MarketplacePage', () => {
 			isError: false,
 		})
 		render(<MarketplacePage />)
-		expect(screen.getByText(/No loops yet/i)).toBeInTheDocument()
+		expect(screen.getByText(/No flows yet/i)).toBeInTheDocument()
 		expect(
 			screen.getByText(/Check back once Maskin publishes the first one\./i),
 		).toBeInTheDocument()
@@ -155,7 +155,7 @@ describe('MarketplacePage', () => {
 						id: 'p1',
 						name: 'Customer Continuous Discovery',
 						slug: 'continuous-discovery',
-						description: 'Loop',
+						description: 'Flow',
 						version: '1.0.0',
 						use_case: 'Discovery',
 						item_types: ['actor', 'trigger'],
@@ -169,7 +169,7 @@ describe('MarketplacePage', () => {
 			isError: false,
 		})
 		render(<MarketplacePage />)
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent(
+		expect(screen.getByRole('region', { name: 'Flows' })).toHaveTextContent(
 			'Customer Continuous Discovery',
 		)
 		expect(screen.queryByRole('region', { name: 'Agents' })).not.toBeInTheDocument()
@@ -184,7 +184,7 @@ describe('MarketplacePage', () => {
 						id: 'p1',
 						name: 'Customer Continuous Discovery',
 						slug: 'continuous-discovery',
-						description: 'Loop',
+						description: 'Flow',
 						version: '1.0.0',
 						use_case: 'Discovery',
 						item_types: ['actor', 'trigger'],
@@ -223,7 +223,7 @@ describe('MarketplacePage', () => {
 			},
 		])
 		render(<MarketplacePage />)
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent(
+		expect(screen.getByRole('region', { name: 'Flows' })).toHaveTextContent(
 			'Customer Continuous Discovery',
 		)
 		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Feedback Agent')
@@ -232,7 +232,7 @@ describe('MarketplacePage', () => {
 
 	it('shows the empty-state copy when the marketplace has no loops', () => {
 		render(<MarketplacePage />)
-		expect(screen.getByText(/No loops yet/i)).toBeInTheDocument()
+		expect(screen.getByText(/No flows yet/i)).toBeInTheDocument()
 	})
 
 	it('renders the free-text filter input inside the filter nav', () => {
@@ -286,7 +286,7 @@ describe('MarketplacePage', () => {
 						id: 'p1',
 						name: 'Discover & Research',
 						slug: 'discover',
-						description: 'Insight loop',
+						description: 'Insight flow',
 						version: '1',
 						use_case: null,
 						item_types: ['actor', 'trigger'],
@@ -297,7 +297,7 @@ describe('MarketplacePage', () => {
 						id: 'p2',
 						name: 'Build & Ship',
 						slug: 'build-ship',
-						description: 'Delivery loop',
+						description: 'Delivery flow',
 						version: '1',
 						use_case: null,
 						item_types: ['actor', 'trigger'],
@@ -311,15 +311,15 @@ describe('MarketplacePage', () => {
 			isError: false,
 		})
 		render(<MarketplacePage />)
-		const loops = screen.getByRole('region', { name: 'Loops' })
+		const loops = screen.getByRole('region', { name: 'Flows' })
 		expect(loops).toHaveTextContent('Discover & Research')
 		expect(loops).toHaveTextContent('Build & Ship')
 
 		const user = userEvent.setup()
 		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
 		await user.type(input, 'discover')
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent('Discover & Research')
-		expect(screen.getByRole('region', { name: 'Loops' })).not.toHaveTextContent('Build & Ship')
+		expect(screen.getByRole('region', { name: 'Flows' })).toHaveTextContent('Discover & Research')
+		expect(screen.getByRole('region', { name: 'Flows' })).not.toHaveTextContent('Build & Ship')
 	})
 
 	it('renders a clean empty state when the query matches nothing', async () => {
@@ -348,9 +348,9 @@ describe('MarketplacePage', () => {
 		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
 		await user.type(input, 'zzzznomatchxyz')
 		expect(screen.getByText('Nothing in the catalog matches those filters.')).toBeInTheDocument()
-		expect(screen.queryByRole('region', { name: 'Loops' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('region', { name: 'Flows' })).not.toBeInTheDocument()
 		expect(screen.queryByText(/Showing all/i)).not.toBeInTheDocument()
-		expect(screen.queryByText(/No loops yet/i)).not.toBeInTheDocument()
+		expect(screen.queryByText(/No flows yet/i)).not.toBeInTheDocument()
 	})
 
 	it('clears the search query and chip filter from the empty state', async () => {

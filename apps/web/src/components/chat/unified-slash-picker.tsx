@@ -499,7 +499,7 @@ function EmptyReferenceState({ hasQuery, query }: { hasQuery: boolean; query: st
 	return (
 		<div className="px-3 py-3 text-center text-muted-foreground text-sm">
 			<Box size={12} aria-hidden className="mx-auto mb-1 opacity-60" />
-			<span>No recent objects yet.</span>
+			<span>No recent items yet.</span>
 		</div>
 	)
 }

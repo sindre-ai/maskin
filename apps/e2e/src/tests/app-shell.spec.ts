@@ -61,8 +61,8 @@ test.describe('App shell', () => {
 		const drawer = page.getByRole('dialog', { name: 'Sidebar' })
 
 		await page.getByRole('button', { name: /toggle sidebar/i }).click()
-		await expect(drawer.getByRole('link', { name: /Loops/ })).toBeVisible()
-		await drawer.getByRole('link', { name: /Loops/ }).click()
+		await expect(drawer.getByRole('link', { name: /Flows/ })).toBeVisible()
+		await drawer.getByRole('link', { name: /Flows/ }).click()
 
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops`))
 		await expect(drawer).toBeHidden()
@@ -151,7 +151,7 @@ test.describe('App shell', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await headerNewTrigger(page).click()
-		// "Create an object" is the group label; the first object menuitem underneath
+		// "Create an item" is the group label; the first object menuitem underneath
 		// it opens the CreatePicker seeded to that subtype.
 		await newMenu(page)
 			.getByRole('menuitem', { name: /^new task/i })

@@ -105,7 +105,7 @@ export function LoopRow({
 			/>
 			<div className="min-w-0 flex-1 leading-[1.35]">
 				<p className="truncate text-[15px] font-bold tracking-[-0.01em] text-foreground">
-					{loop.name ?? 'Untitled loop'}
+					{loop.name ?? 'Untitled flow'}
 				</p>
 				{loop.content && (
 					<p className="mt-0.5 truncate text-[13px] text-muted-foreground">{loop.content}</p>

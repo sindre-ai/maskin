@@ -104,7 +104,7 @@ type ActorAvatarProps = {
 	 *  clockwise ~1.6s/rev; `prefers-reduced-motion: reduce` renders a static
 	 *  300° arc. Wired on the Objects list row to `object.active_session_state
 	 *  === 'running'` — the D2 delta of the v4 polish bet. `aria-label` names
-	 *  the container "Agent working on this object" so screen readers announce
+	 *  the container "Agent working on this item" so screen readers announce
 	 *  the state; the avatar itself keeps its existing name. */
 	working?: boolean
 	/** The v11 list-row driver: a 26px rounded-square plate in the neutral muted
@@ -251,7 +251,7 @@ function WorkingRing({
 	if (!working) return <>{children}</>
 	return (
 		<span
-			aria-label="Agent working on this object"
+			aria-label="Agent working on this item"
 			className="actor-avatar-working-ring relative inline-flex shrink-0 items-center justify-center"
 		>
 			{children}

@@ -72,7 +72,7 @@ beforeEach(() => {
 
 describe('defaultLoopName', () => {
 	it('derives the default loop name from the first object type', () => {
-		expect(defaultLoopName(plan)).toBe('Feedback loop')
+		expect(defaultLoopName(plan)).toBe('Feedback flow')
 	})
 })
 
@@ -80,7 +80,7 @@ describe('LoopPlanCard', () => {
 	it('renders the object types, state chain, triggers, agents and stop point', () => {
 		render(<LoopPlanCard {...baseProps()} />)
 
-		expect(screen.getByText('PROPOSED LOOP')).toBeInTheDocument()
+		expect(screen.getByText('PROPOSED FLOW')).toBeInTheDocument()
 		expect(screen.getByText('not created yet')).toBeInTheDocument()
 		expect(screen.getByText('Feedback')).toBeInTheDocument()
 		expect(screen.getByText('new')).toBeInTheDocument()
@@ -106,7 +106,7 @@ describe('LoopPlanCard', () => {
 		expect(screen.queryByRole('button', { name: /adjust/i })).not.toBeInTheDocument()
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /^start over$/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /create loop/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /create flow/i })).toBeInTheDocument()
 	})
 
 	it('shows the live reading on a type card instead of a fixed label', () => {
@@ -129,7 +129,7 @@ describe('LoopPlanCard', () => {
 								role: 'who hears back',
 								live: 'reused',
 								readOnly: true,
-								note: 'linked, never changed by this loop',
+								note: 'linked, never changed by this flow',
 								stateChain: [],
 								isNew: false,
 							},
@@ -138,7 +138,7 @@ describe('LoopPlanCard', () => {
 				})}
 			/>,
 		)
-		expect(screen.getByText('linked, never changed by this loop')).toBeInTheDocument()
+		expect(screen.getByText('linked, never changed by this flow')).toBeInTheDocument()
 	})
 
 	it('calls onCreate when Create loop is pressed', async () => {
@@ -146,7 +146,7 @@ describe('LoopPlanCard', () => {
 		const onCreate = vi.fn()
 		render(<LoopPlanCard {...baseProps({ onCreate })} />)
 
-		await user.click(screen.getByRole('button', { name: /create loop/i }))
+		await user.click(screen.getByRole('button', { name: /create flow/i }))
 		expect(onCreate).toHaveBeenCalled()
 	})
 
@@ -162,9 +162,7 @@ describe('LoopPlanCard', () => {
 	it('reads the footer summary off the plan rather than fixed copy', () => {
 		render(<LoopPlanCard {...baseProps()} />)
 		expect(
-			screen.getByText(
-				'1 object type · 1 trigger · 1 agent — nothing exists in your workspace yet.',
-			),
+			screen.getByText('1 item type · 1 trigger · 1 agent — nothing exists in your workspace yet.'),
 		).toBeInTheDocument()
 	})
 
@@ -196,7 +194,7 @@ describe('LoopPlanCard — created state', () => {
 
 	it('links to the created loop', () => {
 		render(<LoopPlanCard {...createdProps()} />)
-		expect(screen.getByRole('link', { name: /open loop/i })).toHaveAttribute(
+		expect(screen.getByRole('link', { name: /open flow/i })).toHaveAttribute(
 			'href',
 			'/ws-1/loops/loop-1',
 		)
@@ -257,7 +255,7 @@ describe('LoopPlanCard — NEEDS THESE CONNECTED', () => {
 		const { rerender } = render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByText(/connect slack to enable this loop/i)).toBeInTheDocument()
+		expect(screen.getByText(/connect slack to enable this flow/i)).toBeInTheDocument()
 
 		mockIntegrations.mockReturnValue([
 			{ id: 'int-1', provider: 'slack', status: 'active', config: {} },

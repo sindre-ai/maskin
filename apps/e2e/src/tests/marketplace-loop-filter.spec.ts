@@ -26,7 +26,7 @@ test.describe('Marketplace loop filter', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			const loopsSection = page.getByRole('region', { name: 'Flows' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
 			const visibleFilter = page
@@ -82,7 +82,7 @@ test.describe('Marketplace loop filter', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 		await expect(loopsSection.getByRole('heading', { name: /Discover/ })).toBeVisible()
 		await expect(loopsSection.getByRole('heading', { name: /Build & Ship/ })).toBeVisible()
@@ -109,7 +109,7 @@ test.describe('Marketplace loop filter', () => {
 		await chipNav.getByRole('button', { name: /^Triggers\s/ }).click()
 		const triggersSection = page.getByRole('region', { name: 'Triggers' })
 		await expect(triggersSection).toBeVisible()
-		await expect(page.getByRole('region', { name: 'Loops' })).toHaveCount(0)
+		await expect(page.getByRole('region', { name: 'Flows' })).toHaveCount(0)
 
 		// Add a text query that only matches one of the seeded triggers.
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
@@ -119,7 +119,7 @@ test.describe('Marketplace loop filter', () => {
 		// items whose snapshot matches the query remain.
 		await expect(triggersSection).toBeVisible()
 		await expect(page.getByRole('region', { name: 'Agents' })).toHaveCount(0)
-		await expect(page.getByRole('region', { name: 'Loops' })).toHaveCount(0)
+		await expect(page.getByRole('region', { name: 'Flows' })).toHaveCount(0)
 		const cards = triggersSection.locator('article')
 		const cardCount = await cards.count()
 		expect(cardCount).toBeGreaterThan(0)
@@ -135,16 +135,16 @@ test.describe('Marketplace loop filter', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible({ timeout: 20000 })
+		await expect(page.getByRole('region', { name: 'Flows' })).toBeVisible({ timeout: 20000 })
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('zzzznomatchxyz')
 
 		await expect(page.getByText(EMPTY_COPY)).toBeVisible()
-		await expect(page.getByRole('region', { name: 'Loops' })).toHaveCount(0)
+		await expect(page.getByRole('region', { name: 'Flows' })).toHaveCount(0)
 		await expect(page.getByRole('region', { name: 'Agents' })).toHaveCount(0)
 		// No stale count line — the old marketplace empty-state copy must not leak.
-		await expect(page.getByText(/No loops yet/i)).toHaveCount(0)
+		await expect(page.getByText(/No flows yet/i)).toHaveCount(0)
 		await expect(page.getByText(/Showing all/i)).toHaveCount(0)
 	})
 
@@ -158,7 +158,7 @@ test.describe('Marketplace loop filter', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible({ timeout: 20000 })
+		await expect(page.getByRole('region', { name: 'Flows' })).toBeVisible({ timeout: 20000 })
 
 		// Select the Triggers chip (a section with real seeded items), then drive
 		// the query to "No matches" so the clearable empty state is what shows.
@@ -176,7 +176,7 @@ test.describe('Marketplace loop filter', () => {
 		// filters from the empty state ...'s Workspace").
 		await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
 		await expect(filter).toHaveValue('')
-		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible()
+		await expect(page.getByRole('region', { name: 'Flows' })).toBeVisible()
 		await expect(page.getByRole('region', { name: 'Triggers' })).toBeVisible()
 	})
 
@@ -190,13 +190,13 @@ test.describe('Marketplace loop filter', () => {
 		})
 		await page.goto(`/${account.workspaceId}/marketplace`)
 
-		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible({ timeout: 20000 })
+		await expect(page.getByRole('region', { name: 'Flows' })).toBeVisible({ timeout: 20000 })
 		await noHorizontalOverflow(page)
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('discover')
 		await expect(
-			page.getByRole('region', { name: 'Loops' }).getByRole('heading', { name: /Discover/ }),
+			page.getByRole('region', { name: 'Flows' }).getByRole('heading', { name: /Discover/ }),
 		).toBeVisible()
 		await noHorizontalOverflow(page)
 
