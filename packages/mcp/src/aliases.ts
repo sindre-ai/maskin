@@ -58,6 +58,10 @@ export const ALIASES: readonly AliasRow[] = [
 	{ tool: 'get_session', oldPath: 'session_id', newPath: 'id', kind: 'rename' },
 	{ tool: 'get_actor', oldPath: 'actor_id', newPath: 'id', kind: 'rename' },
 
+	// The same object_id mix-up on the write side: create_comment advertises
+	// entity_id, the object the comment goes on.
+	{ tool: 'create_comment', oldPath: 'object_id', newPath: 'entity_id', kind: 'rename' },
+
 	// id sent to a tool that wants a list of ids.
 	{ tool: 'get_objects', oldPath: 'id', newPath: 'ids', kind: 'wrap' },
 

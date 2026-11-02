@@ -112,7 +112,7 @@ describe('normaliseArgs', () => {
 
 	it('returns the same arguments for a tool with no rows', () => {
 		const input = { content: 'x' }
-		const result = normaliseArgs('create_comment', input)
+		const result = normaliseArgs('get_objects_nonexistent_tool', input)
 		expect(result.args).toBe(input)
 		expect(result.renames).toEqual([])
 		expect(result.bothSent).toBe(false)
@@ -194,6 +194,15 @@ describe('alias table', () => {
 		}
 	})
 
+	it('has the create_comment row, object_id to entity_id', () => {
+		expect(ALIASES).toContainEqual({
+			tool: 'create_comment',
+			oldPath: 'object_id',
+			newPath: 'entity_id',
+			kind: 'rename',
+		})
+	})
+
 	it('has the three skill rows, id to name', () => {
 		for (const tool of [
 			'get_workspace_skill',
@@ -271,6 +280,25 @@ describe('through the real SDK path', () => {
 		expect(both).toEqual(onlyNew)
 		expect(both.requests.some((r) => r.path.includes(U1))).toBe(false)
 		expect(both.requests.some((r) => r.path.includes(U2))).toBe(true)
+	})
+
+	it('conflict: on create_comment the canonical entity_id wins over object_id', async () => {
+		const both = await harness.call('create_comment', {
+			object_id: U1,
+			entity_id: U2,
+			content: 'Done',
+		})
+		const onlyNew = await harness.call('create_comment', { entity_id: U2, content: 'Done' })
+		expect(isValidationError(both)).toBe(false)
+		expect(both).toEqual(onlyNew)
+		expect(both.requests.some((r) => r.path.includes(U1))).toBe(false)
+		expect(both.requests.some((r) => r.path.includes(U2))).toBe(true)
+	})
+
+	it('an unchanged create_comment call with entity_id still posts on that object', async () => {
+		const outcome = await harness.call('create_comment', { entity_id: U1, content: 'Done' })
+		expect(isValidationError(outcome)).toBe(false)
+		expect(outcome.requests.some((r) => r.path.includes(U1))).toBe(true)
 	})
 
 	it('unknown keys are still stripped, not rejected', async () => {
