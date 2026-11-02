@@ -509,10 +509,37 @@ async function runSourceWithTimeout(
 	query: SearchQuery,
 	tokens: string[],
 ): Promise<SourceResult> {
-	return db.transaction(async (tx) => {
-		await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(SOURCE_TIMEOUT_MS))}`)
-		return runSource(tx, source, ctx, query, tokens)
-	})
+	const startedAt = Date.now()
+	let queuedMs = 0
+	try {
+		const result = await db.transaction(async (tx) => {
+			// Time spent waiting for a pooled connection before the transaction began.
+			queuedMs = Date.now() - startedAt
+			await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(SOURCE_TIMEOUT_MS))}`)
+			return runSource(tx, source, ctx, query, tokens)
+		})
+		logger.info('Search source timing', {
+			source: source.key,
+			workspaceId: ctx.workspaceId,
+			words: tokens.length,
+			durationMs: Date.now() - startedAt,
+			queuedMs,
+			rows: result.rows.length,
+			total: result.total,
+			truncated: result.truncated,
+		})
+		return result
+	} catch (error) {
+		logger.info('Search source timing', {
+			source: source.key,
+			workspaceId: ctx.workspaceId,
+			words: tokens.length,
+			durationMs: Date.now() - startedAt,
+			queuedMs,
+			failed: true,
+		})
+		throw error
+	}
 }
 
 /**
@@ -533,6 +560,7 @@ async function runTypoPass(
 	result: SourceResult,
 ): Promise<boolean> {
 	const rules = filterRules(query, source)
+	const startedAt = Date.now()
 	const { truncated, hits } = await db.transaction(async (tx) => {
 		await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(SOURCE_TIMEOUT_MS))}`)
 		const candidates = await rowsOf<RawRow & { p_ok: boolean }>(
@@ -573,6 +601,14 @@ async function runTypoPass(
 			truncated: candidates.length > TYPO_CANDIDATE_CAP,
 			hits: fuzzy.filter(({ raw }) => !strict.has(raw.id)),
 		}
+	})
+
+	logger.info('Search typo pass source timing', {
+		source: source.key,
+		workspaceId: ctx.workspaceId,
+		durationMs: Date.now() - startedAt,
+		typoHits: hits.length,
+		truncated,
 	})
 
 	for (const { raw, distance } of hits) {
@@ -643,11 +679,11 @@ async function addTypoHits(
 	tokens: string[],
 	ok: Array<{ source: SearchSource; result: SourceResult }>,
 	partial: SearchSourceGroup[],
-) {
-	if (!tokens.some(canHaveTypo)) return
+): Promise<boolean> {
+	if (!tokens.some(canHaveTypo)) return false
 	// Below this many strict rows (and below the limit, so every strict row was returned).
 	const strictRows = ok.reduce((sum, { result }) => sum + result.total, 0)
-	if (strictRows >= Math.min(TYPO_PASS_BELOW, query.limit)) return
+	if (strictRows >= Math.min(TYPO_PASS_BELOW, query.limit)) return false
 
 	const startedAt = Date.now()
 	const outcomes = await Promise.allSettled(
@@ -672,6 +708,7 @@ async function addTypoHits(
 			error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
 		})
 	})
+	return true
 }
 
 /**
@@ -686,6 +723,7 @@ export async function runSearch(
 	query: SearchQuery,
 	sources: SearchSource[] = SEARCH_SOURCES,
 ): Promise<SearchResponse> {
+	const startedAt = Date.now()
 	const tokens = searchTokens(query.q)
 	const settled = await Promise.allSettled(
 		sources.map((source) => runSourceWithTimeout(db, source, ctx, query, tokens)),
@@ -708,7 +746,8 @@ export async function runSearch(
 		})
 	})
 
-	await addTypoHits(db, ctx, query, tokens, ok, partial)
+	const strictMs = Date.now() - startedAt
+	const typoPassRan = await addTypoHits(db, ctx, query, tokens, ok, partial)
 
 	const typeFacets: Record<string, number> = {}
 	const statusFacets = emptyStatusCounts()
@@ -744,6 +783,16 @@ export async function runSearch(
 			...sorted(ok.flatMap(({ result }) => result.typoRows.map(({ row }) => row))),
 		].slice(0, query.limit)
 	}
+
+	logger.info('Search timing', {
+		workspaceId: ctx.workspaceId,
+		words: tokens.length,
+		totalMs: Date.now() - startedAt,
+		strictMs,
+		typoPassRan,
+		results: results.length,
+		partial,
+	})
 
 	return {
 		results,
