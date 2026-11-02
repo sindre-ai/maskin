@@ -157,7 +157,7 @@ function ChatsLayout() {
 					// `bg-surface-sunken` is what makes the split read as index +
 					// document rather than two equal halves (mockup 273).
 					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border bg-surface-sunken md:flex">
-						<ConversationList workspaceId={workspaceId} filter={filter} />
+						<ConversationList workspaceId={workspaceId} filter={filter} hideStartLink={isDraft} />
 					</div>
 				)}
 				{/* One gutter variable for the whole thread pane — the header,
