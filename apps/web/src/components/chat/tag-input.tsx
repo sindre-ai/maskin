@@ -329,7 +329,13 @@ export function TagInput({
 				sel?.addRange(range)
 			}
 			placeCaret()
-			requestAnimationFrame(placeCaret)
+			requestAnimationFrame(() => {
+				// A caret already back in the box means typing went on; moving it now would jump it.
+				const sel = document.getSelection()
+				if (sel?.anchorNode && root.contains(sel.anchorNode) && document.activeElement === root)
+					return
+				placeCaret()
+			})
 			setTrigger(null)
 			emit()
 		},
@@ -398,7 +404,6 @@ export function TagInput({
 					aria-disabled={disabled || undefined}
 					aria-invalid={invalid || undefined}
 					aria-haspopup="listbox"
-					aria-expanded={open}
 					spellCheck
 					className={cn(
 						'min-h-[inherit] max-h-[inherit] overflow-y-auto whitespace-pre-wrap break-words outline-none',
