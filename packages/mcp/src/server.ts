@@ -2767,6 +2767,7 @@ function buildTriggerHeroCardObject(
 	trigger: RawTrigger,
 	driver: HeroCardActor | null,
 	nowMs = Date.now(),
+	compact = false,
 ): HeroCardObject {
 	return {
 		id: trigger.id,
@@ -2775,7 +2776,8 @@ function buildTriggerHeroCardObject(
 		status: trigger.enabled ? 'enabled' : 'disabled',
 		driver,
 		contextLine: buildTriggerContextLine(trigger, nowMs),
-		actionPrompt: trigger.actionPrompt ?? null,
+		// The action prompt is most of a row's size; compact rows leave it out.
+		...(compact ? {} : { actionPrompt: trigger.actionPrompt ?? null }),
 		config: trigger.config,
 	}
 }
@@ -6322,12 +6324,26 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	registerAppTool(
+	// The upstream signature accepts a raw shape; list_triggers passes its strict
+	// schema object so the SDK rejects unknown parameters, so the narrow type is
+	// spelled out here. Same cast as registerWrappedSchemaTool below.
+	const registerStrictSchemaTool = registerAppTool as unknown as (
+		s: typeof server,
+		name: string,
+		definition: {
+			description: string
+			inputSchema: typeof tools.list_triggers.inputSchema
+			_meta: Record<string, unknown>
+		},
+		handler: (args: z.infer<typeof tools.list_triggers.inputSchema>) => Promise<unknown>,
+	) => unknown
+	registerStrictSchemaTool(
 		server,
 		'list_triggers',
 		{
 			description: tools.list_triggers.description,
-			inputSchema: tools.list_triggers.inputSchema.shape,
+			// The strict object itself, not its shape: the SDK then rejects unknown parameters.
+			inputSchema: tools.list_triggers.inputSchema,
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
@@ -6344,6 +6360,9 @@ export function createMcpServer(config: McpConfig) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
 				params.set('cursor_id', pagination.cursor.k.id)
 			}
+			if (args.agent_id) params.set('target_actor_id', args.agent_id)
+			if (args.status) params.set('enabled', String(args.status === 'enabled'))
+			if (args.q) params.set('q', args.q)
 			const { data, response } = await apiCallWithResponse(
 				config,
 				'GET',
@@ -6357,7 +6376,13 @@ export function createMcpServer(config: McpConfig) {
 				rawRows as Array<{ id: string; createdAt?: string | null }>,
 			)
 			const rows = trimmed as RawTrigger[]
-			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
+			const trimmedData = Array.isArray(data)
+				? (data as Array<Record<string, unknown>>).slice(0, rows.length).map((t) => {
+						if (!args.compact) return t
+						const { actionPrompt: _actionPrompt, ...rest } = t
+						return rest
+					})
+				: data
 			const ownerIds = rows
 				.map((t) => t.targetActorId)
 				.filter((v): v is string => typeof v === 'string')
@@ -6366,6 +6391,8 @@ export function createMcpServer(config: McpConfig) {
 				buildTriggerHeroCardObject(
 					t,
 					t.targetActorId ? (actors.get(t.targetActorId) ?? null) : null,
+					Date.now(),
+					args.compact,
 				),
 			)
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)

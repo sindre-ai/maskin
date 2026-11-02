@@ -28994,6 +28994,17 @@ public enum Operations {
                 public var cursor_created_at: Foundation.Date?
                 /// - Remark: Generated from `#/paths/api/triggers/GET/query/cursor_id`.
                 public var cursor_id: Swift.String?
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/target_actor_id`.
+                public var target_actor_id: Swift.String?
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/enabled`.
+                @frozen public enum enabledPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case _true = "true"
+                    case _false = "false"
+                }
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/enabled`.
+                public var enabled: Operations.get_sol_api_sol_triggers.Input.Query.enabledPayload?
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/q`.
+                public var q: Swift.String?
                 /// Creates a new `Query`.
                 ///
                 /// - Parameters:
@@ -29003,13 +29014,19 @@ public enum Operations {
                 ///   - snapshot_at:
                 ///   - cursor_created_at:
                 ///   - cursor_id:
+                ///   - target_actor_id:
+                ///   - enabled:
+                ///   - q:
                 public init(
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil,
                     order: Operations.get_sol_api_sol_triggers.Input.Query.orderPayload? = nil,
                     snapshot_at: Foundation.Date? = nil,
                     cursor_created_at: Foundation.Date? = nil,
-                    cursor_id: Swift.String? = nil
+                    cursor_id: Swift.String? = nil,
+                    target_actor_id: Swift.String? = nil,
+                    enabled: Operations.get_sol_api_sol_triggers.Input.Query.enabledPayload? = nil,
+                    q: Swift.String? = nil
                 ) {
                     self.limit = limit
                     self.offset = offset
@@ -29017,6 +29034,9 @@ public enum Operations {
                     self.snapshot_at = snapshot_at
                     self.cursor_created_at = cursor_created_at
                     self.cursor_id = cursor_id
+                    self.target_actor_id = target_actor_id
+                    self.enabled = enabled
+                    self.q = q
                 }
             }
             public var query: Operations.get_sol_api_sol_triggers.Input.Query
