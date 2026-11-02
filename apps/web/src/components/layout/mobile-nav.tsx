@@ -22,13 +22,13 @@ interface MobileNavItem {
 	exact?: boolean
 }
 
-// Mirrors the v2 sidebar inventory (mockup navDefs). Agents is deliberately not
+// Order: For you, Chats, Flows, Items. Mirrors the v2 sidebar inventory (mockup navDefs). Agents is deliberately not
 // here — it is reached through the working-agents card and agent-name links, and
 // a bottom bar promoting it would reinstate exactly the entry the sidebar drops.
 const baseItems: MobileNavItem[] = [
 	{ key: 'for-you', label: 'For you', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
 	{ key: 'chats', label: 'Chats', to: '/$workspaceId/chats', icon: MessageSquare },
-	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
+	{ key: 'loops', label: 'Flows', to: '/$workspaceId/loops', icon: RefreshCw },
 ]
 
 export function MobileNav() {
@@ -41,12 +41,11 @@ export function MobileNav() {
 		if (!hasObjectTypes) return baseItems
 		const objectsItem: MobileNavItem = {
 			key: 'objects',
-			label: 'Objects',
+			label: 'Items',
 			to: '/$workspaceId/objects',
 			icon: Layers,
 		}
-		const [forYou, ...rest] = baseItems
-		return [forYou, objectsItem, ...rest]
+		return [...baseItems, objectsItem]
 	}, [enabledModules])
 
 	return (

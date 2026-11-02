@@ -207,4 +207,36 @@ test.describe('Object timeline — NEW divider (D8)', () => {
 		await expect(page.getByRole('separator', { name: /unread items below/ })).toHaveCount(0)
 		await expect(page.getByRole('button', { name: /Mark all read/ })).toHaveCount(0)
 	})
+
+	// v11 states: a failed activity fetch keeps the filter row and the composer
+	// (which lives outside the Activity tab) and recovers on Try again.
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`a failed activity fetch shows Activity did not load and recovers at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await mockObjectRoutes(page, { workspaceId: account.workspaceId, unread_count: 0 })
+
+			// Registered after the mocks, so it runs first: fail until released,
+			// then hand the request to the success mock above.
+			let failing = true
+			await page.route(`**/api/objects/${OBJECT_ID}/graph`, async (route: Route) => {
+				if (failing) return route.abort('failed')
+				return route.fallback()
+			})
+
+			await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}`)
+
+			await expect(page.getByText('Activity did not load')).toBeVisible({ timeout: 30000 })
+			await expect(page.getByText('Your connection dropped. Nothing was lost.')).toBeVisible()
+			await expect(page.getByRole('button', { name: /^All \(/ })).toBeVisible()
+			await expect(page.getByPlaceholder(/^Comment/)).toBeVisible()
+
+			failing = false
+			await page.getByRole('button', { name: 'Try again' }).click()
+			await expect(page.getByText('Latest reply on the bet.')).toBeVisible({ timeout: 15000 })
+			await expect(page.getByText('Activity did not load')).toHaveCount(0)
+		})
+	}
 })

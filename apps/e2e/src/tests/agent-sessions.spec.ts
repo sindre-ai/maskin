@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { grantEnterprise } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 interface MockSession {
@@ -138,6 +139,201 @@ test.describe('Agent detail — Sessions section', () => {
 			)
 			await resume.click()
 			await resumed
+		})
+	}
+})
+
+// Session detail failure card (v10 "Session failure recovery"). The card lives
+// in SessionDetailPanel, which the object's Origin block opens. A real failed
+// run needs a container runtime, so the session row is served from a route
+// mock; the object, the agent and the `produced_by` edge are real.
+interface RecoveryCase {
+	code: string
+	// Without the Keys page (the default workspace): Maskin's own credential failed.
+	ours: string
+	// With the Keys page: the one button and where it lands.
+	keysTitle: string
+	button: string
+	hash: string
+	topUp?: boolean
+}
+
+const PAUSED = 'Agents are paused on our side'
+
+const RECOVERY_CASES: RecoveryCase[] = [
+	{
+		code: 'oauth_expired',
+		ours: PAUSED,
+		keysTitle: 'Claude login expired',
+		button: 'Reconnect Claude',
+		hash: 'claude-subscriptions',
+	},
+	{
+		code: 'oauth_revoked',
+		ours: PAUSED,
+		keysTitle: 'Claude login expired',
+		button: 'Reconnect Claude',
+		hash: 'claude-subscriptions',
+	},
+	{
+		code: 'not_logged_in',
+		ours: PAUSED,
+		keysTitle: 'Claude is not connected',
+		button: 'Connect Claude',
+		hash: 'claude-subscriptions',
+	},
+	{
+		code: 'invalid_api_key',
+		ours: PAUSED,
+		keysTitle: 'The API key was rejected',
+		button: 'Replace API key',
+		hash: 'llm-api-keys',
+	},
+	{
+		code: 'session_limit',
+		ours: PAUSED,
+		keysTitle: 'Usage limit reached',
+		button: 'Add a backup subscription',
+		hash: 'claude-subscriptions',
+	},
+	{
+		code: 'weekly_limit',
+		ours: PAUSED,
+		keysTitle: 'Usage limit reached',
+		button: 'Add a backup subscription',
+		hash: 'claude-subscriptions',
+	},
+	{
+		code: 'credit_balance_low',
+		ours: PAUSED,
+		keysTitle: 'Anthropic credit is low',
+		button: 'Change API key',
+		hash: 'llm-api-keys',
+		topUp: true,
+	},
+]
+
+async function openFailedSession(
+	page: Page,
+	account: {
+		api: import('../helpers/api.helper').TestAPI
+		workspaceId: string
+	},
+	reasonCode: string,
+	provider: string,
+) {
+	const agent = await account.api.createAgentActor('Fay Failing')
+	await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+	const object = await account.api.createObject(account.workspaceId, {
+		type: 'task',
+		title: `Failed run ${reasonCode}`,
+		status: 'todo',
+	})
+	const session = await account.api.createSession(account.workspaceId, {
+		actor_id: agent.id,
+		action_prompt: 'Draft the weekly note',
+		auto_start: false,
+	})
+	await account.api.createRelationship(account.workspaceId, {
+		source_type: 'session',
+		source_id: session.id,
+		target_type: 'task',
+		target_id: object.id,
+		type: 'produced_by',
+	})
+
+	const failed = {
+		...session,
+		status: 'failed',
+		startedAt: '2026-01-01T00:00:00Z',
+		completedAt: '2026-01-01T00:01:00Z',
+		result: {
+			exit_code: 1,
+			failure_reason: {
+				provider,
+				reason_code: reasonCode,
+				human_message: 'Stored message from the server',
+				http_status: null,
+				reset_at: null,
+				verbatim_output: null,
+			},
+		},
+	}
+	await page.route(new RegExp(`/api/sessions/${session.id}(\\?.*)?$`), async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback()
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(failed),
+		})
+	})
+
+	await page.goto(`/${account.workspaceId}/objects/${object.id}`)
+	await page.getByRole('button', { name: 'Origin — click to expand' }).click({ timeout: 15_000 })
+	await page.getByRole('button', { name: 'Draft the weekly note' }).click()
+	const panel = page.getByRole('dialog')
+	await expect(panel).toBeVisible()
+	return panel
+}
+
+test.describe('Session detail — failure recovery', () => {
+	test.describe.configure({ timeout: 60_000 })
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`a workspace without the Keys page reads "paused on our side" with no button for every code @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			for (const c of RECOVERY_CASES) {
+				const panel = await openFailedSession(page, account, c.code, 'anthropic')
+				await expect(panel.getByText(c.ours, { exact: true })).toBeVisible()
+				await expect(panel.getByText(c.code, { exact: true })).toBeVisible()
+				await expect(panel.getByText('Stored message from the server')).toHaveCount(0)
+				await expect(panel.getByText('Nothing for you to do. We are working on it.')).toBeVisible()
+				await expect(panel.getByRole('link', { name: c.button })).toHaveCount(0)
+				await page.keyboard.press('Escape')
+			}
+
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+		})
+
+		test(`a plan-cap stop offers Go to Billing @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const panel = await openFailedSession(page, account, 'plan_cap_exceeded', 'maskin')
+			await expect(panel.getByText('Plan cap reached', { exact: true })).toBeVisible()
+			await expect(
+				panel.getByText('This workspace used its included sessions for the month.'),
+			).toBeVisible()
+			const billing = panel.getByRole('link', { name: 'Go to Billing' })
+			await expect(billing).toBeVisible()
+			await expect(billing).toHaveAttribute('href', `/${account.workspaceId}/settings/billing`)
+		})
+	}
+
+	// Needs MASKIN_TEST_GRANT_TOKEN on both the run and the API stack, like the
+	// other specs that drive the Keys page (see helpers/plan.helper.ts).
+	for (const c of RECOVERY_CASES) {
+		test(`${c.code} with the Keys page shows "${c.button}" linking to #${c.hash}`, async ({
+			page,
+			account,
+		}) => {
+			await grantEnterprise(account.apiKey, account.workspaceId)
+
+			const panel = await openFailedSession(page, account, c.code, 'anthropic')
+			await expect(panel.getByText(c.keysTitle, { exact: true })).toBeVisible()
+			await expect(panel.getByRole('link', { name: c.button })).toHaveAttribute(
+				'href',
+				`/${account.workspaceId}/settings/keys#${c.hash}`,
+			)
+			const topUp = panel.getByRole('link', { name: /Top up on Anthropic/ })
+			if (c.topUp) await expect(topUp).toBeVisible()
+			else await expect(topUp).toHaveCount(0)
 		})
 	}
 })

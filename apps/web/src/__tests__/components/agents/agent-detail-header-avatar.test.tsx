@@ -26,9 +26,12 @@ vi.mock('@/lib/auth', () => ({
 const agent = buildActorResponse({ id: 'agent-1', type: 'agent', name: 'Planner' })
 
 function renderHeader(overrides: Partial<typeof agent> = {}) {
-	return render(<AgentDetailHeader agent={{ ...agent, ...overrides }} portrait="idle" />, {
-		wrapper: createWorkspaceWrapper(),
-	})
+	return render(
+		<AgentDetailHeader agent={{ ...agent, ...overrides }} portrait="idle" onMessage={() => {}} />,
+		{
+			wrapper: createWorkspaceWrapper(),
+		},
+	)
 }
 
 beforeEach(() => {

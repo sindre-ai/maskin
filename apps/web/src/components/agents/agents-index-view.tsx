@@ -12,6 +12,7 @@ import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { formatUsd } from '@/components/settings/billing-usage'
 import { ActorAvatar, getActorAvatarPaletteClass } from '@/components/shared/actor-avatar'
 import { FilterTabs } from '@/components/shared/filter-tabs'
+import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
 	useUpdateUserDisplaySettings,
@@ -26,11 +27,11 @@ import {
 	statsToCounts,
 	summarizeAgentSessions,
 } from '@/lib/agent-status'
-import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
+import type { ActorListItem, DisplaySettingsBody, LoopSummary, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { SessionStatsRow } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 const AGENTS_DISPLAY_KEY = 'agents'
@@ -41,6 +42,7 @@ type StatusBucket = (typeof AGENT_STATUSES)[number]
 const COLUMNS: DisplayPanelColumn[] = [
 	{ id: 'name', label: 'Name', canHide: false },
 	{ id: 'kind', label: 'Kind', canHide: true },
+	{ id: 'team', label: 'Team', canHide: true },
 	{ id: 'activity', label: 'Activity', canHide: true },
 	{ id: 'sessions', label: 'Sessions', canHide: true },
 	{ id: 'cost', label: 'Cost', canHide: true },
@@ -75,6 +77,54 @@ interface AgentRow {
 	activeCount: number
 	totalCostUsd: number
 	last30dCostUsd: number
+	/** The first flow (A to Z) this agent works in, or the no-team label. */
+	team: string
+}
+
+const NO_TEAM = 'No team'
+
+/** The slice of a flow the Team column needs. */
+export type AgentsLoop = Pick<LoopSummary, 'name' | 'agentIds'>
+
+/** An agent's team is the first flow it appears in, alphabetically. */
+function buildTeamByAgent(loops: AgentsLoop[] | undefined): Map<string, string> {
+	const named = (loops ?? [])
+		.filter((l) => l.name?.trim())
+		.map((l) => ({ name: (l.name as string).trim(), agentIds: l.agentIds }))
+		.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }))
+	const teams = new Map<string, string>()
+	for (const loop of named) {
+		for (const id of loop.agentIds) if (!teams.has(id)) teams.set(id, loop.name)
+	}
+	return teams
+}
+
+export function AgentsSearch({
+	value,
+	onChange,
+	className,
+}: {
+	value: string
+	onChange: (value: string) => void
+	className?: string
+}) {
+	return (
+		<div className={cn('relative', className)}>
+			<Search
+				size={14}
+				aria-hidden
+				className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground"
+			/>
+			<Input
+				type="search"
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				placeholder="Search agents"
+				aria-label="Search agents"
+				className="rounded-full bg-muted pl-9"
+			/>
+		</div>
+	)
 }
 
 export function AgentsIndexView({
@@ -82,6 +132,9 @@ export function AgentsIndexView({
 	agents,
 	sessions,
 	stats,
+	loops,
+	query,
+	onQueryChange,
 }: {
 	workspaceId: string
 	agents: ActorListItem[]
@@ -89,6 +142,11 @@ export function AgentsIndexView({
 	sessions: SessionResponse[]
 	/** Per-agent counts and cost over the whole history; the recent list stands in until it loads. */
 	stats?: SessionStatsRow[]
+	/** Flows, for the Team column and group-by Team. */
+	loops?: AgentsLoop[]
+	/** Search text; the input itself sits beside the page title (see AgentsSearch). */
+	query: string
+	onQueryChange: (value: string) => void
 }) {
 	const [sort, setSort] = useState('name')
 	const [order, setOrder] = useState<'asc' | 'desc'>('asc')
@@ -137,6 +195,8 @@ export function AgentsIndexView({
 
 	const statsByAgent = useMemo(() => new Map((stats ?? []).map((s) => [s.actor_id, s])), [stats])
 
+	const teamByAgent = useMemo(() => buildTeamByAgent(loops), [loops])
+
 	const rows = useMemo<AgentRow[]>(
 		() =>
 			agents.map((agent) => {
@@ -157,9 +217,10 @@ export function AgentsIndexView({
 					activeCount: counts.active,
 					totalCostUsd: counts.totalCostUsd,
 					last30dCostUsd: counts.last30dCostUsd,
+					team: teamByAgent.get(agent.id) ?? NO_TEAM,
 				}
 			}),
-		[agents, sessionsByAgent, statsByAgent, stats],
+		[agents, sessionsByAgent, statsByAgent, stats, teamByAgent],
 	)
 
 	const activeStatuses = useMemo(
@@ -175,14 +236,27 @@ export function AgentsIndexView({
 		[activeStatuses],
 	)
 
+	const words = useMemo(() => query.trim().toLowerCase().split(/\s+/).filter(Boolean), [query])
+
 	const visibleRows = useMemo(
 		() =>
 			rows.filter((row) => {
 				const bucket = portraitStatusToFilter(row.portrait)
 				const statusMatches = statusOnlyFilters.length === 0 || statusOnlyFilters.includes(bucket)
-				return statusMatches
+				if (!statusMatches) return false
+				if (words.length === 0) return true
+				// Every typed word must match the name, outcome, kind or team.
+				const haystack = [
+					row.agent.name,
+					row.agent.description ?? '',
+					row.agent.role ?? '',
+					row.team,
+				]
+					.join(' ')
+					.toLowerCase()
+				return words.every((word) => haystack.includes(word))
 			}),
-		[rows, statusOnlyFilters],
+		[rows, statusOnlyFilters, words],
 	)
 
 	const sortedRows = useMemo(() => {
@@ -194,6 +268,12 @@ export function AgentsIndexView({
 				arr.sort((a, b) => {
 					const byKind = deriveAgentKind(a.agent).localeCompare(deriveAgentKind(b.agent))
 					return dir * (byKind || byName(a, b))
+				})
+				break
+			case 'team':
+				arr.sort((a, b) => {
+					const byTeam = a.team.localeCompare(b.team)
+					return dir * (byTeam || byName(a, b))
 				})
 				break
 			case 'status':
@@ -255,10 +335,32 @@ export function AgentsIndexView({
 					rows: kindRows,
 				}))
 		}
+		if (groupBy === 'team') {
+			const byTeam = new Map<string, AgentRow[]>()
+			for (const row of sortedRows) {
+				const list = byTeam.get(row.team)
+				if (list) list.push(row)
+				else byTeam.set(row.team, [row])
+			}
+			// A to Z, with the catch-all group last.
+			return Array.from(byTeam.entries())
+				.sort(([a], [b]) => {
+					if (a === NO_TEAM) return b === NO_TEAM ? 0 : 1
+					if (b === NO_TEAM) return -1
+					return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
+				})
+				.map(([team, teamRows]) => ({
+					id: team,
+					label: team,
+					note: undefined,
+					rows: teamRows,
+				}))
+		}
 		return [{ id: 'all', label: undefined, note: undefined, rows: sortedRows }]
 	}, [groupBy, statusOnlyFilters, sortedRows])
 
 	const showKind = columnVisibility.kind !== false
+	const showTeam = columnVisibility.team !== false
 	const showActivity = columnVisibility.activity !== false
 	const showSessions = columnVisibility.sessions !== false
 	const showCost = columnVisibility.cost !== false
@@ -319,6 +421,8 @@ export function AgentsIndexView({
 
 	return (
 		<TooltipProvider>
+			{/* The title row carries the search from md up; below that it sits here. */}
+			<AgentsSearch value={query} onChange={onQueryChange} className="mb-2 md:hidden" />
 			{/* Chips left, Display right, on one 28px line (mockup 2290–2308). */}
 			<div className="flex min-h-7 flex-wrap items-center gap-1.5">
 				<FilterTabs
@@ -366,18 +470,26 @@ export function AgentsIndexView({
 				// A centred line, not a bordered empty-state card — the list this
 				// replaces has no frame of its own to sit inside (mockup 2313).
 				<p className="py-9 text-center text-[12.5px] text-muted-foreground">
-					No agents in that state right now.
+					{words.length > 0 ? 'No agents match.' : 'No agents in that state right now.'}
 				</p>
 			) : (
 				// Groups are separated by the header's own top padding, not a gap —
 				// the hairlines have to run unbroken down the list (mockup 2315–2341).
 				<div className="mt-3">
+					<AgentsColumnHeader
+						showTeam={showTeam}
+						showActivity={showActivity}
+						showSessions={showSessions}
+						showCost={showCost}
+						showStatus={showStatus}
+					/>
 					{groups.map((group) => (
 						<AgentGroupSection
 							key={group.id}
 							workspaceId={workspaceId}
 							group={group}
 							showKind={showKind}
+							showTeam={showTeam}
 							showActivity={showActivity}
 							showSessions={showSessions}
 							showCost={showCost}
@@ -390,10 +502,49 @@ export function AgentsIndexView({
 	)
 }
 
+// Column labels over the rows (mockup: Agent / Team / Latest / Sessions /
+// Status). Hidden below md, where the row has no columns. Widths and
+// breakpoints mirror AgentRowItem exactly so every label sits over its column.
+function AgentsColumnHeader({
+	showTeam,
+	showActivity,
+	showSessions,
+	showCost,
+	showStatus,
+}: {
+	showTeam: boolean
+	showActivity: boolean
+	showSessions: boolean
+	showCost: boolean
+	showStatus: boolean
+}) {
+	return (
+		// Same shape as the row: a column group (the link) with the Call button's
+		// footprint beside it, so the labels land on the row's columns.
+		<div
+			aria-hidden="true"
+			className="hidden items-center border-b border-border-subtle pb-2 text-xs font-semibold text-muted-foreground md:flex"
+		>
+			<div className="flex min-w-0 flex-1 items-center gap-3.5 pr-3.5">
+				<span className="w-10 shrink-0" />
+				<span className="min-w-0 flex-1">Agent</span>
+				{showTeam && <span className="hidden w-[110px] shrink-0 lg:block">Team</span>}
+				{showActivity && <span className="w-[110px] shrink-0 lg:w-[200px]">Latest</span>}
+				{showSessions && <span className="w-[74px] shrink-0">Sessions</span>}
+				{showCost && <span className="hidden w-[84px] shrink-0 lg:block">Cost</span>}
+				{showStatus && <span className="w-[72px] shrink-0">Status</span>}
+				<span className="size-3.5 shrink-0" />
+			</div>
+			<span className="mr-3 h-7 w-7 shrink-0 lg:w-[62px]" />
+		</div>
+	)
+}
+
 function AgentGroupSection({
 	workspaceId,
 	group,
 	showKind,
+	showTeam,
 	showActivity,
 	showSessions,
 	showCost,
@@ -402,6 +553,7 @@ function AgentGroupSection({
 	workspaceId: string
 	group: { id: string; label?: string; note?: string; rows: AgentRow[] }
 	showKind: boolean
+	showTeam: boolean
 	showActivity: boolean
 	showSessions: boolean
 	showCost: boolean
@@ -416,6 +568,7 @@ function AgentGroupSection({
 						workspaceId={workspaceId}
 						row={row}
 						showKind={showKind}
+						showTeam={showTeam}
 						showActivity={showActivity}
 						showSessions={showSessions}
 						showCost={showCost}
@@ -454,6 +607,7 @@ function AgentGroupSection({
 							workspaceId={workspaceId}
 							row={row}
 							showKind={showKind}
+							showTeam={showTeam}
 							showActivity={showActivity}
 							showSessions={showSessions}
 							showCost={showCost}
@@ -476,6 +630,7 @@ function AgentRowItem({
 	workspaceId,
 	row,
 	showKind,
+	showTeam,
 	showActivity,
 	showSessions,
 	showCost,
@@ -484,6 +639,7 @@ function AgentRowItem({
 	workspaceId: string
 	row: AgentRow
 	showKind: boolean
+	showTeam: boolean
 	showActivity: boolean
 	showSessions: boolean
 	showCost: boolean
@@ -543,19 +699,30 @@ function AgentRowItem({
 						// the outcome instead — readable on touch with no hover.
 						<span
 							data-testid="agent-latest-mobile"
-							className="line-clamp-2 text-[11.5px] text-muted-foreground md:hidden"
+							className="line-clamp-3 text-[11.5px] text-muted-foreground md:hidden"
 						>
 							{latest}
 						</span>
 					)}
 				</div>
+				{showTeam && (
+					// Team (first flow) waits for `lg`, like Cost, so narrower rows keep the name legible.
+					<span className="hidden w-[110px] shrink-0 truncate text-[11.5px] text-muted-foreground lg:block">
+						{row.team}
+					</span>
+				)}
 				{showActivity && (
 					// "What it's doing now" (mockup 2333) shares the sessions column's
 					// breakpoint — at 768px the row otherwise carried a name and a status
 					// and nothing about the work.
-					<span className="hidden w-[110px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
-						{describeFocus(portrait, latestSession)}
-					</span>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="hidden w-[110px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
+								{latest}
+							</span>
+						</TooltipTrigger>
+						<TooltipContent className="max-w-xs">{latest}</TooltipContent>
+					</Tooltip>
 				)}
 				{showSessions && (
 					<span className="hidden w-[74px] shrink-0 flex-col text-[11.5px] tabular-nums text-muted-foreground md:flex">
@@ -576,7 +743,7 @@ function AgentRowItem({
 				{showStatus && (
 					// A dot and a coloured label, not a filled pill — at row density the
 					// plate reads as a second badge beside the kind (mockup 2337).
-					<span className="shrink-0 text-[11px]">
+					<span className="shrink-0 text-[11px] md:w-[72px]">
 						<AgentStatusPill status={portrait} variant="inline" />
 					</span>
 				)}

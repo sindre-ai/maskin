@@ -31,9 +31,9 @@ describe('buildRecents', () => {
 		expect(items[1].type).toBe('bet')
 	})
 
-	it('stops at four by default and never lists an object that was not opened', () => {
+	it('stops at five by default and never lists an object that was not opened', () => {
 		const items = buildRecents({ objectIds: ['o1'], objects, chats, loops })
-		expect(items).toHaveLength(4)
+		expect(items).toHaveLength(5)
 		expect(items.some((i) => i.id === 'o3')).toBe(false)
 	})
 

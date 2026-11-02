@@ -20,7 +20,7 @@ import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { setFaroUser } from '@/lib/faro'
 import { setLastWorkspaceId } from '@/lib/last-workspace'
-import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
+import { migrateLegacySidebarState } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
@@ -33,7 +33,7 @@ import {
 import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
-import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
+import { Outlet, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
 migrateLegacySidebarState()
@@ -62,10 +62,7 @@ function WorkspaceLayout() {
 		if (hasWorkspace) setLastWorkspaceId(workspaceId)
 	}, [hasWorkspace, workspaceId])
 
-	const matches = useMatches()
-	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
-	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
-	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
+	const { open, setOpen } = usePersistedSidebarOpen()
 	// While a call is open below 1100px the sidebar folds to its icon rail so the
 	// thread keeps room next to the call panel (design: sidebar 230 + chat + panel
 	// at 1100 and up, an icon rail between 700 and 1099). The person's own choice

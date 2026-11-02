@@ -6,7 +6,6 @@ import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
-import { FilterTabs } from '@/components/shared/filter-tabs'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
@@ -33,9 +32,10 @@ import type {
 	DisplaySettingsBody,
 	LoopSummary,
 } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { RefreshCw } from 'lucide-react'
+import { ChevronRight, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 // Display settings are keyed by object type; `loop` is a real object type, so
@@ -179,23 +179,30 @@ function LoopsRoute() {
 		() => sortedLoops.filter((loop) => matchesTab(loop, tab)),
 		[sortedLoops, tab],
 	)
-	// Counts come from the loops already loaded; the tabs add no query.
-	const tabs = useMemo(
-		() => [
-			{ label: 'All', value: 'all' as LoopTab, count: sortedLoops.length },
-			{
-				label: 'Running',
-				value: 'running' as LoopTab,
-				count: sortedLoops.filter((l) => matchesTab(l, 'running')).length,
-			},
-			{
-				label: 'To decide',
-				value: 'to-decide' as LoopTab,
-				count: sortedLoops.filter((l) => matchesTab(l, 'to-decide')).length,
-			},
-		],
+	// The attention chip under the title: how many loops wait on the viewer.
+	// Clicking it narrows the list to those loops, clicking again clears it.
+	const needYouCount = useMemo(
+		() => sortedLoops.filter((l) => matchesTab(l, 'to-decide')).length,
 		[sortedLoops],
 	)
+
+	// Sections follow the loops' first free-form tag (`metadata.tags`: team,
+	// business unit, ...), A to Z, untagged last. With no tags anywhere the list
+	// stays one flat run with no headers.
+	const loopGroups = useMemo(() => {
+		const byTag = new Map<string, LoopSummary[]>()
+		for (const loop of visibleLoops) {
+			const key = loop.tags[0] ?? ''
+			byTag.set(key, [...(byTag.get(key) ?? []), loop])
+		}
+		return [...byTag.entries()]
+			.sort(([a], [b]) => {
+				if (!a || !b) return a ? -1 : b ? 1 : 0
+				return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
+			})
+			.map(([label, items]) => ({ label, items }))
+	}, [visibleLoops])
+	const hasTaggedLoops = loopGroups.some((g) => g.label)
 
 	return (
 		<div>
@@ -214,6 +221,23 @@ function LoopsRoute() {
 					/>
 				}
 			/>
+			{needYouCount > 0 && (
+				<button
+					type="button"
+					aria-pressed={tab === 'to-decide'}
+					onClick={() => setTab(tab === 'to-decide' ? 'all' : 'to-decide')}
+					className={cn(
+						'mb-6 inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[11.5px] font-semibold transition-colors',
+						tab === 'to-decide'
+							? 'bg-brand text-brand-foreground'
+							: 'bg-brand/10 text-brand hover:bg-brand/15',
+					)}
+				>
+					<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+					{needYouCount} need{needYouCount === 1 ? 's' : ''} you
+					<ChevronRight size={12} aria-hidden="true" />
+				</button>
+			)}
 			{loopsLoading ? (
 				<ListSkeleton />
 			) : isLoopsError && !loops ? (
@@ -228,15 +252,24 @@ function LoopsRoute() {
 				<div className="space-y-10">
 					<section className="flex flex-col">
 						{hasLoops ? (
-							sortedLoops.map((loop) => (
-								<LoopRow
-									key={loop.id}
-									loop={loop}
-									actors={actors}
-									busyAgentCount={loop.agentIds.filter((id) => workingAgentIds.has(id)).length}
-									showNoCreditsPill={showNoCreditsPill}
-									onNoCreditsClick={() => setBuyCreditsOpen(true)}
-								/>
+							loopGroups.map((group) => (
+								<div key={group.label || 'untagged'} className="flex flex-col">
+									{hasTaggedLoops && (
+										<h2 className="px-3.5 pt-4 pb-2 text-xs font-bold text-foreground">
+											{group.label || 'No team'}
+										</h2>
+									)}
+									{group.items.map((loop) => (
+										<LoopRow
+											key={loop.id}
+											loop={loop}
+											actors={actors}
+											busyAgentCount={loop.agentIds.filter((id) => workingAgentIds.has(id)).length}
+											showNoCreditsPill={showNoCreditsPill}
+											onNoCreditsClick={() => setBuyCreditsOpen(true)}
+										/>
+									))}
+								</div>
 							))
 						) : (
 							<EmptyState

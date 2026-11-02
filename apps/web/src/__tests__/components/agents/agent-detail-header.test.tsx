@@ -29,7 +29,7 @@ describe('AgentDetailHeader', () => {
 			description: 'Shapes the next bet',
 			agentState: 'idle',
 		})
-		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
 			wrapper: createWorkspaceWrapper({ name: 'Product Team' }),
 		})
 		expect(screen.getByRole('heading', { name: 'Planner' })).toBeInTheDocument()
@@ -41,7 +41,7 @@ describe('AgentDetailHeader', () => {
 
 	it('falls back when the agent has no description', () => {
 		const agent = buildActorResponse({ name: 'Unclaimed', description: null, type: 'agent' })
-		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 		expect(screen.getByText('No outcome set yet')).toBeInTheDocument()
@@ -56,9 +56,12 @@ describe('AgentDetailHeader', () => {
 			name: 'Runner',
 			agentState: 'running',
 		})
-		const { container } = render(<AgentDetailHeader agent={agent} portrait="running" />, {
-			wrapper: createWorkspaceWrapper(),
-		})
+		const { container } = render(
+			<AgentDetailHeader agent={agent} portrait="running" onMessage={() => {}} />,
+			{
+				wrapper: createWorkspaceWrapper(),
+			},
+		)
 		const status = screen.getByText('Running')
 		expect(status.className).toContain('text-status-in_progress-text')
 		expect(status.className).not.toContain('bg-status-in_progress-bg')
@@ -67,16 +70,19 @@ describe('AgentDetailHeader', () => {
 
 	it('does not pulse when the agent is idle', () => {
 		const agent = buildActorResponse({ id: 'agent-idle', type: 'agent', name: 'Idler' })
-		const { container } = render(<AgentDetailHeader agent={agent} portrait="idle" />, {
-			wrapper: createWorkspaceWrapper(),
-		})
+		const { container } = render(
+			<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />,
+			{
+				wrapper: createWorkspaceWrapper(),
+			},
+		)
 		expect(container.querySelector('.animate-pulse')).toBeNull()
 	})
 
 	it('saves a renamed agent when the inline name field is committed', async () => {
 		const user = userEvent.setup()
 		const agent = buildActorResponse({ id: 'agent-edit', type: 'agent', name: 'Planner' })
-		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 
@@ -99,7 +105,7 @@ describe('AgentDetailHeader', () => {
 			name: 'Planner',
 			description: null,
 		})
-		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 
@@ -115,7 +121,7 @@ describe('AgentDetailHeader', () => {
 	it('discards the draft on Escape without saving', async () => {
 		const user = userEvent.setup()
 		const agent = buildActorResponse({ id: 'agent-esc', type: 'agent', name: 'Planner' })
-		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 
@@ -133,7 +139,7 @@ describe('AgentDetailHeader', () => {
 			name: 'Managed',
 			installedLoopId: '11111111-1111-4111-8111-111111111111',
 		})
-		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 		expect(screen.queryByRole('button', { name: 'Edit agent name' })).toBeNull()

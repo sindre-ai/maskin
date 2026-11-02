@@ -59,20 +59,6 @@ function ChatsListTitle() {
 // in `$workspaceId.tsx`) so the split pane runs edge to edge. Keep in step.
 const SHELL_BLEED = '-mx-4 -my-4 md:-mx-8 md:-my-8 lg:-mx-12'
 
-// The list column draws its own title (the shared header hides its <h1> via
-// `hideTitle`), on the same `.page-title` size and side margin every other
-// screen uses so the "Chats" heading sits on the shared left edge.
-function ChatsColumnTitle({ subtitle }: { subtitle?: string }) {
-	return (
-		<div className="flex flex-none items-baseline gap-2 px-4 pt-5 pb-2 md:px-8 lg:px-12">
-			<h2 className="page-title truncate">Chats</h2>
-			{subtitle && (
-				<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
-			)}
-		</div>
-	)
-}
-
 function ChatsLayout() {
 	const { workspaceId } = useWorkspace()
 	const isMobile = useIsMobile()
@@ -117,16 +103,10 @@ function ChatsLayout() {
 	// One writer for the shared nav row: a child route rendering its own
 	// <PageHeader> would lose the race (parent effects run last) and leave the
 	// draft screen labelled "Chats".
-	// The list column (with its own "Chats" title) is on screen unless a thread
-	// has replaced it (mobile) or focus mode / the call panel moved it aside.
-	// The draft screen keeps the shared "New chat" title.
-	const listShown = !hasThread || (!isMobile && !wide && !listAside)
-	const columnTitle = listShown && !isDraft
 	const header = (
 		<PageHeader
 			title={isDraft ? 'New chat' : 'Chats'}
-			hideTitle={columnTitle}
-			subtitle={isDraft || columnTitle ? undefined : subtitle}
+			subtitle={isDraft ? undefined : subtitle}
 			// The split pane owns two internal scrollers; without this the shared
 			// page container scrolls too and the surface double-scrolls.
 			scrollLocked
@@ -157,7 +137,6 @@ function ChatsLayout() {
 					</div>
 				) : (
 					<div className={cn('flex min-h-0 flex-1 flex-col', SHELL_BLEED)}>
-						<ChatsColumnTitle subtitle={subtitle} />
 						<ConversationList workspaceId={workspaceId} filter={filter} />
 					</div>
 				)}
@@ -173,7 +152,6 @@ function ChatsLayout() {
 				{header}
 				<ChatsListTitle />
 				<div className={cn('flex min-h-0 flex-1 flex-col', SHELL_BLEED)}>
-					<ChatsColumnTitle subtitle={subtitle} />
 					<ConversationList workspaceId={workspaceId} filter={filter} expanded />
 				</div>
 			</>
@@ -187,8 +165,7 @@ function ChatsLayout() {
 				{wide || listAside ? null : (
 					// `bg-surface-sunken` is what makes the split read as index +
 					// document rather than two equal halves (mockup 273).
-					<div className="hidden shrink-0 flex-col border-r border-border bg-surface-sunken md:flex md:w-66 lg:w-100">
-						<ChatsColumnTitle subtitle={subtitle} />
+					<div className="hidden shrink-0 flex-col border-r border-border bg-surface-sunken md:flex md:w-70 lg:w-100">
 						<ConversationList workspaceId={workspaceId} filter={filter} />
 					</div>
 				)}

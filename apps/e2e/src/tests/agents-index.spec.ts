@@ -101,8 +101,7 @@ test.describe('Agents index', () => {
 				await expect(page.getByText(/\d+ agents · each owns one outcome/)).toBeVisible()
 			}
 
-			// There is no per-screen search input — workspace search lives in the nav.
-			await expect(page.getByRole('searchbox', { name: 'Search agents' })).toHaveCount(0)
+			await expect(page.getByRole('searchbox', { name: 'Search agents' })).toBeVisible()
 
 			// The chip strip is reachable on touch at every viewport (no hover reveal),
 			// and legible in both colour schemes.
@@ -134,6 +133,38 @@ test.describe('Agents index', () => {
 			if (!box) throw new Error('agent row has no bounding box')
 			await page.mouse.click(box.x + box.width - 30, box.y + box.height / 2)
 			await expect(page).toHaveURL(new RegExp(`/agents/${ada.id}$`))
+		})
+
+		test(`search narrows the list and the Team column follows the breakpoint @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const ada = await account.api.createAgentActor('Ada Atom')
+			await account.api.addWorkspaceMember(account.workspaceId, ada.id)
+			const brian = await account.api.createAgentActor('Brian Bot')
+			await account.api.addWorkspaceMember(account.workspaceId, brian.id)
+
+			await page.goto(`/${account.workspaceId}/agents`)
+			const adaRow = page.getByRole('link', { name: /Ada Atom/ })
+			await expect(adaRow).toBeVisible({ timeout: 10_000 })
+
+			// Agents in no flow show "No team", from the lg breakpoint up.
+			const team = adaRow.getByText('No team', { exact: true })
+			if (vp.width >= 1024) await expect(team).toBeVisible()
+			else await expect(team).toBeHidden()
+
+			const search = page.getByRole('searchbox', { name: 'Search agents' })
+			await search.fill('brian')
+			await expect(page.getByRole('link', { name: /Brian Bot/ })).toBeVisible()
+			await expect(adaRow).toHaveCount(0)
+
+			await search.fill('zzzz-nothing')
+			await expect(page.getByText('No agents match.')).toBeVisible()
+
+			await search.fill('')
+			await expect(adaRow).toBeVisible()
 		})
 
 		// Mockup 2320 (group note) and 2333 ("what it's doing now").

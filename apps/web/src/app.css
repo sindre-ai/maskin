@@ -252,6 +252,14 @@
 	--duration-250: 250ms;
 	--duration-slide: 300ms;
 
+	/* Activity loading skeleton pulse (1.4s, v11 states mockup). */
+	--animate-pulse-fast: pulse-fast 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+	@keyframes pulse-fast {
+		50% {
+			opacity: 0.5;
+		}
+	}
+
 	--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 	--ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
 	--ease-out: ease-out;
@@ -746,7 +754,7 @@
 
 	/* Page title — the v10 mockup's 34px screen heading. 34px is off the Tailwind
 	   scale, so it ships as a utility (like .eyebrow) rather than an arbitrary
-	   value. 24px below md; the 48rem breakpoint is Tailwind's own `md`. */
+	   value. 24px below md, 28px at md, 34px from lg; 48rem / 64rem are Tailwind's own `md` / `lg`. */
 	.page-title {
 		font-size: 1.5rem;
 		font-weight: 700;
@@ -756,7 +764,12 @@
 	}
 	@media (min-width: 48rem) {
 		.page-title {
-			font-size: 2.125rem; /* 34px */
+			font-size: 1.75rem; /* 28px at md */
+		}
+	}
+	@media (min-width: 64rem) {
+		.page-title {
+			font-size: 2.125rem; /* 34px from lg */
 		}
 	}
 

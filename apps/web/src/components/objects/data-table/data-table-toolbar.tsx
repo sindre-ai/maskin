@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
+import type { ReactNode } from 'react'
 import type { ColumnInfo } from './data-table-controls'
 import type { DisplayFilterSectionModel } from './display-filter-section'
 import { DisplayPanel, type DisplayPanelView } from './display-panel'
@@ -25,7 +26,13 @@ export interface ToolbarFilterPill {
 	onRemove: () => void
 }
 
-interface DataTableToolbarProps {
+export interface DataTableToolbarProps {
+	// Rendered first in the row — the type chips, so the type tabs and the pinned
+	// quick filters (Starred, New last 7 days) read as one chip row (mockup 2290).
+	leading?: ReactNode
+	// The Display control lives in the page's title row instead of at the end of
+	// this row; the caller renders <DisplayPanel> there with the same props.
+	hideDisplay?: boolean
 	// Column visibility
 	columns: ColumnInfo[]
 	columnVisibility: VisibilityState
@@ -70,6 +77,8 @@ interface DataTableToolbarProps {
 }
 
 export function DataTableToolbar({
+	leading,
+	hideDisplay,
 	columns,
 	columnVisibility,
 	onColumnVisibilityChange,
@@ -112,7 +121,8 @@ export function DataTableToolbar({
 		// Display panel pushed to the right edge (mockup 658–673). Wraps rather
 		// than scrolls — a chip that scrolled out of view would read as absent,
 		// and "absent filter" is the one thing this row exists to disprove.
-		<div className="flex min-h-7 flex-none flex-wrap items-center gap-1 px-0.5 gap-y-1.5">
+		<div className="flex min-h-7 flex-none flex-nowrap items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-visible pb-3">
+			{leading}
 			{quickChips.map((chip) => (
 				<button
 					key={chip.id}
@@ -120,11 +130,11 @@ export function DataTableToolbar({
 					aria-pressed={chip.active}
 					onClick={chip.onToggle}
 					className={cn(
-						'inline-flex h-[26px] shrink-0 items-center whitespace-nowrap rounded-md px-2.5',
-						'text-[11.5px] transition-colors hover:bg-muted hover:text-foreground',
+						'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3',
+						'text-[11.5px] font-semibold transition-colors',
 						chip.active
-							? 'bg-muted font-bold text-foreground'
-							: 'font-semibold text-muted-foreground',
+							? 'border-primary bg-primary text-primary-foreground'
+							: 'border-border text-muted-foreground hover:border-border-hover hover:text-foreground',
 					)}
 				>
 					{chip.label}
@@ -153,39 +163,41 @@ export function DataTableToolbar({
 				</Button>
 			)}
 
-			<span className="ml-auto" />
+			{!hideDisplay && <span className="ml-auto" />}
 
-			<DisplayPanel
-				view={view}
-				onViewChange={onViewChange}
-				boardSupported={boardSupported}
-				columns={columns}
-				columnVisibility={columnVisibility}
-				onColumnVisibilityChange={onColumnVisibilityChange}
-				statusFilter={statusFilter}
-				onStatusFilterChange={onStatusFilterChange}
-				statusesByType={statusesByType}
-				driverFilter={driverFilter}
-				onDriverFilterChange={onDriverFilterChange}
-				actors={actors}
-				fieldDefinitions={fieldDefinitions}
-				metadataFilters={metadataFilters}
-				onMetadataFilterChange={onMetadataFilterChange}
-				onResetFilters={onResetFilters}
-				sort={sort}
-				onSortChange={onSortChange}
-				order={order}
-				onOrderChange={onOrderChange}
-				groupBy={groupBy}
-				onGroupByChange={onGroupByChange}
-				includeArchived={includeArchived}
-				onIncludeArchivedChange={onIncludeArchivedChange}
-				archivedCount={archivedCount}
-				onResetToDefault={onResetToDefault}
-				filterSections={filterSections}
-				pinnedFilters={pinnedFilters}
-				onTogglePinnedFilter={onTogglePinnedFilter}
-			/>
+			{!hideDisplay && (
+				<DisplayPanel
+					view={view}
+					onViewChange={onViewChange}
+					boardSupported={boardSupported}
+					columns={columns}
+					columnVisibility={columnVisibility}
+					onColumnVisibilityChange={onColumnVisibilityChange}
+					statusFilter={statusFilter}
+					onStatusFilterChange={onStatusFilterChange}
+					statusesByType={statusesByType}
+					driverFilter={driverFilter}
+					onDriverFilterChange={onDriverFilterChange}
+					actors={actors}
+					fieldDefinitions={fieldDefinitions}
+					metadataFilters={metadataFilters}
+					onMetadataFilterChange={onMetadataFilterChange}
+					onResetFilters={onResetFilters}
+					sort={sort}
+					onSortChange={onSortChange}
+					order={order}
+					onOrderChange={onOrderChange}
+					groupBy={groupBy}
+					onGroupByChange={onGroupByChange}
+					includeArchived={includeArchived}
+					onIncludeArchivedChange={onIncludeArchivedChange}
+					archivedCount={archivedCount}
+					onResetToDefault={onResetToDefault}
+					filterSections={filterSections}
+					pinnedFilters={pinnedFilters}
+					onTogglePinnedFilter={onTogglePinnedFilter}
+				/>
+			)}
 		</div>
 	)
 }

@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import { cn } from '@/lib/cn'
 import { isHiddenRouteId } from '@/lib/nav-view-keys'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -268,7 +269,14 @@ export function Header() {
 				   shrinking only happens after an item has been placed on a line.
 				   Zero-basis lets the title give up width first and keeps the nav on
 				   one line. */
-				<div className="flex min-w-0 flex-1 items-baseline gap-2">
+				<div
+					className={cn(
+						'flex min-w-0 items-baseline gap-2',
+						// A page with title tabs/search wants them right beside the title,
+						// so the title block stops growing and the controls take the slack.
+						titleTabs ? 'shrink' : 'flex-1',
+					)}
+				>
 					{/* hideTitle: a two-pane page draws its own title; the context's
 					    title stays published for the crumb and document title. */}
 					{!hideTitle && <h1 className="page-title truncate">{headingText}</h1>}

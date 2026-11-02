@@ -158,8 +158,7 @@ test.describe('Chats v2 — layout', () => {
 		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
 
 		// Search and New share the nav row: wrapping drops New to a second line,
-		// which is what this asserts against. (The "Chats" title is drawn by the
-		// list column below the row, so it is no longer the reference point.)
+		// which is what this asserts against.
 		const search = await page.getByRole('button', { name: 'Search or run a command' }).boundingBox()
 		const newButton = await page.getByRole('button', { name: 'New chat' }).first().boundingBox()
 		expect(search).not.toBeNull()
@@ -210,7 +209,7 @@ test.describe('Chats v2 — layout', () => {
 
 test.describe('Chats v2 — list title and column', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the list column draws the Chats title on the shared edge at ${vp.label}`, async ({
+		test(`the Chats title sits at the shared top-left of the page at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -221,19 +220,18 @@ test.describe('Chats v2 — list title and column', () => {
 			await page.goto(`/${account.workspaceId}/chats`)
 			await expect(list.getByText(chats.plain)).toBeVisible({ timeout: 15_000 })
 
-			// Exactly one "Chats" heading, drawn by the list column, not the nav row.
+			// Exactly one "Chats" heading, drawn by the shared nav row like every other page.
 			const title = page.getByRole('heading', { name: 'Chats', exact: true })
 			await expect(title).toHaveCount(1)
 			await expect(title).toBeVisible()
 			const size = await title.evaluate((el) => window.getComputedStyle(el).fontSize)
-			expect(size).toBe(vp.width >= 768 ? '34px' : '24px')
-			// Side margin: 16 / 32 / 48px at 375 / 768 / 1024 from the content edge.
+			expect(size).toBe(vp.width >= 1024 ? '34px' : vp.width >= 768 ? '28px' : '24px')
+			// Same top edge as every other page: 20px from the top of the viewport.
 			const box = await title.boundingBox()
 			const listBox = await list.boundingBox()
-			const edge = vp.width >= 1024 ? 48 : vp.width >= 768 ? 32 : 16
-			expect(Math.abs((box?.x ?? 0) - ((listBox?.x ?? 0) + edge))).toBeLessThanOrEqual(1)
+			expect(Math.abs((box?.y ?? 0) - 20)).toBeLessThanOrEqual(2)
 
-			// Section headers are present, and the list sits below the title.
+			// Section headers are present, and the list sits below the title row.
 			await expect(list.getByText('Today', { exact: true })).toBeVisible()
 			expect((listBox?.y ?? 0) >= (box?.y ?? 0) + (box?.height ?? 0) - 1).toBe(true)
 			await expectNoHorizontalOverflow(page)
@@ -248,7 +246,8 @@ test.describe('Chats v2 — list title and column', () => {
 			if (vp.width >= 768) {
 				await expect(page.getByRole('heading', { name: 'Chats', exact: true })).toBeVisible()
 				const column = await list.boundingBox()
-				if (vp.width >= 1024) expect(Math.round(column?.width ?? 0)).toBe(400)
+				// The 400px column minus its 1px divider.
+				if (vp.width >= 1024) expect(Math.round(column?.width ?? 0)).toBe(399)
 				// The composer stays reachable beside the wider column.
 				await expect(page.getByLabel('Message this conversation')).toBeVisible()
 			} else {

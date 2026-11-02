@@ -184,6 +184,40 @@ test.describe('Object detail — properties drawer', () => {
 			await expect(timeline).toHaveAttribute('aria-selected', 'true')
 		})
 
+		test(`dragging over the Files section shows the drop label and clears on leave at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const bet = await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Drop bet',
+				status: 'active',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await expect(page.getByRole('heading', { level: 1, name: 'Drop bet' })).toBeVisible({
+				timeout: 15000,
+			})
+			await page
+				.locator('main header')
+				.first()
+				.getByRole('button', { name: 'Properties', exact: true })
+				.click()
+
+			const section = page.getByRole('heading', { name: 'Files' }).locator('xpath=../..')
+			await expect(section).toBeVisible()
+			await section.dispatchEvent('dragover')
+
+			// Visible text, not a hover-only reveal.
+			await expect(page.getByText('Drop to attach to this item')).toBeVisible()
+			await expect(section).toHaveClass(/ring-2/)
+
+			await section.dispatchEvent('dragleave')
+			await expect(page.getByText('Drop to attach to this item')).toHaveCount(0)
+		})
+
 		test(`composer stays pinned to the bottom while the document scrolls at ${vp.label}`, async ({
 			page,
 			account,

@@ -12,13 +12,22 @@ vi.mock('@tanstack/react-router', async () => {
 
 const triggersData = vi.fn()
 
+const updateMutate = vi.fn()
+
 vi.mock('@/hooks/use-triggers', () => ({
 	useTriggers: () => ({ data: triggersData(), isLoading: false }),
+	useUpdateTrigger: () => ({ mutate: updateMutate, isPending: false }),
+}))
+
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: ({ open, defaultType }: { open: boolean; defaultType?: string }) =>
+		open ? <p>picker:{defaultType}</p> : null,
 }))
 
 describe('AgentTriggersSection', () => {
 	beforeEach(() => {
 		triggersData.mockReset()
+		updateMutate.mockReset()
 	})
 
 	it('lists only the triggers that target this agent', () => {
@@ -38,7 +47,9 @@ describe('AgentTriggersSection', () => {
 		triggersData.mockReturnValue([buildTriggerResponse({ targetActorId: 'agent-b' })])
 		render(<AgentTriggersSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(screen.getByText(/no triggers fire this agent/i)).toBeInTheDocument()
+		expect(
+			screen.getByText(/nothing wakes this agent yet\. add a schedule or an event\./i),
+		).toBeInTheDocument()
 	})
 
 	it('links each row to its trigger detail page', () => {
@@ -84,5 +95,27 @@ describe('AgentTriggersSection', () => {
 		const links = screen.getAllByRole('link')
 		expect(links[0]).toHaveAccessibleName(/zulu on/i)
 		expect(links[1]).toHaveAccessibleName(/alpha off/i)
+	})
+	it('turns a trigger off with its switch', async () => {
+		const agent = buildActorResponse({ id: 'agent-a', type: 'agent' })
+		triggersData.mockReturnValue([
+			buildTriggerResponse({ id: 't1', name: 'Nightly', targetActorId: 'agent-a', enabled: true }),
+		])
+		render(<AgentTriggersSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getByRole('switch', { name: /turn off nightly/i }))
+		expect(updateMutate).toHaveBeenCalledWith(
+			{ id: 't1', data: { enabled: false } },
+			expect.anything(),
+		)
+	})
+
+	it('opens the trigger picker from New trigger', async () => {
+		const agent = buildActorResponse({ id: 'agent-a', type: 'agent' })
+		triggersData.mockReturnValue([])
+		render(<AgentTriggersSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getByRole('button', { name: /new trigger/i }))
+		expect(screen.getByText('picker:trigger')).toBeInTheDocument()
 	})
 })

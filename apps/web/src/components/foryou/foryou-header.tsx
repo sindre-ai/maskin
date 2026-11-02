@@ -82,7 +82,7 @@ export function ForYouHeader({
 	}
 
 	return (
-		<div className="mx-auto flex w-full max-w-[700px] items-center gap-1.5 pb-0.5">
+		<div className="flex w-full max-w-280 items-center gap-1.5 pb-0.5">
 			<div className="min-w-0 flex-1">
 				{filterPills && (
 					<FilterTabs

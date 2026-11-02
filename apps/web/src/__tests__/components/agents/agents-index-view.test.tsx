@@ -1,8 +1,9 @@
-import { AgentsIndexView } from '@/components/agents/agents-index-view'
+import { AgentsIndexView, type AgentsLoop } from '@/components/agents/agents-index-view'
 import type { SessionStatsRow } from '@maskin/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildSessionResponse } from '../../factories'
 
@@ -99,15 +100,28 @@ function mount(
 	agents: ReturnType<typeof buildActorListItem>[],
 	sessions: ReturnType<typeof buildSessionResponse>[],
 	stats?: SessionStatsRow[],
+	loops?: AgentsLoop[],
 ) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	})
 	render(
 		<QueryClientProvider client={queryClient}>
-			<AgentsIndexView workspaceId="ws-1" agents={agents} sessions={sessions} stats={stats} />
+			<WithQuery agents={agents} sessions={sessions} stats={stats} loops={loops} />
 		</QueryClientProvider>,
 	)
+}
+
+// The route owns the search text (its input sits in the title row); the view
+// renders the below-md copy of the input against the same state.
+function WithQuery(props: {
+	agents: ReturnType<typeof buildActorListItem>[]
+	sessions: ReturnType<typeof buildSessionResponse>[]
+	stats?: SessionStatsRow[]
+	loops?: AgentsLoop[]
+}) {
+	const [query, setQuery] = useState('')
+	return <AgentsIndexView workspaceId="ws-1" {...props} query={query} onQueryChange={setQuery} />
 }
 
 async function flushHydrateAndWriteThrough() {
@@ -145,6 +159,50 @@ function resetMockState() {
 beforeEach(resetMockState)
 
 describe('AgentsIndexView', () => {
+	describe('search', () => {
+		it('narrows the list by typed words and says when nothing matches', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian()], [])
+			await user.type(screen.getByRole('searchbox', { name: 'Search agents' }), 'architect')
+			expect(screen.getByText('Brian')).toBeInTheDocument()
+			expect(screen.queryByText('Ada')).not.toBeInTheDocument()
+			await user.type(screen.getByRole('searchbox', { name: 'Search agents' }), ' zzz')
+			expect(screen.getByText('No agents match.')).toBeInTheDocument()
+		})
+	})
+
+	describe('column header', () => {
+		it('labels the columns above the rows', () => {
+			mount([agentAda()], [])
+			for (const label of ['Agent', 'Team', 'Latest', 'Sessions', 'Status']) {
+				// 'Agent' also appears as the kind badge, hence getAll.
+				expect(screen.getAllByText(label, { selector: 'span' }).length).toBeGreaterThan(0)
+			}
+		})
+	})
+
+	describe('team', () => {
+		const loops: AgentsLoop[] = [
+			{ name: 'Zeta flow', agentIds: ['agent-ada', 'agent-brian'] },
+			{ name: 'Alpha flow', agentIds: ['agent-brian'] },
+		]
+
+		it('shows the first flow A to Z as the team, else No team', () => {
+			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
+			expect(screen.getByText('Alpha flow')).toBeInTheDocument()
+			expect(screen.getByText('Zeta flow')).toBeInTheDocument()
+			expect(screen.getByText('No team')).toBeInTheDocument()
+		})
+
+		it('groups by team with the catch-all last', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
+			await pickFromDisplayPanel(user, 'Grouping', 'Team')
+			const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
+			expect(headings).toEqual(['Alpha flow', 'Zeta flow', 'No team'])
+		})
+	})
+
 	describe('grouped sections', () => {
 		it('renders Working / Idle / Failed sections with label, count, and note', () => {
 			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
@@ -294,11 +352,6 @@ describe('AgentsIndexView', () => {
 			// Back to All.
 			await user.click(within(strip).getByRole('button', { name: 'All (3)' }))
 			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
-		})
-
-		it('has no per-screen search input — workspace search lives in the nav row', () => {
-			mount([agentAda(), agentBrian()], [])
-			expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
 		})
 	})
 

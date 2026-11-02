@@ -3,6 +3,7 @@ import { AgentCallButton } from '@/components/agents/agent-call-button'
 import { AgentStatusPill, type PortraitStatus } from '@/components/agents/agent-portrait-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
 	Select,
@@ -19,18 +20,21 @@ import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { ACTOR_DESCRIPTION_MAX_LENGTH } from '@maskin/shared'
-import { Camera } from 'lucide-react'
+import { Camera, MessageSquare } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export function AgentDetailHeader({
 	agent,
 	portrait,
+	onMessage,
 }: {
 	agent: ActorResponse
 	/** Derived once by the detail view, which also owns the run/pause action it
 	 *  publishes to the nav row (mockup 2351). */
 	portrait: PortraitStatus
+	/** Moves the cursor to the composer at the foot of the page. */
+	onMessage: () => void
 }) {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
@@ -156,7 +160,13 @@ export function AgentDetailHeader({
 				</div>
 				{/* Voice call entry point. Sits right of the identity block on the same
 				    row. */}
-				<AgentCallButton agent={agent} />
+				<div className="flex items-center gap-2">
+					<Button type="button" variant="outline" size="sm" onClick={onMessage}>
+						<MessageSquare size={14} aria-hidden />
+						Message
+					</Button>
+					<AgentCallButton agent={agent} />
+				</div>
 			</div>
 		</header>
 	)

@@ -1,7 +1,7 @@
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead } from '@/hooks/use-subscriptions'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse, buildObjectResponse, buildRelationshipResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
@@ -363,6 +363,26 @@ describe('TimelineTab', () => {
 		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
 
+	it('caps a filter count at 99+ while the accessible name keeps the exact number', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const events = Array.from({ length: 100 }, (_, i) =>
+			buildEventResponse({
+				id: 1000 + i,
+				action: 'commented',
+				entityType: 'bet',
+				entityId: 'obj-1',
+				createdAt: `2026-01-01T00:${String(i % 60).padStart(2, '0')}:00Z`,
+			}),
+		)
+		mockGraph(events, [], [], object)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const all = screen.getByRole('button', { name: 'All (100)' })
+		expect(within(all).getByText('99+')).toBeInTheDocument()
+		expect(within(all).queryByText('100')).not.toBeInTheDocument()
+	})
+
 	it('renders an empty state when there is nothing to show', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph([], [], [], object)
@@ -385,21 +405,28 @@ describe('TimelineTab', () => {
 		})
 
 		expect(screen.queryByText('No activity yet.')).not.toBeInTheDocument()
-		expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+		expect(container.querySelectorAll('.animate-pulse-fast')).toHaveLength(9)
 	})
 
 	it('shows an error card instead of the empty state when the graph fetch fails', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const refetch = vi.fn()
 		vi.mocked(useObjectGraph).mockReturnValue({
 			data: undefined,
 			isError: true,
 			error: new Error('boom'),
+			refetch,
 		} as never)
 
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.queryByText('No activity yet.')).not.toBeInTheDocument()
-		expect(screen.getByText("Couldn't load activity")).toBeInTheDocument()
+		expect(screen.getByText('Activity did not load')).toBeInTheDocument()
+		expect(screen.getByText('Your connection dropped. Nothing was lost.')).toBeInTheDocument()
+		// Filters stay visible on the error state.
+		expect(screen.getByRole('button', { name: /^All \(/ })).toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+		expect(refetch).toHaveBeenCalledTimes(1)
 	})
 
 	it('falls back to a denormalized title when the linked object is not in the graph', () => {

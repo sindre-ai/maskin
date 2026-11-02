@@ -12,6 +12,7 @@ import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
 import { AgentTriggersSection } from '@/components/agents/agent-triggers-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
+import { EditorBanner } from '@/components/shared/editor-banner'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
@@ -22,7 +23,7 @@ import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export function AgentDetailView({ agent }: { agent: ActorResponse }) {
@@ -36,6 +37,15 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	// The one read of the desktop flag for the whole feature: the computer lives
 	// on this page only, so this is its boundary.
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const composerRef = useRef<HTMLDivElement>(null)
+
+	// The header's Message button hands the person to the composer at the foot of
+	// the page: scroll it into view and put the cursor in it.
+	const focusComposer = useCallback(() => {
+		const textarea = composerRef.current?.querySelector('textarea')
+		textarea?.scrollIntoView({ block: 'center' })
+		textarea?.focus()
+	}, [])
 
 	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions ?? []), [sessions])
 	const portrait = getPortraitStatus(agent, deriveAgentStatus(agent.id, sessionsByAgent))
@@ -138,7 +148,12 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 			{/* w-full: mx-auto stops a flex item stretching, so without it this shrink-wraps to its
 			    widest no-wrap text (an agent's description) and overflows a phone screen. */}
 			<div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-				<AgentDetailHeader agent={agent} portrait={portrait} />
+				<AgentDetailHeader agent={agent} portrait={portrait} onMessage={focusComposer} />
+				{isDisabled && (
+					<EditorBanner tone="info">
+						Disabled. Running sessions were held where they stopped. Enable the agent to continue.
+					</EditorBanner>
+				)}
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 				<AgentSessionsSection agent={agent} />
 				<AgentTriggersSection agent={agent} />
@@ -148,7 +163,9 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				<AgentSkillsSection agent={agent} />
 				<AgentAccessSection agent={agent} />
 				<AgentExtensionsSection agent={agent} />
-				<AgentComposer agent={agent} />
+				<div ref={composerRef}>
+					<AgentComposer agent={agent} />
+				</div>
 			</div>
 		</>
 	)

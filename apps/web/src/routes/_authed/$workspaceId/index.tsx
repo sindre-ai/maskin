@@ -208,7 +208,8 @@ function ForYouFeed() {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
 			if (repliedKeys.has(key)) return 'waiting'
-			return 'needs'
+			// Only an ask with options is something to decide; a plain mention is an update.
+			return classifyCardKind(item) === 'decision' ? 'needs' : 'fyi'
 		},
 		[decided, repliedKeys],
 	)
@@ -689,15 +690,7 @@ function ForYouFeed() {
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
-			<PageHeader
-				title="For you"
-				subtitle={
-					unreadRegular.length === 0
-						? 'All caught up'
-						: `${unreadRegular.length} ${unreadRegular.length === 1 ? 'needs' : 'need'} you`
-				}
-				scrollLocked
-			/>
+			<PageHeader title={greeting} scrollLocked />
 
 			<ForYouHeader
 				unreadCount={unreadRegular.length}
@@ -726,11 +719,10 @@ function ForYouFeed() {
 			)}
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
-				<div className="mx-auto flex w-full max-w-[700px] flex-col">
-					<div className="pb-4" data-testid="foryou-greeting">
-						<p className="text-xl font-semibold tracking-tight text-foreground">{greeting}</p>
-						<p className="text-sm text-muted-foreground">{lead}</p>
-					</div>
+				<div className="flex w-full max-w-280 flex-col">
+					<p className="pb-4 text-sm text-muted-foreground" data-testid="foryou-greeting">
+						{lead}
+					</p>
 
 					<BriefingRow workspaceId={workspaceId} />
 
@@ -833,7 +825,7 @@ export function greetingFor(name: string | undefined, now: Date): string {
 	const hour = now.getHours()
 	const part =
 		hour < 5
-			? 'Good evening'
+			? 'Good night'
 			: hour < 12
 				? 'Good morning'
 				: hour < 18

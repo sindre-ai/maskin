@@ -71,7 +71,7 @@ export function LoopRow({
 		<Link
 			to="/$workspaceId/loops/$loopId"
 			params={{ workspaceId: loop.workspaceId, loopId: loop.id }}
-			className="group flex items-center gap-3.5 rounded-xl border-b border-border px-3.5 py-4 transition-colors duration-150 hover:bg-muted"
+			className="group flex items-center gap-3.5 border-b border-border px-3.5 py-4 transition-colors duration-150 hover:bg-muted"
 		>
 			<span
 				title={pill.label}

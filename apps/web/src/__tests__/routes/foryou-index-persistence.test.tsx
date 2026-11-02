@@ -334,18 +334,10 @@ describe('ForYou curated order', () => {
 describe('ForYou nav identity', () => {
 	beforeEach(resetState)
 
-	it('publishes title/subtitle into the shared nav instead of its own identity node', async () => {
+	it('publishes the greeting as the shared nav title instead of its own identity node', async () => {
 		mount()
 		await flush()
-		expect(pageHeaderProps.current.title).toBe('For you')
-		expect(pageHeaderProps.current.subtitle).toBe('2 need you')
+		expect(pageHeaderProps.current.title).toMatch(/^Good (night|morning|afternoon|evening)/)
 		expect(pageHeaderProps.current.stickyIdentity).toBeUndefined()
-	})
-
-	it('reads "All caught up" once nothing is unread', async () => {
-		feedState.__foryouItems = []
-		mount()
-		await flush()
-		expect(pageHeaderProps.current.subtitle).toBe('All caught up')
 	})
 })

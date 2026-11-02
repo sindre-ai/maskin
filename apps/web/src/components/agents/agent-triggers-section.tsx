@@ -1,14 +1,18 @@
 import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
+import { CreatePicker } from '@/components/shared/create-picker'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useTriggers } from '@/hooks/use-triggers'
+import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
+import { useTriggers, useUpdateTrigger } from '@/hooks/use-triggers'
 import type { ActorResponse, TriggerResponse } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { Bell, ChevronRight, Clock, Zap } from 'lucide-react'
+import { Bell, ChevronRight, Clock, Plus, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 /** Triggers listed before the section collapses behind "Show all". */
 const COLLAPSED_TRIGGERS = 3
@@ -33,6 +37,8 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const { data: triggers, isLoading } = useTriggers(workspaceId)
 	const [showAll, setShowAll] = useState(false)
+	const [createOpen, setCreateOpen] = useState(false)
+	const canWrite = useCanWrite()
 
 	const agentTriggers = useMemo(
 		() => (triggers ?? []).filter((t) => t.targetActorId === agent.id).sort(sortTriggers),
@@ -50,17 +56,31 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 				title="Triggers"
 				note={agentTriggers.length > 0 ? String(agentTriggers.length) : undefined}
 				action={
-					isTruncated ? (
-						<Button
-							variant="ghost"
-							size="sm"
-							className="h-7 shrink-0 px-2 text-xs font-medium"
-							aria-expanded={showAll}
-							onClick={() => setShowAll((v) => !v)}
-						>
-							{showAll ? 'Show fewer' : `Show all ${agentTriggers.length}`}
-						</Button>
-					) : undefined
+					<div className="flex items-center gap-1">
+						{isTruncated && (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-7 shrink-0 px-2 text-xs font-medium"
+								aria-expanded={showAll}
+								onClick={() => setShowAll((v) => !v)}
+							>
+								{showAll ? 'Show fewer' : `Show all ${agentTriggers.length}`}
+							</Button>
+						)}
+						<ViewerTooltip>
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-7 shrink-0 px-2 text-xs font-medium"
+								disabled={!canWrite}
+								onClick={() => setCreateOpen(true)}
+							>
+								<Plus size={14} aria-hidden />
+								New trigger
+							</Button>
+						</ViewerTooltip>
+					</div>
 				}
 			/>
 
@@ -70,7 +90,7 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 				</div>
 			) : agentTriggers.length === 0 ? (
 				<p className="py-4 text-center text-sm text-muted-foreground">
-					No triggers fire this agent yet.
+					Nothing wakes this agent yet. Add a schedule or an event.
 				</p>
 			) : (
 				<ul className="flex flex-col gap-1.5">
@@ -81,11 +101,16 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 					))}
 				</ul>
 			)}
+			{/* The picker has no way to preselect the agent yet, so the new trigger
+			    is pointed at this agent on its own page. */}
+			<CreatePicker open={createOpen} onOpenChange={setCreateOpen} defaultType="trigger" />
 		</section>
 	)
 }
 
 function TriggerCard({ trigger, workspaceId }: { trigger: TriggerResponse; workspaceId: string }) {
+	const canWrite = useCanWrite()
+	const updateTrigger = useUpdateTrigger(workspaceId)
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
 
 	return (
@@ -102,16 +127,19 @@ function TriggerCard({ trigger, workspaceId }: { trigger: TriggerResponse; works
 					{describeTrigger(trigger)}
 				</span>
 			</div>
-			<span
-				className={cn(
-					'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
-					trigger.enabled
-						? 'bg-status-completed-bg text-status-completed-text'
-						: 'bg-muted text-muted-foreground',
-				)}
-			>
-				{trigger.enabled ? 'On' : 'Off'}
-			</span>
+			<ViewerTooltip>
+				<Switch
+					checked={trigger.enabled}
+					disabled={!canWrite || updateTrigger.isPending}
+					aria-label={`${trigger.enabled ? 'Turn off' : 'Turn on'} ${trigger.name}`}
+					onCheckedChange={(enabled) =>
+						updateTrigger.mutate(
+							{ id: trigger.id, data: { enabled } },
+							{ onError: () => toast.error(`Couldn't update ${trigger.name}`) },
+						)
+					}
+				/>
+			</ViewerTooltip>
 			<Link
 				to="/$workspaceId/triggers/$triggerId"
 				params={{ workspaceId, triggerId: trigger.id }}

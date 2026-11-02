@@ -2,7 +2,7 @@
 // last, then recent chats, then recent loops. Pure, so the redesigned launcher
 // can build the same list.
 
-export const RECENTS_MAX = 4
+export const RECENTS_MAX = 5
 
 export interface RecentItem {
 	kind: 'object' | 'chat' | 'loop'

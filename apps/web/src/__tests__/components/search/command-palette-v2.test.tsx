@@ -182,7 +182,7 @@ describe('launcher content from the shared module', () => {
 		expect(await screen.findByRole('option', { name: /New chat/ })).toBeInTheDocument()
 	})
 
-	it('puts up to four recents, chats and loops included, after Needs you', async () => {
+	it('puts up to five recents, chats and loops included, after Needs you', async () => {
 		localStorage.setItem('maskin-recent-objects-ws-1', JSON.stringify([IDS.recent]))
 		objectsRef.current = [
 			{ id: IDS.recent, type: 'bet', title: 'Recent bet', status: 'active' } as unknown,
@@ -206,6 +206,7 @@ describe('launcher content from the shared module', () => {
 			expect.stringContaining('Pricing chat'),
 			expect.stringContaining('Older chat'),
 			expect.stringContaining('Weekly review'),
+			expect.stringContaining('Cut by the limit'),
 		])
 
 		await user.click(screen.getByRole('option', { name: /Weekly review/ }))
@@ -331,6 +332,28 @@ describe('launcher rows', () => {
 })
 
 describe('launcher with words and pills', () => {
+	it('shows the matched snippet as a line under the title of a result that has one', async () => {
+		vi.mocked(api.search.query).mockImplementation(async () =>
+			response([
+				row({
+					id: IDS.task,
+					group: 'objects',
+					type: 'task',
+					title: 'Pricing page',
+					snippet: 'We agreed the hans discount applies from March',
+				}),
+				row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Hans loop' }),
+			]),
+		)
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'hans')
+		const withSnippet = await screen.findByRole('option', { name: /Pricing page/ })
+		expect(withSnippet).toHaveTextContent('We agreed the hans discount applies from March')
+		const without = screen.getByRole('option', { name: /Hans loop/ })
+		expect(without).not.toHaveTextContent('We agreed')
+	})
+
 	it('asks for six rows, shows them under Jump to, and Enter opens the top one', async () => {
 		const user = userEvent.setup()
 		renderLauncher()

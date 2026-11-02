@@ -6,13 +6,14 @@ import { getStaticColumns } from '@/components/objects/data-table/columns'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import {
 	DataTableToolbar,
+	type DataTableToolbarProps,
 	type ToolbarQuickChip,
 } from '@/components/objects/data-table/data-table-toolbar'
 import {
 	type DisplayFilterSectionModel,
 	pinToken,
 } from '@/components/objects/data-table/display-filter-section'
-import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
+import { DisplayPanel, type DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
@@ -1753,29 +1754,116 @@ function ObjectsRoute() {
 		[displaySettingsKey, workspaceId, navigate],
 	)
 
-	// Published into the shared nav row's *left* cluster, immediately after the
-	// <h1> — the mockup puts the type tabs beside "Objects" (146–153), not out
-	// beyond the search field. PageHeader's effect deps are `[titleTabs]`, so a
-	// fresh node every render would re-set context state on every pass;
-	// memoised for that reason.
-	const headerTabs = useMemo(
-		() => (
-			<FilterTabs
-				variant="nav"
-				tabs={tabsWithCounts}
-				value={typeFilter}
-				onChange={handleTypeFilterChange}
-				aria-label="Type filter"
-				// Below md, drop the tabs onto their own row (`basis-full`) after the
-				// title + search cluster (`order-2`) — otherwise the tabs share the
-				// header row with an expanded NavSearch and get clipped mid-label
-				// (last tab reads as "Custo…"). Restored to the inline "beside <h1>"
-				// arrangement at md and above with `md:basis-auto md:order-none`.
-				className="mt-3 min-w-0 basis-full order-2 md:mt-0 md:ml-3 md:basis-auto md:order-none"
-			/>
-		),
-		[tabsWithCounts, typeFilter, handleTypeFilterChange],
+	// The type chips lead the chip row under the title (mockup 2290), with the
+	// pinned quick filters after them; Display sits in the title row. Pill
+	// variant: counts on every chip, scrolls sideways inside the row on mobile.
+	const typeTabs = (
+		<FilterTabs
+			variant="pill"
+			tabs={tabsWithCounts}
+			value={typeFilter}
+			onChange={handleTypeFilterChange}
+			aria-label="Type filter"
+			className="shrink-0 md:shrink"
+		/>
 	)
+
+	const toolbarProps: DataTableToolbarProps = {
+		columns: columnInfo,
+		columnVisibility: effectiveVisibility,
+		onColumnVisibilityChange: handleColumnVisibilityChange,
+		quickChips,
+		filterPills,
+		onClearAllFilters: clearAllFilters,
+		filterSections,
+		pinnedFilters,
+		onTogglePinnedFilter: handleTogglePinnedFilter,
+		statusFilter,
+		onStatusFilterChange: (value) => updateSearch({ status: value }),
+		statusesByType,
+		driverFilter,
+		onDriverFilterChange: (value) => updateSearch({ driver: value }),
+		actors,
+		fieldDefinitions: typeFieldDefinitions,
+		metadataFilters,
+		onMetadataFilterChange: (field, value) => updateSearch({ [`metadata.${field}`]: value }),
+		onResetFilters: () => {
+			const cleared: Record<string, string | number | undefined> = {
+				status: undefined,
+				driver: undefined,
+				attention: undefined,
+				fresh: undefined,
+				starred: undefined,
+				updated: undefined,
+			}
+			for (const key of Object.keys(searchParams)) {
+				if (key.startsWith('metadata.')) cleared[key] = undefined
+			}
+			updateSearch(cleared)
+		},
+		sort,
+		onSortChange: (value) =>
+			updateSearch({
+				sort: value,
+				order: value === BOARD_MANUAL_SORT ? 'asc' : order,
+			}),
+		order,
+		onOrderChange: (value) => updateSearch({ order: value }),
+		groupBy,
+		onGroupByChange: (value) => updateSearch({ groupBy: value ?? 'none' }),
+		includeArchived: supportsIncludeArchived ? includeArchived : undefined,
+		archivedCount,
+		onIncludeArchivedChange: supportsIncludeArchived
+			? // Must be the number 1, not the string '1' — the router's default
+				// search stringifier round-trips through JSON.parse/stringify, so a
+				// string that looks like valid JSON gets re-quoted (`includeArchived=%221%22`)
+				// while a number serializes as the bare digit.
+				(next) => updateSearch({ includeArchived: next ? 1 : undefined })
+			: undefined,
+		view: effectiveView,
+		onViewChange: (next) => {
+			// Board on a type that can't render one (the All tab, or a type with
+			// no configured statuses) lands on the board-capable type rather
+			// than refusing the click.
+			if (next === 'board' && !boardSupported) {
+				if (!boardLandingType) return
+				pendingViewRef.current = { key: boardLandingType, view: 'board' }
+				setView('board')
+				handleTypeFilterChange(boardLandingType)
+				trackEvent('objects_control_changed', {
+					source: 'objects-page',
+					control: 'view',
+					value: next,
+					objectType: boardLandingType,
+				})
+				return
+			}
+			setView(next)
+			if (next === 'list' && sort === BOARD_MANUAL_SORT) {
+				updateSearch({ sort: DEFAULT_SORT, order: DEFAULT_ORDER })
+			}
+			// One analytics line per user-initiated switch so we can count
+			// distinct operators reaching for Board (the bet's success
+			// criterion). Hydration also sets view but bypasses this path.
+			trackEvent('objects_control_changed', {
+				source: 'objects-page',
+				control: 'view',
+				value: next,
+				objectType: typeFilter ?? null,
+			})
+		},
+		boardSupported: boardSupported || !!boardLandingType,
+		onResetToDefault: handleResetToDefault,
+	}
+	// The Display control sits in the title row; the toolbar keeps the chips.
+	const {
+		quickChips: _qc,
+		filterPills: _fp,
+		onClearAllFilters: _oc,
+		leading: _l,
+		hideDisplay: _h,
+		...displayPanelProps
+	} = toolbarProps
 
 	return (
 		// The shared scroll area already supplies the page gutter, so the screen
@@ -1785,7 +1873,7 @@ function ObjectsRoute() {
 			{/* No subtitle: the mockup's Objects header carries the count on the
 			    active type tab (`All 1,063`), not beside the <h1> — printing it in
 			    both places states the same number twice, three characters apart. */}
-			<PageHeader title="Objects" titleTabs={headerTabs} scrollLocked />
+			<PageHeader title="Objects" actions={<DisplayPanel {...displayPanelProps} />} scrollLocked />
 			{idsFilter && (
 				<div className="mb-3 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -1808,96 +1896,7 @@ function ObjectsRoute() {
 				</div>
 			)}
 
-			<DataTableToolbar
-				columns={columnInfo}
-				columnVisibility={effectiveVisibility}
-				onColumnVisibilityChange={handleColumnVisibilityChange}
-				quickChips={quickChips}
-				filterPills={filterPills}
-				onClearAllFilters={clearAllFilters}
-				filterSections={filterSections}
-				pinnedFilters={pinnedFilters}
-				onTogglePinnedFilter={handleTogglePinnedFilter}
-				statusFilter={statusFilter}
-				onStatusFilterChange={(value) => updateSearch({ status: value })}
-				statusesByType={statusesByType}
-				driverFilter={driverFilter}
-				onDriverFilterChange={(value) => updateSearch({ driver: value })}
-				actors={actors}
-				fieldDefinitions={typeFieldDefinitions}
-				metadataFilters={metadataFilters}
-				onMetadataFilterChange={(field, value) => updateSearch({ [`metadata.${field}`]: value })}
-				onResetFilters={() => {
-					const cleared: Record<string, string | number | undefined> = {
-						status: undefined,
-						driver: undefined,
-						attention: undefined,
-						fresh: undefined,
-						starred: undefined,
-						updated: undefined,
-					}
-					for (const key of Object.keys(searchParams)) {
-						if (key.startsWith('metadata.')) cleared[key] = undefined
-					}
-					updateSearch(cleared)
-				}}
-				sort={sort}
-				onSortChange={(value) =>
-					updateSearch({
-						sort: value,
-						order: value === BOARD_MANUAL_SORT ? 'asc' : order,
-					})
-				}
-				order={order}
-				onOrderChange={(value) => updateSearch({ order: value })}
-				groupBy={groupBy}
-				onGroupByChange={(value) => updateSearch({ groupBy: value ?? 'none' })}
-				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
-				archivedCount={archivedCount}
-				onIncludeArchivedChange={
-					supportsIncludeArchived
-						? // Must be the number 1, not the string '1' — the router's default
-							// search stringifier round-trips through JSON.parse/stringify, so a
-							// string that looks like valid JSON gets re-quoted (`includeArchived=%221%22`)
-							// while a number serializes as the bare digit.
-							(next) => updateSearch({ includeArchived: next ? 1 : undefined })
-						: undefined
-				}
-				view={effectiveView}
-				onViewChange={(next) => {
-					// Board on a type that can't render one (the All tab, or a type with
-					// no configured statuses) lands on the board-capable type rather
-					// than refusing the click.
-					if (next === 'board' && !boardSupported) {
-						if (!boardLandingType) return
-						pendingViewRef.current = { key: boardLandingType, view: 'board' }
-						setView('board')
-						handleTypeFilterChange(boardLandingType)
-						trackEvent('objects_control_changed', {
-							source: 'objects-page',
-							control: 'view',
-							value: next,
-							objectType: boardLandingType,
-						})
-						return
-					}
-					setView(next)
-					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
-						updateSearch({ sort: DEFAULT_SORT, order: DEFAULT_ORDER })
-					}
-					// One analytics line per user-initiated switch so we can count
-					// distinct operators reaching for Board (the bet's success
-					// criterion). Hydration also sets view but bypasses this path.
-					trackEvent('objects_control_changed', {
-						source: 'objects-page',
-						control: 'view',
-						value: next,
-						objectType: typeFilter ?? null,
-					})
-				}}
-				boardSupported={boardSupported || !!boardLandingType}
-				onResetToDefault={handleResetToDefault}
-			/>
+			<DataTableToolbar {...toolbarProps} leading={typeTabs} hideDisplay />
 
 			<CreatePicker
 				open={createPickerOpen}

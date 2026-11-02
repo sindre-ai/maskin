@@ -274,23 +274,18 @@ describe('FailureCard', () => {
 		})
 
 		it.each([
-			['oauth_expired', 'Your Claude login expired', 'Reconnect Claude', '#claude-subscriptions'],
-			['oauth_revoked', 'Your Claude login expired', 'Reconnect Claude', '#claude-subscriptions'],
-			['not_logged_in', 'No Claude login is connected', 'Connect Claude', '#claude-subscriptions'],
-			['invalid_api_key', 'Your API key was rejected', 'Replace API key', '#llm-api-keys'],
+			['oauth_expired', 'Claude login expired', 'Reconnect Claude', '#claude-subscriptions'],
+			['oauth_revoked', 'Claude login expired', 'Reconnect Claude', '#claude-subscriptions'],
+			['not_logged_in', 'Claude is not connected', 'Connect Claude', '#claude-subscriptions'],
+			['invalid_api_key', 'The API key was rejected', 'Replace API key', '#llm-api-keys'],
 			[
 				'session_limit',
-				'Your Claude subscription hit its session limit',
+				'Usage limit reached',
 				'Add a backup subscription',
 				'#claude-subscriptions',
 			],
-			[
-				'weekly_limit',
-				'Your Claude subscription hit its weekly limit',
-				'Add a backup subscription',
-				'#claude-subscriptions',
-			],
-			['credit_balance_low', 'Your API key is out of credit', 'Change API key', '#llm-api-keys'],
+			['weekly_limit', 'Usage limit reached', 'Add a backup subscription', '#claude-subscriptions'],
+			['credit_balance_low', 'Anthropic credit is low', 'Change API key', '#llm-api-keys'],
 		])(
 			'%s with the Keys page: title and one button to the right section',
 			(code, title, button, hash) => {
@@ -314,18 +309,17 @@ describe('FailureCard', () => {
 		})
 
 		it.each([
-			['oauth_expired', 'Agents are paused on our side', /Claude login Maskin uses expired/],
-			['oauth_revoked', 'Agents are paused on our side', /Claude login Maskin uses expired/],
-			['not_logged_in', 'Agents are paused on our side', /could not sign in to Claude/],
-			['invalid_api_key', 'Agents are paused on our side', /key Maskin uses was rejected/],
-			['credit_balance_low', 'Agents are paused on our side', /out of Claude credit/],
-			['session_limit', 'Agents are paused until the limit resets', /hit its Claude usage limit/],
-			['weekly_limit', 'Agents are paused until the limit resets', /hit its Claude usage limit/],
-		])('%s without the Keys page: on-our-side copy and no button', (code, title, sentence) => {
+			'oauth_expired',
+			'oauth_revoked',
+			'not_logged_in',
+			'invalid_api_key',
+			'credit_balance_low',
+			'session_limit',
+			'weekly_limit',
+		])('%s without the Keys page: on-our-side copy and no button', (code) => {
 			renderCard(reason(code))
-			expect(screen.getByText(title)).toBeInTheDocument()
-			expect(screen.getByText(sentence)).toBeInTheDocument()
-			expect(screen.getByText(/You do not need to do anything/)).toBeInTheDocument()
+			expect(screen.getByText('Agents are paused on our side')).toBeInTheDocument()
+			expect(screen.getByText('Nothing for you to do. We are working on it.')).toBeInTheDocument()
 			expect(screen.queryByRole('link')).not.toBeInTheDocument()
 			expect(screen.queryByText('Wait')).not.toBeInTheDocument()
 		})
@@ -370,6 +364,10 @@ describe('FailureCard', () => {
 
 		it('plan_cap_exceeded Go to Billing opens the Billing page', () => {
 			renderCard(reason('plan_cap_exceeded', 'maskin'))
+			expect(screen.getByText('Plan cap reached')).toBeInTheDocument()
+			expect(
+				screen.getByText('This workspace used its included sessions for the month.'),
+			).toBeInTheDocument()
 			expect(screen.getByRole('link', { name: 'Go to Billing' })).toHaveAttribute(
 				'href',
 				'/ws-1/settings/billing',

@@ -17,6 +17,22 @@ test.describe('Workspace Navigation', () => {
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/agents`))
 	})
 
+	test('the bottom bar at 375px lists For you, Chats, Flows, then Items', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 812 })
+		await page.goto(`/${account.workspaceId}`)
+		const bar = page.getByRole('navigation', { name: 'Primary' })
+		await expect(bar).toBeVisible({ timeout: 15_000 })
+		const labels = await bar
+			.getByRole('link')
+			.evaluateAll((links) => links.map((l) => (l.getAttribute('aria-label') ?? '').split(',')[0]))
+		// Items only appears when an object-type module is enabled; when it does it is last.
+		expect(labels.slice(0, 3)).toEqual(['For you', 'Chats', 'Flows'])
+		expect(labels.slice(3)).toEqual(labels.length > 3 ? ['Items'] : [])
+	})
+
 	test('redirects unauthenticated users to login', async ({ browser }) => {
 		const context = await browser.newContext()
 		const page = await context.newPage()

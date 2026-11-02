@@ -24,6 +24,7 @@ vi.mock('@/lib/workspace-context', async (importOriginal) => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { id: 'ws-1' } }),
 }))
 
+vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-actors', () => ({ useActors: (wsId?: string) => useActorsMock(wsId) }))
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: (...args: unknown[]) => useWorkspaceSessionsMock(...args),
@@ -67,6 +68,7 @@ function captureViewProps(props: Record<string, unknown>) {
 }
 vi.mock('@/components/agents/agents-index-view', () => ({
 	AgentsIndexView: captureViewProps,
+	AgentsSearch: () => null,
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/agents/index'

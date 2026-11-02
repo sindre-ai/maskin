@@ -3,18 +3,22 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * The shared page title and margin spec: every screen's <h1> is 34px from 768
- * (24px below), sits on a 16 / 32 / 48px side margin at 375 / 768 / 1024, and
+ * The shared page title and margin spec: every screen's <h1> is 34px from 1024,
+ * 28px at 768 and 24px below, sits on a 16 / 32 / 48px side margin at 375 / 768 / 1024, and
  * shares one left edge with the page content. Requires a live backend.
  */
 
 const SCREENS = [
-	{ path: '', heading: 'For you' },
+	{ path: '', heading: /^Good (night|morning|afternoon|evening)/ },
 	{ path: '/loops', heading: 'Loops' },
 	{ path: '/objects', heading: 'Objects' },
 	{ path: '/marketplace', heading: 'Marketplace' },
 	{ path: '/agents', heading: 'Agents' },
 ] as const
+
+function expectedTitleSize(width: number) {
+	return width >= 1024 ? '34px' : width >= 768 ? '28px' : '24px'
+}
 
 function expectedEdge(width: number) {
 	return width >= 1024 ? 48 : width >= 768 ? 32 : 16
@@ -33,16 +37,20 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		test.use({ viewport: { width: vp.width, height: vp.height } })
 
 		for (const screen of SCREENS) {
-			test(`${screen.heading}: 34px / 24px title on the shared left edge`, async ({
+			test(`${String(screen.heading)}: 34 / 28 / 24px title on the shared left edge`, async ({
 				page,
 				account,
 			}) => {
 				await page.goto(`/${account.workspaceId}${screen.path}`)
-				const h1 = page.getByRole('heading', { level: 1, name: screen.heading, exact: true })
+				const h1 = page.getByRole('heading', {
+					level: 1,
+					name: screen.heading,
+					exact: typeof screen.heading === 'string',
+				})
 				await expect(h1).toBeVisible({ timeout: 15_000 })
 
 				const size = await h1.evaluate((el) => window.getComputedStyle(el).fontSize)
-				expect(size).toBe(vp.width >= 768 ? '34px' : '24px')
+				expect(size).toBe(expectedTitleSize(vp.width))
 
 				// The scroll root is the content edge: title x = root x + side margin.
 				const root = await page.locator('[data-scroll-root]').boundingBox()
@@ -96,6 +104,21 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expectNoHorizontalScroll(page)
 			const composer = await page.getByLabel('Message this conversation').boundingBox()
 			expect((composer?.y ?? 0) + (composer?.height ?? 0)).toBeLessThanOrEqual(vp.height)
+		})
+
+		test('the Chats list column is 280px at 768', async ({ page, account }) => {
+			test.skip(vp.width !== 768, 'The 280px step applies at md only')
+			// The two-pane split (and its fixed-width column) only exists with a thread open.
+			const chat = await account.api.createConversation(account.workspaceId, {
+				title: `Column chat ${Date.now()}`,
+				participant_actor_ids: [],
+				initial_message: 'hello',
+			})
+			await page.goto(`/${account.workspaceId}/chats/${chat.id}`)
+			const column = page.locator('div.md\\:w-70').first()
+			await expect(column).toBeVisible({ timeout: 15_000 })
+			const box = await column.boundingBox()
+			expect(Math.round(box?.width ?? 0)).toBe(280)
 		})
 
 		for (const scheme of ['light', 'dark'] as const) {

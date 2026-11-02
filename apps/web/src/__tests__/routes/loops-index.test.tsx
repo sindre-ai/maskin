@@ -212,6 +212,37 @@ describe('LoopsPage', () => {
 		expect(screen.getByText('No loops running here yet')).toBeInTheDocument()
 	})
 
+	it('shows an attention chip that narrows the list to loops waiting on you', async () => {
+		const user = userEvent.setup()
+		mockUseLoops.mockReturnValue({
+			data: [
+				buildLoop({ id: 'l-wait', name: 'Needs a decision', pill: 'waiting_on_you' }),
+				buildLoop({ id: 'l-calm', name: 'Calm loop' }),
+			],
+			isLoading: false,
+		})
+		render(<LoopsPage />)
+
+		await user.click(screen.getByRole('button', { name: /1 needs you/ }))
+		expect(screen.getByText('Needs a decision')).toBeInTheDocument()
+		expect(screen.queryByText('Calm loop')).not.toBeInTheDocument()
+	})
+
+	it('groups loops under their first tag, A to Z, untagged last', () => {
+		mockUseLoops.mockReturnValue({
+			data: [
+				buildLoop({ id: 'l1', name: 'Seo loop', tags: ['Marketing'] }),
+				buildLoop({ id: 'l2', name: 'Delivery loop', tags: ['Product'] }),
+				buildLoop({ id: 'l3', name: 'Loose loop', tags: [] }),
+			],
+			isLoading: false,
+		})
+		render(<LoopsPage />)
+
+		const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+		expect(headings.slice(0, 3)).toEqual(['Marketing', 'Product', 'No team'])
+	})
+
 	it('treats a trigger the loop names in triggerIds as tied, not standalone', () => {
 		const actors = [buildActor({ id: 'actor-1', name: 'Compass' })]
 		mockUseLoops.mockReturnValue({

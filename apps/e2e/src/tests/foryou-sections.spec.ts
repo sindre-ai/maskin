@@ -120,8 +120,9 @@ test.describe('For You sections', () => {
 				await expect(page.getByRole('heading', { name: /Waiting on an agent/ })).toHaveCount(0)
 				await expect(page.getByRole('heading', { name: /Handled today/ })).toHaveCount(0)
 
-				await expect(page.getByTestId('foryou-greeting')).toContainText(
-					/^Good (morning|afternoon|evening)/,
+				// The greeting is the page title; the lead line sits under it.
+				await expect(page.getByRole('heading', { level: 1 })).toContainText(
+					/^Good (night|morning|afternoon|evening)/,
 				)
 				await expect(page.getByTestId('foryou-greeting')).toContainText(
 					'2 decisions are waiting on you',

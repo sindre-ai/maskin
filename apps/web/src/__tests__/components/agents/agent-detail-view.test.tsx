@@ -47,7 +47,7 @@ vi.mock('@/components/agents/agent-skills-section', () => ({
 	AgentSkillsSection: () => null,
 }))
 vi.mock('@/components/agents/agent-composer', () => ({
-	AgentComposer: () => null,
+	AgentComposer: () => <textarea aria-label="Message composer" />,
 }))
 
 beforeEach(() => {
@@ -127,5 +127,40 @@ describe('AgentDetailView delete action', () => {
 			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
 		})
 		expect(screen.queryByRole('button', { name: 'Delete agent' })).toBeNull()
+	})
+})
+
+describe('AgentDetailView message and disabled banner', () => {
+	it('focuses the composer from the header Message button', async () => {
+		const user = userEvent.setup()
+		const agent = buildActorResponse({ id: 'agent-5', type: 'agent', name: 'Planner' })
+		render(<AgentDetailView agent={agent} />, {
+			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+		})
+		Element.prototype.scrollIntoView = vi.fn()
+
+		await user.click(screen.getByRole('button', { name: 'Message' }))
+
+		expect(screen.getByRole('textbox', { name: 'Message composer' })).toHaveFocus()
+	})
+
+	it('explains a disabled agent and shows nothing for an active one', () => {
+		const paused = buildActorResponse({
+			id: 'agent-6',
+			type: 'agent',
+			name: 'Planner',
+			agentState: 'paused',
+		})
+		const { unmount } = render(<AgentDetailView agent={paused} />, {
+			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+		})
+		expect(screen.getByText(/Disabled\. Running sessions were held/)).toBeInTheDocument()
+		unmount()
+
+		const active = buildActorResponse({ id: 'agent-7', type: 'agent', name: 'Planner' })
+		render(<AgentDetailView agent={active} />, {
+			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+		})
+		expect(screen.queryByText(/Disabled\. Running sessions/)).toBeNull()
 	})
 })

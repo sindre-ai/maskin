@@ -118,24 +118,21 @@ vi.mock('@/components/objects/bulk-action-bar', () => ({
 	},
 }))
 vi.mock('@/components/layout/page-header', () => ({
-	// The type tabs go out as `titleTabs` (the nav row's left cluster, beside
-	// the <h1>), not as `actions` — the stand-in renders both so a regression
-	// back to the right-hand cluster shows up here.
+	// The type chips now lead the toolbar's chip row (`leading`) and Display is
+	// published as `actions`, so the stand-in renders `actions` and no tabs slot:
+	// a regression back to the nav row shows up as tabs inside the header.
 	PageHeader: ({
 		title,
 		subtitle,
 		actions,
-		titleTabs,
 	}: {
 		title?: string
 		subtitle?: string
 		actions?: React.ReactNode
-		titleTabs?: React.ReactNode
 	}) => (
 		<div data-testid="page-header">
 			<h1>{title}</h1>
 			<span data-testid="page-subtitle">{subtitle}</span>
-			<span data-testid="page-title-tabs">{titleTabs}</span>
 			{actions}
 		</div>
 	),
@@ -162,7 +159,11 @@ vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
 		filterSections,
 		pinnedFilters,
 		onTogglePinnedFilter,
+		leading,
+		hideDisplay,
 	}: {
+		leading?: React.ReactNode
+		hideDisplay?: boolean
 		filterPills?: Array<{ id: string; label: string; value: string; onRemove: () => void }>
 		onClearAllFilters?: () => void
 		quickChips?: Array<{ id: string; label: string; active: boolean; onToggle: () => void }>
@@ -181,7 +182,12 @@ vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
 		pinnedFilters?: string[]
 		onTogglePinnedFilter?: (token: string) => void
 	}) => (
-		<div data-testid="toolbar" data-pinned={(pinnedFilters ?? []).join(',')}>
+		<div
+			data-testid="toolbar"
+			data-pinned={(pinnedFilters ?? []).join(',')}
+			data-hide-display={String(!!hideDisplay)}
+		>
+			<div data-testid="toolbar-leading">{leading}</div>
 			{(quickChips ?? []).map((chip) => (
 				<button
 					key={chip.id}
@@ -534,11 +540,15 @@ describe('ObjectsPage — board single-card advance', () => {
 })
 
 describe('ObjectsPage bulk edit', () => {
-	it("publishes the type tabs into the nav row's left cluster, not its actions slot", () => {
+	it('puts the type tabs on the chip row under the title and Display in the title row', () => {
 		render(<ObjectsPage />)
 
-		// `titleTabs` lands beside the <h1>; `actions` lands past the search
-		// field. The tabs belong in the first (mockup 146-153).
-		expect(screen.getByTestId('page-title-tabs').textContent).not.toBe('')
+		// Tabs lead the toolbar row, not the page header; the toolbar hands
+		// Display over to the header's actions slot.
+		expect(screen.getByTestId('toolbar-leading').textContent).not.toBe('')
+		expect(screen.getByTestId('page-header')).not.toContainElement(
+			screen.getByRole('group', { name: 'Type filter' }),
+		)
+		expect(screen.getByTestId('toolbar')).toHaveAttribute('data-hide-display', 'true')
 	})
 })

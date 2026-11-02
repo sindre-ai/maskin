@@ -1,4 +1,4 @@
-import { AgentsIndexView } from '@/components/agents/agents-index-view'
+import { AgentsIndexView, AgentsSearch } from '@/components/agents/agents-index-view'
 import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceSessionStats, useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -29,8 +30,10 @@ function AgentsRoute() {
 	// neither grows with the size of the session history.
 	const { data: sessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
 	const { data: stats } = useWorkspaceSessionStats(workspaceId)
+	const { data: loops } = useLoops(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const canWrite = useCanWrite()
+	const [query, setQuery] = useState('')
 
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
@@ -66,7 +69,19 @@ function AgentsRoute() {
 
 	return (
 		<div>
-			<PageHeader title="Agents" subtitle={subtitle} />
+			<PageHeader
+				title="Agents"
+				subtitle={subtitle}
+				titleTabs={
+					agents.length > 0 ? (
+						<AgentsSearch
+							value={query}
+							onChange={setQuery}
+							className="hidden w-56 shrink-0 md:block"
+						/>
+					) : undefined
+				}
+			/>
 			{agents.length === 0 ? (
 				<EmptyState
 					emphasis="page"
@@ -87,6 +102,9 @@ function AgentsRoute() {
 					agents={agents}
 					sessions={sessions ?? []}
 					stats={stats}
+					loops={loops}
+					query={query}
+					onQueryChange={setQuery}
 				/>
 			)}
 			<CreatePicker

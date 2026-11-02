@@ -31,6 +31,7 @@ import {
 import { TRIGGERS_PAGE, matchSettingsPages } from '@/lib/palette/go-to'
 import { initialsMatch, matches, rankTitleMatchesFirst } from '@/lib/palette/ranking'
 import { buildRecents } from '@/lib/palette/recents'
+import { highlightText } from '@/lib/search-highlight'
 import { getRecentObjectIds, pushRecentObject } from '@/lib/search-recents'
 import {
 	searchEntityType,
@@ -85,7 +86,6 @@ import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 
 const MAX_JUMP_ROWS = 6
 const MAX_NEEDS_YOU = 3
-const MAX_RECENT = 4
 
 interface PaletteRow {
 	id: string
@@ -94,6 +94,8 @@ interface PaletteRow {
 	kind: string
 	title: string
 	sub?: string
+	/** Matched text from the item's body, shown as a grey line under the title. */
+	snippet?: string
 	icon: ReactNode
 	run: () => void
 }
@@ -468,6 +470,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		kind: row.type.replace(/_/g, ' ').toUpperCase(),
 		title: rowTitle(row),
 		sub: rowSub(row),
+		snippet: row.snippet ?? undefined,
 		icon: <RowIcon row={row} />,
 		// A row from the previous answer must not open while the new one is on its way.
 		run: () => {
@@ -830,12 +833,19 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 									)}
 								>
 									{row.icon}
-									<SearchRowTitle
-										title={row.title}
-										sub={row.sub}
-										query={hasQuery ? query : ''}
-										className="min-w-0 flex-1 font-semibold"
-									/>
+									<span className="flex min-w-0 flex-1 flex-col">
+										<SearchRowTitle
+											title={row.title}
+											sub={row.sub}
+											query={hasQuery ? query : ''}
+											className="min-w-0 font-semibold"
+										/>
+										{hasQuery && row.snippet ? (
+											<span className="truncate text-xs font-normal text-muted-foreground">
+												{highlightText(row.snippet, query)}
+											</span>
+										) : null}
+									</span>
 									<span className="shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
 										{row.kind}
 									</span>

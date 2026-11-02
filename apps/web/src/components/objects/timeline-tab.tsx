@@ -1,9 +1,8 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { EmptyState } from '@/components/shared/empty-state'
 import { ObjectReference } from '@/components/shared/object-reference'
-import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import {
 	DecidedFold,
@@ -35,6 +34,23 @@ import { toast } from 'sonner'
  *  Kept just below the graph endpoint's 100-event page limit so a full page
  *  reads as an overflow indicator rather than an exact tally. */
 const TAB_COUNT_CUTOFF = 99
+
+/** Three placeholder rows (avatar + two lines) on the 1.4s activity pulse; no spinner. */
+function ActivitySkeleton() {
+	return (
+		<div className="space-y-4">
+			{[0, 1, 2].map((i) => (
+				<div key={i} className="flex items-start gap-3">
+					<div className="size-6 shrink-0 animate-pulse-fast rounded-full bg-muted" />
+					<div className="flex-1 space-y-2">
+						<div className="h-3 w-1/3 animate-pulse-fast rounded bg-muted" />
+						<div className="h-3 w-2/3 animate-pulse-fast rounded bg-muted" />
+					</div>
+				</div>
+			))}
+		</div>
+	)
+}
 
 function formatTabCount(value: number): string {
 	if (value > TAB_COUNT_CUTOFF) return `${TAB_COUNT_CUTOFF}+`
@@ -308,7 +324,7 @@ export function TimelineTab({
 		data: graph,
 		isLoading: isGraphLoading,
 		isError: isGraphError,
-		error: graphError,
+		refetch: refetchGraph,
 	} = useObjectGraph(workspaceId, object.id)
 	const events = useMemo(() => {
 		const base = graph?.events ?? []
@@ -695,15 +711,7 @@ export function TimelineTab({
 	if (isGraphLoading) {
 		return (
 			<div className="w-full min-w-0 pt-2.5">
-				<ListSkeleton rows={3} />
-			</div>
-		)
-	}
-
-	if (isGraphError) {
-		return (
-			<div className="w-full min-w-0 pt-2.5">
-				<QueryStateError title="Couldn't load activity" error={graphError} />
+				<ActivitySkeleton />
 			</div>
 		)
 	}
@@ -780,7 +788,21 @@ export function TimelineTab({
 				)}
 			</div>
 
-			{visible.length === 0 ? (
+			{isGraphError && !graph ? (
+				// Failed with nothing cached: the filter row above stays, and the
+				// composer lives outside this tab (object-detail-shell), so only the
+				// list area carries the error.
+				<EmptyState
+					title="Activity did not load"
+					description="Your connection dropped. Nothing was lost."
+					className="py-8"
+					action={
+						<Button variant="outline" size="sm" onClick={() => refetchGraph()}>
+							Try again
+						</Button>
+					}
+				/>
+			) : visible.length === 0 ? (
 				<div className="flex flex-col items-center gap-2.5 px-3 py-8 text-center">
 					<p className="text-[12.5px] text-muted-foreground">
 						{filter === 'all' ? 'No activity yet.' : 'Nothing in this view yet.'}

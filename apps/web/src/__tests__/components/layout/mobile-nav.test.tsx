@@ -66,8 +66,8 @@ describe('MobileNav', () => {
 		render(<MobileNav />)
 		expect(screen.getByRole('link', { name: /for you/i })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /chats/i })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /loops/i })).toBeInTheDocument()
-		expect(screen.queryByRole('link', { name: /objects/i })).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /flows/i })).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: /items/i })).not.toBeInTheDocument()
 	})
 
 	it('has no Triggers tab — v2 routes triggers through Loops', () => {
@@ -78,7 +78,7 @@ describe('MobileNav', () => {
 		expect(linkCalls.map((c) => c.to)).not.toContain('/$workspaceId/triggers')
 	})
 
-	it('injects the Objects item after For You when object types are enabled', () => {
+	it('puts the Items item last, after Flows when object types are enabled', () => {
 		mockUseEnabledModules.mockReturnValue(['work'])
 		mockMatch.mockReturnValue(false)
 		render(<MobileNav />)
@@ -86,9 +86,9 @@ describe('MobileNav', () => {
 		const labels = links.map((l) => l.getAttribute('aria-label'))
 		expect(labels).toEqual([
 			'For you, navigate to',
-			'Objects, navigate to',
 			'Chats, navigate to',
-			'Loops, navigate to',
+			'Flows, navigate to',
+			'Items, navigate to',
 		])
 	})
 
@@ -98,14 +98,14 @@ describe('MobileNav', () => {
 		render(<MobileNav />)
 		expect(screen.getByRole('link', { name: 'Chats, current page' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'For you, navigate to' })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Loops, navigate to' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Flows, navigate to' })).toBeInTheDocument()
 	})
 
 	it('emits nav_item_clicked with the bottom-nav source on tap', () => {
 		mockUseEnabledModules.mockReturnValue([])
 		mockMatch.mockReturnValue(false)
 		render(<MobileNav />)
-		fireEvent.click(screen.getByRole('link', { name: /loops/i }))
+		fireEvent.click(screen.getByRole('link', { name: /flows/i }))
 		expect(trackNav).toHaveBeenCalledWith({ item_key: 'loops', source: 'bottom-nav' })
 	})
 
