@@ -32,6 +32,8 @@ export class ResendSendError extends Error {
 	}
 }
 
+import type { EmailAttachment } from '../../../email-attachments'
+
 export interface ResendEmail {
 	/** The sender's bare address: read from the agent's mailbox on the server, never from the call. */
 	from: string
@@ -39,6 +41,7 @@ export interface ResendEmail {
 	cc?: string[]
 	subject: string
 	body: string
+	attachments?: EmailAttachment[]
 }
 
 async function describeFailure(res: Response): Promise<string> {
@@ -77,14 +80,23 @@ export async function sendResendEmail(
 				'Content-Type': 'application/json',
 				'Idempotency-Key': idempotencyKey,
 			},
-			// Plain text only, no attachments, no bcc, no scheduled time, no reply-to: the
-			// draft holds recipients, subject and text, and that is exactly what was approved.
+			// Plain text and the approved files only, no bcc, no scheduled time, no reply-to: the
+			// draft holds recipients, subject, text and files, and that is exactly what was approved.
 			body: JSON.stringify({
 				from: email.from,
 				to: email.to,
 				...(email.cc?.length ? { cc: email.cc } : {}),
 				subject: email.subject,
 				text: email.body,
+				...(email.attachments?.length
+					? {
+							attachments: email.attachments.map((a) => ({
+								filename: a.filename,
+								content: a.content.toString('base64'),
+								content_type: a.contentType,
+							})),
+						}
+					: {}),
 			}),
 		})
 	} catch {

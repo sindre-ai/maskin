@@ -232,6 +232,13 @@ export const commentDecisionSchema = z
 			.describe(
 				'The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.',
 			),
+		expires_at: z
+			.string()
+			.datetime({ offset: true })
+			.optional()
+			.describe(
+				'ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.',
+			),
 		no_status_action: z
 			.boolean()
 			.optional()
@@ -312,7 +319,10 @@ function contentTokens(value: string): string[] {
  * rather than throwing on the first: an agent handed one nit at a time burns a
  * turn per rule.
  */
-export function validateDecisionProse(decision: CommentDecision): DecisionProseViolation[] {
+export function validateDecisionProse(
+	decision: CommentDecision,
+	now: Date = new Date(),
+): DecisionProseViolation[] {
 	const violations: DecisionProseViolation[] = []
 	const add = (path: string, message: string) => violations.push({ path, message })
 
@@ -346,6 +356,13 @@ export function validateDecisionProse(decision: CommentDecision): DecisionProseV
 				`Replace "${hedge}" with the actual number, or drop the claim. Numbers are concrete or absent. Got: "${value}"`,
 			)
 		}
+	}
+
+	if (decision.expires_at && new Date(decision.expires_at).getTime() <= now.getTime()) {
+		add(
+			'expires_at',
+			`expires_at must be in the future, or the card would never show. Got: "${decision.expires_at}"`,
+		)
 	}
 
 	const titleWords = words(decision.title)
@@ -478,6 +495,14 @@ export function findStatusActionViolations(
 		}
 	}
 	return []
+}
+
+/** Whether the card's `expires_at` has passed. A card without one never expires. */
+export function isDecisionExpired(
+	decision: Pick<CommentDecision, 'expires_at'> | null | undefined,
+	now: Date = new Date(),
+): boolean {
+	return !!decision?.expires_at && new Date(decision.expires_at).getTime() <= now.getTime()
 }
 
 /**

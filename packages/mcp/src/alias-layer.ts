@@ -103,12 +103,32 @@ export function needsNormalise(tool: string): boolean {
  * The canonical shape is also set on the wrapper. The SDK builds tools/list from a schema's .shape,
  * and a bare preprocess wrapper has none, which would list every wrapped tool with an empty
  * parameter list.
+ *
+ * With rejectUnknownKeys, a top-level key outside the shape fails validation (after the old
+ * spellings are normalised) instead of being stripped. Opt in per tool: z.object drops unknown keys
+ * before the handler runs, so the handler cannot see a misnamed list, and a call mixing one valid
+ * list with one misnamed list would otherwise look like a full success.
  */
 export function wrapInputSchema(
 	input: z.ZodRawShape | z.ZodObject<z.ZodRawShape>,
 	normalise: (raw: unknown) => unknown,
+	opts: { rejectUnknownKeys?: boolean } = {},
 ): z.ZodTypeAny {
 	const schema = input instanceof z.ZodType ? input : z.object(input)
-	const wrapped = z.preprocess(normalise, schema)
-	return Object.assign(wrapped, { shape: input instanceof z.ZodType ? input.shape : input })
+	const shape = input instanceof z.ZodType ? input.shape : input
+	const wrapped = z.preprocess((raw, ctx) => {
+		const args = normalise(raw)
+		if (opts.rejectUnknownKeys && isPlainObject(args)) {
+			const accepted = Object.keys(shape)
+			const unknown = Object.keys(args).filter((key) => !accepted.includes(key))
+			if (unknown.length > 0) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. Accepted names: ${accepted.join(', ')}. Nothing was written.`,
+				})
+			}
+		}
+		return args
+	}, schema)
+	return Object.assign(wrapped, { shape })
 }

@@ -52,6 +52,13 @@ public enum ChiefOfStaffThreads {
 		try await open(titled: title(for: card), alsoInvite: alsoInvite, conversations: conversations)
 	}
 
+	/// The reader's chat with the Chief of Staff about one briefing slide, found or created by title.
+	public static func open(
+		aboutSlide slide: StoryCard, conversations: ConversationsStore
+	) async throws -> Outcome {
+		try await open(titled: BriefFollowUp.title(for: slide), conversations: conversations)
+	}
+
 	/// The title of the wrist's thread with the Chief of Staff: a conversation about nothing in
 	/// particular, kept apart from the "About:" threads so it never collects their messages.
 	public static let watchTitle = "Watch"

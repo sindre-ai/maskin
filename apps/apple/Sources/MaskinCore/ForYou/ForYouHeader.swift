@@ -25,20 +25,24 @@ public enum ForYouHeader {
 		return formatter.string(from: date)
 	}
 
-	/// What is blocked on the reader, in one sentence.
+	/// "Good afternoon, Sebastian": the For you title (v19). Morning to noon, afternoon to 18:00,
+	/// evening after. Only the first word of the name is used; with no name the greeting stands alone.
+	public static func greeting(name: String?, at date: Date, calendar: Calendar = .current) -> String {
+		let hour = calendar.component(.hour, from: date)
+		let part = hour < 12 ? "morning" : (hour < 18 ? "afternoon" : "evening")
+		let first = name?.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+		return first.isEmpty ? "Good \(part)" : "Good \(part), \(first)"
+	}
+
+	/// The first sentence under the title: how many decisions wait on the reader.
 	/// - Nothing is said until the feed has loaded, so a slow start never claims "Nothing is blocked".
-	/// - With no open ask: "Nothing is blocked on you."
-	/// - Otherwise the most urgent open ask (the feed's own order): "{agent} needs a call: {title}".
-	///   An ask whose agent or title is unknown gives no sentence rather than an invented one.
-	public static func summary(
-		blocking: [FeedEntry], loaded: Bool, sender: (ForYouCard) -> String?
-	) -> String? {
+	/// - With none open: "Nothing is blocked on you."
+	public static func summary(blocking: [FeedEntry], loaded: Bool) -> String? {
 		guard loaded else { return nil }
-		guard let first = blocking.first else { return "Nothing is blocked on you." }
-		guard let agent = sender(first.card)?.trimmed.nonEmpty,
-			let title = first.card.decision?.title.trimmed.nonEmpty
-		else { return nil }
-		let ask = title.hasSuffix("?") || title.hasSuffix(".") ? title : title + "."
-		return "\(agent) needs a call: \(ask)"
+		switch blocking.count {
+		case 0: return "Nothing is blocked on you."
+		case 1: return "1 decision is waiting on you."
+		case let n: return "\(n) decisions are waiting on you."
+		}
 	}
 }

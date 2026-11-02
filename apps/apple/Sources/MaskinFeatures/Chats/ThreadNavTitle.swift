@@ -48,11 +48,13 @@ enum ThreadNav {
 
 	/// `typing…` / `replying…` / `working` while anyone is live; otherwise `{flow} flow` for a flow
 	/// chat and nothing for a direct one. A flow channel with several live agents says `n working`
-	/// and a single typer `{name} is typing…`.
+	/// and a single live agent `{name} working`.
 	static func status(
 		presences: [(agent: ChatParticipant, presence: ChatAgentPresence)], flow: ChatFlowContext?
 	) -> ThreadNavStatus? {
 		if presences.count > 1, flow != nil { return .live("\(presences.count) working") }
+		// A flow channel is titled with the flow, so the line names who is working ("Developer working").
+		if flow != nil, let only = presences.first, presences.count == 1 { return .live("\(only.agent.name) working") }
 		if !presences.isEmpty { return .live("working") }
 		if let flow { return .quiet("\(flow.name) flow") }
 		return nil
@@ -69,6 +71,8 @@ struct ThreadNavTitle: View {
 	let title: String
 	var status: ThreadNavStatus?
 	var onTap: (() -> Void)?
+	/// What a tap does, for VoiceOver; defaults to opening the flow.
+	var hint: String?
 
 	var body: some View {
 		let content = VStack(spacing: 0) {
@@ -88,7 +92,7 @@ struct ThreadNavTitle: View {
 		if let onTap {
 			Button(action: onTap) { content.contentShape(Rectangle()) }
 				.buttonStyle(.maskinPressed)
-				.accessibilityHint("Opens the flow")
+				.accessibilityHint(hint ?? "Opens the flow")
 		} else {
 			content
 		}

@@ -52,6 +52,17 @@ public final class AgentDetailStore {
 	public var canPause: Bool { AgentActions.canPause(status) && busy == nil }
 	public var canReset: Bool { AgentActions.canReset(isSystem: profile?.isSystem ?? false) && busy == nil }
 
+	/// Disable is offered while the agent is working: its live session is held where it stopped
+	/// and Enable picks it up again. (An idle agent has nothing to hold, and the server's Enable
+	/// would start a fresh run, so the button is not offered there.)
+	public var canDisable: Bool { canPause }
+	public var canEnable: Bool { status == .paused && busy == nil }
+
+	// MARK: - Stats
+
+	/// What the stats row above the tabs counts.
+	public var stats: AgentStats { AgentStats(sessions: sessions) }
+
 	// MARK: - Loading
 
 	public func start() async {
@@ -129,6 +140,23 @@ public final class AgentDetailStore {
 		return await perform(.pause, intent: "pause", to: .paused) { key in
 			try await self.api.pause(agentID: self.agentID, idempotencyKey: key)
 		}
+	}
+
+	/// "Disable agent": holds the live session where it stopped.
+	@discardableResult
+	public func disable() async -> Bool { await pause() }
+
+	/// "Enable agent": picks the held session up again.
+	@discardableResult
+	public func enable() async -> Bool {
+		guard canEnable else { return false }
+		return await run(prompt: nil)
+	}
+
+	/// Start the same work again from a failed or stopped session.
+	@discardableResult
+	public func retry(_ session: AgentSession) async -> Bool {
+		await run(prompt: session.prompt)
 	}
 
 	@discardableResult
@@ -250,4 +278,63 @@ public final class AgentDetailStore {
 			return false
 		}
 	}
+}
+
+/// The Sessions and "Finished well" numbers of the stats row, over the sessions loaded.
+public struct AgentStats: Equatable, Sendable {
+	public var total: Int
+	/// Sessions that ended well.
+	public var done: Int
+	/// Sessions that have ended (everything but those still alive).
+	public var ended: Int
+
+	public init(sessions: [AgentSession]) {
+		total = sessions.count
+		ended = sessions.filter { !$0.isStoppable }.count
+		done = sessions.filter { $0.status == "completed" }.count
+	}
+
+	/// "1/2", or nil while nothing has ended.
+	public var finishedWell: String? { ended > 0 ? "\(done)/\(ended)" : nil }
+}
+
+/// Which sessions the Sessions tab's chips show.
+public enum AgentSessionFilter: String, CaseIterable, Identifiable, Sendable {
+	case all, running, done, failed
+
+	public var id: String { rawValue }
+	public var title: String {
+		switch self {
+		case .all: "All"
+		case .running: "Running"
+		case .done: "Done"
+		case .failed: "Failed"
+		}
+	}
+
+	public func matches(_ session: AgentSession) -> Bool {
+		switch self {
+		case .all: true
+		case .running: session.isStoppable
+		case .done: session.status == "completed"
+		case .failed: !session.isStoppable && session.status != "completed"
+		}
+	}
+}
+
+extension AgentSession {
+	/// The pill beside a session: Working, Done, Failed, Stopped.
+	public var stateLabel: String {
+		if isActive { return "Working" }
+		if isPaused { return "Disabled" }
+		switch status {
+		case "completed": return "Done"
+		case "failed", "timeout": return "Failed"
+		case "stopped", "cancelled": return "Stopped"
+		default: return status.capitalized
+		}
+	}
+
+	/// A run that can be started again (it failed or was stopped).
+	public var canRetry: Bool { isFailure || status == "stopped" || status == "cancelled" }
 }

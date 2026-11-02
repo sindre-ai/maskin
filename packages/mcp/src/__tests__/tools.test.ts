@@ -88,6 +88,7 @@ const ALL_TOOL_NAMES = [
 	'send_session_message',
 	'ask_user_question',
 	'gmail_send_email',
+	'gmail_save_attachment',
 	'resend_send_email',
 	'approve_object_draft',
 	'create_notification',

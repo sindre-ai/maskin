@@ -58,6 +58,56 @@ public final class MarketplaceStore {
 		}
 	}
 
+	/// One installed flow with its catalog entry (nil when the catalog no longer lists it).
+	public struct InstalledEntry: Identifiable, Equatable, Sendable {
+		public var id: String { install.id }
+		public var install: InstalledLoop
+		public var loop: MarketplaceLoop?
+	}
+
+	/// The catalog's flows not yet installed, grouped by use case (A to Z, loops A to Z inside,
+	/// those without a use case last under "Other").
+	public struct CatalogGroup: Identifiable, Equatable, Sendable {
+		public var id: String { title }
+		public var title: String
+		public var loops: [MarketplaceLoop]
+	}
+
+	public static let otherGroup = "Other"
+
+	/// Installed flows for the Installed section, A to Z by name, narrowed by the search text.
+	public func installedEntries(query: String) -> [InstalledEntry] {
+		let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+		return installs
+			.map { row in InstalledEntry(install: row, loop: catalog.first { $0.id == row.sourceLoopID }) }
+			.filter { entry in
+				text.isEmpty || displayName(entry).localizedCaseInsensitiveContains(text)
+			}
+			.sorted { displayName($0).localizedStandardCompare(displayName($1)) == .orderedAscending }
+	}
+
+	private func displayName(_ entry: InstalledEntry) -> String { entry.loop?.name ?? entry.install.loopName }
+
+	/// The not-installed catalog under its use-case headings.
+	public func catalogGroups(query: String) -> [CatalogGroup] {
+		let open = loops(useCase: nil, query: query).filter { install(for: $0.id) == nil }
+		let byCase = Dictionary(grouping: open) { loop -> String in
+			let name = loop.useCase?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+			return name.isEmpty ? Self.otherGroup : name
+		}
+		return byCase
+			.map { title, loops in
+				CatalogGroup(
+					title: title,
+					loops: loops.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+			}
+			.sorted { lhs, rhs in
+				if lhs.title == Self.otherGroup { return false }
+				if rhs.title == Self.otherGroup { return true }
+				return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+			}
+	}
+
 	public func install(for loopID: String) -> InstalledLoop? {
 		installs.first { $0.sourceLoopID == loopID }
 	}

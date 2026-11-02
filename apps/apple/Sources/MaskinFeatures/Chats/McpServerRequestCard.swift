@@ -12,6 +12,8 @@ struct McpServerRequestCard: View {
 	let request: McpServerRequest
 	/// The agent that asked: the one the server is given to.
 	let agentID: String
+	/// Who asked, for the title and the settled line. Nil reads "this agent".
+	var agentName: String?
 	let messageCreatedAt: Date?
 	/// The card's own message id, so the answer can be recorded against it.
 	let messageID: Int?
@@ -35,11 +37,12 @@ struct McpServerRequestCard: View {
 	@State private var stillRunning = false
 
 	init(
-		request: McpServerRequest, agentID: String, messageCreatedAt: Date?, messageID: Int?,
+		request: McpServerRequest, agentID: String, agentName: String? = nil, messageCreatedAt: Date?, messageID: Int?,
 		answered: ChatCardAnswer.Outcome?, onReply: @escaping (String, ChatSendMetadata) -> Void
 	) {
 		self.request = request
 		self.agentID = agentID
+		self.agentName = agentName
 		self.messageCreatedAt = messageCreatedAt
 		self.messageID = messageID
 		self.answered = answered
@@ -79,6 +82,11 @@ struct McpServerRequestCard: View {
 		RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
 	}
 
+	private var who: String {
+		let trimmed = agentName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return trimmed.isEmpty ? "this agent" : trimmed
+	}
+
 	private var declined: Bool { declinedNow || answered == .declined }
 
 	/// Saved but not given to the agent: only the grant is left, so no secrets are asked for again.
@@ -86,20 +94,21 @@ struct McpServerRequestCard: View {
 
 	/// What to say once the card has been answered; nil while it asks.
 	private var settledLine: String? {
-		if let addedName { return "Added \(addedName) and gave it to this agent." }
+		if let addedName { return "\(addedName) allowed for \(who)." }
 		// Only "given" counts as done: a server saved whose grant failed offers to give it instead.
-		if let earlier, earlier.givenToAgent { return "Added \(earlier.name) and gave it to this agent." }
-		if answered == .done { return "Added \(request.name) and gave it to this agent." }
-		if declined { return "Declined \(request.name)." }
+		if let earlier, earlier.givenToAgent { return "\(earlier.name) allowed for \(who)." }
+		if answered == .done { return "\(request.name) allowed for \(who)." }
+		if declined { return "\(request.name) declined for \(who)." }
 		return nil
 	}
 
 	@ViewBuilder
 	private var form: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			Text("Add the \(request.name) tool server?")
+			Text("\(agentName.map { $0.isEmpty ? "An agent" : $0 } ?? "An agent") wants a tool server")
 				.maskinText(.headline).foregroundStyle(MaskinColor.ink)
 				.fixedSize(horizontal: false, vertical: true)
+			Text("Add MCP server").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 			Text(
 				(request.hint.map { $0 + " " } ?? "")
 					+ "It is saved for this workspace and given to this agent only, with read and write access. You can change that in Settings."
@@ -153,10 +162,10 @@ struct McpServerRequestCard: View {
 			Text(error).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
 		}
 		VStack(spacing: MaskinSpace.s4) {
-			choice(busy ? "Adding…" : (savedServerID != nil ? "Give to this agent" : "Add"), primary: true, enabled: canAdd) {
+			choice(busy ? "Allowing…" : (savedServerID != nil ? "Give to this agent" : "Allow"), primary: true, enabled: canAdd) {
 				await add()
 			}
-			choice("Not now", primary: false, enabled: !busy) { await decline() }
+			choice("Decline", primary: false, enabled: !busy) { await decline() }
 		}
 	}
 

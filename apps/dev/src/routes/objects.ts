@@ -97,6 +97,7 @@ import {
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
 import { movedInstruction, wakeAgentFromCard } from '../services/chat-card-wake'
+import { loadObjectLastSession } from '../services/object-last-session'
 import type { SessionManager } from '../services/session-manager'
 import {
 	getStarredObjectIds,
@@ -1940,35 +1941,38 @@ app.openapi(getObjectRoute, async (c) => {
 	}
 
 	const basePreview = buildObjectPreview(object)
-	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
-		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
-		getUnreadCount(db, {
-			workspaceId: object.workspaceId,
-			actorId,
-			entityType: 'object',
-			entityId: id,
-		}),
-		getSubscriberCount(db, {
-			workspaceId: object.workspaceId,
-			entityType: 'object',
-			entityId: id,
-		}),
-		object.activeSessionId
-			? db
-					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
-					.from(sessions)
-					.where(eq(sessions.id, object.activeSessionId))
-					.limit(1)
-					.then((rows) => rows[0] ?? null)
-			: Promise.resolve(null),
-		isObjectStarredByActor(db, { actorId, objectId: id }),
-	])
+	const [subscribed, unreadCount, subscriberCount, activeSession, starred, lastSession] =
+		await Promise.all([
+			isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+			getUnreadCount(db, {
+				workspaceId: object.workspaceId,
+				actorId,
+				entityType: 'object',
+				entityId: id,
+			}),
+			getSubscriberCount(db, {
+				workspaceId: object.workspaceId,
+				entityType: 'object',
+				entityId: id,
+			}),
+			object.activeSessionId
+				? db
+						.select({ currentActivity: sessions.currentActivity, status: sessions.status })
+						.from(sessions)
+						.where(eq(sessions.id, object.activeSessionId))
+						.limit(1)
+						.then((rows) => rows[0] ?? null)
+				: Promise.resolve(null),
+			isObjectStarredByActor(db, { actorId, objectId: id }),
+			loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
+		])
 
 	return c.json(
 		{
 			...serialize(object),
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
+			last_session: lastSession,
 			is_subscribed: subscribed,
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,

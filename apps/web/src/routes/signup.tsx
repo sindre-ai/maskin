@@ -201,6 +201,11 @@ function SignupPage() {
 						/>
 					</div>
 
+					<p className="-mt-2 text-xs text-muted-foreground">
+						We use Organization and Role to prepare your first workspace. We may look up you and
+						your organization from public sources.
+					</p>
+
 					<div>
 						<Label className="mb-1 text-muted-foreground">Email</Label>
 						<Input
