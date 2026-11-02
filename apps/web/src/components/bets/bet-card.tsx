@@ -5,7 +5,7 @@ import { StatusBadge } from '../shared/status-badge'
 
 const STATUS_HINTS: Record<string, string> = {
 	proposed: 'Move to Active to start task decomposition',
-	signal: 'Promote to Proposed to evaluate this bet',
+	opportunity: 'Promote to Proposed to evaluate this bet',
 	paused: 'Resume by moving to Active',
 }
 

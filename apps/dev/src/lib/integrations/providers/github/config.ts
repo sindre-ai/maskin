@@ -1,4 +1,28 @@
+import { githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { ProviderConfig } from '../../types'
+
+// Spawn spec for GitHub's official MCP server (github/github-mcp-server), baked
+// into the agent-base image. Toolsets are always explicit: the default set and
+// "all" can silently grow on an upstream bump.
+export const GITHUB_MCP_SERVER_SPEC = {
+	command: 'github-mcp-server',
+	args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
+}
+
+// Same server behind the token-refresh supervisor (docker/agent-base/
+// github-mcp-supervisor.cjs), which re-mints the 1-hour installation token and
+// restarts the child behind a stable pipe. The guard runs the plain binary when
+// the image predates the supervisor, so a stale image behaves as today. "$@"
+// carries GITHUB_MCP_SERVER_SPEC.args to whichever process runs.
+export const GITHUB_MCP_SUPERVISED_SPEC = {
+	command: 'sh',
+	args: [
+		'-c',
+		'if [ -f /github-mcp-supervisor.cjs ]; then exec node /github-mcp-supervisor.cjs "$@"; fi; exec github-mcp-server "$@"',
+		'github-mcp-server',
+		...GITHUB_MCP_SERVER_SPEC.args,
+	],
+}
 
 export const config: ProviderConfig = {
 	name: 'github',
@@ -54,9 +78,21 @@ export const config: ProviderConfig = {
 	// the FIRST installation only (session-manager.ts aliases the bare var for
 	// backwards compatibility), silently undoing the per-org targeting.
 	mcp: {
-		command: 'npx',
-		args: ['-y', '@modelcontextprotocol/server-github'],
+		command: GITHUB_MCP_SERVER_SPEC.command,
+		args: GITHUB_MCP_SERVER_SPEC.args,
 		envKey: 'GITHUB_TOKEN',
 		autoInject: true,
+		// An agent's copy is a stdio entry whose token env points at
+		// `${GITHUB_TOKEN_<OWNER>}` (mcp-servers.tsx, handleAddGithub), so it is
+		// recognised by that variable, not by a URL.
+		entry: {
+			kind: 'per-installation',
+			envKey: (owner) => {
+				const login = (owner.config as { owner_login?: unknown } | null)?.owner_login
+				return typeof login === 'string' && login
+					? `GITHUB_TOKEN_${githubOwnerLoginToEnvKey(login)}`
+					: null
+			},
+		},
 	},
 }

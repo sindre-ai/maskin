@@ -257,6 +257,98 @@ describe('POST /api/integrations/resend/connect — two-call handshake', () => {
 		expect(rows).toHaveLength(0)
 	})
 
+	describe('bare-domain guard', () => {
+		let resolveMxSpy: ReturnType<typeof vi.spyOn>
+
+		beforeEach(() => {
+			resolveMxSpy = vi.spyOn(dns, 'resolveMx')
+		})
+
+		afterEach(() => {
+			resolveMxSpy.mockRestore()
+		})
+
+		async function connect(receiveSubdomain: string) {
+			const actorId = getTestActorId()
+			const ws = await insertWorkspace(db, actorId)
+			const res = await buildApp().request(
+				jsonPost(
+					'/api/integrations/resend/connect',
+					{ api_key: 're_test_valid_key', receive_subdomain: receiveSubdomain },
+					{ 'x-workspace-id': ws.id },
+				),
+			)
+			const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, ws.id))
+			return { res, rows }
+		}
+
+		it('returns 400 BARE_DOMAIN_HAS_MAIL without calling Resend for an apex with a foreign MX', async () => {
+			resolveMxSpy.mockResolvedValue([{ exchange: 'aspmx.l.google.com', priority: 1 }])
+
+			const { res, rows } = await connect('example.com')
+
+			expect(res.status).toBe(400)
+			const body = (await res.json()) as {
+				error: { details?: Array<{ field: string; message: string }> }
+			}
+			expect(body.error.details).toEqual(
+				expect.arrayContaining([
+					{ field: 'code', message: 'BARE_DOMAIN_HAS_MAIL' },
+					{ field: 'existing_mx', message: 'aspmx.l.google.com' },
+				]),
+			)
+			expect(fetchSpy).not.toHaveBeenCalled()
+			expect(rows).toHaveLength(0)
+		})
+
+		it('connects an apex that has no MX', async () => {
+			resolveMxSpy.mockRejectedValue(
+				Object.assign(new Error('ENODATA example.com'), { code: 'ENODATA' }),
+			)
+			fetchSpy.mockImplementation(async (_url: RequestInfo | URL, init?: RequestInit) =>
+				init?.method === 'POST'
+					? new Response(JSON.stringify(RESEND_DOMAIN_RESPONSE), { status: 200 })
+					: new Response(JSON.stringify({ data: [] }), { status: 200 }),
+			)
+
+			const { res, rows } = await connect('example.com')
+
+			expect(res.status).toBe(200)
+			expect(rows).toHaveLength(1)
+		})
+
+		it('connects mail.maskin.io without looking up MX', async () => {
+			fetchSpy.mockImplementation(async (_url: RequestInfo | URL, init?: RequestInit) =>
+				init?.method === 'POST'
+					? new Response(JSON.stringify(RESEND_DOMAIN_RESPONSE), { status: 200 })
+					: new Response(JSON.stringify({ data: [] }), { status: 200 }),
+			)
+
+			const { res, rows } = await connect('mail.maskin.io')
+
+			expect(res.status).toBe(200)
+			expect(rows).toHaveLength(1)
+			expect(resolveMxSpy).not.toHaveBeenCalled()
+		})
+
+		it.each(['not a domain', 'mail..example.com', '-mail.example.com', 'localhost'])(
+			'returns 400 INVALID_DOMAIN without calling Resend for %s',
+			async (name) => {
+				const { res, rows } = await connect(name)
+
+				expect(res.status).toBe(400)
+				const body = (await res.json()) as {
+					error: { details?: Array<{ field: string; message: string }> }
+				}
+				expect(body.error.details).toEqual(
+					expect.arrayContaining([{ field: 'code', message: 'INVALID_DOMAIN' }]),
+				)
+				expect(fetchSpy).not.toHaveBeenCalled()
+				expect(rows).toHaveLength(0)
+			},
+		)
+	})
+
 	it('falls through to Skjald behaviour verbatim when the resend body is absent (non-resend provider)', async () => {
 		vi.mocked(getProvider).mockImplementation((name: string) => {
 			if (name === 'skjald') {
@@ -546,5 +638,269 @@ describe('POST /api/integrations/resend/dns-precheck', () => {
 		expect(body.warn).toBe(false)
 		expect(body.is_subdomain).toBe(true)
 		expect(body.existing_mx).toEqual(['feedback-smtp.eu-west-1.amazonses.com'])
+	})
+})
+
+describe('POST /api/integrations/resend/connect — adopt an existing same-account domain', () => {
+	interface FakeDomain {
+		id: string
+		name: string
+		status: string
+		receiving: string
+	}
+
+	const MX_RECORD = {
+		record: 'MX',
+		type: 'MX',
+		name: 'mail.example.com',
+		value: 'inbound-smtp.eu-west-1.amazonaws.com',
+		priority: 10,
+		status: 'verified',
+	}
+
+	function domainDetail(d: FakeDomain) {
+		return {
+			id: d.id,
+			name: d.name,
+			status: d.status,
+			capabilities: { sending: 'enabled', receiving: d.receiving },
+			// The MX record only exists once receiving is on.
+			records: d.receiving === 'enabled' ? [MX_RECORD] : [],
+		}
+	}
+
+	// Fake Resend account: list (paged), get, patch, post. Records every call
+	// so tests can assert which methods ran.
+	function installResend(domains: FakeDomain[], opts: { patchStatus?: number } = {}) {
+		const calls: Array<{ method: string; path: string; body?: unknown }> = []
+		fetchSpy.mockImplementation(async (url: RequestInfo | URL, init?: RequestInit) => {
+			const u = new URL(String(url))
+			const method = init?.method ?? 'GET'
+			const body = init?.body ? JSON.parse(String(init.body)) : undefined
+			calls.push({ method, path: u.pathname + u.search, body })
+			const idMatch = u.pathname.match(/^\/domains\/([^/]+)$/)
+			if (u.pathname === '/domains' && method === 'GET') {
+				const limit = Number(u.searchParams.get('limit') ?? 20)
+				const after = u.searchParams.get('after')
+				const start = after ? domains.findIndex((d) => d.id === after) + 1 : 0
+				const page = domains.slice(start, start + limit)
+				return new Response(
+					JSON.stringify({
+						data: page.map((d) => ({ id: d.id, name: d.name, status: d.status })),
+						has_more: start + limit < domains.length,
+					}),
+					{ status: 200 },
+				)
+			}
+			if (u.pathname === '/domains' && method === 'POST') {
+				return new Response(JSON.stringify(RESEND_DOMAIN_RESPONSE), { status: 200 })
+			}
+			const found = idMatch ? domains.find((d) => d.id === idMatch[1]) : undefined
+			if (!found) return new Response(JSON.stringify({ name: 'not_found' }), { status: 404 })
+			if (method === 'PATCH') {
+				if (opts.patchStatus) {
+					return new Response(JSON.stringify({ name: 'validation_error', message: 'nope' }), {
+						status: opts.patchStatus,
+					})
+				}
+				found.receiving = 'enabled'
+				return new Response(JSON.stringify({ id: found.id }), { status: 200 })
+			}
+			return new Response(JSON.stringify(domainDetail(found)), { status: 200 })
+		})
+		return calls
+	}
+
+	async function connect(workspaceId: string, subdomain = 'mail.example.com') {
+		return buildApp().request(
+			jsonPost(
+				'/api/integrations/resend/connect',
+				{ api_key: 're_test_valid_key', receive_subdomain: subdomain },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+	}
+
+	async function rowsFor(workspaceId: string) {
+		return db.select().from(integrations).where(eq(integrations.workspaceId, workspaceId))
+	}
+
+	it('adopts a verified same-account domain: reuses its id and status, creates nothing, patches nothing', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const calls = installResend([
+			{ id: 'd_existing_1', name: 'mail.example.com', status: 'verified', receiving: 'enabled' },
+		])
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			integration_id: string
+			verification_status: string
+			dns_records: Array<{ record: string }>
+		}
+		expect(body.verification_status).toBe('verified')
+		expect(body.dns_records.map((r) => r.record)).toEqual(['MX'])
+		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0)
+		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0)
+
+		const [row] = await rowsFor(ws.id)
+		expect(row.status).toBe('awaiting_secret')
+		const cfg = row.config as { resend?: Record<string, unknown> }
+		expect(cfg.resend?.resend_domain_id).toBe('d_existing_1')
+		expect(cfg.resend?.verification_status).toBe('verified')
+		expect(cfg.resend?.capabilities).toEqual({ sending: 'enabled', receiving: 'enabled' })
+	})
+
+	it('turns receiving on for an adopted domain that has it off, then re-reads the MX record', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const calls = installResend([
+			{
+				id: 'd_existing_2',
+				name: 'mail.example.com',
+				status: 'not_started',
+				receiving: 'disabled',
+			},
+		])
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			verification_status: string
+			dns_records: Array<{ record: string }>
+		}
+		expect(body.verification_status).toBe('pending')
+		expect(body.dns_records.map((r) => r.record)).toEqual(['MX'])
+		const patches = calls.filter((c) => c.method === 'PATCH')
+		expect(patches).toHaveLength(1)
+		expect(patches[0].path).toBe('/domains/d_existing_2')
+		expect(patches[0].body).toEqual({ capabilities: { receiving: 'enabled' } })
+		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0)
+
+		const [row] = await rowsFor(ws.id)
+		const cfg = row.config as { resend?: Record<string, unknown> }
+		expect(cfg.resend?.resend_domain_id).toBe('d_existing_2')
+		expect(cfg.resend?.capabilities).toEqual({ sending: 'enabled', receiving: 'enabled' })
+	})
+
+	it('returns an error and inserts no row when enabling receiving fails (no stale resend_domain_id)', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		installResend(
+			[{ id: 'd_existing_3', name: 'mail.example.com', status: 'verified', receiving: 'disabled' }],
+			{ patchStatus: 422 },
+		)
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(400)
+		const body = (await res.json()) as {
+			error: { details?: Array<{ field: string; message: string }> }
+		}
+		expect(body.error.details).toEqual(
+			expect.arrayContaining([{ field: 'code', message: 'DOMAIN_REGISTER_FAILED' }]),
+		)
+		expect(await rowsFor(ws.id)).toHaveLength(0)
+	})
+
+	it('matches the domain name case-insensitively', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const calls = installResend([
+			{ id: 'd_existing_4', name: 'Mail.Example.com', status: 'verified', receiving: 'enabled' },
+		])
+
+		const res = await connect(ws.id, 'mail.example.COM')
+
+		expect(res.status).toBe(200)
+		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0)
+		const [row] = await rowsFor(ws.id)
+		expect(
+			(row.config as { resend?: { resend_domain_id?: string } }).resend?.resend_domain_id,
+		).toBe('d_existing_4')
+	})
+
+	it('follows list pagination to find a domain beyond the first page', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const filler: FakeDomain[] = Array.from({ length: 100 }, (_, i) => ({
+			id: `d_filler_${i}`,
+			name: `filler-${i}.example.org`,
+			status: 'verified',
+			receiving: 'enabled',
+		}))
+		const calls = installResend([
+			...filler,
+			{ id: 'd_page_two', name: 'mail.example.com', status: 'verified', receiving: 'enabled' },
+		])
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(200)
+		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0)
+		const listCalls = calls.filter((c) => c.path.startsWith('/domains?'))
+		expect(listCalls.map((c) => c.path)).toEqual([
+			'/domains?limit=100',
+			'/domains?limit=100&after=d_filler_99',
+		])
+		const [row] = await rowsFor(ws.id)
+		expect(
+			(row.config as { resend?: { resend_domain_id?: string } }).resend?.resend_domain_id,
+		).toBe('d_page_two')
+	})
+
+	it('rejects with DOMAIN_ALREADY_CLAIMED, and touches nothing, when another workspace holds the domain', async () => {
+		const actorId = getTestActorId()
+		const wsA = await insertWorkspace(db, actorId)
+		const wsB = await insertWorkspace(db, actorId)
+		await db.insert(integrations).values({
+			workspaceId: wsA.id,
+			provider: 'resend',
+			status: 'awaiting_secret',
+			externalId: randomBytes(24).toString('hex'),
+			credentials: '',
+			config: { system_actor_id: actorId, resend: { resend_domain_id: 'd_held_elsewhere' } },
+			createdBy: actorId,
+		})
+		const calls = installResend([
+			{
+				id: 'd_held_elsewhere',
+				name: 'mail.example.com',
+				status: 'verified',
+				receiving: 'disabled',
+			},
+		])
+
+		const res = await connect(wsB.id)
+
+		expect(res.status).toBe(400)
+		const body = (await res.json()) as {
+			error: { details?: Array<{ field: string; message: string }> }
+		}
+		expect(body.error.details).toEqual(
+			expect.arrayContaining([{ field: 'code', message: 'DOMAIN_ALREADY_CLAIMED' }]),
+		)
+		expect(await rowsFor(wsB.id)).toHaveLength(0)
+		// The claimed domain must not be modified before the claim check rejects.
+		expect(calls.filter((c) => c.method === 'PATCH' || c.method === 'POST')).toHaveLength(0)
+	})
+
+	it('creates the domain with sending and receiving enabled when the account has no match', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const calls = installResend([
+			{ id: 'd_other', name: 'other.example.com', status: 'verified', receiving: 'enabled' },
+		])
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(200)
+		const posts = calls.filter((c) => c.method === 'POST')
+		expect(posts).toHaveLength(1)
+		expect(posts[0].body).toEqual({
+			name: 'mail.example.com',
+			capabilities: { sending: 'enabled', receiving: 'enabled' },
+		})
+		const [row] = await rowsFor(ws.id)
+		const cfg = row.config as { resend?: Record<string, unknown> }
+		expect(cfg.resend?.resend_domain_id).toBe('d_test_abc123')
+		expect(cfg.resend?.verification_status).toBe('pending')
 	})
 })

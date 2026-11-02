@@ -3,9 +3,8 @@ import { EventEmitter } from 'node:events'
 import { events } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { postComment } from '../../lib/comments'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
@@ -22,9 +21,6 @@ import { db, getTestActorId } from './global-setup'
 //      suppresses CommentDispatcher — a user-defined 'commented' trigger
 //      still fires when metadata.suppress_auto_dispatch is true (tech spec
 //      §5.3).
-//   4. The matcher rejects action = 'commented' when the workspace is NOT
-//      on `trigger_engine_v2` — a safety net that prevents an author from
-//      accidentally saving a trigger under an incorrectly-set flag state.
 //
 // Structure and mocking follow beat6-signal-analyst-chained-trigger.test.ts —
 // TriggerRunner runs against a real Postgres, only SessionManager is stubbed,
@@ -36,7 +32,6 @@ describe('Commented action trigger (integration)', () => {
 	let workspaceId: string
 	let actorId: string
 	let mockBridge: EventEmitter & PgNotifyBridge
-	let previousFlagEnv: string | undefined
 
 	beforeEach(async () => {
 		actorId = getTestActorId()
@@ -45,23 +40,6 @@ describe('Commented action trigger (integration)', () => {
 		// EventEmitter subset that TriggerRunner listens against — no PG NOTIFY
 		// required, we hand it PgEvent objects directly.
 		mockBridge = new EventEmitter() as EventEmitter & PgNotifyBridge
-
-		// Enable trigger_engine_v2 for this workspace so the matcher's flag
-		// gate lets the 'commented' path through. Restored in afterEach.
-		previousFlagEnv = process.env.FF_WORKSPACE_FEATURES
-		process.env.FF_WORKSPACE_FEATURES = `${workspaceId}:trigger_engine_v2`
-		// isFlagEnabledForWorkspace reads via the memoized feature-flag config
-		// (parsed once from env). Reset so this test's env write is picked up.
-		_resetFeatureFlagConfig()
-	})
-
-	afterEach(() => {
-		// Restore the env var — assigning undefined mimics `delete` for the
-		// isFlagEnabledForWorkspace check (it reads through a memoized config
-		// derived from a truthy string). biome's `noDelete` is why we don't
-		// `delete`.
-		process.env.FF_WORKSPACE_FEATURES = previousFlagEnv ?? undefined
-		_resetFeatureFlagConfig()
 	})
 
 	async function seedBet() {
@@ -246,47 +224,5 @@ describe('Commented action trigger (integration)', () => {
 		// User trigger STILL fires — `suppress_auto_dispatch` only silences the
 		// separate CommentDispatcher code path (tech spec §5.3).
 		expect(createSession).toHaveBeenCalledTimes(1)
-	})
-
-	it('rejects action = commented when trigger_engine_v2 is off for the workspace', async () => {
-		// Turn the flag off for this test only — same undefined-assignment used
-		// in afterEach's restore path.
-		process.env.FF_WORKSPACE_FEATURES = undefined
-		_resetFeatureFlagConfig()
-
-		const targetAgent = await seedAgent('Test Agent D')
-		const bet = await seedBet()
-		await insertTrigger(db, workspaceId, actorId, targetAgent.id, {
-			name: 'On comment posted on any bet',
-			type: 'event',
-			enabled: true,
-			config: {
-				entity_type: 'object',
-				action: 'commented',
-				filter: { on_target_type: 'bet' },
-			},
-		})
-
-		await postSampleComment(bet)
-		const commentEvent = await latestCommentEventOn(bet.id)
-
-		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
-		const runner = newRunner(createSession)
-		await runner.start()
-		try {
-			mockBridge.emit('event', {
-				workspace_id: workspaceId,
-				actor_id: actorId,
-				action: 'commented',
-				entity_type: 'object',
-				entity_id: bet.id,
-				event_id: String(commentEvent?.id),
-			})
-			await new Promise((resolve) => setTimeout(resolve, 400))
-		} finally {
-			await runner.stop()
-		}
-
-		expect(createSession).not.toHaveBeenCalled()
 	})
 })

@@ -375,3 +375,174 @@ describe('POST /api/webhooks/skjald/:token (integration)', () => {
 		})
 	})
 })
+
+describe('POST /api/webhooks/skjald/:token with outcome events (integration)', () => {
+	const SECRET = 'skjald-outcome-secret-789'
+
+	function buildOutcomePayload(sessionId: string, overrides: Record<string, unknown> = {}) {
+		return JSON.stringify({
+			session: {
+				id: sessionId,
+				title: 'Customer call',
+				startedAt: '2026-10-07T09:00:00Z',
+				duration: 1260.5,
+				languages: [],
+				tag: 'Sales',
+			},
+			outcome: {
+				summary: 'Agreed to a pilot.',
+				decisions: ['Start the pilot in November'],
+				actions: ['Send the quote'],
+				notes: [],
+			},
+			consent: { recordedBy: 'someone' },
+			device: { model: 'iPhone16,2', appVersion: '1.4.0' },
+			sentAt: '2026-10-07T09:30:00Z',
+			...overrides,
+		})
+	}
+
+	async function deliver(
+		app: ReturnType<typeof buildApp>,
+		token: string,
+		event: string,
+		body: string,
+	) {
+		const timestamp = String(Math.floor(Date.now() / 1000))
+		return app.request(
+			skjaldWebhookRequest(token, body, {
+				'x-skjald-event': event,
+				'x-skjald-timestamp': timestamp,
+				'x-skjald-signature': signSkjaldBody(SECRET, timestamp, body),
+				'x-skjald-delivery-id': randomUUID(),
+			}),
+		)
+	}
+
+	async function meetingsIn(workspaceId: string) {
+		return db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'meeting')))
+	}
+
+	it('creates a meeting from outcome.created and updates the same one on outcome.updated', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+		const sessionId = randomUUID()
+
+		const created = await deliver(app, token, 'outcome.created', buildOutcomePayload(sessionId))
+		expect(created.status).toBe(200)
+		expect(await created.json()).toEqual({ ok: true })
+
+		const [meeting] = await meetingsIn(ws.id)
+		expect(meeting.title).toBe('Customer call')
+		expect(meeting.status).toBe('done')
+		expect(meeting.content).toContain('## Summary\nAgreed to a pilot.')
+		expect(meeting.content).toContain('- Start the pilot in November')
+		expect(meeting.content).toContain('- Send the quote')
+		const metadata = meeting.metadata as Record<string, unknown>
+		expect(metadata.external_id).toBe(sessionId)
+		expect(metadata.source).toBe('skjald')
+		expect(metadata.tag).toBe('Sales')
+		expect(metadata.duration_seconds).toBe(1260.5)
+		expect(metadata.device_model).toBe('iPhone16,2')
+
+		const updated = await deliver(
+			app,
+			token,
+			'outcome.updated',
+			buildOutcomePayload(sessionId, {
+				session: {
+					id: sessionId,
+					title: 'Customer call (edited)',
+					startedAt: '2026-10-07T09:00:00Z',
+					duration: 1260.5,
+					languages: [],
+					tag: null,
+				},
+				outcome: { summary: 'Pilot confirmed.', decisions: [], actions: [], notes: ['Budget ok'] },
+			}),
+		)
+		expect(updated.status).toBe(200)
+
+		const after = await meetingsIn(ws.id)
+		expect(after).toHaveLength(1)
+		expect(after[0].id).toBe(meeting.id)
+		expect(after[0].title).toBe('Customer call (edited)')
+		expect(after[0].content).toContain('Pilot confirmed.')
+		expect(after[0].content).not.toContain('Send the quote')
+		expect((after[0].metadata as Record<string, unknown>).tag).toBeNull()
+
+		const meetingEvents = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, ws.id), eq(events.entityType, 'meeting')))
+		expect(meetingEvents.map((e) => e.action).sort()).toEqual(['created', 'updated'])
+	})
+
+	it('includes the transcript when the destination sent one', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+
+		const res = await deliver(
+			app,
+			token,
+			'outcome.created',
+			buildOutcomePayload(randomUUID(), {
+				transcript: [{ t: 1.5, speaker: 'Speaker A', text: 'Hello there', edited: false }],
+			}),
+		)
+		expect(res.status).toBe(200)
+
+		const [meeting] = await meetingsIn(ws.id)
+		expect(meeting.content).toContain('## Transcript')
+		expect(meeting.content).toContain('**Speaker A:** Hello there')
+	})
+
+	it('keeps diarization metadata that transcription.completed stored for the same meeting', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+		const meetingId = randomUUID()
+
+		const first = await deliver(
+			app,
+			token,
+			'transcription.completed',
+			buildTranscriptionPayload({ meeting_id: meetingId }),
+		)
+		expect(first.status).toBe(200)
+		const second = await deliver(app, token, 'outcome.created', buildOutcomePayload(meetingId))
+		expect(second.status).toBe(200)
+
+		const meetings = await meetingsIn(ws.id)
+		expect(meetings).toHaveLength(1)
+		const metadata = meetings[0].metadata as Record<string, unknown>
+		expect(metadata.diarization_status).toBe('completed')
+		expect(metadata.segment_count).toBe(12)
+		expect(metadata.tag).toBe('Sales')
+	})
+
+	it('answers 400 and creates nothing for a malformed outcome payload', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+
+		const res = await deliver(app, token, 'outcome.created', JSON.stringify({ session: {} }))
+		expect(res.status).toBe(400)
+		expect(await meetingsIn(ws.id)).toHaveLength(0)
+	})
+
+	it('still skips event types it does not know', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = buildApp()
+		const { token } = await connectAndActivate(app, ws.id, SECRET)
+
+		const res = await deliver(app, token, 'outcome.deleted', buildOutcomePayload(randomUUID()))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true, skipped: 'unhandled_event' })
+	})
+})

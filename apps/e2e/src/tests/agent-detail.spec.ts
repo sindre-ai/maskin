@@ -22,7 +22,7 @@ test.describe('Agent detail — header and Usage block', () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			await expect(page.getByRole('heading', { name: 'Ada Atom' })).toBeVisible({
+			await expect(page.getByRole('heading', { name: 'Ada Atom', exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
 			await expect(page.getByText('Owns one outcome:')).toBeVisible()
@@ -61,7 +61,7 @@ test.describe('Agent detail — header and Usage block', () => {
 			// The header and Usage block render in both colour schemes.
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
-				await expect(page.getByRole('heading', { name: 'Ada Atom' })).toBeVisible()
+				await expect(page.getByRole('heading', { name: 'Ada Atom', exact: true })).toBeVisible()
 				await expect(usage).toBeVisible()
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
@@ -91,7 +91,7 @@ test.describe('Agent detail — header and Usage block', () => {
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 
-			// Instructions comes before Skills, which comes before Tools.
+			// Instructions comes before Skills (Tools moved to Integrations).
 			const order = await page
 				.locator('section[aria-labelledby]')
 				.evaluateAll((els) =>
@@ -100,7 +100,6 @@ test.describe('Agent detail — header and Usage block', () => {
 			const at = (id: string) => order.findIndex((v) => v.includes(id))
 			expect(at('instructions')).toBeGreaterThanOrEqual(0)
 			expect(at('instructions')).toBeLessThan(at('skills'))
-			expect(at('skills')).toBeLessThan(at('tools'))
 
 			// Disabling the agent flips the control to Enable and the status word with it.
 			await disable.click()
@@ -123,7 +122,7 @@ test.describe('Agent detail — delete action', () => {
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			await expect(page.getByRole('heading', { name: 'Dez Dispose' })).toBeVisible({
+			await expect(page.getByRole('heading', { name: 'Dez Dispose', exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
 
@@ -167,7 +166,9 @@ test.describe('Agent detail — inline identity editing', () => {
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			await expect(page.getByRole('heading', { name: 'Bo Byte' })).toBeVisible({ timeout: 10_000 })
+			await expect(page.getByRole('heading', { name: 'Bo Byte', exact: true })).toBeVisible({
+				timeout: 10_000,
+			})
 
 			// Name — the editor is reachable on touch (no hover-only reveal).
 			const editName = page.getByRole('button', { name: 'Edit agent name' })
@@ -176,7 +177,7 @@ test.describe('Agent detail — inline identity editing', () => {
 			const nameField = page.getByRole('textbox', { name: 'Agent name' })
 			await nameField.fill('Bo Bytesmith')
 			await nameField.press('Enter')
-			await expect(page.getByRole('heading', { name: 'Bo Bytesmith' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'Bo Bytesmith', exact: true })).toBeVisible()
 
 			// Outcome — starts unset, so the placeholder is the edit target.
 			const editOutcome = page.getByRole('button', { name: 'Edit outcome' })
@@ -189,7 +190,7 @@ test.describe('Agent detail — inline identity editing', () => {
 
 			// Both edits persisted, not just optimistic UI.
 			await page.reload()
-			await expect(page.getByRole('heading', { name: 'Bo Bytesmith' })).toBeVisible({
+			await expect(page.getByRole('heading', { name: 'Bo Bytesmith', exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
 			await expect(page.getByText('Keeps the build green')).toBeVisible()

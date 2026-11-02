@@ -1,5 +1,6 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -16,15 +17,17 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useSession } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import { trackMarkReadClicked } from '@/lib/analytics'
-import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
+import type { ActorListItem, EventResponse, GraphFileSummary, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { hasDecision } from '@/lib/comment-decision'
 import { useWorkspace } from '@/lib/workspace-context'
 import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 import { formatEventDescription } from '@maskin/shared'
-import { ArrowDown, ChevronDown } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { ArrowDown, ChevronDown, File as FileIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -67,7 +70,20 @@ type TimelineEntry =
 			isRelationship: boolean
 			newStatus: string | null
 			prevStatus: string | null
-			reference?: { verb: string; objectId: string; object?: ObjectResponse }
+			reference?: {
+				verb: string
+				objectId: string
+				object?: ObjectResponse
+				/** A file endpoint from the graph. Rendered as a file chip that
+				 *  links to the file viewer, matching the right-sidebar reading —
+				 *  files aren't objects, so ObjectReference (which useObjects the id)
+				 *  would 404 the file and render as "deleted object". */
+				file?: GraphFileSummary
+				/** A session endpoint (e.g. `produced_by`). Sessions aren't objects either,
+				 *  so it gets its own chip that names the agent instead of a placeholder
+				 *  object whose status would read "unknown". */
+				sessionId?: string
+			}
 	  }
 
 /** `JUN 8 → 2H` — the span a fold covers, read off its first and last row. */
@@ -256,13 +272,12 @@ function prevStatusOf(event: EventResponse): string | null {
  * opacity-75, the boundary announces itself to screen readers on mount, an
  * EARLIER divider marks the current-window boundary in the stream, and
  * Mark read fires the `mark_read_clicked` PostHog event with
- * `{loop_id, unread_count}`. Gated at the callsite behind the
- * `loops-v4-polish.unread` sub-flag (feature-flag boundary lives in
- * `_authed/$workspaceId/loops/$loopId.tsx`). Absent → the pre-bet divider
- * ships as before, so Objects (the other consumer of this component) is
+ * `{loop_id, unread_count}`. Passed by
+ * the loop detail page (`_authed/$workspaceId/loops/$loopId.tsx`). Absent → the
+ * pre-bet divider ships as before, so Objects (the other consumer of this component) is
  * completely untouched.
  */
-export interface LoopsV4PolishUnreadOptions {
+export interface LoopUnreadOptions {
 	/** Emitted on the analytics payload for `mark_read_clicked` — matches
 	 *  the SPEC's verbatim `{loopId, unreadCount}` contract. */
 	loopId: string
@@ -277,11 +292,11 @@ const EARLIER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
 export function TimelineTab({
 	object,
-	loopsV4PolishUnread,
+	loopUnread,
 	additionalEvents,
 }: {
 	object: ObjectResponse
-	loopsV4PolishUnread?: LoopsV4PolishUnreadOptions
+	loopUnread?: LoopUnreadOptions
 	/** Extra events to merge into the stream — used by the loop detail page to
 	 * fold in agent-work events (session lifecycle, trigger fires) that don't
 	 * carry `entityId = object.id` and so aren't returned by the object graph.
@@ -318,11 +333,24 @@ export function TimelineTab({
 		return map
 	}, [connectedObjects])
 
+	// Files attached to this object (via `attached` relationships whose endpoint
+	// resolves to a file, or referenced from comment `attachmentFileIds`) come
+	// back on the graph payload as `files[]` — the same source of truth the
+	// Related tab and right sidebar read from. Indexed here so a relationship
+	// row whose endpoint is a file renders as the actual file instead of falling
+	// through to ObjectReference and reading back as "deleted object".
+	const filesById = useMemo(() => {
+		const map = new Map<string, GraphFileSummary>()
+		for (const f of graph?.files ?? []) map.set(f.id, f)
+		return map
+	}, [graph?.files])
+
 	// Replies are bucketed under their parent comment so threads stay intact
-	// inside the single stream.
+	// inside the single stream. Events arrive newest-first, but a thread reads
+	// top-down, so replies are bucketed oldest-first (parents stay newest-first).
 	const repliesByParent = useMemo(() => {
 		const replies = new Map<number, EventResponse[]>()
-		for (const event of events ?? []) {
+		for (const event of [...(events ?? [])].reverse()) {
 			if (event.action !== 'commented') continue
 			const parentId = event.data?.parentEventId as number | undefined
 			if (!parentId) continue
@@ -369,6 +397,8 @@ export function TimelineTab({
 			const direction: 'outbound' | 'inbound' = rel.sourceId === object.id ? 'outbound' : 'inbound'
 			const linkedId = direction === 'outbound' ? rel.targetId : rel.sourceId
 			const linkedTitle = direction === 'outbound' ? rel.targetTitle : rel.sourceTitle
+			const file = filesById.get(linkedId)
+			const linkedType = direction === 'outbound' ? rel.targetType : rel.sourceType
 			rows.push({
 				kind: 'event',
 				key: `rel-${rel.id}`,
@@ -385,24 +415,30 @@ export function TimelineTab({
 				reference: {
 					verb: relationshipVerb(rel.type, direction),
 					objectId: linkedId,
-					object:
-						objectsById.get(linkedId) ??
-						(linkedTitle
-							? ({
-									id: linkedId,
-									workspaceId,
-									type: direction === 'outbound' ? rel.targetType : rel.sourceType,
-									title: linkedTitle,
-									content: null,
-									status: 'unknown',
-									metadata: null,
-									driver: null,
-									activeSessionId: null,
-									createdBy: '',
-									createdAt: null,
-									updatedAt: null,
-								} satisfies ObjectResponse)
-							: undefined),
+					file,
+					sessionId: linkedType === 'session' ? linkedId : undefined,
+					// Skip the object branch for file endpoints — the graph returns
+					// files under `files[]`, not `connected_objects`, and ObjectReference
+					// would useObject(linkedId) and 404 → "deleted object".
+					object: file
+						? undefined
+						: (objectsById.get(linkedId) ??
+							(linkedTitle
+								? ({
+										id: linkedId,
+										workspaceId,
+										type: direction === 'outbound' ? rel.targetType : rel.sourceType,
+										title: linkedTitle,
+										content: null,
+										status: 'unknown',
+										metadata: null,
+										driver: null,
+										activeSessionId: null,
+										createdBy: '',
+										createdAt: null,
+										updatedAt: null,
+									} satisfies ObjectResponse)
+								: undefined)),
 				},
 			})
 		}
@@ -411,7 +447,7 @@ export function TimelineTab({
 		// the prototype's descending spine.
 		rows.sort((a, b) => (b.time ?? '').localeCompare(a.time ?? ''))
 		return rows
-	}, [events, relationships, actorsById, objectsById, object.id, workspaceId])
+	}, [events, relationships, actorsById, objectsById, filesById, object.id, workspaceId])
 
 	const counts = useMemo(() => {
 		let comments = 0
@@ -465,9 +501,9 @@ export function TimelineTab({
 		// Emit BEFORE the mutate so a late failure that rolls the dismiss back
 		// still has a click recorded — the metric is "did the admin engage
 		// with the boundary", not "did the server successfully persist it".
-		if (loopsV4PolishUnread) {
+		if (loopUnread) {
 			trackMarkReadClicked({
-				loop_id: loopsV4PolishUnread.loopId,
+				loop_id: loopUnread.loopId,
 				unread_count: unreadCount,
 			})
 		}
@@ -480,7 +516,7 @@ export function TimelineTab({
 				},
 			},
 		)
-	}, [markRead, object.id, latestCommentEventId, loopsV4PolishUnread, unreadCount])
+	}, [markRead, object.id, latestCommentEventId, loopUnread, unreadCount])
 	const firstUnreadId = useMemo(() => {
 		if (unreadEventIds.size === 0) return null
 		let min: number | null = null
@@ -501,7 +537,7 @@ export function TimelineTab({
 	// render. Only computed when the polish variant is on; every other
 	// consumer of TimelineTab reads null and pays no cost.
 	const earlierAnchorKey = useMemo(() => {
-		if (!loopsV4PolishUnread) return null
+		if (!loopUnread) return null
 		const threshold = Date.now() - EARLIER_WINDOW_MS
 		for (const entry of entries) {
 			if (!entry.time) continue
@@ -510,7 +546,7 @@ export function TimelineTab({
 			if (ts < threshold) return entry.key
 		}
 		return null
-	}, [loopsV4PolishUnread, entries])
+	}, [loopUnread, entries])
 
 	const containerRef = useRef<HTMLDivElement>(null)
 	const [jumpTick, setJumpTick] = useState(0)
@@ -562,19 +598,18 @@ export function TimelineTab({
 		const unreadHere =
 			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId
 		const unreadDivider = unreadHere ? (
-			loopsV4PolishUnread ? (
+			loopUnread ? (
 				<PolishUnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			) : (
 				<NewDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			)
 		) : null
 		// EARLIER divider — polish variant only.
-		const earlierDivider =
-			loopsV4PolishUnread && entry.key === earlierAnchorKey ? <EarlierDivider /> : null
+		const earlierDivider = loopUnread && entry.key === earlierAnchorKey ? <EarlierDivider /> : null
 		// D8 (loops v4 polish path): dim entries the current viewer has already
 		// read. Per-viewer via `unreadEventIds`.
 		const dimAsRead =
-			!!loopsV4PolishUnread && entry.kind === 'comment' && !unreadEventIds.has(entry.event.id)
+			!!loopUnread && entry.kind === 'comment' && !unreadEventIds.has(entry.event.id)
 		return (
 			<li key={entry.key} className="list-none">
 				{unreadDivider}
@@ -587,9 +622,7 @@ export function TimelineTab({
 							// D9 decided-fold applies only in the default (Object detail)
 							// path — the loops v4 polish variant keeps the full ActivityComment card.
 							const foldedAnswer =
-								!loopsV4PolishUnread &&
-								answer !== null &&
-								isDecidedFoldEligible(entry.event, replies)
+								!loopUnread && answer !== null && isDecidedFoldEligible(entry.event, replies)
 									? answer
 									: null
 							return foldedAnswer ? (
@@ -689,7 +722,7 @@ export function TimelineTab({
 			 * aria-live host that lives above the strip; content swaps in
 			 * and out of it, not the other way around).
 			 */}
-			{loopsV4PolishUnread && (
+			{loopUnread && (
 				<output className="sr-only" aria-live="polite" aria-atomic="true">
 					{showUnreadDivider ? `${unreadCount} unread activity items` : ''}
 				</output>
@@ -860,13 +893,23 @@ function EventRow({
 					/>
 				)}
 				<span className="shrink-0 text-[12.5px] text-muted-foreground">{entry.reference.verb}</span>
-				<ObjectReference
-					objectId={entry.reference.objectId}
-					workspaceId={workspaceId}
-					object={entry.reference.object}
-					variant="inline"
-					className="min-w-0 text-xs"
-				/>
+				{entry.reference.file ? (
+					<FileReferenceChip file={entry.reference.file} workspaceId={workspaceId} />
+				) : entry.reference.sessionId ? (
+					<SessionReferenceChip
+						sessionId={entry.reference.sessionId}
+						workspaceId={workspaceId}
+						actorsById={actorsById}
+					/>
+				) : (
+					<ObjectReference
+						objectId={entry.reference.objectId}
+						workspaceId={workspaceId}
+						object={entry.reference.object}
+						variant="inline"
+						className="min-w-0 text-xs"
+					/>
+				)}
 			</div>
 		)
 	}
@@ -910,16 +953,89 @@ function EventRow({
 				{entry.reference && (
 					<span className="flex min-w-0 items-baseline gap-1.5">
 						<span className="shrink-0 text-xs text-muted-foreground">{entry.reference.verb}</span>
-						<ObjectReference
-							objectId={entry.reference.objectId}
-							workspaceId={workspaceId}
-							object={entry.reference.object}
-							variant="inline"
-							className="min-w-0 text-xs"
-						/>
+						{entry.reference.file ? (
+							<FileReferenceChip file={entry.reference.file} workspaceId={workspaceId} />
+						) : entry.reference.sessionId ? (
+							<SessionReferenceChip
+								sessionId={entry.reference.sessionId}
+								workspaceId={workspaceId}
+								actorsById={actorsById}
+							/>
+						) : (
+							<ObjectReference
+								objectId={entry.reference.objectId}
+								workspaceId={workspaceId}
+								object={entry.reference.object}
+								variant="inline"
+								className="min-w-0 text-xs"
+							/>
+						)}
 					</span>
 				)}
 			</div>
 		</div>
+	)
+}
+
+/**
+ * Inline chip for a file endpoint on a relationship row. Renders the file's
+ * name + file icon and links to the file viewer — same reading as the right
+ * sidebar's file list. Falls back to the file id when the name is missing so
+ * the row never reads as unlabelled.
+ */
+function FileReferenceChip({
+	file,
+	workspaceId,
+}: {
+	file: GraphFileSummary
+	workspaceId: string
+}) {
+	return (
+		<Link
+			to="/$workspaceId/files/$fileId"
+			params={{ workspaceId, fileId: file.id }}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="inline-flex min-w-0 items-center gap-1.5 rounded px-1 -mx-1 py-0.5 text-xs text-foreground transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+		>
+			<FileIcon size={12} className="shrink-0 text-muted-foreground" aria-hidden />
+			<span className="truncate">{file.name || file.id}</span>
+		</Link>
+	)
+}
+
+/**
+ * The session an edge points at (e.g. the one that produced this object).
+ * Names the agent that ran it; if the session or its agent can't be resolved
+ * (deleted, still loading) it reads "Session" rather than a made-up status.
+ */
+function SessionReferenceChip({
+	sessionId,
+	workspaceId,
+	actorsById,
+}: {
+	sessionId: string
+	workspaceId: string
+	actorsById: Map<string, ActorListItem>
+}) {
+	const { data: session } = useSession(sessionId, workspaceId)
+	const actor = session ? actorsById.get(session.actorId) : undefined
+	const label = actor ? `${actor.name} session` : 'Session'
+	const className =
+		'inline-flex min-w-0 items-center gap-1.5 rounded px-1 -mx-1 py-0.5 text-xs text-foreground'
+
+	if (!actor) return <span className={className}>{label}</span>
+	return (
+		<Link
+			to="/$workspaceId/agents/$agentId"
+			params={{ workspaceId, agentId: actor.id }}
+			className={cn(
+				className,
+				'transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+			)}
+		>
+			<ActorAvatar name={actor.name} type={actor.type} size="sm" />
+			<span className="truncate">{label}</span>
+		</Link>
 	)
 }

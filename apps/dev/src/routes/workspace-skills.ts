@@ -12,7 +12,11 @@ import {
 import AdmZip from 'adm-zip'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -23,6 +27,7 @@ import {
 	type SkillBundleError,
 	extractSkillBundle,
 } from '../lib/skill-bundles'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 
 type Env = {
@@ -193,11 +198,11 @@ app.openapi(listWorkspaceSkillsRoute, (async (c) => {
 	const rows = await (cursorOn
 		? query.order === 'asc'
 			? baseSelect
-					.orderBy(asc(workspaceSkills.createdAt), asc(workspaceSkills.id))
+					.orderBy(asc(msCreatedAt(workspaceSkills.createdAt)), asc(workspaceSkills.id))
 					.limit(effectiveLimit ?? 100)
 					.offset(effectiveOffset ?? 0)
 			: baseSelect
-					.orderBy(desc(workspaceSkills.createdAt), asc(workspaceSkills.id))
+					.orderBy(desc(msCreatedAt(workspaceSkills.createdAt)), asc(workspaceSkills.id))
 					.limit(effectiveLimit ?? 100)
 					.offset(effectiveOffset ?? 0)
 		: effectiveLimit !== undefined
@@ -259,6 +264,7 @@ app.openapi(getWorkspaceSkillRoute, (async (c) => {
 const createWorkspaceSkillRoute = createRoute({
 	method: 'post',
 	path: '/{workspaceId}/skills',
+	'x-viewer-policy': 'writer',
 	tags: ['Workspace Skills'],
 	summary: 'Create a workspace skill',
 	request: {
@@ -306,6 +312,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	// Invalid SKILL.md content is accepted so the user can land it in the UI
 	// and fix the formatting. Invalid rows are flagged `is_valid=false` and
@@ -437,6 +444,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 const uploadWorkspaceSkillRoute = createRoute({
 	method: 'post',
 	path: '/{workspaceId}/skills/upload',
+	'x-viewer-policy': 'writer',
 	tags: ['Workspace Skills'],
 	summary: 'Upload a workspace skill from a single SKILL.md or a zip bundle',
 	request: {
@@ -516,6 +524,7 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	const formData = await c.req.formData()
 	const file = formData.get('file')
@@ -1020,6 +1029,7 @@ app.openapi(listWorkspaceSkillFilesRoute, (async (c) => {
 const updateWorkspaceSkillRoute = createRoute({
 	method: 'put',
 	path: '/{workspaceId}/skills/{name}',
+	'x-viewer-policy': 'writer',
 	tags: ['Workspace Skills'],
 	summary: 'Update a workspace skill',
 	request: {
@@ -1067,6 +1077,7 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	const [existing] = await db
 		.select()
@@ -1197,6 +1208,7 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 const deleteWorkspaceSkillRoute = createRoute({
 	method: 'delete',
 	path: '/{workspaceId}/skills/{name}',
+	'x-viewer-policy': 'writer',
 	tags: ['Workspace Skills'],
 	summary: 'Delete a workspace skill',
 	request: {
@@ -1228,6 +1240,7 @@ app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	const [existing] = await db
 		.select()

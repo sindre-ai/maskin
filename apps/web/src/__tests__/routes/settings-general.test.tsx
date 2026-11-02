@@ -14,7 +14,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspaceId: 'ws-1',
 		workspace: buildWorkspaceWithRole({ name: 'My Workspace' }),
@@ -23,6 +25,10 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: mockMutate, isPending: false }),
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/lib/theme', () => ({
@@ -118,9 +124,14 @@ describe('GeneralPage', () => {
 		expect(screen.queryByText('Extensions')).not.toBeInTheDocument()
 	})
 
-	it('renders the three general sections as uppercase eyebrow labels in mockup order', () => {
+	it('renders the general sections as uppercase eyebrow labels in order', () => {
 		render(<GeneralPage />)
 		const headings = screen.getAllByRole('heading').map((h) => h.textContent)
-		expect(headings).toEqual(['WORKSPACE NAME', 'APPEARANCE', 'PRIVACY & DATA'])
+		expect(headings).toEqual([
+			'WORKSPACE NAME',
+			'DEFAULT WORKSPACE',
+			'APPEARANCE',
+			'PRIVACY & DATA',
+		])
 	})
 })

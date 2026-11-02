@@ -322,6 +322,65 @@ describe('POST /api/webhooks/resend/:token (integration)', () => {
 		expect(claims).toHaveLength(1)
 	})
 
+	it('does not ack a retry that lands mid body-fetch, so a failed first fetch is not lost', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const systemActorId = await seedSystemActor(ws.id)
+		const secret = whsec()
+		const { token } = await seedResendIntegration({
+			workspaceId: ws.id,
+			systemActorId,
+			accessToken: 're_test_key',
+			webhookSecret: secret,
+			createdBy: actorId,
+		})
+
+		// First body-fetch stays in flight until we settle it by hand; a 404 is a
+		// terminal failure, so the first request fails without burning retries.
+		let failFirstFetch: () => void = () => {}
+		fetchMock.mockImplementationOnce(
+			() =>
+				new Promise<Response>((resolve) => {
+					failFirstFetch = () => resolve(new Response('{}', { status: 404 }))
+				}),
+		)
+		fetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ text: 'second try' }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}),
+		)
+
+		const emailId = `em_${randomUUID()}`
+		const body = buildEmailReceivedBody(emailId)
+		const app = buildApp()
+
+		const firstPending = app.request(webhookRequest(token, body, svixHeaders(secret, body)))
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+		// Resend retries while the first fetch is still running. A 2xx here tells
+		// Resend the email was delivered; if the first fetch then fails, nothing
+		// would ever pick it up again.
+		const midFetchRes = await app.request(webhookRequest(token, body, svixHeaders(secret, body)))
+		expect(midFetchRes.status).toBeGreaterThanOrEqual(400)
+
+		failFirstFetch()
+		const firstRes = await firstPending
+		expect(firstRes.status).toBe(500)
+
+		// The claim was released on failure, so the next retry re-claims and
+		// starts exactly one session.
+		const thirdRes = await app.request(webhookRequest(token, body, svixHeaders(secret, body)))
+		expect(thirdRes.status).toBe(200)
+		expect(await thirdRes.json()).toEqual({ ok: true })
+
+		const eventRows = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, ws.id), eq(events.entityType, 'resend.email')))
+		expect(eventRows).toHaveLength(1)
+	})
+
 	it("isolates per-workspace secrets — B's secret cannot sign for A", async () => {
 		const actorId = getTestActorId()
 		const wsA = await insertWorkspace(db, actorId)
@@ -427,5 +486,67 @@ describe('POST /api/webhooks/resend/:token (integration)', () => {
 		expect(res.status).toBe(200)
 		expect(bodyJson).toEqual({ ok: true })
 		expect(bodyJson.error).toBeUndefined()
+	})
+
+	describe('a connection with no credentials', () => {
+		const emptyBlobs = {
+			'an empty credentials column': '',
+			'a blob without the signing secret': JSON.stringify({ accessToken: 're_secret_key' }),
+		}
+
+		for (const [label, credentials] of Object.entries(emptyBlobs)) {
+			it(`answers 409 INTEGRATION_CREDENTIALS_MISSING for ${label}, not a 500`, async () => {
+				const actorId = getTestActorId()
+				const ws = await insertWorkspace(db, actorId)
+				const systemActorId = await seedSystemActor(ws.id)
+				const token = randomBytes(24).toString('hex')
+				const [row] = await db
+					.insert(integrations)
+					.values({
+						workspaceId: ws.id,
+						provider: 'resend',
+						status: 'active',
+						externalId: token,
+						credentials: credentials === '' ? '' : encrypt(credentials),
+						config: { system_actor_id: systemActorId },
+						createdBy: actorId,
+					})
+					.returning({ id: integrations.id })
+				const warnSpy = vi.spyOn(logger, 'warn')
+				const errorSpy = vi.spyOn(logger, 'error')
+
+				const body = buildEmailReceivedBody(`em_${randomUUID()}`)
+				const res = await buildApp().request(
+					webhookRequest(token, body, svixHeaders(whsec(), body)),
+				)
+				const text = await res.text()
+
+				expect(res.status).toBe(409)
+				const json = JSON.parse(text)
+				expect(json.error.code).toBe('CONFLICT')
+				expect(json.error.details).toEqual([
+					{ field: 'code', message: 'INTEGRATION_CREDENTIALS_MISSING' },
+				])
+				expect(json.error.message).toContain('/api/integrations/resend/connect')
+				expect(errorSpy).not.toHaveBeenCalled()
+				expect(warnSpy).toHaveBeenCalledWith('resend.webhook.credentials_missing', {
+					integration_id: row?.id,
+					workspace_id: ws.id,
+				})
+
+				// No credential material in the response or in any log call.
+				const logged = JSON.stringify([...warnSpy.mock.calls, ...errorSpy.mock.calls])
+				expect(text).not.toContain('re_secret_key')
+				expect(logged).not.toContain('re_secret_key')
+
+				// Nothing was claimed, fetched or committed.
+				expect(fetchMock).not.toHaveBeenCalled()
+				const claims = await db
+					.select()
+					.from(webhookDeliveries)
+					.where(eq(webhookDeliveries.workspaceId, ws.id))
+				expect(claims).toHaveLength(0)
+			})
+		}
 	})
 })

@@ -1,7 +1,8 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
+import { objects } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
 import type { SessionManager } from '../../services/session-manager'
 import { buildCreateObjectBody, insertActor, insertObject, insertWorkspace } from '../factories'
@@ -1513,6 +1514,377 @@ describe('Subscriptions Integration', () => {
 			expect(item?.latest_mention?.content).toBe('second ask')
 			expect(item?.latest_mention?.attention).toBe(4)
 			expect(item?.latest_mention?.decision).toEqual(decision)
+		})
+
+		it('carries the draft on the decision to the feed untouched, dash and all', async () => {
+			const appA = appAs(aId)
+			const appB = appAs(bId)
+			const headers = { 'x-workspace-id': workspaceId }
+			const obj = await seedObject()
+			// The draft is a human's text. It must reach the card exactly as written:
+			// a dash and a hedge word would be rejected anywhere in the card's own prose.
+			const draft = {
+				label: 'Email to Hans',
+				to: 'Hans Jensen, Netwerk',
+				body: 'Hej Hans,\n\nMange tak \u2014 jeg ringer i morgen.\n\nMvh Seb',
+			}
+
+			const posted = await appB.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{
+						entity_id: obj.id,
+						content: 'Approve the note to Hans.',
+						mentions: [aId],
+						decision: { ...decision, draft },
+						attention: 3,
+					},
+					headers,
+				),
+			)
+			expect(posted.status).toBe(201)
+
+			const res = await appA.request(jsonGet('/api/subscriptions/unread', headers))
+			const body = (await res.json()) as {
+				items: Array<{
+					entity_id: string
+					latest_mention?: { decision: { draft?: Record<string, unknown> } | null }
+				}>
+			}
+			const item = body.items.find((i) => i.entity_id === obj.id)
+			expect(item?.latest_mention?.decision?.draft).toEqual(draft)
+		})
+
+		describe('a draft that points at an object', () => {
+			const DRAFT_TEXT = 'Hej Hans,\n\nMå jeg ringe i morgen?\n\nMvh Seb'
+
+			async function seedDraftTask(workspace: string, content: string) {
+				const [task] = await db
+					.insert(objects)
+					.values({
+						workspaceId: workspace,
+						type: 'task',
+						title: 'Approve email to Hans',
+						content,
+						status: 'backlog',
+						createdBy: aId,
+					})
+					.returning()
+				if (!task) throw new Error('failed to seed draft task')
+				return task
+			}
+
+			async function ask(entityId: string, draft: Record<string, unknown>) {
+				const res = await appAs(bId).request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: entityId,
+							content: 'Approve the note to Hans.',
+							mentions: [aId],
+							decision: { ...decision, draft },
+						},
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				expect(res.status).toBe(201)
+			}
+
+			async function cardDraft(entityId: string) {
+				const res = await appAs(aId).request(
+					jsonGet('/api/subscriptions/unread', { 'x-workspace-id': workspaceId }),
+				)
+				const body = (await res.json()) as {
+					items: Array<{
+						entity_id: string
+						latest_mention?: { decision: { draft?: Record<string, unknown> } | null }
+					}>
+				}
+				return body.items.find((i) => i.entity_id === entityId)?.latest_mention?.decision?.draft
+			}
+
+			it('shows the description of the object the comment is on, with the default label', async () => {
+				const task = await seedDraftTask(workspaceId, DRAFT_TEXT)
+				await ask(task.id, { object_id: task.id })
+
+				expect(await cardDraft(task.id)).toMatchObject({
+					object_id: task.id,
+					label: 'Draft',
+					body: DRAFT_TEXT,
+				})
+			})
+
+			it('shows the description of a different object than the one commented on', async () => {
+				const task = await seedDraftTask(workspaceId, DRAFT_TEXT)
+				const other = await seedObject()
+				await ask(other.id, { object_id: task.id, label: 'Email to Hans', to: 'Hans Jensen' })
+
+				expect(await cardDraft(other.id)).toMatchObject({
+					label: 'Email to Hans',
+					to: 'Hans Jensen',
+					body: DRAFT_TEXT,
+				})
+			})
+
+			it('shows an edit made after the card was posted', async () => {
+				const task = await seedDraftTask(workspaceId, DRAFT_TEXT)
+				await ask(task.id, { object_id: task.id })
+				await db
+					.update(objects)
+					.set({ content: 'Hej Hans, ring til mig.' })
+					.where(eq(objects.id, task.id))
+
+				expect((await cardDraft(task.id))?.body).toBe('Hej Hans, ring til mig.')
+			})
+
+			it('prefers the live description over a stored body', async () => {
+				const task = await seedDraftTask(workspaceId, DRAFT_TEXT)
+				await ask(task.id, { object_id: task.id, body: 'an older copy' })
+
+				expect((await cardDraft(task.id))?.body).toBe(DRAFT_TEXT)
+			})
+
+			it('falls back to the stored body when the object has no description', async () => {
+				const task = await seedDraftTask(workspaceId, '')
+				await ask(task.id, { object_id: task.id, body: 'the saved text' })
+
+				expect((await cardDraft(task.id))?.body).toBe('the saved text')
+			})
+
+			it('adds the preview and where the draft stands when the object is an email', async () => {
+				const task = await seedDraftTask(workspaceId, 'Hej Hans,\n\nMå jeg ringe?')
+				await db
+					.update(objects)
+					.set({
+						metadata: { kind: 'email', to: 'Hans Jensen <hans@example.com>', subject: 'Opkald' },
+					})
+					.where(eq(objects.id, task.id))
+				await ask(task.id, { object_id: task.id })
+
+				const draft = (await cardDraft(task.id)) as {
+					label?: string
+					body?: string
+					preview?: {
+						subject: string | null
+						recipients: unknown[]
+						delivery?: { state: string }
+					}
+				}
+				expect(draft.label).toBe('Email')
+				expect(draft.body).toBe('Hej Hans,\n\nMå jeg ringe?')
+				expect(draft.preview).toMatchObject({ subject: 'Opkald', delivery: { state: 'draft' } })
+				expect(draft.preview?.recipients).toEqual([
+					{ role: 'to', name: 'Hans Jensen', address: 'hans@example.com' },
+				])
+			})
+
+			it('never reads an object from another workspace', async () => {
+				const otherWorkspace = await insertWorkspace(db, aId)
+				if (!otherWorkspace) throw new Error('failed to seed workspace')
+				const foreign = await seedDraftTask(otherWorkspace.id, 'secret text from elsewhere')
+				const obj = await seedObject()
+				await ask(obj.id, { object_id: foreign.id, body: 'safe fallback' })
+
+				const draft = await cardDraft(obj.id)
+
+				expect(draft?.body).toBe('safe fallback')
+				expect(JSON.stringify(draft)).not.toContain('secret text')
+			})
+
+			it('drops the draft when the object is gone and there is no stored body', async () => {
+				const obj = await seedObject()
+				await ask(obj.id, { object_id: '99999999-9999-4999-8999-999999999999' })
+
+				expect(await cardDraft(obj.id)).toBeUndefined()
+			})
+		})
+
+		describe('a stack of drafts on one card', () => {
+			async function askMany(entityId: string, drafts: Array<Record<string, unknown>>) {
+				const res = await appAs(bId).request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: entityId,
+							content: 'Send these first DMs?',
+							mentions: [aId],
+							decision: { ...decision, drafts },
+						},
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				return res
+			}
+
+			async function cardDrafts(entityId: string) {
+				const res = await appAs(aId).request(
+					jsonGet('/api/subscriptions/unread', { 'x-workspace-id': workspaceId }),
+				)
+				const body = (await res.json()) as {
+					items: Array<{
+						entity_id: string
+						latest_mention?: {
+							decision: { drafts?: Array<Record<string, unknown>> } | null
+						}
+					}>
+				}
+				return body.items.find((i) => i.entity_id === entityId)?.latest_mention?.decision?.drafts
+			}
+
+			it('sends every message with its id, label, recipient and text, in order', async () => {
+				const obj = await seedObject()
+				const res = await askMany(obj.id, [
+					{
+						id: 'kenneth',
+						label: 'LinkedIn DM',
+						to: 'Kenneth Krog Madsen',
+						body: 'Hej Kenneth, tak for sidst.',
+					},
+					{ id: 'dan', label: 'Connection note', to: 'Dan Højgaard Jensen', body: 'Hej Dan.' },
+				])
+				expect(res.status).toBe(201)
+
+				expect(await cardDrafts(obj.id)).toEqual([
+					expect.objectContaining({
+						id: 'kenneth',
+						to: 'Kenneth Krog Madsen',
+						body: 'Hej Kenneth, tak for sidst.',
+					}),
+					expect.objectContaining({ id: 'dan', label: 'Connection note', body: 'Hej Dan.' }),
+				])
+			})
+
+			it('reads each message live from its own object and leaves the others as stored', async () => {
+				const obj = await seedObject()
+				const [task] = await db
+					.insert(objects)
+					.values({
+						workspaceId,
+						type: 'task',
+						title: 'DM to Kenneth',
+						content: 'Live text for Kenneth',
+						status: 'in_review',
+						createdBy: aId,
+					})
+					.returning()
+				if (!task) throw new Error('failed to seed task')
+				await askMany(obj.id, [
+					{ id: 'kenneth', object_id: task.id, body: 'stale copy' },
+					{ id: 'dan', body: 'Hej Dan.' },
+				])
+
+				const drafts = await cardDrafts(obj.id)
+				expect(drafts?.map((d) => d.body)).toEqual(['Live text for Kenneth', 'Hej Dan.'])
+			})
+
+			it('never reads an object from another workspace; it falls back to the stored text', async () => {
+				const obj = await seedObject()
+				const foreignWorkspace = await insertWorkspace(db, aId)
+				const [foreign] = await db
+					.insert(objects)
+					.values({
+						workspaceId: foreignWorkspace.id,
+						type: 'task',
+						title: 'Foreign',
+						content: 'secret text',
+						status: 'backlog',
+						createdBy: aId,
+					})
+					.returning()
+				if (!foreign) throw new Error('failed to seed foreign object')
+				await askMany(obj.id, [{ id: 'x', object_id: foreign.id, body: 'safe fallback' }])
+
+				const drafts = await cardDrafts(obj.id)
+				expect(drafts?.[0]?.body).toBe('safe fallback')
+				expect(JSON.stringify(drafts)).not.toContain('secret text')
+			})
+
+			it('leaves out a message with nothing to show and keeps the rest', async () => {
+				const obj = await seedObject()
+				await askMany(obj.id, [
+					{ id: 'gone', object_id: '99999999-9999-4999-8999-999999999999' },
+					{ id: 'dan', body: 'Hej Dan.' },
+				])
+
+				expect((await cardDrafts(obj.id))?.map((d) => d.id)).toEqual(['dan'])
+			})
+
+			describe('once the messages have gone', () => {
+				async function draftTask(status: string) {
+					return insertObject(db, workspaceId, aId, { type: 'task', status, content: 'Hej' })
+				}
+
+				async function inFeed(entityId: string) {
+					const res = await appAs(aId).request(
+						jsonGet('/api/subscriptions/unread', { 'x-workspace-id': workspaceId }),
+					)
+					const body = (await res.json()) as { items: Array<{ entity_id: string }> }
+					return body.items.some((i) => i.entity_id === entityId)
+				}
+
+				it('leaves the feed when every message points at a finished task', async () => {
+					const obj = await seedObject()
+					const sent = await draftTask('done')
+					const skipped = await draftTask('discarded')
+					await askMany(obj.id, [
+						{ id: 'a', object_id: sent.id },
+						{ id: 'b', object_id: skipped.id },
+					])
+
+					expect(await inFeed(obj.id)).toBe(false)
+				})
+
+				it('stays while one message still has an open task', async () => {
+					const obj = await seedObject()
+					const sent = await draftTask('done')
+					const waiting = await draftTask('in_review')
+					await askMany(obj.id, [
+						{ id: 'a', object_id: sent.id },
+						{ id: 'b', object_id: waiting.id },
+					])
+
+					expect(await inFeed(obj.id)).toBe(true)
+				})
+			})
+
+			it('rejects more messages than the card can hold', async () => {
+				const obj = await seedObject()
+				const res = await askMany(
+					obj.id,
+					Array.from({ length: 11 }, (_, i) => ({ id: `m${i}`, body: 'Hej.' })),
+				)
+				expect(res.status).toBe(400)
+			})
+		})
+
+		it('still rejects a card whose own prose breaks the rules when a draft is attached', async () => {
+			const appB = appAs(bId)
+			const headers = { 'x-workspace-id': workspaceId }
+			const obj = await seedObject()
+
+			const res = await appB.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{
+						entity_id: obj.id,
+						content: 'Approve.',
+						mentions: [aId],
+						decision: {
+							...decision,
+							ask: 'Should we send it?',
+							draft: { label: 'Email', body: 'Hi.' },
+						},
+					},
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(400)
+			expect(JSON.stringify(await res.json())).toContain('decision.ask')
 		})
 
 		it('returns a null decision for a plain mention', async () => {

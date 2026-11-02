@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	notifications,
 	objects,
 	sessions,
 	triggerCooldowns,
@@ -13,7 +14,8 @@ import {
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
-import { type SQL, and, eq, gt, inArray, lt, sql } from 'drizzle-orm'
+import { type SQL, and, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { isActorHumanPaused, isHumanPaused } from '../lib/agent-pause'
 import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
@@ -24,11 +26,22 @@ import {
 	type TriggerQueueDrainSource,
 	trackTriggerCronTickDropped,
 } from '../lib/analytics/trigger-queue-events'
+import { findChiefOfStaffId } from '../lib/chief-of-staff'
+import {
+	claimCommentResponder,
+	releaseCommentResponderClaim,
+} from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
-import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
+import {
+	CredentialResolutionTimeoutError,
+	LlmCredentialsUnavailableError,
+	PlanCapExceededError,
+} from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { returnsToChatByDefault } from './chat-origin-routing'
+import { resolveSpawnLink } from './helper-link'
+import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 import {
@@ -41,17 +54,18 @@ import {
 	findDueWorkspaceIds,
 	sweepQueueRetention,
 } from './trigger-event-queue'
+import { commentPromptHeadline } from './workspace-briefing'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
 
 /**
- * Resolve `{ initiatedFromObjectId, initiatedFromObjectType }` for a
+ * Resolve `{ initiatedFromObjectId }` for a
  * `SessionManager.createSession()` call. The two fields on the sessions row
  * are FK-constrained to `objects.id`, so passing an entity id that isn't an
  * object row (a slack.message uuid, a session id, a webhook delivery id)
- * would trip the FK on insert. This helper resolves the id → object type
- * with one PK read, or returns `null / null` when the entity isn't an
+ * would trip the FK on insert. This helper checks the id against the
+ * objects table with one PK read, or returns `null` when the entity isn't an
  * object — matching the same "not a uuid → not an object" posture the
  * `getObjectContext()` hydration path already uses in `handleEvent()`.
  */
@@ -60,18 +74,17 @@ async function loadInitiatedFromObject(
 	entityId: string | null | undefined,
 ): Promise<{
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }> {
 	if (!entityId || !UUID_RE.test(entityId)) {
-		return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+		return { initiatedFromObjectId: null }
 	}
 	const [row] = await db
-		.select({ id: objects.id, type: objects.type })
+		.select({ id: objects.id })
 		.from(objects)
 		.where(eq(objects.id, entityId))
 		.limit(1)
-	if (!row) return { initiatedFromObjectId: null, initiatedFromObjectType: null }
-	return { initiatedFromObjectId: row.id, initiatedFromObjectType: row.type }
+	if (!row) return { initiatedFromObjectId: null }
+	return { initiatedFromObjectId: row.id }
 }
 
 /**
@@ -86,22 +99,6 @@ async function loadInitiatedFromObject(
  * objects flowing through loops.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-/**
- * Name of the Chief of Staff agent seeded into every workspace at creation —
- * the actor of last resort for case 3 dispatch when a commented object has no
- * driver (or the only candidate driver is the comment author). Load-bearing
- * per spec — see `always-a-responder-rule-shaping.md` §Solution sketch case 3.
- *
- * Resolved per workspace, NOT hardcoded to one actor id. Every workspace gets
- * its own Chief of Staff row at creation and keeps it for the workspace's
- * lifetime, so a single global id is only ever correct in the one workspace it
- * came from — everywhere else case 3 dispatched to a nonexistent actor and
- * failed inside `dispatchCommentFallback`'s catch, silently. Resolution
- * mirrors `lib/onboarding/signup-welcome.ts`'s `resolveAgentIdByName`, which
- * is how the same agent is already located at signup.
- */
-const CHIEF_OF_STAFF_NAME = 'Chief of Staff'
 
 interface TriggerFailureState {
 	count: number
@@ -178,19 +175,32 @@ const RETRY_AT_MAX_MS = QUEUE_RETENTION_MS
 const PLAN_CAP_FALLBACK_SUPPRESSION_MS = 60 * 60_000
 
 /**
- * Pause for "this workspace has no LLM credentials". Unlike a plan cap this has
- * no natural expiry — nothing resets it but a human connecting a credential —
- * so we re-check hourly rather than never, and clear the entry outright on an
- * entitlement-improving workspace event (see `SUPPRESSION_CLEARING_ACTIONS`).
- *
- * Caveat, deliberately stated rather than implied: importing a Claude
- * subscription via Settings → Keys does NOT currently clear the pause, because
- * `routes/claude-oauth.ts` writes `workspaces.settings` without inserting any
- * `events` row at all — so there is no event to match. That is a pre-existing
- * gap against the "log an event on every mutation" rule, not something this
- * pause introduced; until it is fixed, that recovery waits out the hour below.
+ * Pause for "this workspace has a credential, but it was rejected". It may come
+ * back by itself (a refresh, a recovered subscription), so we re-check hourly,
+ * and clear the entry outright on an entitlement-improving workspace event (see
+ * `SUPPRESSION_CLEARING_ACTIONS`).
  */
 const NO_CREDENTIALS_SUPPRESSION_MS = 60 * 60_000
+
+/**
+ * Pause for "this workspace has nothing configured at all". Unlike a plan cap
+ * this has no natural expiry — nothing resets it but a human connecting a
+ * credential, and every way of doing that logs a workspace event that clears
+ * the pause (settings PATCH, and the Claude login import in
+ * `routes/claude-oauth.ts`). The cap is only a backstop for a change that
+ * slips past those events, so a stuck workspace retries about once a day
+ * instead of once an hour. The pause is persisted, so it survives a restart.
+ */
+const NOTHING_CONFIGURED_SUPPRESSION_MS = 24 * 60 * 60_000
+
+/** The pause for a non-transient credentials failure; see the two constants above for the lengths. */
+function credentialsSuppression(now: Date, nothingConfigured: boolean): WorkspaceSuppression {
+	const ms = nothingConfigured ? NOTHING_CONFIGURED_SUPPRESSION_MS : NO_CREDENTIALS_SUPPRESSION_MS
+	return {
+		until: new Date(now.getTime() + ms),
+		reason: 'no LLM credentials connected for this workspace',
+	}
+}
 
 /**
  * Workspace-event actions that mean "this workspace's entitlement may have
@@ -241,6 +251,9 @@ const SUPPRESSION_CLEARING_ACTIONS = new Set([
  * default.
  */
 const TRIGGER_CRUD_ACTIONS = new Set(['created', 'updated', 'deleted'])
+
+/** Largest delay setTimeout honours (2^31-1 ms, ~24.8 days); above it Node fires after ~1 ms. */
+const MAX_TIMEOUT_MS = 2_147_483_647
 
 /** The trigger fields a human edits; a change in any of them counts as an edit. */
 function triggerFingerprint(trigger: typeof triggers.$inferSelect): string {
@@ -307,6 +320,9 @@ export class TriggerRunner {
 	// terminal event for a given session counts toward its trigger's
 	// failure/backoff accounting — otherwise every explicit stop of a
 	// trigger-spawned session double-counts as two failures instead of one.
+	// (A stop now settles once as session_stopped, which is not handled below,
+	// so it no longer counts as a failure at all; this map still covers any other
+	// double report of one outcome.)
 	private processedSessionOutcomes: Map<string, NodeJS.Timeout> = new Map()
 	private static readonly SESSION_OUTCOME_DEDUPE_TTL_MS = 10 * 60_000
 
@@ -559,13 +575,16 @@ export class TriggerRunner {
 		// workspace is misconfigured. Pausing on that would take a workspace's
 		// automations offline for an hour over a network blip, so let those fall
 		// through to the error branch and retry on the next tick.
-		if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
+		// A resolution timeout is not a verdict on the credentials either: it
+		// fails the session, not the workspace's automations.
+		if (
+			err instanceof LlmCredentialsUnavailableError &&
+			!err.transient &&
+			!(err instanceof CredentialResolutionTimeoutError)
+		) {
 			await this.suppressWorkspace(
 				workspaceId,
-				{
-					until: new Date(now.getTime() + NO_CREDENTIALS_SUPPRESSION_MS),
-					reason: 'no LLM credentials connected for this workspace',
-				},
+				credentialsSuppression(now, err.noCredentialsConfigured),
 				triggerName,
 			)
 			return
@@ -600,12 +619,14 @@ export class TriggerRunner {
 	 * only when `!err.transient`, and routes transient credential errors back
 	 * through its retry path instead.
 	 */
-	handleDispatchPermanentFailure(workspaceId: string, reasonCode?: string): void {
+	handleDispatchPermanentFailure(
+		workspaceId: string,
+		reasonCode?: string,
+		noCredentialsConfigured = false,
+	): void {
 		if (reasonCode !== 'not_logged_in') return
-		this.suppressWorkspace(workspaceId, {
-			until: new Date(Date.now() + NO_CREDENTIALS_SUPPRESSION_MS),
-			reason: 'no LLM credentials connected for this workspace',
-		}).catch((err) =>
+		const suppression = credentialsSuppression(new Date(), noCredentialsConfigured)
+		this.suppressWorkspace(workspaceId, suppression).catch((err) =>
 			logger.error('handleDispatchPermanentFailure: suppressWorkspace failed', {
 				workspaceId,
 				error: String(err),
@@ -751,7 +772,7 @@ export class TriggerRunner {
 
 	/**
 	 * The provider's reset time from a credit-exhaustion session_failed, or null
-	 * to fall back to the exponential backoff. Null when the flag is off, the
+	 * to fall back to the exponential backoff. Null when the
 	 * event is not a classified credit_exhaustion carrying a string retry_at,
 	 * or retry_at is unparseable, already past, or beyond RETRY_AT_MAX_MS —
 	 * event data is external input, and an epoch-9999 timestamp would otherwise
@@ -759,7 +780,6 @@ export class TriggerRunner {
 	 */
 	private async readRetryAt(event: PgEvent): Promise<Date | null> {
 		if (event.action !== 'session_failed') return null
-		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return null
 		const data = await this.fetchEventData(event.event_id)
 		if (data?.classification !== 'credit_exhaustion' || typeof data.retry_at !== 'string') {
 			return null
@@ -945,56 +965,28 @@ export class TriggerRunner {
 			}
 			if (config.action && config.action !== event.action) continue
 
-			// Flag-gate `commented` action so a workspace that hasn't rolled to
-			// trigger_engine_v2 can never end up with commented-action triggers
-			// silently dead in the matcher — the trigger builder rejects the flag-off
-			// state with an error, so a saved trigger with action=commented always
-			// implies its workspace is expected to be on v2. If the flag flips off
-			// again (kill switch), the trigger stops firing entirely; better than
-			// firing with the on_target_type row hidden. Ships as one call site here;
-			// S1's two gate points (loadCooldowns / loadSuppressions) share the
-			// same temporary helper and get swapped to the S7 public resolver in
-			// one aggregate-merge pass.
-			if (
-				event.action === 'commented' &&
-				!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)
-			) {
-				continue
-			}
-
 			// Check filter conditions — for status_changed / updated events the entity lives
 			// on `data.updated` (legacy) or must be hydrated from the objects table (new
 			// {changes} shape). For `commented` the root merges `data`, the comment's
 			// `actorId`, and the target object's `__target_type` (tech spec §5.4 fold 6).
 			//
-			// Matcher v2 (tech spec §2.1) is flag-gated per workspace: when
-			// `trigger_engine_v2` is ON, array-valued entries take any-of semantics
+			// Matcher v2 (tech spec §2.1): array-valued entries take any-of semantics
 			// and every miss emits `trigger_match_failed` so the bet #8 dashboard
-			// can watch dead triggers reactivate. When OFF, today's strict-equality
-			// body runs unchanged (array values reference-equal against a literal
-			// array → always false, matching v1 behaviour); no PostHog row emitted
-			// so a pre-rollout workspace does not spam analytics.
+			// can watch dead triggers reactivate.
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
 				const filterRoot = await buildFilterRoot(data)
 				const filter = config.filter as Record<string, unknown>
-				if (isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) {
-					const result = evaluateFilterV2(filter, filterRoot)
-					if (!result.matches) {
-						void trackTriggerMatchFailed({
-							workspaceId: event.workspace_id,
-							triggerId: trigger.id,
-							eventId: event.event_id,
-							filterShape: result.missShape,
-						})
-						continue
-					}
-				} else {
-					const matches = Object.entries(filter).every(
-						([key, value]) => resolvePath(filterRoot, key) === value,
-					)
-					if (!matches) continue
+				const result = evaluateFilterV2(filter, filterRoot)
+				if (!result.matches) {
+					void trackTriggerMatchFailed({
+						workspaceId: event.workspace_id,
+						triggerId: trigger.id,
+						eventId: event.event_id,
+						filterShape: result.missShape,
+					})
+					continue
 				}
 			}
 
@@ -1043,13 +1035,12 @@ export class TriggerRunner {
 			const eventForPrompt = { ...event, data: dataForPrompt ?? null }
 
 			// Idempotency claim — S2 of the trigger-engine fix bet (tech spec §3.4).
-			// Ships UNCONDITIONAL (no flag check): during blue-green rolling deploys
-			// both trigger-runner instances receive the same PG NOTIFY payload and
+			// During blue-green rolling deploys both
+			// trigger-runner instances receive the same PG NOTIFY payload and
 			// would otherwise both dispatch. First INSERT to succeed claims the
 			// (trigger_id, event_id); the other's ON CONFLICT DO NOTHING returns
 			// zero rows and the dispatch skips. Load-bearing during rollback per
-			// §7.3 — a kill-switch flip must not re-open this window, so the
-			// guard cannot sit behind the v2 gate.
+			// §7.3.
 			const eventIdBigint = Number(event.event_id)
 			const claimed = await this.db
 				.insert(triggerDispatches)
@@ -1228,8 +1219,10 @@ export class TriggerRunner {
 		const expression = config.expression as string
 
 		try {
-			const job = new Cron(expression, { timezone: 'UTC' }, async () => {
-				await this.fireCronTrigger(trigger)
+			const job = new Cron(expression, { timezone: 'UTC' }, async (self) => {
+				// The scheduled time, not the wall clock: two instances fire the same
+				// tick a few ms apart and must derive the same dedupe key.
+				await this.fireCronTrigger(trigger, self.currentRun() ?? new Date())
 			})
 
 			this.cronJobs.set(trigger.id, job)
@@ -1241,7 +1234,7 @@ export class TriggerRunner {
 		}
 	}
 
-	private async fireCronTrigger(trigger: typeof triggers.$inferSelect): Promise<void> {
+	private async fireCronTrigger(trigger: typeof triggers.$inferSelect, tick: Date): Promise<void> {
 		// Checked before the scope query and the `trigger_fired` event insert:
 		// a suppressed workspace should cost nothing per tick, and must not
 		// write an audit row claiming a trigger fired when no session follows.
@@ -1261,6 +1254,26 @@ export class TriggerRunner {
 		}
 
 		const config = (trigger.config as Record<string, unknown>) ?? {}
+
+		// Opt-in guard: a scheduled sweep in a workspace nobody has touched since
+		// the last run would only burn allowance. Like the scope check below, it
+		// returns before the `trigger_fired` event and the session. It fails open:
+		// if the check cannot run, the trigger fires as it always did.
+		if (config.skip_when_idle === true) {
+			const idle = await isWorkspaceIdleSinceLastRun(this.db, trigger).catch((err) => {
+				logger.warn(
+					`Cron trigger '${trigger.name}' idle check failed — firing anyway: ${String(err)}`,
+				)
+				return false
+			})
+			if (idle) {
+				logger.info(
+					`Cron trigger '${trigger.name}' skipped — no human activity in workspace ${trigger.workspaceId} since its last run`,
+				)
+				return
+			}
+		}
+
 		const scope = parseCronScope(config.scope)
 
 		// When a scope filter is present, the trigger only fires if the query
@@ -1276,6 +1289,25 @@ export class TriggerRunner {
 				)
 				return
 			}
+		}
+
+		// Idempotency claim, same table and same reason as the event path: during a
+		// rolling deploy the old and new instance both hold this cron job, and the
+		// old one only stops once the new one is healthy. Every cron tick would
+		// otherwise start two sessions. A cron tick has no events row, so its key
+		// is the negative of the tick's unix seconds; real event ids are positive
+		// bigserials and can never collide with it. The 30-day purge covers these
+		// rows too.
+		const claimed = await this.db
+			.insert(triggerDispatches)
+			.values({ triggerId: trigger.id, eventId: -Math.floor(tick.getTime() / 1000) })
+			.onConflictDoNothing()
+			.returning({ triggerId: triggerDispatches.triggerId })
+		if (claimed.length === 0) {
+			logger.info(
+				`Cron trigger '${trigger.name}' tick ${tick.toISOString()} already fired by another process`,
+			)
+			return
 		}
 
 		logger.info(`Cron trigger '${trigger.name}' firing`)
@@ -1312,7 +1344,6 @@ export class TriggerRunner {
 			// correct value when no single originating object exists (spec §3.3,
 			// cron/reminder rows).
 			initiatedFromObjectId: null,
-			initiatedFromObjectType: null,
 			await: 'none',
 		}).catch((err) =>
 			this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch((persistErr) =>
@@ -1345,9 +1376,8 @@ export class TriggerRunner {
 
 	/**
 	 * Hydrate `triggerFailures` from `trigger_cooldowns` at boot — reads every
-	 * row whose `backoff_until` is still in the future, joins to `triggers` to
-	 * find the owning workspace, and skips rows for workspaces that have not
-	 * opted into the v2 gate (§3.2, §7.1).
+	 * row whose `backoff_until` is still in the future and whose trigger still
+	 * exists (§3.2, §7.1).
 	 *
 	 * A DB read failure THROWS: booting with empty Maps against a live DB is
 	 * exactly the deploy-wipe bug this table exists to prevent (§6.3).
@@ -1360,7 +1390,6 @@ export class TriggerRunner {
 			lastFailedAt: Date
 			backoffUntil: Date
 			reason: string | null
-			workspaceId: string
 		}[]
 		try {
 			rows = await this.db
@@ -1370,7 +1399,6 @@ export class TriggerRunner {
 					lastFailedAt: triggerCooldowns.lastFailedAt,
 					backoffUntil: triggerCooldowns.backoffUntil,
 					reason: triggerCooldowns.reason,
-					workspaceId: triggers.workspaceId,
 				})
 				.from(triggerCooldowns)
 				.innerJoin(triggers, eq(triggers.id, triggerCooldowns.triggerId))
@@ -1381,12 +1409,7 @@ export class TriggerRunner {
 		}
 
 		let loaded = 0
-		let skipped = 0
 		for (const row of rows) {
-			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
-				skipped++
-				continue
-			}
 			this.triggerFailures.set(row.triggerId, {
 				count: row.count,
 				lastFailedAt: row.lastFailedAt,
@@ -1395,7 +1418,7 @@ export class TriggerRunner {
 			})
 			loaded++
 		}
-		logger.info(`Trigger cooldowns loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+		logger.info(`Trigger cooldowns loaded — ${loaded} active`)
 	}
 
 	/**
@@ -1424,19 +1447,14 @@ export class TriggerRunner {
 		}
 
 		let loaded = 0
-		let skipped = 0
 		for (const row of rows) {
-			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
-				skipped++
-				continue
-			}
 			this.workspaceSuppressions.set(row.workspaceId, {
 				until: row.suppressedUntil,
 				reason: row.reason,
 			})
 			loaded++
 		}
-		logger.info(`Workspace suppressions loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+		logger.info(`Workspace suppressions loaded — ${loaded} active`)
 	}
 
 	/**
@@ -1476,8 +1494,7 @@ export class TriggerRunner {
 
 	/**
 	 * Parks an event that is about to be dropped so it replays when the window
-	 * lifts (tech spec §4.2). Behind trigger_engine_v2: with the flag off the
-	 * drop is exactly today's, and nothing touches the queue. The queue's own
+	 * lifts (tech spec §4.2). The queue's own
 	 * audit events are never parked — see QUEUE_EVENT_ENTITY_TYPE.
 	 */
 	private async holdDroppedEvent(
@@ -1485,7 +1502,6 @@ export class TriggerRunner {
 		opts: Parameters<typeof enqueueDroppedEvent>[2],
 	): Promise<void> {
 		if (event.entity_type === QUEUE_EVENT_ENTITY_TYPE) return
-		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return
 		await enqueueDroppedEvent(this.db, event, opts)
 	}
 
@@ -1543,7 +1559,6 @@ export class TriggerRunner {
 		try {
 			const replayed = await drainQueue(this.db, scope, {
 				source,
-				canReplay: (workspaceId) => isFlagEnabledForWorkspace(workspaceId, FLAGS.TRIGGER_ENGINE_V2),
 				isHeld,
 				replay,
 			})
@@ -1573,7 +1588,12 @@ export class TriggerRunner {
 	private scheduleReminder(trigger: typeof triggers.$inferSelect) {
 		const config = trigger.config as Record<string, unknown>
 		const scheduledAt = new Date(config.scheduled_at as string)
-		const delay = Math.max(0, scheduledAt.getTime() - Date.now())
+		const remaining = Math.max(0, scheduledAt.getTime() - Date.now())
+		// setTimeout treats a delay above 2^31-1 ms (~24.8 days) as 1 ms, which
+		// would fire a far-future reminder at once. Arm at most MAX_TIMEOUT_MS and
+		// re-arm from the timer callback until the real time is in range.
+		const delay = Math.min(remaining, MAX_TIMEOUT_MS)
+		const clamped = remaining > MAX_TIMEOUT_MS
 
 		// Deliberately NOT gated on isWorkspaceSuppressed: a reminder is one-shot,
 		// so skipping it here would consume its timeout and drop it permanently
@@ -1582,6 +1602,11 @@ export class TriggerRunner {
 		// failure through handleSessionCreateFailure so an over-cap reminder is
 		// classified (and can open a pause) rather than paging.
 		const timeout = setTimeout(async () => {
+			if (clamped) {
+				this.scheduleReminder(trigger)
+				return
+			}
+
 			logger.info(`Reminder trigger '${trigger.name}' firing`)
 
 			await recordEvent(this.db, {
@@ -1608,7 +1633,6 @@ export class TriggerRunner {
 				createdBy: trigger.createdBy,
 				// Reminder trigger: one-shot, no originating object.
 				initiatedFromObjectId: null,
-				initiatedFromObjectType: null,
 				await: 'none',
 			}).catch((err) =>
 				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
@@ -1632,6 +1656,64 @@ export class TriggerRunner {
 
 		this.reminderTimeouts.set(trigger.id, timeout)
 	}
+}
+
+/**
+ * True when no person has acted in the trigger's workspace since the trigger
+ * last fired (or since it was created, if it never has). A person acting is a
+ * human-authored event, or a session a person started themselves (a chat
+ * message starts one but is authored by the agent, so events alone miss it).
+ * Agent and trigger activity does not count: that is exactly the spend this
+ * guard exists to stop.
+ */
+export async function isWorkspaceIdleSinceLastRun(
+	db: Database,
+	trigger: Pick<typeof triggers.$inferSelect, 'id' | 'workspaceId' | 'createdAt'>,
+): Promise<boolean> {
+	const [lastFired] = await db
+		.select({ createdAt: events.createdAt })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, trigger.workspaceId),
+				eq(events.entityId, trigger.id),
+				eq(events.action, 'trigger_fired'),
+			),
+		)
+		.orderBy(desc(events.id))
+		.limit(1)
+	const since = lastFired?.createdAt ?? trigger.createdAt
+	// No reference point means we cannot tell, so do not skip.
+	if (!since) return false
+
+	const [humanEvent] = await db
+		.select({ id: events.id })
+		.from(events)
+		.innerJoin(actors, eq(actors.id, events.actorId))
+		.where(
+			and(
+				eq(events.workspaceId, trigger.workspaceId),
+				gt(events.createdAt, since),
+				eq(actors.type, 'human'),
+			),
+		)
+		.limit(1)
+	if (humanEvent) return false
+
+	const [humanSession] = await db
+		.select({ id: sessions.id })
+		.from(sessions)
+		.innerJoin(actors, eq(actors.id, sessions.createdBy))
+		.where(
+			and(
+				eq(sessions.workspaceId, trigger.workspaceId),
+				isNull(sessions.triggerId),
+				gt(sessions.createdAt, since),
+				eq(actors.type, 'human'),
+			),
+		)
+		.limit(1)
+	return !humanSession
 }
 
 export interface CronScope {
@@ -1905,6 +1987,8 @@ export function evaluateCondition(
 //   • noop_suppressed — `data.metadata.suppress_auto_dispatch === true` short-
 //     circuits BEFORE mention / case 2 / case 3, so a bespoke-dispatch caller
 //     (e.g. signup-welcome) can stamp the escape hatch on its own comment.
+//   • noop_suppressed (agent author) — an agent's mention-free comment dispatches
+//     nobody: it returns before case 0 / 2 / 3 (`isAgentMentionFreeComment`).
 //   • case 1a mention — agent-actor mention → needs_input notification + agent
 //     session; human-actor mention → needs_input notification only. Suppressed
 //     when the mentioned actor authored the parent comment (`noop_self_authored`).
@@ -1945,9 +2029,13 @@ interface CommentEventData {
 	content?: unknown
 	mentions?: unknown
 	parentEventId?: unknown
+	/** Session the author was running, from X-Maskin-Session-Id (lib/comments.ts). A claim only. */
+	authorSessionId?: unknown
 	metadata?: {
 		suppress_auto_dispatch?: unknown
 		suppress_dispatch_actor_ids?: unknown
+		/** Set on the comment a finished helper posts back to its sender (services/helper-return.ts). */
+		helper_return?: unknown
 	} | null
 }
 
@@ -1974,6 +2062,21 @@ export function isCommentFallbackDriverEligible(ctx: {
 	if (ctx.driverId === ctx.commenterId) return false
 	if (ctx.driverId === ctx.parentAuthorId) return false
 	return true
+}
+
+/**
+ * The single source of truth for "an agent's mention-free comment dispatches
+ * nobody". The ladder's case 2 / case 3 wake and the thread-reply auto-spawn in
+ * `routes/events.ts` both consult it, so the rule lives in one spot and the two
+ * paths can't drift apart. Pure on purpose: the callers learn the actor type
+ * differently (the subscriber reads it off the event, the POST handler already
+ * has it in context), so only the predicate is shared, not a lookup.
+ */
+export function isAgentMentionFreeComment(ctx: {
+	actorType: string | null | undefined
+	mentionCount: number
+}): boolean {
+	return ctx.actorType === 'agent' && ctx.mentionCount === 0
 }
 
 export class CommentDispatcher {
@@ -2016,8 +2119,9 @@ export class CommentDispatcher {
 		if (!Number.isFinite(eventIdNum)) return
 
 		const [row] = await this.db
-			.select({ actorId: events.actorId, data: events.data })
+			.select({ actorId: events.actorId, data: events.data, actorType: actors.type })
 			.from(events)
+			.leftJoin(actors, eq(actors.id, events.actorId))
 			.where(eq(events.id, eventIdNum))
 			.limit(1)
 		if (!row) return
@@ -2065,7 +2169,18 @@ export class CommentDispatcher {
 				parentEventId,
 				suppressedActorIds,
 				content: typeof data.content === 'string' ? data.content : '',
+				helperReturnSessionId:
+					typeof data.metadata?.helper_return === 'string' ? data.metadata.helper_return : null,
+				authorSessionId: typeof data.authorSessionId === 'string' ? data.authorSessionId : null,
 			})
+			return
+		}
+
+		// An agent's mention-free comment is low-attention: it dispatches nobody,
+		// neither the driver (case 2) nor the Chief of Staff (case 3). Agents
+		// @mention whoever they need. Human comments fall through unchanged.
+		if (isAgentMentionFreeComment({ actorType: row.actorType, mentionCount: mentions.length })) {
+			await this.emitResolved(event, eventIdNum, commenterId, 'noop_suppressed', null)
 			return
 		}
 
@@ -2099,14 +2214,34 @@ export class CommentDispatcher {
 		parentEventId: number | null
 		suppressedActorIds: Set<string>
 		content: string
+		helperReturnSessionId: string | null
+		authorSessionId: string | null
 	}): Promise<void> {
-		const mentionedActors = await this.db
-			.select({ id: actors.id, type: actors.type })
+		// The commenter rides along in the same lookup so the loop guards can tell
+		// an agent-authored mention from a human one without an extra query. The
+		// join marks which rows are members of this workspace: a mention of an
+		// actor from another workspace is dropped below, so it gets no
+		// notification and no session. The commenter is read whether or not it is
+		// a member, so the loop guards never lose track of an agent author.
+		const lookedUp = await this.db
+			.select({ id: actors.id, type: actors.type, memberWorkspaceId: workspaceMembers.workspaceId })
 			.from(actors)
-			.where(inArray(actors.id, ctx.mentions))
+			.leftJoin(
+				workspaceMembers,
+				and(
+					eq(workspaceMembers.actorId, actors.id),
+					eq(workspaceMembers.workspaceId, ctx.workspaceId),
+				),
+			)
+			.where(inArray(actors.id, [...ctx.mentions, ctx.commenterId]))
+		const commenterIsAgent = lookedUp.some((a) => a.id === ctx.commenterId && a.type === 'agent')
+		const mentionedActors = lookedUp
+			.filter((a) => a.memberWorkspaceId !== null)
+			.map((a) => ({ id: a.id, type: a.type }))
 
 		// Preserve caller ordering (mentions may contain duplicates or ids that
-		// don't resolve to an actor row; both cases quietly drop out here).
+		// don't resolve to a member of this workspace; both cases quietly drop out
+		// here).
 		const actorById = new Map(mentionedActors.map((a) => [a.id, a]))
 		const seen = new Set<string>()
 		let anyDispatched = false
@@ -2142,6 +2277,9 @@ export class CommentDispatcher {
 				actor,
 				content: ctx.content,
 				parentEventId: ctx.parentEventId,
+				commenterIsAgent,
+				helperReturnSessionId: ctx.helperReturnSessionId,
+				authorSessionId: ctx.authorSessionId,
 			})
 			anyDispatched = true
 		}
@@ -2284,27 +2422,8 @@ export class CommentDispatcher {
 		)
 	}
 
-	/**
-	 * Resolves the workspace's own Chief of Staff. Matched on name + agent type
-	 * through `workspace_members`, the same way `signup-welcome.ts` locates it.
-	 * Oldest membership wins so the answer is stable for the workspace's
-	 * lifetime if a second same-named agent is ever added.
-	 */
-	private async chiefOfStaffId(workspaceId: string): Promise<string | null> {
-		const [row] = await this.db
-			.select({ actorId: workspaceMembers.actorId })
-			.from(workspaceMembers)
-			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-			.where(
-				and(
-					eq(workspaceMembers.workspaceId, workspaceId),
-					eq(actors.name, CHIEF_OF_STAFF_NAME),
-					eq(actors.type, 'agent'),
-				),
-			)
-			.orderBy(actors.createdAt)
-			.limit(1)
-		return row?.actorId ?? null
+	private chiefOfStaffId(workspaceId: string): Promise<string | null> {
+		return findChiefOfStaffId(this.db, workspaceId)
 	}
 
 	private async dispatchCommentFallback(ctx: {
@@ -2314,6 +2433,34 @@ export class CommentDispatcher {
 		entityId: string
 		actionPrompt: string
 	}): Promise<boolean> {
+		// A person's Pause holds against the fallback too, for the driver and the Chief of Staff.
+		if (await isActorHumanPaused(this.db, ctx.actorId)) {
+			logger.info('Comment fallback held: agent is paused by a person', {
+				workspace_id: ctx.workspaceId,
+				actor_id: ctx.actorId,
+				object_id: ctx.entityId,
+				source_comment_event_id: ctx.sourceCommentEventId,
+			})
+			return false
+		}
+		// The fallback is the responder of last resort: it stands down when the thread-reply
+		// auto-spawn (routes/events.ts) has claimed, or is claiming, this actor for this comment.
+		// The claim is a primary-key INSERT, so it holds even when the two run ~50ms apart.
+		const claimed = await claimCommentResponder(this.db, {
+			sourceCommentEventId: ctx.sourceCommentEventId,
+			actorId: ctx.actorId,
+			claimedBy: 'comment_fallback',
+		})
+		if (!claimed) {
+			logger.info('Comment fallback stood down: another responder session holds the claim', {
+				workspace_id: ctx.workspaceId,
+				actor_id: ctx.actorId,
+				object_id: ctx.entityId,
+				source_comment_event_id: ctx.sourceCommentEventId,
+			})
+			// A responder exists for this comment, so it is not an unanswered one.
+			return true
+		}
 		try {
 			const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.entityId)
 			await startSession({
@@ -2340,6 +2487,10 @@ export class CommentDispatcher {
 				actorId: ctx.actorId,
 				sourceCommentEventId: ctx.sourceCommentEventId,
 				error: err instanceof Error ? err.message : String(err),
+			})
+			await releaseCommentResponderClaim(this.db, {
+				sourceCommentEventId: ctx.sourceCommentEventId,
+				actorId: ctx.actorId,
 			})
 			return false
 		}
@@ -2432,9 +2583,38 @@ export class CommentDispatcher {
 		actor: { id: string; type: string }
 		content: string
 		parentEventId: number | null
+		commenterIsAgent: boolean
+		helperReturnSessionId: string | null
+		authorSessionId: string | null
 	}): Promise<void> {
-		const [notification] = await this.db.transaction((tx) =>
-			insertNotificationsWithEvents(tx, {
+		// One comment event wakes one mentioned actor once. During a rolling deploy
+		// the old and new instance both run this dispatcher on the same NOTIFY, so
+		// the notification row is the claim: the first transaction writes it, the
+		// second waits on the lock, finds it and stops. Without this the second
+		// instance writes a second notification and starts a second session.
+		const notification = await this.db.transaction(async (tx) => {
+			await tx.execute(
+				sql`select pg_advisory_xact_lock(hashtextextended(${`mention:${ctx.eventId}:${ctx.actor.id}`}, 0))`,
+			)
+			const [existing] = await tx
+				.select({ id: notifications.id })
+				.from(notifications)
+				.where(
+					and(
+						eq(notifications.targetActorId, ctx.actor.id),
+						eq(notifications.objectId, ctx.objectId),
+						sql`${notifications.metadata}->>'comment_event_id' = ${String(ctx.eventId)}`,
+					),
+				)
+				.limit(1)
+			if (existing) {
+				logger.info('Comment mention already dispatched by another process', {
+					eventId: ctx.eventId,
+					actorId: ctx.actor.id,
+				})
+				return null
+			}
+			const [created] = await insertNotificationsWithEvents(tx, {
 				workspaceId: ctx.workspaceId,
 				actorId: ctx.commenterId,
 				rows: [
@@ -2443,14 +2623,24 @@ export class CommentDispatcher {
 						type: 'needs_input' as const,
 						title: '@mentioned by comment',
 						content: ctx.content,
+						// Lets the push policy tell an agent's plain mention from a card that needs a decision.
+						metadata: {
+							comment_event_id: ctx.eventId,
+							source: 'comment_mention',
+							from_agent: ctx.commenterIsAgent,
+						},
 						sourceActorId: ctx.commenterId,
 						targetActorId: ctx.actor.id,
 						objectId: ctx.objectId,
 						status: 'pending' as const,
 					},
 				],
-			}),
-		)
+			})
+			return created
+		})
+
+		// null: another process already dispatched this mention, nothing left to do.
+		if (notification === null) return
 
 		if (!notification) {
 			logger.warn('Comment mention notification not created', {
@@ -2463,6 +2653,95 @@ export class CommentDispatcher {
 		this.log(ctx.event, 'case_1_mention', ctx.actor.id)
 
 		if (ctx.actor.type !== 'agent') return
+
+		// A person's Pause holds against a mention too. Like a blocked loop guard, the
+		// notification above stays, so the mention is waiting when the agent resumes.
+		const [mentionedAgent] = await this.db
+			.select({ agentState: actors.agentState, metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, ctx.actor.id))
+			.limit(1)
+		if (mentionedAgent && isHumanPaused(mentionedAgent)) {
+			logger.info('Mention held: agent is paused by a person', {
+				event_id: ctx.event.event_id,
+				resolved_actor_id: ctx.actor.id,
+				object_id: ctx.objectId,
+			})
+			return
+		}
+
+		// Loop guards. Only agent-authored mentions are limited: a human can always
+		// wake an agent. A blocked mention keeps its notification (written above),
+		// it just does not start a session.
+		let isHelperReturn = false
+		// Depth the woken session carries in config.hop_depth. A session woken by a
+		// return inherits the depth of the helper that returned, so a sender that
+		// keeps re-delegating cannot reset the chain.
+		let hopDepth: number | undefined
+		if (ctx.commenterIsAgent) {
+			// The helper_return marker is plain comment metadata, so it is only
+			// believed when the named session is this author's, has taken its return
+			// claim, and this comment is that session's return: to its sender, on the
+			// return object, not used before. Anything else is an ordinary mention.
+			const verifiedReturn =
+				ctx.helperReturnSessionId !== null
+					? await verifyHelperReturn(this.db, {
+							sessionId: ctx.helperReturnSessionId,
+							commenterId: ctx.commenterId,
+							mentionedActorId: ctx.actor.id,
+							objectId: ctx.objectId,
+							commentEventId: ctx.eventId,
+						})
+					: null
+			isHelperReturn = verifiedReturn !== null
+			if (verifiedReturn) hopDepth = verifiedReturn.hopDepth
+			const decision = await evaluateAgentMentionGuards(this.db, {
+				workspaceId: ctx.workspaceId,
+				commentEventId: ctx.eventId,
+				commenterId: ctx.commenterId,
+				mentionedActorId: ctx.actor.id,
+				objectId: ctx.objectId,
+				content: ctx.content,
+				isHelperReturn,
+			})
+			if (!decision.allowed) {
+				logger.info('Mention blocked by loop guard', {
+					event_id: ctx.event.event_id,
+					reason: decision.reason,
+					resolved_actor_id: ctx.actor.id,
+					object_id: ctx.objectId,
+				})
+				return
+			}
+		}
+
+		// Link the mentioned agent's session to the session the author was running,
+		// so its outcome can be sent back. A return never links: the session it wakes
+		// must have no link of its own, or returns could chain.
+		let spawnedBySessionId: string | undefined
+		let originConversationId: string | null = null
+		let notifyOnComplete = false
+		if (!isHelperReturn) {
+			const link = await resolveSpawnLink(this.db, {
+				claimedSessionId: ctx.authorSessionId,
+				authenticatedActorId: ctx.commenterId,
+				workspaceId: ctx.workspaceId,
+				objectId: ctx.objectId,
+			})
+			if (link.linked) {
+				spawnedBySessionId = link.spawnedBySessionId
+				hopDepth = link.hopDepth
+				originConversationId = link.originConversationId
+				// Handed off from a 1-1 chat: the person is waiting in that chat, so the
+				// outcome goes back there, not only into the object thread.
+				notifyOnComplete = await returnsToChatByDefault(this.db, {
+					senderSessionId: link.spawnedBySessionId,
+					senderConversationId: link.senderConversationId,
+					creatorId: ctx.commenterId,
+					workspaceId: ctx.workspaceId,
+				})
+			}
+		}
 
 		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
 		startSession({
@@ -2477,26 +2756,41 @@ export class CommentDispatcher {
 				parentEventId: ctx.parentEventId,
 			}),
 			config: {
+				// Who asked: launch puts the sender line above the prompt, so the stored
+				// prompt (and the session's title) starts with what the work is.
+				sent_by_actor_id: ctx.commenterId,
 				mention: {
 					object_id: ctx.objectId,
 					commenter_actor_id: ctx.commenterId,
 					notification_id: notification.id,
 					comment_event_id: ctx.eventId,
+					...(isHelperReturn ? { helper_return: true } : {}),
 				},
+				...(hopDepth ? { hop_depth: hopDepth } : {}),
+				...(originConversationId ? { origin_conversation_id: originConversationId } : {}),
+				...(notifyOnComplete ? { notify_on_complete: true } : {}),
 			},
+			spawnedBySessionId,
 			triggerSource: 'comment_fallback',
 			sourceCommentEventId: ctx.eventId,
 			createdBy: ctx.commenterId,
 			...initiatedFrom,
 			await: 'none',
-		}).catch((err) =>
-			logger.error('Failed to create session for @mentioned agent', {
+		}).catch((err) => {
+			const fields = {
 				agentId: ctx.actor.id,
 				objectId: ctx.objectId,
 				notificationId: notification.id,
 				error: String(err),
-			}),
-		)
+			}
+			// A workspace over its plan cap is the cap working as designed, not a
+			// fault, so keep it out of Sentry (same split as handleSessionCreateFailure).
+			if (err instanceof PlanCapExceededError) {
+				logger.warn('Mentioned agent session blocked by plan cap', fields)
+				return
+			}
+			logger.error('Failed to create session for @mentioned agent', fields)
+		})
 	}
 
 	private log(event: PgEvent, kind: CommentDispatchCase, resolvedActorId: string): void {
@@ -2516,6 +2810,7 @@ export class CommentDispatcher {
  * the notification-id it references are edited in one place.
  */
 export function buildMentionPrompt(ctx: {
+	senderLine?: string
 	objectId: string
 	commenterActorId: string
 	content: string
@@ -2523,6 +2818,9 @@ export function buildMentionPrompt(ctx: {
 	parentEventId: number | null
 }): string {
 	return [
+		...(ctx.senderLine ? [ctx.senderLine, ''] : []),
+		commentPromptHeadline('Mentioned in a comment', ctx.content),
+		'',
 		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
 		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
 		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',

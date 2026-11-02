@@ -2,22 +2,12 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/api', () => ({
-	api: {
-		relationships: {
-			list: vi.fn(),
-		},
-	},
-}))
-
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return mockTanStackRouter()
 })
 
 import { LoopFlow } from '@/components/loops/loop-flow'
-import type { RelationshipResponse } from '@/lib/api'
-import { api } from '@/lib/api'
 import {
 	buildActorListItem,
 	buildLoopSummary,
@@ -69,30 +59,9 @@ function wrapper() {
 	})
 }
 
-function relationshipsFor(objectId: string): RelationshipResponse[] {
-	if (objectId === 'i-clustered') {
-		return [
-			{
-				id: 'rel-1',
-				sourceType: 'object',
-				sourceId: 'i-clustered',
-				targetType: 'object',
-				targetId: 'bet-1',
-				type: 'informs',
-				createdBy: 'actor-1',
-				createdAt: null,
-			},
-		]
-	}
-	return []
-}
-
 describe('LoopFlow', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		vi.mocked(api.relationships.list).mockImplementation((_workspaceId, params) =>
-			Promise.resolve(relationshipsFor(params?.object_id ?? '')),
-		)
 	})
 
 	it('renders trigger and agent counts in the section header', async () => {
@@ -116,13 +85,13 @@ describe('LoopFlow', () => {
 		).toBeInTheDocument()
 	})
 
-	it('groups an event trigger with no from_status under "Comes in"', async () => {
+	it('groups an event trigger under "Event-based"', async () => {
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt: 'Normalises the Slack event into the shared source',
+				name: 'Normalises the Slack event into the shared source',
 				config: {},
 			}),
 		]
@@ -136,19 +105,20 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		expect(await screen.findByText('Comes in')).toBeInTheDocument()
+		expect(await screen.findByText('Triggers')).toBeInTheDocument()
+		expect(screen.getByText('Event-based')).toBeInTheDocument()
 		expect(
 			screen.getByText('Normalises the Slack event into the shared source'),
 		).toBeInTheDocument()
 	})
 
-	it('places a cron trigger under "Runs alongside"', async () => {
+	it('places a cron trigger under "Routines"', async () => {
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
 				targetActorId: 'compass',
 				type: 'cron',
-				actionPrompt: 'Sweeps stuck insights nightly',
+				name: 'Sweeps stuck insights nightly',
 				config: { expression: '0 2 * * *' },
 			}),
 		]
@@ -162,17 +132,17 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		expect(await screen.findByText('Runs alongside')).toBeInTheDocument()
+		expect(await screen.findByText('Routines')).toBeInTheDocument()
 		expect(screen.getByText('Sweeps stuck insights nightly')).toBeInTheDocument()
 	})
 
-	it('places an event trigger with a recognised from_status right after that stage', async () => {
+	it('shows the stages above the Triggers section, even for an event trigger with a from_status', async () => {
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
 				targetActorId: 'compass',
 				type: 'event',
-				actionPrompt: 'Writes the generalisable version',
+				name: 'Writes the generalisable version',
 				config: { entity_type: 'object', action: 'updated', from_status: 'clustered' },
 			}),
 		]
@@ -186,49 +156,39 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		// This one is settled synchronously (columns are computed from props,
-		// not an async board fetch), but the relationship-derived cards below
-		// need an await, so wait for one of those first for a stable assertion.
-		await screen.findByText('Slack images do not render inline')
+		const stage = await screen.findByText('clustered')
+		const heading = screen.getByText('Triggers')
+		expect(stage.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 		expect(screen.getByText('Writes the generalisable version')).toBeInTheDocument()
 		expect(screen.queryByText('Comes in')).not.toBeInTheDocument()
+		expect(screen.queryByText('Runs alongside')).not.toBeInTheDocument()
 	})
 
-	it('renders a cycle card with companions for an object that has relationships', async () => {
+	it('shows each stage with its count and no object cards', async () => {
 		render(<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />, {
 			wrapper: wrapper(),
 		})
 
-		expect(await screen.findByText('Slack images do not render inline')).toBeInTheDocument()
-		expect(screen.getByText('Inline attachments')).toBeInTheDocument()
+		expect(await screen.findByText('clustered')).toBeInTheDocument()
+		expect(screen.queryByText('Slack images do not render inline')).not.toBeInTheDocument()
+		expect(screen.queryByText('Inline attachments')).not.toBeInTheDocument()
 	})
 
-	it('does not render a card for an object with no relationships, only its stage count', async () => {
-		render(<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />, {
-			wrapper: wrapper(),
-		})
-
-		await screen.findByText('Slack images do not render inline')
-		expect(screen.queryByText('New insight')).not.toBeInTheDocument()
-		expect(screen.queryByText('Setup confusion drives churn')).not.toBeInTheDocument()
-		expect(screen.getAllByText('new')).toHaveLength(1)
-	})
-
-	it('filters step rows by agent without hiding stage cards', async () => {
+	it('filters step rows by agent without hiding stages', async () => {
 		const user = userEvent.setup()
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt: 'Relay step',
+				name: 'Relay step',
 				config: {},
 			}),
 			buildTriggerResponse({
 				id: 't2',
 				targetActorId: 'compass',
 				type: 'event',
-				actionPrompt: 'Compass step',
+				name: 'Compass step',
 				config: {},
 			}),
 		]
@@ -249,8 +209,8 @@ describe('LoopFlow', () => {
 
 		expect(screen.queryByText('Relay step')).not.toBeInTheDocument()
 		expect(screen.getByText('Compass step')).toBeInTheDocument()
-		// Stage cards are unaffected by the agent filter.
-		expect(await screen.findByText('Slack images do not render inline')).toBeInTheDocument()
+		// Stages are unaffected by the agent filter.
+		expect(await screen.findByText('clustered')).toBeInTheDocument()
 	})
 
 	it('renders nothing when there are no triggers and no child objects', () => {
@@ -268,8 +228,7 @@ describe('LoopFlow', () => {
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt:
-					'A very long step description that must wrap cleanly instead of spilling past the container on a narrow mobile viewport https://example.com/a/extremely/long/unbroken/url/that/should/never/force/horizontal/overflow',
+				name: 'A very long step description that must wrap cleanly instead of spilling past the container on a narrow mobile viewport https://example.com/a/extremely/long/unbroken/url/that/should/never/force/horizontal/overflow',
 				config: {},
 			}),
 		]
@@ -328,7 +287,7 @@ describe('LoopFlow', () => {
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt: 'A step asking for input',
+				name: 'A step asking for input',
 				config: {},
 			}),
 		]

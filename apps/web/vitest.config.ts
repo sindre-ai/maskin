@@ -12,6 +12,15 @@ export default defineConfig({
 		// host. Locale is deliberately NOT pinned — RelativeTime formats in the
 		// viewer's locale on purpose, so tests assert shape, never English words.
 		env: { TZ: 'UTC' },
+		server: {
+			deps: {
+				// The mock of tippy.js in src/__tests__/setup.ts only reaches imports Vite
+				// processes. @tiptap/react and the bubble menu are otherwise loaded by Node
+				// directly, where `import tippy from 'tippy.js'` gets the CommonJS exports
+				// object instead of the function.
+				inline: ['@tiptap/react', '@tiptap/extension-bubble-menu'],
+			},
+		},
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'lcov'],

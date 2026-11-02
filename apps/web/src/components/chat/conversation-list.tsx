@@ -1,13 +1,16 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import type { ConversationListItemResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
 import { Link } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { ChatsFilter } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
+import { ReplyThreadList } from './replies/reply-thread-list'
 
 interface ConversationListProps {
 	workspaceId: string
@@ -16,11 +19,9 @@ interface ConversationListProps {
 	/** True when the list owns the whole content width (no thread open) — the
 	 *  rows then centre on a 900px column instead of stretching edge to edge. */
 	expanded?: boolean
-	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
-	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.list`
-	 *  sub-flag. Off keeps the pre-v4 list, which ends on the last row with no
-	 *  footer. */
-	v4Polish?: boolean
+	/** Hide the "Start a new one" link in the empty state — set beside the new
+	 *  chat screen, where the link would point at the page the reader is on. */
+	hideStartLink?: boolean
 }
 
 const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = {
@@ -40,14 +41,31 @@ const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = 
 		title: 'Nothing archived yet',
 		description: 'Archived chats stay searchable — they just leave the main list.',
 	},
+	// Threads has its own list (`ReplyThreadList`); this entry only satisfies the record.
+	threads: { title: 'No threads yet', description: 'Reply to a message to start one.' },
 }
 
-export function ConversationList({
+export function ConversationList(props: ConversationListProps) {
+	// Threads are not conversations: they list from another endpoint, so they get their own list.
+	// Split here, above the hooks, so the hook order never changes within one mounted list.
+	if (props.filter === 'threads') {
+		return (
+			<ReplyThreadList
+				workspaceId={props.workspaceId}
+				className={props.className}
+				expanded={props.expanded}
+			/>
+		)
+	}
+	return <ChatConversationList {...props} />
+}
+
+function ChatConversationList({
 	workspaceId,
 	filter = 'all',
 	className,
 	expanded,
-	v4Polish = false,
+	hideStartLink,
 }: ConversationListProps) {
 	// Omit `archived` unless it's the active filter — the backend already
 	// defaults the list to non-archived conversations (see
@@ -68,7 +86,53 @@ export function ConversationList({
 		...(filter === 'unread' ? { unread_only: true } : {}),
 	})
 
-	const conversations = data?.pages.flatMap((page) => page.conversations) ?? []
+	const fetched = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
+	// Reading a chat opened from the Unread filter would drop its row on the
+	// next refetch and shift everything below it. Keep rows that were shown in
+	// place (as read) until the filter or workspace changes.
+	const shownRef = useRef<{ key: string; rows: ConversationListItemResponse[] }>({
+		key: '',
+		rows: [],
+	})
+	const conversations = useMemo(() => {
+		if (filter !== 'unread') {
+			// Forget retained rows so coming back to Unread starts from the server's list.
+			shownRef.current = { key: '', rows: [] }
+			return fetched
+		}
+		const key = `${workspaceId}:${filter}`
+		const prev = shownRef.current.key === key ? shownRef.current.rows : []
+		// Server order wins. A retained row the server no longer returns goes back
+		// right after the row that was above it, so a later page never lands on top.
+		const rows = [...fetched]
+		const ids = new Set(rows.map((c) => c.id))
+		prev.forEach((c, i) => {
+			if (ids.has(c.id)) return
+			let at = 0
+			for (let j = i - 1; j >= 0; j--) {
+				const above = rows.findIndex((r) => r.id === prev[j].id)
+				if (above !== -1) {
+					at = above + 1
+					break
+				}
+			}
+			rows.splice(at, 0, { ...c, unread_count: 0 })
+			ids.add(c.id)
+		})
+		const visible = rows.filter((c) => !c.archived)
+		shownRef.current = { key, rows: visible }
+		return visible
+	}, [fetched, filter, workspaceId])
+	// Unread thread replies per chat, from the same list the Threads filter shows. A chat that
+	// reads as caught up can still hold an unread thread; the row says so.
+	const { data: replyThreads } = useReplyThreads(workspaceId)
+	const threadUnreadByChat = new Map<string, number>()
+	for (const t of replyThreads?.threads ?? []) {
+		threadUnreadByChat.set(
+			t.conversationId,
+			(threadUnreadByChat.get(t.conversationId) ?? 0) + t.thread.unreadCount,
+		)
+	}
 	const groups = groupConversations(conversations, {
 		mode: filter === 'archived' ? 'archived' : 'default',
 	})
@@ -127,11 +191,13 @@ export function ConversationList({
 								// the reader is looking at. Clearing the filter is the only
 								// action that shows anything.
 								filter === 'all' ? (
-									<Button asChild variant="link" size="sm">
-										<Link to="/$workspaceId/chats/new" params={{ workspaceId }}>
-											Start a new one →
-										</Link>
-									</Button>
+									hideStartLink ? undefined : (
+										<Button asChild variant="link" size="sm">
+											<Link to="/$workspaceId/chats/new" params={{ workspaceId }}>
+												Start a new one →
+											</Link>
+										</Button>
+									)
 								) : (
 									<Button asChild variant="link" size="sm">
 										<Link
@@ -151,7 +217,12 @@ export function ConversationList({
 								<div key={group.key} className="flex flex-col gap-px">
 									<div className="eyebrow px-2 pt-2.5 pb-1">{group.label}</div>
 									{group.items.map((c) => (
-										<ConversationListRow key={c.id} workspaceId={workspaceId} conversation={c} />
+										<ConversationListRow
+											key={c.id}
+											workspaceId={workspaceId}
+											conversation={c}
+											threadUnread={threadUnreadByChat.get(c.id) ?? 0}
+										/>
 									))}
 								</div>
 							))}
@@ -180,11 +251,11 @@ export function ConversationList({
 										'Older conversations load as you scroll'
 									)}
 								</div>
-							) : v4Polish ? (
+							) : (
 								<div className="flex items-center justify-center px-3 pt-4 pb-2.5 text-center text-[11px] text-muted-foreground">
 									That's the whole history — {conversations.length} in this workspace.
 								</div>
-							) : null}
+							)}
 						</>
 					)}
 				</div>

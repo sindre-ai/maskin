@@ -14,7 +14,6 @@ vi.mock('../../lib/stripe', async () => {
 
 import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
 import { _resetBillingUsageCache } from '../../lib/billing-usage-cache'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
@@ -26,10 +25,11 @@ import { createTestApp } from '../setup'
 // one fixture satisfy both reads - the routes are owner/admin-gated now.
 const OWNER_CALLER = { role: 'owner', type: 'human' } as const
 
-// Sentinel cap values (USD cents) that are intentionally NOT the literal
-// defaults (4_900 / 20_000), AND chosen arithmetically far from them so that
-// a swapped or off-by-one test value couldn't accidentally satisfy a literal-
-// default assertion. Pi / Euler digits keep them memorable.
+// Sentinel Pro/Team cap env values (USD cents) that are intentionally NOT the
+// literal defaults (4_900 / 20_000). Pro and Team caps come from code, so every
+// test below must still see the literals with these set — a sentinel leaking
+// into a response means env is being read again. Pi / Euler digits keep them
+// memorable.
 const PRO_ENV_SENTINEL = '31415926'
 const TEAM_ENV_SENTINEL = '27182818'
 
@@ -57,13 +57,6 @@ beforeEach(() => {
 	vi.mocked(createCreditCheckoutSession).mockReset()
 	clearEnv()
 	setupEnv()
-	// Reset the memoized flag config so a prior test's FF_* mutations can't
-	// leak into the next describe block. Individual tests that need flags on
-	// mutate the env AND call _resetFeatureFlagConfig() again before firing
-	// the request.
-	process.env.FF_TESTER_ACTOR_IDS = undefined
-	process.env.FF_TESTER_FEATURES = undefined
-	_resetFeatureFlagConfig()
 })
 
 describe('POST /api/billing/checkout', () => {
@@ -212,6 +205,66 @@ describe('POST /api/billing/checkout', () => {
 			),
 		)
 		expect(res.status).toBe(500)
+	})
+})
+
+describe('top-up price env (STRIPE_PRICE_CREDITS_CUSTOM) unset', () => {
+	beforeEach(() => {
+		// Empty string reads as unset (readStripeEnv uses a falsy check); the outer
+		// beforeEach re-runs setupEnv() so this doesn't leak into later tests.
+		process.env.STRIPE_PRICE_CREDITS_CUSTOM = ''
+	})
+
+	it('POST /api/billing/credits/checkout returns 404 and never calls Stripe', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				...OWNER_CALLER,
+				settings: { billing: { plan: 'pro', status: 'active' } },
+			},
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(404)
+		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
+	})
+
+	it('POST /api/billing/checkout (subscription) still succeeds', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
+		vi.mocked(createCheckoutSession).mockResolvedValue({
+			id: 'cs_test_unset',
+			url: 'https://checkout.stripe.com/c/cs_test_unset',
+		} as Awaited<ReturnType<typeof createCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'pro',
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(200)
+		expect(createCheckoutSession).toHaveBeenCalled()
 	})
 })
 
@@ -546,8 +599,8 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('falls back to env-driven cap when a Pro workspace has no hard_cap_usd_cents', async () => {
-		process.env.MASKIN_PRO_HARD_CAP_USD_CENTS = '4000'
+	it('falls back to the code Pro cap, not the env, when a Pro workspace has no hard_cap_usd_cents', async () => {
+		process.env.MASKIN_PRO_HARD_CAP_USD_CENTS = '2000'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
@@ -563,10 +616,10 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_000 })
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
 	})
 
-	it('falls back to env-driven cap when a Team workspace has no hard_cap_usd_cents', async () => {
+	it('falls back to the code Team cap, not the env, when a Team workspace has no hard_cap_usd_cents', async () => {
 		process.env.MASKIN_TEAM_HARD_CAP_USD_CENTS = '40000'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
@@ -583,22 +636,19 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 40_000 })
+		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
 	})
 
 	it('falls back to plan default when stored hard_cap_usd_cents is zero or negative', async () => {
 		// Regression: the `billing?.hard_cap_usd_cents && billing.hard_cap_usd_cents > 0`
 		// guard's false branch was untested. A 0 (or negative) value stored on the
-		// workspace must NOT be treated as "an explicit cap" — the env/literal
+		// workspace must NOT be treated as "an explicit cap" — the literal
 		// fallback should kick in just like when the field is missing. Also pin
 		// `hard_cap_usd_cents: 1` as the boundary value of the `> 0` guard: a
 		// positive integer is honored verbatim, even at the smallest possible
 		// value, so callers can't accidentally tip into the fallback by saving 1.
-		// And with env unset, the Pro response must equal the literal $49.00
-		// default — the env-driven test above only proves the false branch hits
-		// the sentinel, not the literal that fires in prod when the env is
-		// missing.
-		for (const k of ['MASKIN_PRO_HARD_CAP_USD_CENTS']) delete process.env[k]
+		// The Pro and Team env sentinels set by setupEnv must be ignored: the
+		// fallback is always the literal, never the env.
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const zeroWs = randomUUID()
 		const negWs = randomUUID()
@@ -611,6 +661,7 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[{ n: 0 }],
 			[
 				{
 					id: negWs,
@@ -618,6 +669,7 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[{ n: 0 }],
 			[
 				{
 					id: oneWs,
@@ -625,13 +677,14 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
+			[{ n: 0 }],
 		]
 
 		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
 		expect(zeroRes.status).toBe(200)
-		// Env is unset, so the fallback path resolves to the literal $49.00
-		// default — the actual prod failure mode (no env, stored 0). Proves the
-		// route took the `> 0` false branch all the way to the literal.
+		// Pro env sentinel is set but ignored, so the fallback resolves to the
+		// literal $49.00 default. Proves the route took the `> 0` false branch
+		// all the way to the literal.
 		expect(await zeroRes.json()).toMatchObject({
 			plan: 'pro',
 			hard_cap_usd_cents: 4_900,
@@ -639,10 +692,10 @@ describe('GET /api/billing/usage', () => {
 
 		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
 		expect(negRes.status).toBe(200)
-		// Team env is still set to the sentinel by setupEnv — fallback hits env.
+		// Team env sentinel is set but ignored — fallback hits the literal.
 		expect(await negRes.json()).toMatchObject({
 			plan: 'team',
-			hard_cap_usd_cents: Number(TEAM_ENV_SENTINEL),
+			hard_cap_usd_cents: 20_000,
 		})
 
 		const oneRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': oneWs }))
@@ -663,8 +716,10 @@ describe('GET /api/billing/usage', () => {
 		mockResults.selectQueue = [
 			[{ id: proWs, settings: { billing: { plan: 'pro', status: 'active' } } }],
 			[],
+			[{ n: 0 }],
 			[{ id: teamWs, settings: { billing: { plan: 'team', status: 'active' } } }],
 			[],
+			[{ n: 0 }],
 		]
 
 		const proRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': proWs }))
@@ -674,20 +729,6 @@ describe('GET /api/billing/usage', () => {
 		const teamRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': teamWs }))
 		expect(teamRes.status).toBe(200)
 		expect(await teamRes.json()).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
-	})
-
-	it('falls back to literal default when the env cap is malformed', async () => {
-		process.env.MASKIN_TEAM_HARD_CAP_USD_CENTS = 'not-a-number'
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: { billing: { plan: 'team', status: 'active' } } }],
-			[],
-		]
-
-		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
-		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
 	})
 
 	it('still honours an explicit billing.hard_cap_usd_cents when set', async () => {
@@ -828,6 +869,38 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({ credit_balance_cents: 0 })
 	})
 
+	it('reports credit_topup_available true when the top-up price env is set', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ credit_topup_available: true })
+	})
+
+	it('reports credit_topup_available false when the top-up price env is unset', async () => {
+		process.env.STRIPE_PRICE_CREDITS_CUSTOM = ''
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ credit_topup_available: false })
+	})
+
+	it('reports credit_topup_available false when Stripe is not configured at all', async () => {
+		process.env.STRIPE_SECRET_KEY = ''
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ credit_topup_available: false })
+	})
+
 	it('reports a zero credit balance for a trial workspace', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
@@ -926,9 +999,6 @@ describe('GET /api/billing/usage', () => {
 
 		it("does not serve one actor's cached read to another actor in the same workspace", async () => {
 			const workspaceId = randomUUID()
-			process.env.FF_TESTER_ACTOR_IDS = 'tester-actor'
-			process.env.FF_TESTER_FEATURES = 'linkedin-addon-visible'
-			_resetFeatureFlagConfig()
 
 			const tester = createTestApp(billingRoutes, '/api/billing', 'tester-actor')
 			tester.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [{ n: 2 }]]
@@ -938,14 +1008,12 @@ describe('GET /api/billing/usage', () => {
 			})
 
 			const other = createTestApp(billingRoutes, '/api/billing', 'other-actor')
-			other.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+			// A different count proves the second read ran its own query rather than
+			// being answered from the first actor's cached entry.
+			other.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [{ n: 5 }]]
 			const otherRes = await other.app.request(usageGet(workspaceId))
 			expect(otherRes.status).toBe(200)
-			expect(await otherRes.json()).toMatchObject({ linkedin_identity_addon: null })
-
-			process.env.FF_TESTER_ACTOR_IDS = undefined
-			process.env.FF_TESTER_FEATURES = undefined
-			_resetFeatureFlagConfig()
+			expect(await otherRes.json()).toMatchObject({ linkedin_identity_addon: { count: 5 } })
 		})
 
 		it('reads again right after the subscription is cancelled', async () => {
@@ -958,9 +1026,11 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: workspaceId, settings: { billing: paid } }],
 				[],
+				[{ n: 0 }],
 				[{ id: workspaceId, settings: { billing: paid }, billingOwnerId: 'test-actor-id' }],
 				[{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'canceled' } } }],
 				[],
+				[{ n: 0 }],
 			]
 
 			const before = await app.request(usageGet(workspaceId))
@@ -982,8 +1052,10 @@ describe('GET /api/billing/usage', () => {
 			mockResults.selectQueue = [
 				[{ id: wsA, settings: { billing: { plan: 'pro', status: 'active' } } }],
 				[],
+				[{ n: 0 }],
 				[{ id: wsB, settings: {} }],
 				[],
+				[{ n: 0 }],
 			]
 
 			const a = await app.request(usageGet(wsA))
@@ -995,40 +1067,7 @@ describe('GET /api/billing/usage', () => {
 	})
 
 	describe('LinkedIn Identity add-on line', () => {
-		// The default `actorId` injected by createTestApp is 'test-actor-id'. The
-		// flag registry lowercases actor ids at compare time so the string form
-		// works even though the real system stores UUIDs.
-		const TESTER_ACTOR_ID = 'test-actor-id'
-
-		const enableFlag = () => {
-			process.env.FF_TESTER_ACTOR_IDS = TESTER_ACTOR_ID
-			process.env.FF_TESTER_FEATURES = 'linkedin-addon-visible'
-			_resetFeatureFlagConfig()
-		}
-
-		afterEach(() => {
-			process.env.FF_TESTER_ACTOR_IDS = undefined
-			process.env.FF_TESTER_FEATURES = undefined
-			_resetFeatureFlagConfig()
-		})
-
-		it('omits the add-on line when the flag is off — the SKU stays hidden by default', async () => {
-			// Flag OFF is the ship-default (feature flag is default OFF per the bet).
-			// The route short-circuits the count query when the flag resolves to false,
-			// so no third selectQueue entry is needed for the integrations count.
-			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-			const workspaceId = randomUUID()
-			mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
-
-			const res = await app.request(
-				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
-			)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toMatchObject({ linkedin_identity_addon: null })
-		})
-
-		it('omits the add-on line when the flag is on but zero linkedin-unipile identities are connected', async () => {
-			enableFlag()
+		it('omits the add-on line when zero linkedin-unipile identities are connected', async () => {
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const workspaceId = randomUUID()
 			mockResults.selectQueue = [
@@ -1044,8 +1083,7 @@ describe('GET /api/billing/usage', () => {
 			expect(await res.json()).toMatchObject({ linkedin_identity_addon: null })
 		})
 
-		it('shows the add-on line with count × $49 when the flag is on and identities are connected', async () => {
-			enableFlag()
+		it('shows the add-on line with count × $49 when identities are connected', async () => {
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const workspaceId = randomUUID()
 			mockResults.selectQueue = [
@@ -1073,7 +1111,6 @@ describe('GET /api/billing/usage', () => {
 			// distinct lines. Ledger conflation would either double-bill the
 			// customer or eat into their token cap. The token sum comes solely
 			// from the sessions query; the $49/identity math never touches it.
-			enableFlag()
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const workspaceId = randomUUID()
 			mockResults.selectQueue = [
@@ -1106,7 +1143,6 @@ describe('GET /api/billing/usage', () => {
 			// Connected identities are free on enterprise, so there is no line —
 			// and the route skips the count query entirely rather than computing a
 			// number it will not render.
-			enableFlag()
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const workspaceId = randomUUID()
 			mockResults.selectQueue = [
@@ -1128,7 +1164,6 @@ describe('GET /api/billing/usage', () => {
 			// resumes billing it. The disclosure must follow the predicate that
 			// bills, not the reported plan, or the customer is charged $49/identity
 			// by a page telling them it is included.
-			enableFlag()
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const workspaceId = randomUUID()
 			mockResults.selectQueue = [
@@ -1156,26 +1191,6 @@ describe('GET /api/billing/usage', () => {
 					monthly_total_usd_cents: 9_800,
 				},
 			})
-		})
-
-		it('omits the add-on line for a non-tester actor even when the flag id is enabled', async () => {
-			// Actor-scoped flag: the flag is listed in FF_TESTER_FEATURES but the
-			// caller's actor id is not in FF_TESTER_ACTOR_IDS, so the flag resolves
-			// to false for THIS caller. Prevents an early rollout from leaking to
-			// non-pilot workspaces via a shared session context.
-			process.env.FF_TESTER_ACTOR_IDS = randomUUID() // some other actor
-			process.env.FF_TESTER_FEATURES = 'linkedin-addon-visible'
-			_resetFeatureFlagConfig()
-
-			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-			const workspaceId = randomUUID()
-			mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
-
-			const res = await app.request(
-				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
-			)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toMatchObject({ linkedin_identity_addon: null })
 		})
 	})
 })

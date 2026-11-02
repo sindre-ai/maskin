@@ -25,6 +25,13 @@ vi.mock('../../services/trigger-event-queue', async (importOriginal) => ({
 	sweepQueueRetention: vi.fn().mockResolvedValue(undefined),
 }))
 
+// startSession() checks that the agent is a member of the workspace. These tests script the mock DB's selects one by one, so
+// the check is stubbed here; it is covered in lib/workspace-scope.test.ts and
+// services/session-lifecycle-scope.test.ts.
+vi.mock('../../lib/workspace-scope', () => ({
+	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: vi.fn().mockResolvedValue(undefined),
 }))
@@ -577,6 +584,93 @@ describe('TriggerRunner', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
+		describe('skip_when_idle', () => {
+			const idleTrigger = () =>
+				buildTrigger({
+					type: 'cron',
+					workspaceId: 'ws-1',
+					config: { expression: '*/5 * * * *', skip_when_idle: true },
+				})
+
+			it('skips the tick when no person acted since the last run', async () => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				mockResults.selectQueue = [
+					[idleTrigger()], // cron triggers on load
+					[], // reminder triggers on load
+					[], // trigger_cooldowns on load
+					[], // workspace_suppressions on load
+					[{ createdAt: new Date('2025-12-31T09:00:00Z') }], // last trigger_fired
+					[], // human-authored events since then
+					[], // person-started sessions since then
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+				await runner.start()
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('fires when a person made a change since the last run', async () => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				mockResults.selectQueue = [
+					[idleTrigger()],
+					[],
+					[],
+					[],
+					[{ createdAt: new Date('2025-12-31T09:00:00Z') }], // last trigger_fired
+					[{ id: 42 }], // a human-authored event since then
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+				await runner.start()
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+				expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			})
+
+			it('fires when a person started a session since the last run', async () => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				mockResults.selectQueue = [
+					[idleTrigger()],
+					[],
+					[],
+					[],
+					[{ createdAt: new Date('2025-12-31T09:00:00Z') }],
+					[], // no human-authored events
+					[{ id: 'session-9' }], // but a person-started session
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+				await runner.start()
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+				expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			})
+
+			it('does not apply the guard unless the flag is set', async () => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				mockResults.selectQueue = [
+					[
+						buildTrigger({
+							type: 'cron',
+							workspaceId: 'ws-1',
+							config: { expression: '*/5 * * * *' },
+						}),
+					],
+					[],
+					[],
+					[],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+				await runner.start()
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+				expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			})
+		})
+
 		it('fires and appends scope matches to the action prompt when the scope is non-empty', async () => {
 			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
 			const trigger = buildTrigger({
@@ -631,6 +725,28 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(10_000)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fire a reminder set more than 24.8 days out until its real time', async () => {
+			const thirtyDays = 30 * 24 * 60 * 60 * 1000
+			const scheduledAt = new Date(Date.now() + thirtyDays).toISOString()
+			const trigger = buildTrigger({
+				type: 'reminder',
+				config: { scheduled_at: scheduledAt },
+			})
+			mockResults.selectQueue = [
+				[], // cron triggers
+				[trigger], // reminder triggers
+			]
+			mockResults.insert = [{ triggerId: 't1' }]
+			await runner.start()
+
+			// Past the setTimeout ceiling (2^31-1 ms): the clamped timer re-arms, it does not fire.
+			await vi.advanceTimersByTimeAsync(2_147_483_647 + 1_000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			await vi.advanceTimersByTimeAsync(thirtyDays - 2_147_483_647)
+			expect(sessionManager.createSession).toHaveBeenCalledOnce()
 		})
 	})
 
@@ -930,6 +1046,80 @@ describe('TriggerRunner', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
+		// Nothing configured has no natural expiry, so it gets a day rather than an
+		// hour. A rejected credential can recover on its own, so it keeps the hour.
+		it('keeps a nothing-configured workspace paused for a day', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(
+				cronTrigger('ws-empty'),
+				new LlmCredentialsUnavailableError('nothing configured', false, {
+					noCredentialsConfigured: true,
+				}),
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-7',
+			})
+
+			await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('resumes a rejected-credential pause after an hour', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(
+				cronTrigger('ws-rejected'),
+				new LlmCredentialsUnavailableError('refresh token rejected'),
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-8',
+			})
+
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			await vi.advanceTimersByTimeAsync(40 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('lifts a nothing-configured pause when the workspace is updated', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-connects')
+			await startWithCron(
+				trigger,
+				new LlmCredentialsUnavailableError('nothing configured', false, {
+					noCredentialsConfigured: true,
+				}),
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-9',
+			})
+
+			await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			// What the Claude login import in Settings → Keys now logs.
+			mockResults.select = []
+			bridge.emit('event', {
+				workspace_id: 'ws-connects',
+				entity_type: 'workspace',
+				entity_id: 'ws-connects',
+				action: 'updated',
+				actor_id: 'actor-1',
+				event_id: 'evt-keys-connect',
+			} as PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			mockResults.selectQueue = [[trigger], []]
+			await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
 		it('keeps firing when credentials are only transiently unverifiable', async () => {
 			// `transient` means we could not REACH the provider, not that the
 			// workspace is misconfigured — pausing on a network blip would take a
@@ -1124,6 +1314,29 @@ describe('TriggerRunner', () => {
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
 			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('pauses for a day when the dispatch failure means nothing is configured', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-dispatch-empty'))
+
+			runner.handleDispatchPermanentFailure('ws-dispatch-empty', 'not_logged_in', true)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('keeps the one hour pause when a configured credential was rejected', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-dispatch-rejected'))
+
+			runner.handleDispatchPermanentFailure('ws-dispatch-rejected', 'not_logged_in')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
 
 		it('keeps firing after an unrelated permanent dispatch failure', async () => {

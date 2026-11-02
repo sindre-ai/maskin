@@ -1,4 +1,5 @@
 import {
+	formatActiveSessionsNote,
 	isConversationParticipant,
 	loadSessionStateChangeFrame,
 	loadSpawnedSessionsByMessage,
@@ -208,5 +209,34 @@ describe('loadSessionStateChangeFrame', () => {
 			result: { ok: true },
 			current_activity: null,
 		})
+	})
+})
+
+describe('formatActiveSessionsNote', () => {
+	const now = new Date('2026-10-26T12:00:00Z')
+
+	it('returns nothing when no session is on the way', () => {
+		expect(formatActiveSessionsNote([], now)).toBe('')
+	})
+
+	it('names each session with its agent, status, age and a short prompt', () => {
+		const note = formatActiveSessionsNote(
+			[
+				{
+					id: 'session-1',
+					status: 'running',
+					actorName: 'Code Reviewer',
+					actionPrompt: `Review   the PR\n${'x'.repeat(200)}`,
+					createdAt: new Date('2026-10-26T11:45:00Z'),
+				},
+			],
+			now,
+		)
+
+		expect(note).toContain(
+			'Code Reviewer (running, started 15 min ago, session session-1): Review the PR',
+		)
+		expect(note).toContain('…')
+		expect(note).not.toContain('x'.repeat(150))
 	})
 })

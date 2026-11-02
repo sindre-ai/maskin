@@ -25,6 +25,8 @@ vi.mock('@/lib/analytics', async () => {
 		trackAgentSessionStarted: vi.fn(),
 		trackCommentPosted: vi.fn(),
 		trackRelationshipCreated: vi.fn(),
+		trackSearchPerformed: vi.fn(),
+		trackSearchResultOpened: vi.fn(),
 		trackEvent: vi.fn(),
 	}
 })
@@ -37,6 +39,7 @@ import {
 	trackCommentPosted,
 	trackEvent,
 	trackRelationshipCreated,
+	trackSearchResultOpened,
 } from '@/lib/analytics'
 
 import { useCreateComment } from '@/hooks/use-events'
@@ -46,6 +49,7 @@ import { useCreateSession } from '@/hooks/use-sessions'
 import type { ObjectResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
+import { countWords, trackSearchRowOpened } from '@/lib/search-telemetry'
 
 const workspaceId = 'ws-1'
 
@@ -88,7 +92,7 @@ describe('useCreateObject — bet_created', () => {
 		const { Wrapper } = makeWrapper()
 		const { result } = renderHook(() => useCreateObject(workspaceId), { wrapper: Wrapper })
 
-		result.current.mutate({ type: 'bet', title: 'New bet', status: 'signal' })
+		result.current.mutate({ type: 'bet', title: 'New bet', status: 'opportunity' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
 		expect(trackBetCreated).toHaveBeenCalledTimes(1)
@@ -207,7 +211,7 @@ describe('useCreateSession — agent_session_started', () => {
 })
 
 describe('useCreateComment — comment_posted', () => {
-	it('emits comment_posted with is_reply, attachment_count, and content derived from variables', async () => {
+	it('emits comment_posted with is_reply, attachment_count, is_multiline and length_bucket derived from variables', async () => {
 		vi.mocked(api.events.create).mockResolvedValue({} as never)
 		const { Wrapper, queryClient } = makeWrapper()
 		queryClient.setQueryData(
@@ -230,7 +234,8 @@ describe('useCreateComment — comment_posted', () => {
 			entity_type: 'bet',
 			is_reply: true,
 			attachment_count: 0,
-			content: 'first line\nsecond line',
+			is_multiline: true,
+			length_bucket: '1-50',
 			flow_id: null,
 		})
 	})
@@ -305,6 +310,33 @@ describe('useCreateRelationship — relationship_created + object_attached_file'
 				parent_entity_type: 'bet',
 				flow_id: 'rel-2',
 			}),
+		)
+	})
+})
+
+describe('countWords', () => {
+	it('counts whitespace-separated words in the trimmed query', () => {
+		expect(countWords('qzxqzx')).toBe(1)
+		expect(countWords('  billing   catch-up ')).toBe(2)
+		expect(countWords('   ')).toBe(0)
+	})
+})
+
+describe('trackSearchRowOpened', () => {
+	const row = {
+		surface: 'command_palette' as const,
+		entityId: 'chat-1',
+		entityType: 'conversation' as const,
+		group: 'chats' as const,
+		position: 2,
+		listSize: 6,
+	}
+
+	it('carries no search id when there is no query', () => {
+		trackSearchRowOpened({ ...row, hasQuery: false })
+
+		expect(trackSearchResultOpened).toHaveBeenCalledWith(
+			expect.objectContaining({ search_id: null, has_query: false, result_count: 6 }),
 		)
 	})
 })

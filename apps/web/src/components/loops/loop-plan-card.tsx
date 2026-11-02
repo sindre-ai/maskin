@@ -1,8 +1,9 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, describeLoopPlan, summariseLoopPlan } from '@/lib/loop-plan'
@@ -56,14 +57,8 @@ export function LoopPlanCard({
 	createdId,
 	workspaceId,
 }: LoopPlanCardProps) {
+	const canWrite = useCanWrite()
 	const title = created ? 'Loop created' : defaultLoopName(plan)
-	// D9 gate: the NEEDS THESE CONNECTED section + its footer sentence ship
-	// behind the umbrella `loops-v4-polish` flag. This is the only user-visible
-	// change in this component; when the flag is off, LoopPlanCard renders
-	// exactly as pre-v4 and never mounts the integration-fetching hooks.
-	// No second flag check further down.
-	const showV4NeedsConnected = useFeatureFlag('loops-v4-polish')
-
 	return (
 		<div className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
 			<div className="flex flex-col gap-2 border-b border-border px-5 py-4">
@@ -219,7 +214,7 @@ export function LoopPlanCard({
 					</section>
 				)}
 
-				{showV4NeedsConnected && plan.triggers.length > 0 && (
+				{plan.triggers.length > 0 && (
 					<NeedsConnectedSection plan={plan} workspaceId={workspaceId} />
 				)}
 			</div>
@@ -241,26 +236,22 @@ export function LoopPlanCard({
 					</>
 				) : (
 					<>
-						{showV4NeedsConnected ? (
-							<V4FooterSummary plan={plan} workspaceId={workspaceId} />
-						) : (
-							<span className="mr-auto min-w-[180px] flex-1 text-[11px] leading-relaxed text-muted-foreground">
-								{summariseLoopPlan(plan)}
-							</span>
-						)}
+						<V4FooterSummary plan={plan} workspaceId={workspaceId} />
 						<Button size="sm" variant="ghost" onClick={onStartOver} disabled={creating}>
 							Start over
 						</Button>
-						<Button size="sm" onClick={onCreate} disabled={creating}>
-							{creating ? (
-								'Creating…'
-							) : (
-								<>
-									<Plus size={14} className="mr-1" aria-hidden />
-									Create loop
-								</>
-							)}
-						</Button>
+						<ViewerTooltip>
+							<Button size="sm" onClick={onCreate} disabled={creating || !canWrite}>
+								{creating ? (
+									'Creating…'
+								) : (
+									<>
+										<Plus size={14} className="mr-1" aria-hidden />
+										Create loop
+									</>
+								)}
+							</Button>
+						</ViewerTooltip>
 					</>
 				)}
 			</div>
@@ -270,8 +261,7 @@ export function LoopPlanCard({
 
 /**
  * NEEDS THESE CONNECTED — D9 section, rendered under WHERE IT WILL STOP FOR
- * YOU (or as the last section when there is no stop-for-you clause). Ships
- * behind the `loops-v4-polish` umbrella flag, gated one level up.
+ * YOU (or as the last section when there is no stop-for-you clause).
  *
  * Requirements are derived from the plan by the shared helper
  * `getRequiredIntegrationsForPlan` — same import trigger-runner uses at

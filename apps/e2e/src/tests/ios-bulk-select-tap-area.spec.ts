@@ -5,9 +5,9 @@ import { VIEWPORTS } from '../helpers/viewports'
 
 // AC-T6 / AC-U1 (revised): at viewports ≤1024 CSS px the list row's visible
 // checkbox is a 16px box with the star beside it. Its tap area is still 44×44
-// CSS px (a pseudo-element, so the box itself measures 16px). Rows sit ~40px
-// apart, so neighbouring tap areas split the gap: a synthetic touch up to 15px
-// off-center must still toggle this row's selection.
+// CSS px (real padding on a wrapper, so the box itself measures 16px). Rows sit
+// ~40px apart, so neighbouring tap areas split the gap: a synthetic touch up to
+// 15px off-center must still toggle this row's selection.
 
 const TOUCH_VIEWPORTS = [VIEWPORTS.mobile, VIEWPORTS.tabletPortrait, VIEWPORTS.tabletLandscape]
 
@@ -15,12 +15,12 @@ async function seedTwoObjects(account: { api: TestAPI; workspaceId: string }) {
 	await account.api.createObject(account.workspaceId, {
 		type: 'bet',
 		title: 'Bulk Select Bet A',
-		status: 'signal',
+		status: 'opportunity',
 	})
 	await account.api.createObject(account.workspaceId, {
 		type: 'bet',
 		title: 'Bulk Select Bet B',
-		status: 'signal',
+		status: 'opportunity',
 	})
 }
 
@@ -54,7 +54,11 @@ test.describe('iOS bulk-select checkbox tap area (T1)', () => {
 			const star = page.getByRole('button', { name: 'Star this object' }).first()
 			await expect(star).toBeVisible()
 			const starBox = await requireBox(star, `row star at ${viewport.label}`)
-			expect(starBox.x, 'star sits to the right of the checkbox').toBeGreaterThan(box.x + box.width)
+			// The star's box includes its tap-area padding, so compare its centre.
+			expect(
+				starBox.x + starBox.width / 2,
+				'star sits to the right of the checkbox',
+			).toBeGreaterThan(box.x + box.width)
 		})
 
 		test(`tap 15px off-center on the row-select checkbox toggles selection at ${viewport.label}`, async ({

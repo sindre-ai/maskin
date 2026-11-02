@@ -154,22 +154,13 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 			const controller = new AbortController()
 			abortControllersRef.current.set(`${entryId}:${fileTempId}`, controller)
 			try {
-				const { readFileAsBase64 } = await import('@/lib/file-utils')
-				const content = await readFileAsBase64(file)
-				const created = await uploadFile(
-					{
-						name: file.name,
-						mime_type: file.type || 'application/octet-stream',
-						content,
-						encoding: 'base64',
+				const { toUploadInput } = await import('@/lib/large-file-upload')
+				const created = await uploadFile(await toUploadInput(file), {
+					signal: controller.signal,
+					onProgress: (progress) => {
+						mutateFile(entryId, fileTempId, (prev) => ({ ...prev, progress }))
 					},
-					{
-						signal: controller.signal,
-						onProgress: (progress) => {
-							mutateFile(entryId, fileTempId, (prev) => ({ ...prev, progress }))
-						},
-					},
-				)
+				})
 				mutateFile(entryId, fileTempId, (prev) => ({
 					...prev,
 					status: 'uploaded',

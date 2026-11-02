@@ -25,6 +25,8 @@ export type SignalKind =
 	| 'protected_path'
 	| 'regex_floor_hit'
 	| 'squawk_blocking_lock'
+	| 'loc_gate'
+	| 'db_change_gate'
 
 export interface SignalHit {
 	kind: SignalKind

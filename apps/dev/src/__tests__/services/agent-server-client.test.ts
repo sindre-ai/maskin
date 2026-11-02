@@ -201,6 +201,28 @@ describe('AgentServerClient.stopSession', () => {
 	})
 })
 
+describe('AgentServerClient.setModel', () => {
+	it('POSTs the model to /sessions/:id/input with bearer auth', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(
+			new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+
+		await client.setModel('sess-1', 'deepseek/deepseek-v4-flash')
+
+		expect(calls).toHaveLength(1)
+		expect(calls[0]?.url).toBe(`${SERVER.url}/sessions/sess-1/input`)
+		expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+			model: 'deepseek/deepseek-v4-flash',
+		})
+		const headers = new Headers(calls[0]?.init?.headers)
+		expect(headers.get('authorization')).toBe(`Bearer ${SERVER.secret}`)
+	})
+})
+
 describe('AgentServerClient.postJson', () => {
 	it('exposes the same bearer + JSON plumbing for arbitrary sub-paths', async () => {
 		const { fetchImpl, calls } = makeFetchSpy(

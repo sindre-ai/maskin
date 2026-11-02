@@ -1,20 +1,25 @@
+import { LiveCallSurface } from '@/components/agents/live-call-surface'
+import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
-import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
+import { CommandPaletteV2 } from '@/components/search/command-palette-v2'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { trackAppActive } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { setFaroUser } from '@/lib/faro'
+import { setLastWorkspaceId } from '@/lib/last-workspace'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
@@ -23,7 +28,9 @@ import {
 	identifyForWorkspace,
 	registerWorkspaceProperties,
 	setCapturingEnabled,
+	setWorkspaceGroup,
 } from '@/lib/posthog'
+import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
@@ -48,10 +55,24 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
+	// Remember the workspace once it resolves from the user's memberships, so a
+	// stale or foreign id in the URL is never stored as "last used".
+	const hasWorkspace = Boolean(workspace)
+	useEffect(() => {
+		if (hasWorkspace) setLastWorkspaceId(workspaceId)
+	}, [hasWorkspace, workspaceId])
+
 	const matches = useMatches()
 	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
 	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
 	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
+	// While a call is open below 1100px the sidebar folds to its icon rail so the
+	// thread keeps room next to the call panel (design: sidebar 230 + chat + panel
+	// at 1100 and up, an icon rail between 700 and 1099). The person's own choice
+	// is left alone, so it is back as they had it when the call ends.
+	const onCall = useVoiceCallLive()
+	const narrowForCall = useMediaQuery('(max-width: 1099px)')
+	const railForCall = onCall && narrowForCall
 
 	// Pin the Synthesizer's join keys on every analytics event from this workspace,
 	// and apply the workspace's Privacy & data settings — both the share-usage
@@ -73,6 +94,7 @@ function WorkspaceLayout() {
 			actor_type: actor.type,
 		})
 		setCapturingEnabled(shareUsage)
+		setWorkspaceGroup(workspaceId, workspace.createdAt)
 		// Faro gets ids only — never the actor's email or the workspace name.
 		// Unlike PostHog this is not gated on the share-usage analytics toggle:
 		// it is crash reporting, the same category as Sentry, which is likewise
@@ -81,6 +103,8 @@ function WorkspaceLayout() {
 		void identifyForWorkspace(actor.id, anonymizeWorkspace, {
 			name: actor.name,
 			email: actor.email,
+		}).then(() => {
+			if (shareUsage) trackAppActive()
 		})
 	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 
@@ -102,8 +126,10 @@ function WorkspaceLayout() {
 						<PageHeaderProvider>
 							<ContentPushShell>
 								<SidebarProvider
-									open={open}
-									onOpenChange={setOpen}
+									open={open && !railForCall}
+									onOpenChange={(next) => {
+										if (!railForCall) setOpen(next)
+									}}
 									className="h-dvh !min-h-0"
 									data-shell="v2"
 								>
@@ -115,10 +141,12 @@ function WorkspaceLayout() {
 											<Outlet />
 										</MainScrollArea>
 									</SidebarInset>
+									<LiveCallSurface />
 								</SidebarProvider>
 							</ContentPushShell>
 						</PageHeaderProvider>
-						<CommandPalette />
+						<CommandPaletteV2 />
+						<VoiceCallHost />
 					</PendingCommentsProvider>
 				</CommandPaletteProvider>
 			</NewConversationProvider>
@@ -153,7 +181,7 @@ function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
 								type: 'bet',
 								title: d.title ?? undefined,
 								content: d.content ?? undefined,
-								status: 'signal',
+								status: 'opportunity',
 							}),
 						),
 				),

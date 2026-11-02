@@ -41,7 +41,7 @@ test.describe('Loop detail page', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/loops`)
-			await page.getByText('Customer feedback loop').click()
+			await page.getByText('Customer feedback loop', { exact: true }).click()
 
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops/${loop.id}`), {
 				timeout: 10000,
@@ -52,18 +52,19 @@ test.describe('Loop detail page', () => {
 			await expect(
 				page.getByText('Every customer who gives feedback hears back within 30 days').first(),
 			).toBeVisible()
-			// Scoped to the stat block — "in progress" also reads in prose
-			// elsewhere on the page, which otherwise makes these ambiguous.
+			// Scoped to the stat block — the labels also read in prose elsewhere on
+			// the page, which otherwise makes these ambiguous.
 			const stats = page.getByTestId('loop-stats')
-			await expect(stats.getByText('in progress')).toBeVisible()
-			await expect(stats.getByText('closed')).toBeVisible()
-			await expect(stats.getByText('median to close')).toBeVisible()
+			await expect(stats.getByText('Cycles running')).toBeVisible()
+			await expect(stats.getByText('Closed this month')).toBeVisible()
+			await expect(stats.getByText('Median cycle time')).toBeVisible()
+			await expect(stats.getByText('Asks waiting')).toBeVisible()
+			await expect(stats.getByText('Next fire')).toBeVisible()
 			await expect(page.getByText('The loop, right now')).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
 			await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible()
-			await expect(
-				page.getByText('Normalises the Slack event into the shared source'),
-			).toBeVisible()
+			// Step rows show the trigger's title, not its action prompt (#2777).
+			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
 			// The right-now note reads as one line: primitives · triggers on ·
 			// cycles (mockup 1891).
 			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
@@ -91,7 +92,7 @@ test.describe('Loop detail page', () => {
 
 			// A step row is the only route into a loop-owned trigger now that
 			// /triggers redirects.
-			await page.getByText('Normalises the Slack event into the shared source').click()
+			await page.getByText('Triage feedback', { exact: true }).click()
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
 				timeout: 10000,
 			})

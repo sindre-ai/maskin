@@ -1,4 +1,5 @@
 import { AgentsIndexView } from '@/components/agents/agents-index-view'
+import type { SessionStatsRow } from '@maskin/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -9,6 +10,13 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return { ...mockTanStackRouter() }
 })
+
+// The row Call button mounts VoiceCallDialog, whose hook reads the workspace.
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
 
 type DisplaySettingsBody = Record<string, unknown>
 type MockState = {
@@ -90,13 +98,14 @@ const brianRunningSession = () =>
 function mount(
 	agents: ReturnType<typeof buildActorListItem>[],
 	sessions: ReturnType<typeof buildSessionResponse>[],
+	stats?: SessionStatsRow[],
 ) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	})
 	render(
 		<QueryClientProvider client={queryClient}>
-			<AgentsIndexView workspaceId="ws-1" agents={agents} sessions={sessions} />
+			<AgentsIndexView workspaceId="ws-1" agents={agents} sessions={sessions} stats={stats} />
 		</QueryClientProvider>,
 	)
 }
@@ -178,7 +187,81 @@ describe('AgentsIndexView', () => {
 			const activity = screen.getByText('Crunching numbers')
 			const sessions = screen.getByText('1 session')
 			expect(activity.className).toContain('md:block')
-			expect(sessions.className).toContain('md:block')
+			expect(sessions.parentElement?.className).toContain('md:flex')
+			expect(screen.getByText('$0.00').parentElement?.className).toContain('lg:flex')
+		})
+
+		it('shows active sessions and total / last-30-day cost per agent', () => {
+			const now = Date.now()
+			const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString()
+			mount(
+				[agentBrian()],
+				[
+					buildSessionResponse({ id: 'a', actorId: 'agent-brian', status: 'running' }),
+					buildSessionResponse({
+						id: 'b',
+						actorId: 'agent-brian',
+						status: 'completed',
+						totalCostUsd: '1.50',
+						completedAt: daysAgo(2),
+					}),
+					buildSessionResponse({
+						id: 'c',
+						actorId: 'agent-brian',
+						status: 'completed',
+						totalCostUsd: '10.25',
+						completedAt: daysAgo(45),
+					}),
+				],
+			)
+			const row = screen.getByRole('link').closest('li') as HTMLElement
+			expect(within(row).getByText('3 sessions')).toBeInTheDocument()
+			expect(within(row).getByText('1 active')).toBeInTheDocument()
+			expect(within(row).getByText('$11.75')).toBeInTheDocument()
+			expect(within(row).getByText('$1.50 · 30d')).toBeInTheDocument()
+		})
+
+		it('reads counts and cost from the stats, not from the recent sessions', () => {
+			mount(
+				[agentBrian()],
+				[buildSessionResponse({ id: 'a', actorId: 'agent-brian', status: 'running' })],
+				[
+					{
+						actor_id: 'agent-brian',
+						total: 59_500,
+						active: 1,
+						total_cost_usd: 1234.5,
+						last_30d_cost_usd: 99.25,
+						latest_status: 'running',
+						latest_session_at: '2026-10-29T07:00:00.000Z',
+					},
+				],
+			)
+			const row = screen.getByRole('link').closest('li') as HTMLElement
+			expect(within(row).getByText('59500 sessions')).toBeInTheDocument()
+			expect(within(row).getByText('1 active')).toBeInTheDocument()
+			expect(within(row).getByText('$1,234.50')).toBeInTheDocument()
+			expect(within(row).getByText('$99.25 · 30d')).toBeInTheDocument()
+		})
+
+		it('puts an agent with no recent session under Failed when its latest run in the stats failed', () => {
+			mount(
+				[agentBrian()],
+				[],
+				[
+					{
+						actor_id: 'agent-brian',
+						total: 7,
+						active: 0,
+						total_cost_usd: 0,
+						last_30d_cost_usd: 0,
+						latest_status: 'failed',
+						latest_session_at: '2026-09-01T07:00:00.000Z',
+					},
+				],
+			)
+			const failed = screen.getByRole('heading', { name: /failed/i })
+			expect(failed.closest('div')).toHaveTextContent('1')
 		})
 	})
 
@@ -458,5 +541,24 @@ describe('AgentsIndexView', () => {
 			expect(within(row).getByText('Crunching numbers')).toBeInTheDocument()
 			expect(within(row).getByText('1 session')).toBeInTheDocument()
 		}, 10_000)
+	})
+})
+
+describe('AgentsIndexView — row Call button', () => {
+	it('gives every agent row a Call button, beside the row link and not inside it', () => {
+		mount([agentAda(), agentBrian()], [])
+		const call = screen.getByRole('button', { name: 'Call Ada' })
+		expect(call).toHaveTextContent('Call')
+		expect(screen.getByRole('button', { name: 'Call Brian' })).toBeInTheDocument()
+		// A button nested in the row's anchor is invalid markup and would navigate.
+		expect(screen.getByRole('link', { name: /Ada/ })).not.toContainElement(call)
+		// Hover-reveal is desktop-only; below md the button is plain inline.
+		expect(call.className).toContain('md:opacity-0')
+		expect(call.className).not.toMatch(/(^|\s)opacity-0/)
+	})
+
+	it('has no Voice filter chip', () => {
+		mount([agentAda(), agentBrian()], [])
+		expect(screen.queryByRole('button', { name: /^Voice/ })).not.toBeInTheDocument()
 	})
 })

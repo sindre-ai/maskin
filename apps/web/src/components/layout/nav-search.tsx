@@ -1,19 +1,41 @@
 import { useCommandPalette } from '@/lib/command-palette-context'
+import { shortcutLabel } from '@/lib/search/platform'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { Search, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 
 /**
- * The shared top nav's workspace search — mockup lines 202–212.
- *
- * Collapsed it is a 30px icon button; opening it expands an inline field that
- * grows to at most 320px. Enter commits the query to the /search page, which is
- * the source of truth for results; this field only carries the query there.
- * The ⌘K chip opens the command palette, which is a different affordance —
- * jump-anywhere and run-an-action, not text search.
+ * The shared top nav's workspace search: one button that opens the launcher, whose last
+ * row opens /search. Search itself has its own field, so the header shows nothing there,
+ * and Marketplace keeps the inline field.
  */
 export function NavSearch() {
+	const { workspaceId } = useWorkspace()
+	const { setOpen } = useCommandPalette()
+	const pathname = useRouterState({ select: (s) => s.location.pathname })
+	const paletteShortcut = shortcutLabel('K')
+	if (pathname === `/${workspaceId}/search`) return null
+	if (pathname.startsWith(`/${workspaceId}/marketplace`)) return <NavSearchInline />
+	return (
+		<button
+			type="button"
+			onClick={() => setOpen(true)}
+			aria-label="Search or run a command"
+			title={`Search or run a command · ${paletteShortcut}`}
+			className="inline-flex h-[30px] shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-[9px] text-[12.5px] text-muted-foreground transition-colors duration-150 hover:border-border-hover hover:text-foreground"
+		>
+			<Search aria-hidden="true" className="size-[15px] shrink-0" />
+			{/* Icon only up to 1024px: the labelled button is 227px and crushes the page title. */}
+			<span className="hidden min-[1024px]:inline">Search or run a command</span>
+			<kbd className="hidden rounded-[5px] border border-border bg-background px-[5px] py-[3px] font-mono text-[10px] font-semibold min-[1024px]:inline-block">
+				{paletteShortcut}
+			</kbd>
+		</button>
+	)
+}
+
+function NavSearchInline() {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const { setOpen: setPaletteOpen } = useCommandPalette()

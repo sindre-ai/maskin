@@ -199,12 +199,14 @@ export function withTestEnv(
 	db: Database,
 	actorId = 'test-actor-id',
 	actorType = 'human',
+	agentStorage?: AgentStorageManager,
 ) {
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', actorId)
 		c.set('actorType', actorType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
+		if (agentStorage) c.set('agentStorage', agentStorage)
 		await next()
 	})
 }
@@ -218,10 +220,11 @@ export function createTestApp(
 	basePath = '/',
 	actorId = 'test-actor-id',
 	actorType = 'human',
+	agentStorage?: AgentStorageManager,
 ) {
 	const app = new CreateOpenAPIHono<Env>()
 	const { db, mockResults, calls } = createTestContext()
-	withTestEnv(app, db, actorId, actorType)
+	withTestEnv(app, db, actorId, actorType, agentStorage)
 	app.route(basePath, routeModule)
 	return { app, db, mockResults, calls }
 }
@@ -248,6 +251,16 @@ export function createMockStorageProvider(overrides?: Record<string, unknown>) {
 		delete: vi.fn().mockResolvedValue(undefined),
 		exists: vi.fn().mockResolvedValue(false),
 		ensureBucket: vi.fn().mockResolvedValue(undefined),
+		createMultipartUpload: vi.fn().mockResolvedValue('s3-upload-1'),
+		presignUploadPart: vi
+			.fn()
+			.mockImplementation(
+				async (_key: string, _id: string, part: number) => `https://storage.test/part/${part}`,
+			),
+		completeMultipartUpload: vi.fn().mockResolvedValue(undefined),
+		abortMultipartUpload: vi.fn().mockResolvedValue(undefined),
+		headObject: vi.fn().mockResolvedValue(null),
+		presignDownload: vi.fn().mockResolvedValue('https://storage.test/download/file'),
 		...overrides,
 	} as unknown as StorageProvider
 }
@@ -258,6 +271,7 @@ export function createMockAgentStorage(overrides?: Record<string, unknown>) {
 		getFile: vi.fn().mockResolvedValue(Buffer.from('')),
 		uploadFile: vi.fn().mockResolvedValue('key'),
 		deleteFile: vi.fn().mockResolvedValue(undefined),
+		deleteAllAgentFiles: vi.fn().mockResolvedValue(undefined),
 		listFiles: vi.fn().mockResolvedValue([]),
 		pullAgentFiles: vi.fn().mockResolvedValue(undefined),
 		pushAgentFiles: vi.fn().mockResolvedValue(undefined),

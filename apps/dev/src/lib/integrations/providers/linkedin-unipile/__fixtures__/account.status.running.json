@@ -1,0 +1,11 @@
+{
+	"id": "evt_01JAXQ5A06ACCT8N5ZB7K3R2T9M",
+	"created_at": "2026-10-04T11:06:00.000Z",
+	"account_id": "acc_unipile_test_01",
+	"account_provider": "LINKEDIN",
+	"account_name": "Test Member",
+	"application_id": "app_test_01",
+	"application_production": false,
+	"type": "account.status.running",
+	"payload": {}
+}

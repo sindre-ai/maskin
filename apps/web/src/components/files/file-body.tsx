@@ -1,8 +1,10 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { useAutoSave } from '@/hooks/use-auto-save'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateFile } from '@/hooks/use-files'
 import { trackMiniAppFileViewed } from '@/lib/analytics'
 import { compileAnnotations, hydrateAnnotations } from '@/lib/annotations'
@@ -10,7 +12,7 @@ import type { AnnotationJson } from '@/lib/annotations'
 import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
 import { prepareMiniAppHtml } from '@/lib/mini-app'
-import { Bot, Check, Clipboard, Pin } from 'lucide-react'
+import { Bot, Check, Clipboard, ExternalLink, Pin } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
 
@@ -35,6 +37,10 @@ export function isHtml(mimeType: string): boolean {
 	return mimeType === 'text/html' || mimeType === 'application/xhtml+xml'
 }
 
+export function isPdf(mimeType: string): boolean {
+	return mimeType === 'application/pdf'
+}
+
 export function isInlineImage(mimeType: string): boolean {
 	return mimeType.startsWith('image/') && !UNSAFE_INLINE_MIME.has(mimeType)
 }
@@ -50,9 +56,9 @@ export function isPlainText(mimeType: string): boolean {
 	)
 }
 
-type ViewMode = 'rendered' | 'source'
+export type ViewMode = 'rendered' | 'source'
 
-function SourceView({ text }: { text: string }) {
+export function SourceView({ text }: { text: string }) {
 	return (
 		<pre className="rounded-md border border-border bg-muted p-4 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto text-foreground">
 			{text}
@@ -60,7 +66,10 @@ function SourceView({ text }: { text: string }) {
 	)
 }
 
-function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
+export function ViewToggle({
+	mode,
+	onChange,
+}: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
 	const options: { value: ViewMode; label: string }[] = [
 		{ value: 'rendered', label: 'Rendered' },
 		{ value: 'source', label: 'Source' },
@@ -113,6 +122,54 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 	)
 }
 
+// Renders a PDF with the browser's own viewer. Browsers don't send our Bearer
+// token on a plain URL, so the bytes come from the base64 content via a Blob URL
+// rather than the API. The frame is deliberately unsandboxed (Chrome's PDF viewer
+// won't load inside a sandboxed iframe), which is only safe because the Blob is
+// built here with the exact type application/pdf and never carries HTML. The type
+// is asserted again before the Blob is created so this path can't be reused for
+// text/html or svg.
+export function PdfPreview({
+	file,
+	className = 'h-[70vh] min-h-[20vh] rounded-md border border-border',
+}: { file: FileDetail; className?: string }) {
+	const [url, setUrl] = useState<string | null>(null)
+	useEffect(() => {
+		if (!isPdf(file.mimeType)) return
+		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
+		const blob = new Blob([base64ToBytes(b64).buffer as ArrayBuffer], { type: 'application/pdf' })
+		const objectUrl = URL.createObjectURL(blob)
+		setUrl(objectUrl)
+		return () => {
+			URL.revokeObjectURL(objectUrl)
+			setUrl(null)
+		}
+	}, [file.content, file.encoding, file.mimeType])
+	return (
+		<div className="flex h-full w-full flex-col gap-3">
+			<div className="flex justify-end">
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					disabled={!url}
+					onClick={() => url && window.open(url, '_blank', 'noopener,noreferrer')}
+				>
+					<ExternalLink size={14} />
+					Open in new tab
+				</Button>
+			</div>
+			{url && (
+				<iframe
+					title={`Preview of ${file.name}`}
+					src={url}
+					className={`w-full bg-card ${className}`}
+				/>
+			)}
+		</div>
+	)
+}
+
 function fileText(file: FileDetail): string {
 	return file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content)
 }
@@ -124,10 +181,12 @@ export interface FileBodyProps {
 }
 
 export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: FileBodyProps) {
+	const canWrite = useCanWrite()
 	const [mode, setMode] = useState<ViewMode>('rendered')
 	// Open straight into pin-visible mode when the file already has annotations,
 	// so other humans see existing review comments without hunting for the toggle.
-	const [annotateMode, setAnnotateMode] = useState((file.annotations?.length ?? 0) > 0)
+	// Viewers cannot place pins, so the overlay (which captures clicks) stays closed for them.
+	const [annotateMode, setAnnotateMode] = useState(canWrite && (file.annotations?.length ?? 0) > 0)
 	const [annotations, setAnnotations] = useState<Annotation[]>(() =>
 		hydrateAnnotations(file.annotations),
 	)
@@ -144,7 +203,6 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 		trackMiniAppFileViewed({
 			entity_id: file.id,
 			entity_type: 'file',
-			file_name: file.name,
 		})
 	}, [file])
 
@@ -154,7 +212,7 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 	// resolution that lands after a pin is placed.
 	const updateFile = useUpdateFile(file.workspaceId)
 	const { showSaved } = useAutoSave<FileAnnotation[]>({
-		isActive: isHtml(file.mimeType),
+		isActive: isHtml(file.mimeType) && canWrite,
 		isValid: true,
 		buildPayload: useCallback(() => annotations, [annotations]),
 		onSave: useCallback(
@@ -197,16 +255,18 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 					{annotations.length > 0 && (
 						<>
 							{onReviseWithAnnotations && (
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={handleReviseWithAnnotations}
-									disabled={isRevising}
-								>
-									<Bot size={14} />
-									{isRevising ? 'Starting…' : 'Revise with annotations'}
-								</Button>
+								<ViewerTooltip>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={handleReviseWithAnnotations}
+										disabled={isRevising || !canWrite}
+									>
+										<Bot size={14} />
+										{isRevising ? 'Starting…' : 'Revise with annotations'}
+									</Button>
+								</ViewerTooltip>
 							)}
 							<Button type="button" variant="ghost" size="sm" onClick={handleCopyAnnotations}>
 								<Clipboard size={14} />
@@ -215,19 +275,22 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 						</>
 					)}
 					{mode === 'rendered' && (
-						<Button
-							type="button"
-							variant={annotateMode ? 'secondary' : 'ghost'}
-							size="sm"
-							onClick={() => setAnnotateMode((v) => !v)}
-						>
-							<Pin size={14} />
-							{annotateMode
-								? 'Exit annotate'
-								: annotations.length > 0
-									? `Annotate (${annotations.length})`
-									: 'Annotate'}
-						</Button>
+						<ViewerTooltip>
+							<Button
+								type="button"
+								variant={annotateMode ? 'secondary' : 'ghost'}
+								size="sm"
+								onClick={() => setAnnotateMode((v) => !v)}
+								disabled={!canWrite}
+							>
+								<Pin size={14} />
+								{annotateMode
+									? 'Exit annotate'
+									: annotations.length > 0
+										? `Annotate (${annotations.length})`
+										: 'Annotate'}
+							</Button>
+						</ViewerTooltip>
 					)}
 					<ViewToggle
 						mode={mode}
@@ -274,6 +337,8 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 		// cannot execute in our origin because we never set innerHTML.
 		return <SourceView text={fileText(file)} />
 	}
+
+	if (isPdf(file.mimeType)) return <PdfPreview file={file} />
 
 	return (
 		<EmptyState

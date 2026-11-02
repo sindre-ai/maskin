@@ -1,5 +1,4 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -640,7 +639,6 @@ async function getOrCreateStripeSystemActor(tx: Tx, workspaceId: string): Promis
 			.values({
 				type: 'system',
 				name: STRIPE_SYSTEM_ACTOR_NAME,
-				apiKey: generateApiKey().key,
 			})
 			.returning({ id: actors.id })
 		if (!newActor) {

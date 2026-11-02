@@ -24,8 +24,8 @@ function systemPromptQuality(actor: ActorInput): SetupCheck | null {
 		status: 'warn',
 		message:
 			prompt.length === 0
-				? 'This agent has no system prompt yet — ask the user to add one so it knows its role and how to behave.'
-				: `This agent's system prompt is only ${prompt.length} character${prompt.length === 1 ? '' : 's'} — ask the user to add more detail (aim for ${MIN_SYSTEM_PROMPT_LENGTH}+).`,
+				? 'This agent has no system prompt yet — add one so it knows its role and how to behave.'
+				: `This agent's system prompt is only ${prompt.length} character${prompt.length === 1 ? '' : 's'} — add a fuller system prompt (aim for ${MIN_SYSTEM_PROMPT_LENGTH}+).`,
 		fix: {
 			tool: 'update_actor',
 			args_hint: 'set system_prompt: "<a fuller description of role, scope, and behavior>"',
@@ -40,7 +40,7 @@ function skillsAttached(actor: ActorInput): SetupCheck | null {
 		return {
 			name: 'skills_attached',
 			status: 'warn',
-			message: 'This agent has no skills attached — ask the user if a skill should be added.',
+			message: 'This agent has no skills attached — consider attaching a relevant skill.',
 			fix: {
 				tool: 'update_actor',
 				args_hint: 'attach_skill_ids: ["<workspace skill id>"] (see list_workspace_skills)',
@@ -52,8 +52,7 @@ function skillsAttached(actor: ActorInput): SetupCheck | null {
 		return {
 			name: 'skills_attached',
 			status: 'warn',
-			message:
-				'This agent has only one skill attached — ask the user if more skills should be added.',
+			message: 'This agent has only one skill attached — consider attaching more skills.',
 			fix: {
 				tool: 'update_actor',
 				args_hint: 'attach_skill_ids: ["<workspace skill id>"] (see list_workspace_skills)',
@@ -71,7 +70,7 @@ function mcpConfigured(actor: ActorInput): SetupCheck | null {
 			name: 'mcp_configured',
 			status: 'warn',
 			message:
-				'This agent has no MCP tools beyond the built-in Maskin connection — ask the user to add one so it can take action outside Maskin.',
+				'This agent has no MCP tools beyond the built-in Maskin connection — consider adding one so it can take action outside Maskin.',
 			fix: {
 				tool: 'update_actor',
 				args_hint: 'set tools.mcpServers.<name> to a new MCP server config',
@@ -83,7 +82,7 @@ function mcpConfigured(actor: ActorInput): SetupCheck | null {
 		return {
 			name: 'mcp_configured',
 			status: 'warn',
-			message: 'This agent has one MCP tool configured — ask the user if another should be added.',
+			message: 'This agent has one MCP tool configured — consider adding another.',
 			fix: {
 				tool: 'update_actor',
 				args_hint: 'set tools.mcpServers.<name> to a new MCP server config',
@@ -100,25 +99,11 @@ function automationWired(actor: ActorInput): SetupCheck | null {
 		name: 'automation_wired',
 		status: 'warn',
 		message:
-			"This agent isn't wired into any trigger or loop yet, so nothing will make it run on its own — ask the user whether it should be added to one.",
+			"This agent isn't wired into any trigger or loop yet, so nothing will make it run on its own — consider adding it to a trigger or loop.",
 		fix: {
 			tool: 'create_trigger',
 			args_hint: `target_actor_id: "${actor.id}" + a cron/event/reminder config (or add a step targeting this actor via create_loop/update_loop)`,
-			why: 'Without a trigger or loop, this agent only ever runs when explicitly invoked via run_agent.',
-		},
-	}
-}
-
-function dryRunSuggested(actor: ActorInput): SetupCheck {
-	return {
-		name: 'dry_run_suggested',
-		status: 'warn',
-		message:
-			'Ask the user if they want to run a dry-run session to test this agent before relying on it.',
-		fix: {
-			tool: 'run_agent',
-			args_hint: `actor_id: "${actor.id}", action_prompt: "<a small representative test task>"`,
-			why: 'A quick test session surfaces prompt, tool, and permission problems before the agent runs unsupervised.',
+			why: 'Without a trigger or loop, this agent only ever runs when explicitly invoked via create_session.',
 		},
 	}
 }
@@ -131,7 +116,6 @@ export function checkActor(actor: ActorInput): SetupCheck[] {
 		safeCheck('skills_attached', () => skillsAttached(actor)),
 		safeCheck('mcp_configured', () => mcpConfigured(actor)),
 		safeCheck('automation_wired', () => automationWired(actor)),
-		safeCheck('dry_run_suggested', () => dryRunSuggested(actor)),
 	]
 	return sortByPriority(results.filter((c): c is SetupCheck => c !== null))
 }

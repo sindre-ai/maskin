@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { parseResultLine, scanTurnLine, splitLines } from '../stream-json'
+import {
+	MODEL_NAME_RE,
+	buildSetModelRequest,
+	classifyTurnLine,
+	parseResultLine,
+	scanTurnLine,
+	splitLines,
+} from '../stream-json'
 
 const resultLine = (extra: Record<string, unknown> = {}) =>
 	JSON.stringify({
@@ -258,5 +265,94 @@ describe('scanTurnLine', () => {
 		expect(scanTurnLine('not json')).toEqual({ kind: 'other' })
 		expect(scanTurnLine('{oops')).toEqual({ kind: 'other' })
 		expect(scanTurnLine('')).toEqual({ kind: 'other' })
+	})
+})
+
+describe('classifyTurnLine', () => {
+	const assistantLine = (content: unknown[], overrides: Record<string, unknown> = {}) =>
+		JSON.stringify({
+			type: 'assistant',
+			message: { id: 'gen-1', role: 'assistant', content },
+			...overrides,
+		})
+
+	it('separates text that stands alone from text that rides with a tool call', () => {
+		expect(classifyTurnLine(assistantLine([{ type: 'text', text: 'All done.' }]))).toEqual({
+			kind: 'assistant_text',
+			text: 'All done.',
+		})
+		expect(
+			classifyTurnLine(
+				assistantLine([
+					{ type: 'text', text: 'Almost there...' },
+					{ type: 'tool_use', name: 'Read', id: 'call_1', input: {} },
+				]),
+			),
+		).toEqual({ kind: 'work_tool', text: 'Almost there...' })
+	})
+
+	it('reports a bare tool call as work with no text', () => {
+		expect(
+			classifyTurnLine(
+				assistantLine([{ type: 'tool_use', name: 'Read', id: 'call_1', input: {} }]),
+			),
+		).toEqual({ kind: 'work_tool', text: '' })
+	})
+
+	it('reports the chat tools as a reply, ahead of any narration in the same line', () => {
+		for (const name of ['AskUserQuestion', 'mcp__maskin__post_conversation_message']) {
+			expect(
+				classifyTurnLine(
+					assistantLine([
+						{ type: 'text', text: 'posting that now' },
+						{ type: 'tool_use', name, id: 'call_1', input: {} },
+					]),
+				),
+			).toEqual({ kind: 'reply_tool' })
+		}
+	})
+
+	it('marks a closing result and a tagged user turn as the start, not a tool_result or sub-agent', () => {
+		expect(classifyTurnLine(JSON.stringify({ type: 'result', result: '' }))).toEqual({
+			kind: 'turn_start',
+		})
+		expect(
+			classifyTurnLine(JSON.stringify({ type: 'user', message: {}, maskin_message_id: 4 })),
+		).toEqual({ kind: 'turn_start' })
+		expect(classifyTurnLine(JSON.stringify({ type: 'user', message: { content: [] } }))).toEqual({
+			kind: 'other',
+		})
+		expect(
+			classifyTurnLine(JSON.stringify({ type: 'result', parent_tool_use_id: 'call_1' })),
+		).toEqual({ kind: 'other' })
+	})
+
+	it('ignores sub-agent assistant output, thinking-only lines and noise', () => {
+		expect(
+			classifyTurnLine(
+				assistantLine([{ type: 'text', text: 'internal' }], { parent_tool_use_id: 'call_1' }),
+			),
+		).toEqual({ kind: 'other' })
+		expect(classifyTurnLine(assistantLine([{ type: 'thinking', thinking: 'hmm' }]))).toEqual({
+			kind: 'other',
+		})
+		expect(classifyTurnLine('not json')).toEqual({ kind: 'other' })
+	})
+})
+
+describe('buildSetModelRequest', () => {
+	it('builds the control request the CLI reads from stdin', () => {
+		expect(buildSetModelRequest('deepseek/deepseek-v4-flash', 'req-1')).toEqual({
+			type: 'control_request',
+			request_id: 'req-1',
+			request: { subtype: 'set_model', model: 'deepseek/deepseek-v4-flash' },
+		})
+	})
+
+	it('refuses a model name that could not be one', () => {
+		for (const bad of ['', ' deepseek/x', 'a b', 'x"y', 'x\ny', '/leading', 'a'.repeat(129)]) {
+			expect(MODEL_NAME_RE.test(bad)).toBe(false)
+			expect(() => buildSetModelRequest(bad, 'req-1')).toThrow('Invalid model name')
+		}
 	})
 })

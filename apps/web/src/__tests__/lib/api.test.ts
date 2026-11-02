@@ -260,6 +260,74 @@ describe('sessions.input', () => {
 	})
 })
 
+describe('api.invites', () => {
+	it('sends no X-Workspace-Id when accepting an invite, even while signed in', async () => {
+		vi.mocked(getApiKey).mockReturnValue('ank_test123')
+		fetchSpy.mockResolvedValue(
+			new Response(JSON.stringify({ workspaceId: 'ws-1', actorId: 'a-1' }), { status: 200 }),
+		)
+
+		await api.invites.accept('tok/en+1')
+
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe('/api/invites/tok%2Fen%2B1/accept')
+		expect(init.method).toBe('POST')
+		expect(init.body).toBe('{}')
+		const headers = init.headers as Record<string, string>
+		expect(headers.Authorization).toBe('Bearer ank_test123')
+		expect(headers['X-Workspace-Id']).toBeUndefined()
+	})
+
+	it('posts the signup body on accept for a new account', async () => {
+		fetchSpy.mockResolvedValue(
+			new Response(JSON.stringify({ workspaceId: 'ws-1' }), { status: 201 }),
+		)
+
+		await api.invites.accept('tok', { email: 'ada@example.com', password: 'hunter2hunter2' })
+
+		const init = fetchSpy.mock.calls[0][1] as RequestInit
+		expect(JSON.parse(init.body as string)).toEqual({
+			email: 'ada@example.com',
+			password: 'hunter2hunter2',
+		})
+	})
+
+	it('previews by token without a workspace header', async () => {
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify({ status: 'pending' }), { status: 200 }))
+
+		await api.invites.preview('a b')
+
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe('/api/invites/preview?token=a%20b')
+		expect((init.headers as Record<string, string>)['X-Workspace-Id']).toBeUndefined()
+	})
+
+	it('exposes Retry-After seconds on a 429 ApiError', async () => {
+		fetchSpy.mockResolvedValue(
+			new Response(JSON.stringify({ error: { code: 'RATE_LIMITED', message: 'slow down' } }), {
+				status: 429,
+				headers: { 'Retry-After': '14400' },
+			}),
+		)
+
+		const err = await api.invites
+			.create({ workspaceId: 'ws-1', email: 'ada@example.com', role: 'member' })
+			.catch((e) => e)
+
+		expect(err).toBeInstanceOf(ApiError)
+		expect(err.status).toBe(429)
+		expect(err.retryAfter).toBe(14400)
+	})
+
+	it('leaves retryAfter unset when the header is missing', async () => {
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify({ error: 'nope' }), { status: 409 }))
+
+		const err = await api.invites.revoke('inv-1').catch((e) => e)
+
+		expect(err.retryAfter).toBeUndefined()
+	})
+})
+
 describe('events.historyUpTo', () => {
 	const page = (n: number, from = 0) => Array.from({ length: n }, (_, i) => ({ id: from + i + 1 }))
 	const ok = (rows: unknown[]) => new Response(JSON.stringify(rows), { status: 200 })
@@ -297,5 +365,43 @@ describe('events.historyUpTo', () => {
 		expect(rows).toHaveLength(150)
 		expect(fetchSpy).toHaveBeenCalledTimes(2)
 		expect(new URL(urls()[1], 'http://x').searchParams.get('limit')).toBe('50')
+	})
+})
+
+describe('api.transcriptions.create', () => {
+	const errorBody = (status: number, code: string, message: string) =>
+		new Response(JSON.stringify({ error: { code, message } }), {
+			status,
+			headers: { 'Content-Type': 'application/json' },
+		})
+
+	it('keeps the route message on a 503 that carries an error code', async () => {
+		fetchSpy.mockResolvedValueOnce(
+			errorBody(503, 'INTERNAL_ERROR', 'Transcription is not available on this server'),
+		)
+		await expect(api.transcriptions.create('ws-1', { audio: 'QUJD' })).rejects.toMatchObject({
+			status: 503,
+			message: 'Transcription is not available on this server',
+		})
+	})
+
+	it('keeps the route message on a 504 timeout', async () => {
+		fetchSpy.mockResolvedValueOnce(
+			errorBody(504, 'INTERNAL_ERROR', 'Transcription timed out, try again'),
+		)
+		await expect(api.transcriptions.create('ws-1', { audio: 'QUJD' })).rejects.toMatchObject({
+			status: 504,
+			message: 'Transcription timed out, try again',
+		})
+	})
+
+	it('still shows the generic text when a gateway answers with no body from our API', async () => {
+		fetchSpy.mockResolvedValueOnce(
+			new Response('<html>Bad Gateway</html>', { status: 502, statusText: 'Bad Gateway' }),
+		)
+		await expect(api.transcriptions.create('ws-1', { audio: 'QUJD' })).rejects.toMatchObject({
+			status: 502,
+			message: 'Service unavailable. Please try again in a minute.',
+		})
 	})
 })

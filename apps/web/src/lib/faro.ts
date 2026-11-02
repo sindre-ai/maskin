@@ -6,6 +6,7 @@ import {
 	WebVitalsInstrumentation,
 	initializeFaro,
 } from '@grafana/faro-web-sdk'
+import { isClientErrorLoggingPaused } from './client-logging-pause'
 
 // Grafana Faro — browser-side observability, reporting into the same Grafana
 // Cloud stack as our backend logs and host metrics.
@@ -84,6 +85,7 @@ export function initFaro(): void {
 			// so strip the query and hash before anything leaves the browser. Ids in
 			// the path are fine; free text is not.
 			beforeSend: (item) => {
+				if (isClientErrorLoggingPaused()) return null
 				const page = item.meta?.page
 				if (page?.url) page.url = stripQuery(page.url)
 				return item
@@ -146,6 +148,12 @@ export function resetFaroUser(): void {
 	}
 }
 
+// The invite accept route carries its one-time credential in the path
+// (/invites/<token>/accept), unlike other ids in paths, so it is redacted.
+function redactInviteToken(path: string): string {
+	return path.replace(/^\/invites\/[^/]+\/accept$/, '/invites/:token/accept')
+}
+
 /**
  * Records a failed `/api` call — the point where a backend problem becomes
  * visible to a user. Sends the method, the path with its query stripped, the
@@ -158,13 +166,13 @@ export function reportApiFailure(attrs: {
 	status: number
 	code?: string
 }): void {
-	if (!faro) return
+	if (!faro || isClientErrorLoggingPaused()) return
 	try {
 		faro.api.pushEvent('api_request_failed', {
 			method: attrs.method,
 			// A relative path, so split rather than parse — stripQuery would
 			// resolve it against the origin and report an absolute URL.
-			path: attrs.path.split('?')[0].split('#')[0],
+			path: redactInviteToken(attrs.path.split('?')[0].split('#')[0]),
 			status: String(attrs.status),
 			...(attrs.code ? { code: attrs.code } : {}),
 		})
@@ -174,7 +182,7 @@ export function reportApiFailure(attrs: {
 }
 
 export function pushFaroError(error: Error): void {
-	if (!faro) return
+	if (!faro || isClientErrorLoggingPaused()) return
 	try {
 		faro.api.pushError(error)
 	} catch (err) {

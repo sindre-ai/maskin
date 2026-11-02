@@ -8,7 +8,11 @@
   --dur-180: 180ms;     /* fade-in on the brief drawer */
   --dur-200: 200ms;     /* shadow + transform */
   --dur-250: 250ms;     /* nav / panel state */
-  --dur-slide: 300ms;   /* drawer slide-in */
+  --dur-slide: 300ms;   /* drawer slide-in, sheets */
+  --dur-push: 340ms;    /* v4 navigation push, cubic-bezier(.32,.72,0,1) */
+  --dur-wave: 800ms;    /* v4 waveform bar cycle */
+  --dur-wave-stagger: 120ms; /* v4 waveform bar stagger */
+  --dur-pulse: 1200ms;  /* v4 pulsing dots */
 
   /* --- easings --- */
   --ease-standard: cubic-bezier(.4, 0, .2, 1);

@@ -6,7 +6,7 @@ const defaultSettings: WorkspaceSettings = {
 	display_names: { insight: 'Insight', bet: 'Bet', task: 'Task', contact: 'Contact' },
 	statuses: {
 		insight: ['new', 'processing', 'clustered', 'discarded'],
-		bet: ['signal', 'proposed', 'active', 'completed'],
+		bet: ['opportunity', 'proposed', 'active', 'completed'],
 		task: ['todo', 'in_progress', 'done', 'blocked'],
 		contact: ['active', 'inactive'],
 	},

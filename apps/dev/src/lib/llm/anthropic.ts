@@ -1,4 +1,5 @@
 import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './adapter'
+import { assertNoRawSecrets } from './secret-guard'
 
 export class AnthropicAdapter implements LLMAdapter {
 	private apiKey: string
@@ -16,6 +17,8 @@ export class AnthropicAdapter implements LLMAdapter {
 		temperature?: number
 		max_tokens?: number
 	}): Promise<LLMResponse> {
+		assertNoRawSecrets(options.messages)
+
 		const systemMessages = options.messages.filter((m) => m.role === 'system')
 		const nonSystemMessages = options.messages.filter((m) => m.role !== 'system')
 

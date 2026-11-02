@@ -4,11 +4,18 @@ import type { Breadcrumb, ErrorEvent, Log } from '@sentry/node'
 // these hooks first, wired in sentry.ts. They remove bound SQL values from error
 // text: drizzle-orm builds "Failed query: <sql>\nparams: <every bound value>", so a
 // failed write that binds a token or hash would otherwise ship the value.
-// Only string values are rewritten, keys never are, and stdout is never touched
-// (the logger prints before anything here runs).
+// String values are rewritten, keys never are, with one exception: the values of
+// SENSITIVE_KEYS (stored credential material) are replaced whole, wherever they
+// sit in the payload. stdout is never touched (the logger prints before anything
+// here runs).
 
 const MAX_DEPTH = 5
 const REDACTED = '[redacted]'
+// Keychain: ciphertext and wrapped data keys from integrations rows, plus the raw
+// secret a chat capture carries. Ciphertext is not a secret on its own, but it is
+// exactly what an attacker holding the KMS grant needs, and there is no reason for
+// it to leave the box.
+const SENSITIVE_KEYS = new Set(['credentials', 'dek_ciphertext', 'dekCiphertext', 'rawSecret'])
 const DRIZZLE_QUERY_MARKER = 'Failed query:'
 const DRIZZLE_PARAMS_MARKER = '\nparams:'
 // Sentry's console integration records every console line as a breadcrumb with this category.
@@ -69,7 +76,9 @@ export function scrubDeep(value: unknown, depth = 0): unknown {
 	}
 	if (!isPlainObject(value)) return value
 	const out: Record<string, unknown> = {}
-	for (const [key, item] of Object.entries(value)) out[key] = scrubDeep(item, depth + 1)
+	for (const [key, item] of Object.entries(value)) {
+		out[key] = SENSITIVE_KEYS.has(key) ? REDACTED : scrubDeep(item, depth + 1)
+	}
 	// An Error that Sentry already normalized into a plain object (event.extra) keeps
 	// drizzle's raw bound values in params, and those strings carry no marker to match.
 	if (typeof out.query === 'string' && Array.isArray(out.params)) out.params = REDACTED
@@ -121,6 +130,8 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent | null {
 			...event,
 			message: event.message === undefined ? undefined : scrubString(event.message),
 			extra: scrubRecord(event.extra),
+			contexts: scrubRecord(event.contexts) as ErrorEvent['contexts'],
+			request: event.request && { ...event.request, data: scrubDeep(event.request.data) },
 			exception: event.exception && {
 				...event.exception,
 				// cause and linked errors arrive as separate entries in values
@@ -140,6 +151,8 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent | null {
 				...event,
 				message: undefined,
 				extra: undefined,
+				contexts: undefined,
+				request: undefined,
 				breadcrumbs: undefined,
 				exception: event.exception && {
 					...event.exception,

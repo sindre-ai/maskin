@@ -1,0 +1,243 @@
+name: Apple
+
+# Native Apple clients (apps/apple). Separate from ci.yml on purpose: this is the
+# only job that needs a macOS runner (10x the per-minute cost), and a workflow-level
+# `paths` filter is the only way to skip it entirely on web-only PRs. Consequence:
+# if this check is ever made a *required* status check, a PR that touches none of
+# the paths below will never report it and will block — keep it non-required, or
+# add a path-aware aggregator job first.
+#
+# Triggers only on changes under apps/apple (plus this file). Consequence: token drift
+# does NOT run when only the design-system CSS changes — it surfaces on the next apps/apple
+# change instead. OpenAPI snapshot drift from backend changes is caught by the
+# apple-openapi-snapshot job in ci.yml, so it fails the PR that moved the spec.
+#
+# Pull requests into feat/** run too: stacked slices are based on a task branch, not
+# main, and without this they were never compiled until the whole stack reached main.
+#
+# What each step guards against, cheapest first so a drift failure costs seconds,
+# not a 20-minute Xcode build:
+#   1. Token drift      — Tokens.swift is generated from the design-system CSS
+#                         (.claude/skills/maskin-design/tokens, apps/web app.css).
+#                         Changing a token without regenerating ships a native app
+#                         that no longer matches the web.
+#   2. OpenAPI drift    — apps/apple/openapi.json is a snapshot of the backend spec
+#                         that the Swift client is generated from. A route/schema
+#                         change in apps/dev or packages/shared without a refreshed
+#                         snapshot leaves the apps calling an API that has moved.
+#   3. swift test       — MaskinKit unit tests (stores, outbox, SSE, tokens).
+#   4. Platform builds  — iOS, macOS, watchOS, tvOS each compile the app shells
+#                         against MaskinKit. A change that is fine on iOS but uses
+#                         an unavailable API on watchOS/tvOS only shows up here.
+#
+# Two jobs, because one job was too long: checks + swift test run in `apple`, and the
+# four platform builds run in parallel in `apple-build`. Run in one job, the steps
+# added up to 35-47 minutes against the 45 minute job limit (swift test 6-22 min,
+# setup 7-20 min, builds 19-30 min depending on the runner), and the job was
+# cancelled while the last platform was still compiling. The builds need only Xcode
+# and xcodegen: Tokens.swift and Sources/MaskinAPI/Generated are checked in and
+# verified by `apple`, so the build jobs skip node, pnpm and the OpenAPI steps.
+#
+# Job limits (60 for `apple`, 50 for `apple-build`) are a hang guard, not a budget.
+# After the split, healthy runs took 14-16 min for `apple` and up to 27 min for the
+# slowest platform (iOS), with slow-runner days of 40+ min for `apple` on record. Keep
+# the limit well above the slowest healthy job so a slow runner is not a false red.
+#
+# Toolchain: the project needs Xcode 26 / Swift 6.x. The jobs run on macos-26 and
+# select the newest installed Xcode 26.x explicitly; they fail loudly if none is
+# installed rather than silently building with an older SDK. Builds use generic
+# simulator destinations, so no simulator runtimes need to be installed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/apple/**'
+      - '.github/workflows/apple.yml'
+  pull_request:
+    branches: [main, 'feat/**']
+    paths:
+      - 'apps/apple/**'
+      - '.github/workflows/apple.yml'
+
+# Superseded runs are cancelled on pull requests only. On main, back-to-back merges
+# used to cancel each other (runs 540-545 and 547), leaving main with no finished run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  apple:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image (needed for iOS 26 APIs / Swift 6.x). Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # --- 1. Token drift (no deps, runs in a second) ---
+      - name: Design tokens are up to date
+        run: |
+          if ! node apps/apple/scripts/gen-tokens.mjs --check; then
+            echo "::error::Tokens.swift is stale. Run 'node apps/apple/scripts/gen-tokens.mjs' and commit the result."
+            exit 1
+          fi
+
+      # --- 2. OpenAPI snapshot drift ---
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build workspace deps of @maskin/dev
+        run: pnpm --filter "@maskin/dev^..." build
+
+      - name: OpenAPI snapshot is up to date
+        run: |
+          pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts
+          if ! git diff --exit-code -- apps/apple/openapi.json; then
+            echo "::error::apps/apple/openapi.json is stale. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result (then run apps/apple/scripts/gen-api.sh and commit Sources/MaskinAPI/Generated)."
+            exit 1
+          fi
+
+      - name: Generated API client is up to date
+        working-directory: apps/apple
+        run: |
+          ./scripts/gen-api.sh
+          if ! git diff --exit-code -- Sources/MaskinAPI/Generated; then
+            echo "::error::Sources/MaskinAPI/Generated is stale. Run 'apps/apple/scripts/gen-api.sh' and commit the result."
+            exit 1
+          fi
+
+      # --- 3. Package tests ---
+      - name: Cache SwiftPM and the generated-client build
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/apple/.build
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('apps/apple/Package.resolved', 'apps/apple/Package.swift', 'apps/apple/openapi.json') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
+      - name: swift test
+        working-directory: apps/apple
+        # --no-parallel: several suites render SwiftUI snapshots on the main actor, which starves
+        # the timing-sensitive store/outbox tests when everything runs at once (they pass alone and
+        # in serial: 657 tests, 0 failures, ~23 s). Serial is deterministic and still fast.
+        run: swift test --no-parallel
+        env:
+          # The chat card tests write a PNG of every card state here (open, folded, loading,
+          # deleted, in a message, in your own message; light and dark, normal and largest text);
+          # the step below uploads them for the design check.
+          CHATS_SNAPSHOT_DIR: ${{ runner.temp }}/chats-snapshots
+          # The For you view tests write a PNG of every new view here (normal and largest text size,
+          # light and dark); the step below uploads them for the design check.
+          FORYOU_SNAPSHOT_DIR: ${{ runner.temp }}/foryou-snapshots
+
+      # always(): a failing test should not hide the images that did render.
+      - name: Upload chat card snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chats-snapshots
+          path: ${{ runner.temp }}/chats-snapshots
+          if-no-files-found: warn
+          overwrite: true  # a re-run of the job replaces the images of the first try
+          retention-days: 14
+
+      - name: Upload For you snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foryou-snapshots
+          path: ${{ runner.temp }}/foryou-snapshots
+          if-no-files-found: warn
+          overwrite: true  # a re-run of the job replaces the images of the first try
+          retention-days: 14
+
+  # --- 4. Platform builds, one runner per platform ---
+  apple-build:
+    name: apple-build (${{ matrix.platform }})
+    runs-on: macos-26
+    timeout-minutes: 50
+    strategy:
+      # Let the other platforms finish: one failing platform should not hide a second one.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: iOS
+            scheme: Maskin
+            destination: 'generic/platform=iOS Simulator'
+          - platform: macOS
+            scheme: Maskin
+            destination: 'generic/platform=macOS'
+          - platform: watchOS
+            scheme: MaskinWatch
+            destination: 'generic/platform=watchOS Simulator'
+          - platform: tvOS
+            scheme: MaskinTV
+            destination: 'generic/platform=tvOS Simulator'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image (needed for iOS 26 APIs / Swift 6.x). Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: apps/apple
+        run: xcodegen generate
+
+      - name: xcodebuild (${{ matrix.platform }})
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          echo "==> ${{ matrix.scheme }} (${{ matrix.destination }})"
+          xcodebuild build \
+            -project Maskin.xcodeproj -scheme "${{ matrix.scheme }}" \
+            -destination "${{ matrix.destination }}" \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | tail -n 25
+          test "${PIPESTATUS[0]}" -eq 0
+
+      # failure() alone skips on a timeout cancel, which is exactly when the log is needed.
+      - name: Upload build log
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-xcodebuild-log-${{ matrix.platform }}
+          path: ${{ runner.temp }}/xcodebuild.log
+          retention-days: 7

@@ -16,7 +16,7 @@ import { reserveRoundSlot } from '../lib/file-comment-round-limiter'
 import { migrateLegacyAnnotationsIfNeeded } from '../lib/file-comments-migration'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -46,6 +46,7 @@ function toDto(row: typeof fileComments.$inferSelect): z.infer<typeof fileCommen
 		page: row.page,
 		positionDoc: row.positionDoc as { x: number; y: number },
 		selector: row.selector,
+		textAnchor: row.textAnchor ?? null,
 		authorId: row.authorId,
 		body: row.body,
 		parentId: row.parentId,
@@ -162,6 +163,7 @@ app.openapi(getFileCommentsRoute, (async (c) => {
 const createFileCommentRoute = createRoute({
 	method: 'post',
 	path: '/{id}/comments',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Create a draft comment on a file (no roundId until sent).',
 	request: {
@@ -191,7 +193,7 @@ app.openapi(createFileCommentRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [file] = await db.select().from(files).where(eq(files.id, fileId)).limit(1)
-	if (!file || !(await isWorkspaceMember(db, actorId, file.workspaceId))) {
+	if (!file || !(await isWorkspaceWriter(db, actorId, file.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404 as never)
 	}
 
@@ -218,6 +220,7 @@ app.openapi(createFileCommentRoute, (async (c) => {
 			page: body.page ?? null,
 			positionDoc: body.positionDoc,
 			selector: body.selector ?? null,
+			textAnchor: body.textAnchor ?? null,
 			authorId: actorId,
 			body: body.body,
 			parentId: body.parentId ?? null,
@@ -236,6 +239,7 @@ app.openapi(createFileCommentRoute, (async (c) => {
 const patchFileCommentRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/comments/{cid}',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Update a comment body, or resolve / reopen it.',
 	request: {
@@ -269,7 +273,7 @@ app.openapi(patchFileCommentRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [file] = await db.select().from(files).where(eq(files.id, fileId)).limit(1)
-	if (!file || !(await isWorkspaceMember(db, actorId, file.workspaceId))) {
+	if (!file || !(await isWorkspaceWriter(db, actorId, file.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
 	}
 
@@ -319,6 +323,7 @@ app.openapi(patchFileCommentRoute, (async (c) => {
 const sendRoundRoute = createRoute({
 	method: 'post',
 	path: '/{id}/comments/rounds',
+	'x-viewer-policy': 'writer',
 	tags: ['Files'],
 	summary: 'Send a batched review round to the attaching object driver.',
 	request: {
@@ -356,7 +361,7 @@ app.openapi(sendRoundRoute, (async (c) => {
 	const { roundId, targetObjectId, commentIds } = c.req.valid('json')
 
 	const [file] = await db.select().from(files).where(eq(files.id, fileId)).limit(1)
-	if (!file || !(await isWorkspaceMember(db, actorId, file.workspaceId))) {
+	if (!file || !(await isWorkspaceWriter(db, actorId, file.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404 as never)
 	}
 
@@ -414,6 +419,7 @@ app.openapi(sendRoundRoute, (async (c) => {
 				eq(relationships.targetId, fileId),
 				eq(relationships.type, 'attached'),
 				eq(relationships.sourceType, 'object'),
+				eq(objects.workspaceId, file.workspaceId),
 			),
 		)
 

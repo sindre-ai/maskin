@@ -8,6 +8,7 @@ vi.mock('@grafana/faro-web-sdk', () => ({
 	SessionInstrumentation: class {},
 }))
 
+import { pauseClientErrorLogging } from '@/lib/client-logging-pause'
 import {
 	__setFaroForTesting,
 	initFaro,
@@ -191,6 +192,30 @@ describe('PII scrubbing', () => {
 		})
 	})
 
+	it('reportApiFailure redacts the invite token from the accept path', () => {
+		__setFaroForTesting(fakeFaro)
+
+		reportApiFailure({ method: 'POST', path: '/invites/s3cr3t-token_AbC/accept', status: 409 })
+
+		expect(fakeFaro.api.pushEvent).toHaveBeenCalledWith('api_request_failed', {
+			method: 'POST',
+			path: '/invites/:token/accept',
+			status: '409',
+		})
+	})
+
+	it('reportApiFailure leaves other invite paths untouched', () => {
+		__setFaroForTesting(fakeFaro)
+
+		reportApiFailure({ method: 'POST', path: '/invites/0d5f6c1e/resend', status: 409 })
+
+		expect(fakeFaro.api.pushEvent).toHaveBeenCalledWith('api_request_failed', {
+			method: 'POST',
+			path: '/invites/0d5f6c1e/resend',
+			status: '409',
+		})
+	})
+
 	it('reportApiFailure includes the structured error code when the backend supplied one', () => {
 		__setFaroForTesting(fakeFaro)
 
@@ -248,5 +273,31 @@ describe('reporting helpers once initialised', () => {
 
 		expect(() => pushFaroError(new Error('boom'))).not.toThrow()
 		expect(consoleSpy).toHaveBeenCalledOnce()
+	})
+})
+
+describe('while client error logging is paused', () => {
+	it('beforeSend drops the signal, and lets it through once released', () => {
+		const beforeSend = initWithForceEnable().beforeSend
+		// biome-ignore lint/suspicious/noExplicitAny: partial TransportItem is all beforeSend touches
+		const item = { meta: { page: { url: 'https://app.example/ws/1' } } } as any
+
+		const release = pauseClientErrorLogging()
+		expect(beforeSend?.(item)).toBeNull()
+		release()
+
+		expect(beforeSend?.(item)).toBe(item)
+	})
+
+	it('pushFaroError and reportApiFailure send nothing', () => {
+		__setFaroForTesting(fakeFaro)
+		const release = pauseClientErrorLogging()
+
+		pushFaroError(new Error('boom'))
+		reportApiFailure({ method: 'POST', path: '/integrations/chat-capture', status: 500 })
+		release()
+
+		expect(fakeFaro.api.pushError).not.toHaveBeenCalled()
+		expect(fakeFaro.api.pushEvent).not.toHaveBeenCalled()
 	})
 })

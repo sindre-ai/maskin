@@ -14,7 +14,11 @@ import {
 } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspaces } from '@/hooks/use-workspaces'
-import { trackSidebarWorkspaceSwitcherOpened } from '@/lib/analytics'
+import {
+	trackSidebarWorkspaceSwitcherDismissedImmediately,
+	trackSidebarWorkspaceSwitcherOpenAttempted,
+	trackSidebarWorkspaceSwitcherOpened,
+} from '@/lib/analytics'
 import type { WorkspaceWithRole } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
@@ -22,9 +26,13 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { Check, ChevronDown, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { getActorAvatarPaletteClass } from '../shared/actor-avatar'
 import { NewWorkspaceDialog } from './new-workspace-dialog'
+
+// A menu that closes within this long of opening was dismissed by something
+// other than the user (the tap that opened it, or an ancestor layer).
+const DISMISSED_IMMEDIATELY_MS = 200
 
 // v2 labels a workspace by how many people are in it, not by the caller's role
 // (mockup line 55's `w.sub`) — the menu is for picking a room, and "owner"
@@ -41,6 +49,7 @@ export function WorkspaceSwitcher() {
 	const navigate = useNavigate()
 	const queryClient = useQueryClient()
 	const [createOpen, setCreateOpen] = useState(false)
+	const openedAtRef = useRef<number | null>(null)
 
 	const currentFromList = workspaces?.find((ws) => ws.id === workspaceId)
 	const displayName = currentFromList?.name ?? workspace?.name ?? workspaceId
@@ -123,10 +132,31 @@ export function WorkspaceSwitcher() {
 			<SidebarMenuItem>
 				<DropdownMenu
 					onOpenChange={(open) => {
-						if (open) trackSidebarWorkspaceSwitcherOpened({ workspaceId })
+						if (open) {
+							openedAtRef.current = performance.now()
+							trackSidebarWorkspaceSwitcherOpened({ workspaceId })
+							return
+						}
+						const openMs =
+							openedAtRef.current === null ? null : performance.now() - openedAtRef.current
+						openedAtRef.current = null
+						if (openMs !== null && openMs < DISMISSED_IMMEDIATELY_MS) {
+							trackSidebarWorkspaceSwitcherDismissedImmediately({
+								workspaceId,
+								openMs: Math.round(openMs),
+							})
+						}
 					}}
 				>
-					<DropdownMenuTrigger asChild>
+					<DropdownMenuTrigger
+						asChild
+						onPointerDown={(e) =>
+							trackSidebarWorkspaceSwitcherOpenAttempted({
+								workspaceId,
+								pointerType: e.pointerType,
+							})
+						}
+					>
 						<SidebarMenuButton
 							tooltip={displayName}
 							aria-label={`Switch workspace, currently ${displayName}`}

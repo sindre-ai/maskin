@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { KmsConfigError, KmsDecryptError } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import {
 	INTEGRATION_STATUS_ACTIVE,
@@ -8,13 +9,23 @@ import {
 } from '@maskin/db/schema'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
-import { decrypt } from '../../../crypto'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { isWorkspaceMember } from '../../../workspace-auth'
-import { getIntegrationCredential } from '../../lookup'
+import {
+	CredentialNotFoundError,
+	CredentialPendingError,
+	CredentialUnavailableError,
+	CredentialUndoneError,
+	ScopeDeniedError,
+} from '../../errors'
+import { findIntegrationRow, getCredential } from '../../lookup'
+import { readContextFor } from '../../read-context'
+import { type ActionRecorder, LinkedInActionRefusal } from './action-log'
+import { type LinkedInFileAttachment, loadPostImage } from './attachment'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
@@ -26,6 +37,31 @@ import {
 	isAccountStatusRevoked,
 	isLinkedInIntegrationError,
 } from './errors'
+import {
+	type InmailBalance,
+	type InmailCredits,
+	UNKNOWN_INMAIL_BALANCE,
+	deriveInmailBalance,
+	parseInmailCredits,
+} from './inmail'
+import {
+	REINVITE_LOCK_DAYS,
+	type SentListCaches,
+	WITHDRAW_MIN_AGE_DAYS,
+	addDays,
+	findFirstSeen,
+	findPriorWithdrawal,
+	findSentInvitation,
+	forgetSentInvitation,
+	recordFirstSeen,
+} from './invitation-withdrawal'
+import {
+	type SentInvitation,
+	inviteAgeDays,
+	nextSentOffset,
+	parseSentInvitations,
+} from './invitations'
+import { parsePostId, withAcceptedForms } from './post-id'
 import type {
 	LinkedInClient,
 	LinkedInConnectionRequestResponse,
@@ -33,7 +69,7 @@ import type {
 	LinkedInListConversationsResponse,
 	LinkedInSendMessageResponse,
 } from './unipile-client'
-import { createLinkedInHttpClient } from './unipile-client'
+import { buildPeopleSearchUrl, createLinkedInHttpClient } from './unipile-client'
 import { buildLinkedInClientForWebhook, handleUnipileAccountReconnect } from './webhook'
 
 /**
@@ -75,7 +111,7 @@ let clientOverride: ClientOverride | null = null
  * `__setLinkedInClientForTests` so the routes don't have to touch the real
  * fetch during unit tests.
  */
-function buildLinkedInClient(credentials: StoredLinkedInCredentials): LinkedInClient {
+export function buildLinkedInClient(credentials: StoredLinkedInCredentials): LinkedInClient {
 	if (clientOverride) return clientOverride.build(credentials)
 	const baseUrl = process.env.UNIPILE_BASE_URL
 	const apiKey = process.env.UNIPILE_API_KEY
@@ -115,11 +151,38 @@ export function __setLinkedInClientForTests(builder: ClientOverride['build'] | n
  * actor-scoped fallback so a Sales Rep loop that never received a fan-out MCP
  * row still resolves the workspace's connected identity.
  */
+/**
+ * Failures of the Keychain read that must reach the caller as themselves: a
+ * denied scope, an undone or pending credential, a KMS problem. Anything else
+ * thrown by the read is the stored blob failing to decrypt (a key rotation) and
+ * keeps its CREDENTIAL_REVOKED shape.
+ */
+function isKeychainReadError(err: unknown): boolean {
+	return (
+		err instanceof ScopeDeniedError ||
+		err instanceof CredentialNotFoundError ||
+		err instanceof CredentialUndoneError ||
+		err instanceof CredentialPendingError ||
+		err instanceof CredentialUnavailableError ||
+		err instanceof KmsDecryptError ||
+		err instanceof KmsConfigError
+	)
+}
+
+/** Host the Unipile client calls, for the audit row. Undefined when unconfigured. */
+function unipileHost(): string | undefined {
+	try {
+		return new URL(process.env.UNIPILE_BASE_URL ?? '').host
+	} catch {
+		return undefined
+	}
+}
+
 type Preamble =
 	| { ok: true; workspaceId: string; actorId: string; credentials: StoredLinkedInCredentials }
 	| { ok: false; error: LinkedInIntegrationError }
 
-async function preamble(
+export async function preamble(
 	db: Database,
 	actorId: string,
 	workspaceId: string,
@@ -134,7 +197,7 @@ async function preamble(
 			),
 		}
 	}
-	let row: Awaited<ReturnType<typeof getIntegrationCredential>> = null
+	let row: Awaited<ReturnType<typeof findIntegrationRow>> = null
 	if (options.identity) {
 		// P3-C · Per-call gate: load the identity's own row UNFILTERED by status
 		// (P3-G filtered on active), so a row present-but-revoked lands here and
@@ -160,7 +223,7 @@ async function preamble(
 		// actor-scoped read makes the credential unreachable from the MCP tools
 		// that exist to use it. A human connects; every agent in the workspace can
 		// send, exactly as they can with Gmail or Slack.
-		row = await getIntegrationCredential(db, workspaceId, PROVIDER, actorId, {
+		row = await findIntegrationRow(db, workspaceId, PROVIDER, actorId, {
 			fallbackToAnyActor: true,
 		})
 	}
@@ -199,8 +262,19 @@ async function preamble(
 	}
 	let parsed: StoredLinkedInCredentials
 	try {
-		parsed = JSON.parse(decrypt(row.credentials as string)) as StoredLinkedInCredentials
+		// The only place the value is read. Scope-checked and written to
+		// credential_access_log by getCredential; the caller is the real,
+		// membership-checked actor. These routes carry no session header, so the
+		// session is null.
+		const credential = await getCredential(
+			db,
+			workspaceId,
+			row.id,
+			readContextFor(actorId, unipileHost()),
+		)
+		parsed = JSON.parse(credential.value) as StoredLinkedInCredentials
 	} catch (err) {
+		if (isKeychainReadError(err)) throw err
 		return {
 			ok: false,
 			error: new LinkedInIntegrationError(
@@ -310,7 +384,7 @@ async function markIntegrationRevoked(
  * success. 429 stays retryable either way — a rate-limited request is
  * rejected before execution, so replaying it cannot duplicate anything.
  */
-async function callLinkedInWithRetry<T>(
+export async function callLinkedInWithRetry<T>(
 	call: () => Promise<{ status: number; body: unknown; headers: Record<string, string> }>,
 	opts: { mutating?: boolean } = {},
 ): Promise<{ status: number; body: T; headers: Record<string, string> }> {
@@ -419,8 +493,8 @@ export async function withPageAdminRevokeSafetyNet<T>(
 		const summary = await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
 		// Only delete when EVERY applied row (a) succeeded on the diff (no
 		// `error`), AND (b) reports zero surviving identities (registered +
-		// unchanged both empty). An enumeration failure or an unreadable
-		// credential means we can't confirm the account is orphaned — leaving
+		// unchanged both empty). An enumeration failure or a skipped row
+		// (no unipile_acc_slug) means we can't confirm the account is orphaned — leaving
 		// it in place is the safe direction. This is the "conditional" reading
 		// of the P3-B "R11-C PAGE_ADMIN_REVOKED calls deleteAccount" AC (see
 		// PR body's "R11-C interpretation" risk note).
@@ -871,6 +945,10 @@ const V2PersonSchema = z
 		public_identifier: z.string().nullish(),
 		network_distance: z.string().nullish(),
 		location: z.string().nullish(),
+		// v2 moved the provider-specific fields under `specifics` — the profile
+		// endpoint answers `specifics.network_distance`, while the search
+		// endpoint still answers `network_distance` top-level. Read both.
+		specifics: z.object({ network_distance: z.string().nullish() }).passthrough().nullish(),
 	})
 	.passthrough()
 
@@ -892,17 +970,93 @@ function toPerson(raw: unknown): LinkedInPerson | null {
 		headline: p.headline ?? p.description ?? '',
 		profile_url: p.profile_url ?? '',
 		public_identifier: p.public_identifier ?? '',
-		network_distance: p.network_distance ?? '',
+		// Top-level on a search result; nested under `specifics` on a v2
+		// profile. Prefer top-level so the search path is unchanged.
+		network_distance: p.network_distance ?? p.specifics?.network_distance ?? '',
 		location: p.location ?? '',
 	}
 }
 
-function normalizePeople(
+/** One job from a profile's experience section. */
+export type LinkedInPosition = {
+	company: string
+	title: string
+	/** ISO date: YYYY-MM-DD, or YYYY-MM / YYYY when LinkedIn only gave that much. */
+	start: string | null
+	/** Same format as start. Null while the role is current. */
+	end: string | null
+	/** True when LinkedIn gave no end date, i.e. the person still holds the role. */
+	current: boolean
+}
+
+/**
+ * get_profile result. The base fields are always present; `experience` only
+ * when the caller asked for it and LinkedIn answered. `experience_unavailable`
+ * is set instead when the section pull was throttled, rejected or came back
+ * without the section, so an empty `experience` array only ever means "no
+ * jobs listed".
+ */
+export type LinkedInProfile = LinkedInPerson & {
+	experience?: LinkedInPosition[]
+	experience_unavailable?: true
+}
+
+/** Unipile v2 `with_sections` value for the experience section. */
+const EXPERIENCE_SECTION = 'linkedin_experience'
+
+/**
+ * Unipile v2 answers experience dates as MM/DD/YYYY. Convert to ISO, keeping
+ * whatever precision LinkedIn gave (MM/YYYY and YYYY show up on older roles).
+ * Null when the value is not a date we recognise.
+ */
+function toIsoDate(raw: unknown): string | null {
+	if (typeof raw !== 'string') return null
+	const value = raw.trim()
+	const full = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value)
+	if (full) return `${full[3]}-${full[1]}-${full[2]}`
+	const monthYear = /^(\d{2})\/(\d{4})$/.exec(value)
+	if (monthYear) return `${monthYear[2]}-${monthYear[1]}`
+	if (/^\d{4}$/.test(value)) return value
+	return null
+}
+
+/**
+ * Map `specifics.experience` of a v2 profile. Returns null when the section is
+ * not an array at all (the pull did not deliver it), so the caller can flag it
+ * as unavailable instead of reporting a person with no jobs.
+ */
+function toExperience(raw: unknown): LinkedInPosition[] | null {
+	const specifics = (raw as { specifics?: { experience?: unknown } } | null)?.specifics
+	const entries = specifics?.experience
+	if (!Array.isArray(entries)) return null
+	const positions: LinkedInPosition[] = []
+	for (const entry of entries) {
+		if (!entry || typeof entry !== 'object') continue
+		const e = entry as Record<string, unknown>
+		// v2 nests the company as an object with a name; tolerate a bare string.
+		const co = e.company
+		const coName = typeof co === 'object' && co !== null ? (co as { name?: unknown }).name : co
+		const company = typeof coName === 'string' ? coName : ''
+		const title = typeof e.job_title === 'string' ? e.job_title : ''
+		if (!company && !title) continue
+		const hasEnd = typeof e.ended_on === 'string' && e.ended_on.trim() !== ''
+		positions.push({
+			company,
+			title,
+			start: toIsoDate(e.started_on),
+			end: toIsoDate(e.ended_on),
+			current: !hasEnd,
+		})
+	}
+	return positions
+}
+
+function parsePeoplePage(
 	body: unknown,
 	what: string,
 	/** Relations nest the person under `user`; search returns it flat. */
 	unwrap?: (item: unknown) => unknown,
-): { people: LinkedInPerson[]; next_cursor?: string } {
+): { people: LinkedInPerson[]; next_cursor?: string; dropped: number } {
 	const { items, nextCursor } = readPage(body, what)
 	const people: LinkedInPerson[] = []
 	let skipped = 0
@@ -920,24 +1074,41 @@ function normalizePeople(
 			total: items.length,
 		})
 	}
-	return nextCursor ? { people, next_cursor: nextCursor } : { people }
+	return nextCursor
+		? { people, next_cursor: nextCursor, dropped: skipped }
+		: { people, dropped: skipped }
+}
+
+function normalizePeople(
+	body: unknown,
+	what: string,
+	unwrap?: (item: unknown) => unknown,
+): { people: LinkedInPerson[]; next_cursor?: string } {
+	const { dropped: _dropped, ...page } = parsePeoplePage(body, what, unwrap)
+	return page
 }
 
 type SendPayload = {
 	recipient_urn: string
 	body: string
 	idempotency_key: string
-	/**
-	 * Optional messaging attachments. Passed through to the Unipile client
-	 * verbatim; each entry carries `send_mode` (native vs file). Shape is
-	 * validated at the MCP tool boundary via `linkedinAttachmentsArraySchema`
-	 * in `packages/mcp/src/lib/linkedin-attachments.ts`, so this operation
-	 * treats them as opaque objects and lets the tool layer reject
-	 * mixed-type arrays with the exact §4.2 refinement message.
-	 */
-	attachments?: unknown[]
 }
-type ReplyPayload = { thread_id: string; body: string; idempotency_key: string }
+type ReplyPayload = {
+	thread_id: string
+	body: string
+	idempotency_key: string
+	/** True when the key was derived from in_reply_to_message_id, false on the legacy path. */
+	derived_key: boolean
+}
+
+const IDEMPOTENCY_KEY_MAX = 128
+
+/**
+ * What a caller gets for passing raw `attachments` to `send_message`. A file only goes out
+ * on a message a person approved, through the object it is filed on.
+ */
+export const ATTACHMENTS_REFUSED_MESSAGE =
+	'send_message does not take attachments. File the workspace file on the draft instead: set metadata.attachment_file_id on the object, have a person approve it, then send with object_id.'
 
 function validateSendPayload(input: {
 	recipient_urn?: unknown
@@ -945,6 +1116,9 @@ function validateSendPayload(input: {
 	idempotency_key?: unknown
 	attachments?: unknown
 }): { ok: true; payload: SendPayload } | { ok: false; error: string } {
+	if (input.attachments !== undefined) {
+		return { ok: false, error: ATTACHMENTS_REFUSED_MESSAGE }
+	}
 	if (typeof input.recipient_urn !== 'string' || input.recipient_urn.length === 0) {
 		return { ok: false, error: 'recipient_urn is required' }
 	}
@@ -958,20 +1132,12 @@ function validateSendPayload(input: {
 	) {
 		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
 	}
-	let attachments: unknown[] | undefined
-	if (input.attachments !== undefined) {
-		if (!Array.isArray(input.attachments)) {
-			return { ok: false, error: 'attachments must be an array when provided' }
-		}
-		attachments = input.attachments
-	}
 	return {
 		ok: true,
 		payload: {
 			recipient_urn: input.recipient_urn,
 			body: input.body,
 			idempotency_key: input.idempotency_key,
-			...(attachments !== undefined ? { attachments } : {}),
 		},
 	}
 }
@@ -980,6 +1146,7 @@ function validateReplyPayload(input: {
 	thread_id?: unknown
 	body?: unknown
 	idempotency_key?: unknown
+	in_reply_to_message_id?: unknown
 }): { ok: true; payload: ReplyPayload } | { ok: false; error: string } {
 	if (typeof input.thread_id !== 'string' || input.thread_id.length === 0) {
 		return { ok: false, error: 'thread_id is required' }
@@ -987,12 +1154,46 @@ function validateReplyPayload(input: {
 	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
 		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
 	}
+	// The key is built here, from the chat and the inbound message being
+	// answered, so the webhook path and the sweep path claim the same slot no
+	// matter what a prompt tells the agent. A supplied idempotency_key is
+	// ignored when in_reply_to_message_id is present.
+	if (input.in_reply_to_message_id !== undefined) {
+		if (
+			typeof input.in_reply_to_message_id !== 'string' ||
+			input.in_reply_to_message_id.length === 0
+		) {
+			return { ok: false, error: 'in_reply_to_message_id must be a non-empty string' }
+		}
+		const derivedKey = `inbound:${input.thread_id}:${input.in_reply_to_message_id}`
+		if (derivedKey.length >= IDEMPOTENCY_KEY_MAX) {
+			return {
+				ok: false,
+				error: 'thread_id and in_reply_to_message_id are too long to build an idempotency key',
+			}
+		}
+		return {
+			ok: true,
+			payload: {
+				thread_id: input.thread_id,
+				body: input.body,
+				idempotency_key: derivedKey,
+				derived_key: true,
+			},
+		}
+	}
+	// Transitional: callers that predate in_reply_to_message_id keep supplying
+	// their own key, so prompt edits and the deploy can land in either order.
 	if (
 		typeof input.idempotency_key !== 'string' ||
 		input.idempotency_key.length === 0 ||
-		input.idempotency_key.length > 128
+		input.idempotency_key.length > IDEMPOTENCY_KEY_MAX
 	) {
-		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
+		return {
+			ok: false,
+			error:
+				'in_reply_to_message_id is required (legacy callers: idempotency_key, a non-empty string, max 128 chars)',
+		}
 	}
 	return {
 		ok: true,
@@ -1000,6 +1201,7 @@ function validateReplyPayload(input: {
 			thread_id: input.thread_id,
 			body: input.body,
 			idempotency_key: input.idempotency_key,
+			derived_key: false,
 		},
 	}
 }
@@ -1031,6 +1233,22 @@ export interface LinkedInOperationContext {
 	 * this will become required.
 	 */
 	identity?: LinkedInMcpInstanceConfig
+	/**
+	 * Where workspace files are read from, for a send that carries an approved file. Injected
+	 * by the MCP route the way Slack's fan-out receives it; absent for callers that never
+	 * send a file (the REST routes).
+	 */
+	storage?: StorageProvider
+}
+
+/**
+ * Only the approved-send path (send-object.ts) passes these: the caller of a tool or the REST
+ * route cannot, so a file never goes out on a message nobody approved.
+ */
+export interface LinkedInSendExtras {
+	attachments?: LinkedInFileAttachment[]
+	/** Start the chat as a classic InMail (one credit). Only send_inmail, in inmail-send.ts, sets it. */
+	inmail?: boolean
 }
 
 export async function sendLinkedInMessage(
@@ -1041,6 +1259,7 @@ export async function sendLinkedInMessage(
 		idempotency_key?: unknown
 		attachments?: unknown
 	},
+	extras: LinkedInSendExtras = {},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateSendPayload(input)
 	if (!validation.ok) {
@@ -1073,9 +1292,8 @@ export async function sendLinkedInMessage(
 						recipient_urn: validation.payload.recipient_urn,
 						body: validation.payload.body,
 						...(inboxId ? { inbox_id: inboxId } : {}),
-						...(validation.payload.attachments !== undefined
-							? { attachments: validation.payload.attachments }
-							: {}),
+						...(extras.attachments?.length ? { attachments: extras.attachments } : {}),
+						...(extras.inmail ? { inmail: true } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -1086,11 +1304,23 @@ export async function sendLinkedInMessage(
 
 export async function replyToLinkedInThread(
 	ctx: LinkedInOperationContext,
-	input: { thread_id?: unknown; body?: unknown; idempotency_key?: unknown },
+	input: {
+		thread_id?: unknown
+		body?: unknown
+		idempotency_key?: unknown
+		in_reply_to_message_id?: unknown
+	},
+	extras: LinkedInSendExtras = {},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateReplyPayload(input)
 	if (!validation.ok) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
+	}
+	if (!validation.payload.derived_key) {
+		logger.warn('LinkedIn reply called without in_reply_to_message_id; using the supplied key', {
+			actorId: ctx.actorId,
+			threadId: validation.payload.thread_id,
+		})
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
@@ -1110,6 +1340,7 @@ export async function replyToLinkedInThread(
 						account_id: pre.credentials.account_id,
 						thread_id: validation.payload.thread_id,
 						body: validation.payload.body,
+						...(extras.attachments?.length ? { attachments: extras.attachments } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -1205,6 +1436,20 @@ export async function listLinkedInConnections(
 	)
 }
 
+/** What `search_people` returns: the people plus enough context to read an empty page. */
+export type LinkedInPeopleSearchResult = {
+	people: LinkedInPerson[]
+	next_cursor?: string
+	/** The LinkedIn search URL actually used; open it in a browser to compare. */
+	search_url: string
+	/** Rows LinkedIn returned that we could not parse. Present only when above zero. */
+	dropped_rows?: number
+	/** True when `dropped_rows` is set: `people` is missing rows LinkedIn did return. */
+	is_partial?: true
+	/** Present when the call worked but LinkedIn returned no rows at all. */
+	empty_reason?: 'upstream_returned_no_rows'
+}
+
 /**
  * Open people search across LinkedIn.
  *
@@ -1212,11 +1457,16 @@ export async function listLinkedInConnections(
  * member — subject to their visibility — so most hits are 2nd/3rd degree and
  * NOT directly messageable. `network_distance` on each result is what tells
  * the agent that, which is why it is on the shared person shape.
+ *
+ * An empty `people` is never left to speak for itself: every result carries the
+ * `search_url` that was actually run, rows we could not parse are counted in
+ * `dropped_rows` with `is_partial`, and an empty page with nothing dropped says
+ * `empty_reason` so a caller can tell a genuine zero from a lost row.
  */
 export async function searchLinkedInPeople(
 	ctx: LinkedInOperationContext,
 	input: { keywords?: unknown; search_url?: unknown; limit?: number; cursor?: string },
-): Promise<{ people: LinkedInPerson[]; next_cursor?: string }> {
+): Promise<LinkedInPeopleSearchResult> {
 	const keywords = typeof input.keywords === 'string' ? input.keywords.trim() : ''
 	const searchUrl = typeof input.search_url === 'string' ? input.search_url.trim() : ''
 	if (!keywords && !searchUrl) {
@@ -1243,7 +1493,19 @@ export async function searchLinkedInPeople(
 			cursor: input.cursor,
 		}),
 	)
-	return normalizePeople(upstream.body, 'people search')
+	const { dropped, ...page } = parsePeoplePage(upstream.body, 'people search')
+	const result: LinkedInPeopleSearchResult = {
+		...page,
+		// Same precedence as the client: a caller-supplied URL wins over keywords.
+		search_url: searchUrl || buildPeopleSearchUrl(keywords),
+	}
+	if (dropped > 0) {
+		result.dropped_rows = dropped
+		result.is_partial = true
+	} else if (page.people.length === 0) {
+		result.empty_reason = 'upstream_returned_no_rows'
+	}
+	return result
 }
 
 /**
@@ -1447,6 +1709,8 @@ export type PublishPostInput = {
 	text?: unknown
 	post_as?: unknown
 	attachments?: unknown
+	/** Workspace file ids (PNG or JPEG). The server reads the bytes; the caller never sends them. */
+	attachment_file_ids?: unknown
 	can_read?: unknown
 	can_comment?: unknown
 	quoted_post_id?: unknown
@@ -1457,7 +1721,12 @@ export type PublishPostResult = {
 	post_id: string
 	post_url?: string
 	published_at: string
+	/** The LinkedIn identity the post went out as. Absent for callers without a fan-out identity. */
+	posted_as?: { name: string; public_identifier: string }
 }
+
+/** A carousel holds up to 9 images, the same cap the tool schema had for raw attachments. */
+const MAX_POST_IMAGES = 9
 
 function normalizePublishResponse(body: unknown): PublishPostResult {
 	const rec = (body ?? {}) as Record<string, unknown>
@@ -1487,7 +1756,15 @@ function validatePublishPostInput(
 	input: PublishPostInput,
 	opts: { requirePostAs: boolean },
 ):
-	| { ok: true; payload: { text: string; post_as?: string; extras: Record<string, unknown> } }
+	| {
+			ok: true
+			payload: {
+				text: string
+				post_as?: string
+				extras: Record<string, unknown>
+				attachment_file_ids?: string[]
+			}
+	  }
 	| {
 			ok: false
 			error: string
@@ -1510,6 +1787,24 @@ function validatePublishPostInput(
 	} else if (typeof input.post_as === 'string' && input.post_as.length > 0) {
 		postAs = input.post_as
 	}
+	let fileIds: string[] | undefined
+	if (input.attachment_file_ids !== undefined) {
+		const ids = input.attachment_file_ids
+		if (
+			!Array.isArray(ids) ||
+			ids.length > MAX_POST_IMAGES ||
+			!ids.every((id) => typeof id === 'string' && id.length > 0)
+		) {
+			return {
+				ok: false,
+				error: `attachment_file_ids must be a list of at most ${MAX_POST_IMAGES} workspace file ids`,
+			}
+		}
+		if (ids.length > 0) fileIds = ids
+	}
+	if (fileIds && Array.isArray(input.attachments) && input.attachments.length > 0) {
+		return { ok: false, error: 'pass attachment_file_ids or attachments, not both' }
+	}
 	const extras: Record<string, unknown> = {}
 	if (Array.isArray(input.attachments)) extras.attachments = input.attachments
 	if (typeof input.can_read === 'string') extras.can_read = input.can_read
@@ -1520,7 +1815,12 @@ function validatePublishPostInput(
 	}
 	return {
 		ok: true,
-		payload: postAs ? { text: input.text, post_as: postAs, extras } : { text: input.text, extras },
+		payload: {
+			text: input.text,
+			...(postAs ? { post_as: postAs } : {}),
+			extras,
+			...(fileIds ? { attachment_file_ids: fileIds } : {}),
+		},
 	}
 }
 
@@ -1537,6 +1837,8 @@ export async function publishLinkedInPost(
 	if (!validation.ok) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
 	}
+	// Read the files before anything is claimed or posted, so a bad file fails with nothing sent.
+	const images = await loadPostImages(ctx, validation.payload.attachment_file_ids)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
@@ -1553,8 +1855,10 @@ export async function publishLinkedInPost(
 	// request should collide even if LinkedIn renames a field later. `account_id`
 	// is deliberately excluded because it identifies the caller's LinkedIn
 	// credential, not the request semantics.
+	// The file ids are in the hash (validation.payload carries them), so the same text with a
+	// different image is a different post and a retry of the same call replays.
 	const requestBody = { tool: 'linkedin_publish_post', ...validation.payload }
-	return withContentHashIdempotency({
+	const published = await withContentHashIdempotency({
 		db: ctx.db,
 		actorId: ctx.actorId,
 		tool: 'linkedin_publish_post',
@@ -1567,12 +1871,47 @@ export async function publishLinkedInPost(
 						text: validation.payload.text,
 						...(postAs ? { post_as: postAs } : {}),
 						...validation.payload.extras,
+						...(images ? { attachments: images } : {}),
 					}),
 				{ mutating: true },
 			)
 			return normalizePublishResponse(upstream.body)
 		},
 	})
+	return ctx.identity
+		? {
+				...published,
+				posted_as: { name: ctx.identity.displayName, public_identifier: ctx.identity.identitySlug },
+			}
+		: published
+}
+
+async function loadPostImages(
+	ctx: LinkedInOperationContext,
+	fileIds: string[] | undefined,
+): Promise<LinkedInFileAttachment[] | undefined> {
+	if (!fileIds) return undefined
+	const images: LinkedInFileAttachment[] = []
+	for (const fileId of fileIds) {
+		try {
+			images.push(
+				await loadPostImage(
+					{ db: ctx.db, storage: ctx.storage },
+					{ workspaceId: ctx.workspaceId, fileId },
+				),
+			)
+		} catch (err) {
+			if (err instanceof LinkedInIntegrationError) {
+				throw new LinkedInIntegrationError(err.code, `File ${fileId}: ${err.message}`, {
+					httpStatus: err.httpStatus,
+					retryable: err.retryable,
+					cause: err,
+				})
+			}
+			throw err
+		}
+	}
+	return images
 }
 
 export type CommentInput = { post_id?: unknown; text?: unknown }
@@ -1943,18 +2282,34 @@ export async function readLinkedInPostComments(
 ): Promise<{ comments: LinkedInComment[]; next_cursor?: string }> {
 	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+	const parsed = parsePostId(postId)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
-	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
-		client.readPostComments({
-			account_id: pre.credentials.account_id,
-			post_id: postId,
-			limit: input.limit,
-			cursor: input.cursor,
-		}),
-	)
-	return normalizeCommentsList(upstream.body)
+	const accountId = pre.credentials.account_id
+	try {
+		// The comments route takes the id a Get a Post response carries, so an activity
+		// number is resolved first. The opaque id list_user_posts returns goes straight through.
+		let subRoutePostId = parsed.kind === 'opaque' ? parsed.id : ''
+		if (parsed.kind === 'activity') {
+			const activityId = parsed.activityId
+			const postResp = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+				client.retrievePost({ account_id: accountId, post_id: activityId }),
+			)
+			subRoutePostId = resolvedPostId(postResp.body) || activityId
+		}
+		const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+			client.readPostComments({
+				account_id: accountId,
+				post_id: subRoutePostId,
+				limit: input.limit,
+				cursor: input.cursor,
+			}),
+		)
+		return normalizeCommentsList(upstream.body)
+	} catch (err) {
+		throw withAcceptedForms(err)
+	}
 }
 
 export type PostEngagementResult = {
@@ -1978,6 +2333,21 @@ export type PostEngagementResult = {
 	}
 	/** True when `partial_errors` carries any non-null marker. */
 	is_partial: boolean
+}
+
+/**
+ * The id `retrievePost` returns on the Post object. Unipile's sub-routes
+ * (reactions, comments) require the id from a *Get a Post* response, not the
+ * native activity id the caller supplies — so a read that skips this resolves
+ * the post, then asks for engagement against an id the sub-route rejects.
+ * Same `data`-unwrap as `summarisePost`, since the envelope may or may not
+ * nest the Post under `data`.
+ */
+function resolvedPostId(body: unknown): string {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	return typeof inner.id === 'string' ? inner.id.trim() : ''
 }
 
 function summarisePost(body: unknown): {
@@ -2166,23 +2536,34 @@ export async function getLinkedInPostEngagement(
 ): Promise<PostEngagementResult> {
 	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+	const parsed = parsePostId(postId)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const acc = pre.credentials.account_id
+	// A URL or URN is reduced to its activity number before the call.
+	const retrieveId = parsed.kind === 'activity' ? parsed.activityId : parsed.id
 	// retrievePost first — if the base post read fails, there's nothing to
 	// return but an empty envelope, so treat that as terminal.
 	const postResp = await callLinkedInWithRetry<Record<string, unknown>>(() =>
-		client.retrievePost({ account_id: acc, post_id: postId }),
-	)
+		client.retrievePost({ account_id: acc, post_id: retrieveId }),
+	).catch((err) => {
+		throw withAcceptedForms(err)
+	})
 	const summary = summarisePost(postResp.body)
+	// Sub-routes take the id *retrievePost* returns, never the caller's input —
+	// Unipile's reactions/comments endpoints only accept the Get-a-Post id. Fall
+	// back to the input only when the response carried no usable id, so a
+	// degenerate response degrades to the old behaviour rather than calling with
+	// an empty segment.
+	const subRoutePostId = resolvedPostId(postResp.body) || postId
 	// Reactions + comments run concurrently — each is independent, and both
 	// failing degrades to a base-metadata-only envelope rather than a total
 	// failure. `Promise.all` is fine because both `safeCollectReactions` and
 	// `safeCountComments` swallow their own errors.
 	const [reactions, comments] = await Promise.all([
-		safeCollectReactions(client, acc, postId),
-		safeCountComments(client, acc, postId),
+		safeCollectReactions(client, acc, subRoutePostId),
+		safeCountComments(client, acc, subRoutePostId),
 	])
 	const isPartial = reactions.error !== null || comments.error !== null
 	return {
@@ -2197,18 +2578,44 @@ export async function getLinkedInPostEngagement(
 
 export async function getLinkedInProfile(
 	ctx: LinkedInOperationContext,
-	input: { identifier?: unknown },
-): Promise<LinkedInPerson> {
+	input: { identifier?: unknown; sections?: unknown },
+): Promise<LinkedInProfile> {
 	const identifier = typeof input.identifier === 'string' ? input.identifier.trim() : ''
 	if (!identifier) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', 'identifier is required')
 	}
+	const wantsExperience = parseProfileSections(input.sections)
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
-	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
-		client.getProfile({ account_id: pre.credentials.account_id, identifier }),
-	)
+	const account_id = pre.credentials.account_id
+	const fetchProfile = (withSections: boolean) =>
+		callLinkedInWithRetry<Record<string, unknown>>(() =>
+			client.getProfile({
+				account_id,
+				identifier,
+				...(withSections ? { with_sections: [EXPERIENCE_SECTION] } : {}),
+			}),
+		)
+	let upstream: Awaited<ReturnType<typeof fetchProfile>>
+	let experienceFailed = false
+	if (wantsExperience) {
+		try {
+			upstream = await fetchProfile(true)
+		} catch (err) {
+			if (!isLinkedInIntegrationError(err)) throw err
+			// LinkedIn may throttle or reject a section pull. Fall back to the
+			// base profile so the call still answers; if the base fetch fails too
+			// that error is the real one and propagates.
+			logger.warn('linkedin-unipile get_profile: experience pull failed, falling back', {
+				code: err.code,
+			})
+			experienceFailed = true
+			upstream = await fetchProfile(false)
+		}
+	} else {
+		upstream = await fetchProfile(false)
+	}
 	const person = toPerson(upstream.body)
 	if (!person) {
 		throw new LinkedInIntegrationError(
@@ -2216,7 +2623,70 @@ export async function getLinkedInProfile(
 			'LinkedIn profile response had an unrecognised shape',
 		)
 	}
-	return person
+	if (!wantsExperience) return person
+	const experience = experienceFailed ? null : toExperience(upstream.body)
+	return experience ? { ...person, experience } : { ...person, experience_unavailable: true }
+}
+
+/** The raw InMail credits of the connected account. Throws when the call fails. */
+export async function readLinkedInInmailCredits(
+	ctx: LinkedInOperationContext,
+): Promise<InmailCredits> {
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+		client.getInmailCredits({ account_id: pre.credentials.account_id }),
+	)
+	return parseInmailCredits(upstream.body)
+}
+
+/**
+ * `get_inmail_balance`: the connected account's InMail credits and what is still sendable
+ * above the floor we keep back. A failed credits call answers `seat: unknown` instead of an
+ * error, so an agent that only wants to know whether to try an InMail gets an answer it can
+ * act on. A missing or revoked credential still throws, as for every other tool.
+ */
+export async function getLinkedInInmailBalance(
+	ctx: LinkedInOperationContext,
+): Promise<InmailBalance> {
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	try {
+		const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+			client.getInmailCredits({ account_id: pre.credentials.account_id }),
+		)
+		return deriveInmailBalance(parseInmailCredits(upstream.body))
+	} catch (err) {
+		if (!isLinkedInIntegrationError(err)) throw err
+		logger.warn('linkedin-unipile get_inmail_balance: credits read failed', { code: err.code })
+		return UNKNOWN_INMAIL_BALANCE
+	}
+}
+
+/**
+ * Validate the optional `sections` input. Absent or empty means off (the
+ * default, which costs nothing and leaves the response unchanged). Only
+ * "experience" is accepted for now; anything else is a clear input error rather
+ * than a silent no-op.
+ */
+function parseProfileSections(raw: unknown): boolean {
+	if (raw === undefined || raw === null) return false
+	if (!Array.isArray(raw)) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'sections must be an array; the only supported value is "experience"',
+		)
+	}
+	const unsupported = raw.filter((v) => v !== 'experience')
+	if (unsupported.length > 0) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			`unsupported sections ${JSON.stringify(unsupported)}; the only supported value is "experience"`,
+		)
+	}
+	return raw.length > 0
 }
 
 /**
@@ -2286,5 +2756,218 @@ function normalizeConnectionRequestResponse(
 		status: 'sent',
 		sent_at: sentAt,
 		...(invitationId ? { invitation_id: invitationId } : {}),
+	}
+}
+
+const SENT_INVITATIONS_DEFAULT_LIMIT = 50
+const SENT_INVITATIONS_MAX_LIMIT = 100
+
+/** An optional whole number within [min, max]; anything else is an input error naming the field. */
+function optionalInt(raw: unknown, field: string, min: number, max: number): number | undefined {
+	if (raw === undefined || raw === null) return undefined
+	if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < min || raw > max) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			`${field} must be a whole number from ${min} to ${max}`,
+		)
+	}
+	return raw
+}
+
+export type ListSentInvitationsResult = {
+	invitations: SentInvitation[]
+	total_pending: number | null
+	next_offset: number | null
+	/** Rows on this page with no date from LinkedIn. They never match older_than_days. */
+	rows_without_date: number
+}
+
+/**
+ * `list_sent_invitations`: the invitations this account sent that are still pending, one page
+ * at a time. A read of the account's own list, so it is neither capped nor flagged.
+ *
+ * `older_than_days` keeps rows at least that many days old and never matches a row with no
+ * date; `rows_without_date` says how many such rows the page held, so an empty result is not
+ * mistaken for "nothing is stale". `next_offset` moves by what LinkedIn returned, not by what
+ * the filter kept, so paging with a filter still walks the whole list.
+ */
+export async function listLinkedInSentInvitations(
+	ctx: LinkedInOperationContext,
+	input: { limit?: unknown; offset?: unknown; older_than_days?: unknown } = {},
+	now: () => Date = () => new Date(),
+): Promise<ListSentInvitationsResult> {
+	const limit =
+		optionalInt(input.limit, 'limit', 1, SENT_INVITATIONS_MAX_LIMIT) ??
+		SENT_INVITATIONS_DEFAULT_LIMIT
+	const offset = optionalInt(input.offset, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0
+	const olderThanDays = optionalInt(input.older_than_days, 'older_than_days', 0, 3650)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+		client.listRelationRequests({ account_id: pre.credentials.account_id, offset, limit }),
+	)
+	const page = parseSentInvitations(upstream.body, now())
+	// Where Unipile gives no send date, the age of an invitation counts from the first time a
+	// list showed it, so note that for every undated row seen here.
+	if (ctx.identity) {
+		await recordFirstSeen(
+			ctx.db,
+			{
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				integrationId: ctx.identity.integrationId,
+			},
+			page.invitations.filter((i) => i.sent_at === null),
+		)
+	}
+	return {
+		invitations:
+			olderThanDays === undefined
+				? page.invitations
+				: page.invitations.filter((i) => i.age_days !== null && i.age_days >= olderThanDays),
+		total_pending: page.total,
+		next_offset: nextSentOffset(offset, limit, page),
+		rows_without_date: page.invitations.filter((i) => i.sent_at === null).length,
+	}
+}
+
+export type WithdrawInvitationResult = {
+	invitation_id: string
+	recipient_provider_id: string | null
+	withdrawn: true
+	already_withdrawn: boolean
+	/** When LinkedIn lets this account invite the person again: the withdrawal plus 21 days. */
+	can_reinvite_after: string
+}
+
+function refuseWithdrawal(message: string): never {
+	throw new LinkedInActionRefusal('refused_rule', 'INVALID_INPUT', message)
+}
+
+/**
+ * `withdraw_invitation`: takes back one pending invitation this account sent.
+ *
+ * Unipile's cancel call withdraws a sent invite and refuses a received one with the same call,
+ * so the id is checked against the account's own sent list before anything is cancelled. The
+ * caller passes an id only: the age that gates the call comes from LinkedIn's send date, or,
+ * where LinkedIn gave none, from the first time our own list showed the id, never from the caller.
+ *
+ * Runs inside `withActionLog` (the daily cap of 30 is checked there, before this runs), and
+ * refuses with `refused_rule` when a rule says no. Order here:
+ *   1. A success already on the log for this invitation returns `already_withdrawn` at once. This
+ *      comes before the sent-list lookup because a withdrawn invitation leaves the sent list, so
+ *      asking the list afterwards would call it "not a sent invitation". Such a call is logged
+ *      as `noop`, which the cap does not count.
+ *   2. The id must be in the sent list, and at least 14 days old.
+ *   3. Cancel. A 404 means it is already gone: `already_withdrawn`, also a `noop`.
+ * The feature flag is checked when the tool is registered (mcp-server.ts).
+ */
+export async function withdrawLinkedInInvitation(
+	ctx: LinkedInOperationContext,
+	input: { invitation_id?: unknown },
+	deps: {
+		integrationId: string
+		recorder: ActionRecorder
+		now?: () => Date
+		caches?: SentListCaches
+	},
+): Promise<WithdrawInvitationResult> {
+	const invitationId = typeof input.invitation_id === 'string' ? input.invitation_id.trim() : ''
+	if (!invitationId) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', 'invitation_id is required')
+	}
+	const now = (deps.now ?? (() => new Date()))()
+	const { recorder } = deps
+	recorder.set({ refId: invitationId })
+
+	const prior = await findPriorWithdrawal(ctx.db, deps.integrationId, invitationId)
+	if (prior) {
+		recorder.set({ refId: invitationId, targetProviderId: prior.recipientProviderId })
+		recorder.markNoop()
+		return {
+			invitation_id: invitationId,
+			recipient_provider_id: prior.recipientProviderId,
+			withdrawn: true,
+			already_withdrawn: true,
+			can_reinvite_after: addDays(prior.withdrawnAt, REINVITE_LOCK_DAYS).toISOString(),
+		}
+	}
+
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+	const accountId = pre.credentials.account_id
+	const scope = {
+		workspaceId: ctx.workspaceId,
+		actorId: ctx.actorId,
+		integrationId: deps.integrationId,
+	}
+
+	const found = await findSentInvitation({
+		accountKey: accountId,
+		invitationId,
+		nowMs: now.getTime(),
+		caches: deps.caches,
+		fetchPage: async (offset, limit) => {
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
+				client.listRelationRequests({ account_id: accountId, offset, limit }),
+			)
+			return parseSentInvitations(upstream.body, now)
+		},
+		onPage: (rows) =>
+			recordFirstSeen(
+				ctx.db,
+				scope,
+				rows.filter((row) => row.sent_at === null),
+			),
+	})
+	if (!found) {
+		refuseWithdrawal(
+			`Invitation ${invitationId} is not in this account's list of pending sent invitations: not a sent invitation; this tool never refuses received invites. Nothing was withdrawn.`,
+		)
+	}
+	recorder.set({ refId: invitationId, targetProviderId: found.recipient_provider_id })
+
+	// The age is recomputed here, not read from the cached row, which may be 10 minutes old.
+	let ageDays = inviteAgeDays(found.sent_at, now)
+	if (found.sent_at === null) {
+		const firstSeen = await findFirstSeen(ctx.db, deps.integrationId, invitationId)
+		ageDays = inviteAgeDays(firstSeen ? firstSeen.toISOString() : null, now)
+		if (ageDays === null) {
+			refuseWithdrawal(
+				`The age of invitation ${invitationId} is unknown: LinkedIn gave no send date and this account's list has not shown it before. Nothing was withdrawn. List the sent invitations, then try again.`,
+			)
+		}
+	}
+	if (ageDays === null || ageDays < WITHDRAW_MIN_AGE_DAYS) {
+		const basis =
+			found.sent_at === null
+				? " (LinkedIn gave no send date, so the age counts from when this account's list first showed it)"
+				: ''
+		refuseWithdrawal(
+			`Invitation ${invitationId} is ${ageDays ?? 0} days old${basis}; only invitations at least ${WITHDRAW_MIN_AGE_DAYS} days old can be withdrawn. Nothing was withdrawn.`,
+		)
+	}
+
+	let alreadyGone = false
+	try {
+		await callLinkedInWithRetry(
+			() => client.cancelRelationRequest({ account_id: accountId, request_id: invitationId }),
+			{ mutating: true },
+		)
+	} catch (err) {
+		// The sent list just showed this id, so a 404 is about the request: it is already gone.
+		if (!(isLinkedInIntegrationError(err) && err.httpStatus === 404)) throw err
+		alreadyGone = true
+	}
+	forgetSentInvitation(accountId, invitationId, deps.caches)
+	if (alreadyGone) recorder.markNoop()
+	return {
+		invitation_id: invitationId,
+		recipient_provider_id: found.recipient_provider_id,
+		withdrawn: true,
+		already_withdrawn: alreadyGone,
+		can_reinvite_after: addDays(now, REINVITE_LOCK_DAYS).toISOString(),
 	}
 }

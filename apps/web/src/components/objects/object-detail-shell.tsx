@@ -16,6 +16,7 @@ import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveSidebarViewport, trackSidebarToggle } from '@/lib/analytics'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -334,11 +335,11 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 						attention: prev.attention,
 						fresh: prev.fresh,
 						starred: prev.starred,
-						updated: prev.updated,
+						updated: isUpdatedBucket(prev.updated) ? prev.updated : undefined,
 						sort: prev.sort ?? 'updatedAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,
-						groupBy: prev.groupBy ?? 'status',
+						groupBy: prev.groupBy ?? 'none',
 						ids: prev.ids,
 						includeArchived: prev.includeArchived,
 					}),

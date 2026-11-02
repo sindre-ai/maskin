@@ -11,18 +11,18 @@ import {
 
 describe('computeChanges', () => {
 	it('returns one entry per changed whitelisted field', () => {
-		const prev = { title: 'old', status: 'signal', content: 'same' }
+		const prev = { title: 'old', status: 'opportunity', content: 'same' }
 		const next = { title: 'new', status: 'active', content: 'same' }
 		const changes = computeChanges(prev, next, OBJECT_DIFF_FIELDS)
 		expect(changes).toEqual([
-			{ field: 'status', old: 'signal', new: 'active' },
+			{ field: 'status', old: 'opportunity', new: 'active' },
 			{ field: 'title', old: 'old', new: 'new' },
 		])
 	})
 
 	it('returns an empty array when no whitelisted field changed', () => {
-		const prev = { title: 'same', status: 'signal', id: 'a' }
-		const next = { title: 'same', status: 'signal', id: 'b' }
+		const prev = { title: 'same', status: 'opportunity', id: 'a' }
+		const next = { title: 'same', status: 'opportunity', id: 'b' }
 		expect(computeChanges(prev, next, OBJECT_DIFF_FIELDS)).toEqual([])
 	})
 
@@ -42,8 +42,8 @@ describe('computeChanges', () => {
 	})
 
 	it('treats null/undefined as equal for change detection', () => {
-		const prev = { driver: null, status: 'signal' } as Record<string, unknown>
-		const next = { driver: undefined, status: 'signal' } as Record<string, unknown>
+		const prev = { driver: null, status: 'opportunity' } as Record<string, unknown>
+		const next = { driver: undefined, status: 'opportunity' } as Record<string, unknown>
 		expect(computeChanges(prev, next, ['driver', 'status'])).toEqual([])
 	})
 })
@@ -73,11 +73,11 @@ describe('readChanges', () => {
 describe('changesFromSnapshot', () => {
 	it('derives changes from legacy {previous, updated} data', () => {
 		const data = {
-			previous: { status: 'signal', title: 'Old' },
+			previous: { status: 'opportunity', title: 'Old' },
 			updated: { status: 'active', title: 'Old' },
 		}
 		expect(changesFromSnapshot(data, OBJECT_DIFF_FIELDS)).toEqual([
-			{ field: 'status', old: 'signal', new: 'active' },
+			{ field: 'status', old: 'opportunity', new: 'active' },
 		])
 	})
 
@@ -89,22 +89,22 @@ describe('changesFromSnapshot', () => {
 describe('getChangesFromEventData', () => {
 	it('prefers new-shape changes over legacy snapshot when both are present', () => {
 		const data = {
-			changes: [{ field: 'status', old: 'signal', new: 'active' }],
+			changes: [{ field: 'status', old: 'opportunity', new: 'active' }],
 			previous: { status: 'other' },
 			updated: { status: 'other' },
 		}
 		expect(getChangesFromEventData(data, OBJECT_DIFF_FIELDS)).toEqual([
-			{ field: 'status', old: 'signal', new: 'active' },
+			{ field: 'status', old: 'opportunity', new: 'active' },
 		])
 	})
 
 	it('falls back to legacy snapshot when changes is absent', () => {
 		const data = {
-			previous: { status: 'signal' },
+			previous: { status: 'opportunity' },
 			updated: { status: 'active' },
 		}
 		expect(getChangesFromEventData(data, OBJECT_DIFF_FIELDS)).toEqual([
-			{ field: 'status', old: 'signal', new: 'active' },
+			{ field: 'status', old: 'opportunity', new: 'active' },
 		])
 	})
 
@@ -135,11 +135,11 @@ describe('reversePatch', () => {
 	it('rewinds each changed field to its old value', () => {
 		const current = { status: 'active', title: 'New', unchanged: 42 }
 		const changes = [
-			{ field: 'status', old: 'signal', new: 'active' },
+			{ field: 'status', old: 'opportunity', new: 'active' },
 			{ field: 'title', old: 'Old', new: 'New' },
 		]
 		expect(reversePatch(current, changes)).toEqual({
-			status: 'signal',
+			status: 'opportunity',
 			title: 'Old',
 			unchanged: 42,
 		})

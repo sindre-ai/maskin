@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import type { Database, Transaction } from '@maskin/db'
+import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
@@ -11,7 +11,6 @@ import {
 	sessions,
 	starState,
 	subscriptions,
-	triggers,
 	workspaces,
 } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
@@ -22,7 +21,6 @@ import {
 	OBJECT_DIFF_FIELDS,
 	SAFE_METADATA_FIELD_NAME_RE,
 	SIGNUP_CAPTURE_SOURCE,
-	TERMINAL_BET_STATUSES,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
 	bulkUpdateObjectsResponseSchema,
@@ -34,7 +32,9 @@ import {
 	getChangesFromEventData,
 	migrateObjectTypeResponseSchema,
 	migrateObjectTypeSchema,
-	objectQuerySchema,
+	objectFacetsQuerySchema,
+	objectFacetsResponseSchema,
+	objectListQuerySchema,
 	reversePatch,
 	searchObjectsSchema,
 	updateObjectSchema,
@@ -48,10 +48,10 @@ import {
 	desc,
 	eq,
 	gt,
+	gte,
 	ilike,
 	inArray,
 	lt,
-	lte,
 	ne,
 	or,
 	sql,
@@ -69,7 +69,9 @@ import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { resolveEndpointTitles, sessionTitleFrom } from '../lib/graph/endpoint-titles'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
-import { insertNotificationsWithEvents } from '../lib/notifications'
+import { withDeliveryState } from '../lib/object-delivery'
+import { buildObjectPreview } from '../lib/object-preview'
+import { applyObjectUpdate } from '../lib/object-update'
 import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
@@ -79,9 +81,23 @@ import {
 	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import {
+	TITLE_COVERAGE_SCALE,
+	TITLE_HIT_WEIGHT,
+	TITLE_PHRASE_PREFIX_BONUS,
+	tokenIlikePattern,
+} from '../lib/search-rank'
 import { serialize, serializeArray } from '../lib/serialize'
+import { checkTaskInitialStatus } from '../lib/task-initial-status'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	assertWorkspaceWriterRole,
+	isWorkspaceHumanAdminOrOwner,
+	isWorkspaceMember,
+	isWorkspaceWriter,
+} from '../lib/workspace-auth'
+import { movedInstruction, wakeAgentFromCard } from '../services/chat-card-wake'
+import { loadObjectLastSession } from '../services/object-last-session'
 import type { SessionManager } from '../services/session-manager'
 import {
 	getStarredObjectIds,
@@ -100,6 +116,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		sessionManager: SessionManager
 		/** Set by app-factory when the request carried a well-formed
@@ -145,9 +163,38 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
  * `createdAt` (or any non-unique sort key) can re-appear across pages.
  */
 function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
-	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
+	const resolved = resolveSortColumn(query.sort) ?? objects.createdAt
+	const sortExpr =
+		resolved === objects.createdAt || resolved === objects.updatedAt
+			? truncateToMs(resolved)
+			: resolved
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
+}
+
+/**
+ * Postgres stores timestamps to the microsecond, but the cursor round-trips
+ * through a JS Date (milliseconds). A bulk insert stamps every row with one
+ * microsecond-precision `created_at`, so seeking past the truncated value
+ * skips those tied rows under desc and replays them under asc. Ordering and
+ * seeking on the millisecond-truncated value keeps the sort key and the cursor
+ * on the same grid; `id` breaks the tie inside a millisecond.
+ */
+function truncateToMs(column: Column): SQL {
+	// updatedAt is converted to UTC first so the expression is IMMUTABLE and
+	// matches objects_ws_updated_at_ms_idx (migration 0088). The ORDER BY, the
+	// snapshot filter and the seek must all go through this one function, and
+	// bind their value through `seekBound`, or the planner cannot use the index.
+	if (column === objects.updatedAt) {
+		return sql`date_trunc('milliseconds', ${column} AT TIME ZONE 'UTC')`
+	}
+	return sql`date_trunc('milliseconds', ${column})`
+}
+
+/** A cursor / snapshot timestamp, typed the same way `truncateToMs` types its column. */
+function seekBound(column: Column, iso: string): SQL {
+	if (column === objects.updatedAt) return sql`(${iso}::timestamptz AT TIME ZONE 'UTC')`
+	return sql`${iso}::timestamptz`
 }
 
 /**
@@ -254,20 +301,24 @@ function buildCursorConditions(
 	includeKeyset = true,
 ): SQL[] {
 	const conditions: SQL[] = []
-	const seekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
+	const rawSeekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
+	const seekColumn = truncateToMs(rawSeekColumn)
 	if (query.snapshot_at) {
-		conditions.push(lte(seekColumn, new Date(query.snapshot_at)))
+		const snapshot = seekBound(rawSeekColumn, new Date(query.snapshot_at).toISOString())
+		conditions.push(sql`${seekColumn} <= ${snapshot}`)
 	}
 	if (includeKeyset && isCursorSeekActive(query)) {
-		const lastCa = new Date(query.cursor_created_at as string)
+		const lastCa = seekBound(
+			rawSeekColumn,
+			new Date(query.cursor_created_at as string).toISOString(),
+		)
 		const lastId = query.cursor_id as string
-		if (query.order === 'asc') {
-			const seek = or(gt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
-			if (seek) conditions.push(seek)
-		} else {
-			const seek = or(lt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
-			if (seek) conditions.push(seek)
-		}
+		const past = query.order === 'asc' ? sql`>` : sql`<`
+		const seek = or(
+			sql`${seekColumn} ${past} ${lastCa}`,
+			and(sql`${seekColumn} = ${lastCa}`, gt(objects.id, lastId)),
+		)
+		if (seek) conditions.push(seek)
 	}
 	return conditions
 }
@@ -365,8 +416,53 @@ export function tokenizeSearchQuery(q: string): string[] {
 	return tokens
 }
 
-function tokenIlikePattern(token: string): string {
-	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
+function phraseWordPrefixPatterns(q: string): [string, string] | null {
+	const phrase = q.trim().toLowerCase().replace(/\s+/g, ' ')
+	if (!phrase) return null
+	const escaped = phrase.replace(/[%_\\]/g, '\\$&')
+	return [`${escaped}%`, `% ${escaped}%`]
+}
+
+/**
+ * IANA zone name safe to inline into SQL. The date group axes put the zone in
+ * both SELECT and GROUP BY, where two separate bind parameters would not be
+ * recognised as the same expression — so it is validated and inlined instead.
+ */
+function safeTimeZone(tz?: string): string {
+	if (!tz || !/^[A-Za-z0-9_+-/]{1,64}$/.test(tz)) return 'UTC'
+	try {
+		new Intl.DateTimeFormat('en', { timeZone: tz })
+		return tz
+	} catch {
+		return 'UTC'
+	}
+}
+
+/** The SQL expression an Objects-page group axis buckets rows by, or null for an
+ *  axis the server does not know. Empty string = "no value". Mirrors
+ *  `getObjectGroupValue` on the client. */
+function resolveGroupExpression(groupBy: string | undefined, tz?: string): SQL | null {
+	if (!groupBy || groupBy === 'status') return sql`${objects.status}`
+	if (groupBy === 'type') return sql`${objects.type}`
+	if (groupBy === 'driver') return sql`coalesce(${objects.driver}::text, '')`
+	if (groupBy === 'createdBy') return sql`coalesce(${objects.createdBy}::text, '')`
+	if (groupBy === 'createdAt' || groupBy === 'updatedAt') {
+		const column = groupBy === 'createdAt' ? objects.createdAt : objects.updatedAt
+		return sql`to_char(${column} at time zone '${sql.raw(safeTimeZone(tz))}', 'YYYY-MM-DD')`
+	}
+	if (groupBy.startsWith('metadata.')) {
+		const fieldName = groupBy.slice('metadata.'.length)
+		if (SAFE_METADATA_FIELD_NAME_RE.test(fieldName)) {
+			return sql`coalesce(${objects.metadata}->>'${sql.raw(fieldName)}', '')`
+		}
+	}
+	return null
+}
+
+// Literal, table-qualified SQL — Drizzle column objects inside a correlated
+// subquery render unqualified (known-pitfalls.md).
+function starredByCondition(actorId: string): SQL {
+	return sql`exists (select 1 from star_state s where s.actor_id = ${actorId} and s.entity_type = 'object' and s.entity_id = objects.id)`
 }
 
 export function buildObjectListConditions(
@@ -379,11 +475,30 @@ export function buildObjectListConditions(
 		updated_before?: string
 		updated_after?: string
 		include_archived?: boolean
+		starred?: boolean
+		working?: boolean
+		attention_ids?: string
+		group_by?: string
+		group_value?: string
+		tz?: string
 	},
 	metadataFilters: { field: string; value: string }[] = [],
+	context: { actorId?: string } = {},
 ): { conditions: SQL[]; searchRankExpr: SQL | null } {
 	const conditions: SQL[] = []
 	let searchRankExpr: SQL | null = null
+	if (query.starred && context.actorId) conditions.push(starredByCondition(context.actorId))
+	if (query.working) conditions.push(sql`${objects.activeSessionId} is not null`)
+	if (query.attention_ids !== undefined) {
+		const attentionIds = query.attention_ids.split(',').filter((id) => UUID_RE.test(id))
+		conditions.push(attentionIds.length > 0 ? inArray(objects.id, attentionIds) : sql`false`)
+	}
+	if (query.group_value !== undefined) {
+		// An axis the server does not know falls back to status, like the board.
+		const groupExpr =
+			resolveGroupExpression(query.group_by, query.tz) ?? resolveGroupExpression('status')
+		conditions.push(sql`${groupExpr} = ${query.group_value}`)
+	}
 	if (query.type) conditions.push(eq(objects.type, query.type))
 	if (query.status) {
 		const statuses = query.status.split(',').filter(Boolean)
@@ -409,7 +524,14 @@ export function buildObjectListConditions(
 				const match = or(ilike(objects.title, pattern), ilike(objects.content, pattern))
 				if (match) perTokenMatches.push(match)
 				perTokenHits.push(
-					sql`(case when ${objects.title} ilike ${pattern} or ${objects.content} ilike ${pattern} then 1 else 0 end)`,
+					sql`((case when ${objects.title} ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(${objects.title}), 1)) else 0 end) + (case when ${objects.content} ilike ${pattern} then 1 else 0 end))`,
+				)
+			}
+			const phrasePatterns = phraseWordPrefixPatterns(query.q)
+			if (phrasePatterns) {
+				const [atStart, atWord] = phrasePatterns
+				perTokenHits.push(
+					sql`(case when (${objects.title} ilike ${atStart} or ${objects.title} ilike ${atWord}) then ${TITLE_PHRASE_PREFIX_BONUS}::int else 0 end)`,
 				)
 			}
 			const combined = or(...perTokenMatches)
@@ -435,9 +557,10 @@ export function buildObjectListConditions(
 }
 
 /**
- * Ordering when a tokenized `q` produced a rank expression: token-hit count
- * DESC, then title ASC (T1's deterministic tie-break), then id ASC to keep
- * pagination stable across ties.
+ * Ordering when a tokenized `q` produced a rank expression: rank DESC (title
+ * hits, weighted by how much of the title the query covers), then title ASC
+ * (T1's deterministic tie-break), then id ASC to keep pagination stable across
+ * ties.
  */
 export function tokenRankOrderBy(rankExpr: SQL): SQL[] {
 	return [desc(rankExpr), asc(objects.title), asc(objects.id)]
@@ -473,6 +596,7 @@ function toCount(value: unknown) {
 const createObjectRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Create object',
 	request: {
@@ -516,6 +640,7 @@ app.openapi(createObjectRoute, async (c) => {
 	const sessionManager = c.get('sessionManager')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Fetch workspace to validate status
 	const [workspace] = await db
@@ -556,6 +681,14 @@ app.openapi(createObjectRoute, async (c) => {
 			400,
 		)
 	}
+
+	const taskStatusError = checkTaskInitialStatus({
+		type: body.type,
+		status: body.status,
+		actorId,
+		field: 'status',
+	})
+	if (taskStatusError) return c.json(taskStatusError, 400)
 
 	if (body.type === 'knowledge') {
 		const duplicate = await findKnowledgeDuplicate(db, workspaceId, body.title)
@@ -636,8 +769,7 @@ app.openapi(createObjectRoute, async (c) => {
 
 	// Log event · pass the session context so `recordEvent` can also upsert
 	// a `session → object` `produced_by` edge when the caller's session id
-	// arrived on the `X-Maskin-Session-Id` header and the
-	// `graph-provenance-writes` flag is on for the session's actor.
+	// arrived on the `X-Maskin-Session-Id` header.
 	await recordEvent(db, {
 		workspaceId,
 		actorId,
@@ -694,7 +826,7 @@ const listObjectsRoute = createRoute({
 	summary: 'List objects',
 	request: {
 		headers: workspaceIdHeader,
-		query: objectQuerySchema,
+		query: objectListQuerySchema,
 	},
 	responses: {
 		200: {
@@ -722,6 +854,7 @@ app.openapi(listObjectsRoute, async (c) => {
 	const { conditions: filterConditions, searchRankExpr } = buildObjectListConditions(
 		query,
 		parsedMetadataFilters.filters,
+		{ actorId },
 	)
 	// When `q` tokenizes to a non-empty set the ORDER BY switches to
 	// rank-by-token-hits, and the `(createdAt, id)` keyset seek in
@@ -744,13 +877,29 @@ app.openapi(listObjectsRoute, async (c) => {
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
 	// the walk snapshot-consistent when a caller accidentally forwards both.
-	const results = await db
-		.select()
-		.from(objects)
-		.where(and(...conditions))
-		.limit(query.limit)
-		.offset(useKeyset ? 0 : query.offset)
-		.orderBy(...orderBy)
+	// X-Total-Count is the real match count under the walk's snapshot — the filters
+	// and the `snapshot_at` freeze, but not the keyset seek, so it stays constant
+	// across every page of one walk.
+	const [results, [totalRow]] = await Promise.all([
+		db
+			.select()
+			.from(objects)
+			.where(and(...conditions))
+			.limit(query.limit)
+			.offset(useKeyset ? 0 : query.offset)
+			.orderBy(...orderBy),
+		db
+			.select({ value: count() })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					...filterConditions,
+					...buildCursorConditions(query, false),
+				),
+			),
+	])
+	c.header('X-Total-Count', String(totalRow?.value ?? 0))
 
 	// D2 · Working-ring predicate. Hydrate the active session's status as a
 	// scalar the client reads with `=== 'running'` — mirrors the read_state
@@ -808,6 +957,171 @@ async function hydrateActiveSessionStates(
 	}
 	return statesByObjectId
 }
+
+// GET /facets - Exact counts for the Objects page (tabs, group headers, filter chips)
+const facetsObjectsRoute = createRoute({
+	method: 'get',
+	path: '/facets',
+	tags: ['Objects'],
+	summary: 'Counts for the Objects page',
+	description:
+		'Totals under the same filters as GET /objects. Each facet ignores its own axis (type counts ignore `type`, status counts ignore `status`, ...) so every option shows what picking it would give. `groups` is the total per `group_by` value, in display order.',
+	request: {
+		headers: workspaceIdHeader,
+		query: objectFacetsQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: objectFacetsResponseSchema } },
+			description: 'Facet counts',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+	},
+})
+
+const DAY_MS = 86_400_000
+
+app.openapi(facetsObjectsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const parsedMetadataFilters = extractMetadataFilters(c.req.query())
+	if (!parsedMetadataFilters.ok) {
+		return c.json(invalidMetadataFieldError(parsedMetadataFilters.invalidField), 400)
+	}
+
+	// Conditions under every filter except the named axes. `group_*` never applies
+	// here: the group totals are the point.
+	const conditionsWithout = (omit: Partial<Record<keyof typeof query, true>>) => {
+		const q = { ...query, group_by: undefined, group_value: undefined } as Record<string, unknown>
+		for (const key of Object.keys(omit)) {
+			q[key] = key === 'starred' || key === 'working' ? false : undefined
+		}
+		return [
+			eq(objects.workspaceId, workspaceId),
+			...buildObjectListConditions(q, parsedMetadataFilters.filters, { actorId }).conditions,
+		]
+	}
+	const grouped = async (expr: SQL, where: SQL[]) => {
+		const rows = (await db
+			.select({ value: expr, total: count() })
+			.from(objects)
+			.where(and(...where))
+			.groupBy(expr)) as Array<{ value: unknown; total: unknown }>
+		return rows.map((row) => ({ value: String(row.value ?? ''), total: toCount(row.total) }))
+	}
+	const countWhere = async (where: SQL[]) => {
+		const [row] = await db
+			.select({ value: count() })
+			.from(objects)
+			.where(and(...where))
+		return toCount(row?.value)
+	}
+	const toRecord = (rows: Array<{ value: string; total: number }>) =>
+		Object.fromEntries(rows.map((row) => [row.value, row.total]))
+
+	const dayStart = query.day_start ? new Date(query.day_start).getTime() : null
+	const updatedBounds: Record<string, [number | null, number | null]> | null =
+		dayStart === null
+			? null
+			: {
+					today: [dayStart, null],
+					yesterday: [dayStart - DAY_MS, dayStart],
+					week: [dayStart - 6 * DAY_MS, dayStart - DAY_MS],
+					older: [null, dayStart - 6 * DAY_MS],
+				}
+	const waitingIds = (query.waiting_ids ?? '').split(',').filter((id) => UUID_RE.test(id))
+	const sinceWeek = new Date(Date.now() - 7 * DAY_MS)
+
+	const noRecency = conditionsWithout({ updated_after: true, updated_before: true })
+	const groupExpr = (resolveGroupExpression(query.group_by, query.tz) ??
+		resolveGroupExpression('status')) as SQL
+
+	const [
+		total,
+		groupRows,
+		typeRows,
+		statusRows,
+		driverRows,
+		fresh,
+		starred,
+		working,
+		waiting,
+		updatedEntries,
+		[workspace],
+	] = await Promise.all([
+		countWhere(conditionsWithout({})),
+		grouped(groupExpr, conditionsWithout({})),
+		grouped(sql`${objects.type}`, conditionsWithout({ type: true })),
+		grouped(sql`${objects.status}`, conditionsWithout({ status: true })),
+		grouped(sql`coalesce(${objects.driver}::text, '')`, conditionsWithout({ driver: true })),
+		countWhere([...noRecency, gte(objects.updatedAt, sinceWeek)]),
+		countWhere([...conditionsWithout({ starred: true }), starredByCondition(actorId)]),
+		countWhere([
+			...conditionsWithout({ working: true }),
+			sql`${objects.activeSessionId} is not null`,
+		]),
+		waitingIds.length === 0
+			? Promise.resolve(0)
+			: countWhere([
+					...conditionsWithout({ attention_ids: true }),
+					inArray(objects.id, waitingIds),
+				]),
+		Promise.all(
+			Object.entries(updatedBounds ?? {}).map(async ([bucket, [from, to]]) => {
+				const where = [...noRecency]
+				if (from !== null) where.push(gte(objects.updatedAt, new Date(from)))
+				if (to !== null) where.push(lt(objects.updatedAt, new Date(to)))
+				return [bucket, await countWhere(where)] as const
+			}),
+		),
+		db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1),
+	])
+
+	// Group order: statuses follow the workspace's configured lifecycle order,
+	// dates run newest first, everything else A to Z with "no value" last.
+	const axis = query.group_by ?? 'status'
+	const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+	let groups = groupRows
+	if (axis === 'status') {
+		const settings = workspace?.settings as WorkspaceSettings | undefined
+		const configured = [...new Set(Object.values(settings?.statuses ?? {}).flat())]
+		const rank = (value: string) => {
+			const index = configured.indexOf(value)
+			return index === -1 ? configured.length : index
+		}
+		groups = [...groupRows].sort(
+			(a, b) => rank(a.value) - rank(b.value) || collator.compare(a.value, b.value),
+		)
+	} else if (axis === 'createdAt' || axis === 'updatedAt') {
+		groups = [...groupRows].sort((a, b) => b.value.localeCompare(a.value))
+	} else {
+		groups = [...groupRows].sort((a, b) =>
+			a.value === '' ? 1 : b.value === '' ? -1 : collator.compare(a.value, b.value),
+		)
+	}
+
+	return c.json(
+		{
+			total,
+			by_type: toRecord(typeRows),
+			by_status: toRecord(statusRows),
+			by_driver: toRecord(driverRows.filter((row) => row.value !== '')),
+			updated: Object.fromEntries(updatedEntries),
+			fresh,
+			starred,
+			working,
+			waiting,
+			groups,
+		} as z.infer<typeof objectFacetsResponseSchema>,
+		200,
+	)
+})
 
 // GET /board - List board columns with per-column pagination
 const boardObjectsRoute = createRoute({
@@ -1098,7 +1412,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		connectedObjects = await db
 			.select()
 			.from(objects)
-			.where(inArray(objects.id, [...connectedIds]))
+			.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, [...connectedIds])))
 	}
 
 	// Fetch recent activity + comments for this object. Events use the object's
@@ -1189,7 +1503,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		else if (rel.targetType === 'session') provenanceSessionIds.add(rel.targetId)
 	}
 	if (provenanceConversationIds.size > 0 || provenanceSessionIds.size > 0) {
-		const provenanceTitles = await resolveEndpointTitles(db, {
+		const provenanceTitles = await resolveEndpointTitles(db, workspaceId, {
 			conversationIds: [...provenanceConversationIds],
 			sessionIds: [...provenanceSessionIds],
 		})
@@ -1248,6 +1562,11 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		}
 	}
 
+	const basePreview = buildObjectPreview(object)
+	const preview = basePreview
+		? await withDeliveryState(db, object.workspaceId, object.id, basePreview)
+		: null
+
 	return c.json(
 		{
 			object: {
@@ -1258,6 +1577,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
 				is_starred_by_me: starredIds.has(object.id),
+				preview,
 			},
 			relationships: rels.map((r) => ({
 				...serialize(r),
@@ -1620,39 +1940,46 @@ app.openapi(getObjectRoute, async (c) => {
 		})
 	}
 
-	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
-		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
-		getUnreadCount(db, {
-			workspaceId: object.workspaceId,
-			actorId,
-			entityType: 'object',
-			entityId: id,
-		}),
-		getSubscriberCount(db, {
-			workspaceId: object.workspaceId,
-			entityType: 'object',
-			entityId: id,
-		}),
-		object.activeSessionId
-			? db
-					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
-					.from(sessions)
-					.where(eq(sessions.id, object.activeSessionId))
-					.limit(1)
-					.then((rows) => rows[0] ?? null)
-			: Promise.resolve(null),
-		isObjectStarredByActor(db, { actorId, objectId: id }),
-	])
+	const basePreview = buildObjectPreview(object)
+	const [subscribed, unreadCount, subscriberCount, activeSession, starred, lastSession] =
+		await Promise.all([
+			isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+			getUnreadCount(db, {
+				workspaceId: object.workspaceId,
+				actorId,
+				entityType: 'object',
+				entityId: id,
+			}),
+			getSubscriberCount(db, {
+				workspaceId: object.workspaceId,
+				entityType: 'object',
+				entityId: id,
+			}),
+			object.activeSessionId
+				? db
+						.select({ currentActivity: sessions.currentActivity, status: sessions.status })
+						.from(sessions)
+						.where(eq(sessions.id, object.activeSessionId))
+						.limit(1)
+						.then((rows) => rows[0] ?? null)
+				: Promise.resolve(null),
+			isObjectStarredByActor(db, { actorId, objectId: id }),
+			loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
+		])
 
 	return c.json(
 		{
 			...serialize(object),
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
+			last_session: lastSession,
 			is_subscribed: subscribed,
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
 			is_starred_by_me: starred,
+			preview: basePreview
+				? await withDeliveryState(db, object.workspaceId, id, basePreview)
+				: null,
 		} as z.infer<typeof objectResponseSchema>,
 		200,
 	)
@@ -1662,6 +1989,7 @@ app.openapi(getObjectRoute, async (c) => {
 const updateObjectRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Update object',
 	request: {
@@ -1669,7 +1997,12 @@ const updateObjectRoute = createRoute({
 		body: {
 			content: {
 				'application/json': {
-					schema: updateObjectSchema,
+					schema: updateObjectSchema.extend({
+						/** The chat card a status change was made from: the agent behind it is told. */
+						chat: z
+							.object({ conversation_id: z.string().uuid(), agent_id: z.string().uuid() })
+							.optional(),
+					}),
 				},
 			},
 		},
@@ -1694,12 +2027,12 @@ app.openapi(updateObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const body = c.req.valid('json')
+	const { chat, ...body } = c.req.valid('json')
 
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
@@ -1735,122 +2068,26 @@ app.openapi(updateObjectRoute, async (c) => {
 		}
 	}
 
-	const updateData = {
-		...body,
-		updatedAt: new Date(),
-	}
-
-	// Shallow-merge metadata: new fields are added/overwritten, existing fields are preserved
-	if (body.metadata && existing.metadata) {
-		updateData.metadata = {
-			...(existing.metadata as typeof body.metadata),
-			...body.metadata,
-		}
-	}
-
-	// All three writes (object update, status event, notification fan-out) run in
-	// one transaction so a fan-out failure cannot leave the bet updated but
-	// watchers un-notified.
-	let updated: typeof objects.$inferSelect | undefined
-
-	await db.transaction(async (tx) => {
-		// Re-read the row under FOR UPDATE *inside* the transaction rather than
-		// trusting the pre-transaction `existing` fetch above. `existing` is only
-		// safe to use for the 404/validation checks that already returned by this
-		// point — using it here would be a stale read: two concurrent PATCHes that
-		// both flip the same bet to a terminal status would both see the same
-		// pre-transition `existing.status` and both fan out duplicate
-		// notifications. The row lock makes the second PATCH block until the
-		// first commits, then observe the now-terminal status and correctly skip
-		// the fan-out.
-		const [current] = await tx
-			.select()
-			.from(objects)
-			.where(eq(objects.id, id))
-			.for('update')
-			.limit(1)
-		if (!current) return // object deleted concurrently; 404 handled below
-
-		const [row] = await tx.update(objects).set(updateData).where(eq(objects.id, id)).returning()
-		if (!row) return
-
-		updated = row
-
-		// Derive action inside the transaction from the locked pre-update read so
-		// the event record is accurate even under concurrent PATCHes.
-		const action = current.status !== row.status ? 'status_changed' : 'updated'
-
-		// Log a per-field diff instead of full pre/post snapshots. On a 100 KB-content
-		// bet, a title-only edit now ships ~200 B of event payload instead of ~200 KB —
-		// see bet/mcp-response-shape AC #4.
-		const changes = computeChanges(
-			current as unknown as Record<string, unknown>,
-			row as unknown as Record<string, unknown>,
-			OBJECT_DIFF_FIELDS,
-		)
-		await recordEvent(tx, {
-			workspaceId: current.workspaceId,
-			actorId,
-			action,
-			entityType: current.type,
-			entityId: id,
-			data: { changes },
-			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
-		})
-
-		// Fan out a notification row to every subscriber when a bet reaches a
-		// terminal state (succeeded/failed/paused — see TERMINAL_BET_STATUSES).
-		// The status_changed event itself surfaces the entity in the unread feed
-		// (see subscriptions.ts); the notification row drives the dedicated
-		// terminal-signal UI and is the canonical record for "watcher was told
-		// the bet ended". Author/manual/commenter/mentioned subscribers are all
-		// included; the actor making the change is excluded (you don't notify
-		// yourself about your own flip).
-		//
-		// Guard on current.status not already being terminal: prevents a re-PATCH
-		// of an already-terminal bet from double-notifying subscribers.
-		if (
-			action === 'status_changed' &&
-			current.type === 'bet' &&
-			isTerminalBetStatus(row.status) &&
-			!isTerminalBetStatus(current.status)
-		) {
-			await fanOutBetTerminalNotifications(tx, {
-				workspaceId: current.workspaceId,
-				actorId,
-				bet: row,
-			})
-		}
-
-		// Pausing a loop must pause its work: every trigger referenced in the
-		// loop's metadata.trigger_ids stops firing while the loop is paused, and
-		// resumes when the loop leaves paused. This PATCH is the single choke
-		// point for loop status writes — the frontend's pause/resume button and
-		// the MCP update_loop tool both land here — so it's implemented once
-		// rather than duplicated per caller.
-		if (action === 'status_changed' && current.type === 'loop') {
-			const enteringPaused = row.status === 'paused' && current.status !== 'paused'
-			const leavingPaused = current.status === 'paused' && row.status !== 'paused'
-			if (enteringPaused || leavingPaused) {
-				const meta = (row.metadata as Record<string, unknown> | null) ?? {}
-				const rawTriggerIds = meta.trigger_ids
-				const triggerIds = Array.isArray(rawTriggerIds)
-					? rawTriggerIds.filter((v): v is string => typeof v === 'string')
-					: []
-				if (triggerIds.length > 0) {
-					await tx
-						.update(triggers)
-						.set({ enabled: leavingPaused, updatedAt: new Date() })
-						.where(
-							and(eq(triggers.workspaceId, current.workspaceId), inArray(triggers.id, triggerIds)),
-						)
-				}
-			}
-		}
-	})
+	// One transaction for the update, its status event and the notification fan-out.
+	const { row: updated } = await db.transaction((tx) =>
+		applyObjectUpdate(tx, { id, actorId, body, sessionId: c.get('maskinSessionId') }),
+	)
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	// Moved from a card in a chat: tell the agent behind the card, without posting a message
+	// in the person's name. Not awaited, since waking the agent may start its session.
+	if (chat && updated.status !== existing.status) {
+		void wakeAgentFromCard({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId: updated.workspaceId,
+			callerId: actorId,
+			card: chat,
+			instruction: movedInstruction(updated, updated.status),
+		})
 	}
 
 	return c.json(serialize(updated) as z.infer<typeof objectResponseSchema>, 200)
@@ -1865,6 +2102,7 @@ app.openapi(updateObjectRoute, async (c) => {
 const verifyObjectRoute = createRoute({
 	method: 'post',
 	path: '/{id}/verification',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Stamp or unstamp verification on a Knowledge Author write',
 	request: {
@@ -2002,6 +2240,7 @@ app.openapi(verifyObjectRoute, async (c) => {
 const undoWriteRoute = createRoute({
 	method: 'post',
 	path: '/{id}/undo-write',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Undo a Knowledge Author write on a knowledge object',
 	request: {
@@ -2050,7 +2289,7 @@ app.openapi(undoWriteRoute, async (c) => {
 
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
@@ -2192,78 +2431,11 @@ function hasWriterProvenance(metadata: unknown): boolean {
 		.includes('writer')
 }
 
-function isTerminalBetStatus(status: string): boolean {
-	return (TERMINAL_BET_STATUSES as readonly string[]).includes(status)
-}
-
-function betTerminalNotificationContent(bet: typeof objects.$inferSelect): {
-	type: 'good_news' | 'alert'
-	title: string
-} {
-	switch (bet.status) {
-		case 'succeeded':
-			return { type: 'good_news', title: `Bet succeeded: ${bet.title}` }
-		case 'paused':
-			return { type: 'alert', title: `Bet paused: ${bet.title}` }
-		default:
-			return { type: 'alert', title: `Bet failed: ${bet.title}` }
-	}
-}
-
-async function fanOutBetTerminalNotifications(
-	tx: Transaction,
-	args: { workspaceId: string; actorId: string; bet: typeof objects.$inferSelect },
-): Promise<void> {
-	const { workspaceId, actorId, bet } = args
-
-	const subs = await tx
-		.select({ actorId: subscriptions.actorId })
-		.from(subscriptions)
-		.where(
-			and(
-				eq(subscriptions.workspaceId, workspaceId),
-				eq(subscriptions.entityType, 'object'),
-				eq(subscriptions.entityId, bet.id),
-				ne(subscriptions.actorId, actorId),
-			),
-		)
-
-	if (subs.length === 0) {
-		logger.info('Bet reached terminal state, no subscribers to notify', {
-			betId: bet.id,
-			status: bet.status,
-		})
-		return
-	}
-
-	const { type, title } = betTerminalNotificationContent(bet)
-
-	const created = await insertNotificationsWithEvents(tx, {
-		workspaceId,
-		actorId,
-		rows: subs.map((s) => ({
-			workspaceId,
-			type,
-			title,
-			content: null,
-			sourceActorId: actorId,
-			targetActorId: s.actorId,
-			objectId: bet.id,
-			status: 'pending' as const,
-		})),
-	})
-
-	logger.info('Bet reached terminal state, notified subscribers', {
-		betId: bet.id,
-		status: bet.status,
-		notified: created.length,
-	})
-}
-
 // DELETE /{id} - Delete object
 const deleteObjectRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Delete object',
 	request: {
@@ -2285,6 +2457,7 @@ const deleteObjectRoute = createRoute({
 const migrateObjectTypeRoute = createRoute({
 	method: 'post',
 	path: '/migrate-type',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Migrate or delete all objects of a given type in a workspace',
 	request: {
@@ -2306,6 +2479,10 @@ const migrateObjectTypeRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller is not a human workspace admin or owner',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Workspace not found',
@@ -2318,6 +2495,20 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	// Retyping or deleting every object of a type is a workspace-wide change, so
+	// it is limited to human admins and owners (the extension removal dialog is
+	// the only caller, and removing an extension is already admin-only).
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only a workspace admin or owner can migrate or delete all objects of a type',
+			),
+			403,
+		)
+	}
 
 	const [workspace] = await db
 		.select()
@@ -2453,6 +2644,7 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 const bulkUpdateObjectsRoute = createRoute({
 	method: 'post',
 	path: '/bulk-update',
+	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
 	summary: 'Bulk update objects',
 	request: {
@@ -2481,6 +2673,7 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { ids, patch } = c.req.valid('json')
 
 	// Dedup so duplicates in the request don't double-write or double-report.
@@ -2611,7 +2804,7 @@ app.openapi(deleteObjectRoute, async (c) => {
 
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 

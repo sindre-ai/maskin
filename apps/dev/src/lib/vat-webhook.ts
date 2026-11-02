@@ -56,7 +56,7 @@ export async function applyVatEventIfHandled(
 	stripe: Stripe,
 ): Promise<{ handled: boolean }> {
 	if (event.type === 'charge.dispute.created') {
-		await handleChargeDisputeCreated(event, stripe)
+		await handleChargeDisputeCreated(db, event, stripe)
 		return { handled: true }
 	}
 
@@ -453,7 +453,11 @@ async function emitCompletedEvent(
  * Delta 5 — chargeback log-and-alert. NEVER mutates state or credit
  * notes; Sebk owns manual response from the Dashboard.
  */
-async function handleChargeDisputeCreated(event: Stripe.Event, stripe: Stripe): Promise<void> {
+async function handleChargeDisputeCreated(
+	db: Database,
+	event: Stripe.Event,
+	stripe: Stripe,
+): Promise<void> {
 	const dispute = event.data.object as Stripe.Dispute
 	const chargeId = typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id
 	let invoiceId: string | null = null
@@ -498,6 +502,7 @@ async function handleChargeDisputeCreated(event: Stripe.Event, stripe: Stripe): 
 	const currencyDisplay = (dispute.currency ?? 'usd').toUpperCase()
 	const amountFormatted = (dispute.amount / 100).toFixed(2)
 	await notifySebkOnSlack(
+		db,
 		[
 			':rotating_light: Stripe dispute opened — manual void may be needed.',
 			`• Dispute: <https://dashboard.stripe.com/disputes/${dispute.id}|${dispute.id}>`,

@@ -14,6 +14,13 @@
  * That keeps this file dumb HTTP and every retry/taxonomy decision reviewable
  * in a single spot.
  */
+import { INMAIL_CHAT_SPECIFICS, type LinkedInInmailCreditsQuery, inmailCreditsPath } from './inmail'
+import {
+	type LinkedInCancelRelationRequestPayload,
+	type LinkedInListRelationRequestsQuery,
+	cancelRelationRequestPath,
+	listRelationRequestsPath,
+} from './invitations'
 
 export type LinkedInHttpResult<TBody = unknown> = {
 	status: number
@@ -35,12 +42,19 @@ export type LinkedInSendMessagePayload = {
 	attachments?: unknown[]
 	/** Defaults to `DEFAULT_LINKEDIN_INBOX`. */
 	inbox_id?: string
+	/**
+	 * Start the chat as a classic InMail, which spends one credit. Only `send_inmail` sets it.
+	 * A wrong key is silently a plain chat start, so the body is pinned by a test (see inmail.ts).
+	 */
+	inmail?: boolean
 }
 
 export type LinkedInReplyPayload = {
 	account_id: string
 	thread_id: string
 	body: string
+	/** Same shape and meaning as on {@link LinkedInSendMessagePayload}; omitted when empty. */
+	attachments?: unknown[]
 }
 
 export type LinkedInListConversationsQuery = {
@@ -138,8 +152,47 @@ export type LinkedInSearchPeopleQuery = {
 /** `GET /v2/{account_id}/users/{identifier}` */
 export type LinkedInGetProfileQuery = {
 	account_id: string
-	/** Public identifier ("janedoe"), provider id, or `me`. */
+	/**
+	 * Public identifier ("janedoe"), provider id, or `me`. A member-shaped
+	 * LinkedIn URN is accepted and reduced to its bare provider id before the
+	 * request goes out — see `normalizeProfileIdentifier`.
+	 */
 	identifier: string
+	/**
+	 * Extra profile sections to pull, as Unipile v2 `with_sections` values (e.g.
+	 * `linkedin_experience`). Omit for the base profile: the param is only sent
+	 * when set, because LinkedIn may throttle section pulls and callers that do
+	 * not need them should pay nothing.
+	 */
+	with_sections?: readonly string[]
+}
+
+/**
+ * Member-shaped LinkedIn URN prefixes the provider hands back to callers.
+ * `get_profile` round-trips whatever `search_people` / `list_connections`
+ * surfaced, and those surface URNs — `urn:li:fsd_profile:<id>` off the
+ * provider's own payloads, `urn:li:person:<id>` from fan-out/enumeration. The
+ * `users/{identifier}` route accepts only the bare provider id or the public
+ * handle, so a URN passed verbatim faults with `INVALID_INPUT`.
+ */
+const LINKEDIN_MEMBER_URN_PREFIXES = [
+	'urn:li:fsd_profile:',
+	'urn:li:person:',
+	'urn:li:member:',
+] as const
+
+/**
+ * Reduce a member identifier to the form `users/{identifier}` accepts: strip a
+ * member-shaped LinkedIn URN prefix down to its bare provider id. Public
+ * handles, bare provider ids, and `me` pass through untouched. Pure, so the
+ * outgoing path can be asserted directly.
+ */
+export function normalizeProfileIdentifier(identifier: string): string {
+	const trimmed = identifier.trim()
+	for (const prefix of LINKEDIN_MEMBER_URN_PREFIXES) {
+		if (trimmed.toLowerCase().startsWith(prefix)) return trimmed.slice(prefix.length)
+	}
+	return trimmed
 }
 
 /**
@@ -239,7 +292,11 @@ export type LinkedInPagedResponse = {
 export type LinkedInPublishPostPayload = {
 	account_id: string
 	text: string
-	/** Present when publishing as a business page; a company URN like `urn:li:organization:12345`. */
+	/**
+	 * Present when publishing as a business page. Callers hold the company URN
+	 * (`urn:li:organization:12345`); `publishPost` reduces it to the plain id
+	 * (`12345`) the v2 route takes — see `normalizePostAs`.
+	 */
 	post_as?: string
 	attachments?: unknown[]
 	can_read?: string
@@ -343,6 +400,22 @@ export type LinkedInDeleteAccountResponse = {
 	object?: string
 }
 
+const LINKEDIN_ORGANIZATION_URN_PREFIX = 'urn:li:organization:'
+
+/**
+ * Reduce a company URN to the plain numeric id the v2 create-post route takes
+ * in `post_as` (v2 "Create posts" guide, "Publish on behalf of a company":
+ * `post_as: '123456'`). A plain id passes through. Pure, so the outgoing body
+ * can be asserted directly.
+ */
+export function normalizePostAs(postAs: string): string {
+	const trimmed = postAs.trim()
+	if (trimmed.toLowerCase().startsWith(LINKEDIN_ORGANIZATION_URN_PREFIX)) {
+		return trimmed.slice(LINKEDIN_ORGANIZATION_URN_PREFIX.length)
+	}
+	return trimmed
+}
+
 export interface LinkedInClient {
 	sendMessage(
 		payload: LinkedInSendMessagePayload,
@@ -363,12 +436,23 @@ export interface LinkedInClient {
 		query: LinkedInSearchPeopleQuery,
 	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
 	getProfile(query: LinkedInGetProfileQuery): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	// Bet aff468ba · InMail credit balance; the reducers live in inmail.ts.
+	getInmailCredits(
+		query: LinkedInInmailCreditsQuery,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
 	getManagedCompanyPages(
 		query: LinkedInListManagedPagesQuery,
 	): Promise<LinkedInHttpResult<LinkedInListManagedPagesResponse | Record<string, unknown>>>
 	sendConnectionRequest(
 		payload: LinkedInConnectionRequestPayload,
 	): Promise<LinkedInHttpResult<LinkedInConnectionRequestResponse | Record<string, unknown>>>
+	// Bet aff468ba · sent invitations; the path builders live in invitations.ts.
+	listRelationRequests(
+		query: LinkedInListRelationRequestsQuery,
+	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
+	cancelRelationRequest(
+		payload: LinkedInCancelRelationRequestPayload,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
 	// Task 7b content/community verbs — see notes above the payload types.
 	publishPost(
 		payload: LinkedInPublishPostPayload,
@@ -418,16 +502,21 @@ export type LinkedInHttpClientOptions = {
 }
 
 /**
- * Default fetch-based `LinkedInClient`. Reads LinkedIn's `X-API-KEY` auth
- * header and treats every response as JSON. `UNIPILE_BASE_URL` must NOT
- * include the `/v2` suffix — the path lives here so this client owns the
- * v1 → v2 migration surface in a single spot.
+ * The fetch wrapper behind `createLinkedInHttpClient`, exported so a sibling
+ * client (posts-reads.ts) shares the exact same auth headers, JSON handling and
+ * result shape instead of copying them.
  */
-export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): LinkedInClient {
+export type LinkedInHttpCall = <T>(
+	method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+	path: string,
+	body?: unknown,
+) => Promise<LinkedInHttpResult<T>>
+
+export function createLinkedInHttpCall(options: LinkedInHttpClientOptions): LinkedInHttpCall {
 	const baseUrl = options.baseUrl.replace(/\/+$/, '')
 	const fetchFn = options.fetchImpl ?? fetch
 
-	async function call<T>(
+	return async function call<T>(
 		method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
 		path: string,
 		body?: unknown,
@@ -458,6 +547,16 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		}
 		return { status: response.status, body: parsed as T, headers }
 	}
+}
+
+/**
+ * Default fetch-based `LinkedInClient`. Reads LinkedIn's `X-API-KEY` auth
+ * header and treats every response as JSON. `UNIPILE_BASE_URL` must NOT
+ * include the `/v2` suffix — the path lives here so this client owns the
+ * v1 → v2 migration surface in a single spot.
+ */
+export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): LinkedInClient {
+	const call = createLinkedInHttpCall(options)
 
 	return {
 		sendMessage(payload) {
@@ -488,6 +587,7 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			if (payload.attachments && payload.attachments.length > 0) {
 				body.attachments = payload.attachments
 			}
+			if (payload.inmail) body.specifics = INMAIL_CHAT_SPECIFICS
 			return call(
 				'POST',
 				`/v2/${encodeURIComponent(payload.account_id)}/inboxes/${inbox}/chats/send`,
@@ -497,10 +597,16 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		reply(payload) {
 			// v1: POST /api/v1/chats/{id}/messages with { account_id, text }
 			// v2: POST /v2/{account_id}/chats/{chat_id}/messages/send with { text }
+			// An approved message that carries a file adds `attachments`, folded in the same way
+			// as on `sendMessage`; a text-only reply keeps its exact wire body.
+			const body: Record<string, unknown> = { text: payload.body }
+			if (payload.attachments && payload.attachments.length > 0) {
+				body.attachments = payload.attachments
+			}
 			return call(
 				'POST',
 				`/v2/${encodeURIComponent(payload.account_id)}/chats/${encodeURIComponent(payload.thread_id)}/messages/send`,
-				{ text: payload.body },
+				body,
 			)
 		},
 		listConversations(query) {
@@ -558,9 +664,21 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 		},
 		getProfile(query) {
 			// GET /v2/{account_id}/users/{identifier}; `me` returns the account's
-			// own profile.
+			// own profile. Normalize first: callers round-trip the URN the
+			// provider handed them, and this route rejects a URN passed verbatim
+			// with INVALID_INPUT.
 			const acc = encodeURIComponent(query.account_id)
-			return call('GET', `/v2/${acc}/users/${encodeURIComponent(query.identifier)}`)
+			const identifier = normalizeProfileIdentifier(query.identifier)
+			// Unipile encodes an array query param as one `with_sections` pair
+			// per value.
+			const params = new URLSearchParams()
+			for (const section of query.with_sections ?? []) params.append('with_sections', section)
+			const qs = params.toString()
+			const path = `/v2/${acc}/users/${encodeURIComponent(identifier)}`
+			return call('GET', qs ? `${path}?${qs}` : path)
+		},
+		getInmailCredits(query) {
+			return call('GET', inmailCreditsPath(query.account_id))
 		},
 		getManagedCompanyPages(query) {
 			// GET /v2/{account_id}/linkedin/company/pages — pages the connected
@@ -584,11 +702,24 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			if (payload.message !== undefined) body.message = payload.message
 			return call('POST', `/v2/${acc}/users/me/relation-requests`, body)
 		},
+		listRelationRequests(query) {
+			// GET /v2/{account_id}/users/me/relation-requests?type=sent&offset=&limit=.
+			// LinkedIn pages this with `offset`, not a cursor.
+			return call('GET', listRelationRequestsPath(query))
+		},
+		cancelRelationRequest(payload) {
+			// POST /v2/{account_id}/users/me/relation-requests/{request_id}/cancel.
+			// The same call withdraws a sent invite and refuses a received one, so a
+			// caller must have confirmed the id is in the sent list first.
+			return call('POST', cancelRelationRequestPath(payload))
+		},
 		publishPost(payload) {
 			// POST /v2/{account_id}/posts with {text, post_as?, ...}. Same endpoint
 			// serves personal and business-page publish; `post_as` selects the page
-			// URN when publishing as a page.
-			const { account_id, ...body } = payload
+			// when publishing as a page, as the plain company id, not the URN.
+			// (`as_organization` is the v1.0 field name; v2 does not take it.)
+			const { account_id, post_as, ...rest } = payload
+			const body = post_as ? { ...rest, post_as: normalizePostAs(post_as) } : rest
 			return call('POST', `/v2/${encodeURIComponent(account_id)}/posts`, body)
 		},
 		commentOnPost(payload) {

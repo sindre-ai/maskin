@@ -1,14 +1,16 @@
 import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { getIntegrationCredential } from '../../lib/integrations/lookup'
+import { verifyCredentialAccessChain } from '../../lib/integrations/credential-audit'
+import { getCredential, getIntegrationCredential } from '../../lib/integrations/lookup'
 import {
 	type LinkedInMockServer,
 	simulateCallbackError,
 	simulateCallbackSuccess,
 	startLinkedInMock,
 } from '../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
-import { insertWorkspace } from '../factories'
+import { readContextFor } from '../../lib/integrations/read-context'
+import { grantedActorIds, insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 
 /**
@@ -298,5 +300,37 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 		void simulateCallbackSuccess
 		void simulateCallbackError
 		void integration_id
+	})
+})
+
+describe('linkedin-unipile connect leaves agents the default read access', () => {
+	it('a connect made after the backfill reads successfully with one audit row', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const { integration_id } = (await (await connect(ws.id)).json()) as { integration_id: string }
+		const [pending] = await db
+			.select()
+			.from(integrations)
+			.where(eq(integrations.id, integration_id))
+		// No grant rows: agents get the integration's default.
+		expect(pending?.defaultAgentAccess).toBe('read')
+		expect(await grantedActorIds(db, integration_id)).toEqual([])
+		await callbackGet({
+			state: capturedWizardState(),
+			account_id: 'linkedin-account-grant',
+			provider: 'linkedin',
+		})
+
+		const credential = await getIntegrationCredential(db, ws.id, 'linkedin-unipile', actorId, {
+			fallbackToAnyActor: true,
+			ctx: readContextFor(actorId),
+		})
+		expect(JSON.parse(credential?.value ?? '{}')).toMatchObject({
+			account_id: 'linkedin-account-grant',
+		})
+		const logs =
+			await sql`SELECT actor_id::text FROM credential_access_log WHERE workspace_id = ${ws.id}`
+		expect(logs).toHaveLength(1)
+		expect(await verifyCredentialAccessChain(db, ws.id)).toMatchObject({ ok: true, rows: 1 })
 	})
 })

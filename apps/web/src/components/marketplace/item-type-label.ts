@@ -21,7 +21,7 @@ export const KIND_LABEL_CLASS: Record<MarketplaceKind, string> = {
 	loop: 'text-status-proposed-text',
 	actor: 'text-status-active-text',
 	trigger: 'text-status-processing-text',
-	skill: 'text-status-signal-text',
+	skill: 'text-status-opportunity-text',
 	integration: 'text-status-in_progress-text',
 }
 

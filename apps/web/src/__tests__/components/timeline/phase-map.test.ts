@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 describe('phaseForStatus', () => {
 	it('maps shaping-phase statuses to SHAPING', () => {
-		expect(phaseForStatus('signal')).toBe('SHAPING')
+		expect(phaseForStatus('opportunity')).toBe('SHAPING')
 		expect(phaseForStatus('define')).toBe('SHAPING')
 		expect(phaseForStatus('shaped')).toBe('SHAPING')
 	})

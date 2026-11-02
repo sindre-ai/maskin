@@ -22,8 +22,8 @@ import { db, getTestActorId } from './global-setup'
 //      `Deep-research brief validated → Signal Analyst clustering` trigger.
 //   2. Both are event triggers on knowledge status_changed → validated, wired
 //      to the Chief of Staff actor (the target agent that then dispatches
-//      Researcher via run_agent for deep research and Signal Analyst via
-//      run_agent for the chained Beat 6 clustering).
+//      Researcher via create_session (wait) for deep research and Signal Analyst via
+//      create_session (wait) for the chained Beat 6 clustering).
 //   3. When the first-pass brief validates, the deep-research trigger's
 //      Beat 2 gate dispatches immediately (Chief of Staff session is created
 //      for it) — this is action 1 of the extended trigger.
@@ -38,7 +38,7 @@ import { db, getTestActorId } from './global-setup'
 //   5. When a deep-research knowledge object validates, the chained Beat 6
 //      trigger fires — a Chief of Staff session is created whose actionPrompt
 //      is the Signal Analyst hand-off (dispatches Signal Analyst which stages
-//      exactly one candidate bet in status = signal with informs edges).
+//      exactly one candidate bet in status = opportunity with informs edges).
 
 function createMemoryStorage(): StorageProvider {
 	const store = new Map<string, Buffer>()
@@ -147,11 +147,11 @@ describe('Beat 6 — Signal Analyst chained trigger (integration)', () => {
 		expect(prompt).toContain('All three onboarding deep-research briefs are now in')
 		expect(prompt).toContain('validated')
 		// Exactly-once idempotency via informs-edge check on any existing
-		// signal-stage bet.
+		// opportunity-stage bet.
 		expect(prompt).toContain('exactly-once')
 		expect(prompt).toContain('informs')
-		// Expected output: ONE candidate bet in status = signal.
-		expect(prompt).toContain('status = signal')
+		// Expected output: ONE candidate bet in status = opportunity.
+		expect(prompt).toContain('status = opportunity')
 	})
 
 	it('the extended Beat 2 trigger points at the chained Beat 6 trigger and forbids concurrent dispatch', async () => {

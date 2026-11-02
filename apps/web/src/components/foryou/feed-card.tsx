@@ -1,6 +1,7 @@
 import { CommentInput } from '@/components/activity/comment-input'
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { DecisionOptionCard, DecisionOptionGrid } from '@/components/shared/decision-option-card'
+import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
@@ -13,7 +14,12 @@ import {
 	trackForyouCardMarkedRead,
 	trackForyouCardShown,
 } from '@/lib/analytics'
-import type { ActorListItem, EventResponse, UnreadItem } from '@/lib/api'
+import type {
+	ActorListItem,
+	EventResponse,
+	LatestMentionDecisionDraft,
+	UnreadItem,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	type CardAction,
@@ -29,6 +35,8 @@ import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DraftPreview } from './draft-preview'
+import { type DraftAction, DraftStack } from './draft-stack'
 
 export interface DecidedOption {
 	id: string
@@ -44,6 +52,10 @@ interface FeedCardProps {
 	onToggleExpanded?: () => void
 	decided: DecidedOption | null
 	onDecide: (option: DecidedOption) => void
+	/** Send or skip one message of a stacked card; rejects when the reply was not sent. */
+	onDraftAction?: (draft: LatestMentionDecisionDraft, action: DraftAction) => Promise<unknown>
+	/** Every stacked message has been dealt with, so the card settles. */
+	onDraftsDone?: () => void
 	/** The reader answered in this sitting — the card flips to "Waiting on …". */
 	replied: boolean
 	onReplied: () => void
@@ -69,6 +81,8 @@ export function FeedCard({
 	replied,
 	onReplied,
 	onMarkRead,
+	onDraftAction,
+	onDraftsDone,
 }: FeedCardProps) {
 	const objectId = item.entity_id
 	const object = item.object
@@ -274,29 +288,39 @@ export function FeedCard({
 						<p className="text-[13px] font-semibold leading-[1.5] text-pretty text-foreground">
 							{decision.ask}
 						</p>
+						{decision.draft ? (
+							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
+						) : null}
+						{decision.drafts?.length && onDraftAction && onDraftsDone ? (
+							<DraftStack
+								workspaceId={workspaceId}
+								drafts={decision.drafts}
+								onAction={onDraftAction}
+								onAllDone={onDraftsDone}
+							/>
+						) : null}
 					</div>
 				) : (
 					mentionBody && (
 						// The whole comment, not a preview: the reader answers here, so
 						// nothing about the ask lives behind a second click.
 						<div className="-mt-1 max-w-[58ch] text-[13px] leading-[1.55] text-pretty text-muted-foreground">
-							<MarkdownContent content={mentionBody} size="sm" mentionActors={actors} />
+							<MarkdownContent
+								content={mentionBody}
+								size="sm"
+								mentionActors={actors}
+								linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+							/>
 						</div>
 					)
 				)}
 
 				{options.length > 0 && (
-					<DecisionOptionGrid>
-						{options.map((option) => (
-							<DecisionOptionCard
-								key={option.id}
-								option={option}
-								pending={pendingId === option.id}
-								disabled={pendingId !== null}
-								onChoose={() => chooseOption(option)}
-							/>
-						))}
-					</DecisionOptionGrid>
+					<DecisionOptions
+						options={options}
+						pendingId={pendingId}
+						onChoose={(option) => chooseOption(option)}
+					/>
 				)}
 
 				<CommentInput
@@ -468,7 +492,7 @@ function TimelineHistory({
 					)
 				)}
 				{shown.map((event) => (
-					<TimelineMessage key={event.id} event={event} actors={actors} />
+					<TimelineMessage key={event.id} workspaceId={workspaceId} event={event} actors={actors} />
 				))}
 				{remaining > 0 && (
 					<button
@@ -485,9 +509,11 @@ function TimelineHistory({
 }
 
 function TimelineMessage({
+	workspaceId,
 	event,
 	actors,
 }: {
+	workspaceId: string
 	event: EventResponse
 	actors: ActorListItem[] | undefined
 }) {
@@ -513,7 +539,12 @@ function TimelineMessage({
 					/>
 				</div>
 				<div className="mt-px line-clamp-3 text-[12px] leading-[1.5] text-pretty text-muted-foreground">
-					<MarkdownContent content={content} size="xs" mentionActors={actors} />
+					<MarkdownContent
+						content={content}
+						size="xs"
+						mentionActors={actors}
+						linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
+					/>
 				</div>
 			</div>
 		</div>

@@ -4,7 +4,15 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: vi.fn(async () => {}),
 }))
 
-import { argKeys, captureMcpToolCall } from '../../../lib/analytics/mcp-tool-calls'
+import { classifyMcpClient } from '../../../lib/analytics/mcp-client'
+import {
+	MCP_HANDSHAKE_ANONYMOUS_DISTINCT_ID,
+	MCP_HANDSHAKE_EVENT,
+	argKeys,
+	captureMcpHandshake,
+	captureMcpToolCall,
+	normalizeActorType,
+} from '../../../lib/analytics/mcp-tool-calls'
 import { capturePosthogEvent } from '../../../lib/analytics/posthog'
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111'
@@ -23,6 +31,9 @@ function baseTrace() {
 		responseBytes: 1024,
 		transport: 'http' as const,
 		agentActorId: ACTOR_ID,
+		authMethod: 'api_key' as 'api_key' | null,
+		client: 'claude_code' as ReturnType<typeof classifyMcpClient>,
+		actorType: 'agent' as 'human' | 'agent' | null,
 	}
 }
 
@@ -61,6 +72,17 @@ describe('argKeys', () => {
 	})
 })
 
+describe('normalizeActorType', () => {
+	it('passes through human and agent and nulls everything else', () => {
+		expect(normalizeActorType('human')).toBe('human')
+		expect(normalizeActorType('agent')).toBe('agent')
+		expect(normalizeActorType('system')).toBeNull()
+		expect(normalizeActorType('')).toBeNull()
+		expect(normalizeActorType(undefined)).toBeNull()
+		expect(normalizeActorType(null)).toBeNull()
+	})
+})
+
 describe('captureMcpToolCall', () => {
 	beforeEach(() => vi.mocked(capturePosthogEvent).mockClear())
 	afterEach(() => vi.restoreAllMocks())
@@ -79,6 +101,29 @@ describe('captureMcpToolCall', () => {
 			transport: 'http',
 			workspace_id: WORKSPACE_ID,
 		})
+	})
+
+	it('emits auth_method, client and actor_type', async () => {
+		await captureMcpToolCall(WORKSPACE_ID, baseTrace())
+		expect(vi.mocked(capturePosthogEvent).mock.calls[0][2]).toMatchObject({
+			auth_method: 'api_key',
+			client: 'claude_code',
+			actor_type: 'agent',
+		})
+	})
+
+	it('emits null auth_method and actor_type for an unresolved caller, never api_key', async () => {
+		await captureMcpToolCall(WORKSPACE_ID, {
+			...baseTrace(),
+			agentActorId: null,
+			authMethod: null,
+			actorType: null,
+			client: 'other',
+		})
+		const props = vi.mocked(capturePosthogEvent).mock.calls[0][2]
+		expect(props).toHaveProperty('auth_method', null)
+		expect(props).toHaveProperty('actor_type', null)
+		expect(props).toHaveProperty('client', 'other')
 	})
 
 	it('falls back to the workspace as distinct id when the actor is unknown', async () => {
@@ -111,5 +156,103 @@ describe('captureMcpToolCall', () => {
 		expect(props.arg_keys).toEqual(['api_key', 'nested', 'owner_email', 'title'])
 		// ...and nested keys do not, since nesting is not traversed.
 		expect(serialized).not.toContain('inner_secret')
+	})
+
+	// The new properties are labels from fixed sets. Whatever the caller sent,
+	// no raw User-Agent, key, token or key prefix may appear in any property.
+	it('never emits the raw User-Agent, key, token or key prefix', async () => {
+		const rawUserAgent = 'claude-cli/2.0.14 (external, cli) build-7f3a9c linux-6.12'
+		const apiKey = 'ank_0123456789abcdef0123456789abcdef'
+		const oauthToken = 'mat_abcdef0123456789abcdef0123456789'
+		await captureMcpToolCall(WORKSPACE_ID, {
+			...baseTrace(),
+			client: classifyMcpClient(rawUserAgent),
+		})
+		const props = vi.mocked(capturePosthogEvent).mock.calls[0][2]
+		const serialized = JSON.stringify(props)
+		expect(props.client).toBe('claude_code')
+		for (const forbidden of [rawUserAgent, 'build-7f3a9c', 'linux-6.12', apiKey, oauthToken]) {
+			expect(serialized).not.toContain(forbidden)
+		}
+		for (const prefix of ['ank_', 'mat_', 'mrt_', 'Bearer']) {
+			expect(serialized).not.toContain(prefix)
+		}
+	})
+})
+
+describe('captureMcpToolCall era labels', () => {
+	beforeEach(() => {
+		vi.mocked(capturePosthogEvent).mockClear()
+	})
+
+	it('emits mcp_era and mcp_protocol_version when classified', async () => {
+		await captureMcpToolCall(WORKSPACE_ID, {
+			...baseTrace(),
+			mcpEra: 'legacy',
+			mcpProtocolVersion: '2025-06-18',
+		})
+		expect(vi.mocked(capturePosthogEvent).mock.calls[0][2]).toMatchObject({
+			mcp_era: 'legacy',
+			mcp_protocol_version: '2025-06-18',
+		})
+	})
+
+	// Absent, not a guess: a classifier fault must not read as "legacy".
+	it('leaves both properties out when the classifier faulted', async () => {
+		await captureMcpToolCall(WORKSPACE_ID, baseTrace())
+		const props = vi.mocked(capturePosthogEvent).mock.calls[0][2]
+		expect(props.mcp_era).toBeUndefined()
+		expect(props.mcp_protocol_version).toBeUndefined()
+		expect(JSON.parse(JSON.stringify(props))).not.toHaveProperty('mcp_era')
+	})
+})
+
+describe('captureMcpHandshake', () => {
+	beforeEach(() => {
+		vi.mocked(capturePosthogEvent).mockClear()
+	})
+
+	function handshake(overrides: Record<string, unknown> = {}) {
+		return {
+			handshakeMethod: 'initialize' as const,
+			outcome: 'ok' as const,
+			mcpEra: 'legacy' as const,
+			mcpProtocolVersion: 'none' as const,
+			client: 'claude_code' as ReturnType<typeof classifyMcpClient>,
+			transport: 'http' as const,
+			authMethod: 'api_key' as 'api_key' | null,
+			agentActorId: ACTOR_ID as string | null,
+			...overrides,
+		}
+	}
+
+	it('emits one mcp_handshake with the full property set, keyed on the actor', async () => {
+		await captureMcpHandshake(WORKSPACE_ID, handshake())
+		expect(capturePosthogEvent).toHaveBeenCalledTimes(1)
+		const [event, distinctId, props] = vi.mocked(capturePosthogEvent).mock.calls[0]
+		expect(event).toBe(MCP_HANDSHAKE_EVENT)
+		expect(event).toBe('mcp_handshake')
+		expect(distinctId).toBe(ACTOR_ID)
+		expect(props).toEqual({
+			handshake_method: 'initialize',
+			outcome: 'ok',
+			mcp_era: 'legacy',
+			mcp_protocol_version: 'none',
+			client: 'claude_code',
+			transport: 'http',
+			auth_method: 'api_key',
+			workspace_id: WORKSPACE_ID,
+			agent_actor_id: ACTOR_ID,
+		})
+	})
+
+	it('falls back to the workspace, then to a fixed anonymous id, never an empty one', async () => {
+		await captureMcpHandshake(WORKSPACE_ID, handshake({ agentActorId: null }))
+		expect(vi.mocked(capturePosthogEvent).mock.calls[0][1]).toBe(WORKSPACE_ID)
+
+		await captureMcpHandshake('', handshake({ agentActorId: null }))
+		const anonymous = vi.mocked(capturePosthogEvent).mock.calls[1][1]
+		expect(anonymous).toBe(MCP_HANDSHAKE_ANONYMOUS_DISTINCT_ID)
+		expect(anonymous).not.toBe('')
 	})
 })

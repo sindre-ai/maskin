@@ -170,23 +170,46 @@ describe('ResendConnectDialog', () => {
 			expect(domainInput.value).toBe('example.com')
 		})
 
-		it('advances to Step 3b without pre-check when the user picks "Continue anyway"', async () => {
+		it('offers no "Continue anyway" override on the root-MX scene', async () => {
 			vi.mocked(api.integrations.resendDnsPrecheck).mockResolvedValue(PRECHECK_WARN)
-			vi.mocked(api.integrations.connect).mockResolvedValue(CONNECT_SUCCESS)
 			renderDialog()
 
 			await userEvent.type(await screen.findByLabelText(/Resend API key/i), 're_test_key')
 			await userEvent.click(screen.getByRole('button', { name: /^Next/i }))
 			await userEvent.type(await screen.findByLabelText(/receiving domain/i), 'example.com')
 			await userEvent.click(screen.getByRole('button', { name: /register domain/i }))
-			await userEvent.click(await screen.findByRole('button', { name: /continue anyway/i }))
 
-			await waitFor(() =>
-				expect(vi.mocked(api.integrations.connect)).toHaveBeenCalledWith('ws-1', 'resend', {
-					api_key: 're_test_key',
-					receive_subdomain: 'example.com',
-				}),
-			)
+			expect(await screen.findByRole('button', { name: /pick a subdomain/i })).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /continue anyway/i })).not.toBeInTheDocument()
+		})
+	})
+
+	describe('server-side domain rejections on /connect', () => {
+		// ApiError carries the generic BAD_REQUEST in code and the specific code
+		// from error.details in fieldErrors.code.
+		function connectRejection(specificCode: string) {
+			return Object.assign(new Error('rejected'), {
+				status: 400,
+				code: 'BAD_REQUEST',
+				fieldErrors: { code: [specificCode] },
+			})
+		}
+
+		it.each([
+			['BARE_DOMAIN_HAS_MAIL', /that domain already receives mail/i],
+			['INVALID_DOMAIN', /doesn.t look like a valid domain/i],
+		])('shows a step-2 error for %s', async (specificCode, expected) => {
+			vi.mocked(api.integrations.resendDnsPrecheck).mockResolvedValue(PRECHECK_SAFE)
+			vi.mocked(api.integrations.connect).mockRejectedValue(connectRejection(specificCode))
+			renderDialog()
+
+			await userEvent.type(await screen.findByLabelText(/Resend API key/i), 're_test_key')
+			await userEvent.click(screen.getByRole('button', { name: /^Next/i }))
+			await userEvent.type(await screen.findByLabelText(/receiving domain/i), 'example.com')
+			await userEvent.click(screen.getByRole('button', { name: /register domain/i }))
+
+			expect(await screen.findByRole('alert')).toHaveTextContent(expected)
+			expect(screen.getByRole('button', { name: /try another domain/i })).toBeInTheDocument()
 		})
 	})
 

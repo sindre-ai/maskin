@@ -67,5 +67,37 @@ export const config: ProviderConfig = {
 		},
 	},
 
+	deliverables: [
+		{
+			kind: 'email',
+			label: 'Email',
+			sendTool: 'gmail_send_email',
+			// Mirrors the limits in ./send.ts, which enforces them at the Gmail call.
+			bodyMaxLength: 100_000,
+			fields: [
+				{
+					key: 'to',
+					label: 'To',
+					type: 'recipients',
+					required: true,
+					role: 'to',
+					address: 'email',
+				},
+				{ key: 'cc', label: 'Cc', type: 'recipients', role: 'cc', address: 'email' },
+				{
+					key: 'subject',
+					label: 'Subject',
+					type: 'text',
+					required: true,
+					maxLength: 998,
+					slot: 'subject',
+				},
+				// The message being answered, shown above the draft so it is read in context.
+				// Not sent and not part of the approval.
+				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
+			],
+		},
+	],
+
 	externalIdDisplay: 'email',
 }

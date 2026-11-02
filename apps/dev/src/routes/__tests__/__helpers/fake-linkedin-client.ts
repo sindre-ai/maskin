@@ -58,6 +58,8 @@ export function fakeLinkedInClientForTests(): LinkedInClient {
 		listRelations: vi.fn() as never,
 		searchPeople: vi.fn() as never,
 		sendConnectionRequest: vi.fn() as never,
+		listRelationRequests: vi.fn() as never,
+		cancelRelationRequest: vi.fn() as never,
 		publishPost: vi.fn() as never,
 		commentOnPost: vi.fn() as never,
 		replyToComment: vi.fn() as never,

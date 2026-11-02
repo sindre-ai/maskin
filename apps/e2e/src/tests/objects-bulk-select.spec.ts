@@ -22,7 +22,7 @@ test.describe('Bulk-select — checkbox tap zones (ship gate)', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Tap Zone Test Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)
@@ -50,7 +50,7 @@ test.describe('Bulk-select — grouped list selection', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Group Signal Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
@@ -99,12 +99,12 @@ test.describe('Bulk-select — archive action', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Archive Bet A',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Archive Bet B',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			// Archive is a bet-only bulk action (T5), so the bar only offers it while
@@ -137,7 +137,7 @@ test.describe('Bulk-select — shift-click range selection', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: `Shift Select Bet ${i}`,
-				status: 'signal',
+				status: 'opportunity',
 			})
 		}
 
@@ -146,17 +146,21 @@ test.describe('Bulk-select — shift-click range selection', () => {
 		// which otherwise makes this locator ambiguous.
 		await expect(page.getByText('Shift Select Bet').first()).toBeVisible({ timeout: 10000 })
 
-		// Ordinary click anchors the range on the first row.
-		await page.getByRole('checkbox', { name: 'Select row' }).first().click()
+		// A new workspace is seeded with other rows (the onboarding knowledge page
+		// and the default loops) in other status groups, and the list sorts by
+		// updatedAt, so where those land relative to the three bets is a race.
+		// Scope to the bets' own rows instead of the page-wide first/nth(2) row.
+		const betRows = page.locator('[data-obj-id]').filter({ hasText: 'Shift Select Bet' })
+		await expect(betRows).toHaveCount(3)
+
+		// Ordinary click anchors the range on the first bet row.
+		await betRows.first().getByRole('checkbox', { name: 'Select row' }).click()
 		await expect(page.getByLabel('1 selected')).toBeVisible()
 
-		// Shift-click the third row's background. The checkbox and the title
+		// Shift-click the last bet row's background. The checkbox and the title
 		// Link both stop propagation, so the shift-click must land on the row's
 		// own surface (what a real user clicks in the gap between cells).
-		await page
-			.locator('[data-obj-id]')
-			.nth(2)
-			.click({ modifiers: ['Shift'] })
+		await betRows.last().click({ modifiers: ['Shift'] })
 		await expect(page.getByLabel('3 selected')).toBeVisible()
 	})
 })

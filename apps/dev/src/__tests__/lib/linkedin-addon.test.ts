@@ -6,38 +6,21 @@ import {
 } from '../../lib/linkedin-addon'
 
 describe('resolveLinkedInIdentityAddon', () => {
-	it('returns null when the feature flag is off, regardless of connected count', () => {
-		expect(
-			resolveLinkedInIdentityAddon({ connectedCount: 0, flagOn: false, exempt: false }),
-		).toBeNull()
-		expect(
-			resolveLinkedInIdentityAddon({ connectedCount: 3, flagOn: false, exempt: false }),
-		).toBeNull()
-	})
-
-	it('returns null when the flag is on but no identities are connected', () => {
-		expect(
-			resolveLinkedInIdentityAddon({ connectedCount: 0, flagOn: true, exempt: false }),
-		).toBeNull()
+	it('returns null when no identities are connected', () => {
+		expect(resolveLinkedInIdentityAddon({ connectedCount: 0, exempt: false })).toBeNull()
 	})
 
 	it('returns null when the connected count is negative (defensive; count() should never do this)', () => {
-		expect(
-			resolveLinkedInIdentityAddon({ connectedCount: -1, flagOn: true, exempt: false }),
-		).toBeNull()
+		expect(resolveLinkedInIdentityAddon({ connectedCount: -1, exempt: false })).toBeNull()
 	})
 
-	it('returns a line with count × $49 when the flag is on and identities are connected', () => {
-		expect(
-			resolveLinkedInIdentityAddon({ connectedCount: 1, flagOn: true, exempt: false }),
-		).toEqual({
+	it('returns a line with count × $49 when identities are connected', () => {
+		expect(resolveLinkedInIdentityAddon({ connectedCount: 1, exempt: false })).toEqual({
 			count: 1,
 			unit_price_usd_cents: 4900,
 			monthly_total_usd_cents: 4900,
 		})
-		expect(
-			resolveLinkedInIdentityAddon({ connectedCount: 4, flagOn: true, exempt: false }),
-		).toEqual({
+		expect(resolveLinkedInIdentityAddon({ connectedCount: 4, exempt: false })).toEqual({
 			count: 4,
 			unit_price_usd_cents: 4900,
 			monthly_total_usd_cents: 19_600,
@@ -49,12 +32,8 @@ describe('resolveLinkedInIdentityAddon', () => {
 		// that exempts them from the plan spend cap and credit debiting. There is
 		// no line because there is no charge; syncLinkedInAddonQuantity likewise
 		// creates no Stripe item for them.
-		expect(
-			resolveLinkedInIdentityAddon({ connectedCount: 1, flagOn: true, exempt: true }),
-		).toBeNull()
-		expect(
-			resolveLinkedInIdentityAddon({ connectedCount: 9, flagOn: true, exempt: true }),
-		).toBeNull()
+		expect(resolveLinkedInIdentityAddon({ connectedCount: 1, exempt: true })).toBeNull()
+		expect(resolveLinkedInIdentityAddon({ connectedCount: 9, exempt: true })).toBeNull()
 	})
 
 	it('pins the $49 unit price and provider name so drift trips a test rather than a customer', () => {

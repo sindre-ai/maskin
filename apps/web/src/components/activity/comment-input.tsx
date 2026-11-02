@@ -1,4 +1,5 @@
 import { SlashPicker, type SlashPickerResult } from '@/components/chat/slash-picker'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -7,7 +8,10 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
+import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDictation } from '@/hooks/use-dictation'
 import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -17,6 +21,7 @@ import { cn } from '@/lib/cn'
 import { getTypeColor } from '@/lib/constants'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -68,14 +73,37 @@ function randomDraftId(): string {
 	return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-// ~5 lines at text-base (line-height 24px) + py-1 (8px) + 2px border
-const MAX_INPUT_HEIGHT_PX = 130
+// The field grows with its content up to this share of the viewport, then
+// scrolls. Matches the maxHeight on the textarea below.
+const MAX_INPUT_HEIGHT_VH = 50
 
 // Show the live character counter once the draft reaches this fraction of the
 // limit. Keeps the UI quiet for the common short-comment case.
 const COUNTER_VISIBILITY_THRESHOLD = 0.9
 
-export function CommentInput({
+/**
+ * The comment box. A viewer gets the same slot with the box switched off, so
+ * they can see where comments go without being offered a post that would fail.
+ */
+export function CommentInput(props: CommentInputProps) {
+	const canWrite = useCanWrite()
+	if (!canWrite) {
+		return (
+			<ViewerTooltip className="flex w-full">
+				<Textarea
+					disabled
+					rows={1}
+					aria-label="Comment"
+					placeholder={VIEWER_READ_ONLY_MESSAGE}
+					className="min-h-[36px] w-full resize-none text-sm"
+				/>
+			</ViewerTooltip>
+		)
+	}
+	return <CommentInputForm {...props} />
+}
+
+function CommentInputForm({
 	workspaceId,
 	objectId,
 	parentEventId,
@@ -138,8 +166,9 @@ export function CommentInput({
 		const ta = inputRef.current
 		if (!ta) return
 		ta.style.height = 'auto'
-		const overflows = ta.scrollHeight > MAX_INPUT_HEIGHT_PX
-		ta.style.height = `${Math.min(ta.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`
+		const maxHeight = (window.innerHeight * MAX_INPUT_HEIGHT_VH) / 100
+		const overflows = ta.scrollHeight > maxHeight
+		ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`
 		ta.style.overflowY = overflows ? 'auto' : 'hidden'
 	}, [])
 
@@ -235,11 +264,16 @@ export function CommentInput({
 		setMentionFilter('')
 	}, [])
 
-	// Appends dictated phrases to the draft. Renders nothing at all when the
-	// browser has no SpeechRecognition — never a dead control.
+	// Appends the dictated transcript to the draft. Renders nothing at all when
+	// the browser cannot record audio — never a dead control.
 	const dictation = useDictation(
 		useCallback((text: string) => {
 			setContent((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
+		}, []),
+		workspaceId,
+		// The clean pass only replaces the streamed text while it is untouched.
+		useCallback((streamed: string, refined: string) => {
+			setContent((prev) => (prev.includes(streamed) ? prev.replace(streamed, () => refined) : prev))
 		}, []),
 	)
 
@@ -530,10 +564,18 @@ export function CommentInput({
 						dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
 					)}
 					onClick={dictation.toggle}
+					disabled={dictation.transcribing}
 					aria-pressed={dictation.recording}
-					aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a comment'}
+					aria-busy={dictation.transcribing}
+					aria-label={
+						dictation.transcribing
+							? 'Transcribing'
+							: dictation.recording
+								? 'Stop dictating'
+								: 'Dictate a comment'
+					}
 				>
-					<Mic size={14} aria-hidden />
+					{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
 				</Button>
 			) : null}
 			<Button
@@ -694,7 +736,7 @@ export function CommentInput({
 									wrap="soft"
 									aria-invalid={overLimit || undefined}
 									className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
-									style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
+									style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_VH}vh` }}
 								/>
 							</div>
 							{isBar && controlsRight}

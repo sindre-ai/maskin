@@ -683,7 +683,7 @@ describe('charge.dispute.created (spec Delta 5 log-and-alert)', () => {
 				expect.objectContaining({ expand: expect.arrayContaining(['invoice']) }),
 			)
 			expect(notifySebkOnSlack).toHaveBeenCalledOnce()
-			const [msg] = vi.mocked(notifySebkOnSlack).mock.calls[0]
+			const [, msg] = vi.mocked(notifySebkOnSlack).mock.calls[0]
 			expect(msg).toMatch(/Stripe dispute opened/)
 			expect(msg).toMatch(/123\.00 EUR/)
 			expect(msg).toMatch(/dp_1/)

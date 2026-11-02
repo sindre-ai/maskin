@@ -68,9 +68,7 @@ export type StartSessionRequest = {
 	env?: Record<string, string>
 	memoryMib?: number
 	cpus?: number
-	browserRequired?: boolean
 	sourceSessionId?: string
-	previewGuestPorts?: number[]
 	/**
 	 * Workspace skills to stage into `<sessionDir>/skills/` host-side, before
 	 * `spawnSession` mounts the dir as `/agent` in the guest. Optional and
@@ -87,8 +85,6 @@ export type StartSessionResponse = {
 	connection: { host: string; port: number }
 	env_overflow_spilled?: number
 	env_sanitized?: number
-	preview_url?: string
-	preview_forwarding_failed?: boolean
 }
 
 export type AgentServerClientDeps = {
@@ -118,6 +114,15 @@ export class AgentServerClient {
 		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/input`, {
 			content: payload.message.content,
 		})
+	}
+
+	/**
+	 * Switch the session's CLI onto another model for its next turns. The
+	 * agent-server writes the control request in order with the user turns
+	 * around it, so a switch followed by a turn applies to that turn.
+	 */
+	async setModel(sessionId: string, model: string): Promise<void> {
+		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/input`, { model })
 	}
 
 	/**

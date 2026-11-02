@@ -84,6 +84,21 @@ describe('stdio trace fan-out', () => {
 		expect(inserts[0]?.hasRichRender).toBe(true)
 	})
 
+	it('stores the object type and cursor flag of a list call on the row', async () => {
+		const { inserts } = await postCapturing(
+			baseBody({ transport: 'http', object_type: 'insight', has_cursor: true }),
+		)
+
+		expect(inserts[0]).toMatchObject({ objectType: 'insight', hasCursor: true })
+	})
+
+	it('stores null for both on a call that is not a list-family call', async () => {
+		const { inserts } = await postCapturing(baseBody({ tool_name: 'get_objects' }))
+
+		expect(inserts[0]?.objectType).toBeNull()
+		expect(inserts[0]?.hasCursor).toBeNull()
+	})
+
 	it('persists the session id for an attributable source', async () => {
 		const { inserts } = await postCapturing(
 			baseBody({ transport: 'stdio', session_source: 'maskin-session', session_id: 'sess-1' }),
@@ -104,6 +119,46 @@ describe('stdio trace fan-out', () => {
 			argKeys: ['type'],
 			transport: 'stdio',
 		})
+	})
+
+	// Same three properties as the HTTP path. Stdio reaches us through our own
+	// sink, so the request's User-Agent says nothing about the end client and
+	// `client` is other; the caller is key-authenticated and its type comes from
+	// the auth context.
+	it('stamps api_key, the actor type and client other on a stdio trace', async () => {
+		await post(baseBody({ transport: 'stdio', seq: 1 }))
+
+		expect(lastTrace()).toMatchObject({
+			authMethod: 'api_key',
+			actorType: 'human',
+			client: 'other',
+			agentActorId: 'test-actor-id',
+		})
+	})
+
+	it('carries the actor type of an agent key', async () => {
+		const { app, mockResults } = createTestApp(
+			telemetryRoutes,
+			'/api/telemetry',
+			'agent-actor-id',
+			'agent',
+		)
+		mockResults.select = [{ actorId: 'agent-actor-id' }]
+		mockResults.insert = [{}]
+		await app.request(
+			jsonRequest('POST', '/api/telemetry/mcp', baseBody({ transport: 'stdio', seq: 1 }), {
+				'x-workspace-id': wsId,
+				'user-agent': 'Cursor/0.45.1',
+			}),
+		)
+		await new Promise((r) => setImmediate(r))
+
+		expect(lastTrace()).toMatchObject({
+			actorType: 'agent',
+			authMethod: 'api_key',
+			client: 'other',
+		})
+		expect(JSON.stringify(lastTrace())).not.toContain('Cursor/0.45.1')
 	})
 
 	// The guard this file exists for. routes/mcp.ts already emitted this call.

@@ -19,7 +19,7 @@ test.describe('Objects display-panel persistence', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Display Persistence Probe',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)

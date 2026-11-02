@@ -326,12 +326,9 @@ describe('ActivityComment', () => {
 			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
 		).toBeGreaterThanOrEqual(1)
 	})
-	// The clamped branch used to render the raw markdown string in a bare span,
-	// so every long comment on the v2 timeline opened showing literal `**` and
-	// `- ` until the reader pressed Show more.
-	it('renders markdown, not raw syntax, while a long bubble comment is clamped', async () => {
-		const user = userEvent.setup()
-		const content = `This **matters** and [the retry window](/ws-1/objects/abc) explains why. ${'padding words to run past the clamp threshold '.repeat(8)}`
+	it('renders a long bubble comment in full, formatted, with no Show more toggle', () => {
+		const tail = 'the very last words of a long comment'
+		const content = `This **matters** and [the retry window](/ws-1/objects/abc) explains why. ${'padding words to make this comment long '.repeat(8)}${tail}`
 		const event = buildEventResponse({
 			id: 1,
 			action: 'commented',
@@ -340,15 +337,10 @@ describe('ActivityComment', () => {
 
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" variant="bubble" />)
 
-		// Clamped by default, and formatted rather than literal.
-		const showMore = screen.getByRole('button', { name: /show more/i })
+		expect(screen.queryByRole('button', { name: /show (more|less)/i })).not.toBeInTheDocument()
+		expect(document.body.textContent).toContain(tail)
 		expect(screen.getByText('matters').tagName).toBe('STRONG')
 		expect(screen.getByRole('link', { name: 'the retry window' })).toBeInTheDocument()
-		expect(document.body.textContent).not.toContain('**matters**')
-
-		// And still formatted once expanded.
-		await user.click(showMore)
-		expect(screen.getByText('matters').tagName).toBe('STRONG')
 		expect(document.body.textContent).not.toContain('**matters**')
 	})
 })

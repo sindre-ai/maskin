@@ -1,0 +1,21 @@
+-- Link a helper session to the session that started it, and mark when its
+-- result has been sent back.
+--
+--   spawned_by_session_id  the sender: the session whose create_session /
+--                          run_agent / @mention call started this one. Nullable;
+--                          NULL means "no known sender" (every pre-existing row,
+--                          cron and webhook starts, and any call whose session
+--                          header could not be authenticated). Deliberately NOT
+--                          source_session_id: that column means "restore that
+--                          session's workspace snapshot".
+--   helper_returned_at     one-shot claim taken by the helper-return module
+--                          before it posts the outcome, so a double call posts
+--                          once. Nullable; NULL means "not returned yet".
+--
+-- Both are nullable with no default, so this is a metadata-only ALTER and safe
+-- for every reader and writer of the previous code (expand step; nothing reads
+-- these columns until the matching code ships). sessions is not on the hot-table
+-- list in MIGRATIONS.md. The index lives in 0090 (CONCURRENTLY, alone in its file).
+ALTER TABLE "sessions" ADD COLUMN IF NOT EXISTS "spawned_by_session_id" uuid;
+--> statement-breakpoint
+ALTER TABLE "sessions" ADD COLUMN IF NOT EXISTS "helper_returned_at" timestamp with time zone;

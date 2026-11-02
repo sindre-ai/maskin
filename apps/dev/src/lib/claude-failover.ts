@@ -16,10 +16,11 @@ import {
 	CLAUDE_CREDENTIAL_TIMEOUT_MS,
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
+	type RefreshBuffer,
+	applyWorkspaceRowTimeouts,
 	decryptOAuthData,
-	encryptOAuthTokens,
-	persistRefreshedSlot,
-	refreshClaudeTokenIfNeeded,
+	refreshSlotSingleFlight,
+	reportClaudeRefreshFailure,
 } from './claude-oauth'
 import { attemptPrimaryRecovery, shouldAttemptPrimaryRecovery } from './claude-oauth-recovery'
 import {
@@ -34,6 +35,7 @@ import {
 } from './claude-oauth-slots'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
+import { Sentry } from './sentry'
 import { parseSubscriptionLimitReset } from './subscription-limit-reset'
 
 /**
@@ -158,8 +160,8 @@ export interface FailoverParams {
 	now?: () => number
 	/** Overrides `process.env` (used by tests). */
 	env?: NodeJS.ProcessEnv
-	/** Passed through to `refreshClaudeTokenIfNeeded`. */
-	bufferMs?: number
+	/** Passed through to `refreshSlotSingleFlight`. */
+	bufferMs?: RefreshBuffer
 	/**
 	 * Invoked when a CONFIGURED slot yields no usable token, reporting whether
 	 * the failure is worth retrying. Deliberately not called when nothing is
@@ -419,16 +421,14 @@ async function loadAndRefreshSlot(
 	workspaceId: string,
 	slot: OAuthSlotKind,
 	encrypted: EncryptedOAuthData,
-	bufferMs: number | undefined,
+	bufferMs: RefreshBuffer | undefined,
 ): Promise<{ tokens: ClaudeOAuthTokens; refreshFailure: ClassifierInput | null }> {
 	const stored = decryptOAuthData(encrypted)
 	try {
-		const result = await refreshClaudeTokenIfNeeded(stored, bufferMs ?? 10 * 60 * 1000)
-		if (result.refreshed) {
-			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(result.tokens))
-		}
+		const result = await refreshSlotSingleFlight(db, workspaceId, slot, encrypted, bufferMs)
 		return { tokens: result.tokens, refreshFailure: null }
 	} catch (err) {
+		reportClaudeRefreshFailure({ workspaceId, slot, caller: 'session_start', error: err })
 		logger.warn('Failed to refresh Claude OAuth slot', {
 			workspaceId,
 			slot,
@@ -453,34 +453,38 @@ async function attemptChainHeadRecovery(params: {
 	workspaceId: string
 	actorId: string
 	probe: SubscriptionProbe
-	bufferMs: number | undefined
+	bufferMs: RefreshBuffer | undefined
 	now: number
 }): Promise<ClaudeCredentials | null> {
 	const { db, workspaceId, actorId, probe, bufferMs, now } = params
 	let recoveredTokens: ClaudeOAuthTokens | null = null
-	let recoveredNeedsPersist = false
 
 	const recovery = await attemptPrimaryRecovery({
 		db,
 		workspaceId,
 		actorId,
 		now,
-		healthCheck: async (head) => {
-			const decrypted = decryptOAuthData(head)
+		healthCheck: async (head, headSlot) => {
 			try {
-				const { tokens, refreshed } = await refreshClaudeTokenIfNeeded(
-					decrypted,
-					bufferMs ?? 10 * 60 * 1000,
-				)
+				// Refresh and persist go through the shared single-flight path.
+				// healthCheck runs before attemptPrimaryRecovery opens its row-lock
+				// transaction, so persisting here never nests a transaction on the
+				// workspaces row, and the lock is released before the probe runs.
+				const { tokens } = await refreshSlotSingleFlight(db, workspaceId, headSlot, head, bufferMs)
 				const probeResult = await runProbe(probe, tokens)
 				if (probeResult) {
 					const decision = classifyClaudeFailureWithReset(probeResult)
 					return { healthy: false, reason: decision.reason }
 				}
 				recoveredTokens = tokens
-				recoveredNeedsPersist = refreshed
 				return { healthy: true }
 			} catch (err) {
+				reportClaudeRefreshFailure({
+					workspaceId,
+					slot: headSlot,
+					caller: 'failover_recovery',
+					error: err,
+				})
 				const decision = classifyClaudeFailureWithReset(classifierInputFromError(err))
 				return { healthy: false, reason: decision.reason }
 			}
@@ -488,14 +492,6 @@ async function attemptChainHeadRecovery(params: {
 	})
 
 	if (!recovery.recovered || !recoveredTokens) return null
-
-	if (recoveredNeedsPersist) {
-		// Persist AFTER attemptPrimaryRecovery's transaction has released its
-		// row lock — persisting from inside `healthCheck` (which runs under
-		// that lock) would open a second transaction competing for the same
-		// lock and deadlock against itself.
-		await persistRefreshedSlot(db, workspaceId, recovery.slot, encryptOAuthTokens(recoveredTokens))
-	}
 	return { slot: recovery.slot, tokens: recoveredTokens }
 }
 
@@ -507,7 +503,7 @@ async function attemptChainHeadRecovery(params: {
  * (AC-T2). The slot flip itself is idempotent — both sessions still land on
  * the same next slot.
  */
-async function recordFailoverTransition(params: {
+export async function recordFailoverTransition(params: {
 	db: Database
 	workspaceId: string
 	actorId: string
@@ -518,6 +514,7 @@ async function recordFailoverTransition(params: {
 }): Promise<void> {
 	const { db, workspaceId, actorId, fromSlot, toSlot, bucket, reason } = params
 	const inserted = await db.transaction(async (tx) => {
+		await applyWorkspaceRowTimeouts(tx)
 		const [latest] = await tx
 			.select()
 			.from(workspaces)
@@ -599,6 +596,88 @@ async function recordChainExhausted(params: {
 		now,
 		slot,
 	})
+}
+
+/**
+ * sessions.config key holding the access-token expiry (epoch ms) a container
+ * launched with. Stamped only when the refresh token was withheld from it, so
+ * its presence means "this session cannot refresh itself".
+ */
+export const SESSION_OAUTH_EXPIRES_AT_KEY = 'claude_oauth_expires_at'
+
+/** Reasons that read as a bad credential rather than a spent one. */
+const AUTH_CLASS_FAILOVER_REASONS: ReadonlySet<string> = new Set([
+	'auth_failed',
+	'not_logged_in',
+	'oauth_revoked',
+])
+
+/** An auth error this close to (or past) expiry is attributed to expiry. */
+const ACCESS_TOKEN_EXPIRY_SLACK_MS = 60_000
+
+/**
+ * True when a session that could not refresh its own token hit an auth-class
+ * error at its access token's expiry. That is the honest limit of withholding
+ * the refresh token (the slot is healthy, the session simply outlived its
+ * token), so it must not stamp auth_failed on the slot or move the workspace
+ * off it. Sessions without the stamp (flag off, other routes) never match.
+ */
+export function isAuthErrorAtAccessTokenExpiry(
+	config: Record<string, unknown>,
+	reason: string,
+	now: number = Date.now(),
+): boolean {
+	if (!AUTH_CLASS_FAILOVER_REASONS.has(reason)) return false
+	const expiresAt = config[SESSION_OAUTH_EXPIRES_AT_KEY]
+	if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return false
+	return now >= expiresAt - ACCESS_TOKEN_EXPIRY_SLACK_MS
+}
+
+/**
+ * Leave a Sentry event when a session dies because the model API answered 401
+ * and the CLI could not renew its login. Nothing else records this: it is not
+ * a token-endpoint failure (the platform never refreshed) and it is not
+ * classified for failover, so without this the loss is invisible.
+ *
+ * Tags carry the workspace and session ids so an alert rule can filter on
+ * them. refresh_withheld tells the two causes apart: true means the
+ * container never had a refresh token and outlived its access token (launch
+ * buffer too small), false means it had one and the renewal failed (the
+ * refresh token was rotated under it). Never throws.
+ */
+export function reportClaudeSessionAuthDeath(params: {
+	sessionId: string
+	workspaceId: string
+	config: Record<string, unknown> | null | undefined
+}): void {
+	const { sessionId, workspaceId } = params
+	const config = params.config ?? {}
+	try {
+		const route = typeof config.llm_route === 'string' ? config.llm_route : 'unknown'
+		const slot = typeof config.llm_oauth_slot === 'string' ? config.llm_oauth_slot : 'none'
+		const refreshWithheld = typeof config[SESSION_OAUTH_EXPIRES_AT_KEY] === 'number'
+		Sentry.captureMessage('Claude session died on a 401', {
+			level: 'error',
+			tags: {
+				workspace_id: workspaceId,
+				session_id: sessionId,
+				route,
+				slot,
+				refresh_withheld: String(refreshWithheld),
+			},
+			extra: {
+				workspaceId,
+				sessionId,
+				route,
+				slot,
+				refreshWithheld,
+				failedAt: new Date().toISOString(),
+			},
+			fingerprint: ['claude-session-auth-death', route, String(refreshWithheld)],
+		})
+	} catch (sentryErr) {
+		console.error('[sentry] captureMessage failed', sentryErr)
+	}
 }
 
 /**

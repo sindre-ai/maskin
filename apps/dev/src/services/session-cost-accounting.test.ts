@@ -31,6 +31,7 @@ interface StubRow {
 
 function makeStub(row: StubRow) {
 	const captured: CapturedUpdate[] = []
+	const revoked: CapturedUpdate[] = []
 	const db = {
 		select() {
 			return {
@@ -50,7 +51,12 @@ function makeStub(row: StubRow) {
 		update() {
 			return {
 				set(setPatch: Record<string, unknown>) {
-					captured.push({ setPatch })
+					// Only the terminal write is under test. After a settle, the helper
+					// return takes its own one-shot claim with a separate update
+					// (helperReturnedAt only) and the session's API keys are revoked with
+					// another (revokedAt only); neither is part of the setPatch contract.
+					if ('revokedAt' in setPatch) revoked.push({ setPatch })
+					else if (!('helperReturnedAt' in setPatch)) captured.push({ setPatch })
 					return {
 						where() {
 							return { returning: async () => [{ id: row.id }] }
@@ -60,7 +66,7 @@ function makeStub(row: StubRow) {
 			}
 		},
 	}
-	return { db: db as unknown as SettleDependencies['db'], captured }
+	return { db: db as unknown as SettleDependencies['db'], captured, revoked }
 }
 
 function makeDeps(dbStub: SettleDependencies['db']): SettleDependencies {
@@ -213,6 +219,14 @@ describe('settleSession — §1.4 additive usage accounting (setPatch contract)'
 			const patch = captured[0]?.setPatch as Record<string, unknown>
 			expect(patch.completedAt, `completedAt set for ${kind}`).toBeInstanceOf(Date)
 		}
+	})
+
+	it('revokes the session API keys once the terminal write is made', async () => {
+		const { db, captured, revoked } = makeStub(baseRow())
+		await settleSession('session-cost-1', outcome('complete'), makeDeps(db))
+		expect(captured).toHaveLength(1)
+		expect(revoked).toHaveLength(1)
+		expect(revoked[0]?.setPatch.revokedAt).toBeInstanceOf(Date)
 	})
 
 	it('idle-pause writes the snapshot key onto snapshotPath', async () => {

@@ -54,7 +54,7 @@ describe('Object validation', () => {
 	it('accepts optional metadata', () => {
 		const result = createObjectSchema.safeParse({
 			type: 'bet',
-			status: 'signal',
+			status: 'opportunity',
 			metadata: { signal_strength: 0.8 },
 		})
 		expect(result.success).toBe(true)
@@ -284,6 +284,20 @@ describe('Safe metadata validation', () => {
 	it('rejects arrays of objects', () => {
 		const result = safeMetadataSchema.safeParse({
 			items: [{ name: 'bad' }],
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it("accepts a loop's closed_statuses map (shallow record of string arrays)", () => {
+		const result = safeMetadataSchema.safeParse({
+			closed_statuses: { content: ['live'], task: ['done', 'validated'] },
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('still rejects nested objects one level deeper than closed_statuses', () => {
+		const result = safeMetadataSchema.safeParse({
+			closed_statuses: { content: { live: true } },
 		})
 		expect(result.success).toBe(false)
 	})

@@ -194,7 +194,7 @@ describe('getLatestActivityPreview', () => {
 				content: [{ type: 'tool_use', id: 't1', name: 'search_objects', input: {} }],
 			},
 		})
-		expect(getLatestActivityPreview([log(1, 'stdout', tool)])).toBe('Using search_objects')
+		expect(getLatestActivityPreview([log(1, 'stdout', tool)])).toBe('Search objects')
 	})
 
 	it('returns "Awaiting input" when the latest envelope is a successful result', () => {
@@ -227,7 +227,7 @@ describe('getLatestActivityPreview', () => {
 		})
 		const systemInit = JSON.stringify({ type: 'system', subtype: 'init' })
 		expect(getLatestActivityPreview([log(1, 'stdout', tool), log(2, 'stdout', systemInit)])).toBe(
-			'Using list_objects',
+			'List objects',
 		)
 	})
 
@@ -241,6 +241,37 @@ describe('getLatestActivityPreview', () => {
 		expect(preview).toBeTruthy()
 		expect(preview?.length).toBeLessThanOrEqual(80)
 		expect(preview?.endsWith('…')).toBe(true)
+	})
+
+	it('strips markdown markers so the one-line preview shows no literal stars', () => {
+		const assistant = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [
+					{
+						type: 'text',
+						text: '**Claimed by session 83e1** on `feat/task-bfe77591` with _two_ [links](https://maskin.io/x) and *more*',
+					},
+				],
+			},
+		})
+		expect(getLatestActivityPreview([log(1, 'stdout', assistant)])).toBe(
+			'Claimed by session 83e1 on feat/task-bfe77591 with two links and more',
+		)
+	})
+
+	it('leaves a lone asterisk and snake_case names alone', () => {
+		const assistant = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [{ type: 'text', text: 'Reading 2 * 3 in list_objects and get_file' }],
+			},
+		})
+		expect(getLatestActivityPreview([log(1, 'stdout', assistant)])).toBe(
+			'Reading 2 * 3 in list_objects and get_file',
+		)
 	})
 
 	it('returns null when there is nothing renderable yet', () => {
@@ -337,7 +368,7 @@ describe('segmentActivityByMessage', () => {
 		])
 		expect(segments).toEqual([])
 		expect(unassigned).toEqual([
-			{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' },
+			{ id: '1-0', kind: 'tool_use', text: 'Search objects' },
 			{ id: '2-0', kind: 'text', text: 'Found 3 matches' },
 		])
 	})
@@ -453,12 +484,12 @@ describe('segmentActivityByMessage', () => {
 			{
 				conversationMessageId: 10,
 				containsReply: false,
-				steps: [{ id: '2-0', kind: 'tool_use', text: 'Using search_objects' }],
+				steps: [{ id: '2-0', kind: 'tool_use', text: 'Search objects' }],
 			},
 			{
 				conversationMessageId: 20,
 				containsReply: false,
-				steps: [{ id: '4-0', kind: 'tool_use', text: 'Using list_objects' }],
+				steps: [{ id: '4-0', kind: 'tool_use', text: 'List objects' }],
 			},
 		])
 	})
@@ -475,7 +506,7 @@ describe('segmentActivityByMessage', () => {
 			log(1, 'stdout', tool),
 			log(2, 'stdout', taggedUserTurn(10, 'hi')),
 		])
-		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' }])
+		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'Search objects' }])
 		expect(segments).toEqual([{ conversationMessageId: 10, containsReply: false, steps: [] }])
 	})
 
@@ -561,7 +592,7 @@ describe('segmentActivityByMessage', () => {
 				conversationMessageId: 10,
 				containsReply: false,
 				steps: [
-					{ id: '2-0', kind: 'tool_use', text: 'Using search_objects' },
+					{ id: '2-0', kind: 'tool_use', text: 'Search objects' },
 					{ id: '3-0', kind: 'text', text: 'Found 3 matches' },
 				],
 			},

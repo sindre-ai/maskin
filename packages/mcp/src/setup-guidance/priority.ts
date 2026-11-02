@@ -30,7 +30,6 @@ const CHECK_ORDER: Record<string, number> = {
 	status_progression: 47,
 	// rest
 	has_members: 50,
-	dry_run_suggested: 90,
 }
 
 const CHECK_ORDER_DEFAULT = 999

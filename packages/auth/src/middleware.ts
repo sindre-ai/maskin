@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
 import { createAuthCaches, resolveAuthCacheTtlMs } from './auth-cache'
+import { hashApiKey } from './key-hash'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -31,7 +32,7 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 		// API key auth
 		if (token.startsWith('ank_')) {
 			const result = await caches.apiKeys.get(
-				token,
+				hashApiKey(token),
 				() => validateApiKey(db, token),
 				(value) => value !== null,
 			)
@@ -57,11 +58,11 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 				if (!UUID_RE.test(workspaceId)) {
 					return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 				}
-				const isMember = await caches.memberships.get(
+				const role = await caches.memberships.get(
 					`${result.actorId}|${workspaceId}`,
 					async () => {
 						const [member] = await db
-							.select({ actorId: workspaceMembers.actorId })
+							.select({ role: workspaceMembers.role })
 							.from(workspaceMembers)
 							.where(
 								and(
@@ -70,13 +71,16 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 								),
 							)
 							.limit(1)
-						return Boolean(member)
+						return member?.role ?? null
 					},
-					(value) => value,
+					(value) => value !== null,
 				)
-				if (!isMember) {
+				if (role === null) {
 					return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 				}
+				// Same lookup as the membership check, so write routes can refuse a viewer
+				// without a second query (see assertWorkspaceWriterRole in workspace-auth.ts).
+				c.set('workspaceRole', role)
 			}
 
 			return next()

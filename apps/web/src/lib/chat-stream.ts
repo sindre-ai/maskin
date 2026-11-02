@@ -46,6 +46,8 @@ export type ChatEvent =
 			 * `SessionManager.writeInput`'s retry caller.
 			 */
 			isRetry?: boolean
+			/** Who typed it, from the `maskin_actor_id` side-channel the input route writes. */
+			actorId?: string
 	  }
 	| { kind: 'text'; text: string; sessionId?: string; messageId?: string }
 	| {
@@ -179,6 +181,7 @@ function parseUserMessage(envelope: Record<string, unknown>): ChatEvent[] {
 	const attachments = parseMaskinAttachments(envelope.maskin_attachments)
 	const conversationMessageId = asNumber(envelope.maskin_message_id)
 	const isRetry = envelope.maskin_retry === true
+	const actorId = asString(envelope.maskin_actor_id)
 
 	const withAttachments = (text: string): ChatEvent => ({
 		kind: 'user',
@@ -186,6 +189,7 @@ function parseUserMessage(envelope: Record<string, unknown>): ChatEvent[] {
 		...(attachments.length > 0 ? { attachments } : {}),
 		...(conversationMessageId !== undefined ? { conversationMessageId } : {}),
 		...(isRetry ? { isRetry: true } : {}),
+		...(actorId ? { actorId } : {}),
 	})
 
 	if (typeof content === 'string') {

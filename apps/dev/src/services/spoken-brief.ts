@@ -184,7 +184,6 @@ export function buildFactsMessage(facts: BriefingFacts): string {
 			verdict: b.verdict ?? undefined,
 		})),
 		open_insights: facts.openInsights.map((i) => i.title),
-		recent_learnings: facts.ledgerLines,
 	})
 }
 
@@ -246,11 +245,6 @@ export function formatSpokenFallback(facts: BriefingFacts): string {
 		sentences.push(
 			`Recently closed: ${closed.title}${closed.verdict ? `. The verdict was ${closed.verdict}` : ''}.`,
 		)
-	}
-
-	const lastLearning = facts.ledgerLines[facts.ledgerLines.length - 1]
-	if (lastLearning) {
-		sentences.push(`Last session left a note: ${lastLearning}`)
 	}
 
 	// Says only what the facts contain. `BriefingBetFact.progress` carries a
@@ -375,10 +369,15 @@ export async function generateSpokenBrief(
 	db: Database,
 	storage: StorageProvider,
 	workspaceId: string,
-	options: { now?: Date } = {},
+	options: { now?: Date; mayGenerate?: boolean } = {},
 ): Promise<SpokenBrief> {
 	const now = options.now ?? new Date()
-	const facts = await collectBriefingFacts(db, storage, workspaceId)
+	// A read-only caller (a viewer) is served the day's cache or the plain
+	// fallback prose. Only a writer may spend the workspace's model credentials
+	// or write the cache, and a viewer's fallback must not be cached or it would
+	// hide the agent's brief from the next writer.
+	const mayGenerate = options.mayGenerate ?? true
+	const facts = await collectBriefingFacts(db, workspaceId)
 
 	// Resolved before the cache is read, not after: the agent and the model it
 	// would use are part of the fingerprint, so they have to be known to decide
@@ -415,12 +414,13 @@ export async function generateSpokenBrief(
 	// midnight, and every retry would silently read the failure back.
 	let cacheable = true
 
-	if (agent) {
+	if (agent && mayGenerate) {
 		if (credentials) {
 			try {
 				const adapter = createLLMAdapter(credentials.provider, {
 					api_key: credentials.apiKey,
 					base_url: credentials.baseUrl,
+					extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
 				})
 				const response = await adapter.chat({
 					model: credentials.model,
@@ -486,7 +486,7 @@ export async function generateSpokenBrief(
 	// The no-credentials fallback is worth caching — the prose is deterministic,
 	// so every press would otherwise re-run the queries for an identical result.
 	// A fallback caused by a failed call is not: see `cacheable` above.
-	if (cacheable) {
+	if (cacheable && mayGenerate) {
 		try {
 			const { cached: _cached, ...persisted } = brief
 			await storage.put(key, Buffer.from(JSON.stringify({ ...persisted, inputHash }), 'utf-8'))

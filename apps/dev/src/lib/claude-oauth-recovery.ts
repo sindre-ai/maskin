@@ -72,7 +72,7 @@ export interface AttemptPrimaryRecoveryInput {
 	workspaceId: string
 	actorId: string
 	/** Probes the head of the chain — the slot recovery would switch back to. */
-	healthCheck: (head: OAuthSlotData) => Promise<RecoveryHealthCheckResult>
+	healthCheck: (head: OAuthSlotData, headSlot: OAuthSlotKind) => Promise<RecoveryHealthCheckResult>
 	now?: number
 	cooldownMs?: number
 }
@@ -140,7 +140,7 @@ export async function attemptPrimaryRecovery(
 		id: OAuthSlotKind
 		data: OAuthSlotData
 	}
-	const probe = await healthCheck(precheckHead.data)
+	const probe = await healthCheck(precheckHead.data, precheckHead.id)
 
 	type TxOutcome =
 		| {

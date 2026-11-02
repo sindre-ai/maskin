@@ -1,6 +1,4 @@
 import type { InvalidateQueryFilters, QueryClient } from '@tanstack/react-query'
-import { trackAgentSessionCompleted, trackTriggerFired } from './analytics'
-import { api } from './api'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
 
@@ -13,7 +11,11 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 // Session events that can move the credit balance or end a run. Billing usage
 // only needs a refetch on these; routine session_updated / session_started
 // traffic does not change it.
-const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session_budget_stopped'])
+const BILLING_INVALIDATING_ACTIONS = new Set([
+	'session_credit_debited',
+	'session_budget_stopped',
+	'session_stopped',
+])
 
 // Trailing windows for the refetches a burst of session events would otherwise
 // multiply. Agents PATCH current_activity on every step and a scheduled trigger
@@ -27,6 +29,9 @@ const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session
 // (lib/events/record-event.ts), so a refetch is never answered from a snapshot
 // older than the event no matter how long the window is.
 const SESSIONS_REFETCH_MS = 5_000
+// The per-agent stats group the whole session history server-side, so they get a longer
+// window. They only feed counts and cost; live status comes from the 100-row list.
+const SESSIONS_STATS_REFETCH_MS = 30_000
 const BILLING_REFETCH_MS = 15_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -119,6 +124,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		invalidate(queryClient, { queryKey: queryKeys.objects.references(event.entity_id) })
 	}
 
+	// A draft approved or sent changes its card (Approved, sending, then Sent). The draft can
+	// be any object type, including ones the entity-type switch below does not list.
+	if (event.action === 'approved' || event.action === 'delivered') {
+		invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
+	}
+
 	// New comments may change unread counts for any subscriber in this workspace
 	// and the subscriber list for the entity that was commented on (the latter
 	// because the commenter auto-subscribes server-side).
@@ -126,6 +137,8 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		invalidate(queryClient, {
 			queryKey: ['subscriptions', 'unread', workspaceId],
 		})
+		// A reply on a thread can settle a curated For You item.
+		invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 		invalidate(queryClient, {
 			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
 		})
@@ -162,22 +175,31 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 				// keyed to the trigger — we don't know which loop from the payload,
 				// so invalidate every open loop-activity query in this workspace.
 				invalidate(queryClient, { queryKey: ['loops', workspaceId, 'activity'] })
-				trackTriggerFired({
-					entity_id: event.entity_id,
-					entity_type: 'trigger',
-					flow_id: event.event_id ?? null,
-				})
 			}
 			break
 		case 'session': {
+			// A handoff exists from the moment `create_session` runs, before any message
+			// carries it; the messages list returns it as `pending_handoffs`.
+			invalidate(queryClient, {
+				queryKey: ['conversations', 'detail'],
+				predicate: (query) => query.queryKey[3] === 'messages',
+			})
 			// Broad prefix invalidation covers all session queries including byActor,
 			// detail and logs — except the workspace list (exactly ['sessions', ws]),
-			// which is coalesced below. The prefix also matches it, so exclude it here.
+			// which is coalesced below, and the per-agent stats
+			// (['sessions', ws, 'stats']), which are coalesced on a longer window. The prefix
+			// matches both, so exclude them here.
+			// A per-session query (detail, logs) is only stale when the event is about that
+			// session — otherwise every mounted `useSession` refetches on every event for
+			// every other session in the workspace.
 			invalidate(queryClient, {
 				queryKey: ['sessions'],
 				predicate: (query) => {
 					const key = query.queryKey
-					return !(key.length === 2 && key[1] === workspaceId)
+					if (key[1] === 'detail') return key[2] === event.entity_id
+					if (key[2] === 'logs') return key[1] === event.entity_id
+					if (key[1] !== workspaceId) return true
+					return !(key.length === 2 || (key.length === 3 && key[2] === 'stats'))
 				},
 			})
 			scheduleTrailingRefetch(
@@ -188,6 +210,15 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 					exact: true,
 				},
 				SESSIONS_REFETCH_MS,
+			)
+			scheduleTrailingRefetch(
+				queryClient,
+				`sessions-stats:${workspaceId}`,
+				{
+					queryKey: queryKeys.sessions.stats(workspaceId),
+					exact: true,
+				},
+				SESSIONS_STATS_REFETCH_MS,
 			)
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.
@@ -208,41 +239,16 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 					BILLING_REFETCH_MS,
 				)
 			}
-			if (outcome) {
-				const sessionId = event.entity_id
-				// G2 trigger provenance lives on the session row — the `trigger_id`
-				// column plus the `trigger_type` folded into `config` by
-				// `createSession` — and the SSE payload has carried no `data` since
-				// migration 0006 dropped it for the 8KB NOTIFY limit. So read the row
-				// back. Fire-and-forget: `onEvent` is not awaited upstream
-				// (`sse.ts`), so this cannot stall the stream, and a completion whose
-				// row is unreadable (deleted, evicted) still emits — just without
-				// provenance, rather than being dropped.
-				void (async () => {
-					let triggerId: string | null = null
-					let triggerType: string | null = null
-					try {
-						const session = await api.sessions.get(sessionId, workspaceId)
-						triggerId = session.triggerId
-						triggerType =
-							typeof session.config?.trigger_type === 'string' ? session.config.trigger_type : null
-					} catch {
-						// Provenance is best-effort; the completion itself is not.
-					}
-					trackAgentSessionCompleted({
-						entity_id: sessionId,
-						entity_type: 'session',
-						outcome,
-						flow_id: event.event_id ?? null,
-						trigger_id: triggerId,
-						trigger_type: triggerType,
-					})
-				})()
-			}
 			break
 		}
+		case 'integration':
+			// A grant, a default, a connect or a disconnect: the integration list, the Keychain page
+			// and every agent's access are all under this key, so they refresh together.
+			invalidate(queryClient, { queryKey: queryKeys.integrations.all(workspaceId) })
+			break
 		case 'notification':
 			invalidate(queryClient, { queryKey: queryKeys.notifications.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.forYou.list(workspaceId) })
 			break
 		case 'actor':
 			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })

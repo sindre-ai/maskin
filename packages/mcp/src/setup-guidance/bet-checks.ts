@@ -24,8 +24,8 @@ function contentQuality(bet: BetInput): SetupCheck | null {
 		status: 'warn',
 		message:
 			content.length === 0
-				? `This ${bet.type} has no content yet — ask the user to add more detail so agents and collaborators know what it's about.`
-				: `This ${bet.type}'s content is only ${content.length} character${content.length === 1 ? '' : 's'} — ask the user to add more detail (aim for ${MIN_CONTENT_LENGTH}+).`,
+				? `This ${bet.type} has no content yet — add more detail so agents and collaborators know what it's about.`
+				: `This ${bet.type}'s content is only ${content.length} character${content.length === 1 ? '' : 's'} — add more detail (aim for ${MIN_CONTENT_LENGTH}+).`,
 		fix: {
 			tool: 'update_objects',
 			args_hint: 'set content: "<a fuller description>" on the object',
@@ -34,12 +34,12 @@ function contentQuality(bet: BetInput): SetupCheck | null {
 	}
 }
 
-function driverSet(bet: BetInput): SetupCheck {
+function driverSet(bet: BetInput): SetupCheck | null {
 	if (!bet.driver) {
 		return {
 			name: 'driver_set',
 			status: 'warn',
-			message: `This ${bet.type} has no driver — ask the user to add one so someone is accountable for moving it forward.`,
+			message: `This ${bet.type} has no driver — set one so someone is accountable for moving it forward.`,
 			fix: {
 				tool: 'update_objects',
 				args_hint: 'set driver: "<actor id>" on the object',
@@ -47,16 +47,8 @@ function driverSet(bet: BetInput): SetupCheck {
 			},
 		}
 	}
-	return {
-		name: 'driver_set',
-		status: 'warn',
-		message: `This ${bet.type} is driven by ${bet.driver} — ask the user to confirm this is the right driver.`,
-		fix: {
-			tool: 'update_objects',
-			args_hint: 'set driver: "<actor id>" to change the owner',
-			why: 'Objects are sometimes created with a placeholder or wrong driver — confirm ownership before work starts.',
-		},
-	}
+	// An existing driver is not a gap.
+	return null
 }
 
 function statusProgression(bet: BetInput, ctx: BetCheckContext): SetupCheck | null {
@@ -67,12 +59,7 @@ function statusProgression(bet: BetInput, ctx: BetCheckContext): SetupCheck | nu
 	return {
 		name: 'status_progression',
 		status: 'warn',
-		message: `This ${bet.type} is at the entry status "${first}" — ask the user if it should be progressed to "${next}".`,
-		fix: {
-			tool: 'update_objects',
-			args_hint: `set status: "${next}"`,
-			why: `Objects sitting at the entry status ("${first}") may already be ready to move forward.`,
-		},
+		message: `This ${bet.type} is at the entry status "${first}". Moving it to "${next}" is a human or triage call, so leave the status alone unless your task says to progress it.`,
 	}
 }
 

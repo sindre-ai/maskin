@@ -17,15 +17,24 @@
  */
 import { and, eq, ne, notInArray, sql } from 'drizzle-orm'
 
+import { revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { objects, sessions } from '@maskin/db'
 import type { SessionResult, SettleSource, TerminalOutcomeKind } from '@maskin/shared'
 
+import {
+	type AiGenerationOutcome,
+	trackSessionAiGeneration,
+} from '../lib/analytics/ai-generation-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
+import { assertInWorkspace } from '../lib/workspace-scope'
+import { postRetryNotice } from './chat-retry-notice'
+import { returnDeferredHelpers, returnToSender } from './helper-return'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -63,6 +72,11 @@ export interface StartSessionInput {
 	sourceCommentEventId?: number
 	parentSessionId?: string
 	/**
+	 * The session that started this one (sessions.spawned_by_session_id), already
+	 * authenticated by resolveSpawnLink(). Never pass a raw header value here.
+	 */
+	spawnedBySessionId?: string
+	/**
 	 * Handed-off strip anchors (bet/444b-handed-off-strip). Both optional; a
 	 * spawn without them persists NULL and renders no strip.
 	 */
@@ -77,15 +91,15 @@ export interface StartSessionInput {
 	/**
 	 * The object this session was started for (bet, task, insight, or any
 	 * first-class object). Required-optional shape: every call site MUST pass
-	 * both fields, either as real values or as explicit null, so tsc catches a
-	 * missed site. NULL is still a valid value (direct API creates, onboarding,
-	 * cron triggers, conversation-only spawns). Persisted on the sessions row,
-	 * read back by settleSession() for the session_failed event's
-	 * data.initiated_from block, and by every terminal runtime_session_ended
-	 * emit as context_object_id / context_object_type.
+	 * it, either as a real value or as explicit null, so tsc catches a missed
+	 * site. NULL is still a valid value (direct API creates, onboarding, cron
+	 * triggers, conversation-only spawns). Persisted on the sessions row, read
+	 * back by settleSession() for the session_failed event's
+	 * data.initiated_from block (the object's type is looked up from this id
+	 * there), and by every terminal runtime_session_ended emit as
+	 * context_object_id.
 	 */
 	initiatedFromObjectId: string | null
-	initiatedFromObjectType: string | null
 }
 
 export interface StartSessionHandle {
@@ -139,6 +153,11 @@ function getDeps(): LifecycleDeps {
 	return _deps
 }
 
+/** The configured session manager, or undefined where settleSession runs without lifecycle wiring (unit tests). */
+function configuredSessionManager(): SessionManager | undefined {
+	return _deps?.sessionManager
+}
+
 // ── startSession() (spec §14.2, §14.4, §14.5) ─────────────────────────────
 
 const AWAIT_DEFAULT_TIMEOUT_MS: Record<Exclude<AwaitMode, 'none'>, number> = {
@@ -168,6 +187,12 @@ export async function startSession(
 	outcomeStreamCallback?: OutcomeStreamCallback,
 ): Promise<StartSessionHandle> {
 	const { db, sessionManager } = getDeps()
+
+	// Fail closed on the one id every caller supplies: the agent must be a member
+	// of the workspace the session runs in. The session runs with that agent's own
+	// key, prompt and tools, so a foreign agent id must never get this far. Throws
+	// NotInWorkspaceError (404) before any row is written.
+	await assertInWorkspace(db, input.workspaceId, { actors: [input.actorId] })
 
 	// §14.5 — opt-in idempotency via input.config.idempotencyKey. Duplicate
 	// submits from a jittery MCP client hit the same live row instead of
@@ -202,7 +227,7 @@ export async function startSession(
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: input.config,
+		config: withBackgroundDefaults(input),
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
@@ -210,8 +235,8 @@ export async function startSession(
 		createdBy,
 		autoStart: input.autoStart,
 		sourceSessionId: input.parentSessionId,
+		spawnedBySessionId: input.spawnedBySessionId,
 		initiatedFromObjectId: input.initiatedFromObjectId,
-		initiatedFromObjectType: input.initiatedFromObjectType,
 		spawnedByMessageId: input.spawnedByMessageId,
 		dependsOnSessionIds: input.dependsOnSessionIds,
 	}
@@ -275,6 +300,22 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+/**
+ * Background work (a trigger, a cron, a plain API call) runs as an interactive session that
+ * ends on its result, like a helper: the person can read it as a chat and write into it, and
+ * once it has ended a message starts a follow-up. A session that belongs to a chat is left as given.
+ */
+function withBackgroundDefaults(input: StartSessionInput): SessionConfig | undefined {
+	const config = input.config
+	const hasChat =
+		!!input.conversationId || !!(config as { conversation?: unknown } | undefined)?.conversation
+	// A session that belongs to a chat sets its own mode (the chat responder makes it interactive,
+	// and at most one such session may be active per chat and agent), so it is left as given.
+	if (hasChat) return config
+	// Everything else is interactive, whatever the caller asked for, and ends on its result.
+	return { ...config, interactive: true, stop_on_result: true }
 }
 
 function readIdempotencyKey(config: SessionConfig | undefined): string | undefined {
@@ -405,13 +446,30 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 
 	try {
 		await sessionManager.startSession(sessionId)
+		// startSession returns normally when the workspace has no capacity: it
+		// only parks the row at status='queued'. Nothing was dispatched, so the
+		// row must not be advanced to 'running' — the reaper would later read a
+		// containerless "running" row and fail it. Put it back to 'queued'; the
+		// dispatch writers stamp 'running' once drainQueue really starts it.
+		const [requeued] = await db
+			.update(sessions)
+			.set({ sessionState: 'queued', stateEnteredAt: new Date(), driverHeartbeatAt: null })
+			.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'queued')))
+			.returning({ id: sessions.id })
+		if (requeued) return
+
 		// Reached 'running' successfully — clear heartbeat so the reaper's
 		// stale-heartbeat check no longer applies to this row, and stamp the
-		// transition so the wall-timeout cutoff measures 2h from here.
+		// transition so the wall-timeout cutoff measures 2h from here. Only a row
+		// whose status is 'running' really started. A remote dispatch only hands
+		// the row to the dispatch queue (status 'starting', session_state
+		// 'waiting_for_machine') and returns while it waits for an agent-server
+		// slot; stamping 'running' here would let idle-pause fail it as
+		// containerless. The dispatcher stamps 'running' itself once it starts.
 		await db
 			.update(sessions)
 			.set({ sessionState: 'running', stateEnteredAt: new Date(), driverHeartbeatAt: null })
-			.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TERMINAL_STATUSES])))
+			.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'running')))
 			.catch((err) => {
 				logger.warn('_driveToRunning failed to enter running state', {
 					sessionId,
@@ -497,6 +555,8 @@ export interface SettleOutcome {
 	snapshotKey?: string
 	/** Structured provider-side failure reason (feeds `sessions.result`). */
 	failureReason?: SessionResult['failure_reason']
+	/** When the scheduler may retry a credit-exhausted session; written to `sessions.retry_at`. */
+	retryAt?: Date
 	/** Who called settle. */
 	source: SettleSource
 }
@@ -549,6 +609,10 @@ export interface SessionSettleRow {
 	previousCacheReadTokens: number | null
 	previousCacheCreationTokens: number | null
 	previousCostUsd: number | null
+	/** `sessions.model_name` — feeds `$ai_model` on the `$ai_generation` emit. */
+	modelName?: string | null
+	/** `sessions.duration_ms` before this settle — feeds `active_seconds`. */
+	previousDurationMs?: number | null
 }
 
 /**
@@ -826,14 +890,16 @@ export async function settleSession(
 			config: sessions.config,
 			triggerId: sessions.triggerId,
 			conversationId: sessions.conversationId,
+			attemptNumber: sessions.attemptNumber,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
-			initiatedFromObjectType: sessions.initiatedFromObjectType,
 			startedAt: sessions.startedAt,
 			inputTokens: sessions.inputTokens,
 			outputTokens: sessions.outputTokens,
 			cacheReadInputTokens: sessions.cacheReadInputTokens,
 			cacheCreationInputTokens: sessions.cacheCreationInputTokens,
 			totalCostUsd: sessions.totalCostUsd,
+			modelName: sessions.modelName,
+			durationMs: sessions.durationMs,
 		})
 		.from(sessions)
 		.where(eq(sessions.id, sessionId))
@@ -865,6 +931,8 @@ export async function settleSession(
 		previousCacheReadTokens: existing.cacheReadInputTokens ?? null,
 		previousCacheCreationTokens: existing.cacheCreationInputTokens ?? null,
 		previousCostUsd,
+		modelName: existing.modelName ?? null,
+		previousDurationMs: existing.durationMs ?? null,
 	}
 
 	const wasAlreadyTerminal = TRULY_TERMINAL_STATUS_SET.has(existing.status)
@@ -925,6 +993,7 @@ export async function settleSession(
 			// including pause, whose UI-side treatment is the same "not running"
 			// state a completed row has.
 			setPatch.currentActivity = null
+			if (outcome.retryAt) setPatch.retryAt = outcome.retryAt
 			if (outcome.kind === 'pause') {
 				// A paused row's container is gone — the caller stops/removes the
 				// sandbox as part of the snapshot flow, and any resume path spins
@@ -1009,10 +1078,51 @@ export async function settleSession(
 			})
 	}
 
+	// The key minted for this session's container dies with the session (also on a pause: resume
+	// mints a new one). Runs for an already-terminal row too, so a key a late launch minted
+	// after the settle is still closed. Best-effort: the session is already settled, and a key
+	// that survives a failed revoke is cascaded away with the session row.
+	await revokeSessionKeys(deps.db, sessionId).catch((err) => {
+		logger.warn('settleSession: failed to revoke session API keys', {
+			sessionId,
+			error: String(err),
+		})
+	})
+
 	// The eviction inside `recordEvent` runs before the settle transaction
 	// commits, so a usage read landing in between could re-cache the pre-settle
 	// cost. Evict again now that the final cost is visible to every connection.
 	if (flipped) evictBillingUsage(row.workspaceId)
+
+	// A chat session that hit a usage limit and has a retry time gets its notice now, while the
+	// person is looking, not when the retry fires. A session at the attempt cap is not retried
+	// (the scheduler clears retry_at), so promising a retry there would be untrue.
+	if (
+		flipped &&
+		outcome.retryAt &&
+		existing.conversationId &&
+		existing.attemptNumber < MAX_RETRY_ATTEMPTS
+	) {
+		await postRetryNotice(deps.db, {
+			conversationId: existing.conversationId,
+			workspaceId: row.workspaceId,
+			actorId: row.actorId,
+			retryAt: outcome.retryAt,
+		})
+	}
+
+	// Tell the session that started this one how it ended. Fire-and-forget:
+	// returnToSender never throws, and one-shot-claims the row so the other two
+	// terminal paths (handleCompletion, markRemoteSessionComplete) can call it too.
+	// A pause is not an ending.
+	if (flipped && outcome.kind !== 'pause') {
+		void returnToSender(deps.db, sessionId, { sessionManager: configuredSessionManager() })
+	}
+	// A sender that finished normally may have missed helpers that failed while it was
+	// busy: tell it now, so it is woken to deal with them.
+	if (flipped && outcome.kind === 'complete') {
+		void returnDeferredHelpers(deps.db, sessionId, { sessionManager: configuredSessionManager() })
+	}
 
 	// Step 4: (Post-commit) stopSandbox best-effort.
 	let stoppedSandbox: StoppedSandboxOutcome
@@ -1056,12 +1166,29 @@ export async function settleSession(
 	let posthogEmitted = false
 	if (flipped && completedAt) {
 		try {
-			posthogEmitted = await emitCompletion(
-				row,
-				outcome,
-				computePostSettleTotals(row, outcome.usage),
-				completedAt,
-			)
+			const totals = computePostSettleTotals(row, outcome.usage)
+			posthogEmitted = await emitCompletion(row, outcome, totals, completedAt)
+			// One `$ai_generation` per session at terminal state. A pause is not
+			// terminal: the resume adds to the same totals and settles again, so
+			// emitting here would count the first segment twice.
+			if (outcome.kind !== 'pause') {
+				await trackSessionAiGeneration({
+					sessionId: row.id,
+					workspaceId: row.workspaceId,
+					actorId: row.actorId,
+					outcome: mapKindToOutcomeProp(outcome.kind) as AiGenerationOutcome,
+					config: row.config,
+					modelName: row.modelName ?? null,
+					inputTokens: totals.inputTokens,
+					outputTokens: totals.outputTokens,
+					cacheReadTokens: totals.cacheReadTokens,
+					cacheCreationTokens: totals.cacheCreationTokens,
+					costUsd: totals.costUsd,
+					activeMs: row.previousDurationMs ?? null,
+					startedAt: row.startedAt,
+					completedAt,
+				})
+			}
 		} catch (err) {
 			// `emitCompletion` swallows every capture rejection, so a throw
 			// here is a defensive net for an unexpected pre-emit failure —
@@ -1159,7 +1286,7 @@ interface InitiatedFromBlock {
 
 /**
  * Build the data.initiated_from block for a session_failed event from the
- * session row's two initiated_from_object_* columns. Returns null (not an
+ * session row's initiated_from_object_id column. Returns null (not an
  * object with null members) when the session has no originating object, and
  * also null if the object was deleted between spawn and settle: the FK's
  * ON DELETE SET NULL cascade would normally have already nulled the id
@@ -1167,18 +1294,18 @@ interface InitiatedFromBlock {
  */
 async function resolveInitiatedFromBlock(
 	db: Database,
-	session: { initiatedFromObjectId: string | null; initiatedFromObjectType: string | null },
+	session: { initiatedFromObjectId: string | null },
 ): Promise<InitiatedFromBlock | null> {
 	if (!session.initiatedFromObjectId) return null
 	const [obj] = await db
-		.select({ title: objects.title })
+		.select({ type: objects.type, title: objects.title })
 		.from(objects)
 		.where(eq(objects.id, session.initiatedFromObjectId))
 		.limit(1)
 	if (!obj) return null
 	return {
 		object_id: session.initiatedFromObjectId,
-		object_type: session.initiatedFromObjectType ?? '',
+		object_type: obj.type,
 		// objects.title is nullable in the schema; coalesce so the failure card
 		// renderer never has to guard against a null title.
 		object_title: obj.title ?? '',

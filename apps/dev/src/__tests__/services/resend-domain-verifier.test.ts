@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	CADENCE_MID_MS,
 	CADENCE_SLOW_MS,
@@ -7,8 +7,10 @@ import {
 	type ResendDnsRecordConfig,
 	type ResendDomainGetResponse,
 	type ResendIntegrationConfig,
+	buildNotFoundFieldUpdate,
 	buildPollFieldUpdate,
 	buildTimeoutFieldUpdate,
+	defaultPoll,
 	isTimedOut,
 	mapTopStatus,
 	mergeDnsRecords,
@@ -237,5 +239,33 @@ describe('resend-domain-verifier — pure functions', () => {
 			expect(next.resend?.resend_domain_id).toBe('dom_x')
 			expect(next.resend?.receive_subdomain).toBe('send.example.com')
 		})
+	})
+})
+
+describe('resend-domain-verifier — deleted domain', () => {
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it("buildNotFoundFieldUpdate writes 'failed' + verification_error: 'domain_not_found'", () => {
+		const now = new Date('2026-10-03T12:00:00.000Z')
+		const next = buildNotFoundFieldUpdate(
+			{ resend: { resend_domain_id: 'dom_1', verification_status: 'pending' } },
+			now,
+		)
+		expect(next.resend?.verification_status).toBe('failed')
+		expect(next.resend?.verification_error).toBe('domain_not_found')
+		expect(next.resend?.last_polled_at).toBe(now.toISOString())
+		expect(next.resend?.resend_domain_id).toBe('dom_1')
+	})
+
+	it('defaultPoll treats a 404 from GET /domains/:id as not_found, not retry', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 404 }))
+		expect(await defaultPoll('dom_gone', 're_key')).toEqual({ kind: 'not_found' })
+	})
+
+	it('defaultPoll still retries on 5xx', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 503 }))
+		expect(await defaultPoll('dom_1', 're_key')).toEqual({ kind: 'retry', statusOrErr: '503' })
 	})
 })

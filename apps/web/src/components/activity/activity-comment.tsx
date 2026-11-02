@@ -1,6 +1,8 @@
+import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -12,6 +14,7 @@ import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
+import { ViewerTooltip } from '../shared/viewer-tooltip'
 import { CommentDecisionBlock } from './comment-decision-block'
 import { CommentInput } from './comment-input'
 import { CommentTaskList, hasTaskList } from './comment-task-list'
@@ -19,22 +22,12 @@ import { MentionSessionCard } from './mention-session-card'
 
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
 
-// Long agent comments are clamped so the timeline stays readable at a glance
-// (mockup 6261–6268): past 300 characters the bubble shows the first 230, cut
-// at a word boundary, behind a Show more / Show less toggle.
 /** Object ids the composer attached to the comment via `metadata.refs`. */
 function readReferencedObjectIds(event: EventResponse): string[] {
 	const metadata = event.data?.metadata as Record<string, unknown> | undefined
 	const refs = metadata?.refs
 	if (!Array.isArray(refs)) return []
 	return refs.filter((id): id is string => typeof id === 'string' && id.length > 0)
-}
-
-const CLAMP_OVER = 300
-const CLAMP_TO = 230
-
-function clampComment(content: string): string {
-	return `${content.slice(0, CLAMP_TO).replace(/\s+\S*$/, '')}…`
 }
 
 interface ActivityCommentProps {
@@ -91,7 +84,7 @@ function CommentRow({
 	footer,
 }: CommentRowProps) {
 	const isBubble = variant === 'bubble'
-	const [expanded, setExpanded] = useState(false)
+	const canWrite = useCanWrite()
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
@@ -117,7 +110,6 @@ function CommentRow({
 	}
 
 	const isAgent = actor?.type === 'agent'
-	const clampable = isBubble && content.length > CLAMP_OVER
 	const referencedObjectIds = readReferencedObjectIds(event)
 	const legacyChips = legacyChipsOf(event)
 
@@ -144,17 +136,6 @@ function CommentRow({
 				onClick={() => setHumanDialogActorId(actor.id)}
 			/>
 		)
-	) : null
-
-	const showMoreButton = clampable ? (
-		<button
-			type="button"
-			onClick={() => setExpanded((open) => !open)}
-			aria-expanded={expanded}
-			className="ml-1.5 whitespace-nowrap text-[11.5px] font-semibold text-secondary-foreground hover:underline"
-		>
-			{expanded ? 'Show less' : 'Show more'}
-		</button>
 	) : null
 
 	const nameEl = !actor ? (
@@ -242,27 +223,16 @@ function CommentRow({
 							/>
 						</div>
 					)}
-					{/* Clamped or whole, the message renders through the same markdown
-					    path — an excerpt is still markdown, and rendering it raw showed
-					    literal `**`, `- ` and link syntax on the most common row of the
-					    timeline. Clamped, it stays inline so "Show more" can sit on the
-					    end of the sentence rather than under it (mockup 1285–1286). */}
-					<>
-						<AgentOutput
-							content={clampable && !expanded ? clampComment(content) : content}
-							disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
-							mentionActors={actors}
-							onMentionClick={handleMentionClick}
-							size="sm"
-							className={cn(
-								isBubble || (clampable && !expanded)
-									? 'inline [&_p:first-child]:inline [&_p]:my-0'
-									: 'mt-1',
-							)}
-							renderVisuals
-						/>
-						{clampable && showMoreButton}
-					</>
+					<AgentOutput
+						content={content}
+						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
+						mentionActors={actors}
+						onMentionClick={handleMentionClick}
+						size="sm"
+						className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
+						renderVisuals
+						linkedCards={outsideChatLinkedCards(workspaceId, 'full')}
+					/>
 
 					{footer && <div>{footer}</div>}
 					{/* Objects the author attached from the composer, as real
@@ -316,15 +286,18 @@ function CommentRow({
 					)}
 				</div>
 				{onReply && (
-					<button
-						type="button"
-						onClick={() => onReply(actor?.name ?? 'this message')}
-						aria-label="Reply"
-						/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
-						className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1"
-					>
-						<Reply size={14} />
-					</button>
+					<ViewerTooltip className="inline-flex self-end shrink-0">
+						<button
+							type="button"
+							onClick={() => onReply(actor?.name ?? 'this message')}
+							aria-label="Reply"
+							disabled={!canWrite}
+							/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
+							className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0 p-1 -my-1 -ml-1 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							<Reply size={14} />
+						</button>
+					</ViewerTooltip>
 				)}
 			</div>
 			{humanDialogActorId && (

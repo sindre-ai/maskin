@@ -29,6 +29,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => ({ data: undefined, isLoading: false }),
 }))
 
+const useSessionMock = vi.fn()
+vi.mock('@/hooks/use-sessions', () => ({
+	useSession: (...args: unknown[]) => useSessionMock(...args),
+}))
+
 const markReadMutate = vi.fn()
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: vi.fn(() => ({ mutate: markReadMutate, isPending: false })),
@@ -49,9 +54,10 @@ function mockGraph(
 	relationships: ReturnType<typeof buildRelationshipResponse>[] = [],
 	connectedObjects: ReturnType<typeof buildObjectResponse>[] = [],
 	object = buildObjectResponse({}),
+	files: Array<{ id: string; name: string; mimeType: string; sizeBytes: number; url: string }> = [],
 ) {
 	vi.mocked(useObjectGraph).mockReturnValue({
-		data: { object, relationships, connected_objects: connectedObjects, events },
+		data: { object, relationships, connected_objects: connectedObjects, events, files },
 	} as never)
 }
 
@@ -121,6 +127,89 @@ describe('TimelineTab', () => {
 		expect(within(third).queryByText('Link')).toBeNull()
 		expect(within(third).getByText('breaks into')).toBeInTheDocument()
 		expect(within(third).getAllByRole('link', { name: /Timeline tab/i })).not.toHaveLength(0)
+	})
+
+	// Regression: a file endpoint on an `attached` edge is NOT an object row —
+	// ObjectReference would useObject(fileId) and 404, rendering "deleted
+	// object" (the bug Magnus reported on the object timeline while the right
+	// sidebar still rendered the same file correctly). The row must resolve
+	// against graph.files and render the filename linked to the file viewer.
+	it('renders a file endpoint on an attached edge as the file, not "deleted object"', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const relationships = [
+			buildRelationshipResponse({
+				id: 'rel-file',
+				sourceId: 'obj-1',
+				sourceType: 'bet',
+				targetId: 'file-1',
+				targetType: 'file',
+				targetTitle: 'design.pdf',
+				type: 'attached',
+				createdBy: 'actor-1',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+		]
+		const files = [
+			{
+				id: 'file-1',
+				name: 'design.pdf',
+				mimeType: 'application/pdf',
+				sizeBytes: 12345,
+				url: 'http://localhost:5173/ws/files/file-1',
+			},
+		]
+		mockGraph([], relationships, [], object, files)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const items = screen.getAllByRole('listitem')
+		expect(items).toHaveLength(1)
+		const row = items[0]
+		expect(within(row).getByText('attached')).toBeInTheDocument()
+		expect(within(row).getByRole('link', { name: /design\.pdf/i })).toBeInTheDocument()
+		expect(within(row).queryByText(/deleted object/i)).toBeNull()
+	})
+
+	// Regression: a session endpoint (`produced_by`) is not an object either. It
+	// used to render through a placeholder object whose status was the literal
+	// word "unknown". It must name the agent that ran the session instead.
+	describe('session endpoint on a produced_by edge', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		const relationships = [
+			buildRelationshipResponse({
+				id: 'rel-session',
+				sourceId: 'session-1',
+				sourceType: 'session',
+				sourceTitle: 'Drive the task',
+				targetId: 'obj-1',
+				targetType: 'bet',
+				type: 'produced_by',
+				createdBy: 'actor-2',
+				createdAt: '2026-01-01T00:00:00Z',
+			}),
+		]
+
+		it('names the agent that ran the session, never "unknown"', () => {
+			useSessionMock.mockReturnValue({ data: { id: 'session-1', actorId: 'actor-2' } })
+			mockGraph([], relationships, [], object)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			const row = screen.getAllByRole('listitem')[0]
+			expect(within(row).getByRole('link', { name: /Agent Smith session/i })).toBeInTheDocument()
+			expect(within(row).queryByText(/unknown/i)).toBeNull()
+		})
+
+		it('falls back to a neutral label when the session or its agent is gone', () => {
+			useSessionMock.mockReturnValue({ data: undefined })
+			mockGraph([], relationships, [], object)
+
+			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+			const row = screen.getAllByRole('listitem')[0]
+			expect(within(row).getByText('Session')).toBeInTheDocument()
+			expect(within(row).queryByText(/unknown|deleted object/i)).toBeNull()
+		})
 	})
 
 	// The Activity/Timeline split is gone: one stream carries comments and
@@ -661,11 +750,11 @@ describe('TimelineTab', () => {
 	})
 
 	// D8 delta (bet/d166-loops-v4-polish) — every assertion below exercises
-	// the polish variant, opted in via the `loopsV4PolishUnread` prop the
-	// loop-detail route passes when the sub-flag is on. Objects (the other
+	// the polish variant, opted in via the `loopUnread` prop the
+	// loop-detail route passes. Objects (the other
 	// consumer of TimelineTab) never sets the prop, so these behaviours are
 	// scoped to the loop-detail surface by construction.
-	describe('loops-v4-polish.unread variant', () => {
+	describe('loop unread variant', () => {
 		beforeEach(() => {
 			vi.mocked(trackMarkReadClicked).mockReset()
 			markReadMutate.mockReset()
@@ -695,7 +784,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -760,7 +849,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -790,7 +879,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -822,7 +911,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -893,7 +982,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 
@@ -925,7 +1014,7 @@ describe('TimelineTab', () => {
 				object,
 			)
 
-			render(<TimelineTab object={object} loopsV4PolishUnread={{ loopId: 'loop-1' }} />, {
+			render(<TimelineTab object={object} loopUnread={{ loopId: 'loop-1' }} />, {
 				wrapper: createWorkspaceWrapper(),
 			})
 

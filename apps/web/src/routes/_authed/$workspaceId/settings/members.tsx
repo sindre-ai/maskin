@@ -1,9 +1,11 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
+import { InviteMemberDialog } from '@/components/settings/invite-member-dialog'
+import { PendingInviteRow } from '@/components/settings/pending-invite-row'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
-import { FormError } from '@/components/shared/form-error'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -19,7 +21,6 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
 import {
 	Select,
 	SelectContent,
@@ -27,20 +28,25 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
+import { useResendInvite, useRevokeInvite, useWorkspaceInvites } from '@/hooks/use-invites'
 import {
-	useAddWorkspaceMember,
 	useRemoveWorkspaceMember,
 	useUpdateWorkspaceMemberRole,
 	useWorkspaceMembers,
 } from '@/hooks/use-workspaces'
-import { ApiError, type MemberResponse } from '@/lib/api'
+import type { MemberResponse, PendingInviteListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Bot, Plus, Trash2, UserPlus } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
+	validateSearch: (search: Record<string, unknown>): { member?: string } => ({
+		member: typeof search.member === 'string' ? search.member : undefined,
+	}),
 	component: MembersPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
@@ -51,38 +57,50 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
 const ROLE_OPTIONS = ['admin', 'member'] as const
 
 function MembersPage() {
-	const { workspaceId } = useWorkspace()
-	const { data: members, isLoading } = useWorkspaceMembers(workspaceId)
-	const addMember = useAddWorkspaceMember(workspaceId)
+	const { workspaceId, workspace } = useWorkspace()
+	const canWrite = useCanWrite()
+	const { member: memberFromSearch } = Route.useSearch()
+	const { data: allMembers, isLoading } = useWorkspaceMembers(workspaceId)
+	// Connected integrations hold a 'system' member row so they can act in the
+	// workspace; this list is people and agents only.
+	const members = allMembers?.filter((member) => member.type !== 'system')
+	const { data: pendingInvites } = useWorkspaceInvites(workspaceId)
+	const resendInvite = useResendInvite(workspaceId)
+	const revokeInvite = useRevokeInvite(workspaceId)
 	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
 	const removeMember = useRemoveWorkspaceMember(workspaceId)
 	const navigate = useNavigate()
-	const [showAddDialog, setShowAddDialog] = useState(false)
-	const [actorId, setActorId] = useState('')
-	const [newMemberRole, setNewMemberRole] = useState('member')
-	const [addError, setAddError] = useState<string | null>(null)
-	const [activeHumanId, setActiveHumanId] = useState<string | null>(null)
+	const [showInviteDialog, setShowInviteDialog] = useState(false)
+	const [activeHumanId, setActiveHumanId] = useState<string | null>(memberFromSearch ?? null)
 	const [pendingRemoval, setPendingRemoval] = useState<MemberResponse | null>(null)
 	const [removeError, setRemoveError] = useState<string | null>(null)
 	const [roleError, setRoleError] = useState<string | null>(null)
+	const [pendingRevoke, setPendingRevoke] = useState<PendingInviteListItem | null>(null)
+	const [revokeError, setRevokeError] = useState<string | null>(null)
 
-	const handleAdd = async (e: React.FormEvent) => {
-		e.preventDefault()
-		if (!actorId.trim()) return
-		setAddError(null)
+	// The page stays mounted when search or cmd+k picks a person while already
+	// here, so follow ?member= instead of reading it only on mount.
+	useEffect(() => {
+		if (memberFromSearch) setActiveHumanId(memberFromSearch)
+	}, [memberFromSearch])
+
+	const handleResend = async (invite: PendingInviteListItem) => {
 		try {
-			await addMember.mutateAsync({ actor_id: actorId.trim(), role: newMemberRole })
-			setActorId('')
-			setNewMemberRole('member')
-			setShowAddDialog(false)
+			await resendInvite.mutateAsync(invite.id)
+			toast.success(`Invite re-sent to ${invite.email}.`)
 		} catch (err) {
-			setAddError(
-				err instanceof ApiError && err.code === 'SEAT_CAP_EXCEEDED'
-					? "This workspace has reached its plan's member limit. Upgrade to add more."
-					: err instanceof Error
-						? err.message
-						: 'Failed to add member',
-			)
+			toast.error(err instanceof Error ? err.message : 'Failed to resend invite')
+		}
+	}
+
+	const handleRevoke = async () => {
+		if (!pendingRevoke) return
+		setRevokeError(null)
+		try {
+			await revokeInvite.mutateAsync(pendingRevoke.id)
+			setPendingRevoke(null)
+		} catch (err) {
+			setRevokeError(err instanceof Error ? err.message : 'Failed to revoke invite')
 		}
 	}
 
@@ -124,16 +142,18 @@ function MembersPage() {
 					{count} {count === 1 ? 'person or agent' : 'people & agents'}
 				</span>
 				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button variant="outline" size="sm" className="ml-auto">
-							<Plus size={14} className="mr-1" />
-							Add member
-						</Button>
-					</DropdownMenuTrigger>
+					<ViewerTooltip className="ml-auto inline-flex">
+						<DropdownMenuTrigger asChild>
+							<Button variant="outline" size="sm" className="ml-auto" disabled={!canWrite}>
+								<Plus size={14} className="mr-1" />
+								Add member
+							</Button>
+						</DropdownMenuTrigger>
+					</ViewerTooltip>
 					<DropdownMenuContent align="end">
-						<DropdownMenuItem onClick={() => setShowAddDialog(true)}>
+						<DropdownMenuItem onClick={() => setShowInviteDialog(true)}>
 							<UserPlus size={14} className="mr-2" />
-							Add human
+							Invite member
 						</DropdownMenuItem>
 						<DropdownMenuItem onClick={handleCreateAgent}>
 							<Bot size={14} className="mr-2" />
@@ -198,89 +218,77 @@ function MembersPage() {
 										{member.role}
 									</span>
 								) : (
-									<Select
-										value={member.role}
-										onValueChange={(value) => handleRoleChange(member, value)}
-										disabled={updateRole.isPending}
-									>
-										<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											{ROLE_OPTIONS.map((role) => (
-												<SelectItem key={role} value={role}>
-													{role}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+									<ViewerTooltip>
+										<Select
+											value={member.role}
+											onValueChange={(value) => handleRoleChange(member, value)}
+											disabled={updateRole.isPending || !canWrite}
+										>
+											<SelectTrigger
+												className="w-28 shrink-0"
+												aria-label={`Role for ${member.name}`}
+											>
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												{ROLE_OPTIONS.map((role) => (
+													<SelectItem key={role} value={role}>
+														{role}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</ViewerTooltip>
 								)}
-								<Button
-									variant="ghost"
-									size="icon"
-									className={cn('shrink-0', isOwner && 'invisible')}
-									aria-label={`Remove ${member.name}`}
-									disabled={isOwner}
-									onClick={() => {
-										setRemoveError(null)
-										setPendingRemoval(member)
-									}}
-								>
-									<Trash2 size={14} />
-								</Button>
+								<ViewerTooltip>
+									<Button
+										variant="ghost"
+										size="icon"
+										className={cn('shrink-0', isOwner && 'invisible')}
+										aria-label={`Remove ${member.name}`}
+										disabled={isOwner || !canWrite}
+										onClick={() => {
+											setRemoveError(null)
+											setPendingRemoval(member)
+										}}
+									>
+										<Trash2 size={14} />
+									</Button>
+								</ViewerTooltip>
 							</div>
 						)
 					})}
 				</div>
 			)}
 
-			<Dialog
-				open={showAddDialog}
-				onOpenChange={(open) => {
-					setShowAddDialog(open)
-					if (!open) setAddError(null)
-				}}
-			>
-				<DialogContent>
-					<DialogHeader>
-						<DialogTitle>Add member</DialogTitle>
-						<DialogDescription>
-							Invite an existing user to this workspace by their Actor ID.
-						</DialogDescription>
-					</DialogHeader>
-					<form onSubmit={handleAdd} className="space-y-4">
-						<Input
-							type="text"
-							value={actorId}
-							onChange={(e) => setActorId(e.target.value)}
-							placeholder="Actor ID (UUID)"
-							className="font-mono"
-							autoFocus
-						/>
-						<Select value={newMemberRole} onValueChange={setNewMemberRole}>
-							<SelectTrigger aria-label="Role for the new member">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{ROLE_OPTIONS.map((role) => (
-									<SelectItem key={role} value={role}>
-										{role}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-						{addError && <FormError error={addError} />}
-						<DialogFooter>
-							<Button type="button" variant="ghost" onClick={() => setShowAddDialog(false)}>
-								Cancel
-							</Button>
-							<Button type="submit" disabled={!actorId.trim() || addMember.isPending}>
-								Add
-							</Button>
-						</DialogFooter>
-					</form>
-				</DialogContent>
-			</Dialog>
+			{!!pendingInvites?.length && (
+				<section className="mt-6" aria-label="Pending invites">
+					<h3 className="mb-1 px-2 text-xs font-medium text-muted-foreground">
+						Pending — {pendingInvites.length}
+					</h3>
+					<div className="flex flex-col">
+						{pendingInvites.map((invite) => (
+							<PendingInviteRow
+								key={invite.id}
+								invite={invite}
+								onResend={handleResend}
+								onRevoke={(i) => {
+									setRevokeError(null)
+									setPendingRevoke(i)
+								}}
+								resending={resendInvite.isPending && resendInvite.variables === invite.id}
+							/>
+						))}
+					</div>
+				</section>
+			)}
+
+			<InviteMemberDialog
+				open={showInviteDialog}
+				onOpenChange={setShowInviteDialog}
+				workspaceId={workspaceId}
+				workspaceName={workspace.name}
+			/>
 
 			<Dialog
 				open={!!pendingRemoval}
@@ -319,13 +327,62 @@ function MembersPage() {
 				</DialogContent>
 			</Dialog>
 
+			<Dialog
+				open={!!pendingRevoke}
+				onOpenChange={(open) => {
+					if (!open) {
+						setPendingRevoke(null)
+						setRevokeError(null)
+					}
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>Revoke this invite?</DialogTitle>
+						<DialogDescription>
+							The link sent to {pendingRevoke?.email} will stop working. You can invite them again
+							later.
+						</DialogDescription>
+					</DialogHeader>
+					{revokeError && (
+						<p className="text-sm text-error" role="alert">
+							{revokeError}
+						</p>
+					)}
+					<DialogFooter>
+						<Button type="button" variant="ghost" onClick={() => setPendingRevoke(null)}>
+							Keep invite
+						</Button>
+						<Button
+							type="button"
+							variant="destructive"
+							onClick={handleRevoke}
+							disabled={revokeInvite.isPending}
+						>
+							Revoke
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
 			{activeHumanId && (
 				<HumanDetailDialog
 					actorId={activeHumanId}
 					workspaceId={workspaceId}
 					open
 					onOpenChange={(open) => {
-						if (!open) setActiveHumanId(null)
+						if (open) return
+						setActiveHumanId(null)
+						// Clear the param so a reload does not reopen the dialog and the
+						// same person can be picked again.
+						if (memberFromSearch) {
+							navigate({
+								to: '/$workspaceId/settings/members',
+								params: { workspaceId },
+								search: {},
+								replace: true,
+							})
+						}
 					}}
 				/>
 			)}

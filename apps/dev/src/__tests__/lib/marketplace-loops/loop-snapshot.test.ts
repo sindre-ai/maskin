@@ -1,18 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import devActors from '../../../lib/marketplace-loops/data/dev-actors.json'
-import growthActors from '../../../lib/marketplace-loops/data/growth-actors.json'
-import {
-	BROWSER_MCP_SERVER,
-	BROWSER_MCP_SERVER_NAME,
-	actorSnapshot,
-	expandBrowserCapability,
-} from '../../../lib/marketplace-loops/loop-snapshot'
+import { actorSnapshot, dropLegacyBrowserFlag } from '../../../lib/marketplace-loops/loop-snapshot'
 
 const baseRow = {
 	type: 'agent',
 	name: 'Event Producer',
 	description: null,
-	systemPrompt: 'You have a Playwright MCP.',
+	systemPrompt: 'You run meetups.',
 	llmProvider: 'anthropic',
 	llmConfig: null,
 }
@@ -35,7 +28,7 @@ describe('actorSnapshot', () => {
 		expect(out.tools).toEqual({})
 	})
 
-	it('preserves the browser as a boolean capability when an entry references the CDP placeholder', () => {
+	it('drops a browser MCP entry along with the rest of mcpServers, leaving no browser flag', () => {
 		const out = actorSnapshot({
 			...baseRow,
 			tools: {
@@ -45,14 +38,9 @@ describe('actorSnapshot', () => {
 				},
 			},
 		})
-		// The flag survives; the config it came from does not.
-		expect(out.tools).toEqual({ browser: true })
-		expect(JSON.stringify(out)).not.toContain('pat-live-secret')
-	})
-
-	it('does not set the browser flag for actors with no browser entry', () => {
-		const out = actorSnapshot({ ...baseRow, tools: { mcpServers: { hubspot: {} } } })
+		// The agent's computer replaces the browser sidecar, so no capability flag remains.
 		expect(out.tools).toEqual({})
+		expect(JSON.stringify(out)).not.toContain('pat-live-secret')
 	})
 
 	it('leaves non-object tools untouched', () => {
@@ -60,60 +48,80 @@ describe('actorSnapshot', () => {
 	})
 })
 
-describe('expandBrowserCapability', () => {
-	it('turns the browser flag back into a real MCP entry the sidecar check matches', () => {
-		const out = expandBrowserCapability({ browser: true }) as Record<string, unknown>
-		expect(out).toEqual({ mcpServers: { [BROWSER_MCP_SERVER_NAME]: BROWSER_MCP_SERVER } })
-		// session-manager.ts's needsBrowserSidecar() string-matches this in the
-		// serialised MCP config — if it stops appearing, no Chromium is provisioned.
-		expect(JSON.stringify(out)).toContain('${BROWSER_CDP_URL}')
-	})
-
-	it('round-trips a published actor back to a browser-capable install', () => {
-		const snapshot = actorSnapshot({
+describe('actorSnapshot llmConfig', () => {
+	it('drops apiKey so a provider credential never reaches the snapshot', () => {
+		const out = actorSnapshot({
 			...baseRow,
-			tools: { mcpServers: { playwright: browserServer } },
+			tools: null,
+			llmConfig: { provider: 'anthropic', model: 'fake-model', apiKey: 'fake-key-not-real' },
 		})
-		expect(JSON.stringify(expandBrowserCapability(snapshot.tools))).toContain('${BROWSER_CDP_URL}')
+		expect(JSON.stringify(out)).not.toContain('fake-key-not-real')
+		expect(out.llmConfig).not.toHaveProperty('apiKey')
 	})
 
-	it('keeps other MCP servers and never clobbers an existing entry of the same name', () => {
-		const installerOwn = { command: 'docker', args: ['run', 'my-own-browser'] }
-		const out = expandBrowserCapability({
-			browser: true,
-			mcpServers: { hubspot: { command: 'npx' }, [BROWSER_MCP_SERVER_NAME]: installerOwn },
-		}) as Record<string, unknown>
-		const servers = out.mcpServers as Record<string, unknown>
-		expect(servers[BROWSER_MCP_SERVER_NAME]).toEqual(installerOwn)
-		expect(servers.hubspot).toEqual({ command: 'npx' })
+	it('drops snake_case and nested credential keys too', () => {
+		const out = actorSnapshot({
+			...baseRow,
+			tools: null,
+			llmConfig: {
+				provider: 'custom',
+				api_key: 'fake-snake-key',
+				headers: { Authorization: 'Bearer fake-bearer' },
+			},
+		})
+		expect(JSON.stringify(out)).not.toContain('fake-snake-key')
+		expect(JSON.stringify(out)).not.toContain('fake-bearer')
+	})
+
+	it('drops unknown keys, endpoints and headers by default', () => {
+		const out = actorSnapshot({
+			...baseRow,
+			tools: null,
+			llmConfig: {
+				provider: 'custom',
+				model: 'fake-model',
+				baseUrl: 'https://fake-gateway.invalid',
+				someFutureSetting: 'x',
+			},
+		})
+		expect(out.llmConfig).toEqual({ provider: 'custom', model: 'fake-model' })
+	})
+
+	it('keeps provider and model unchanged', () => {
+		const out = actorSnapshot({
+			...baseRow,
+			tools: null,
+			llmConfig: { provider: 'anthropic', model: 'fake-model' },
+		})
+		expect(out.llmConfig).toEqual({ provider: 'anthropic', model: 'fake-model' })
+	})
+
+	it('keeps only the model when the config has no provider', () => {
+		const out = actorSnapshot({ ...baseRow, tools: null, llmConfig: { model: 'fake-model' } })
+		expect(out.llmConfig).toEqual({ model: 'fake-model' })
+	})
+
+	it('does not throw on a null, missing or non-object llmConfig', () => {
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: null }).llmConfig).toBeNull()
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: undefined }).llmConfig).toBeNull()
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: 'fake-key' }).llmConfig).toBeNull()
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: ['fake-key'] }).llmConfig).toBeNull()
+	})
+
+	it('keeps an empty llmConfig empty', () => {
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: {} }).llmConfig).toEqual({})
+	})
+})
+
+describe('dropLegacyBrowserFlag', () => {
+	it('removes the flag older snapshots carry and keeps everything else', () => {
+		expect(dropLegacyBrowserFlag({ browser: true, other: 1 })).toEqual({ other: 1 })
+		expect(dropLegacyBrowserFlag({ browser: true })).toEqual({})
 	})
 
 	it('is a no-op without the flag', () => {
 		const tools = { mcpServers: { hubspot: { command: 'npx' } } }
-		expect(expandBrowserCapability(tools)).toEqual(tools)
-		expect(expandBrowserCapability({ browser: false })).toEqual({ browser: false })
-		expect(expandBrowserCapability(null)).toBeNull()
-	})
-})
-
-// Guards the checked-in catalogue data itself: these snapshots were captured
-// before the browser flag existed, so every actor whose system prompt promises
-// Playwright had tools:{} and silently ran without a Chromium sidecar. If the
-// data is ever re-captured, this fails unless the flag survives the round-trip.
-describe('catalogue actor data', () => {
-	it.each([
-		['dev-actors', devActors],
-		['growth-actors', growthActors],
-	])('gives every %s actor that claims Playwright the browser capability', (_name, data) => {
-		const claiming = Object.values(
-			data as Record<string, { name: string; systemPrompt: string; tools: unknown }>,
-		).filter((a) => a.systemPrompt?.includes('laywright'))
-		expect(claiming.length).toBeGreaterThan(0)
-		for (const actor of claiming) {
-			expect(
-				JSON.stringify(expandBrowserCapability(actor.tools)),
-				`${actor.name} promises Playwright but gets no browser sidecar`,
-			).toContain('${BROWSER_CDP_URL}')
-		}
+		expect(dropLegacyBrowserFlag(tools)).toEqual(tools)
+		expect(dropLegacyBrowserFlag(null)).toBeNull()
 	})
 })
