@@ -71,44 +71,34 @@ struct LoopProblemBanner: View {
 	}
 }
 
-/// "Under the hood": how the flow is put together, in the handoff's order: when it runs, the last
-/// seven days, what it is for and how it is going, where its work sits now, when it starts and
-/// ends, and the steps.
-struct LoopHoodSection: View {
-	let store: LoopDetailStore
-	var onOpenTrigger: (String) -> Void = { _ in }
+/// What the flow is for: its description in one card. Nothing when it has none.
+struct LoopAboutSection: View {
+	let loop: LoopSummary
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
-			LoopHealthSection(loop: store.loop, activity: store.activity, loaded: store.phase == .loaded)
-			LoopScheduleSection(store: store)
-			LoopRunChart(activity: store.activity, loaded: store.phase == .loaded)
-			outcomeText
-			stats
-			LoopFlowSection(store: store, onOpenTrigger: onOpenTrigger)
-			conditions
-			pipeline
+		if let content = loop.content, !content.isEmpty {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				FlowSectionHeader("About")
+				Text(content)
+					.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
+					.tracking(-0.01 * MaskinFontSize.t16)
+					.foregroundStyle(MaskinColor.ink2)
+					.lineSpacing(MaskinSpace.s2)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.padding(.vertical, MaskinSpace.s9)
+					.padding(.horizontal, MaskinSpace.s10)
+					.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+			}
 		}
 	}
+}
 
-	@ViewBuilder
-	private var outcomeText: some View {
-		if let content = store.loop.content, !content.isEmpty {
-			Text(content)
-				.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
-				.tracking(-0.01 * MaskinFontSize.t16)
-				.foregroundStyle(MaskinColor.ink2)
-				.lineSpacing(MaskinSpace.s2)
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.padding(.vertical, MaskinSpace.s9)
-				.padding(.horizontal, MaskinSpace.s10)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
-		}
-	}
+/// "Starts when" and "Done when", as the flow states them. Nothing when neither is set.
+struct LoopConditionsSection: View {
+	let loop: LoopSummary
 
-	@ViewBuilder
-	private var conditions: some View {
-		let rows = [("Starts when", store.loop.entryCondition), ("Done when", store.loop.closeCondition)]
+	var body: some View {
+		let rows = [("Starts when", loop.entryCondition), ("Done when", loop.closeCondition)]
 			.compactMap { label, value in value.flatMap { $0.isEmpty ? nil : (label, $0) } }
 		if !rows.isEmpty {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
@@ -122,64 +112,6 @@ struct LoopHoodSection: View {
 					}
 				}
 				.loopCard()
-			}
-		}
-	}
-
-	private var stats: some View {
-		let tiles: [(String, String)] = [
-			("In progress", "\(store.loop.inProgressCount)"),
-			("Closed", "\(store.loop.closedCount)"),
-			("Agents", "\(store.loop.agentIDs.count)"),
-			("Needs you", "\(store.loop.waitingCount)"),
-			("Median time", store.loop.medianTimeToClose.map(LoopDurationText.string) ?? "—"),
-		]
-		return LazyVGrid(
-			columns: [GridItem(.adaptive(minimum: 100), spacing: MaskinSpace.s4)], spacing: MaskinSpace.s4
-		) {
-			ForEach(tiles, id: \.0) { label, value in
-				VStack(spacing: MaskinSpace.s2) {
-					Text(value)
-						.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.w750, relativeTo: .title3))
-						.tracking(-0.02 * MaskinFontSize.t20)
-						.foregroundStyle(MaskinColor.ink)
-					Text(label)
-						.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
-						.foregroundStyle(MaskinColor.ink5)
-				}
-				.frame(maxWidth: .infinity)
-				.padding(.vertical, MaskinSpace.s8)
-				.padding(.horizontal, MaskinSpace.s7)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
-				.accessibilityElement(children: .combine)
-			}
-		}
-	}
-
-	private var pipeline: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			FlowSectionHeader("Steps") {
-				Text("\(store.steps.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
-			}
-			switch store.phase {
-			case .idle where store.steps.isEmpty, .loading where store.steps.isEmpty:
-				LoadingSkeleton(rows: 3)
-			case .failed(let message) where store.steps.isEmpty:
-				EmptyState(symbol: "wifi.exclamationmark", title: "Couldn't load steps", message: message) {
-					Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
-				}
-			default:
-				if store.steps.isEmpty {
-					Text("This flow has no steps yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-				} else {
-					VStack(spacing: 0) {
-						ForEach(Array(store.steps.enumerated()), id: \.element.id) { index, step in
-							LoopStepRow(
-								number: index + 1, step: step, isLast: index == store.steps.count - 1,
-								onOpen: { onOpenTrigger(step.triggerID) })
-						}
-					}
-				}
 			}
 		}
 	}

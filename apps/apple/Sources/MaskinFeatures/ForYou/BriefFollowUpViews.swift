@@ -28,50 +28,6 @@ struct BriefFollowUpChips: View {
 	}
 }
 
-/// "Ask Chief of Staff about this slide": a field, the mic and Send, pinned to the bottom of the viewer.
-struct BriefFollowUpComposer: View {
-	@Bindable var model: BriefFollowUpModel
-	var focused: FocusState<Bool>.Binding
-	let send: () -> Void
-	@State private var listening = false
-
-	private var canSend: Bool {
-		!model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !model.isOpening
-	}
-
-	var body: some View {
-		HStack(spacing: MaskinSpace.s3) {
-			TextField(
-				"", text: $model.text,
-				prompt: Text(BriefFollowUp.placeholder).foregroundStyle(BriefViewerPalette.placeholder)
-			)
-			.focused(focused)
-			.submitLabel(.send)
-			.onSubmit { if canSend { send() } }
-			.font(MaskinTypeface.sans(MaskinFontSize.t17))
-			.foregroundStyle(BriefViewerPalette.ink)
-			.tint(BriefViewerPalette.ink)
-			.padding(.leading, MaskinSpace.s9)
-			.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s5)
-			.accessibilityLabel(BriefFollowUp.placeholder)
-			DictationButton(text: $model.text, listening: $listening)
-			Button(action: send) {
-				Image(systemName: "arrow.up")
-					.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: .semibold))
-					.foregroundStyle(BriefViewerPalette.ink)
-					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-					.background(canSend ? BriefViewerPalette.fillStrong : BriefViewerPalette.fillDisabled, in: Circle())
-			}
-			.buttonStyle(.maskinPressed(.shrink))
-			.disabled(!canSend)
-			.accessibilityLabel("Send")
-		}
-		.padding(.trailing, MaskinSpace.s2)
-		.background(BriefViewerPalette.fillSoft, in: Capsule())
-		.overlay(Capsule().strokeBorder(BriefViewerPalette.stroke, lineWidth: 1))
-	}
-}
-
 /// The exchange above the composer: the reader's question, the agent's answer as it arrives, and
 /// "Continue in chat". The slide text and buttons fold away while it is open.
 struct BriefFollowUpPanel: View {

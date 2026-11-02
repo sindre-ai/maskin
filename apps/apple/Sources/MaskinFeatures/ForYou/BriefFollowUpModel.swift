@@ -7,7 +7,12 @@ import Observation
 @MainActor
 @Observable
 final class BriefFollowUpModel {
-	var text = ""
+	/// The standard composer's model; the viewer's field edits it.
+	let composer = ChatComposerModel(uploader: nil, selfActorID: "")
+	var text: String {
+		get { composer.text }
+		set { composer.text = newValue }
+	}
 	/// A reason the question could not go out, shown under the panel.
 	var notice: String?
 	private(set) var conversationID: String?
@@ -54,7 +59,7 @@ final class BriefFollowUpModel {
 			} else if let chat {
 				try send(body, on: chat)
 			}
-			text = ""
+			composer.clear()
 		} catch is NotSent {
 			// `send` already set the reason.
 		} catch is ChiefOfStaffThreads.NoChiefOfStaff {
@@ -81,7 +86,7 @@ final class BriefFollowUpModel {
 		chat = nil
 		firstID = nil
 		conversationID = nil
-		text = ""
+		composer.clear()
 		notice = nil
 	}
 }

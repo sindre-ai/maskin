@@ -106,6 +106,12 @@ public final class LoopsStore {
 	/// The "{n} need you ›" pill in the Flows header: on, the list shows only the flows that need
 	/// the viewer. Not remembered: it is a glance, not a view.
 	public var needsYouOnly = false
+
+	/// The tag chip above the list: only flows carrying it. Nil is "All". Not remembered.
+	public var tagFilter: String?
+
+	/// Every tag on any flow, A to Z.
+	public var tags: [String] { FlowTags.all(loops) }
 	/// The Display sheet's "Running" filter: only flows that are running work.
 	public var runningOnly = false
 
@@ -137,6 +143,7 @@ public final class LoopsStore {
 				(text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text))
 					&& (!needsYouOnly || ($0.status.isLive && needsYou($0)))
 					&& (!runningOnly || $0.status.isLive)
+					&& (tagFilter == nil || FlowTags.has($0, tagFilter ?? ""))
 			}, reversed: display.reversed)
 	}
 

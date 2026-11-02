@@ -37,8 +37,8 @@ struct PaletteContrastTests {
 		var testDescription: String { name }
 	}
 
-	/// Light danger (#D93A2F, 4.37) and ok (#12875A, 4.33) are the handoff's exact values and sit just
-	/// under 4.5 on #F8FAFD: fine for bold/large text and icons, so their floor is 4.3, not 4.5.
+	/// Light ok (#12875A) and destructive (#D93A2F) are the handoff's exact values and sit just
+	/// under 4.5 on #FBFCFE: fine for bold/large text and icons, so their floor is 4.3, not 4.5.
 	static let pairs: [Pair] = [
 		Pair(name: "ink on bg", fg: MaskinColor.ink, bg: MaskinSurface.grouped, minimum: 4.5),
 		Pair(name: "ink on card", fg: MaskinColor.ink, bg: MaskinSurface.card, minimum: 4.5),
@@ -50,6 +50,9 @@ struct PaletteContrastTests {
 		Pair(name: "accent text on bg", fg: MaskinColor.sigInk, bg: MaskinSurface.grouped, minimum: 4.5),
 		Pair(name: "accent text on tint", fg: MaskinColor.sigInk, bg: MaskinColor.sigTint, minimum: 4.5),
 		Pair(name: "danger on bg", fg: MaskinColor.danger, bg: MaskinSurface.grouped, minimum: 4.3),
+		Pair(name: "warning on its fill", fg: MaskinColor.warning, bg: MaskinColor.warningTint, minimum: 4.5),
+		Pair(name: "warning on bg", fg: MaskinColor.warning, bg: MaskinSurface.grouped, minimum: 4.5),
+		Pair(name: "destructive text on bg", fg: MaskinColor.destructive, bg: MaskinSurface.grouped, minimum: 4.3),
 		Pair(name: "ok on bg", fg: MaskinColor.ok, bg: MaskinSurface.grouped, minimum: 4.3),
 		Pair(name: "on-ok on ok", fg: MaskinColor.onOk, bg: MaskinColor.ok, minimum: 4.5),
 		Pair(name: "inverse label", fg: MaskinSurface.onInverse, bg: MaskinSurface.inverse, minimum: 4.5),

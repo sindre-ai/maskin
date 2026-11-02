@@ -49,112 +49,71 @@ struct OutcomeBar: View {
 	}
 }
 
-/// TARGET on a flow's Outcome tab: one card per target, hidden when the flow has none. No due
-/// date or forecast line: the API carries neither.
+/// TARGETS on a flow's Overview tab (v19): one card per target with its name, a status badge, the
+/// figure, a bar and, when the source reads as words, "Source: Tasks". Hidden when the flow has
+/// none. No due date or forecast line: the API carries neither.
 struct LoopTargetsSection: View {
 	let cards: [OutcomeCard]
 	let directory: ActorDirectory
 
 	var body: some View {
-		ForEach(cards) { card in
-			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-				HStack {
-					Text("TARGET")
-						.maskinText(.microLabelLarge)
-						.foregroundStyle(MaskinColor.ink5)
-					Spacer(minLength: MaskinSpace.s4)
-					if let owner = directory.actor(card.target.ownerID) {
-						ActorAvatar(
-							name: owner.name, kind: owner.isAgent ? .agent : .human, size: MaskinSpace.s11,
-							seed: owner.id)
+		if !cards.isEmpty {
+			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+				FlowSectionHeader("Targets")
+				ForEach(cards) { card in
+					VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+						HStack(alignment: .top, spacing: MaskinSpace.s5) {
+							Text(card.target.label)
+								.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.w650, relativeTo: .headline))
+								.foregroundStyle(MaskinColor.ink)
+								.fixedSize(horizontal: false, vertical: true)
+							Spacer(minLength: MaskinSpace.s3)
+							badge(card.status)
+						}
+						Text("\(number(card.target.actual)) of \(number(card.target.target))")
+							.font(MaskinTypeface.sans(MaskinFontSize.t24, weight: MaskinFontWeight.w750, relativeTo: .title2))
+							.tracking(-0.028 * MaskinFontSize.t24)
+							.foregroundStyle(MaskinColor.ink)
+						FlowProgressBar(fraction: card.target.fraction, status: card.status)
+						HStack(spacing: MaskinSpace.s4) {
+							if let source = FlowTargetSource.label(card.target.source) {
+								Text("Source: \(source)").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+							}
+							Spacer(minLength: 0)
+							if let owner = directory.actor(card.target.ownerID) {
+								ActorAvatar(
+									name: owner.name, kind: owner.isAgent ? .agent : .human, size: MaskinSpace.s11,
+									seed: owner.id)
+							}
+						}
 					}
+					.padding(.vertical, MaskinSpace.s8)
+					.padding(.horizontal, MaskinSpace.s9)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.background(
+						MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
+					)
+					.overlay(
+						RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
+							.strokeBorder(MaskinSurface.line, lineWidth: 1)
+					)
+					.accessibilityElement(children: .combine)
+					.accessibilityLabel(
+						"\(card.target.label), \(number(card.target.actual)) of \(number(card.target.target)), \(card.status.label)"
+					)
 				}
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3 + MaskinSpace.s1) {
-					Text(number(card.target.actual))
-						.font(MaskinTypeface.sans(MaskinFontSize.t32, weight: MaskinFontWeight.w750, relativeTo: .largeTitle))
-						.tracking(-0.03 * MaskinFontSize.t32)
-						.foregroundStyle(MaskinColor.ink)
-					Text("of \(number(card.target.target))")
-						.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
-						.foregroundStyle(MaskinColor.ink5)
-				}
-				Text(card.target.label)
-					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: MaskinFontWeight.w650, relativeTo: .subheadline))
-					.foregroundStyle(MaskinColor.ink)
-				OutcomeBar(fraction: card.target.fraction, status: card.status)
-					.padding(.top, MaskinSpace.s4)
-				HStack(spacing: MaskinSpace.s3) {
-					Circle().fill(card.status.dot).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
-					Text(card.status.label)
-						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: MaskinFontWeight.w650, relativeTo: .footnote))
-						.foregroundStyle(card.status.textColor)
-				}
-				.padding(.top, MaskinSpace.s2)
-				.accessibilityElement(children: .combine)
 			}
-			.padding(.vertical, MaskinSpace.s9)
-			.padding(.horizontal, MaskinSpace.s10)
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.background(
-				MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous)
-			)
-			.accessibilityElement(children: .combine)
-			.accessibilityLabel(
-				"\(card.target.label), \(number(card.target.actual)) of \(number(card.target.target)), \(card.status.label)"
-			)
-		}
-	}
-}
-
-/// OUTCOMES above the loops list: a horizontal row of score cards, one per target.
-struct OutcomeScoreRow: View {
-	let cards: [OutcomeCard]
-	var onOpen: (String) -> Void = { _ in }
-
-	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			MonoLabel("Outcomes", size: .section)
-				.padding(.horizontal, MaskinSpace.s9)
-			ScrollView(.horizontal, showsIndicators: false) {
-				LazyHStack(spacing: MaskinSpace.s5) {
-					ForEach(cards) { card in
-						Button { onOpen(card.loopID) } label: { scoreCard(card) }
-							.buttonStyle(.maskinPressed(.shrink))
-					}
-				}
-				.padding(.horizontal, MaskinSpace.s7)
-			}
-			MonoLabel("Flows", size: .section)
-				.padding(.horizontal, MaskinSpace.s9)
-				.padding(.top, MaskinSpace.s3)
 		}
 	}
 
-	private func scoreCard(_ card: OutcomeCard) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-			HStack(spacing: MaskinSpace.s3) {
-				Text(card.target.label).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(2)
-				Spacer(minLength: 0)
-				Circle().fill(card.status.dot).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
-			}
-			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s2) {
-				Text(number(card.target.actual)).maskinText(.title).foregroundStyle(MaskinColor.ink)
-				Text("of \(number(card.target.target))")
-					.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-			}
-			OutcomeBar(fraction: card.target.fraction, status: card.status)
-			Text(card.status.label).maskinText(.caption).foregroundStyle(card.status.textColor)
-			Text(card.loopName).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(1)
-		}
-		.padding(MaskinSpace.s7)
-		.frame(width: MaskinSpace.s14 * 5 + MaskinSpace.s5, alignment: .leading)
-		.background(
-			MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
-		)
-		.accessibilityElement(children: .combine)
-		.accessibilityLabel(
-			"\(card.target.label), \(number(card.target.actual)) of \(number(card.target.target)), \(card.status.label), \(card.loopName)"
-		)
+	private func badge(_ status: OutcomeStatus) -> some View {
+		let ok = status == .onTrack
+		return Text(status.label)
+			.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: MaskinFontWeight.bold, relativeTo: .subheadline))
+			.foregroundStyle(ok ? MaskinColor.ok : MaskinColor.warning)
+			.padding(.horizontal, MaskinSpace.s6)
+			.padding(.vertical, MaskinSpace.s3)
+			.background(ok ? MaskinColor.okTint : MaskinColor.warningTint, in: Capsule())
 	}
 }
 

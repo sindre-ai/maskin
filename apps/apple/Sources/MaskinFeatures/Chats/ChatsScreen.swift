@@ -136,7 +136,7 @@ private struct ChatsContainer: View {
 			if request.live {
 				Task { await startLive(with: request.agent) }
 			} else {
-				newChat = NewChatRequest(recipient: request.agent)
+				newChat = NewChatRequest(prefill: request.draft, recipient: request.agent)
 			}
 		}
 		.onChange(of: runtime?.chatDraft, initial: true) {

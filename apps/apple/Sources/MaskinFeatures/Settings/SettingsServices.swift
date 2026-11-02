@@ -1,12 +1,12 @@
 import MaskinCore
 import SwiftUI
 
-/// Settings keeps the account and the workspace's setup. Members, Integrations, Billing and
-/// Keys & MCP are reached from the profile sheet (`ProfileMenuItem`), not from here.
+/// Settings keeps the account and the workspace's setup pages (v19). The profile sheet still
+/// reaches the same pages through `ProfileMenuItem`.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
 	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
-	case members, integrations, files
+	case members, integrations, files, autonomy, keys, triggers, billing
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.

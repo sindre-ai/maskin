@@ -23,7 +23,8 @@ struct BriefViewer: View {
 	@State private var dragY: CGFloat = 0
 	/// The follow-up chat on the slide in view; reset whenever the slide changes.
 	@State private var followUp = BriefFollowUpModel()
-	@FocusState private var composerFocused: Bool
+	@State private var composerFocused = false
+	@State private var stubNote: String?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
 	@Environment(\.scenePhase) private var scenePhase
@@ -74,15 +75,20 @@ struct BriefViewer: View {
 						actions(card)
 						BriefFollowUpChips { question in ask(question, card) }
 					}
-					BriefFollowUpComposer(model: followUp, focused: $composerFocused) {
-						ask(followUp.text, card)
-					}
+					MaskinComposer(
+						model: followUp.composer,
+						config: MaskinComposerConfig(
+							placeholder: BriefFollowUp.placeholder, onFocusChange: { composerFocused = $0 },
+							onPlus: { stubNote = "Coming soon" }, onMic: { stubNote = "Coming soon" }),
+						busy: false,
+						onSend: { ask(followUp.text, card) })
 				}
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s7)
 				.frame(maxWidth: Self.maxPlayerWidth)
 			}
 		}
+		.comingSoonToast($stubNote)
 		.offset(y: dragY)
 		.background { arrowKeys }
 		.simultaneousGesture(swipeDown)

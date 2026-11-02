@@ -42,6 +42,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	@State private var retryPrompt: String?
 	@State private var retrying = false
 	@State private var sessionError: String?
+	@State private var composerMode: ObjectComposerMode = .comment
 
 	public init(
 		environment: AppEnvironment, objectId: String, onOpenObject: ((String) -> Void)? = nil,
@@ -157,7 +158,9 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	private var composerConfig: MaskinComposerConfig {
 		MaskinComposerConfig(
 			variant: .floating,
-			placeholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" } ?? "Comment — @ to tag, / to link",
+			placeholder: composerMode.placeholder(
+				commentPlaceholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" } ?? "Comment — @ to tag, / to link",
+				agentName: messageTarget?.name),
 			suggestions: { query in
 				CommentMentions.candidates(
 					query: query, actors: Array(store.directory.actors.values), selfID: store.currentActorId,
@@ -177,7 +180,19 @@ public struct ObjectDetailScreen<Decision: View>: View {
 
 	/// The thread already shows the parent, so the body carries the text alone, not a quote.
 	/// Sending jumps to Activity, where the thread is.
+	private var messageTarget: ActorRef? {
+		ObjectComposerMode.target(object: store.object, actor: { store.directory.actor(for: $0) })
+	}
+
 	private func sendComment() {
+		if composerMode == .message, let agent = messageTarget, let appRuntime {
+			let text = composer.trimmedText
+			guard !text.isEmpty else { return }
+			composer.clear()
+			composerMode = .comment
+			appRuntime.startChat(with: ChatParticipant(id: agent.id, name: agent.name, kind: .agent), draft: text)
+			return
+		}
 		let text = composer.trimmedText
 		guard !text.isEmpty, !composer.isUploading, !composer.hasFailedAttachment else { return }
 		let mentions = composer.mentions.map(\.id).filter { $0 != store.currentActorId }
@@ -228,6 +243,9 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						}
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.padding(.horizontal, MaskinSpace.s5)
+					}
+					if let agent = messageTarget, appRuntime != nil {
+						ObjectComposerModeToggle(mode: $composerMode, agentName: agent.name)
 					}
 					MaskinComposer(model: composer, config: composerConfig, onSend: sendComment)
 				}

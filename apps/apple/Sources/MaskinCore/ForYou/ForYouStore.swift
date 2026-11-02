@@ -583,19 +583,11 @@ public final class ForYouStore {
 
 	// MARK: Header
 
-	/// "SUN 18 OCT" for the line above the title.
-	public func dateLine(at date: Date? = nil) -> String { ForYouHeader.dateLine(date ?? now()) }
-
-	/// The same day, written for VoiceOver.
-	public func spokenDate(at date: Date? = nil) -> String { ForYouHeader.spokenDate(date ?? now()) }
-
-	/// The one sentence under the title: what is blocked on the reader. It looks past the intent
+	/// The first sentence under the title: how many decisions are blocked on the reader. It looks past the intent
 	/// filter, which only narrows the list below.
 	public var blockedSummary: String? {
 		let blocking = build(deferred: false, ignoringIntent: true).filter { $0.bucket == .needs }
-		return ForYouHeader.summary(
-			blocking: blocking, loaded: phase == .loaded,
-			sender: { [self] in agent(of: $0)?.name ?? senderName(of: $0) })
+		return ForYouHeader.summary(blocking: blocking, loaded: phase == .loaded)
 	}
 
 	// MARK: Groups

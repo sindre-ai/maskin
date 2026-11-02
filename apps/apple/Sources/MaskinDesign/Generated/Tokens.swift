@@ -7,8 +7,8 @@ import SwiftUI
 /// Each adapts to the system appearance; the dark values come from the token
 /// file's `html.dark` swap, and a token with no dark override is the same in both.
 public enum MaskinColor {
-	public static let surface = Color(light: RGBA(0xF8FAFD), dark: RGBA(0x0F1215))
-	public static let surfaceMuted = Color(light: RGBA(0xFBFCFE), dark: RGBA(0x14181C))
+	public static let surface = Color(light: RGBA(0xFBFCFE), dark: RGBA(0x0F1215))
+	public static let surfaceMuted = Color(light: RGBA(0xFDFEFF), dark: RGBA(0x14181C))
 	public static let surfaceAlt = Color(light: RGBA(0xEDF1F8), dark: RGBA(0x1E2329))
 	public static let surfaceHover = Color(light: RGBA(0xE8EDF6), dark: RGBA(0x1E2329))
 	public static let surfaceHover2 = Color(light: RGBA(0xE1E7F0), dark: RGBA(0x2A3036))
@@ -75,12 +75,12 @@ public enum MaskinColor {
 	public static let successTint = Color(light: RGBA(0xEDF1F8), dark: RGBA(0x1D2126))
 	@available(*, deprecated, renamed: "doneBd")
 	public static let successTint2 = Color(light: RGBA(0xD5DCE8), dark: RGBA(0x262B31))
-	public static let warning = Color(light: RGBA(0xD97706), dark: RGBA(0xD97706))
-	public static let warningStrong = Color(light: RGBA(0xB45309), dark: RGBA(0xB45309))
-	public static let warningTint = Color(light: RGBA(0xFEF3C7), dark: RGBA(0xFEF3C7))
-	public static let danger = Color(light: RGBA(0xD93A2F), dark: RGBA(0xFF6B5E))
-	public static let dangerStrong = Color(light: RGBA(0xB02A21), dark: RGBA(0xFF8A80))
-	public static let dangerMic = Color(light: RGBA(0xE5483D), dark: RGBA(0xFF6B5E))
+	public static let warning = Color(light: RGBA(0x9A5A0A), dark: RGBA(0xE0A33A))
+	public static let warningStrong = Color(light: RGBA(0x9A5A0A), dark: RGBA(0xE0A33A))
+	public static let warningTint = Color(light: RGBA(0xFBF1DC), dark: RGBA(0x2A2112))
+	public static let danger = Color(light: RGBA(0xC23A3A), dark: RGBA(0xFF7A7A))
+	public static let dangerStrong = Color(light: RGBA(0xA32E2E), dark: RGBA(0xFF9A9A))
+	public static let dangerMic = Color(light: RGBA(0xD94A4A), dark: RGBA(0xFF7A7A))
 	public static let info = Color(light: RGBA(0x0EA5E9), dark: RGBA(0x0EA5E9))
 	public static let infoStrong = Color(light: RGBA(0x0369A1), dark: RGBA(0x0369A1))
 	public static let infoTint = Color(light: RGBA(0xE0F2FE), dark: RGBA(0xE0F2FE))
@@ -112,6 +112,7 @@ public enum MaskinColor {
 	public static let ok = Color(light: RGBA(0x12875A), dark: RGBA(0x3DDC97))
 	public static let onOk = Color(light: RGBA(0xFFFFFF), dark: RGBA(0x04140C))
 	public static let okTint = Color(light: RGBA(0xE1F3EA), dark: RGBA(0x12261D))
+	public static let destructive = Color(light: RGBA(0xD93A2F), dark: RGBA(0xFF6B5E))
 }
 
 /// Corner radii in points, by intent (`--r-card` → `card`).

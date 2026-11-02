@@ -1,16 +1,16 @@
 import SwiftUI
 
-/// v15 palette (bg #F8FAFD / #0F1215, soft, line, ink as the action surface). iOS-only surface and chrome colours: the grouped-list look (grey canvas, white
+/// v19 palette (bg #FBFCFE / #0F1215, soft, line, ink as the action surface). iOS-only surface and chrome colours: the grouped-list look (grey canvas, white
 /// cards) the iPhone mockup uses. These are additions to the web tokens, hand-written
 /// because the web app has no grouped background; values come from the mockup's
 /// `--bg/--card/--sep/--line/--tint/--amber*` variables, with the mockup's dark values.
 public enum MaskinSurface {
 	/// Screen canvas behind grouped cards (`--bg`).
-	public static let grouped = Color(light: RGBA(0xF8FAFD), dark: RGBA(0x0F1215))
+	public static let grouped = Color(light: RGBA(0xFBFCFE), dark: RGBA(0x0F1215))
 	/// Primary card on the canvas (`--card`).
 	public static let card = Color(light: RGBA(0xFFFFFF), dark: RGBA(0x181C21))
 	/// Inset well inside a card (`--card2`).
-	public static let cardInset = Color(light: RGBA(0xFBFCFE), dark: RGBA(0x1D2227))
+	public static let cardInset = Color(light: RGBA(0xFDFEFF), dark: RGBA(0x1D2227))
 	/// Deeper inset, e.g. a held-note block (`--card3`).
 	public static let cardInset2 = Color(light: RGBA(0xEDF1F8), dark: RGBA(0x1F252B))
 	/// Hairline between rows inside a card (`--sep`).

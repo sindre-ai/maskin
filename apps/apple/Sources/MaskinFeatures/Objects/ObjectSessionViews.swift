@@ -150,3 +150,57 @@ struct ObjectOriginRow: View {
 		.buttonStyle(.plain)
 	}
 }
+
+/// Which way the item composer sends: a comment on the item, or a message to its agent's chat.
+enum ObjectComposerMode: Equatable {
+	case comment, message
+
+	/// The agent to message: the one running now, else the item's driver, only if it is an agent.
+	static func target(object: WorkObject?, actor: (String?) -> ActorRef?) -> ActorRef? {
+		let id = object?.lastSession.flatMap { $0.isLive ? $0.agentID : nil } ?? object?.driverId
+		guard let found = actor(id), found.isAgent else { return nil }
+		return found
+	}
+
+	func placeholder(commentPlaceholder: String, agentName: String?) -> String {
+		switch (self, agentName) {
+		case (.message, let name?): return "Message \(name)"
+		default: return commentPlaceholder
+		}
+	}
+}
+
+/// "Comment | Message {agent}": two pills above the composer.
+struct ObjectComposerModeToggle: View {
+	@Binding var mode: ObjectComposerMode
+	let agentName: String
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			pill("Comment", .comment)
+			pill("Message \(agentName)", .message)
+			Spacer(minLength: 0)
+		}
+		.padding(.horizontal, MaskinSpace.s5)
+	}
+
+	private func pill(_ title: String, _ value: ObjectComposerMode) -> some View {
+		let active = mode == value
+		return Button {
+			MaskinHaptics.play(.selection)
+			mode = value
+		} label: {
+			Text(title)
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
+				.foregroundStyle(active ? MaskinSurface.onInverse : MaskinColor.ink)
+				.lineLimit(1)
+				.padding(.horizontal, MaskinSpace.s7)
+				.frame(minHeight: MaskinSpace.s14)
+				.background(active ? MaskinSurface.inverse : MaskinSurface.card, in: Capsule())
+				.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 0.5))
+				.contentShape(Capsule())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityAddTraits(active ? .isSelected : [])
+	}
+}

@@ -103,6 +103,7 @@ struct ObjectPropertiesCard: View {
 	let store: ObjectDetailStore
 	let object: WorkObject
 	@State private var showAll = false
+	@State private var pickingDue = false
 
 	private static var preview: Int { 6 }
 
@@ -163,6 +164,16 @@ struct ObjectPropertiesCard: View {
 						}
 						.maskinText(.subhead)
 					}
+					if store.dueDate == nil {
+						HStack(alignment: .firstTextBaseline) {
+							Text("Due").foregroundStyle(MaskinColor.ink5)
+							Spacer(minLength: MaskinSpace.s7)
+							Button("Add") { pickingDue = true }
+								.foregroundStyle(MaskinColor.ink4)
+								.frame(minHeight: MaskinSpace.touchMin, alignment: .trailing)
+						}
+						.maskinText(.subhead)
+					}
 					if all.count > Self.preview {
 						Button(showAll ? "Show fewer" : "Show all \(all.count)") {
 							withAnimation(reduceMotion ? nil : MaskinMotion.standard) { showAll.toggle() }
@@ -175,6 +186,9 @@ struct ObjectPropertiesCard: View {
 				.padding(MaskinSpace.s9)
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			}
+			.sheet(isPresented: $pickingDue) {
+				DuePickerSheet(date: nil) { date in Task { await store.setDueDate(date) } }
 			}
 		}
 	}

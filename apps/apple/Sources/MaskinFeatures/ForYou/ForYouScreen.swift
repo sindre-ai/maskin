@@ -48,7 +48,8 @@ public struct ForYouScreen: View {
 			openAgent: { appRuntime.openAgent($0) }
 		)
 		.shellToolbar(
-			environment: environment, title: "For you",
+			environment: environment,
+			title: ForYouHeader.greeting(name: environment.auth.session?.name, at: Date()),
 			actions: ShellActions(live: true)
 		)
 		.task(id: environment.workspaceId) {
@@ -155,10 +156,7 @@ struct ForYouFeedView: View {
 					Color.clear.frame(height: 0).id(Self.topId)
 						.listRowSeparator(.hidden).listRowBackground(Color.clear)
 						.listRowInsets(EdgeInsets())
-					ForYouHeaderView(
-						dateLine: store.dateLine(at: fixedNow), spokenDate: store.spokenDate(at: fixedNow),
-						summary: store.blockedSummary
-					)
+					ForYouHeaderView(summary: store.blockedSummary)
 					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					if let stories, !stories.cards.isEmpty {
 						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
