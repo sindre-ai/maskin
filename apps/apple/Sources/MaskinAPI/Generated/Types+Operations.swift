@@ -29516,21 +29516,27 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config/scope`.
                             public var scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload?
+                            /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config/skip_when_idle`.
+                            public var skip_when_idle: Swift.Bool?
                             /// Creates a new `configPayload`.
                             ///
                             /// - Parameters:
                             ///   - expression:
                             ///   - scope:
+                            ///   - skip_when_idle:
                             public init(
                                 expression: Swift.String,
-                                scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload? = nil
+                                scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload? = nil,
+                                skip_when_idle: Swift.Bool? = nil
                             ) {
                                 self.expression = expression
                                 self.scope = scope
+                                self.skip_when_idle = skip_when_idle
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case expression
                                 case scope
+                                case skip_when_idle
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config`.
@@ -30500,21 +30506,27 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1/scope`.
                             public var scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload?
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1/skip_when_idle`.
+                            public var skip_when_idle: Swift.Bool?
                             /// Creates a new `Value1Payload`.
                             ///
                             /// - Parameters:
                             ///   - expression:
                             ///   - scope:
+                            ///   - skip_when_idle:
                             public init(
                                 expression: Swift.String,
-                                scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload? = nil
+                                scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload? = nil,
+                                skip_when_idle: Swift.Bool? = nil
                             ) {
                                 self.expression = expression
                                 self.scope = scope
+                                self.skip_when_idle = skip_when_idle
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case expression
                                 case scope
+                                case skip_when_idle
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1`.

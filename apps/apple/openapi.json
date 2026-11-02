@@ -22643,6 +22643,9 @@
 														"required": [
 															"entity_type"
 														]
+													},
+													"skip_when_idle": {
+														"type": "boolean"
 													}
 												},
 												"required": [
@@ -23323,6 +23326,9 @@
 														"required": [
 															"entity_type"
 														]
+													},
+													"skip_when_idle": {
+														"type": "boolean"
 													}
 												},
 												"required": [
