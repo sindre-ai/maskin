@@ -123,7 +123,8 @@ const pageHeaderProps: { current: Record<string, unknown> } = { current: {} }
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: (props: Record<string, unknown>) => {
 		pageHeaderProps.current = props
-		return null
+		// The Display menu (View: Cards | List) lives in the title row's actions.
+		return <div>{props.actions as React.ReactNode}</div>
 	},
 }))
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
@@ -228,8 +229,8 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 	}
 
 	async function pickView(user: ReturnType<typeof userEvent.setup>, label: RegExp) {
-		await user.click(screen.getByRole('button', { name: /view options/i }))
-		await user.click(await screen.findByRole('menuitem', { name: label }))
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		await user.click(await screen.findByRole('button', { name: label }))
 	}
 
 	it('expands every card when no display-settings row exists yet', async () => {
@@ -262,7 +263,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		mount()
 		await flush()
 
-		await pickView(user, /^List/)
+		await pickView(user, /View: List/)
 		await flush()
 
 		expect(settingsState.__dsUpsertCalls).toBe(1)
@@ -279,7 +280,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		mount()
 		await flush()
 
-		await pickView(user, /^List/)
+		await pickView(user, /View: List/)
 		await flush()
 
 		expect(settingsState.__dsUpsertCalls).toBe(0)
@@ -292,7 +293,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		await flush()
 		expect(cardStates()).toEqual(['false', 'false'])
 
-		await pickView(user, /^Cards/)
+		await pickView(user, /View: Cards/)
 		await flush()
 
 		expect(settingsState.__dsLastUpsertBody).toMatchObject({ foryouViewMode: 'card' })

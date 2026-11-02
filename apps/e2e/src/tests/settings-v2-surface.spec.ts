@@ -210,12 +210,20 @@ test.describe('Settings > General — labels and Appearance', () => {
 				// The pill's fill must be the near-black (light) / near-white (dark)
 				// --primary, and its label the paired foreground — never the
 				// near-white --secondary, which is invisible on the white card.
-				const fill = await selected.evaluate((el) => {
+				// Expected colours come from the tokens themselves (a throwaway element carrying
+				// `bg-primary` / `text-primary-foreground`), so a palette change cannot stale this.
+				const { fill, token } = await selected.evaluate((el) => {
 					const cs = getComputedStyle(el)
-					return { bg: cs.backgroundColor, fg: cs.color }
+					const probe = document.createElement('span')
+					probe.className = 'bg-primary text-primary-foreground'
+					document.body.appendChild(probe)
+					const ps = getComputedStyle(probe)
+					const token = { bg: ps.backgroundColor, fg: ps.color }
+					probe.remove()
+					return { fill: { bg: cs.backgroundColor, fg: cs.color }, token }
 				})
-				expect(fill.bg).toBe(theme === 'light' ? 'rgb(24, 24, 27)' : 'rgb(250, 250, 250)')
-				expect(fill.fg).toBe(theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 27)')
+				expect(fill.bg).toBe(token.bg)
+				expect(fill.fg).toBe(token.fg)
 
 				// The other two stay unfilled.
 				const unselected = page.getByRole('button', { name: 'System' })

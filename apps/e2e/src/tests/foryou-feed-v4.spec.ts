@@ -231,12 +231,12 @@ async function mockFeed(
 }
 
 async function openViewMenu(page: Page) {
-	await page.getByRole('button', { name: /view options/i }).click()
+	await page.getByRole('button', { name: /display/i }).click()
 }
 
 async function pickView(page: Page, label: RegExp) {
 	await openViewMenu(page)
-	await page.getByRole('menuitem', { name: label }).click()
+	await page.getByRole('button', { name: label }).click()
 	await page.keyboard.press('Escape')
 }
 
@@ -287,7 +287,7 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			await assertNoHorizontalOverflow(page, `${vp.label} cards`)
 
 			// List view collapses them to one line each — the composer goes away.
-			await pickView(page, /^List/)
+			await pickView(page, /View: List/)
 			await expect(page.getByPlaceholder(/give instructions/)).toHaveCount(0)
 			await expect(page.getByText('Merge the trigger settings rewrite?').first()).toBeVisible()
 			await assertNoHorizontalOverflow(page, `${vp.label} list`)
@@ -410,7 +410,8 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await expect(page.getByRole('button', { name: /^Tasks \(/ })).toHaveCount(0)
 
 		await openViewMenu(page)
-		await page.getByRole('menuitem', { name: /Filter bar under the header/ }).click()
+		await page.getByRole('button', { name: /^Filter bar filter/ }).click()
+		await page.getByRole('button', { name: /Show under the header/ }).click()
 		await page.keyboard.press('Escape')
 
 		await expect(page.getByRole('button', { name: /^Tasks \(/ })).toBeVisible()

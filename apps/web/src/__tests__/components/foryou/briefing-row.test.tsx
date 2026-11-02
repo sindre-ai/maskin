@@ -9,12 +9,19 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 const mockCreateConversation = vi.fn()
-vi.mock('@/hooks/use-conversations', () => ({
+vi.mock('@/hooks/use-conversations', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-conversations')>()),
 	useCreateConversation: () => ({ mutateAsync: mockCreateConversation, isPending: false }),
 }))
 
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
+	useWorkspace: () => ({ workspace: { role: 'member' }, workspaceId: 'ws-1' }),
+}))
+
 const mockDefaultAgent = vi.fn(() => ({ id: 'default-1', name: 'Workspace Coach' }))
-vi.mock('@/hooks/use-actors', () => ({
+vi.mock('@/hooks/use-actors', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-actors')>()),
 	useDefaultChatAgent: () => mockDefaultAgent(),
 	useActors: () => ({ data: [] }),
 }))
@@ -168,9 +175,12 @@ describe('BriefingRow', () => {
 		renderRow()
 		await user.click(screen.getByRole('button', { name: /Two bets stalled/ }))
 
-		await user.click(screen.getByTestId('briefing-viewer'))
+		// The viewer is a modal dialog now: the scrim around it is a sibling of the content.
+		const scrim = document.querySelector('.bg-black\\/50')
+		expect(scrim).not.toBeNull()
+		await user.click(scrim as Element)
 
-		expect(screen.queryByTestId('briefing-viewer')).toBeNull()
+		await waitFor(() => expect(screen.queryByTestId('briefing-viewer')).toBeNull())
 	})
 
 	it('stays open when the page itself is clicked', async () => {
