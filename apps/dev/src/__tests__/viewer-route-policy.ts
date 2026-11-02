@@ -201,6 +201,11 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 	],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
 	[
+		'PUT',
+		'/api/integrations/slack/direct-post-channels',
+		'human admin or owner only, checked in the handler (a viewer gets 403)',
+	],
+	[
 		'POST',
 		'/api/integrations/:provider/gateway',
 		'MCP gateway, forwards tool calls with the provider token',
