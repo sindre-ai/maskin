@@ -1,4 +1,4 @@
-import { API_URL, DEMO_WORKSPACE_ID, assertDemoWorkspace, requireEnv } from './config'
+import { API_URL, DEMO_WORKSPACE_ID, assertDemoWorkspace, demoCredentials } from './config'
 
 export interface ApiObject {
 	id: string
@@ -22,7 +22,7 @@ export interface LoggedInActor extends ApiActor {
 }
 
 /**
- * Signs in with the demo account's email and password from the environment and returns the
+ * Signs in with the demo account's email and password (see demoCredentials) and returns the
  * actor with a fresh API key. The web app signs in the same way: it keeps this key in
  * localStorage. The password is only ever sent to the login endpoint, never logged.
  */
@@ -30,10 +30,7 @@ export async function login(): Promise<LoggedInActor> {
 	const res = await fetch(`${API_URL}/auth/login`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			email: requireEnv('DEMO_EMAIL'),
-			password: requireEnv('DEMO_PASSWORD'),
-		}),
+		body: JSON.stringify(demoCredentials()),
 	})
 	if (!res.ok) throw new Error(`Demo login failed: ${res.status}`)
 	return res.json()

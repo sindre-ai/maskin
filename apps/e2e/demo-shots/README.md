@@ -6,8 +6,11 @@ in it is invented demo data.
 
 ## Run
 
-Needs `DEMO_EMAIL` and `DEMO_PASSWORD` (the Maskin Demo account, from the Keychain) in the
-environment, and `MASKIN_API_KEY` for the upload. Once per machine:
+Needs the Maskin Demo account's login. In an agent session it arrives from the Keychain secrets
+"Maskin Demo email" and "Maskin Demo password" (as `KEYCHAIN_BYO_APIKEY_MASKIN_DEMO_EMAIL` and
+`KEYCHAIN_BYO_APIKEY_MASKIN_DEMO_PASSWORD`); share both with the agent that runs the job. Set
+`DEMO_EMAIL` and `DEMO_PASSWORD` to override them. The values are never printed. `MASKIN_API_KEY`
+is needed for the upload. Once per machine:
 `pnpm --filter @maskin/e2e exec playwright install chromium`.
 
 ```

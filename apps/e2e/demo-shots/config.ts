@@ -20,6 +20,22 @@ export function requireEnv(name: string): string {
 	return value
 }
 
+/**
+ * The demo account's login. The Keychain secrets "Maskin Demo email" and "Maskin Demo password"
+ * arrive as KEYCHAIN_BYO_APIKEY_MASKIN_DEMO_EMAIL / _PASSWORD; DEMO_EMAIL and DEMO_PASSWORD
+ * override them. The values are never logged, and the error names only the variables.
+ */
+export function demoCredentials(): { email: string; password: string } {
+	const email = process.env.DEMO_EMAIL || process.env.KEYCHAIN_BYO_APIKEY_MASKIN_DEMO_EMAIL
+	const password = process.env.DEMO_PASSWORD || process.env.KEYCHAIN_BYO_APIKEY_MASKIN_DEMO_PASSWORD
+	if (!email || !password) {
+		throw new Error(
+			'Missing demo login: set DEMO_EMAIL and DEMO_PASSWORD, or share the Keychain secrets "Maskin Demo email" and "Maskin Demo password" with this agent',
+		)
+	}
+	return { email, password }
+}
+
 /** Hard check: nothing is read or written unless the workspace is the demo workspace. */
 export function assertDemoWorkspace(workspaceId: string): void {
 	if (workspaceId !== DEMO_WORKSPACE_ID) {
