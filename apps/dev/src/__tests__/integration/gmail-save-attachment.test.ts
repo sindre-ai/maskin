@@ -88,6 +88,8 @@ async function setup(access: 'read' | 'read_write' | null = 'read') {
 				JSON.stringify({ accessToken: 'live-token', expiresAt: Date.now() + 60 * 60 * 1000 }),
 			),
 			createdBy: human,
+			// An agent with no grant falls back to the integration's default, so "no access" needs both.
+			...(access ? {} : { defaultAgentAccess: 'none' as const }),
 		})
 		.returning()
 	if (!gmail) throw new Error('gmail integration was not inserted')
