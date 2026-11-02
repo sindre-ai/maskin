@@ -79,9 +79,11 @@ export const FLAGS = {
 	 * HTML file in place of the stats and flow, with live data from the read-only
 	 * bridge. Per-actor visual gate only: set_loop_view, query_data and
 	 * GET /api/data/query are read-only or metadata-only and stay reachable for
-	 * everyone. Not for customers until scripted self-navigation out of the
-	 * sandboxed frame is closed (the frame is only reset, not prevented). Retire
-	 * once that is fixed and the view ships to everyone.
+	 * everyone. Not for customers until a view cannot send what it has read to
+	 * another site. Self-navigation is blocked in Chrome by the isolation frame
+	 * (frame-src 'none', untested elsewhere), but a view can still make Chrome
+	 * fetch an address of its choosing with <link rel=prerender>. Retire once that
+	 * is closed and the view ships to everyone.
 	 */
 	LOOP_CUSTOM_VIEW: 'loop-custom-view',
 	/**

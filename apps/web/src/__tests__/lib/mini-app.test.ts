@@ -1,6 +1,7 @@
 import {
 	BRIDGE_QUERY_MESSAGE,
 	DATA_SLOT_ID,
+	ISOLATION_LOAD_MESSAGE,
 	MINI_APP_CSP,
 	SOURCES_SLOT_ID,
 	VIEWER_DOC_SIZE_MESSAGE,
@@ -12,6 +13,7 @@ import {
 	collectViewerSlides,
 	injectIntoHtml,
 	prepareBridgedViewHtml,
+	prepareIsolatedViewHtml,
 	prepareMiniAppHtml,
 	prepareViewerHtml,
 	readViewSources,
@@ -450,8 +452,44 @@ describe('prepareBridgedViewHtml', () => {
 		expect(prepared).not.toContain(VIEWER_WHEEL_MESSAGE)
 	})
 
-	it('only trusts results that come from its parent window', () => {
-		expect(prepareBridgedViewHtml(html)).toContain('e.source!==parent')
+	it('only trusts results that come from the host, one frame above its parent', () => {
+		const prepared = prepareBridgedViewHtml(html)
+		expect(prepared).toContain('e.source!==parent.parent')
+		expect(prepared).toContain(`parent.parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}'`)
+		expect(prepared).toContain(`parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}'`)
+	})
+})
+
+describe('prepareIsolatedViewHtml', () => {
+	const html = '<html><head></head><body><h1>View</h1></body></html>'
+	const outer = () => new DOMParser().parseFromString(prepareIsolatedViewHtml(html), 'text/html')
+
+	it('gives its own document no policy but frame-src none, so the view keeps its own CSP alone', () => {
+		const metas = [...outer().querySelectorAll('meta[http-equiv="Content-Security-Policy"]')]
+		expect(metas.map((m) => m.getAttribute('content'))).toEqual(["frame-src 'none'"])
+	})
+
+	it('holds exactly one sandboxed frame, script-only, with the bridged view as its srcdoc', () => {
+		const frames = outer().querySelectorAll('iframe')
+		expect(frames).toHaveLength(1)
+		expect(frames[0].getAttribute('sandbox')).toBe('allow-scripts')
+		expect(frames[0].getAttribute('srcdoc')).toBe(prepareBridgedViewHtml(html))
+	})
+
+	it('contains no script of its own: the load relay is an attribute on the frame', () => {
+		const doc = outer()
+		expect(doc.querySelectorAll('script')).toHaveLength(0)
+		expect(doc.querySelector('iframe')?.getAttribute('onload')).toContain(ISOLATION_LOAD_MESSAGE)
+	})
+
+	it('cannot be broken out of by a view that closes the attribute or the tag', () => {
+		const hostile = '<html><body>"><script>top.x=1</script><iframe srcdoc="</body></html>'
+		const doc = new DOMParser().parseFromString(prepareIsolatedViewHtml(hostile), 'text/html')
+		expect(doc.querySelectorAll('iframe')).toHaveLength(1)
+		expect(doc.querySelectorAll('script')).toHaveLength(0)
+		expect(doc.querySelector('iframe')?.getAttribute('srcdoc')).toBe(
+			prepareBridgedViewHtml(hostile),
+		)
 	})
 })
 

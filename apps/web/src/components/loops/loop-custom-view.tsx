@@ -2,7 +2,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { useFile } from '@/hooks/use-files'
 import { api } from '@/lib/api'
 import { handleBridgeMessage, sourcesAffectedBy } from '@/lib/loop-view-bridge'
-import { prepareBridgedViewHtml, readViewSources } from '@/lib/mini-app'
+import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
 import type { DataQuerySpec } from '@maskin/shared'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -78,7 +78,7 @@ function ViewFrame({
 	const blockedRef = useRef(false)
 	// The last answer given to the frame per source (by its query), to tell whether a change matters.
 	const lastResultsRef = useRef(new Map<string, string>())
-	const srcDoc = useMemo(() => prepareBridgedViewHtml(html), [html])
+	const srcDoc = useMemo(() => prepareIsolatedViewHtml(html), [html])
 
 	// The handler is installed once per workspace; it reads the latest sources
 	// and failure callback through refs so a re-render never drops a message.
@@ -88,10 +88,38 @@ function ViewFrame({
 	onFailureRef.current = onFailure
 
 	useEffect(() => {
+		// The view runs one frame inside the iframe we render (see prepareIsolatedViewHtml), so
+		// it is that iframe's first child frame. Cross-origin windows still expose `frames`.
+		const viewWindow = () => iframeRef.current?.contentWindow?.frames[0] ?? null
+
+		// The isolation frame reports each load of the view frame. A view frame loads once; a
+		// second load means it navigated itself away (the isolation frame's CSP blocks that in
+		// Chrome, but is untested elsewhere). Stop answering it at once, then replace the frame
+		// with a fresh one; a view that keeps doing it is dropped for the default page.
+		function noteViewLoad() {
+			loadsRef.current += 1
+			if (loadsRef.current === 1) return
+			blockedRef.current = true
+			if (resetsRef.current >= MAX_FRAME_RESETS) {
+				onFailureRef.current('The view tried to navigate away and was stopped.')
+				return
+			}
+			resetsRef.current += 1
+			setFrameKey((k) => k + 1)
+		}
+
 		function onMessage(event: MessageEvent) {
+			// Only the isolation frame itself can say this; the view frame's window is a different one.
+			if (
+				event.source === iframeRef.current?.contentWindow &&
+				(event.data as { type?: unknown } | null)?.type === ISOLATION_LOAD_MESSAGE
+			) {
+				noteViewLoad()
+				return
+			}
 			void handleBridgeMessage(
 				{
-					frameWindow: () => iframeRef.current?.contentWindow ?? null,
+					frameWindow: viewWindow,
 					isBlocked: () => blockedRef.current,
 					sources: () => sourcesRef.current,
 					run: async (spec) => {
@@ -100,7 +128,7 @@ function ViewFrame({
 						if (result.rows_truncated || result.groups_truncated) setPartial(true)
 						return result
 					},
-					post: (message) => iframeRef.current?.contentWindow?.postMessage(message, '*'),
+					post: (message) => viewWindow()?.postMessage(message, '*'),
 					onDocHeight: (h) => setHeight(Math.max(MIN_HEIGHT, Math.ceil(h))),
 					onQueryError: (message) => onFailureRef.current(`A data query failed: ${message}`),
 				},
@@ -236,22 +264,6 @@ function ViewFrame({
 		blockedRef.current = false
 	}, [srcDoc, frameKey])
 
-	// A srcdoc frame fires `load` once. A second load means the view navigated
-	// itself away (scripted navigation is not covered by the CSP). Stop answering
-	// it at once, then replace the frame with a fresh one; a view that keeps doing
-	// it is dropped for the default page.
-	function handleLoad() {
-		loadsRef.current += 1
-		if (loadsRef.current === 1) return
-		blockedRef.current = true
-		if (resetsRef.current >= MAX_FRAME_RESETS) {
-			onFailure('The view tried to navigate away and was stopped.')
-			return
-		}
-		resetsRef.current += 1
-		setFrameKey((k) => k + 1)
-	}
-
 	return (
 		<>
 			{(partial || stale) && (
@@ -267,7 +279,6 @@ function ViewFrame({
 				title="Custom loop view"
 				srcDoc={srcDoc}
 				sandbox="allow-scripts"
-				onLoad={handleLoad}
 				style={{ height }}
 				className="block w-full rounded-md border border-border bg-background"
 			/>

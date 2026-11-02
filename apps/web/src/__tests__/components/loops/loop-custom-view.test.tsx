@@ -1,8 +1,8 @@
 import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import type { FileDetail } from '@/lib/api'
 import { api } from '@/lib/api'
-import { BRIDGE_QUERY_MESSAGE, MINI_APP_CSP } from '@/lib/mini-app'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { BRIDGE_QUERY_MESSAGE, ISOLATION_LOAD_MESSAGE, MINI_APP_CSP } from '@/lib/mini-app'
+import { act, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -46,6 +46,28 @@ function file(overrides: Partial<FileDetail> = {}): FileDetail {
 	}
 }
 
+/** The view's own document: the srcdoc of the frame inside the isolation frame the host renders. */
+function viewDoc(container: HTMLElement) {
+	const outer = container.querySelector('iframe')?.getAttribute('srcdoc') ?? ''
+	return (
+		new DOMParser()
+			.parseFromString(outer, 'text/html')
+			.querySelector('iframe')
+			?.getAttribute('srcdoc') ?? ''
+	)
+}
+
+/**
+ * Stands in for the view frame: the host reaches it as the first child frame of the iframe it
+ * renders. jsdom does not run nested srcdoc frames, so the window is supplied here.
+ */
+function viewWindowOf(container: HTMLElement) {
+	const frame = container.querySelector('iframe') as HTMLIFrameElement
+	const view = { postMessage: vi.fn() }
+	Object.defineProperty(frame.contentWindow, 'frames', { value: [view], configurable: true })
+	return { frame, view }
+}
+
 function renderView(onFailure = vi.fn()) {
 	const utils = render(
 		<LoopCustomView workspaceId="ws-1" fileId="file-1" onFailure={onFailure} />,
@@ -71,7 +93,8 @@ describe('LoopCustomView', () => {
 
 		const iframe = container.querySelector('iframe')
 		expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts')
-		const srcdoc = iframe?.getAttribute('srcdoc') ?? ''
+		expect(iframe?.getAttribute('srcdoc')).toContain('frame-src')
+		const srcdoc = viewDoc(container)
 		expect(srcdoc).toContain(`content="${MINI_APP_CSP}"`)
 		expect(srcdoc).toContain('window.maskin={query:')
 		expect(srcdoc).toContain('<h1>Pipeline</h1>')
@@ -126,11 +149,23 @@ describe('LoopCustomView', () => {
 			return utils
 		}
 
+		/** The isolation frame reporting that the view frame loaded. */
+		async function viewLoaded(frame: HTMLIFrameElement) {
+			await act(async () => {
+				window.dispatchEvent(
+					new MessageEvent('message', {
+						data: { type: ISOLATION_LOAD_MESSAGE },
+						source: frame.contentWindow,
+					}),
+				)
+			})
+		}
+
 		it('replaces the frame with a fresh one after a second load', async () => {
 			const { container } = await mounted()
 			const first = container.querySelector('iframe') as HTMLIFrameElement
-			fireEvent.load(first)
-			fireEvent.load(first)
+			await viewLoaded(first)
+			await viewLoaded(first)
 
 			const replaced = container.querySelector('iframe')
 			expect(replaced).not.toBeNull()
@@ -141,10 +176,27 @@ describe('LoopCustomView', () => {
 			const { container, onFailure } = await mounted()
 			for (let i = 0; i < 6 && !onFailure.mock.calls.length; i++) {
 				const frame = container.querySelector('iframe') as HTMLIFrameElement
-				fireEvent.load(frame)
-				fireEvent.load(frame)
+				await viewLoaded(frame)
+				await viewLoaded(frame)
 			}
 			expect(onFailure).toHaveBeenCalledWith('The view tried to navigate away and was stopped.')
+		})
+
+		it('ignores a load report that does not come from the isolation frame', async () => {
+			const { container } = await mounted()
+			const first = container.querySelector('iframe') as HTMLIFrameElement
+			const { view } = viewWindowOf(container)
+			for (let i = 0; i < 3; i++) {
+				await act(async () => {
+					window.dispatchEvent(
+						new MessageEvent('message', {
+							data: { type: ISOLATION_LOAD_MESSAGE },
+							source: view as unknown as Window,
+						}),
+					)
+				})
+			}
+			expect(container.querySelector('iframe')).toBe(first)
 		})
 	})
 
@@ -159,12 +211,12 @@ describe('LoopCustomView', () => {
 
 		/** The frame asks for its declared source, as window.maskin.query would. */
 		async function ask(container: HTMLElement) {
-			const frame = container.querySelector('iframe') as HTMLIFrameElement
+			const { view } = viewWindowOf(container)
 			await act(async () => {
 				window.dispatchEvent(
 					new MessageEvent('message', {
 						data: { type: BRIDGE_QUERY_MESSAGE, id: 1, name: 'by_status' },
-						source: frame.contentWindow,
+						source: view as unknown as Window,
 					}),
 				)
 			})
