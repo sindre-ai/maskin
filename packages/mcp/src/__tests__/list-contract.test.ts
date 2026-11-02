@@ -214,6 +214,8 @@ describe('list tools put the same payload on both channels', () => {
 
 	const textOf = (res: Result) =>
 		JSON.parse(res.content[0]?.text ?? 'null') as Record<string, unknown>
+	// list_triggers keeps its rows in the text and the hero card only, so read rows from the text.
+	const rowsOf = (res: Result, key: string) => textOf(res)[key] as Array<Record<string, unknown>>
 	const idsOf = (res: Result) =>
 		(res.structuredContent.integrations as Array<{ id: string }>).map((r) => r.id)
 
@@ -554,7 +556,7 @@ describe('list tools put the same payload on both channels', () => {
 		async function counts(c: FilterCase) {
 			c.stub()
 			const res = await call(c.tool, { limit: 100 })
-			const rows = res.structuredContent[c.rows] as Array<Record<string, unknown>>
+			const rows = rowsOf(res, c.rows)
 			const kept = rows.filter(c.keep).length
 			expect(kept).toBeGreaterThan(5)
 			expect(kept).toBeLessThan(rows.length)
@@ -568,7 +570,7 @@ describe('list tools put the same payload on both channels', () => {
 			for (let hop = 0; hop < 30; hop++) {
 				const res = await call(c.tool, { ...args, ...(cursor ? { cursor } : {}) })
 				pages.push(res)
-				ids.push(...(res.structuredContent[c.rows] as Array<{ id: string }>).map((r) => r.id))
+				ids.push(...rowsOf(res, c.rows).map((r) => r.id as string))
 				cursor = res.structuredContent.next_cursor as string | undefined
 				if (!cursor) break
 			}
@@ -605,7 +607,7 @@ describe('list tools put the same payload on both channels', () => {
 
 					expect((unfiltered.structuredContent.page as { total: number }).total).toBe(all)
 					expect((filtered.structuredContent.page as { total: number }).total).toBe(kept)
-					expect((filtered.structuredContent[c.rows] as unknown[]).length).toBe(kept)
+					expect(rowsOf(filtered, c.rows).length).toBe(kept)
 					expect(filtered.structuredContent.page).toMatchObject({ has_more: false })
 					expect(filtered.structuredContent).not.toHaveProperty('next_cursor')
 				})
@@ -678,7 +680,7 @@ describe('list tools put the same payload on both channels', () => {
 				let cursor: string | undefined
 				for (let hop = 0; hop < 20; hop++) {
 					const res = await call('list_triggers', { limit: 100, ...(cursor ? { cursor } : {}) })
-					for (const r of res.structuredContent.triggers as Array<{ id: string }>) seen.add(r.id)
+					for (const r of rowsOf(res, 'triggers')) seen.add(r.id as string)
 					hasMore.push((res.structuredContent.page as { has_more: boolean }).has_more)
 					cursor = res.structuredContent.next_cursor as string | undefined
 					if (!cursor) break

@@ -6490,8 +6490,13 @@ export function createMcpServer(config: McpConfig) {
 					pickCollectionResourceUri(heroCard),
 				),
 				content: [{ type: 'text' as const, text: listText(payload) }],
-				// The card is presentation only; every datum is in the payload the text carries too.
-				structuredContent: { heroCard, ...payload },
+				// The rows already ride in heroCard, so only the page block and cursor sit beside it;
+				// the text carries the whole payload. Rows here too would ship them twice, untrimmed.
+				structuredContent: {
+					heroCard,
+					page: payload.page,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
