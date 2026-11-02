@@ -2,7 +2,13 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, actors, objects } from '@maskin/db/schema'
 import { type DecisionDraft, commentDecisionSchema, readChanges } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
+import {
+	EmailAttachmentError,
+	loadEmailAttachments,
+	readAttachmentIds,
+} from '../lib/email-attachments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
@@ -59,6 +65,7 @@ type Env = {
 		db: Database
 		actorId: string
 		workspaceRole?: string
+		storageProvider?: StorageProvider
 	}
 }
 
@@ -453,6 +460,7 @@ async function loadApproval(
  */
 async function loadObjectEmail(
 	db: Database,
+	storage: StorageProvider | undefined,
 	workspaceId: string,
 	objectId: string,
 ): Promise<
@@ -504,6 +512,22 @@ async function loadObjectEmail(
 		return { failure: sendFailureFor(err) }
 	}
 	const approval = await findCurrentApproval(db, workspaceId, objectId, preview.content_hash)
+	// Files are read only once a person has approved: until then nothing is sent, so nothing is checked.
+	if (approval) {
+		try {
+			email.attachments = await loadEmailAttachments(
+				{ db, storage },
+				{
+					workspaceId,
+					ids: readAttachmentIds(object.metadata),
+					approvedAt: approval.createdAt,
+				},
+			)
+		} catch (err) {
+			if (!(err instanceof EmailAttachmentError)) throw err
+			return { failure: fail(400, 'BAD_REQUEST', err.message) }
+		}
+	}
 	return {
 		email,
 		contentHash: preview.content_hash,
@@ -571,7 +595,7 @@ app.openapi(sendRoute, async (c) => {
 		approvalEventId: number | null
 	} | null = null
 	if (input.object_id) {
-		const loaded = await loadObjectEmail(db, workspaceId, input.object_id)
+		const loaded = await loadObjectEmail(db, c.get('storageProvider'), workspaceId, input.object_id)
 		if ('failure' in loaded) return c.json(loaded.failure.body, loaded.failure.status)
 		email = loaded.email
 		objectDraft = {
@@ -677,6 +701,7 @@ app.openapi(sendRoute, async (c) => {
 						.join(', ')
 						.slice(0, 300),
 					recipients: email.to.length + (email.cc?.length ?? 0),
+					...(email.attachments?.length ? { attachments: email.attachments.length } : {}),
 					...(approvalId ? { approval_comment_id: approvalId } : {}),
 					...(input.draft_id ? { approval_draft_id: input.draft_id } : {}),
 					...(objectDraft ? { object_id: objectDraft.id } : {}),
