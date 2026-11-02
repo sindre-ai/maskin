@@ -28,5 +28,8 @@ struct ActivityFilterTests {
 		#expect(ActivityLoadState.of(fetched: true, revalidateFailed: true) == .ready)
 		#expect(ActivityLoadState.of(fetched: false, revalidateFailed: true) == .failed)
 		#expect(ActivityLoadState.of(fetched: false, revalidateFailed: false) == .loading)
+		// A cached timeline is never "did not load", and Try again shows the skeleton while it runs.
+		#expect(ActivityLoadState.of(fetched: false, revalidateFailed: true, hasItems: true) == .ready)
+		#expect(ActivityLoadState.of(fetched: false, revalidateFailed: true, retrying: true) == .loading)
 	}
 }

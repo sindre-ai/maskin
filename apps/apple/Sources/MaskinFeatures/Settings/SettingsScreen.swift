@@ -8,8 +8,8 @@ import SwiftUI
 ///
 /// ACCOUNT: your profile. NOTIFICATIONS: push permission, preferences and Lock Screen flows
 /// (`NotificationsPage`). SETUP: the workspace's name, skills, object types and extensions (web).
-/// Members, Integrations, Billing and Keys & MCP are not here: they live in the profile sheet's
-/// WORKSPACE group (handoff `7-Chat.md` §10). Log out at the end.
+/// Members, Integrations and Files open from SETUP (also reachable from the profile sheet); Billing and
+/// Keys & MCP stay in the profile sheet. DANGER ZONE holds both delete actions. Log out at the end.
 public struct SettingsScreen: View {
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.openURL) private var openURL
@@ -47,10 +47,6 @@ public struct SettingsScreen: View {
 							symbol: "person.crop.circle", title: "Your profile",
 							detail: environment.auth.session?.name)
 					}
-					NavigationLink(value: SettingsRoute.deleteAccount) {
-						SettingsRow(
-							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
-					}
 				}
 				Section("Notifications") {
 					NavigationLink(value: SettingsRoute.notifications) {
@@ -63,6 +59,15 @@ public struct SettingsScreen: View {
 							SettingsRow(
 								symbol: "building.2", title: "Workspace name", detail: services.workspace?.name)
 						}
+						NavigationLink(value: SettingsRoute.members) {
+							SettingsRow(symbol: "person.2", title: "Members")
+						}
+						NavigationLink(value: SettingsRoute.integrations) {
+							SettingsRow(symbol: "puzzlepiece.extension", title: "Integrations")
+						}
+						NavigationLink(value: SettingsRoute.files) {
+							SettingsRow(symbol: "doc.text", title: "Files")
+						}
 						NavigationLink(value: SettingsRoute.skills) {
 							SettingsRow(symbol: "wand.and.stars", title: "Skills")
 						}
@@ -74,13 +79,10 @@ public struct SettingsScreen: View {
 						} label: {
 							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions", detail: "Opens in browser")
 						}
-						NavigationLink(value: SettingsRoute.deleteWorkspace) {
-							SettingsRow(symbol: "trash", title: "Delete workspace", destructive: true)
-						}
 					} header: {
 						Text("Setup")
 					} footer: {
-						Text("Members, integrations, billing and keys are under your profile.")
+						Text("Billing and keys are under your profile.")
 					}
 				}
 				if let appLock, appLock.availability != .unavailable || appLock.isEnabled {
@@ -109,6 +111,18 @@ public struct SettingsScreen: View {
 					}
 					LabeledContent("Version", value: Self.versionString)
 				}
+				// Both irreversible actions live here, in the danger colour, each on its own row.
+				Section("Danger zone") {
+					if services.workspaceId != nil {
+						NavigationLink(value: SettingsRoute.deleteWorkspace) {
+							SettingsRow(symbol: "trash", title: "Delete workspace", destructive: true)
+						}
+					}
+					NavigationLink(value: SettingsRoute.deleteAccount) {
+						SettingsRow(
+							symbol: "person.crop.circle.badge.minus", title: "Delete account", destructive: true)
+					}
+				}
 				// Its own centred red card, as the mockup draws it.
 				Section {
 					Button("Log out", role: .destructive) { confirmSignOut = true }
@@ -133,6 +147,11 @@ public struct SettingsScreen: View {
 					WorkspaceSettingsView(
 						store: services.workspaceStore(), workspaceId: services.workspaceId ?? "",
 						currentName: services.workspace?.name ?? "", role: services.role)
+				case .members: MembersView(store: services.membersStore())
+				case .integrations:
+					IntegrationsView(
+						store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
+				case .files: FilesListScreen(environment: environment)
 				case .skills: SkillsView(store: services.skillsStore())
 				case .objectTypes: ObjectTypesView(store: services.schemaStore())
 				case .deleteAccount:

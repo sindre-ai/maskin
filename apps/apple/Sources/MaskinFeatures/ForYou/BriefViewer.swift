@@ -21,6 +21,9 @@ struct BriefViewer: View {
 	/// Pages fetched ahead of the reader, by file id, so the next slide opens without a spinner.
 	@State private var preloaded: [String: FileDetail] = [:]
 	@State private var dragY: CGFloat = 0
+	/// The follow-up chat on the slide in view; reset whenever the slide changes.
+	@State private var followUp = BriefFollowUpModel()
+	@FocusState private var composerFocused: Bool
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
 	@Environment(\.scenePhase) private var scenePhase
@@ -61,7 +64,19 @@ struct BriefViewer: View {
 							if pressing { playback.hold() } else { playback.release() }
 						})
 						.accessibilityHidden(true)
-					actions(card)
+					if followUp.isOpen {
+						BriefFollowUpPanel(model: followUp) { conversationID in
+							close()
+							runtime?.openChat(conversationID)
+						}
+						.frame(maxHeight: proxy.size.height * 0.4)
+					} else {
+						actions(card)
+						BriefFollowUpChips { question in ask(question, card) }
+					}
+					BriefFollowUpComposer(model: followUp, focused: $composerFocused) {
+						ask(followUp.text, card)
+					}
 				}
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s7)
@@ -77,6 +92,7 @@ struct BriefViewer: View {
 		.task(id: autoAdvances) { await runClock() }
 		.task(id: playback.index) { await prefetchNext() }
 		.onChange(of: playback.index, initial: true) { _, _ in
+			followUp.reset()
 			guard let card else { return }
 			stories.markSeen(card)
 			AccessibilityNotification.Announcement("\(playback.position). \(card.headline)").post()
@@ -88,6 +104,11 @@ struct BriefViewer: View {
 		.onChange(of: fullPage) { _, page in
 			if page == nil { playback.release() } else { playback.hold() }
 		}
+		// Asking about a slide pauses the story: while the field is in use or an exchange is open.
+		.onChange(of: composerFocused || followUp.isOpen) { _, active in
+			if active { playback.hold() } else { playback.release() }
+		}
+		.onDisappear { followUp.reset() }
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { playback.release() } else { playback.hold() }
 		}
@@ -186,20 +207,20 @@ struct BriefViewer: View {
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 					Text(card.headline)
 						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: MaskinFontWeight.w650))
-						.foregroundStyle(Color.white)
+						.foregroundStyle(BriefViewerPalette.ink)
 						.lineLimit(1)
 					Text("\(card.unit) \u{00B7} \(Self.clock(playback.currentDuration))")
 						.font(MaskinTypeface.sans(MaskinFontSize.t14))
-						.foregroundStyle(MaskinColor.patina100.opacity(0.7))
+						.foregroundStyle(BriefViewerPalette.inkSoft)
 						.lineLimit(1)
 				}
 				Spacer(minLength: 0)
 				Button(action: close) {
 					Image(systemName: "xmark")
 						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold))
-						.foregroundStyle(Color.white)
+						.foregroundStyle(BriefViewerPalette.ink)
 						.frame(width: MaskinSpace.s14 + MaskinSpace.s3, height: MaskinSpace.s14 + MaskinSpace.s3)
-						.background(Color.white.opacity(0.16), in: Circle())
+						.background(BriefViewerPalette.fill, in: Circle())
 						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 						.contentShape(Circle())
 				}
@@ -261,16 +282,16 @@ struct BriefViewer: View {
 					Spacer(minLength: 0)
 					Image(systemName: "chevron.right")
 						.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
-						.foregroundStyle(MaskinColor.patina100.opacity(0.6))
+						.foregroundStyle(BriefViewerPalette.inkFaint)
 						.accessibilityHidden(true)
 				}
-				.foregroundStyle(Color.white)
+				.foregroundStyle(BriefViewerPalette.ink)
 				.padding(.horizontal, MaskinSpace.s10)
 				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin + MaskinSpace.s9)
-				.background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+				.background(BriefViewerPalette.fillSoft, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
 				.overlay(
 					RoundedRectangle(cornerRadius: 26, style: .continuous)
-						.strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+						.strokeBorder(BriefViewerPalette.stroke, lineWidth: 1))
 				.contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
 			}
 			.buttonStyle(.maskinPressed(.shrink))
@@ -278,14 +299,24 @@ struct BriefViewer: View {
 				Button { fullPage = output } label: {
 					Image(systemName: "arrow.up.forward.square")
 						.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: .semibold))
-						.foregroundStyle(Color.white)
+						.foregroundStyle(BriefViewerPalette.ink)
 						.frame(width: MaskinSpace.touchMin + MaskinSpace.s9, height: MaskinSpace.touchMin + MaskinSpace.s9)
-						.background(Color.white.opacity(0.1), in: Circle())
-						.overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+						.background(BriefViewerPalette.fillSoft, in: Circle())
+						.overlay(Circle().strokeBorder(BriefViewerPalette.stroke, lineWidth: 1))
 				}
 				.buttonStyle(.maskinPressed(.shrink))
 				.accessibilityLabel("Open page")
 				.accessibilityHint("Opens the page so you can scroll and use it")
+			}
+		}
+	}
+
+	/// Sends a question about the slide to the Chief of Staff's chat and opens the exchange panel.
+	private func ask(_ question: String, _ card: StoryCard) {
+		composerFocused = false
+		Task {
+			await followUp.ask(question, about: card, desk: runtime?.forYou.chief) { desk, id in
+				ChiefOfStaffSheet.makeChat(environment: environment, desk: desk, conversationID: id)
 			}
 		}
 	}
@@ -303,9 +334,9 @@ private struct ProgressSegment: View {
 
 	var body: some View {
 		GeometryReader { proxy in
-			Capsule().fill(Color.white.opacity(0.25))
+			Capsule().fill(BriefViewerPalette.track)
 				.overlay(alignment: .leading) {
-					Capsule().fill(Color.white)
+					Capsule().fill(BriefViewerPalette.ink)
 						.frame(width: proxy.size.width * min(max(fill, 0), 1))
 				}
 				.clipShape(Capsule())

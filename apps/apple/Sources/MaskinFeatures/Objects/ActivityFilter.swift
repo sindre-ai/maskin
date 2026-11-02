@@ -35,8 +35,13 @@ enum ActivityLoadState: Equatable {
 	case loading, failed, ready
 
 	/// `fetched` is true once one fetch has landed; `revalidateFailed` that the latest try failed.
-	static func of(fetched: Bool, revalidateFailed: Bool) -> ActivityLoadState {
-		if fetched { return .ready }
+	/// A cached timeline (`hasItems`) is always ready, even when the first fetch failed; `retrying`
+	/// shows the skeleton again while Try again is in flight.
+	static func of(fetched: Bool, revalidateFailed: Bool, hasItems: Bool = false, retrying: Bool = false)
+		-> ActivityLoadState
+	{
+		if fetched || hasItems { return .ready }
+		if retrying { return .loading }
 		return revalidateFailed ? .failed : .loading
 	}
 }

@@ -223,7 +223,7 @@ struct ObjectsBoardColumnView: View {
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
 			showsStatus: store.display.shows(.status), showsDriver: store.display.shows(.driver),
-			showsUpdated: store.display.shows(.updated))
+			showsUpdated: store.display.shows(.updated), reservesMenu: !picking.isActive)
 		Group {
 			if picking.isActive {
 				HStack(spacing: MaskinSpace.s5) {
@@ -285,6 +285,9 @@ struct ObjectBoardCard: View {
 	var showsStatus = true
 	var showsDriver = true
 	var showsUpdated = true
+	/// Keeps a strip under the content for the card's "···" menu, so it never covers the text or
+	/// steals taps meant to open the card.
+	var reservesMenu = false
 
 	var body: some View {
 		ObjectRow(
@@ -293,6 +296,7 @@ struct ObjectBoardCard: View {
 			showsUpdated: showsUpdated)
 		.padding(.horizontal, MaskinSpace.s7)
 		.padding(.vertical, MaskinSpace.s6)
+		.padding(.bottom, reservesMenu ? MaskinSpace.touchMin - MaskinSpace.s6 : 0)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl, style: .continuous))
 		.contentShape(Rectangle())
 	}

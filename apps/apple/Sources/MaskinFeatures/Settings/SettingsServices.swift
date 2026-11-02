@@ -6,6 +6,7 @@ import SwiftUI
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
 	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case members, integrations, files
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.

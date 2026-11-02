@@ -176,3 +176,69 @@ struct AgentDetailStoreTests {
 		#expect(Set(keys).count == 3)
 	}
 }
+
+@Suite("AgentDetailStore enable, disable, retry and stats")
+@MainActor
+struct AgentDetailOverviewTests {
+	private func make(
+		_ profile: AgentProfile = agentProfile(), sessions: [AgentSession] = []
+	) async -> (AgentDetailStore, FakeAgentDetailAPI) {
+		let api = FakeAgentDetailAPI(profile, sessions: sessions)
+		let store = AgentDetailStore(agentID: profile.id, api: api, events: nil)
+		await store.refresh()
+		return (store, api)
+	}
+
+	@Test("Disable is offered while working and Enable while disabled, never both")
+	func offers() async {
+		let (working, _) = await make(sessions: [agentSession("s", actor: "forge", status: "running")])
+		#expect(working.canDisable && !working.canEnable)
+		_ = await working.disable()
+		#expect(working.status == .paused)
+		#expect(working.canEnable && !working.canDisable)
+		_ = await working.enable()
+		#expect(working.status == .running)
+	}
+
+	@Test("an idle agent offers neither, so Enable can never start an unasked run")
+	func idleOffersNeither() async {
+		let (store, api) = await make()
+		#expect(!store.canDisable && !store.canEnable)
+		#expect(await store.enable() == false)
+		#expect(await api.runPrompts.isEmpty)
+	}
+
+	@Test("retry starts again from the failed session's own prompt")
+	func retry() async {
+		let failed = agentSession("f", actor: "forge", status: "failed", prompt: "Fix the 502")
+		let (store, api) = await make(sessions: [failed])
+		#expect(failed.canRetry)
+		_ = await store.retry(failed)
+		#expect(await api.runPrompts == ["Fix the 502"])
+	}
+
+	@Test("stats count sessions and how many that ended finished well")
+	func stats() async {
+		let (store, _) = await make(sessions: [
+			agentSession("a", actor: "forge", status: "running"),
+			agentSession("b", actor: "forge", status: "completed"),
+			agentSession("c", actor: "forge", status: "failed"),
+		])
+		#expect(store.stats.total == 3)
+		#expect(store.stats.finishedWell == "1/2")
+		let (none, _) = await make()
+		#expect(none.stats.finishedWell == nil)
+	}
+
+	@Test("session filters and labels")
+	func filters() {
+		let live = agentSession("a", actor: "x", status: "running")
+		let done = agentSession("b", actor: "x", status: "completed")
+		let failed = agentSession("c", actor: "x", status: "failed")
+		let stopped = agentSession("d", actor: "x", status: "stopped")
+		#expect([live, done, failed, stopped].filter(AgentSessionFilter.running.matches).map(\.id) == ["a"])
+		#expect([live, done, failed, stopped].filter(AgentSessionFilter.done.matches).map(\.id) == ["b"])
+		#expect([live, done, failed, stopped].filter(AgentSessionFilter.failed.matches).map(\.id) == ["c", "d"])
+		#expect([live, done, failed, stopped].map(\.stateLabel) == ["Working", "Done", "Failed", "Stopped"])
+	}
+}

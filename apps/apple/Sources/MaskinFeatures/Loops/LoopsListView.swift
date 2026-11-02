@@ -31,7 +31,7 @@ struct LoopsListView: View {
 		LoopCard(
 			loop: loop, needsYou: store.needsYou(loop),
 			hasUpdate: store.installs[loop.id]?.hasUpdate == true,
-			update: store.latestUpdate(for: loop),
+			update: store.display.showsSummary ? store.latestUpdate(for: loop) : nil,
 			target: LoopOutcomes.cards(for: [loop]).first)
 	}
 
@@ -89,7 +89,7 @@ struct LoopsListView: View {
 				.listRowSeparator(.hidden)
 				.listRowBackground(Color.clear)
 			}
-			if search.isEmpty, !store.needsYouOnly {
+			if search.isEmpty, store.filter == .everything {
 				let cards = LoopOutcomes.cards(for: store.loops)
 				if !cards.isEmpty {
 					OutcomeScoreRow(cards: cards) { selection = $0 }
@@ -138,6 +138,10 @@ struct LoopsListView: View {
 					// The pill is on but every flow that needed you was handled meanwhile.
 					EmptyState(symbol: "checkmark", title: "Nothing needs you right now") {
 						Button("Show all flows") { store.needsYouOnly = false }.buttonStyle(.secondaryAction)
+					}
+				} else if store.runningOnly {
+					EmptyState(symbol: "pause.circle", title: "No flows are running") {
+						Button("Show all flows") { store.filter = .everything }.buttonStyle(.secondaryAction)
 					}
 				} else if search.isEmpty {
 					EmptyState(

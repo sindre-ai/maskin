@@ -23,20 +23,34 @@ struct ObjectActivityView: View {
 	var now: Date = Date()
 
 	@State private var filter: ActivityFilter = .all
+	@State private var retrying = false
 
 	private var loadState: ActivityLoadState {
-		.of(fetched: store.hasFetched, revalidateFailed: store.freshness.lastRevalidateFailed)
+		.of(
+			fetched: store.hasFetched, revalidateFailed: store.freshness.lastRevalidateFailed,
+			hasItems: !store.timeline.isEmpty, retrying: retrying)
 	}
 
 	var body: some View {
 		let days = ActivityGrouping.days(filter.apply(to: store.timeline.filter(include)), now: now)
+		let dividers = filter == .all
+			? ActivityPhases.dividers(
+				newestFirst: days.flatMap { $0.entries.map(\.id) },
+				statuses: ActivityPhases.statuses(of: store.timeline))
+			: [:]
 		VStack(alignment: .leading, spacing: 0) {
 			ActivityFilterChips(selected: $filter)
 				.padding(.bottom, MaskinSpace.s3)
 			if days.isEmpty {
 				switch loadState {
 				case .failed:
-					ActivityLoadFailed { Task { await store.refresh() } }
+					ActivityLoadFailed {
+						retrying = true
+						Task {
+							await store.refresh()
+							retrying = false
+						}
+					}
 				case .loading:
 					LoadingSkeleton(rows: 3)
 				case .ready:
@@ -57,6 +71,9 @@ struct ObjectActivityView: View {
 				ForEach(day.entries) { entry in
 					ActivityEntryView(store: store, entry: entry, onOpenObject: onOpenObject, onReply: onReply)
 						.id(entry.id)
+					if let status = dividers[entry.id] {
+						PhaseDivider(label: MaskinStatus.sentenceLabel(for: status))
+					}
 				}
 			}
 			if !days.isEmpty, onReply != nil {
@@ -68,6 +85,29 @@ struct ObjectActivityView: View {
 			}
 		}
 		.accessibilityElement(children: .contain)
+	}
+}
+
+/// "—— REVIEW ——": where the object entered a status, between the entries before and after.
+struct PhaseDivider: View {
+	let label: String
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s5) {
+			rule
+			Text(label.uppercased())
+				.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold, relativeTo: .caption))
+				.tracking(MaskinSpace.s1)
+				.foregroundStyle(MaskinColor.ink5)
+			rule
+		}
+		.padding(.vertical, MaskinSpace.s5)
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel("\(label) phase")
+	}
+
+	private var rule: some View {
+		Rectangle().fill(MaskinSurface.separator).frame(height: MaskinSpace.s1 / 2)
 	}
 }
 

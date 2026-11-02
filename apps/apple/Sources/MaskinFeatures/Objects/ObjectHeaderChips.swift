@@ -58,18 +58,17 @@ struct ObjectHeaderView: View {
 
 	/// "Forge is working" with what it is doing, and a way to message it.
 	private func workingCard(activity: String?) -> some View {
-		let who = store.ownerName ?? "An agent"
+		// The model knows only that a session is active, not whose: the driver may be someone else.
+		let who = "An agent"
 		return HStack(spacing: MaskinSpace.s6) {
 			DetailWorkingBars()
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				Text("\(who) is working")
 					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
 					.foregroundStyle(MaskinColor.ink)
-				if let activity, !activity.isEmpty {
-					Text(activity).lineLimit(1)
-						.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-						.foregroundStyle(MaskinColor.ink4)
-				}
+				Text(activity.flatMap { $0.isEmpty ? nil : $0 } ?? "Session running").lineLimit(1)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+					.foregroundStyle(MaskinColor.ink4)
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 			if let onMessage {

@@ -21,6 +21,10 @@ public final class LoopsStore {
 	public var sort: LoopsSort {
 		didSet { if sort != oldValue { sortStorage?.save(sort) } }
 	}
+	/// Order and Summary, remembered on this device with the sort.
+	public var display: LoopsDisplay {
+		didSet { if display != oldValue { displayStorage?.save(display) } }
+	}
 	/// Loop id → its newest post, for the card's latest update (only the bounded set is loaded).
 	public private(set) var latestPosts: [String: LoopPost] = [:]
 	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
@@ -28,6 +32,7 @@ public final class LoopsStore {
 
 	@ObservationIgnored private let cache: SnapshotCache?
 	@ObservationIgnored private let sortStorage: (any LoopsSortStorage)?
+	@ObservationIgnored private let displayStorage: (any LoopsDisplayStorage)?
 	@ObservationIgnored private let api: any LoopsAPI
 	@ObservationIgnored private let events: EventHub?
 	@ObservationIgnored private var listener: Task<Void, Never>?
@@ -42,8 +47,10 @@ public final class LoopsStore {
 
 	public init(
 		api: any LoopsAPI, events: EventHub?, cache: SnapshotCache? = nil,
-		sortStorage: (any LoopsSortStorage)? = nil
+		sortStorage: (any LoopsSortStorage)? = nil, displayStorage: (any LoopsDisplayStorage)? = nil
 	) {
+		self.displayStorage = displayStorage
+		self.display = displayStorage?.load() ?? LoopsDisplay()
 		self.api = api
 		self.events = events
 		self.debouncer = RefreshDebouncer()
@@ -77,8 +84,10 @@ public final class LoopsStore {
 	init(
 		api: any LoopsAPI, events: EventHub?, debounce: Duration,
 		sleep: @escaping RefreshDebouncer.Sleep, cache: SnapshotCache? = nil,
-		sortStorage: (any LoopsSortStorage)? = nil
+		sortStorage: (any LoopsSortStorage)? = nil, displayStorage: (any LoopsDisplayStorage)? = nil
 	) {
+		self.displayStorage = displayStorage
+		self.display = displayStorage?.load() ?? LoopsDisplay()
 		self.api = api
 		self.events = events
 		self.debouncer = RefreshDebouncer(delay: debounce, sleep: sleep)
@@ -97,6 +106,27 @@ public final class LoopsStore {
 	/// The "{n} need you ›" pill in the Flows header: on, the list shows only the flows that need
 	/// the viewer. Not remembered: it is a glance, not a view.
 	public var needsYouOnly = false
+	/// The Display sheet's "Running" filter: only flows that are running work.
+	public var runningOnly = false
+
+	/// The Display sheet's Filters row, over the pill's flag and the running flag.
+	public var filter: LoopsFilter {
+		get { needsYouOnly ? .needsYou : runningOnly ? .running : .everything }
+		set {
+			needsYouOnly = newValue == .needsYou
+			runningOnly = newValue == .running
+		}
+	}
+
+	/// Display's Reset: the sort, order, filter and properties back to their defaults.
+	public func resetDisplay() {
+		sort = .recent
+		display = LoopsDisplay()
+		filter = .everything
+	}
+
+	/// Whether anything is off its default, for the Display button and Reset.
+	public var isDisplayCustomised: Bool { sort != .recent || display != LoopsDisplay() || filter != .everything }
 
 	/// Every loop in the chosen order, narrowed by the search text and, when the pill is on, to the
 	/// flows that need the viewer.
@@ -106,7 +136,8 @@ public final class LoopsStore {
 			to: loops.filter {
 				(text.isEmpty || $0.displayName.localizedCaseInsensitiveContains(text))
 					&& (!needsYouOnly || ($0.status.isLive && needsYou($0)))
-			})
+					&& (!runningOnly || $0.status.isLive)
+			}, reversed: display.reversed)
 	}
 
 	public var waitingCount: Int { loops.reduce(0) { $0 + $1.waitingCount } }

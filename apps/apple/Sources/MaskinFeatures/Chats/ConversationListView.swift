@@ -264,6 +264,10 @@ struct ConversationListView: View {
 	}
 
 	private func status(for row: TeamLayout.Row) -> ConversationRowStatus {
+		rawStatus(for: row).applying(store.displayOptions)
+	}
+
+	private func rawStatus(for row: TeamLayout.Row) -> ConversationRowStatus {
 		switch row.kind {
 		case .conversation(let c):
 			return store.status(for: c, draft: draft(c.id), tick: sendTick(c))
@@ -362,7 +366,9 @@ struct ConversationListView: View {
 		switch empty {
 		case .nothing: onNewChat(nil)
 		case .noResults: onSearchEverywhere(query.trimmingCharacters(in: .whitespacesAndNewlines))
-		case .caughtUp, .noKind: store.chip = .all
+		case .caughtUp, .noKind:
+			store.chip = .all
+			store.displayOptions.unreadOnly = false
 		}
 	}
 
@@ -428,28 +434,41 @@ struct ConversationListView: View {
 	}
 }
 
-/// The Team Display menu in the shell's pill (spec 7 §6): LAYOUT (Sections / One list),
-/// CONVERSATIONS grouping (only in Sections) and FILTER CHIPS (Show / Hide). The store persists
-/// the choice per user.
-struct ChatsDisplayMenu: View {
+/// The Chats Display sheet (handoff v15): Group by Sections or None, Show All chats or Unread, and
+/// the Preview and Working line properties. The store persists the choice per user.
+struct ChatsDisplaySheet: View {
 	@Bindable var store: ConversationsStore
 
 	var body: some View {
-		Picker("Show as", selection: $store.displayOptions.layout) {
-			ForEach(TeamDisplayOptions.Layout.allCases, id: \.self) { Text($0.label).tag($0) }
-		}
-		.pickerStyle(.inline)
-		if store.displayOptions.layout == .sections {
-			Picker("Group by", selection: $store.displayOptions.grouping) {
-				ForEach(TeamDisplayOptions.Grouping.allCases, id: \.self) { Text($0.label).tag($0) }
+		DisplaySheet(canReset: store.displayOptions.isCustomised, onReset: { store.displayOptions = .default }) {
+			DisplaySection(title: "Grouping", showsDivider: false) {
+				DisplayChoice(
+					label: "Group by", options: [(true, "Sections"), (false, "None")],
+					selection: $store.displayOptions.isSectioned)
+				if store.displayOptions.isSectioned {
+					DisplayChoice(
+						label: "Sections",
+						options: TeamDisplayOptions.Grouping.allCases.map { ($0, $0.label) },
+						selection: $store.displayOptions.grouping)
+				}
 			}
-			.pickerStyle(.inline)
+			DisplaySection(title: "Filters") {
+				DisplayChoice(
+					label: "Show", options: [(false, "All chats"), (true, "Unread")],
+					selection: $store.displayOptions.unreadOnly)
+				DisplayChoice(
+					label: "Quick filters", options: [(false, "Hide"), (true, "Show")],
+					selection: $store.displayOptions.showsFilterChips)
+			}
+			DisplaySection(title: "Properties") {
+				DisplayToggles(
+					label: "Show",
+					items: [
+						.init(id: "preview", title: "Preview", isOn: $store.displayOptions.showsPreview),
+						.init(id: "working", title: "Working line", isOn: $store.displayOptions.showsWorkingLine),
+					])
+			}
 		}
-		Picker("Quick filters", selection: $store.displayOptions.showsFilterChips) {
-			Text("Show").tag(true)
-			Text("Hide").tag(false)
-		}
-		.pickerStyle(.inline)
 	}
 }
 

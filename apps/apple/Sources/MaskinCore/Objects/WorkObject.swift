@@ -188,11 +188,15 @@ public struct ObjectsQuery: Sendable, Equatable {
 	public var limit: Int
 	public var offset: Int
 	public var sort: ObjectsSort
+	/// Against the sort's natural direction (oldest first, Z to A).
+	public var reversed: Bool
 
 	public init(
 		type: String? = nil, status: String? = nil, driver: String? = nil, search: String = "", limit: Int = 50,
-		offset: Int = 0, sort: ObjectsSort = .needsYou
+		offset: Int = 0, sort: ObjectsSort = .needsYou,
+		reversed: Bool = false
 	) {
+		self.reversed = reversed
 		self.type = type
 		self.status = status
 		self.driver = driver

@@ -41,7 +41,7 @@ public struct ChatsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "bubble.left.and.bubble.right", title: "Choose a workspace")
-					.shellToolbar(environment: environment, title: "Team")
+					.shellToolbar(environment: environment, title: "Chats")
 			}
 		}
 	}
@@ -50,6 +50,7 @@ public struct ChatsScreen: View {
 private struct ChatsContainer: View {
 	let environment: AppEnvironment
 	@State private var store: ConversationsStore
+	@State private var showDisplay = false
 	@State private var selection: String?
 	@State private var search = ""
 	@State private var newChat: NewChatRequest?
@@ -96,12 +97,13 @@ private struct ChatsContainer: View {
 				pill: runtime?.teamPill
 			)
 			.shellToolbar(
-				environment: environment, title: "Team",
+				environment: environment, title: "Chats",
 				actions: ShellActions(
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
-					display: ShellDisplayMenu { ChatsDisplayMenu(store: store) },
 					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
+					displayToggle: { showDisplay = true },
 					hidesAvatar: true, newAlwaysVisible: true))
+			.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store) }
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {

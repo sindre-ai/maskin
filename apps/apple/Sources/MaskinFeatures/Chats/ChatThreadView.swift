@@ -815,7 +815,7 @@ struct ChatThreadView: View {
 	}
 
 	private func reply(to message: ChatMessage) {
-		composer.reply(to: message.actorName, text: message.content)
+		composer.reply(to: message.actorName, text: message.content, serverID: message.serverID)
 	}
 
 	/// Edit loads the text into the composer under the "Editing message" quote; sending replaces it.
@@ -1159,7 +1159,9 @@ struct ThreadTranscript: View {
 	/// The message a reply's quote points at, when it is in the loaded chat.
 	private func quoteTarget(of message: ChatMessage) -> ChatMessage? {
 		guard let quote = message.quotedReply else { return nil }
-		return QuoteJump.original(of: quote, replyID: message.id, in: store.messages)
+		var quotedID: Int?
+		if case .number(let n)? = message.metadata?["quoted_message_id"] { quotedID = Int(n) }
+		return QuoteJump.original(of: quote, replyID: message.id, quotedID: quotedID, in: store.messages)
 	}
 
 	@ViewBuilder
@@ -1205,7 +1207,8 @@ struct ThreadTranscript: View {
 				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: message.content.isEmpty ? nil : { onReply(message) },
-				onQuoteTap: quoteTarget(of: message).map { target in { onJumpToMessage(target.id) } },
+				onQuoteTap: message.quotedReply == nil
+					? nil : { if let target = quoteTarget(of: message) { onJumpToMessage(target.id) } },
 				threadSummary: store.threadSummary(for: message),
 				onOpenThread: { onOpenThread(message) },
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
