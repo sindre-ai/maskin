@@ -144,8 +144,8 @@ export function CommentInput({
 				type: result.ref.type ?? 'object',
 			}
 			setReferences((prev) => (prev.some((r) => r.id === picked.id) ? prev : [...prev, picked]))
-		} else if (result.kind === 'agent') {
-			tagRef.current?.insertTag(result.ref)
+		} else if (result.kind === 'agent' && result.ref.name) {
+			tagRef.current?.insertTag({ id: result.ref.id, name: result.ref.name })
 		}
 		setObjectPickerOpen(false)
 	}, [])
