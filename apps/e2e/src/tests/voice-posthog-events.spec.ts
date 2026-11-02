@@ -40,7 +40,8 @@ test.beforeAll(async () => {
 				// The server stamps every backend event with these three. They are not part of
 				// the voice event spec, so the exact-properties checks below leave them out.
 				const properties = { ...body.properties }
-				for (const key of ['$process_person_profile', 'actor_type', 'surface']) delete properties[key]
+				for (const key of ['$process_person_profile', 'actor_type', 'surface'])
+					delete properties[key]
 				captured.push({
 					event: body.event,
 					distinct_id: body.distinct_id,
