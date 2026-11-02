@@ -1283,6 +1283,12 @@ export const tools = {
 				.describe(
 					'Set to true to force a new top-level comment on `entity_id`, opting out of the automatic reply-in-thread default. Only use when you deliberately want to open a new topic rather than reply inside the thread that dispatched this session. Ignored if `parent_event_id` is also set — an explicit parent always wins.',
 				),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Hold until each agent in `mentions` has replied to this comment (in its thread) and return the replies. Ends early with settled false if an agent never starts or the wait runs out. Nothing is waited for when no agent is mentioned.',
+				),
 		}),
 	},
 
