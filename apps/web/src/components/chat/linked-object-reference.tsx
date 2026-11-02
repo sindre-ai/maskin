@@ -69,7 +69,9 @@ import {
 	type ReactElement,
 	type ReactNode,
 	cloneElement,
+	createContext,
 	isValidElement,
+	useContext,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -138,6 +140,14 @@ function previewBounds(chip: Element) {
 }
 
 const PREVIEW_QUERY = '(min-width: 640px) and (hover: hover) and (pointer: fine)'
+
+/**
+ * Provided around chips that sit inside text being edited. There is no hover preview and no phone
+ * sheet (a card opening over words you are about to change gets in the way), a chip whose object is
+ * still loading stays the plain link (the line must not jump), and `label`, when set, is the link
+ * text the author wrote and replaces the name on the chip.
+ */
+export const EditorChipContext = createContext<{ label?: string } | null>(null)
 
 /** True on a pointer device at 640px or wider, the only place a chip opens a preview. */
 function usePreviewCapable() {
@@ -219,7 +229,7 @@ function PreviewActions({ openLink, path }: Pick<ChipSheetContent, 'openLink' | 
 function ChipPreview({
 	card,
 	sheet,
-	enabled,
+	enabled: enabledByChip,
 	children,
 }: {
 	/** The card to open, drawn as a preview (see the cards' `preview` prop), given the buttons for its footer. */
@@ -228,6 +238,8 @@ function ChipPreview({
 	enabled: boolean
 	children: ReactNode
 }) {
+	const inEditor = useContext(EditorChipContext) !== null
+	const enabled = enabledByChip && !inEditor
 	const capable = usePreviewCapable()
 	const [open, setOpen] = useState(false)
 	const [sheetOpen, setSheetOpen] = useState(false)
@@ -411,7 +423,16 @@ const JOIN = '\u2060'
  * The text of a chip with its marks: `lead` stays on the first character and `trail` on the last,
  * so a dot never wraps onto a line of its own. Everything between breaks like words in a sentence.
  */
-function ChipText({ lead, text, trail }: { lead?: ReactNode; text: string; trail?: ReactNode }) {
+function ChipText({
+	lead,
+	text: name,
+	trail,
+}: {
+	lead?: ReactNode
+	text: string
+	trail?: ReactNode
+}) {
+	const text = useContext(EditorChipContext)?.label ?? name
 	const chars = Array.from(text)
 	if (chars.length < 2) {
 		return (
@@ -442,7 +463,12 @@ function ChipText({ lead, text, trail }: { lead?: ReactNode; text: string; trail
  * at the sentence size, with a neutral dot that pulses (it holds still under reduced motion).
  */
 function loadingChip(fallback: ReactNode, dot = true): ReactNode {
-	if (!isValidElement(fallback)) return fallback
+	return <LoadingChip fallback={fallback} dot={dot} />
+}
+
+function LoadingChip({ fallback, dot }: { fallback: ReactNode; dot: boolean }) {
+	// In the editor the link stays plain until its object arrives.
+	if (useContext(EditorChipContext) !== null || !isValidElement(fallback)) return <>{fallback}</>
 	const link = fallback as ReactElement<{ className?: string; children?: ReactNode }>
 	return cloneElement(
 		link,
@@ -473,12 +499,15 @@ export function ObjectReferenceChip({
 	objectId,
 	fallback,
 	cardFollows = true,
+	newTab = false,
 }: {
 	workspaceId: string
 	objectId: string
 	fallback: ReactNode
 	/** A draft's approval card is drawn under its sentence. Without one the draft is a chip too. */
 	cardFollows?: boolean
+	/** Opens the object in a new tab (your own message). */
+	newTab?: boolean
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
@@ -538,6 +567,7 @@ export function ObjectReferenceChip({
 			<Link
 				to="/$workspaceId/objects/$objectId"
 				params={{ workspaceId, objectId: object.id }}
+				{...(newTab ? NEW_TAB : {})}
 				aria-label={name}
 				className={CHIP}
 			>
@@ -640,6 +670,9 @@ export function SettingsReferenceChip({
 	)
 }
 
+/** Your own messages open an object in a new tab, so the conversation stays where it is. */
+const NEW_TAB = { target: '_blank', rel: 'noopener noreferrer' } as const
+
 const CARD_SHELL =
 	'not-prose @container my-2 flex w-full max-w-[460px] flex-col rounded-xl border bg-card'
 // The same card as a hover preview: no outer margin, a fixed width, lifted off the page.
@@ -672,6 +705,7 @@ function FoldableCard({
 	title,
 	head,
 	state,
+	className,
 	children,
 }: {
 	title: string
@@ -679,6 +713,8 @@ function FoldableCard({
 	head: ReactNode
 	/** The status badge or state. */
 	state: ReactNode
+	/** Added to the card's shell, e.g. to change its width or margin. */
+	className?: string
 	/** The card's link, drawn without a shell of its own. */
 	children: ReactNode
 }) {
@@ -706,6 +742,7 @@ function FoldableCard({
 				CARD_SHELL,
 				'relative border-border transition-colors duration-180 ease-standard hover:border-border-hover has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring',
 				folded && 'h-10',
+				className,
 			)}
 		>
 			{folded ? (
@@ -791,6 +828,8 @@ export function ObjectReferenceCard({
 	preview = false,
 	sheet = false,
 	actions,
+	newTab = false,
+	className,
 }: {
 	workspaceId: string
 	objectId: string
@@ -800,12 +839,16 @@ export function ObjectReferenceCard({
 	sheet?: boolean
 	/** The preview's Copy link and Open, at the right end of the footer. */
 	actions?: ReactNode
+	/** Opens the object in a new tab (your own message). */
+	newTab?: boolean
+	/** Added to the card's shell, e.g. to change its width or margin. */
+	className?: string
 }) {
 	const object = useLinkedObject(workspaceId, objectId)
 	const driver = useDriver(workspaceId, object)
 	const typeLabel = useObjectTypeLabel()
 	const { workspace } = useWorkspace()
-	const shell = sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL
+	const shell = cn(sheet ? SHEET_SHELL : preview ? PREVIEW_SHELL : CARD_SHELL, className)
 	const marker = preview || sheet ? undefined : ''
 
 	if (object === undefined) {
@@ -843,7 +886,11 @@ export function ObjectReferenceCard({
 			preview={preview}
 			sheet={sheet}
 			link={
-				<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId: object.id }} />
+				<Link
+					to="/$workspaceId/objects/$objectId"
+					params={{ workspaceId, objectId: object.id }}
+					{...(newTab ? NEW_TAB : {})}
+				/>
 			}
 		>
 			<LinkedCardFace
@@ -900,7 +947,7 @@ export function ObjectReferenceCard({
 	return preview || sheet ? (
 		link
 	) : (
-		<FoldableCard title={title} head={head} state={state}>
+		<FoldableCard title={title} head={head} state={state} className={className}>
 			{link}
 		</FoldableCard>
 	)

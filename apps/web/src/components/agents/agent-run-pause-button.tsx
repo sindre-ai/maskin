@@ -1,3 +1,5 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { cn } from '@/lib/cn'
 import { PauseCircle, Play } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -29,6 +31,8 @@ export function AgentRunPauseButton({
 	/** 'nav' matches the top nav's 30px control scale (Search, New). */
 	density?: 'default' | 'nav'
 }) {
+	// Starting and pausing an agent are writes; a viewer sees the button switched off.
+	const canWrite = useCanWrite()
 	// The nav row is built on a 30px scale (NavSearch's size-[30px], NewMenu's
 	// h-[30px]) rather than shadcn's sm (h-9/36px), so a nav-density button opts
 	// out of the sm height entirely. Everywhere else keeps the 44px touch floor.
@@ -43,39 +47,43 @@ export function AgentRunPauseButton({
 
 	if (isActive) {
 		return (
+			<ViewerTooltip className={fullWidth ? 'flex w-full' : 'inline-flex'}>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className={className}
+					onClick={(e) => {
+						e.preventDefault()
+						e.stopPropagation()
+						onPause()
+					}}
+					disabled={isPausePending || !canWrite}
+				>
+					<PauseCircle size={14} aria-hidden="true" />
+					{isPausePending ? 'Pausing…' : pauseLabel}
+				</Button>
+			</ViewerTooltip>
+		)
+	}
+
+	return (
+		<ViewerTooltip className={fullWidth ? 'flex w-full' : 'inline-flex'}>
 			<Button
 				type="button"
-				variant="outline"
+				variant={tone === 'warning' ? 'outline' : 'default'}
 				size="sm"
 				className={className}
 				onClick={(e) => {
 					e.preventDefault()
 					e.stopPropagation()
-					onPause()
+					onRun()
 				}}
-				disabled={isPausePending}
+				disabled={isRunPending || !canWrite}
 			>
-				<PauseCircle size={14} aria-hidden="true" />
-				{isPausePending ? 'Pausing…' : pauseLabel}
+				<Play size={14} aria-hidden="true" />
+				{isRunPending ? 'Starting…' : runLabel}
 			</Button>
-		)
-	}
-
-	return (
-		<Button
-			type="button"
-			variant={tone === 'warning' ? 'outline' : 'default'}
-			size="sm"
-			className={className}
-			onClick={(e) => {
-				e.preventDefault()
-				e.stopPropagation()
-				onRun()
-			}}
-			disabled={isRunPending}
-		>
-			<Play size={14} aria-hidden="true" />
-			{isRunPending ? 'Starting…' : runLabel}
-		</Button>
+		</ViewerTooltip>
 	)
 }

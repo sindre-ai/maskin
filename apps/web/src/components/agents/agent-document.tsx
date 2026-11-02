@@ -1,4 +1,5 @@
 import { ForkDialog } from '@/components/marketplace/fork-dialog'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -20,6 +21,7 @@ import {
 	useResetActor,
 	useUpdateActor,
 } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
@@ -583,6 +585,7 @@ function SessionRow({
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
 	const [showError, setShowError] = useState(false)
 	const createSession = useCreateSession(workspaceId)
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 
 	const result = session.result as Record<string, unknown> | null
@@ -640,23 +643,25 @@ function SessionRow({
 						>
 							{showError ? 'Hide' : 'Error'}
 						</button>
-						<button
-							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
-							onClick={(e) => {
-								e.stopPropagation()
-								createSession.mutate(
-									{
-										actor_id: agentId,
-										action_prompt: session.actionPrompt,
-									},
-									{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
-								)
-							}}
-							disabled={createSession.isPending}
-						>
-							{createSession.isPending ? 'Restarting…' : 'Restart'}
-						</button>
+						<ViewerTooltip>
+							<button
+								type="button"
+								className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
+								onClick={(e) => {
+									e.stopPropagation()
+									createSession.mutate(
+										{
+											actor_id: agentId,
+											action_prompt: session.actionPrompt,
+										},
+										{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
+									)
+								}}
+								disabled={createSession.isPending || !canWrite}
+							>
+								{createSession.isPending ? 'Restarting…' : 'Restart'}
+							</button>
+						</ViewerTooltip>
 					</>
 				)}
 				{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}

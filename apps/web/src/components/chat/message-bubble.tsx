@@ -5,6 +5,8 @@ import {
 	renderLinkedSettingsChip,
 } from '@/components/chat/linked-object-preview'
 import {
+	ObjectReferenceCard,
+	ObjectReferenceChip,
 	OtherWorkspaceLink,
 	useOtherWorkspaceLabel,
 } from '@/components/chat/linked-object-reference'
@@ -13,7 +15,9 @@ import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversation, useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
@@ -27,13 +31,17 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import {
 	type GithubTarget,
+	type OwnCard,
+	type OwnPlacement,
 	type SettingsTarget,
 	githubChipName,
 	githubChipText,
+	isOnlyCard,
+	placeOwnLinks,
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
-import { splitTextByTags, tagLabel } from '@/lib/tag-input-model'
+import { type TagSegment, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
@@ -50,7 +58,7 @@ import {
 	RotateCcw,
 	Settings as SettingsIcon,
 } from 'lucide-react'
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, type Ref, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { EditMessageCard } from './edit-message-card'
@@ -144,6 +152,8 @@ export function MessageBubble({
 	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
 	const canReply = !!onReplyInThread && message.id > 0 && message.kind === 'message'
 	const [editing, setEditing] = useState(false)
+	// Editing and asking agents again are writes; a viewer keeps the buttons, switched off.
+	const canWrite = useCanWrite()
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const { data: conversation } = useConversation(message.conversationId, workspaceId)
 	const conversationParticipantIds = useMemo(
@@ -188,10 +198,17 @@ export function MessageBubble({
 					.map((a) => (answers.length > 1 ? `${a.header}: ` : '') + a.selected.join(', '))
 					.join('\n')
 			: message.content
-	const ownSegments = useMemo(
-		() => (isOwn ? splitOwnLinks(shownContent, workspaceId, enterprise) : []),
-		[isOwn, shownContent, workspaceId, enterprise],
+	const placedParts = useMemo(
+		() =>
+			isOwn
+				? placeOwnLinks(splitOwnLinks(shownContent, workspaceId, enterprise), shownLinkedObjectIds)
+				: [],
+		[isOwn, shownContent, workspaceId, enterprise, shownLinkedObjectIds],
 	)
+	// One card and nothing else (no words, no attachments, not being edited): the card is the message.
+	const cardOnly = isOwn && !editing && attachments.length === 0 && isOnlyCard(placedParts)
+	// A bubble that holds a card is a fixed width so the card has room, instead of the width of its words.
+	const holdsCard = isOwn && !editing && !cardOnly && placedParts.some((p) => p.kind === 'card')
 
 	// Tags in your own words are drawn as chips where they stand: each tagged id claims its
 	// "@Name" in the text. Ids with no place in the text (messages sent before tags lived in the
@@ -209,18 +226,19 @@ export function MessageBubble({
 	}, [tagActors])
 	const { ownParts, untaggedMentions } = useMemo(() => {
 		let remaining = mentions
-		const parts = ownSegments.map((segment) => {
-			if (segment.kind !== 'text' || remaining.length === 0) return segment
-			const split = splitTextByTags(segment.text, remaining, tagLabelOf)
+		const parts = placedParts.map((part): OwnBodyPart => {
+			if (part.kind !== 'text' || remaining.length === 0) return part
+			const split = splitTextByTags(part.text, remaining, tagLabelOf)
 			remaining = split.unmatchedIds
-			return { kind: 'tagged' as const, parts: split.segments }
+			return { kind: 'tagged', parts: split.segments }
 		})
 		return { ownParts: parts, untaggedMentions: remaining }
-	}, [ownSegments, mentions, tagLabelOf])
+	}, [placedParts, mentions, tagLabelOf])
 
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
-	// attachments take the same width. Editing, and a message with no text, keep the full layout.
-	const fitText = isOwn && !editing && message.content.length > 0
+	// attachments take the same width. Editing, a message with no text and a message with a card
+	// (which has its own width) keep the full layout.
+	const fitText = isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard
 	const { columnRef, plateRef, textRef } = useFitTextWidth({
 		enabled: fitText,
 		minWidth: attachments.length > 0 ? MIN_FIT_WIDTH : 0,
@@ -332,13 +350,18 @@ export function MessageBubble({
 				    against the bubble and stays inside the box that measures overflow. */}
 							<div
 								className={cn(
-									// While fitting, the column above carries the width cap. The edit card takes the
-									// row, up to the bubble's own cap, so its buttons always fit.
+									// While fitting, the column above carries the width cap. The edit card takes the row,
+									// up to the bubble's own cap, so its buttons always fit. A lone card fills the column up
+									// to 460px; a bubble with a card is min(520px, 88% of the column).
 									fitText
 										? 'relative w-full'
 										: editing
 											? 'relative max-w-[560px]'
-											: 'relative max-w-[min(560px,80%)]',
+											: cardOnly
+												? 'relative w-full max-w-[460px]'
+												: holdsCard
+													? 'relative w-[min(520px,88%)]'
+													: 'relative max-w-[min(560px,80%)]',
 									spawnInfo && 'pr-2',
 									editing && 'w-full',
 								)}
@@ -346,7 +369,12 @@ export function MessageBubble({
 								{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
 								<div
 									ref={plateRef}
-									className="flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground"
+									className={
+										// A message that is only a card has no plate: the card is the message.
+										cardOnly
+											? 'contents'
+											: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
+									}
 								>
 									{fileList}
 									{editing ? (
@@ -371,42 +399,14 @@ export function MessageBubble({
 										// `min-w-0` bounds the box, this bounds the ink. Without it an
 										// unbroken token (a long URL) raises this span's min-content and
 										// paints past the bubble's `max-w` cap, out to the viewport edge.
-										<span ref={textRef} className="whitespace-pre-wrap text-balance break-words">
-											{ownParts.map((segment, index) =>
-												segment.kind === 'tagged' ? (
-													// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-													<Fragment key={index}>
-														{segment.parts.map((part, partIndex) =>
-															part.kind === 'text' ? (
-																// biome-ignore lint/suspicious/noArrayIndexKey: positional by construction
-																<Fragment key={partIndex}>{part.text}</Fragment>
-															) : (
-																<TagChip
-																	// biome-ignore lint/suspicious/noArrayIndexKey: the same person can be tagged twice
-																	key={partIndex}
-																	workspaceId={workspaceId}
-																	id={part.id}
-																	label={part.label}
-																	surface="plate"
-																	isSelf={part.id === actor?.id}
-																	linkable={actorLookup.get(part.id)?.type === 'agent'}
-																/>
-															),
-														)}
-													</Fragment>
-												) : segment.kind === 'text' ? (
-													// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
-													<Fragment key={index}>{segment.text}</Fragment>
-												) : (
-													<OwnLinkChip
-														// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
-														key={index}
-														workspaceId={workspaceId}
-														segment={segment}
-													/>
-												),
-											)}
-										</span>
+										<OwnMessageBody
+											parts={ownParts}
+											workspaceId={workspaceId}
+											inBubble={!cardOnly}
+											textRef={fitText ? textRef : undefined}
+											selfActorId={actor?.id ?? null}
+											isAgent={(id) => actorLookup.get(id)?.type === 'agent'}
+										/>
 									) : null}
 								</div>
 							</div>
@@ -450,29 +450,34 @@ export function MessageBubble({
 					) : null}
 					{canAct && !editing ? (
 						<>
-							<button
-								ref={pencilRef}
-								type="button"
-								onClick={startEditing}
-								aria-label="Edit message"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
-							>
-								<Pencil size={12} aria-hidden />
-							</button>
-							<button
-								type="button"
-								onClick={() =>
-									retryMessage.mutate(
-										{ messageId: message.id },
-										{ onSuccess: () => onRetried?.(message) },
-									)
-								}
-								disabled={retryMessage.isPending}
-								aria-label="Ask agents to respond again"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-							>
-								<RotateCcw size={12} aria-hidden />
-							</button>
+							<ViewerTooltip>
+								<button
+									ref={pencilRef}
+									type="button"
+									onClick={startEditing}
+									disabled={!canWrite}
+									aria-label="Edit message"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<Pencil size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
+							<ViewerTooltip>
+								<button
+									type="button"
+									onClick={() =>
+										retryMessage.mutate(
+											{ messageId: message.id },
+											{ onSuccess: () => onRetried?.(message) },
+										)
+									}
+									disabled={retryMessage.isPending || !canWrite}
+									aria-label="Ask agents to respond again"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<RotateCcw size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
 						</>
 					) : null}
 				</div>
@@ -702,20 +707,22 @@ export function MessageBubble({
 							</button>
 						) : null}
 						{canRetryAgent ? (
-							<button
-								type="button"
-								onClick={() =>
-									retryMessage.mutate(
-										{ messageId: message.id },
-										{ onSuccess: () => onRetried?.(message) },
-									)
-								}
-								disabled={retryMessage.isPending}
-								aria-label="Retry"
-								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-							>
-								<RotateCcw size={12} aria-hidden />
-							</button>
+							<ViewerTooltip>
+								<button
+									type="button"
+									onClick={() =>
+										retryMessage.mutate(
+											{ messageId: message.id },
+											{ onSuccess: () => onRetried?.(message) },
+										)
+									}
+									disabled={retryMessage.isPending || !canWrite}
+									aria-label="Retry"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<RotateCcw size={12} aria-hidden />
+								</button>
+							</ViewerTooltip>
 						) : null}
 					</div>
 				) : null}
@@ -733,8 +740,125 @@ function chipTitle(title: string): string {
 		: trimmed
 }
 
+/** What the own-message body draws: the placed links and cards, with the words split around their tags. */
+type OwnBodyPart = OwnPlacement | { kind: 'tagged'; parts: TagSegment[] }
+
 const OWN_CHIP_CLASS =
 	'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+/**
+ * What you wrote, in order: words, a chip for each link, and a card for an object linked on a
+ * line of its own. In a bubble the cards sit nested under the words they follow; a message that is
+ * only a card has no bubble. Objects open in a new tab.
+ */
+function OwnMessageBody({
+	parts,
+	workspaceId,
+	inBubble,
+	textRef,
+	selfActorId,
+	isAgent,
+}: {
+	parts: OwnBodyPart[]
+	workspaceId: string
+	inBubble: boolean
+	/** The words, measured to fit the bubble to them (only set when the message holds no card). */
+	textRef?: Ref<HTMLSpanElement>
+	selfActorId: string | null
+	isAgent: (id: string) => boolean
+}) {
+	const runs: Array<{ card: OwnCard } | { inline: Exclude<OwnBodyPart, OwnCard>[] }> = []
+	for (const part of parts) {
+		const last = runs[runs.length - 1]
+		if (part.kind === 'card') runs.push({ card: part })
+		else if (last && 'inline' in last) last.inline.push(part)
+		else runs.push({ inline: [part] })
+	}
+	return (
+		<>
+			{runs.map((run, index) =>
+				'card' in run ? (
+					<ObjectReferenceCard
+						// biome-ignore lint/suspicious/noArrayIndexKey: runs are positional by construction
+						key={index}
+						workspaceId={workspaceId}
+						objectId={run.card.id}
+						newTab
+						// In a bubble the card fills it, 8px under the words (the bubble's gap is 6px) and
+						// with a light shadow; a lone card is the message and fills its wrapper.
+						className={cn(
+							'my-0 w-full max-w-full',
+							inBubble && 'shadow-xs',
+							inBubble && index > 0 && 'mt-0.5',
+						)}
+					/>
+				) : (
+					// `break-words` is load-bearing next to the column's `min-w-0`: `min-w-0` bounds the
+					// box, this bounds the ink. Without it an unbroken token (a long URL) raises this
+					// span's min-content and paints past the bubble's `max-w` cap, out to the viewport edge.
+					<span
+						// biome-ignore lint/suspicious/noArrayIndexKey: runs are positional by construction
+						key={index}
+						ref={textRef}
+						className="whitespace-pre-wrap text-balance break-words"
+					>
+						{run.inline.map((part, i) =>
+							part.kind === 'tagged' ? (
+								// biome-ignore lint/suspicious/noArrayIndexKey: parts are positional by construction
+								<Fragment key={i}>
+									{part.parts.map((tagPart, tagIndex) =>
+										tagPart.kind === 'text' ? (
+											// biome-ignore lint/suspicious/noArrayIndexKey: positional by construction
+											<Fragment key={tagIndex}>{tagPart.text}</Fragment>
+										) : (
+											<TagChip
+												// biome-ignore lint/suspicious/noArrayIndexKey: the same person can be tagged twice
+												key={tagIndex}
+												workspaceId={workspaceId}
+												id={tagPart.id}
+												label={tagPart.label}
+												surface="plate"
+												isSelf={tagPart.id === selfActorId}
+												linkable={isAgent(tagPart.id)}
+											/>
+										),
+									)}
+								</Fragment>
+							) : part.kind === 'text' ? (
+								// biome-ignore lint/suspicious/noArrayIndexKey: parts are positional by construction
+								<Fragment key={i}>{part.text}</Fragment>
+							) : part.kind === 'other' ? (
+								<OwnLinkChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									segment={part.segment}
+								/>
+							) : part.kind === 'file' ? (
+								<OwnLinkChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									segment={{ kind: 'file', id: part.id }}
+								/>
+							) : (
+								<ObjectReferenceChip
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same link can appear twice
+									key={i}
+									workspaceId={workspaceId}
+									objectId={part.id}
+									newTab
+									cardFollows={false}
+									fallback={part.address}
+								/>
+							),
+						)}
+					</span>
+				),
+			)}
+		</>
+	)
+}
 
 /**
  * A link to an object, file, loop or trigger in your own message, drawn inline where it was typed

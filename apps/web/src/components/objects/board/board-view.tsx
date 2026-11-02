@@ -1,6 +1,7 @@
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { EmptyState } from '@/components/shared/empty-state'
 import { QueryStateError } from '@/components/shared/query-state'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useBulkUpdateObjects } from '@/hooks/use-objects'
 import { api } from '@/lib/api'
 import type {
@@ -1048,9 +1049,12 @@ function DraggableBoardCard({
 	nextStatus,
 	nextLabel,
 }: DraggableBoardCardProps) {
+	// A viewer cannot move a card between columns, so it does not pick up.
+	const canWrite = useCanWrite()
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: object.id,
 		data: { object, status: object.status },
+		disabled: !canWrite,
 	})
 	const longPressTimerRef = useRef<number | null>(null)
 	const longPressStartRef = useRef<{ x: number; y: number } | null>(null)

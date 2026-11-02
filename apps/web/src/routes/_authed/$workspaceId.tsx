@@ -13,6 +13,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { trackAppActive } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -27,6 +28,7 @@ import {
 	identifyForWorkspace,
 	registerWorkspaceProperties,
 	setCapturingEnabled,
+	setWorkspaceGroup,
 } from '@/lib/posthog'
 import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
@@ -92,6 +94,7 @@ function WorkspaceLayout() {
 			actor_type: actor.type,
 		})
 		setCapturingEnabled(shareUsage)
+		setWorkspaceGroup(workspaceId, workspace.createdAt)
 		// Faro gets ids only — never the actor's email or the workspace name.
 		// Unlike PostHog this is not gated on the share-usage analytics toggle:
 		// it is crash reporting, the same category as Sentry, which is likewise
@@ -100,6 +103,8 @@ function WorkspaceLayout() {
 		void identifyForWorkspace(actor.id, anonymizeWorkspace, {
 			name: actor.name,
 			email: actor.email,
+		}).then(() => {
+			if (shareUsage) trackAppActive()
 		})
 	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 

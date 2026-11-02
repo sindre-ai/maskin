@@ -1,3 +1,5 @@
+import { waitForInviteLink } from './mock-resend.helper'
+
 const BASE_URL = 'http://localhost:5173'
 
 /**
@@ -497,6 +499,31 @@ export class TestAPI {
 		})
 		if (!res.ok) throw new Error(`addWorkspaceMember failed: ${res.status}`)
 		return res.json()
+	}
+
+	/**
+	 * Makes an existing person a member the way a real one joins: the account
+	 * invites their email and they accept with their own key. A person can't be
+	 * added by id, only an agent the workspace created can.
+	 */
+	async addHumanByInvite(
+		workspaceId: string,
+		human: { email: string | null; api_key: string },
+	): Promise<void> {
+		if (!human.email) throw new Error('addHumanByInvite failed: actor has no email')
+		const create = await fetch(`${this.baseURL}/api/invites`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ workspaceId, email: human.email, role: 'member' }),
+		})
+		if (!create.ok) throw new Error(`addHumanByInvite failed to invite: ${create.status}`)
+		const token = new URL(await waitForInviteLink(human.email)).searchParams.get('token')
+		if (!token) throw new Error('addHumanByInvite failed: invite link has no token')
+		const accept = await fetch(`${this.baseURL}/api/invites/${token}/accept`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${human.api_key}` },
+		})
+		if (!accept.ok) throw new Error(`addHumanByInvite failed to accept: ${accept.status}`)
 	}
 
 	async listWorkspaceMembers(

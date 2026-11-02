@@ -1,4 +1,5 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import {
 	Select,
 	SelectContent,
@@ -7,6 +8,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useRemoveAgentGrant,
 	useSetAgentGrant,
@@ -118,6 +120,7 @@ export function AgentAccess({
 	const isKey = kind === 'key'
 	const [open, setOpen] = useState(false)
 	const { workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const { data: actors } = useActors(workspaceId)
 	const setGrant = useSetAgentGrant(workspaceId, integration.id)
 	const removeGrant = useRemoveAgentGrant(workspaceId, integration.id)
@@ -135,6 +138,7 @@ export function AgentAccess({
 
 	const me = getStoredActor()
 	const canEdit =
+		canWrite &&
 		me?.type === 'human' &&
 		(integration.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	const busy = setGrant.isPending || removeGrant.isPending || setDefault.isPending
@@ -172,22 +176,24 @@ export function AgentAccess({
 							<p className="text-sm font-medium text-foreground">All other agents</p>
 							<p className="text-xs text-muted-foreground">Agents without their own entry below</p>
 						</div>
-						<Select
-							value={defaultAccess}
-							onValueChange={(v) => setDefault.mutate(v as DefaultAgentAccess)}
-							disabled={!canEdit || busy}
-						>
-							<SelectTrigger aria-label="Access for all other agents" className="w-full sm:w-36">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{(isKey ? KEY_DEFAULT_ORDER : DEFAULT_ACCESS_ORDER).map((a) => (
-									<SelectItem key={a} value={a}>
-										{isKey && a === 'read' ? 'Full access' : AGENT_ACCESS_LABELS[a]}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+						<ViewerTooltip className="flex w-full sm:w-36">
+							<Select
+								value={defaultAccess}
+								onValueChange={(v) => setDefault.mutate(v as DefaultAgentAccess)}
+								disabled={!canEdit || busy}
+							>
+								<SelectTrigger aria-label="Access for all other agents" className="w-full sm:w-36">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{(isKey ? KEY_DEFAULT_ORDER : DEFAULT_ACCESS_ORDER).map((a) => (
+										<SelectItem key={a} value={a}>
+											{isKey && a === 'read' ? 'Full access' : AGENT_ACCESS_LABELS[a]}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</ViewerTooltip>
 					</div>
 
 					{listed.map(({ agent, access }) => (
@@ -200,54 +206,61 @@ export function AgentAccess({
 								<p className="truncate text-sm font-medium text-foreground">{agent.name}</p>
 							</div>
 							<div className="flex items-center gap-1">
-								<Select
-									value={isKey ? (access === 'none' ? 'none' : 'read_write') : access}
-									onValueChange={(v) => changeAgent(agent.id, v as AgentGrantAccess)}
-									disabled={!canEdit || busy}
-								>
-									<SelectTrigger aria-label={`Access for ${agent.name}`} className="w-full sm:w-36">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										{(isKey ? KEY_ACCESS_ORDER : ACCESS_ORDER).map((a) => (
-											<SelectItem key={a} value={a}>
-												{isKey && (a === 'read_write' || a === 'none')
-													? KEY_ACCESS_LABELS[a]
-													: AGENT_ACCESS_LABELS[a]}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<ViewerTooltip className="flex w-full sm:w-36">
+									<Select
+										value={isKey ? (access === 'none' ? 'none' : 'read_write') : access}
+										onValueChange={(v) => changeAgent(agent.id, v as AgentGrantAccess)}
+										disabled={!canEdit || busy}
+									>
+										<SelectTrigger
+											aria-label={`Access for ${agent.name}`}
+											className="w-full sm:w-36"
+										>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{(isKey ? KEY_ACCESS_ORDER : ACCESS_ORDER).map((a) => (
+												<SelectItem key={a} value={a}>
+													{isKey && (a === 'read_write' || a === 'none')
+														? KEY_ACCESS_LABELS[a]
+														: AGENT_ACCESS_LABELS[a]}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</ViewerTooltip>
 							</div>
 						</div>
 					))}
 
-					{canEdit && addable.length > 0 && (
-						<Select
-							value=""
-							onValueChange={(actorId) =>
-								setGrant.mutate({
-									actorId,
-									access: isKey
-										? defaultAccess === 'read'
-											? 'none'
-											: 'read_write'
-										: startingAccess(defaultAccess),
-								})
-							}
-							disabled={busy}
-						>
-							<SelectTrigger aria-label="Add an agent" className="w-full sm:w-56">
-								<SelectValue placeholder="Add an agent…" />
-							</SelectTrigger>
-							<SelectContent>
-								{addable.map((a) => (
-									<SelectItem key={a.id} value={a.id}>
-										{a.name}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+					{(canEdit || !canWrite) && addable.length > 0 && (
+						<ViewerTooltip className="flex w-full sm:w-56">
+							<Select
+								value=""
+								onValueChange={(actorId) =>
+									setGrant.mutate({
+										actorId,
+										access: isKey
+											? defaultAccess === 'read'
+												? 'none'
+												: 'read_write'
+											: startingAccess(defaultAccess),
+									})
+								}
+								disabled={!canWrite || busy}
+							>
+								<SelectTrigger aria-label="Add an agent" className="w-full sm:w-56">
+									<SelectValue placeholder="Add an agent…" />
+								</SelectTrigger>
+								<SelectContent>
+									{addable.map((a) => (
+										<SelectItem key={a.id} value={a.id}>
+											{a.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</ViewerTooltip>
 					)}
 
 					{requiresApprovalToAct(integration.provider) && (

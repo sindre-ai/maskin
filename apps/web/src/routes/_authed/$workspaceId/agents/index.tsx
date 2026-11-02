@@ -4,8 +4,10 @@ import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picke
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useWorkspaceSessionStats, useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -28,6 +30,7 @@ function AgentsRoute() {
 	const { data: sessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
 	const { data: stats } = useWorkspaceSessionStats(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
+	const canWrite = useCanWrite()
 
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
@@ -70,7 +73,13 @@ function AgentsRoute() {
 					icon={<Users size={28} aria-hidden />}
 					title="Nobody on this team yet."
 					description="Agents own one outcome each and run on their own. Add the first one to get started."
-					action={<Button onClick={() => setCreatePickerOpen(true)}>Create an agent</Button>}
+					action={
+						<ViewerTooltip>
+							<Button disabled={!canWrite} onClick={() => setCreatePickerOpen(true)}>
+								Create an agent
+							</Button>
+						</ViewerTooltip>
+					}
 				/>
 			) : (
 				<AgentsIndexView

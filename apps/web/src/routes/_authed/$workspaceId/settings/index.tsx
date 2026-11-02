@@ -1,15 +1,18 @@
 import { DeleteWorkspaceDialog } from '@/components/settings/delete-workspace-dialog'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useUpdateActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { createFileRoute } from '@tanstack/react-router'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { useState } from 'react'
@@ -22,11 +25,12 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
 
 function GeneralPage() {
 	const { workspace, workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const [name, setName] = useState(workspace.name)
 
 	const handleSave = () => {
-		if (name !== workspace.name) {
+		if (canWrite && name !== workspace.name) {
 			updateWorkspace.mutate(
 				{ name },
 				{
@@ -41,19 +45,25 @@ function GeneralPage() {
 		<div className="max-w-[580px]">
 			<h2 className="settings-label mb-[7px]">WORKSPACE NAME</h2>
 			<div className="flex gap-2">
-				<Input
-					type="text"
-					value={name}
-					onChange={(e) => setName(e.target.value)}
-					aria-label="Workspace name"
-					className="flex-1"
-				/>
-				<Button
-					onClick={handleSave}
-					disabled={name === workspace.name || updateWorkspace.isPending}
-				>
-					Save
-				</Button>
+				<ViewerTooltip className="flex flex-1">
+					<Input
+						type="text"
+						value={name}
+						onChange={(e) => setName(e.target.value)}
+						aria-label="Workspace name"
+						placeholder={canWrite ? undefined : VIEWER_READ_ONLY_MESSAGE}
+						disabled={!canWrite}
+						className="flex-1"
+					/>
+				</ViewerTooltip>
+				<ViewerTooltip>
+					<Button
+						onClick={handleSave}
+						disabled={name === workspace.name || updateWorkspace.isPending || !canWrite}
+					>
+						Save
+					</Button>
+				</ViewerTooltip>
 			</div>
 
 			<Separator className="my-6" />
@@ -77,6 +87,7 @@ function GeneralPage() {
 
 function DangerSection() {
 	const { workspace, workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const [open, setOpen] = useState(false)
 
 	return (
@@ -89,9 +100,11 @@ function DangerSection() {
 						Permanently deletes the workspace and everything in it.
 					</span>
 				</div>
-				<Button variant="destructive" onClick={() => setOpen(true)}>
-					Delete workspace
-				</Button>
+				<ViewerTooltip>
+					<Button variant="destructive" disabled={!canWrite} onClick={() => setOpen(true)}>
+						Delete workspace
+					</Button>
+				</ViewerTooltip>
 			</div>
 			<DeleteWorkspaceDialog
 				workspaceId={workspaceId}
@@ -157,11 +170,13 @@ function readPrivacySettings(settings: Record<string, unknown>): PrivacySettings
 
 function PrivacySection() {
 	const { workspace, workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const privacy = readPrivacySettings(settings)
 
 	const persist = (next: PrivacySettings) => {
+		if (!canWrite) return
 		updateWorkspace.mutate(
 			{ settings: { ...settings, privacy: next } },
 			{ onError: () => toast.error('Failed to update privacy settings') },
@@ -185,11 +200,14 @@ function PrivacySection() {
 							Bet lifecycle, agent sessions, trigger fires. No content, no PII.
 						</span>
 					</div>
-					<Switch
-						checked={privacy.share_usage}
-						onCheckedChange={(checked) => persist({ ...privacy, share_usage: !!checked })}
-						aria-label="Share product usage with Maskin"
-					/>
+					<ViewerTooltip>
+						<Switch
+							checked={privacy.share_usage}
+							disabled={!canWrite}
+							onCheckedChange={(checked) => persist({ ...privacy, share_usage: !!checked })}
+							aria-label="Share product usage with Maskin"
+						/>
+					</ViewerTooltip>
 				</div>
 				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
 					<div className="min-w-0">
@@ -198,11 +216,14 @@ function PrivacySection() {
 							Rotate workspace and actor IDs into hashes before events leave the browser.
 						</span>
 					</div>
-					<Switch
-						checked={privacy.anonymize_workspace}
-						onCheckedChange={(checked) => persist({ ...privacy, anonymize_workspace: !!checked })}
-						aria-label="Anonymize this workspace"
-					/>
+					<ViewerTooltip>
+						<Switch
+							checked={privacy.anonymize_workspace}
+							disabled={!canWrite}
+							onCheckedChange={(checked) => persist({ ...privacy, anonymize_workspace: !!checked })}
+							aria-label="Anonymize this workspace"
+						/>
+					</ViewerTooltip>
 				</div>
 			</div>
 		</div>

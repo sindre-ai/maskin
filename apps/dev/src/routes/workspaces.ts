@@ -43,16 +43,12 @@ import {
 } from '../lib/workspace-auth'
 import {
 	OwnershipCapExceededError,
-	SeatCapExceededError,
 	computeEffectiveTier,
-	countHumanMembers,
 	lockActorForOwnershipClaim,
 	ownedWorkspacePlans,
 	ownershipCapErrorBody,
 	ownershipCapForTier,
 	resolvePlanTier,
-	seatCapErrorBody,
-	seatCapForPlan,
 } from '../lib/workspace-capacity'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import {
@@ -384,9 +380,16 @@ function pickChangedAdminSettings(
 		}
 	}
 
-	if (custom_llm !== undefined && !isDeepStrictEqual(custom_llm, stored.custom_llm)) {
-		settings.custom_llm = custom_llm
-		changed = true
+	if (custom_llm !== undefined) {
+		// A body spread back from GET has no api_key (the key is write-only), so
+		// without one the comparison leaves the stored key out too.
+		const storedCustom = stored.custom_llm as Record<string, unknown> | undefined
+		const { api_key: _storedKey, ...storedWithoutKey } = storedCustom ?? {}
+		const comparable = 'api_key' in custom_llm || !storedCustom ? storedCustom : storedWithoutKey
+		if (!isDeepStrictEqual(custom_llm, comparable)) {
+			settings.custom_llm = custom_llm
+			changed = true
+		}
 	}
 
 	return { settings, changed }
@@ -539,12 +542,26 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 			merged.llm_keys = mergedLlm
 		}
 
+		// custom_llm is replaced as a whole object, and its api_key is write-only:
+		// a patch without one keeps the stored (sealed) key, null clears it.
+		const storedCustomKey = (existingSettings.custom_llm as { api_key?: unknown } | undefined)
+			?.api_key
+		const keptCustomKey =
+			sealedPatch.custom_llm && !('api_key' in sealedPatch.custom_llm) && storedCustomKey
+		if (keptCustomKey) {
+			merged.custom_llm = { ...sealedPatch.custom_llm, api_key: storedCustomKey }
+		}
+
 		// BYO-LLM ↔ paid plan mutex: if the PATCH is adding a BYO Anthropic
 		// key or enabling custom_llm AND a live Stripe subscription exists,
 		// cancel the subscription via API first and roll the billing slot
 		// into the same merged write. The .deleted webhook will arrive
 		// shortly after and is idempotent against this exact terminal state.
-		if (patchAddsByoSource(patchSettings)) {
+		// The kept key counts: enabling a stored endpoint is adding a BYO source.
+		const effectivePatch = keptCustomKey
+			? { ...patchSettings, custom_llm: merged.custom_llm as SettingsPatch['custom_llm'] }
+			: patchSettings
+		if (patchAddsByoSource(effectivePatch)) {
 			const errorRes = await cancelPaidPlanForByoTransition(existingSettings, merged, id)
 			if (errorRes) return c.json(...errorRes)
 		}
@@ -809,11 +826,11 @@ const addMemberRoute = createRoute({
 		},
 		403: {
 			description:
-				'Caller is a member but not a human admin or owner, or the workspace has reached its seat cap',
+				'Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace not found, caller is not a member of it, or actor not found',
+			description: 'Workspace not found, or the caller is not a member of it',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -838,40 +855,40 @@ app.openapi(addMemberRoute, (async (c) => {
 	}
 
 	const [targetActor] = await db
-		.select({ type: actors.type })
+		.select({ type: actors.type, createdBy: actors.createdBy })
 		.from(actors)
 		.where(eq(actors.id, actor_id))
 		.limit(1)
-	if (!targetActor) return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+
+	// An admin may attach an actor without its consent only when this workspace
+	// already owns it: an agent made by the caller or by a current member. A
+	// person, or an agent made elsewhere, has to accept an invitation instead.
+	// A missing id gets the same 403, so the answer never confirms an id exists.
+	const isOwnedAgent =
+		targetActor?.type === 'agent' &&
+		targetActor.createdBy !== null &&
+		(targetActor.createdBy === callerId ||
+			(await isWorkspaceMember(db, targetActor.createdBy, workspaceId)))
+	if (!isOwnedAgent) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only agents created in this workspace can be added by id. Invite people by email instead.',
+			),
+			403,
+		)
+	}
 
 	const outcome = await db.transaction(async (tx) => {
-		// Lock the workspace row for the duration of the capacity check + insert.
-		// Serializes ALL concurrent member-adds against this workspace — the
-		// seat cap is a workspace-scoped aggregate (COUNT across all members),
-		// not a per-row invariant a UNIQUE constraint alone could enforce.
+		// Lock the workspace row so a workspace deleted mid-request is reported
+		// as missing instead of failing the insert on its foreign key.
 		const [locked] = await tx
-			.select({
-				id: workspaces.id,
-				settings: workspaces.settings,
-				billingOwnerId: workspaces.billingOwnerId,
-			})
+			.select({ id: workspaces.id })
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.for('update')
 			.limit(1)
 		if (!locked) return { kind: 'ws_not_found' as const }
-
-		// Agents never count toward the seat cap and are never blocked by it.
-		if (targetActor.type === 'human' && !isEnterpriseActor(locked.billingOwnerId)) {
-			const plan = resolvePlanTier(locked.settings)
-			const cap = seatCapForPlan(plan)
-			if (cap !== null) {
-				const used = await countHumanMembers(tx, workspaceId)
-				if (used >= cap) {
-					return { kind: 'cap_exceeded' as const, plan, used, cap }
-				}
-			}
-		}
 
 		// onConflictDoNothing turns a re-invite of an already-a-member actor into
 		// a safe idempotent no-op instead of an uncaught PK-violation crash.
@@ -897,21 +914,6 @@ app.openapi(addMemberRoute, (async (c) => {
 
 	if (outcome.kind === 'ws_not_found') {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
-	if (outcome.kind === 'cap_exceeded') {
-		const err = new SeatCapExceededError({
-			workspaceId,
-			plan: outcome.plan,
-			used: outcome.used,
-			cap: outcome.cap,
-		})
-		logger.warn('Workspace seat cap exceeded', {
-			workspaceId,
-			plan: outcome.plan,
-			used: outcome.used,
-			cap: outcome.cap,
-		})
-		return c.json(seatCapErrorBody(err), 403)
 	}
 
 	// Telemetry for the retirement-observation window: counts residual actor-ID

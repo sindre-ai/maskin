@@ -57,7 +57,8 @@ struct MaskinApp: App {
 				baseURL: environment.baseURL, clientSource: environment.clientSource,
 				credentials: environment.auth.credentialsProvider),
 			environment: .detect(), platform: platform,
-			appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+			appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+			network: NWPathNetworkMonitor()
 		)
 		#if os(iOS)
 			Self.setUpLiveActivity(environment: environment, registrar: registrar)
@@ -137,6 +138,10 @@ struct MaskinApp: App {
 			AgentsActivityRuntime.shared = AgentsActivityRuntime(environment: environment, coordinator: coordinator)
 			CycleActivityController.shared = CycleActivityController(host: CycleActivityHost())
 			MeetingActivityController.shared = MeetingActivityController(host: MeetingActivityHost())
+			// No call survives a relaunch, so a call card found now is stale.
+			let callActivity = CallActivityController(host: CallActivityHost())
+			CallActivityController.shared = callActivity
+			Task { await callActivity.endStaleCards() }
 			environment.auth.onSessionEnded { ending in
 				let creds = APILiveActivityTokens.Credentials(
 					apiKey: ending.apiKey, workspaceId: ending.workspaceId)

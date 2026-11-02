@@ -1,4 +1,5 @@
 import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import {
 	Select,
 	SelectContent,
@@ -7,6 +8,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useAgentAccess, useRemoveAgentGrant, useSetAgentGrant } from '@/hooks/use-integrations'
 import type { ActorResponse, AgentAccessView, AgentGrantAccess } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -23,8 +25,10 @@ const LEVELS: AgentGrantAccess[] = ['read', 'read_write', 'none']
 /** Same rule as the Integrations and Keychain pages: whoever connected it, or an admin or owner. */
 function useCanChange(createdBy: string): boolean {
 	const { workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const me = getStoredActor()
 	return (
+		canWrite &&
 		me?.type === 'human' &&
 		(createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	)
@@ -50,29 +54,31 @@ function IntegrationRow({
 			<div className="min-w-0 flex-1 basis-40">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
 			</div>
-			<Select
-				value={value}
-				onValueChange={(v) =>
-					v === 'default'
-						? removeGrant.mutate(agentId)
-						: setGrant.mutate({ actorId: agentId, access: v as AgentGrantAccess })
-				}
-				disabled={!canChange || busy}
-			>
-				<SelectTrigger aria-label={`Access to ${row.name}`} className="w-full sm:w-44">
-					<SelectValue />
-				</SelectTrigger>
-				<SelectContent>
-					<SelectItem value="default">
-						Default ({AGENT_ACCESS_LABELS[row.default_access]})
-					</SelectItem>
-					{LEVELS.map((level) => (
-						<SelectItem key={level} value={level}>
-							{AGENT_ACCESS_LABELS[level]}
+			<ViewerTooltip className="flex w-full sm:w-44">
+				<Select
+					value={value}
+					onValueChange={(v) =>
+						v === 'default'
+							? removeGrant.mutate(agentId)
+							: setGrant.mutate({ actorId: agentId, access: v as AgentGrantAccess })
+					}
+					disabled={!canChange || busy}
+				>
+					<SelectTrigger aria-label={`Access to ${row.name}`} className="w-full sm:w-44">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="default">
+							Default ({AGENT_ACCESS_LABELS[row.default_access]})
 						</SelectItem>
-					))}
-				</SelectContent>
-			</Select>
+						{LEVELS.map((level) => (
+							<SelectItem key={level} value={level}>
+								{AGENT_ACCESS_LABELS[level]}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			</ViewerTooltip>
 		</li>
 	)
 }
@@ -103,16 +109,18 @@ function ToolServerRow({
 			<div className="min-w-0 flex-1">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
 			</div>
-			<Switch
-				checked={on}
-				disabled={!canChange || busy}
-				aria-label={`${row.name} for this agent`}
-				onCheckedChange={(next) =>
-					matchesDefault(next)
-						? removeGrant.mutate(agentId)
-						: setGrant.mutate({ actorId: agentId, access: next ? 'read_write' : 'none' })
-				}
-			/>
+			<ViewerTooltip>
+				<Switch
+					checked={on}
+					disabled={!canChange || busy}
+					aria-label={`${row.name} for this agent`}
+					onCheckedChange={(next) =>
+						matchesDefault(next)
+							? removeGrant.mutate(agentId)
+							: setGrant.mutate({ actorId: agentId, access: next ? 'read_write' : 'none' })
+					}
+				/>
+			</ViewerTooltip>
 		</li>
 	)
 }
@@ -136,17 +144,19 @@ function CredentialRow({
 			<div className="min-w-0 flex-1">
 				<p className="truncate text-sm font-medium text-foreground">{row.name}</p>
 			</div>
-			<Switch
-				checked={row.has_access}
-				disabled={!canChange || busy}
-				aria-label={`${row.name} for this agent`}
-				onCheckedChange={(on) =>
-					// Back to the key's default when the choice matches it; otherwise an entry of its own.
-					on === (row.default_access === 'read')
-						? removeGrant.mutate(agentId)
-						: setGrant.mutate({ actorId: agentId, access: on ? 'read_write' : 'none' })
-				}
-			/>
+			<ViewerTooltip>
+				<Switch
+					checked={row.has_access}
+					disabled={!canChange || busy}
+					aria-label={`${row.name} for this agent`}
+					onCheckedChange={(on) =>
+						// Back to the key's default when the choice matches it; otherwise an entry of its own.
+						on === (row.default_access === 'read')
+							? removeGrant.mutate(agentId)
+							: setGrant.mutate({ actorId: agentId, access: on ? 'read_write' : 'none' })
+					}
+				/>
+			</ViewerTooltip>
 		</li>
 	)
 }

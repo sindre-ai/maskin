@@ -8,6 +8,14 @@ import { z } from 'zod'
 export const FOR_YOU_KIND = 'for_you'
 
 /**
+ * An agent that "clears" an optional field writes null (or an empty list) instead of leaving
+ * the key out. A strict optional rejected that and the whole card vanished from the list
+ * without an error, so null and an empty list mean the same as absent.
+ */
+const nullAsAbsent = (v: unknown) =>
+	v === null || (Array.isArray(v) && v.length === 0) ? undefined : v
+
+/**
  * What the Chief of Staff writes into `notification.metadata` for an item it
  * has decided the human must see. Read back by `GET /api/for-you`, which orders
  * by `rank` and re-checks every item against live state before returning it.
@@ -19,20 +27,22 @@ export const forYouMetadataSchema = z.object({
 		.string()
 		.min(1)
 		.describe('One line saying what is needed from the human, not what happened.'),
-	rationale: z.string().optional().describe('Why the agents could not settle this themselves.'),
+	rationale: z
+		.preprocess(nullAsAbsent, z.string().optional())
+		.describe('Why the agents could not settle this themselves.'),
 	// Event ids come back from the API as strings (they are bigints), and an agent
 	// copying one into metadata passes it on as text. Accept digits either way:
 	// a strict number made the whole item vanish from the list without an error.
 	source_comment_id: z
-		.preprocess((v) => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v), z.number().int())
-		.optional()
+		.preprocess(
+			(v) => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : nullAsAbsent(v)),
+			z.number().int().optional(),
+		)
 		.describe(
 			'Event id of the comment carrying the ask. The item drops once the human replies to or dismisses that thread.',
 		),
 	only_while_status: z
-		.array(z.string().min(1))
-		.min(1)
-		.optional()
+		.preprocess(nullAsAbsent, z.array(z.string().min(1)).min(1).optional())
 		.describe(
 			'The statuses the item\'s object must still be in for the ask to make sense, e.g. ["proposed"] for "move this bet to active". The item drops the moment the object\'s status is anything else, so a card cannot outlive the state it was written about.',
 		),
@@ -61,7 +71,7 @@ export interface ForYouItemLike {
 	due_at?: string | null
 	entity_id: string | null
 	object?: { title?: string | null; type?: string | null; status?: string | null } | null
-	latest_mention?: { content?: string | null } | null
+	latest_mention?: { event_id?: number | null; content?: string | null } | null
 }
 
 export interface SlimForYouCard {
@@ -70,6 +80,8 @@ export interface SlimForYouCard {
 	headline: string
 	rationale: string | null
 	notification_id: string | null
+	// The card's source comment: what withdraw_decision_card takes. Null when the card has none.
+	comment_id: number | null
 	object_id: string | null
 	title: string | null
 	type: string | null
@@ -88,10 +100,13 @@ export function slimForYouItems(
 	items: ForYouItemLike[],
 	limit: number = FOR_YOU_TOOL_DEFAULT_LIMIT,
 	offset = 0,
-): { total: number; items: SlimForYouCard[] } {
+): { total: number; next_offset: number | null; items: SlimForYouCard[] } {
+	const end = offset + limit
 	return {
 		total: items.length,
-		items: items.slice(offset, offset + limit).map((item) => {
+		// Where the next page starts, or null when this page reached the end of the list.
+		next_offset: end < items.length ? end : null,
+		items: items.slice(offset, end).map((item) => {
 			const ask = item.latest_mention?.content?.trim()
 			return {
 				rank: item.rank,
@@ -99,6 +114,7 @@ export function slimForYouItems(
 				headline: item.headline,
 				rationale: item.rationale,
 				notification_id: item.notification_id,
+				comment_id: item.latest_mention?.event_id ?? null,
 				object_id: item.entity_id,
 				title: item.object?.title ?? null,
 				type: item.object?.type ?? null,

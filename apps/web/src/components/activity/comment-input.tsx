@@ -1,5 +1,6 @@
 import { SlashPicker, type SlashPickerResult } from '@/components/chat/slash-picker'
 import { TagInput, type TagInputHandle } from '@/components/chat/tag-input'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -9,6 +10,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import { Textarea } from '@/components/ui/textarea'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDictation } from '@/hooks/use-dictation'
 import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -19,6 +22,7 @@ import { getTypeColor } from '@/lib/constants'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
 import type { TagValue } from '@/lib/tag-input-model'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -68,7 +72,29 @@ function randomDraftId(): string {
 // limit. Keeps the UI quiet for the common short-comment case.
 const COUNTER_VISIBILITY_THRESHOLD = 0.9
 
-export function CommentInput({
+/**
+ * The comment box. A viewer gets the same slot with the box switched off, so
+ * they can see where comments go without being offered a post that would fail.
+ */
+export function CommentInput(props: CommentInputProps) {
+	const canWrite = useCanWrite()
+	if (!canWrite) {
+		return (
+			<ViewerTooltip className="flex w-full">
+				<Textarea
+					disabled
+					rows={1}
+					aria-label="Comment"
+					placeholder={VIEWER_READ_ONLY_MESSAGE}
+					className="min-h-[36px] w-full resize-none text-sm"
+				/>
+			</ViewerTooltip>
+		)
+	}
+	return <CommentInputForm {...props} />
+}
+
+function CommentInputForm({
 	workspaceId,
 	objectId,
 	parentEventId,

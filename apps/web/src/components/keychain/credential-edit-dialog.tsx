@@ -10,6 +10,7 @@ import {
 	ResponsiveDialogHeader,
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateCredential } from '@/hooks/use-integrations'
 import { ApiError } from '@/lib/api'
 import {
@@ -63,6 +64,7 @@ function EditForm({
 	onDone,
 }: Omit<CredentialEditDialogProps, 'open' | 'onOpenChange'> & { onDone: () => void }) {
 	const id = useId()
+	const canWrite = useCanWrite()
 	const update = useUpdateCredential(workspaceId, integrationId)
 	const isLogin = kind === 'login'
 	const [name, setName] = useState(savedName)
@@ -77,7 +79,8 @@ function EditForm({
 	const hasSecret = isLogin
 		? username.trim().length > 0 || password.length > 0 || email.trim().length > 0
 		: secret.length > 0
-	const canSave = trimmed.length > 0 && !nameProblem && (renamed || hasSecret) && !update.isPending
+	const canSave =
+		canWrite && trimmed.length > 0 && !nameProblem && (renamed || hasSecret) && !update.isPending
 
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault()

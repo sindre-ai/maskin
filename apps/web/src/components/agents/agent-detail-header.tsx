@@ -2,6 +2,7 @@ import { isCurrentActorAdmin } from '@/components/agents/agent-avatar-upload'
 import { AgentCallButton } from '@/components/agents/agent-call-button'
 import { AgentStatusPill, type PortraitStatus } from '@/components/agents/agent-portrait-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Input } from '@/components/ui/input'
 import {
 	Select,
@@ -12,6 +13,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { useUpdateActor, useUploadActorAvatar } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -189,6 +191,7 @@ function EditableField({
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(value)
+	const canWrite = useCanWrite()
 
 	if (readOnly) return <span className={className}>{displayValue ?? value}</span>
 
@@ -222,19 +225,22 @@ function EditableField({
 	}
 
 	return (
-		<button
-			type="button"
-			aria-label={`Edit ${label.toLowerCase()}`}
-			onClick={() => {
-				setDraft(value)
-				setEditing(true)
-			}}
-			className={cn(
-				'max-w-full truncate rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-				className,
-			)}
-		>
-			{displayValue ?? value}
-		</button>
+		<ViewerTooltip className="inline-flex min-w-0 max-w-full">
+			<button
+				type="button"
+				aria-label={`Edit ${label.toLowerCase()}`}
+				disabled={!canWrite}
+				onClick={() => {
+					setDraft(value)
+					setEditing(true)
+				}}
+				className={cn(
+					'max-w-full truncate rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:hover:bg-transparent',
+					className,
+				)}
+			>
+				{displayValue ?? value}
+			</button>
+		</ViewerTooltip>
 	)
 }

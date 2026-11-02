@@ -1,5 +1,7 @@
 import { ApiError, api } from '@/lib/api'
+import { pickNoiseReduction } from '@/lib/voice-audio-profile'
 import { VOICE_UNAVAILABLE_TOOLTIP, markVoiceUnavailable } from '@/lib/voice-availability'
+import { closeChimeContext, createChimeContext, playMaskinReady } from '@/lib/voice-chime'
 import { type VoiceRelay, type VoiceTranscriptLine, createVoiceRelay } from '@/lib/voice-relay'
 import { showVoiceCallEndedToast } from '@/lib/voice-toast'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -64,6 +66,27 @@ function isMicMissing(err: unknown): boolean {
 	)
 }
 
+// Ideal (not exact) constraints, so a device that cannot do one still opens.
+// A browser that rejects them outright gets one retry with plain audio before
+// the caller treats it as no mic.
+async function getMicStream(): Promise<MediaStream> {
+	try {
+		return await navigator.mediaDevices.getUserMedia({
+			audio: {
+				echoCancellation: true,
+				noiseSuppression: true,
+				autoGainControl: true,
+				channelCount: 1,
+			},
+		})
+	} catch (err) {
+		if (err instanceof DOMException && err.name === 'OverconstrainedError') {
+			return navigator.mediaDevices.getUserMedia({ audio: true })
+		}
+		throw err
+	}
+}
+
 export function useVoiceCall(agentActorId: string, agentName: string, open: boolean): VoiceCall {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
@@ -78,7 +101,9 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 	const [speakerOn, setSpeakerOn] = useState(true)
 	const speakerOnRef = useRef(true)
 	const mutedRef = useRef(false)
-	const preMuteStateRef = useRef<VoiceCallState>('live-agent-speaking')
+	const preMuteStateRef = useRef<VoiceCallState>('live-user-speaking')
+	// Reused for the ready sound; made inside the gesture that starts the call.
+	const chimeCtxRef = useRef<AudioContext | null>(null)
 
 	// Handles held for tear-down. Everything the call owns must be releasable
 	// from one place; a leaked mic track (or a leaked peer connection sitting on
@@ -133,6 +158,8 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 			remoteAudioRef.current.remove()
 			remoteAudioRef.current = null
 		}
+		closeChimeContext(chimeCtxRef.current)
+		chimeCtxRef.current = null
 		mutedRef.current = false
 		clearReconnectTimer()
 		iceRestartedRef.current = false
@@ -264,10 +291,12 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 			const recovering = recovery !== undefined
 			const abandoned = () => recovering && recoveryRunRef.current !== recovery.runId
 			setNotice(null)
+			// Before the first await, so the click that started the call still counts as the gesture.
+			if (!chimeCtxRef.current) chimeCtxRef.current = createChimeContext()
 
 			let stream: MediaStream
 			try {
-				stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+				stream = await getMicStream()
 			} catch (err) {
 				// No session has been minted yet, so there is nothing to hang up.
 				if (isMicBlocked(err)) {
@@ -360,6 +389,8 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 					handleRealtimeEvent(evt, mutedRef, preMuteStateRef, setState)
 					if (evt?.type === 'session.created' && connectedAtRef.current === null) {
 						connectedAtRef.current = Date.now()
+						// The call opens with a chime, not a spoken greeting. Not when the speaker is off.
+						if (speakerOnRef.current) playMaskinReady(chimeCtxRef.current)
 					}
 				} catch {
 					// Ignore non-JSON frames (Realtime never sends any).
@@ -406,6 +437,10 @@ export function useVoiceCall(agentActorId: string, agentName: string, open: bool
 					workspaceId,
 					session.voice_session_id,
 					offer.sdp ?? '',
+					pickNoiseReduction(
+						stream.getAudioTracks()[0]?.label ?? '',
+						typeof navigator === 'undefined' ? '' : navigator.userAgent,
+					),
 				)
 				if (callRef.current) callRef.current.persistTranscripts = answer.persist_transcripts
 				relay = createVoiceRelay({
@@ -538,7 +573,7 @@ function handleRealtimeEvent(
 			preMuteStateRef.current = 'live-agent-thinking'
 		return
 	}
-	if (evt.type === 'session.created') setState('live-agent-speaking')
+	if (evt.type === 'session.created') setState('live-user-speaking')
 	else if (evt.type === 'input_audio_buffer.speech_started') setState('live-user-speaking')
 	else if (evt.type === 'input_audio_buffer.speech_stopped') setState('live-agent-speaking')
 	else if (evt.type === 'response.output_audio.done' || evt.type === 'response.audio.done')

@@ -22,6 +22,19 @@ const VOICE_TOOLS = [
 		description: 'List objects',
 		parameters: { type: 'object', properties: { cursor: { type: 'string' } } },
 	},
+	// Not in the core set: reachable only through ask_workspace.
+	{
+		type: 'function' as const,
+		name: 'delete_object',
+		description: 'Delete an object',
+		parameters: { type: 'object', properties: { id: { type: 'string' } } },
+	},
+	{
+		type: 'function' as const,
+		name: 'acme__send',
+		description: 'Attached server tool',
+		parameters: { type: 'object', properties: {} },
+	},
 ]
 
 function membershipRow() {
@@ -48,6 +61,7 @@ afterEach(() => {
 	setOpenRealtimeSocketFn(null)
 	setVoiceInvokeToolFactory(null)
 	vi.unstubAllGlobals()
+	vi.unstubAllEnvs()
 	process.env.MASKIN_VOICE_OPENAI_API_KEY = undefined
 })
 
@@ -211,8 +225,10 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		systemPrompt: 'You are the Chief of Staff.',
 		tools: null,
 	})
-	const post = (app: { request: (r: Request) => Response | Promise<Response> }) =>
-		app.request(jsonRequest('POST', `/api/voice-sessions/${SESSION}/offer`, OFFER))
+	const post = (
+		app: { request: (r: Request) => Response | Promise<Response> },
+		body: Record<string, unknown> = OFFER,
+	) => app.request(jsonRequest('POST', `/api/voice-sessions/${SESSION}/offer`, body))
 
 	function openSocketImmediately() {
 		setOpenRealtimeSocketFn((_url, _key, handlers) => {
@@ -319,7 +335,7 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		expect(JSON.stringify(calls.inserts)).not.toContain(agentKey)
 	})
 
-	it('sends the offer to the GA calls endpoint with the pinned model and the full MCP tool list', async () => {
+	it('sends the offer to the GA calls endpoint with the pinned model and the core tool list plus ask_workspace', async () => {
 		openSocketImmediately()
 		setVoiceInvokeToolFactory(async () => ({
 			tools: VOICE_TOOLS,
@@ -369,11 +385,119 @@ describe('POST /api/voice-sessions/:id/offer', () => {
 		}
 		expect(sent.type).toBe('realtime')
 		expect(sent.model).toBe('gpt-realtime-2.1')
-		// The toolkit's tools, then the call's own show_in_chat (not held, so no confirmation_id).
-		expect(sent.tools.slice(0, VOICE_TOOLS.length)).toEqual(VOICE_TOOLS)
-		expect(sent.tools.map((t) => t.name)).toContain('show_in_chat')
-		expect(JSON.stringify(sent.tools.at(-1))).not.toContain('confirmation_id')
+		// Core tools of the toolkit, then the call's own tools. Everything else is behind ask_workspace.
+		expect(sent.tools.map((t) => t.name)).toEqual([
+			'list_objects',
+			'show_in_chat',
+			'wait_for_user',
+			'ask_workspace',
+		])
+		// ask_workspace carries its own confirmation_id; show_in_chat is never held.
+		const byName = Object.fromEntries(sent.tools.map((t) => [t.name, JSON.stringify(t)]))
+		expect(byName.ask_workspace).toContain('confirmation_id')
+		expect(byName.show_in_chat).not.toContain('confirmation_id')
 		expect(sent.tool_choice).toBe('auto')
+	})
+
+	it('sends the offer to the GA calls endpoint with every tool and no ask_workspace when MASKIN_VOICE_TOOL_MODE is full', async () => {
+		vi.stubEnv('MASKIN_VOICE_TOOL_MODE', 'full')
+		openSocketImmediately()
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			readOnlyTools: new Set(['list_objects']),
+			unreachableServers: [],
+			close: async () => {},
+		}))
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response('v=0 vendor answer', {
+				status: 201,
+				headers: { location: '/v1/realtime/calls/rtc_abc' },
+			}),
+		)
+		vi.stubGlobal('fetch', fetchMock)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [
+			[sessionRow()],
+			[memberRow()],
+			[offerAgent()],
+			[], // agentSkills
+			[{ name: 'Sam', timezone: null }], // caller
+			[{ settings: null }], // transcript persistence
+		]
+		mockResults.update = [{ id: SESSION }]
+
+		const res = await post(app)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			sdp: 'v=0 vendor answer',
+			tools_available: true,
+			persist_transcripts: true,
+		})
+
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe('https://api.openai.com/v1/realtime/calls')
+		const headers = init.headers as Record<string, string>
+		expect(headers.Authorization).toBe('Bearer test-key')
+		expect(headers['OpenAI-Beta']).toBeUndefined()
+		const form = init.body as FormData
+		expect(form.get('sdp')).toBe(OFFER.sdp)
+		const sent = JSON.parse(form.get('session') as string) as {
+			type: string
+			model: string
+			tools: Array<{ type: string; name: string }>
+			tool_choice: string
+		}
+		expect(sent.type).toBe('realtime')
+		expect(sent.model).toBe('gpt-realtime-2.1')
+		expect(sent.tools.map((t) => t.name)).toEqual([
+			'list_objects',
+			'delete_object',
+			'acme__send',
+			'show_in_chat',
+			'wait_for_user',
+		])
+		expect(sent.tool_choice).toBe('auto')
+	})
+
+	it('rejects a noise_reduction value that is not near_field or far_field', async () => {
+		const { app } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		expect((await post(app, { ...OFFER, noise_reduction: 'stadium' })).status).toBe(400)
+	})
+
+	it('passes the offer body noise_reduction on to the vendor session', async () => {
+		openSocketImmediately()
+		setVoiceInvokeToolFactory(async () => ({
+			tools: VOICE_TOOLS,
+			invokeTool: vi.fn(),
+			readOnlyTools: new Set<string>(),
+			unreachableServers: [],
+			close: async () => {},
+		}))
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response('v=0 vendor answer', {
+				status: 201,
+				headers: { location: '/v1/realtime/calls/rtc_abc' },
+			}),
+		)
+		vi.stubGlobal('fetch', fetchMock)
+		const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+		mockResults.selectQueue = [
+			[sessionRow()],
+			[memberRow()],
+			[offerAgent()],
+			[],
+			[{ name: 'Sam', timezone: null }],
+			[{ name: 'Acme ApS' }],
+			[{ settings: null }],
+		]
+		mockResults.update = [{ id: SESSION }]
+		expect((await post(app, { ...OFFER, noise_reduction: 'near_field' })).status).toBe(200)
+		const form = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData
+		const sent = JSON.parse(form.get('session') as string) as {
+			audio: { input: { noise_reduction: { type: string } } }
+		}
+		expect(sent.audio.input.noise_reduction).toEqual({ type: 'near_field' })
 	})
 
 	it('puts the expected languages, the three names and the configured voice in the vendor session', async () => {

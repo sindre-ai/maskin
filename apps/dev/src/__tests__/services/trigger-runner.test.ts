@@ -584,6 +584,93 @@ describe('TriggerRunner', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
+		describe('skip_when_idle', () => {
+			const idleTrigger = () =>
+				buildTrigger({
+					type: 'cron',
+					workspaceId: 'ws-1',
+					config: { expression: '*/5 * * * *', skip_when_idle: true },
+				})
+
+			it('skips the tick when no person acted since the last run', async () => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				mockResults.selectQueue = [
+					[idleTrigger()], // cron triggers on load
+					[], // reminder triggers on load
+					[], // trigger_cooldowns on load
+					[], // workspace_suppressions on load
+					[{ createdAt: new Date('2025-12-31T09:00:00Z') }], // last trigger_fired
+					[], // human-authored events since then
+					[], // person-started sessions since then
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+				await runner.start()
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('fires when a person made a change since the last run', async () => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				mockResults.selectQueue = [
+					[idleTrigger()],
+					[],
+					[],
+					[],
+					[{ createdAt: new Date('2025-12-31T09:00:00Z') }], // last trigger_fired
+					[{ id: 42 }], // a human-authored event since then
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+				await runner.start()
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+				expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			})
+
+			it('fires when a person started a session since the last run', async () => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				mockResults.selectQueue = [
+					[idleTrigger()],
+					[],
+					[],
+					[],
+					[{ createdAt: new Date('2025-12-31T09:00:00Z') }],
+					[], // no human-authored events
+					[{ id: 'session-9' }], // but a person-started session
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+				await runner.start()
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+				expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			})
+
+			it('does not apply the guard unless the flag is set', async () => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				mockResults.selectQueue = [
+					[
+						buildTrigger({
+							type: 'cron',
+							workspaceId: 'ws-1',
+							config: { expression: '*/5 * * * *' },
+						}),
+					],
+					[],
+					[],
+					[],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+				await runner.start()
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+				expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			})
+		})
+
 		it('fires and appends scope matches to the action prompt when the scope is non-empty', async () => {
 			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
 			const trigger = buildTrigger({

@@ -28,7 +28,9 @@ import {
 	withdrawLinkedInInvitation,
 } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
-import { insertWorkspace } from '../factories'
+import { recordObjectApproval } from '../../lib/object-delivery'
+import { buildObjectPreview } from '../../lib/object-preview'
+import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 /**
@@ -445,6 +447,31 @@ describe('withdraw_invitation: the tool', () => {
 	})
 })
 
+/** An approved connection request to `recipient`, the only way a send_connection_request goes out. */
+async function approvedInvite(h: Harness, recipient: string) {
+	const object = await insertObject(db, h.workspaceId, h.actorId, {
+		type: 'task',
+		status: 'todo',
+		content: 'Hej',
+		metadata: {
+			kind: 'linkedin_connection_request',
+			to: 'Someone',
+			recipient_provider_id: recipient,
+		},
+	})
+	const preview = buildObjectPreview(object)
+	if (!preview) throw new Error('not a draft')
+	await recordObjectApproval(db, {
+		workspaceId: h.workspaceId,
+		actorId: h.actorId,
+		objectId: object.id,
+		objectType: object.type,
+		preview,
+		via: 'approval',
+	})
+	return object
+}
+
 describe('send_connection_request after a withdrawal', () => {
 	async function withdrawnPerson(h: Harness, createdAt: Date) {
 		await db.insert(linkedinActions).values({
@@ -465,10 +492,11 @@ describe('send_connection_request after a withdrawal', () => {
 		__setLinkedInClientForTests(() => client)
 		const h = await connect()
 		await withdrawnPerson(h, new Date(Date.now() - 20 * DAY))
+		const invite = await approvedInvite(h, 'ACoAA-withdrawn')
 
 		const result = await h.mcp.callTool({
 			name: toolName(h.cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoAA-withdrawn', message: 'Hej' },
+			arguments: { object_id: invite.id },
 		})
 
 		expect(result.isError).toBe(true)
@@ -484,10 +512,11 @@ describe('send_connection_request after a withdrawal', () => {
 		__setLinkedInClientForTests(() => client)
 		const h = await connect()
 		await withdrawnPerson(h, new Date(Date.now() - 22 * DAY))
+		const invite = await approvedInvite(h, 'ACoAA-withdrawn')
 
 		const result = await h.mcp.callTool({
 			name: toolName(h.cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoAA-withdrawn', message: 'Hej' },
+			arguments: { object_id: invite.id },
 		})
 
 		expect(result.isError).toBeFalsy()
@@ -499,10 +528,11 @@ describe('send_connection_request after a withdrawal', () => {
 		__setLinkedInClientForTests(() => client)
 		const h = await connect()
 		await withdrawnPerson(h, new Date(Date.now() - 2 * DAY))
+		const invite = await approvedInvite(h, 'ACoAA-someone-else')
 
 		const result = await h.mcp.callTool({
 			name: toolName(h.cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoAA-someone-else' },
+			arguments: { object_id: invite.id },
 		})
 
 		expect(result.isError).toBeFalsy()
@@ -515,10 +545,11 @@ describe('send_connection_request after a withdrawal', () => {
 		const h = await connect()
 		const other = await connect()
 		await withdrawnPerson(other, new Date(Date.now() - 2 * DAY))
+		const invite = await approvedInvite(h, 'ACoAA-withdrawn')
 
 		const result = await h.mcp.callTool({
 			name: toolName(h.cfg, 'send_connection_request'),
-			arguments: { user_id: 'ACoAA-withdrawn' },
+			arguments: { object_id: invite.id },
 		})
 
 		expect(result.isError).toBeFalsy()

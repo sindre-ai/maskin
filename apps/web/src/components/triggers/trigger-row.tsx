@@ -1,6 +1,8 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { readEventStatusTransition } from '@/components/triggers/trigger-form'
 import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { describeCronExpression } from '@/lib/cron'
@@ -71,6 +73,7 @@ export function TriggerRow({
 	 *  The loops page opts in; other surfaces keep the original row. */
 	v4Polish?: boolean
 }) {
+	const canWrite = useCanWrite()
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
 	const description = describeTrigger(trigger)
 
@@ -120,12 +123,14 @@ export function TriggerRow({
 
 			{onToggleEnabled && (
 				<span className="relative shrink-0">
-					<Switch
-						checked={trigger.enabled}
-						disabled={isToggling}
-						onCheckedChange={(next) => onToggleEnabled(next)}
-						aria-label={`${trigger.enabled ? 'Disable' : 'Enable'} ${trigger.name}`}
-					/>
+					<ViewerTooltip>
+						<Switch
+							checked={trigger.enabled}
+							disabled={isToggling || !canWrite}
+							onCheckedChange={(next) => onToggleEnabled(next)}
+							aria-label={`${trigger.enabled ? 'Disable' : 'Enable'} ${trigger.name}`}
+						/>
+					</ViewerTooltip>
 				</span>
 			)}
 

@@ -7,9 +7,11 @@ import {
 	githubChipName,
 	githubChipText,
 	githubTargetOf,
+	isOnlyCard,
 	isOtherWorkspace,
 	peopleLine,
 	pickFacts,
+	placeOwnLinks,
 	plainPreview,
 	plainSnippet,
 	settingsChipText,
@@ -193,7 +195,7 @@ describe('splitOwnLinks', () => {
 	it('keeps the words and the link in the order they were written', () => {
 		expect(splitOwnLinks(`is this done? ${url('objects', A)} thanks`, WS)).toEqual([
 			{ kind: 'text', text: 'is this done? ' },
-			{ kind: 'object', id: A },
+			{ kind: 'object', id: A, address: url('objects', A) },
 			{ kind: 'text', text: ' thanks' },
 		])
 	})
@@ -201,13 +203,15 @@ describe('splitOwnLinks', () => {
 	it('finds a link to a file and leaves the sentence punctuation in the words', () => {
 		expect(splitOwnLinks(`see ${url('files', B)}.`, WS)).toEqual([
 			{ kind: 'text', text: 'see ' },
-			{ kind: 'file', id: B },
+			{ kind: 'file', id: B, address: url('files', B) },
 			{ kind: 'text', text: '.' },
 		])
 	})
 
 	it('is just the link when the message is only the link', () => {
-		expect(splitOwnLinks(url('objects', A), WS)).toEqual([{ kind: 'object', id: A }])
+		expect(splitOwnLinks(url('objects', A), WS)).toEqual([
+			{ kind: 'object', id: A, address: url('objects', A) },
+		])
 	})
 
 	it('keeps every link, including a repeated one', () => {
@@ -217,30 +221,32 @@ describe('splitOwnLinks', () => {
 
 	it('finds a bare address of a loop and of a trigger', () => {
 		expect(splitOwnLinks(`${url('loops', A)} wakes ${url('triggers', B)}`, WS)).toEqual([
-			{ kind: 'loop', id: A },
+			{ kind: 'loop', id: A, address: url('loops', A) },
 			{ kind: 'text', text: ' wakes ' },
-			{ kind: 'trigger', id: B },
+			{ kind: 'trigger', id: B, address: url('triggers', B) },
 		])
 	})
 
 	it('finds a bare address of an agent', () => {
 		expect(splitOwnLinks(`ask ${url('agents', A)} to look`, WS)).toEqual([
 			{ kind: 'text', text: 'ask ' },
-			{ kind: 'agent', id: A },
+			{ kind: 'agent', id: A, address: url('agents', A) },
 			{ kind: 'text', text: ' to look' },
 		])
 	})
 
 	it('marks an agent address of another workspace with that workspace', () => {
 		const other = `https://maskin.io/${A}/agents/${B}`
-		expect(splitOwnLinks(other, WS)).toEqual([{ kind: 'agent', id: B, otherWorkspaceId: A }])
+		expect(splitOwnLinks(other, WS)).toEqual([
+			{ kind: 'agent', id: B, otherWorkspaceId: A, address: other },
+		])
 	})
 
 	it('marks an object, loop, trigger or chat address of another workspace with that workspace', () => {
 		for (const kind of ['objects', 'loops', 'triggers', 'chats']) {
 			const other = `https://maskin.io/${A.toUpperCase()}/${kind}/${B}`
 			expect(splitOwnLinks(other, WS)).toEqual([
-				{ kind: kind.slice(0, -1), id: B, otherWorkspaceId: A },
+				{ kind: kind.slice(0, -1), id: B, otherWorkspaceId: A, address: other },
 			])
 		}
 	})
@@ -279,7 +285,7 @@ describe('splitOwnLinks', () => {
 	it('finds a bare address of a chat', () => {
 		expect(splitOwnLinks(`see ${url('chats', A)}.`, WS)).toEqual([
 			{ kind: 'text', text: 'see ' },
-			{ kind: 'chat', id: A },
+			{ kind: 'chat', id: A, address: url('chats', A) },
 			{ kind: 'text', text: '.' },
 		])
 	})
@@ -488,6 +494,84 @@ describe('isOtherWorkspace', () => {
 		expect(isOtherWorkspace({ kind: 'file', id: A, workspaceId: other }, WS)).toBe(false)
 		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: 'settings' }, WS)).toBe(false)
 		expect(isOtherWorkspace({ kind: 'object', id: A, workspaceId: other })).toBe(false)
+	})
+})
+
+describe('placeOwnLinks', () => {
+	const url = (kind: string, id: string) => `https://maskin.io/${WS}/${kind}/${id}`
+	const place = (text: string, skip?: ReadonlySet<string>) =>
+		placeOwnLinks(splitOwnLinks(text, WS), skip)
+	const kinds = (text: string, skip?: ReadonlySet<string>) =>
+		place(text, skip).map((p) =>
+			p.kind === 'text'
+				? 'text'
+				: p.kind === 'other'
+					? `other:${p.segment.kind}`
+					: `${p.kind}:${p.id}`,
+		)
+
+	it('makes a card of a link on its own line, and takes the line break next to it', () => {
+		expect(place(`is this done?\n${url('objects', A)}\nthanks`)).toEqual([
+			{ kind: 'text', text: 'is this done?' },
+			{ kind: 'card', id: A, address: url('objects', A) },
+			{ kind: 'text', text: 'thanks' },
+		])
+	})
+
+	it('makes a card of a link that is the whole message', () => {
+		const parts = place(url('objects', A))
+		expect(kinds(url('objects', A))).toEqual([`card:${A}`])
+		expect(isOnlyCard(parts)).toBe(true)
+	})
+
+	it('is not only a card when there are words around it', () => {
+		expect(isOnlyCard(place(`see\n${url('objects', A)}`))).toBe(false)
+	})
+
+	it('makes a chip of a link inside a sentence or after a label on the same line', () => {
+		expect(kinds(`is this done? ${url('objects', A)} thanks`)).toEqual([
+			'text',
+			`chip:${A}`,
+			'text',
+		])
+		expect(kinds(`Draft: ${url('objects', A)}`)).toEqual(['text', `chip:${A}`])
+	})
+
+	it('draws the same object again as a chip', () => {
+		const link = url('objects', A)
+		expect(kinds(`${link}\n${link}`)).toEqual([`card:${A}`, `chip:${A}`])
+	})
+
+	it('draws an object an earlier message shows as a chip', () => {
+		expect(kinds(url('objects', A), new Set([A]))).toEqual([`chip:${A}`])
+	})
+
+	it('gives at most three cards and draws the fourth as a chip', () => {
+		const ids = [A, B, C, 'd0b8f0a2-5b3e-4a39-9d57-6f3c2f0a9b11']
+		const text = ids.map((id) => url('objects', id)).join('\n')
+		expect(kinds(text)).toEqual([`card:${A}`, `card:${B}`, `card:${C}`, `chip:${ids[3]}`])
+	})
+
+	it('keeps a link to a file as a chip, even on its own line', () => {
+		expect(kinds(url('files', B))).toEqual([`file:${B}`])
+	})
+
+	it('leaves every other kind of link, and an object of another workspace, to its own chip', () => {
+		const otherObject = `https://maskin.io/${A}/objects/${B}`
+		expect(kinds(`${url('loops', A)}\n${url('agents', B)}\n${otherObject}`)).toEqual([
+			'other:loop',
+			'text',
+			'other:agent',
+			'text',
+			'other:object',
+		])
+		const settings = `https://maskin.io/${WS}/settings/billing`
+		expect(kinds(`see https://github.com/a/b/pull/4 and ${settings}`)).toEqual([
+			'text',
+			'other:github',
+			'text',
+			'other:settings',
+		])
 	})
 })
 

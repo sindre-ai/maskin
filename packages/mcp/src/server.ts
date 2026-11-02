@@ -759,6 +759,42 @@ async function assertAgentsExist(
 }
 
 /**
+ * Validate a loop's driver: it must be an agent in this workspace (not a
+ * human) and not paused. Same workspace-scoped `GET /api/actors?ids=` lookup as
+ * assertAgentsExist. Throws a message that tells the caller how to pick one.
+ */
+async function assertLoopDriver(
+	config: McpConfig,
+	driverId: string | undefined,
+	workspaceId?: string,
+): Promise<void> {
+	const pick =
+		"Pick an agent whose job covers the loop's outcome (find one with list_actors), or ask the Chief of Staff to create one. Do not borrow an unrelated agent."
+	if (!driverId) {
+		throw new Error(`driver_id is required: every loop needs one agent who drives it. ${pick}`)
+	}
+	const rows = (await apiCall(
+		config,
+		'GET',
+		`/api/actors?ids=${encodeURIComponent(driverId)}`,
+		undefined,
+		{ workspaceId },
+	)) as Array<{ id: string; type: string; agentState?: string }>
+	const actor = (Array.isArray(rows) ? rows : []).find((r) => r.id === driverId)
+	if (!actor) {
+		throw new Error(
+			`Invalid driver_id ${driverId}: not found or not a member of this workspace. ${pick}`,
+		)
+	}
+	if (actor.type !== 'agent') {
+		throw new Error(`Invalid driver_id ${driverId}: it is a ${actor.type}, not an agent. ${pick}`)
+	}
+	if (actor.agentState === 'paused') {
+		throw new Error(`Invalid driver_id ${driverId}: that agent is paused. ${pick}`)
+	}
+}
+
+/**
  * Delete every `in_loop` edge for a loop (source = loop, no target filter) —
  * used by delete_loop. `relationships` rows have no FK/cascade from either
  * side, so these are orphaned unless explicitly cleaned up before the loop
@@ -907,10 +943,11 @@ async function fetchLoopStepsView(
 	}
 }
 
-/** Strip fields that don't apply to a loop (a loop is never driven or run
- *  directly — its steps are the triggers that do the work). */
+/** Strip fields that don't apply to a loop (a loop is never run directly —
+ *  its steps are the triggers that do the work). The driver stays: it is the
+ *  agent accountable for the loop. */
 function stripLoopOnlyFields(entity: Record<string, unknown>): Record<string, unknown> {
-	const { driver: _driver, activeSessionId: _activeSessionId, ...rest } = entity
+	const { activeSessionId: _activeSessionId, ...rest } = entity
 	return rest
 }
 
@@ -979,10 +1016,20 @@ async function assertLoopTypesValid(
 async function getWorkspace(
 	config: McpConfig,
 	workspaceId: string,
-): Promise<{ id: string; name: string; settings: Record<string, unknown> }> {
+): Promise<{
+	id: string
+	name: string
+	settings: Record<string, unknown>
+	llm_configured?: { anthropic?: boolean; openai?: boolean }
+}> {
 	const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 		skipWorkspace: true,
-	})) as Array<{ id: string; name: string; settings: Record<string, unknown> }>
+	})) as Array<{
+		id: string
+		name: string
+		settings: Record<string, unknown>
+		llm_configured?: { anthropic?: boolean; openai?: boolean }
+	}>
 	const workspace = workspaces.find((w) => w.id === workspaceId)
 	if (!workspace) throw new Error('Workspace not found')
 	return workspace
@@ -3350,11 +3397,13 @@ export function createMcpServer(config: McpConfig) {
 			// to a single `unknown` check — surfacing "no LLM keys" as certain
 			// when we actually couldn't check would be a false negative.
 			let sharedWorkspaceSettings: Record<string, unknown> | null = null
+			let sharedWorkspaceLlmConfigured: { anthropic?: boolean; openai?: boolean } | undefined
 			let sharedWorkspaceError: unknown = null
 			if (wsId) {
 				try {
 					const workspace = await getWorkspace(config, wsId)
 					sharedWorkspaceSettings = workspace.settings
+					sharedWorkspaceLlmConfigured = workspace.llm_configured
 				} catch (err) {
 					sharedWorkspaceError = err
 				}
@@ -3428,7 +3477,7 @@ export function createMcpServer(config: McpConfig) {
 								content: (withUrl.content as string | undefined) ?? null,
 								driver: (withUrl.driver as string | undefined) ?? null,
 							},
-							readWorkspaceLlmReadiness(sharedWorkspaceSettings),
+							readWorkspaceLlmReadiness(sharedWorkspaceSettings, sharedWorkspaceLlmConfigured),
 							readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
 						)
 					})
@@ -4301,14 +4350,16 @@ export function createMcpServer(config: McpConfig) {
 				;(result as Record<string, unknown>).workspace_id = bornInWorkspace
 				;(result as Record<string, unknown>).role = 'member'
 			} else if (targetWorkspace && !isAgent && !createBody.auto_create_workspace) {
-				// Humans only: add the new actor as a member
+				// Humans only: a person can't be added by id without accepting, so the
+				// workspace invites them by email and they join when they accept.
 				try {
-					await apiCall(config, 'POST', `/api/workspaces/${targetWorkspace}/members`, {
-						actor_id: result.id,
+					await apiCall(config, 'POST', '/api/invites', {
+						workspaceId: targetWorkspace,
+						email: createBody.email,
 						role: role ?? 'member',
 					})
 					;(result as Record<string, unknown>).workspace_id = targetWorkspace
-					;(result as Record<string, unknown>).role = role ?? 'member'
+					;(result as Record<string, unknown>).invited_role = role ?? 'member'
 				} catch (error) {
 					;(result as Record<string, unknown>).workspace_membership_error = String(error)
 				}
@@ -6447,6 +6498,7 @@ export function createMcpServer(config: McpConfig) {
 			const {
 				workspace_id,
 				name,
+				driver_id,
 				content,
 				status,
 				entry_condition,
@@ -6465,6 +6517,7 @@ export function createMcpServer(config: McpConfig) {
 
 			// Validate everything up-front so nothing is created on a bad request.
 			await Promise.all([
+				assertLoopDriver(config, driver_id, workspace_id),
 				assertTriggersExist(config, existingTriggerIds, workspace_id),
 				assertObjectsExist(config, memberObjectIds, workspace_id),
 				assertAgentsExist(
@@ -6518,6 +6571,7 @@ export function createMcpServer(config: McpConfig) {
 					type: 'loop',
 					title: name,
 					status,
+					driver: driver_id,
 					metadata,
 				}
 				if (content !== undefined) node.content = content
@@ -6618,6 +6672,7 @@ export function createMcpServer(config: McpConfig) {
 				workspace_id,
 				id,
 				name,
+				driver_id,
 				content,
 				status,
 				entry_condition,
@@ -6658,6 +6713,7 @@ export function createMcpServer(config: McpConfig) {
 				const stepsStartEnabled = effectiveStatus !== 'paused'
 
 				await Promise.all([
+					driver_id !== undefined ? assertLoopDriver(config, driver_id, workspace_id) : undefined,
 					assertTriggersExist(config, add_trigger_ids ?? [], workspace_id),
 					assertObjectsExist(config, add_object_ids ?? [], workspace_id),
 					assertAgentsExist(
@@ -6726,6 +6782,7 @@ export function createMcpServer(config: McpConfig) {
 
 					const body: Record<string, unknown> = {}
 					if (name !== undefined) body.title = name
+					if (driver_id !== undefined) body.driver = driver_id
 					if (content !== undefined) body.content = content
 					if (status !== undefined) body.status = status
 					if (Object.keys(metadataPatch).length > 0) body.metadata = metadataPatch
@@ -7109,6 +7166,30 @@ export function createMcpServer(config: McpConfig) {
 				_meta: meta('list_for_you', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
 				structuredContent: payload,
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'withdraw_decision_card',
+		{
+			description: tools.withdraw_decision_card.description,
+			inputSchema: tools.withdraw_decision_card.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/for-you/withdrawals', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta(
+					'withdraw_decision_card',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -7515,6 +7596,44 @@ export function createMcpServer(config: McpConfig) {
 					sent.mode === 'approved_draft'
 						? 'Sent: the email went out exactly as the person approved it. Do not send it again.'
 						: 'Sent. Do not send it again.',
+				)
+			} catch (err) {
+				// The server words every refusal for the agent (what happened, what to do next),
+				// so pass it on as a result instead of a thrown error.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not sent. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'resend_send_email',
+		{
+			description: tools.resend_send_email.description,
+			inputSchema: tools.resend_send_email.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('resend_send_email', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const sent = (await apiCall(
+					config,
+					'POST',
+					'/api/integrations/resend/send',
+					{ object_id: args.object_id },
+					{ workspaceId: args.workspace_id },
+				)) as { email_id: string; from: string }
+				return reply(
+					`Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
 				)
 			} catch (err) {
 				// The server words every refusal for the agent (what happened, what to do next),
@@ -8110,6 +8229,7 @@ export function createMcpServer(config: McpConfig) {
 						kind: args.kind,
 						...(args.suggested_name ? { suggested_name: args.suggested_name } : {}),
 						...(args.hint ? { hint: args.hint } : {}),
+						...(args.target_agent_ids?.length ? { target_agent_ids: args.target_agent_ids } : {}),
 					},
 					{ workspaceId: args.workspace_id },
 				)

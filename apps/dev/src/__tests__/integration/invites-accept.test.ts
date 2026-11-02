@@ -420,6 +420,43 @@ describe('Invites — POST /:token/accept', () => {
 			expect(capturePosthogEventMock).not.toHaveBeenCalled()
 		})
 
+		it('lets an invitee join past the trial seat cap when the billing owner is allowlisted', async () => {
+			const original = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = inviterId
+			try {
+				const enterpriseWs = await insertWorkspace(db, inviterId, { name: 'Enterprise Seat WS' })
+				const invitee = await insertActor(db, {
+					email: 'enterprise-invitee@example.com',
+					apiKey: generateApiKey().key,
+				})
+				const { rawToken } = await seedPendingInvite({
+					workspaceId: enterpriseWs.id,
+					inviterId,
+					email: 'enterprise-invitee@example.com',
+				})
+
+				const res = await app().request(
+					jsonRequest('POST', `/api/invites/${rawToken}/accept`, undefined, {
+						Authorization: `Bearer ${invitee.apiKey}`,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				const memberships = await db
+					.select()
+					.from(workspaceMembers)
+					.where(eq(workspaceMembers.actorId, invitee.id))
+				expect(memberships).toHaveLength(1)
+			} finally {
+				if (original === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+				} else {
+					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = original
+				}
+			}
+		})
+
 		it('seat cap on new-signup rolls back the actor insert (invite pending, no actor)', async () => {
 			// Same fresh trial-tier workspace: 1 seat, filled by the owner.
 			const seatCapWs = await insertWorkspace(db, inviterId, { name: 'Seat Cap Signup WS' })

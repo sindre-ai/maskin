@@ -31,7 +31,7 @@ import {
 	supersededFailedReplyIds,
 } from '@/lib/failed-turns'
 import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
-import { extractLinkedObjectIds } from '@/lib/linked-objects'
+import { extractLinkedObjectIds, splitOwnLinks } from '@/lib/linked-objects'
 import { isTimelineMessage } from '@/lib/message-threads'
 import { parseVoiceReceipt } from '@/lib/voice-receipts'
 import {
@@ -115,10 +115,12 @@ export function ThreadMessages({
 				))}
 			</div>
 		) : null
+	// The main chat draws the main sessions only; a thread's session shows in its own pane.
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
 		messages,
+		{ threadRootId: null },
 	)
 	// A turn with no message tag yet hangs under the newest message. A reply that stays in its thread
 	// is not drawn here, so that wait is shown by the thread pane instead.
@@ -220,19 +222,28 @@ export function ThreadMessages({
 
 	// A linked object's card shows once, on the first message that links it; later messages keep
 	// the link as a chip. A draft edited since is the exception: the newest message that links it
-	// holds the card, with an Updated tag. Only messages that draw cards count: your own bubble
-	// draws none, so a link you posted first must not hide the card from the agent's reply.
+	// holds the card, with an Updated tag. Your own message counts too: it draws the card (or a
+	// chip) itself, so the agent's reply to it links the same object as a chip.
 	const ownActorId = getStoredActor()?.id
 	const cardMessages = useMemo(
 		() =>
 			visibleMessages
-				.filter((m) => m.kind === 'message' && m.actorId !== ownActorId)
+				.filter((m) => m.kind === 'message')
 				.map((m) => ({
 					id: m.id,
 					createdAt: m.createdAt,
-					linkedIds: extractLinkedObjectIds(m.content),
+					linkedIds:
+						m.actorId === ownActorId
+							? [
+									...new Set(
+										splitOwnLinks(m.content, workspaceId).flatMap((s) =>
+											s.kind === 'object' && s.otherWorkspaceId === undefined ? [s.id] : [],
+										),
+									),
+								].slice(0, 3)
+							: extractLinkedObjectIds(m.content),
 				})),
-		[visibleMessages, ownActorId],
+		[visibleMessages, ownActorId, workspaceId],
 	)
 	const linkedPlacements = useLinkedCardPlacements(workspaceId, cardMessages)
 

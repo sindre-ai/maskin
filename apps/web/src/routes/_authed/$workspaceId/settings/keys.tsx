@@ -1,11 +1,13 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import {
 	type ClaudeOAuthImportInput,
@@ -17,6 +19,7 @@ import { getCredentialsCommand, parseClaudeCredentials } from '@/lib/claude-oaut
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Unplug } from 'lucide-react'
@@ -34,11 +37,11 @@ function KeysPage() {
 		<div className="space-y-6">
 			{enterprise ? (
 				<div className="max-w-lg space-y-6">
-					<div className="border-t border-border pt-6">
+					<div id="claude-subscriptions" className="border-t border-border pt-6">
 						<ClaudeOAuthSection workspaceId={workspaceId} />
 					</div>
 
-					<div className="border-t border-border pt-6">
+					<div id="llm-api-keys" className="border-t border-border pt-6">
 						<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
 					</div>
 
@@ -252,6 +255,7 @@ function AddSlotCard({
 	position: number
 	onConnectClick: () => void
 }) {
+	const canWrite = useCanWrite()
 	const isFirst = position === 0
 	return (
 		<div
@@ -270,9 +274,11 @@ function AddSlotCard({
 					? 'Connect your Claude subscription to start running agent sessions.'
 					: 'When every subscription above has hit its usage limit or expired, agents stop until you reconnect one. Another keeps them running.'}
 			</p>
-			<Button variant="outline" size="sm" onClick={onConnectClick}>
-				{isFirst ? 'Import credentials' : 'Import another subscription'}
-			</Button>
+			<ViewerTooltip>
+				<Button variant="outline" size="sm" disabled={!canWrite} onClick={onConnectClick}>
+					{isFirst ? 'Import credentials' : 'Import another subscription'}
+				</Button>
+			</ViewerTooltip>
 		</div>
 	)
 }
@@ -297,6 +303,7 @@ function SlotCard({
 	onReplaceClick,
 }: SlotCardProps) {
 	const slot = info.slot
+	const canWrite = useCanWrite()
 	const disconnectMutation = useMutation({
 		mutationFn: () => api.claudeOauth.disconnect(workspaceId, slot),
 		onSuccess,
@@ -378,38 +385,40 @@ function SlotCard({
 				)}
 			</div>
 			<div>
-				<div className="flex items-center gap-1 w-fit max-w-full">
-					<input
-						ref={nicknameInputRef}
-						type="text"
-						value={nicknameDraft}
-						onChange={(e) => {
-							setNicknameDraft(e.target.value)
-							if (renameMutation.isError) renameMutation.reset()
-						}}
-						onBlur={handleNicknameBlur}
-						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-						placeholder={NICKNAME_PLACEHOLDER}
-						onFocus={() => {
-							editingNickname.current = true
-						}}
-						maxLength={60}
-						size={Math.max(nicknameDraft.length, NICKNAME_PLACEHOLDER.length)}
-						disabled={renameMutation.isPending}
-						aria-label={`Nickname for ${label} slot`}
-						data-testid={`slot-${slot}-nickname`}
-						className="min-w-0 max-w-full bg-transparent border-none outline-none text-sm font-medium text-foreground placeholder:text-muted-foreground/70 focus:outline-none px-0 py-0 disabled:opacity-60"
-					/>
-					<button
-						type="button"
-						onClick={() => nicknameInputRef.current?.focus()}
-						className="shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
-						aria-label={`Edit nickname for ${label} slot`}
-						tabIndex={-1}
-					>
-						<Pencil size={12} />
-					</button>
-				</div>
+				<ViewerTooltip className="inline-flex max-w-full">
+					<div className="flex items-center gap-1 w-fit max-w-full">
+						<input
+							ref={nicknameInputRef}
+							type="text"
+							value={nicknameDraft}
+							onChange={(e) => {
+								setNicknameDraft(e.target.value)
+								if (renameMutation.isError) renameMutation.reset()
+							}}
+							onBlur={handleNicknameBlur}
+							onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+							placeholder={NICKNAME_PLACEHOLDER}
+							onFocus={() => {
+								editingNickname.current = true
+							}}
+							maxLength={60}
+							size={Math.max(nicknameDraft.length, NICKNAME_PLACEHOLDER.length)}
+							disabled={renameMutation.isPending || !canWrite}
+							aria-label={`Nickname for ${label} slot`}
+							data-testid={`slot-${slot}-nickname`}
+							className="min-w-0 max-w-full bg-transparent border-none outline-none text-sm font-medium text-foreground placeholder:text-muted-foreground/70 focus:outline-none px-0 py-0 disabled:opacity-60"
+						/>
+						<button
+							type="button"
+							onClick={() => nicknameInputRef.current?.focus()}
+							className="shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
+							aria-label={`Edit nickname for ${label} slot`}
+							tabIndex={-1}
+						>
+							<Pencil size={12} />
+						</button>
+					</div>
+				</ViewerTooltip>
 				{renameMutation.isError && (
 					<FormError error={renameMutation.error?.message || 'Could not save nickname'} />
 				)}
@@ -442,28 +451,34 @@ function SlotCard({
 			{unhealthyLine && <p className="text-xs text-warning">{unhealthyLine}</p>}
 			<div className="flex flex-wrap gap-2 pt-1">
 				{position > 0 && (
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => promoteMutation.mutate()}
-						disabled={promoteMutation.isPending}
-					>
-						<ArrowUp size={14} className="mr-1" />
-						{promoteMutation.isPending ? 'Moving...' : 'Use first'}
-					</Button>
+					<ViewerTooltip>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => promoteMutation.mutate()}
+							disabled={promoteMutation.isPending || !canWrite}
+						>
+							<ArrowUp size={14} className="mr-1" />
+							{promoteMutation.isPending ? 'Moving...' : 'Use first'}
+						</Button>
+					</ViewerTooltip>
 				)}
-				<Button variant="ghost" size="sm" onClick={onReplaceClick}>
-					Replace
-				</Button>
-				<Button
-					variant="ghost"
-					size="sm"
-					onClick={() => disconnectMutation.mutate()}
-					disabled={disconnectMutation.isPending}
-				>
-					<Unplug size={14} className="mr-1" />
-					Disconnect
-				</Button>
+				<ViewerTooltip>
+					<Button variant="ghost" size="sm" disabled={!canWrite} onClick={onReplaceClick}>
+						Replace
+					</Button>
+				</ViewerTooltip>
+				<ViewerTooltip>
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => disconnectMutation.mutate()}
+						disabled={disconnectMutation.isPending || !canWrite}
+					>
+						<Unplug size={14} className="mr-1" />
+						Disconnect
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)
@@ -534,6 +549,7 @@ function PasteFlow({
 	onClose,
 	onSuccess,
 }: PasteFlowProps) {
+	const canWrite = useCanWrite()
 	const [pasteValue, setPasteValue] = useState('')
 	const [slot, setSlot] = useState<string>(initialSlot)
 	const [parseError, setParseError] = useState('')
@@ -548,6 +564,7 @@ function PasteFlow({
 	})
 
 	const handleImport = () => {
+		if (!canWrite) return
 		setParseError('')
 		const parsed = parseClaudeCredentials(pasteValue)
 		if (!parsed) {
@@ -620,7 +637,7 @@ function PasteFlow({
 			<div className="flex gap-2">
 				<Button
 					onClick={handleImport}
-					disabled={!pasteValue.trim() || importMutation.isPending}
+					disabled={!pasteValue.trim() || importMutation.isPending || !canWrite}
 					size="sm"
 				>
 					{importMutation.isPending ? 'Importing...' : 'Import'}
@@ -646,6 +663,41 @@ const llmProviders = [
 	{ key: 'openai' as const, label: 'OpenAI', placeholder: 'sk-...' },
 ]
 
+/** What the settings screen shows of a saved key: it never has the key itself. */
+function SavedKey({
+	hint,
+	onReplace,
+	onClear,
+	disabled,
+	testId,
+}: {
+	hint: string | null | undefined
+	onReplace: () => void
+	onClear: () => void
+	disabled?: boolean
+	testId: string
+}) {
+	const canWrite = useCanWrite()
+	return (
+		<div className="flex items-center gap-2" data-testid={testId}>
+			<span className="flex-1 text-sm text-foreground">
+				Key saved
+				{hint ? <span className="text-muted-foreground"> · ends in {hint}</span> : null}
+			</span>
+			<ViewerTooltip>
+				<Button variant="outline" size="sm" onClick={onReplace} disabled={disabled || !canWrite}>
+					Replace
+				</Button>
+			</ViewerTooltip>
+			<ViewerTooltip>
+				<Button variant="outline" size="sm" onClick={onClear} disabled={disabled || !canWrite}>
+					Clear
+				</Button>
+			</ViewerTooltip>
+		</div>
+	)
+}
+
 function LLMKeysEditor({
 	workspace,
 	workspaceId,
@@ -653,75 +705,110 @@ function LLMKeysEditor({
 	workspace: import('@/lib/api').WorkspaceWithRole
 	workspaceId: string
 }) {
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
-	const settings = workspace.settings as Record<string, unknown>
-	const savedKeys = (settings?.llm_keys as Record<string, string>) ?? {}
 
-	const [keys, setKeys] = useState<Record<string, string>>({
-		anthropic: savedKeys.anthropic ?? '',
-		openai: savedKeys.openai ?? '',
-	})
+	// Saved keys are write-only: the API says whether one is stored and its last
+	// four characters, never the key. Saving sends only the provider that
+	// changed, so nothing else in the stored keys is touched.
+	const [keys, setKeys] = useState<Record<string, string>>({ anthropic: '', openai: '' })
+	const [replacing, setReplacing] = useState<Record<string, boolean>>({})
 	const [visible, setVisible] = useState<Record<string, boolean>>({})
+
+	const finish = (provider: string) => {
+		setKeys((prev) => ({ ...prev, [provider]: '' }))
+		setReplacing((prev) => ({ ...prev, [provider]: false }))
+		setVisible((prev) => ({ ...prev, [provider]: false }))
+	}
 
 	const handleSave = (provider: string) => {
 		const value = keys[provider]?.trim()
-		const updatedKeys = { ...savedKeys }
-		if (value) {
-			updatedKeys[provider] = value
-		} else {
-			delete updatedKeys[provider]
-		}
-		updateWorkspace.mutate({
-			settings: { llm_keys: updatedKeys },
-		})
+		if (!value || !canWrite) return
+		updateWorkspace.mutate(
+			{ settings: { llm_keys: { [provider]: value } } },
+			{ onSuccess: () => finish(provider) },
+		)
 	}
 
-	const isDirty = (provider: string) => {
-		const saved = savedKeys[provider] ?? ''
-		return keys[provider] !== saved
+	const handleClear = (provider: string) => {
+		if (!canWrite) return
+		updateWorkspace.mutate(
+			{ settings: { llm_keys: { [provider]: null } } },
+			{ onSuccess: () => finish(provider) },
+		)
 	}
 
 	return (
 		<div>
 			<Label className="mb-1 text-bold">LLM API Keys</Label>
 			<p className="text-xs text-muted-foreground mb-3">
-				Set API keys per provider. All agents in this workspace will use these keys.
+				Set API keys per provider. All agents in this workspace will use these keys. A saved key
+				cannot be shown again; replace it to change it.
 			</p>
 			<div className="space-y-3">
-				{llmProviders.map((provider) => (
-					<div key={provider.key}>
-						<Label className="mb-1 text-xs text-muted-foreground">{provider.label}</Label>
-						<div className="flex gap-2">
-							<div className="relative flex-1">
-								<Input
-									type={visible[provider.key] ? 'text' : 'password'}
-									value={keys[provider.key]}
-									onChange={(e) => setKeys((prev) => ({ ...prev, [provider.key]: e.target.value }))}
-									placeholder={provider.placeholder}
-									className="pr-9"
+				{llmProviders.map((provider) => {
+					const saved = Boolean(workspace.llm_configured?.[provider.key])
+					const showInput = !saved || replacing[provider.key]
+					return (
+						<div key={provider.key}>
+							<Label className="mb-1 text-xs text-muted-foreground">{provider.label}</Label>
+							{showInput ? (
+								<div className="flex gap-2">
+									<div className="relative flex-1">
+										<Input
+											type={visible[provider.key] ? 'text' : 'password'}
+											value={keys[provider.key]}
+											onChange={(e) =>
+												setKeys((prev) => ({ ...prev, [provider.key]: e.target.value }))
+											}
+											placeholder={canWrite ? provider.placeholder : VIEWER_READ_ONLY_MESSAGE}
+											disabled={!canWrite}
+											aria-label={`${provider.label} API key`}
+											autoComplete="off"
+											className="pr-9"
+										/>
+										<button
+											type="button"
+											aria-label={visible[provider.key] ? 'Hide typed key' : 'Show typed key'}
+											className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+											onClick={() =>
+												setVisible((prev) => ({
+													...prev,
+													[provider.key]: !prev[provider.key],
+												}))
+											}
+										>
+											{visible[provider.key] ? <EyeOff size={14} /> : <Eye size={14} />}
+										</button>
+									</div>
+									<ViewerTooltip>
+										<Button
+											onClick={() => handleSave(provider.key)}
+											disabled={
+												!keys[provider.key]?.trim() || updateWorkspace.isPending || !canWrite
+											}
+										>
+											Save
+										</Button>
+									</ViewerTooltip>
+									{saved && (
+										<Button variant="ghost" onClick={() => finish(provider.key)}>
+											Cancel
+										</Button>
+									)}
+								</div>
+							) : (
+								<SavedKey
+									testId={`llm-key-saved-${provider.key}`}
+									hint={workspace.llm_key_hints?.[provider.key]}
+									disabled={updateWorkspace.isPending}
+									onReplace={() => setReplacing((prev) => ({ ...prev, [provider.key]: true }))}
+									onClear={() => handleClear(provider.key)}
 								/>
-								<button
-									type="button"
-									className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-									onClick={() =>
-										setVisible((prev) => ({
-											...prev,
-											[provider.key]: !prev[provider.key],
-										}))
-									}
-								>
-									{visible[provider.key] ? <EyeOff size={14} /> : <Eye size={14} />}
-								</button>
-							</div>
-							<Button
-								onClick={() => handleSave(provider.key)}
-								disabled={!isDirty(provider.key) || updateWorkspace.isPending}
-							>
-								Save
-							</Button>
+							)}
 						</div>
-					</div>
-				))}
+					)
+				})}
 			</div>
 		</div>
 	)
@@ -742,38 +829,57 @@ function CustomLlmEditor({
 	workspace: import('@/lib/api').WorkspaceWithRole
 	workspaceId: string
 }) {
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const saved = (settings?.custom_llm as CustomLlmConfig | undefined) ?? {}
+	const keySaved = Boolean(workspace.llm_configured?.custom_llm)
 
 	const [enabled, setEnabled] = useState(Boolean(saved.enabled))
 	const [baseUrl, setBaseUrl] = useState(saved.base_url ?? '')
-	const [apiKey, setApiKey] = useState(saved.api_key ?? '')
 	const [model, setModel] = useState(saved.model ?? '')
 	const [smallModel, setSmallModel] = useState(saved.small_fast_model ?? '')
+	// The saved key is write-only. It is kept unless the user replaces or clears
+	// it, and a save only carries api_key in those two cases.
+	const [keyMode, setKeyMode] = useState<'keep' | 'replace' | 'clear'>('keep')
+	const [apiKey, setApiKey] = useState('')
 	const [keyVisible, setKeyVisible] = useState(false)
 
+	const showKeyInput = !keySaved || keyMode === 'replace'
+	const typedKey = apiKey.trim()
+
 	const handleSave = () => {
+		if (!canWrite) return
 		const next: CustomLlmConfig = {
 			enabled,
 			base_url: baseUrl.trim() || null,
-			api_key: apiKey.trim() || null,
 			model: model.trim() || null,
 			small_fast_model: smallModel.trim() || null,
 		}
-		updateWorkspace.mutate({
-			settings: { custom_llm: next },
-		})
+		if (keyMode === 'clear') next.api_key = null
+		else if (typedKey) next.api_key = typedKey
+		updateWorkspace.mutate(
+			{ settings: { custom_llm: next } },
+			{
+				onSuccess: () => {
+					setKeyMode('keep')
+					setApiKey('')
+					setKeyVisible(false)
+				},
+			},
+		)
 	}
 
 	const isDirty =
 		enabled !== Boolean(saved.enabled) ||
 		baseUrl !== (saved.base_url ?? '') ||
-		apiKey !== (saved.api_key ?? '') ||
+		keyMode === 'clear' ||
+		typedKey !== '' ||
 		model !== (saved.model ?? '') ||
 		smallModel !== (saved.small_fast_model ?? '')
 
-	const canEnable = baseUrl.trim() && apiKey.trim() && model.trim()
+	const hasKey = keyMode === 'clear' ? false : keySaved || typedKey !== ''
+	const canEnable = baseUrl.trim() && hasKey && model.trim()
 
 	return (
 		<div>
@@ -787,11 +893,13 @@ function CustomLlmEditor({
 
 			<div className="space-y-3">
 				<div className="flex items-center gap-2">
-					<Switch
-						checked={enabled}
-						onCheckedChange={setEnabled}
-						disabled={!canEnable && !enabled}
-					/>
+					<ViewerTooltip>
+						<Switch
+							checked={enabled}
+							onCheckedChange={setEnabled}
+							disabled={(!canEnable && !enabled) || !canWrite}
+						/>
+					</ViewerTooltip>
 					<span className="text-sm text-foreground">{enabled ? 'Enabled' : 'Disabled'}</span>
 				</div>
 
@@ -800,28 +908,68 @@ function CustomLlmEditor({
 					<Input
 						value={baseUrl}
 						onChange={(e) => setBaseUrl(e.target.value)}
-						placeholder="https://openrouter.ai/api"
+						placeholder={canWrite ? 'https://openrouter.ai/api' : VIEWER_READ_ONLY_MESSAGE}
+						disabled={!canWrite}
 					/>
 				</div>
 
 				<div>
 					<Label className="mb-1 text-xs text-muted-foreground">API Key</Label>
-					<div className="relative">
-						<Input
-							type={keyVisible ? 'text' : 'password'}
-							value={apiKey}
-							onChange={(e) => setApiKey(e.target.value)}
-							placeholder="sk-or-..."
-							className="pr-9"
+					{showKeyInput ? (
+						<div className="flex gap-2">
+							<div className="relative flex-1">
+								<Input
+									type={keyVisible ? 'text' : 'password'}
+									value={apiKey}
+									onChange={(e) => setApiKey(e.target.value)}
+									placeholder={canWrite ? 'sk-or-...' : VIEWER_READ_ONLY_MESSAGE}
+									disabled={!canWrite}
+									aria-label="Custom endpoint API key"
+									autoComplete="off"
+									className="pr-9"
+								/>
+								<button
+									type="button"
+									aria-label={keyVisible ? 'Hide typed key' : 'Show typed key'}
+									className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+									onClick={() => setKeyVisible((v) => !v)}
+								>
+									{keyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+								</button>
+							</div>
+							{keySaved && (
+								<Button
+									variant="ghost"
+									onClick={() => {
+										setKeyMode('keep')
+										setApiKey('')
+										setKeyVisible(false)
+									}}
+								>
+									Cancel
+								</Button>
+							)}
+						</div>
+					) : keyMode === 'clear' ? (
+						<div className="flex items-center gap-2" data-testid="custom-llm-key-clearing">
+							<span className="flex-1 text-sm text-muted-foreground">
+								The key is removed when you save.
+							</span>
+							<Button variant="ghost" size="sm" onClick={() => setKeyMode('keep')}>
+								Undo
+							</Button>
+						</div>
+					) : (
+						<SavedKey
+							testId="custom-llm-key-saved"
+							hint={workspace.llm_key_hints?.custom_llm}
+							onReplace={() => setKeyMode('replace')}
+							onClear={() => {
+								setKeyMode('clear')
+								setEnabled(false)
+							}}
 						/>
-						<button
-							type="button"
-							className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-							onClick={() => setKeyVisible((v) => !v)}
-						>
-							{keyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
-						</button>
-					</div>
+					)}
 				</div>
 
 				<div>
@@ -829,7 +977,8 @@ function CustomLlmEditor({
 					<Input
 						value={model}
 						onChange={(e) => setModel(e.target.value)}
-						placeholder="deepseek/deepseek-v4-flash"
+						placeholder={canWrite ? 'deepseek/deepseek-v4-flash' : VIEWER_READ_ONLY_MESSAGE}
+						disabled={!canWrite}
 					/>
 				</div>
 
@@ -838,13 +987,19 @@ function CustomLlmEditor({
 					<Input
 						value={smallModel}
 						onChange={(e) => setSmallModel(e.target.value)}
-						placeholder="Defaults to the model above"
+						placeholder={canWrite ? 'Defaults to the model above' : VIEWER_READ_ONLY_MESSAGE}
+						disabled={!canWrite}
 					/>
 				</div>
 
-				<Button onClick={handleSave} disabled={!isDirty || updateWorkspace.isPending}>
-					Save
-				</Button>
+				<ViewerTooltip>
+					<Button
+						onClick={handleSave}
+						disabled={!isDirty || updateWorkspace.isPending || !canWrite}
+					>
+						Save
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)
