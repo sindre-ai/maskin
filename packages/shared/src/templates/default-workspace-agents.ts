@@ -1344,6 +1344,7 @@ If firing:
 		type: 'cron',
 		config: {
 			expression: '0 7 * * *',
+			skip_when_idle: true,
 		},
 		actionPrompt: `Run your once-a-day sweep of the \`todo\` column. The question you are answering is narrow: **which tasks could be worked on right now, but aren't?**
 
@@ -1365,6 +1366,7 @@ Order:
 		type: 'cron',
 		config: {
 			expression: '0 8 * * *',
+			skip_when_idle: true,
 		},
 		actionPrompt:
 			"Run the daily signal sweep. Pull all insights updated in the last 30 days. Exclude any insight with `workspace-improvements` in `metadata.tags` and any insight about agents/loops/triggers/prompts/skills/workspace-operations. Cluster the rest by underlying pattern (not surface keyword). For each cluster that clears the 'worth shaping' bar (3+ source insights, medium+ confidence, falsifiable hypothesis possible), stage a bet in `opportunity` status linked to its source insights via `informs` — but first search existing `opportunity` bets and update instead of duplicating. Move clustered insights to the status `clustered`, borderline to `parked`, noise to `discarded`. Post one consolidated comment on this loop object using the template in your system prompt (clusters + rejection line + parked/discarded counts + any asks for other agents). Attention 3 by default; 4 only if a cluster is genuinely time-sensitive. Never 5.",
@@ -1376,6 +1378,7 @@ Order:
 		type: 'cron',
 		config: {
 			expression: '0 * * * *',
+			skip_when_idle: true,
 		},
 		actionPrompt:
 			'Curate the For You lists. This workspace has several humans and each has their own list: an item belongs on the list of the person who has to act, not on whoever you are talking to and not on whoever the agent happened to @-mention. First, make one cheap Maskin call: list_notifications with kind "for_you" and status pending (limit 100). If it fails for any reason (a 503, no available server, a missing tool), stop and say so in your final message, starting with "FAILED:" and naming the error. Never end a failed run as if nothing needed doing: a run that could not read the list has not checked it. Then list_actors to find the humans, and get_actor on each one to read their full instructions, not just the one-line description: their Role and routing lines say what is theirs. Give each item to the human whose profile covers the ask. If the action needs a person\'s own account or login (for example an OAuth sign-in), it goes to the owner of that account. Never copy the name written in the comment. Start each item\'s rationale with "Routed to <name> because <the profile line>". Otherwise: 1) Do not page through other notifications: a workspace can hold thousands. 2) Resolve (update_notification status resolved) every item that is no longer true: the object is closed, an agent has since settled it, the person already answered, or a later comment on the object says the thing was done or is no longer needed. Check what you can before keeping an item: the object\'s current status, the newest comments on it, an integration\'s current status (list_integrations, paging through all of it), and any page or file it refers to. 3) Audit the target of every pending item against the profiles. If one is addressed to the wrong person, resolve it and create a new one for the right person (a target cannot be changed). 4) Look for new escalations since your last pass: comments on objects that @-mention you with a `decision`, and blocked sessions or objects that only a human can unblock. For each, first try to settle it agent-to-agent; only if it truly needs a human, pick WHICH human from their profiles and create one for_you notification with that person as target_actor_id (or update the existing one for that object; one item per ask, never a second for the same ask). If an ask needs two people, write one item per person. If you cannot tell who it is for, say so in the rationale and target the workspace owner. Never list an ask that is conditional on something that has not happened yet (for example "after PR 211 merges, submit the sitemap"): that is a future task, not a blocked decision. Leave it with the agent that owns it, and list it only once the condition is true. If you cannot tell whether the condition is met, say so in the rationale instead of guessing. 5) Re-rank each person\'s pending items so rank 1 is their most important, no ties, by update_notification with the full existing metadata and only the rank changed (metadata is replaced, not merged). A target cannot be changed on an existing item. If the read succeeded and nothing changed, exit silently without posting anything.',
@@ -1399,6 +1402,7 @@ Order:
 		type: 'cron',
 		config: {
 			expression: '0 7 * * 1',
+			skip_when_idle: true,
 		},
 		actionPrompt:
 			"Run the weekly deep revalidation pass (distinct from the daily sweep — read your system prompt's 'Deep revalidation pass' section). Pull insights older than the 30-day window (`updated_before=now-30d`) still in `new`, `parked`, or `clustered`. Re-validate each existing `opportunity` bet and cluster: does new evidence strengthen, contradict, or leave it unchanged? Update bet bodies / `informs` edges where newer insights shift the pattern. Catch parked single-insight fragments that now corroborate into a real cluster and stage a `opportunity` bet. POST ONLY IF SOMETHING CHANGED — no change means stay silent. When you do post, one short comment on this loop object (attention 3; 4 only if a previously-staged bet is now actively contradicted) listing: updated bets, proposed retirements, newly-coalesced clusters.",
@@ -1422,6 +1426,7 @@ Order:
 		type: 'cron',
 		config: {
 			expression: '23 9 * * 1,4',
+			skip_when_idle: true,
 		},
 		actionPrompt:
 			"Twice-weekly digest pass for this loop. Before writing the digest, sweep the workspace for anything that changed since the last digest: list knowledge objects updated in the last ~4 days, plus in-scope bets, insights, and tasks whose status moved — fold anything that adds meaning into the wiki first (dedupe, wire lineage, refresh Homepage + Status page). Then write the digest: what's new on the wiki, what reframed, what went stale, what to look at next. Keep it under 250 words and skimmable — this is for the user. Post it as ONE comment on this loop object (attention 3).",
@@ -1466,6 +1471,7 @@ If both checks pass, briefly record on the insight (create_comment, attention 1)
 		config: {
 			// 05:00 UTC: early morning across Europe, before the working day starts.
 			expression: '0 5 * * *',
+			skip_when_idle: true,
 		},
 		actionPrompt: `You are the Chief of Staff writing today's briefing for the workspace's owner. It opens as a full-screen story on their phone, so it is a short page they read in about a minute, not a report.
 
@@ -1496,6 +1502,7 @@ Do not post a comment, notification or For you item about the briefing. The file
 		type: 'cron',
 		config: {
 			expression: '0 9 * * *',
+			skip_when_idle: true,
 		},
 		actionPrompt: `You are the Chief of Staff running the daily clustering step of the 'Workspace improvements' loop.
 
@@ -1536,6 +1543,7 @@ Also: do not audit sessions of the Workspace Coach itself (per your scope bounda
 		type: 'cron',
 		config: {
 			expression: '0 9 * * *',
+			skip_when_idle: true,
 		},
 		actionPrompt: `Run your daily workspace sweep as defined in Beat 2 of your system prompt.
 

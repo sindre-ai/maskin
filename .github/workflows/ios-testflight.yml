@@ -24,6 +24,10 @@ name: iOS TestFlight
 # Build number is a UTC timestamp (yymmddHHMM), always higher than the last upload. The
 # marketing version still comes from project.yml.
 #
+# The debug symbols (dSYMs) of each build are kept as a workflow artifact for 14 days, named
+# Maskin-dSYMs-<build number>. Apple's copy cannot be downloaded for a build without bitcode,
+# so this is the only way to symbolicate a crash log from a CI build.
+#
 # Internal testers get the build automatically once App Store Connect finishes processing it,
 # if the internal TestFlight group has "Automatic distribution" switched on.
 #
@@ -130,6 +134,18 @@ jobs:
             CURRENT_PROJECT_VERSION="$build_number" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
+
+      # The debug symbols exist only inside this archive, which disappears with the runner.
+      # Kept before the upload so a failed upload still leaves them. Never fails the build.
+      - name: Keep the debug symbols
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: Maskin-dSYMs-${{ env.BUILD_NUMBER }}
+          path: ${{ runner.temp }}/Maskin.xcarchive/dSYMs
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Export and upload to TestFlight
         if: steps.gate.outputs.enabled == 'true'

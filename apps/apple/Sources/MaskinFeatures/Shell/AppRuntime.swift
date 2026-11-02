@@ -309,9 +309,10 @@ public final class AppRuntime {
 	/// outbox is driven by the coordinator itself).
 	public func scenePhaseChanged(_ phase: SyncScenePhase) {
 		syncCoordinator?.scenePhaseChanged(phase)
+		// Signed in or not: a pending push unregister is finished on every foreground.
+		if phase == .active { Task { await push?.foregrounded() } }
 		if phase == .active, let session = environment.auth.session {
 			Task { await syncTimezone() }
-			Task { await push?.foregrounded() }
 			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
 			drainShareQueue(apiKey: session.apiKey)
 		}

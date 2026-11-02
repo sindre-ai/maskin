@@ -1283,6 +1283,12 @@ export const tools = {
 				.describe(
 					'Set to true to force a new top-level comment on `entity_id`, opting out of the automatic reply-in-thread default. Only use when you deliberately want to open a new topic rather than reply inside the thread that dispatched this session. Ignored if `parent_event_id` is also set — an explicit parent always wins.',
 				),
+			wait: z
+				.boolean()
+				.optional()
+				.describe(
+					'Hold until each agent in `mentions` has replied to this comment (in its thread) and return the replies. Ends early with settled false if an agent never starts or the wait runs out. Nothing is waited for when no agent is mentioned.',
+				),
 		}),
 	},
 
@@ -1522,23 +1528,50 @@ export const tools = {
 	},
 	list_triggers: {
 		description:
-			'List all triggers in the workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
-		}),
+			'List triggers in the workspace, newest first. Filter by `agent_id` (the agent a trigger runs), `status` (enabled or disabled) and `q` (words in the trigger name); filters combine with AND and carry through the cursor. Set `compact` for short rows without the action prompt. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. Any parameter not listed here is rejected with an error.',
+		// Strict: an unknown parameter is an error, never a silently ignored filter.
+		inputSchema: z
+			.object({
+				workspace_id: optionalWorkspaceId,
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(100)
+					.optional()
+					.describe('Max rows to return. Defaults to 25.'),
+				cursor: z
+					.string()
+					.optional()
+					.describe(
+						'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+					),
+				agent_id: z
+					.string()
+					.uuid()
+					.optional()
+					.describe(
+						'Only triggers that run this agent (the trigger target). Find ids with list_actors.',
+					),
+				status: z
+					.enum(['enabled', 'disabled'])
+					.optional()
+					.describe('Only enabled or only disabled triggers. Omit for both.'),
+				q: z
+					.string()
+					.trim()
+					.min(1)
+					.max(200)
+					.optional()
+					.describe('Only triggers whose name contains this text (case-insensitive).'),
+				compact: z
+					.boolean()
+					.optional()
+					.describe(
+						'Return short rows without the action prompt. Use it to scan or audit many triggers; read one trigger in full by leaving it off and filtering with `q`.',
+					),
+			})
+			.strict(),
 	},
 	// ─── Loops ───────────────────────────────────────────────
 	// A Loop is a persistent multi-agent process: a goal wrapped around

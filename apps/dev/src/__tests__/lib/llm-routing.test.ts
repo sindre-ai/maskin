@@ -22,6 +22,8 @@ import {
 } from '../../lib/billing-defaults'
 import { preflightLlmCredentials } from '../../lib/llm-routing'
 import {
+	CREDENTIAL_RESOLUTION_TIMEOUT_MS,
+	CredentialResolutionTimeoutError,
 	LEGACY_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
@@ -36,6 +38,7 @@ import {
 	readFallbackConfig,
 	resolveChatCredentials,
 	resolveLlmRoute,
+	withCredentialResolutionTimeout,
 } from '../../lib/llm-routing'
 import type { WorkspaceSettings } from '../../lib/types'
 
@@ -1616,5 +1619,60 @@ describe('MASKIN_FALLBACK_ZDR gate', () => {
 		})
 		expect(creds?.provider).toBe('anthropic')
 		expect(creds).not.toHaveProperty('providerPrefs')
+	})
+})
+
+describe('withCredentialResolutionTimeout', () => {
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('rejects with the credential-resolution timeout once the guard time passes, and not before', async () => {
+		vi.useFakeTimers()
+		const outcome = withCredentialResolutionTimeout(new Promise<never>(() => {})).then(
+			() => null,
+			(err: unknown) => err,
+		)
+		let settled = false
+		void outcome.then(() => {
+			settled = true
+		})
+
+		await vi.advanceTimersByTimeAsync(CREDENTIAL_RESOLUTION_TIMEOUT_MS - 1)
+		expect(settled).toBe(false)
+
+		await vi.advanceTimersByTimeAsync(1)
+		const err = await outcome
+		expect(err).toBeInstanceOf(CredentialResolutionTimeoutError)
+		// Same family as the other launch failures, so the existing handlers run.
+		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
+	})
+
+	it('returns the result and leaves no timer behind when resolution finishes in time', async () => {
+		vi.useFakeTimers()
+		await expect(withCredentialResolutionTimeout(Promise.resolve('ok'))).resolves.toBe('ok')
+		expect(vi.getTimerCount()).toBe(0)
+	})
+
+	it('passes through the original error when resolution fails before the guard time', async () => {
+		vi.useFakeTimers()
+		const boom = new Error('boom')
+		await expect(withCredentialResolutionTimeout(Promise.reject(boom))).rejects.toBe(boom)
+		expect(vi.getTimerCount()).toBe(0)
+	})
+})
+
+describe('CredentialResolutionTimeoutError', () => {
+	it('is a permanent failure the dispatcher fails at once, not a retry', () => {
+		expect(new CredentialResolutionTimeoutError().transient).toBe(false)
+	})
+
+	it('names credential lookup as the step that timed out and does not blame the credentials', () => {
+		const reason = new CredentialResolutionTimeoutError().toFailureReason()
+		expect(reason.reason_code).toBe('startup_stalled')
+		expect(reason.human_message).toMatch(/looking up the LLM credentials/i)
+		expect(reason.human_message).toMatch(/30 seconds/)
+		expect(reason.human_message).not.toMatch(/Connect a Claude subscription/i)
+		expect(reason.verbatim_output).toMatch(/resolveLlmRoute/)
 	})
 })

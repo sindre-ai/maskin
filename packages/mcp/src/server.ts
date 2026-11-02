@@ -1754,6 +1754,118 @@ async function waitForChatReplies(
 	}
 }
 
+interface CommentReplyEvent {
+	id: number
+	actorId: string
+	actorName?: string
+	data?: { content?: string; parentEventId?: number | null } | null
+	createdAt?: string
+}
+
+/**
+ * Holds until each awaited agent has replied in the thread of the comment
+ * `commentId` on `objectId`. A reply is a later comment by that agent whose parent is
+ * `threadRootId`: the server collapses every reply to the thread root, so for a comment
+ * posted inside a thread that is the comment's own parent, not the comment itself. An
+ * agent that never replies is given up on when it has no live session any more, so a
+ * failed run does not hold the caller for the full wait.
+ */
+async function waitForCommentReplies(
+	config: McpConfig,
+	opts: {
+		workspaceId: string | undefined
+		objectId: string
+		commentId: number
+		threadRootId: number
+		awaitedActorIds: string[]
+	},
+) {
+	const wsOpts = { workspaceId: opts.workspaceId }
+	const pending = new Set(opts.awaitedActorIds)
+	const seen = new Map<number, CommentReplyEvent>()
+	const idlePolls = new Map<string, number>()
+	const unanswered = new Set<string>()
+	const deadline = Date.now() + CHAT_WAIT_MAX_MS
+	let attempt = 0
+	let pollFailures = 0
+	let pollError: string | undefined
+
+	while (pending.size > 0 && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(attempt)))
+		attempt += 1
+		try {
+			const query = new URLSearchParams({
+				entity_type: 'object',
+				entity_id: opts.objectId,
+				action: 'commented',
+				since: String(opts.commentId),
+				limit: '100',
+			})
+			const rows = (await apiCall(
+				config,
+				'GET',
+				`/api/events/history?${query}`,
+				undefined,
+				wsOpts,
+			)) as CommentReplyEvent[]
+			pollFailures = 0
+			pollError = undefined
+			for (const row of Array.isArray(rows) ? rows : []) {
+				if (!opts.awaitedActorIds.includes(row.actorId)) continue
+				if (row.id <= opts.commentId || row.data?.parentEventId !== opts.threadRootId) continue
+				seen.set(row.id, row)
+				pending.delete(row.actorId)
+			}
+		} catch (err) {
+			pollFailures += 1
+			pollError = err instanceof Error ? err.message : String(err)
+			if (pollFailures >= MAX_POLL_FAILURES) break
+			continue
+		}
+		if (pending.size === 0 || attempt <= CHAT_WAIT_GRACE_POLLS) continue
+
+		for (const actorId of [...pending]) {
+			let hasLiveSession = false
+			try {
+				const sessions = (await apiCall(
+					config,
+					'GET',
+					`/api/sessions?actor_id=${actorId}&limit=5`,
+					undefined,
+					wsOpts,
+				)) as ChatSessionRow[]
+				const live = latestSessionByActor(Array.isArray(sessions) ? sessions : []).get(actorId)
+				hasLiveSession =
+					!!live && !ENDED_SESSION_STATUSES.includes(live.status) && live.status !== 'paused'
+			} catch {
+				// A failed lookup is not evidence the agent is gone: keep waiting.
+				continue
+			}
+			const idle = hasLiveSession ? 0 : (idlePolls.get(actorId) ?? 0) + 1
+			idlePolls.set(actorId, idle)
+			if (idle >= CHAT_WAIT_IDLE_POLLS) {
+				pending.delete(actorId)
+				unanswered.add(actorId)
+			}
+		}
+	}
+	for (const actorId of pending) unanswered.add(actorId)
+
+	const replies = [...seen.values()].sort((a, b) => a.id - b.id)
+	return {
+		settled: unanswered.size === 0,
+		replies,
+		...(unanswered.size > 0
+			? {
+					unanswered_actor_ids: [...unanswered],
+					message:
+						'Some agents did not reply: they have no live session, or the wait ran out. Read the thread with get_comments, or see what they did with get_session_activity.',
+				}
+			: {}),
+		...(pollError ? { poll_error: pollError } : {}),
+	}
+}
+
 /** A participant as the conversation route returns it. */
 interface ChatParticipant {
 	actorId: string
@@ -2767,6 +2879,7 @@ function buildTriggerHeroCardObject(
 	trigger: RawTrigger,
 	driver: HeroCardActor | null,
 	nowMs = Date.now(),
+	compact = false,
 ): HeroCardObject {
 	return {
 		id: trigger.id,
@@ -2775,7 +2888,8 @@ function buildTriggerHeroCardObject(
 		status: trigger.enabled ? 'enabled' : 'disabled',
 		driver,
 		contextLine: buildTriggerContextLine(trigger, nowMs),
-		actionPrompt: trigger.actionPrompt ?? null,
+		// The action prompt is most of a row's size; compact rows leave it out.
+		...(compact ? {} : { actionPrompt: trigger.actionPrompt ?? null }),
 		config: trigger.config,
 	}
 }
@@ -2977,6 +3091,11 @@ export function getServerHandlers(server: McpServer): Map<string, McpToolHandler
 	return serverHandlers.get(server) ?? new Map()
 }
 
+// Tools whose schema rejects a top-level argument name it does not know instead
+// of stripping it. Only tools where a dropped list reads as a finished write;
+// other tools keep stripping, since agents often send harmless extra keys.
+const REJECT_UNKNOWN_KEYS_TOOLS = new Set(['update_objects'])
+
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
 		name: 'maskin',
@@ -3019,27 +3138,31 @@ export function createMcpServer(config: McpConfig) {
 		// SDK validates arguments before our handler runs. A tool with no alias
 		// rows passes through untouched, so its tools/list entry is unchanged.
 		const definition =
-			baseDefinition?.inputSchema && needsNormalise(name)
+			baseDefinition?.inputSchema && (needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name))
 				? {
 						...baseDefinition,
-						inputSchema: wrapInputSchema(baseDefinition.inputSchema, (raw) => {
-							const normalised = normaliseArgs(name, raw)
-							// One event per call that used at least one old name. Here, not in
-							// the handler, so it fires before validation and a call that then
-							// fails validation is still counted. Fire and forget; key names
-							// only. A separate event type from tool_call, so the server-side
-							// trace is not double counted.
-							if (normalised.renames.length > 0) {
-								recordAliasUse(telemetrySink, telemetryTarget, {
-									tool_name: name,
-									workspace_id: extractWorkspaceId(raw),
-									renames: normalised.renames,
-									both_sent: normalised.bothSent,
-									transport: config.transport,
-								})
-							}
-							return normalised.args
-						}),
+						inputSchema: wrapInputSchema(
+							baseDefinition.inputSchema,
+							(raw) => {
+								const normalised = normaliseArgs(name, raw)
+								// One event per call that used at least one old name. Here, not in
+								// the handler, so it fires before validation and a call that then
+								// fails validation is still counted. Fire and forget; key names
+								// only. A separate event type from tool_call, so the server-side
+								// trace is not double counted.
+								if (normalised.renames.length > 0) {
+									recordAliasUse(telemetrySink, telemetryTarget, {
+										tool_name: name,
+										workspace_id: extractWorkspaceId(raw),
+										renames: normalised.renames,
+										both_sent: normalised.bothSent,
+										transport: config.transport,
+									})
+								}
+								return normalised.args
+							},
+							{ rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name) },
+						),
 					}
 				: baseDefinition
 		const defHasRichRender = Boolean(definition?._meta?.ui)
@@ -5735,9 +5858,10 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, no_thread, ...body } = args as {
+			const { workspace_id, no_thread, wait, ...body } = args as {
 				workspace_id?: string
 				no_thread?: boolean
+				wait?: boolean
 				parent_event_id?: number
 				[key: string]: unknown
 			}
@@ -5760,9 +5884,59 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', '/api/events', body, {
 				workspaceId: workspace_id,
 			})
+			let waitResult:
+				| Awaited<ReturnType<typeof waitForCommentReplies>>
+				| { note: string; lookup_errors?: string[] }
+				| undefined
+			if (wait) {
+				const posted = result as {
+					id?: number
+					actorId?: string
+					data?: { parentEventId?: number | null } | null
+				}
+				const mentioned = ((body.mentions as string[] | undefined) ?? []).filter(
+					(id) => id !== posted.actorId,
+				)
+				const agentIds: string[] = []
+				const lookupErrors: string[] = []
+				for (const id of mentioned) {
+					try {
+						const actor = (await apiCall(config, 'GET', `/api/actors/${id}`, undefined, {
+							workspaceId: workspace_id,
+						})) as ActorRow
+						if (actor?.type === 'agent') agentIds.push(id)
+					} catch (err) {
+						lookupErrors.push(`${id}: ${err instanceof Error ? err.message : String(err)}`)
+					}
+				}
+				if (typeof posted.id !== 'number' || agentIds.length === 0) {
+					waitResult = {
+						note:
+							lookupErrors.length > 0
+								? 'No agent could be confirmed, so nothing was waited for: looking up some mentioned actors failed (see lookup_errors).'
+								: 'No agent was mentioned, so there is nothing to wait for.',
+						...(lookupErrors.length > 0 ? { lookup_errors: lookupErrors } : {}),
+					}
+				} else {
+					const replies = await waitForCommentReplies(config, {
+						workspaceId: workspace_id,
+						objectId: String(body.entity_id),
+						commentId: posted.id,
+						// The server stores a reply under the thread root, and replies to it likewise.
+						threadRootId: posted.data?.parentEventId ?? posted.id,
+						awaitedActorIds: agentIds,
+					})
+					waitResult =
+						lookupErrors.length > 0 ? { ...replies, lookup_errors: lookupErrors } : replies
+				}
+			}
+			const payload =
+				waitResult && result && typeof result === 'object'
+					? { ...(result as object), wait: waitResult }
+					: result
 			return {
 				_meta: meta('create_comment', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
 			}
 		},
 	)
@@ -6322,12 +6496,26 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	registerAppTool(
+	// The upstream signature accepts a raw shape; list_triggers passes its strict
+	// schema object so the SDK rejects unknown parameters, so the narrow type is
+	// spelled out here. Same cast as registerWrappedSchemaTool below.
+	const registerStrictSchemaTool = registerAppTool as unknown as (
+		s: typeof server,
+		name: string,
+		definition: {
+			description: string
+			inputSchema: typeof tools.list_triggers.inputSchema
+			_meta: Record<string, unknown>
+		},
+		handler: (args: z.infer<typeof tools.list_triggers.inputSchema>) => Promise<unknown>,
+	) => unknown
+	registerStrictSchemaTool(
 		server,
 		'list_triggers',
 		{
 			description: tools.list_triggers.description,
-			inputSchema: tools.list_triggers.inputSchema.shape,
+			// The strict object itself, not its shape: the SDK then rejects unknown parameters.
+			inputSchema: tools.list_triggers.inputSchema,
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
@@ -6344,6 +6532,9 @@ export function createMcpServer(config: McpConfig) {
 				params.set('cursor_created_at', pagination.cursor.k.sortValue)
 				params.set('cursor_id', pagination.cursor.k.id)
 			}
+			if (args.agent_id) params.set('target_actor_id', args.agent_id)
+			if (args.status) params.set('enabled', String(args.status === 'enabled'))
+			if (args.q) params.set('q', args.q)
 			const { data, response } = await apiCallWithResponse(
 				config,
 				'GET',
@@ -6357,7 +6548,13 @@ export function createMcpServer(config: McpConfig) {
 				rawRows as Array<{ id: string; createdAt?: string | null }>,
 			)
 			const rows = trimmed as RawTrigger[]
-			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
+			const trimmedData = Array.isArray(data)
+				? (data as Array<Record<string, unknown>>).slice(0, rows.length).map((t) => {
+						if (!args.compact) return t
+						const { actionPrompt: _actionPrompt, ...rest } = t
+						return rest
+					})
+				: data
 			const ownerIds = rows
 				.map((t) => t.targetActorId)
 				.filter((v): v is string => typeof v === 'string')
@@ -6366,6 +6563,8 @@ export function createMcpServer(config: McpConfig) {
 				buildTriggerHeroCardObject(
 					t,
 					t.targetActorId ? (actors.get(t.targetActorId) ?? null) : null,
+					Date.now(),
+					args.compact,
 				),
 			)
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)

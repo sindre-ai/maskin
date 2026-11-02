@@ -36,6 +36,7 @@ private final class DeviceProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private let tokenHex = String(repeating: "ab", count: 32)
+private let deviceSecret = String(repeating: "s", count: 43)
 private let deviceJSON = """
 	{"id":"4f0c1c3e-8f4e-4f1a-9a55-0d1f2d1d9e11","actor_id":"a","platform":"ios","environment":"sandbox",
 	"app_version":"1.2","created_at":"2026-10-21T00:00:00.000Z","last_seen_at":"2026-10-21T00:00:00.000Z"}
@@ -76,12 +77,17 @@ struct APIDeviceRegistrarTests {
 	@Test("register body carries exactly the keys the server schema requires")
 	func registerBody() throws {
 		let data = try APIDeviceRegistrar.registerBody(
-			token: tokenHex, environment: .sandbox, platform: .ios, appVersion: "1.2")
+			token: tokenHex, environment: .sandbox, platform: .ios, appVersion: "1.2",
+			unregisterSecret: deviceSecret)
 		let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: String])
 		#expect(
-			json == ["platform": "ios", "apns_token": tokenHex, "environment": "sandbox", "app_version": "1.2"])
+			json == [
+				"platform": "ios", "apns_token": tokenHex, "environment": "sandbox", "app_version": "1.2",
+				"unregister_secret": deviceSecret,
+			])
 		let bare = try APIDeviceRegistrar.registerBody(
-			token: tokenHex, environment: .production, platform: .macos, appVersion: nil)
+			token: tokenHex, environment: .production, platform: .macos, appVersion: nil,
+			unregisterSecret: deviceSecret)
 		let keys = try #require(try JSONSerialization.jsonObject(with: bare) as? [String: String])
 		#expect(keys["environment"] == "production")
 		#expect(keys["platform"] == "macos")
@@ -91,7 +97,8 @@ struct APIDeviceRegistrarTests {
 	@Test("register sends the request and returns the decoded device id")
 	func registerReturnsId() async throws {
 		let id = try await registrar(json: deviceJSON).register(
-			token: tokenHex, environment: .sandbox, platform: .ios, appVersion: "1.2")
+			token: tokenHex, environment: .sandbox, platform: .ios, appVersion: "1.2",
+			unregisterSecret: deviceSecret)
 		#expect(id == "4f0c1c3e-8f4e-4f1a-9a55-0d1f2d1d9e11")
 		let s = try #require(seen.first)
 		#expect(s.method == "POST")
@@ -104,7 +111,8 @@ struct APIDeviceRegistrarTests {
 	func unreadableReply() async {
 		await #expect(throws: NotificationsError("Maskin sent a reply this version can't read.")) {
 			try await registrar(json: #"{"nope":1}"#).register(
-				token: tokenHex, environment: .sandbox, platform: .ios, appVersion: nil)
+				token: tokenHex, environment: .sandbox, platform: .ios, appVersion: nil,
+				unregisterSecret: deviceSecret)
 		}
 	}
 
@@ -121,7 +129,8 @@ struct APIDeviceRegistrarTests {
 			let r = registrar(status: status, json: #"{"error":{"message":"ank_secret leaked"}}"#, fail: fail)
 			do {
 				_ = try await r.register(
-					token: tokenHex, environment: .sandbox, platform: .ios, appVersion: nil)
+					token: tokenHex, environment: .sandbox, platform: .ios, appVersion: nil,
+					unregisterSecret: deviceSecret)
 				Issue.record("expected a throw for \(status)")
 			} catch let error as NotificationsError {
 				#expect(error.message == message)
@@ -155,6 +164,54 @@ struct APIDeviceRegistrarTests {
 		}
 		await #expect(throws: NotificationsError.self) {
 			try await registrar(fail: true).unregister(deviceId: "x")
+		}
+	}
+
+	@Test("the secret unregister has no Authorization header and no token in the URL")
+	func secretUnregisterRequest() async throws {
+		let r = registrar(json: #"{"deleted":true}"#)
+		let request = await r.makeSecretUnregisterRequest()
+		#expect(request.url?.absoluteString == "http://localhost:3000/api/devices/unregister")
+		#expect(request.httpMethod == "POST")
+		#expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+		#expect(request.value(forHTTPHeaderField: "X-Workspace-Id") == nil)
+		#expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+		try await r.unregister(token: tokenHex, environment: .sandbox, secret: deviceSecret)
+		let s = try #require(seen.first)
+		#expect(s.method == "POST")
+		#expect(s.url == "http://localhost:3000/api/devices/unregister")
+		#expect(!s.url.contains(tokenHex))
+		#expect(!s.url.contains(deviceSecret))
+		#expect(s.headers["Authorization"] == nil)
+	}
+
+	@Test("the secret unregister is done on any 200, whether or not a row was deleted")
+	func secretUnregisterDoneOn200() async throws {
+		try await registrar(json: #"{"deleted":true}"#).unregister(
+			token: tokenHex, environment: .sandbox, secret: deviceSecret)
+		try await registrar(json: #"{"deleted":false}"#).unregister(
+			token: tokenHex, environment: .production, secret: deviceSecret)
+	}
+
+	@Test("a server without the route (404 or 405) is not done")
+	func secretUnregisterRouteMissing() async {
+		for status in [404, 405] {
+			await #expect(throws: DeviceUnregisterRouteMissing.self) {
+				try await registrar(status: status).unregister(
+					token: tokenHex, environment: .sandbox, secret: deviceSecret)
+			}
+		}
+	}
+
+	@Test("a rate limit or a dead network is a plain failure, so the record stays pending")
+	func secretUnregisterFailures() async {
+		await #expect(throws: NotificationsError.self) {
+			try await registrar(status: 429).unregister(
+				token: tokenHex, environment: .sandbox, secret: deviceSecret)
+		}
+		await #expect(throws: NotificationsError.self) {
+			try await registrar(fail: true).unregister(
+				token: tokenHex, environment: .sandbox, secret: deviceSecret)
 		}
 	}
 }

@@ -346,12 +346,11 @@ export function trackChatObjectReferenceCreated(p: {
 
 // Fires when the `/` picker's Reference search endpoint fails. Paired at query
 // time with `chat_object_reference_created` to compute error-rate on the
-// picker; the message is truncated so posthog-js's batching doesn't reject a
-// long payload on a slow network. See the parent bet's "Retry works from the
+// picker; it carries the error name only, never the message. See the parent bet's "Retry works from the
 // error state" gate.
-export function trackChatSlashPickerError(p: { message: string }): void {
+export function trackChatSlashPickerError(p: { errorClass: string }): void {
 	trackEvent('chat_slash_picker_error', {
-		message: p.message.slice(0, 200),
+		error_class: p.errorClass,
 		source: 'web',
 	})
 }

@@ -222,6 +222,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session`.
+                        public var last_session: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/createdAt`.
@@ -431,6 +486,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -451,6 +507,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -471,6 +528,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -492,6 +550,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -883,6 +942,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session`.
+                        public var last_session: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/createdAt`.
@@ -1092,6 +1206,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -1112,6 +1227,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -1132,6 +1248,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -1153,6 +1270,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -2557,6 +2675,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session`.
+                        public var last_session: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/createdAt`.
@@ -2766,6 +2939,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -2786,6 +2960,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -2806,6 +2981,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -2827,6 +3003,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -3156,6 +3333,61 @@ public enum Operations {
                             public var activeSessionCurrentActivity: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/active_session_state`.
                             public var active_session_state: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session`.
+                            public struct last_sessionPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/status`.
+                                public var status: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/agent_id`.
+                                public var agent_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/started_at`.
+                                public var started_at: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/failure_reason`.
+                                public var failure_reason: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/chat_id`.
+                                public var chat_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/created_by_actor_id`.
+                                public var created_by_actor_id: Swift.String
+                                /// Creates a new `last_sessionPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - status:
+                                ///   - agent_id:
+                                ///   - started_at:
+                                ///   - failure_reason:
+                                ///   - chat_id:
+                                ///   - created_by_actor_id:
+                                public init(
+                                    id: Swift.String,
+                                    status: Swift.String,
+                                    agent_id: Swift.String,
+                                    started_at: Swift.String? = nil,
+                                    failure_reason: Swift.String? = nil,
+                                    chat_id: Swift.String? = nil,
+                                    created_by_actor_id: Swift.String
+                                ) {
+                                    self.id = id
+                                    self.status = status
+                                    self.agent_id = agent_id
+                                    self.started_at = started_at
+                                    self.failure_reason = failure_reason
+                                    self.chat_id = chat_id
+                                    self.created_by_actor_id = created_by_actor_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case status
+                                    case agent_id
+                                    case started_at
+                                    case failure_reason
+                                    case chat_id
+                                    case created_by_actor_id
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session`.
+                            public var last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.last_sessionPayload?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/createdBy`.
                             public var createdBy: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/createdAt`.
@@ -3365,6 +3597,7 @@ public enum Operations {
                             ///   - activeSessionId:
                             ///   - activeSessionCurrentActivity:
                             ///   - active_session_state:
+                            ///   - last_session:
                             ///   - createdBy:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -3385,6 +3618,7 @@ public enum Operations {
                                 activeSessionId: Swift.String? = nil,
                                 activeSessionCurrentActivity: Swift.String? = nil,
                                 active_session_state: Swift.String? = nil,
+                                last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.last_sessionPayload? = nil,
                                 createdBy: Swift.String,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -3405,6 +3639,7 @@ public enum Operations {
                                 self.activeSessionId = activeSessionId
                                 self.activeSessionCurrentActivity = activeSessionCurrentActivity
                                 self.active_session_state = active_session_state
+                                self.last_session = last_session
                                 self.createdBy = createdBy
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -3426,6 +3661,7 @@ public enum Operations {
                                 case activeSessionId
                                 case activeSessionCurrentActivity
                                 case active_session_state
+                                case last_session
                                 case createdBy
                                 case createdAt
                                 case updatedAt
@@ -3579,6 +3815,61 @@ public enum Operations {
                             public var activeSessionCurrentActivity: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/active_session_state`.
                             public var active_session_state: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session`.
+                            public struct last_sessionPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/status`.
+                                public var status: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/agent_id`.
+                                public var agent_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/started_at`.
+                                public var started_at: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/failure_reason`.
+                                public var failure_reason: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/chat_id`.
+                                public var chat_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/created_by_actor_id`.
+                                public var created_by_actor_id: Swift.String
+                                /// Creates a new `last_sessionPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - status:
+                                ///   - agent_id:
+                                ///   - started_at:
+                                ///   - failure_reason:
+                                ///   - chat_id:
+                                ///   - created_by_actor_id:
+                                public init(
+                                    id: Swift.String,
+                                    status: Swift.String,
+                                    agent_id: Swift.String,
+                                    started_at: Swift.String? = nil,
+                                    failure_reason: Swift.String? = nil,
+                                    chat_id: Swift.String? = nil,
+                                    created_by_actor_id: Swift.String
+                                ) {
+                                    self.id = id
+                                    self.status = status
+                                    self.agent_id = agent_id
+                                    self.started_at = started_at
+                                    self.failure_reason = failure_reason
+                                    self.chat_id = chat_id
+                                    self.created_by_actor_id = created_by_actor_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case status
+                                    case agent_id
+                                    case started_at
+                                    case failure_reason
+                                    case chat_id
+                                    case created_by_actor_id
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session`.
+                            public var last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.last_sessionPayload?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/createdBy`.
                             public var createdBy: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/createdAt`.
@@ -3788,6 +4079,7 @@ public enum Operations {
                             ///   - activeSessionId:
                             ///   - activeSessionCurrentActivity:
                             ///   - active_session_state:
+                            ///   - last_session:
                             ///   - createdBy:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -3808,6 +4100,7 @@ public enum Operations {
                                 activeSessionId: Swift.String? = nil,
                                 activeSessionCurrentActivity: Swift.String? = nil,
                                 active_session_state: Swift.String? = nil,
+                                last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.last_sessionPayload? = nil,
                                 createdBy: Swift.String,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -3828,6 +4121,7 @@ public enum Operations {
                                 self.activeSessionId = activeSessionId
                                 self.activeSessionCurrentActivity = activeSessionCurrentActivity
                                 self.active_session_state = active_session_state
+                                self.last_session = last_session
                                 self.createdBy = createdBy
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -3849,6 +4143,7 @@ public enum Operations {
                                 case activeSessionId
                                 case activeSessionCurrentActivity
                                 case active_session_state
+                                case last_session
                                 case createdBy
                                 case createdAt
                                 case updatedAt
@@ -4906,6 +5201,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session`.
+                        public var last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/createdAt`.
@@ -5115,6 +5465,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -5135,6 +5486,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -5155,6 +5507,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -5176,6 +5529,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -5591,6 +5945,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session`.
+                        public var last_session: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/createdAt`.
@@ -5800,6 +6209,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -5820,6 +6230,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -5840,6 +6251,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -5861,6 +6273,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -28994,6 +29407,17 @@ public enum Operations {
                 public var cursor_created_at: Foundation.Date?
                 /// - Remark: Generated from `#/paths/api/triggers/GET/query/cursor_id`.
                 public var cursor_id: Swift.String?
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/target_actor_id`.
+                public var target_actor_id: Swift.String?
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/enabled`.
+                @frozen public enum enabledPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case _true = "true"
+                    case _false = "false"
+                }
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/enabled`.
+                public var enabled: Operations.get_sol_api_sol_triggers.Input.Query.enabledPayload?
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/q`.
+                public var q: Swift.String?
                 /// Creates a new `Query`.
                 ///
                 /// - Parameters:
@@ -29003,13 +29427,19 @@ public enum Operations {
                 ///   - snapshot_at:
                 ///   - cursor_created_at:
                 ///   - cursor_id:
+                ///   - target_actor_id:
+                ///   - enabled:
+                ///   - q:
                 public init(
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil,
                     order: Operations.get_sol_api_sol_triggers.Input.Query.orderPayload? = nil,
                     snapshot_at: Foundation.Date? = nil,
                     cursor_created_at: Foundation.Date? = nil,
-                    cursor_id: Swift.String? = nil
+                    cursor_id: Swift.String? = nil,
+                    target_actor_id: Swift.String? = nil,
+                    enabled: Operations.get_sol_api_sol_triggers.Input.Query.enabledPayload? = nil,
+                    q: Swift.String? = nil
                 ) {
                     self.limit = limit
                     self.offset = offset
@@ -29017,6 +29447,9 @@ public enum Operations {
                     self.snapshot_at = snapshot_at
                     self.cursor_created_at = cursor_created_at
                     self.cursor_id = cursor_id
+                    self.target_actor_id = target_actor_id
+                    self.enabled = enabled
+                    self.q = q
                 }
             }
             public var query: Operations.get_sol_api_sol_triggers.Input.Query
@@ -29516,21 +29949,27 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config/scope`.
                             public var scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload?
+                            /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config/skip_when_idle`.
+                            public var skip_when_idle: Swift.Bool?
                             /// Creates a new `configPayload`.
                             ///
                             /// - Parameters:
                             ///   - expression:
                             ///   - scope:
+                            ///   - skip_when_idle:
                             public init(
                                 expression: Swift.String,
-                                scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload? = nil
+                                scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload? = nil,
+                                skip_when_idle: Swift.Bool? = nil
                             ) {
                                 self.expression = expression
                                 self.scope = scope
+                                self.skip_when_idle = skip_when_idle
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case expression
                                 case scope
+                                case skip_when_idle
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config`.
@@ -30500,21 +30939,27 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1/scope`.
                             public var scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload?
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1/skip_when_idle`.
+                            public var skip_when_idle: Swift.Bool?
                             /// Creates a new `Value1Payload`.
                             ///
                             /// - Parameters:
                             ///   - expression:
                             ///   - scope:
+                            ///   - skip_when_idle:
                             public init(
                                 expression: Swift.String,
-                                scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload? = nil
+                                scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload? = nil,
+                                skip_when_idle: Swift.Bool? = nil
                             ) {
                                 self.expression = expression
                                 self.scope = scope
+                                self.skip_when_idle = skip_when_idle
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case expression
                                 case scope
+                                case skip_when_idle
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1`.
@@ -55876,6 +56321,8 @@ public enum Operations {
                             public var createdAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/updatedAt`.
                             public var updatedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/failure_reason`.
+                            public var failure_reason: Swift.String?
                             /// Creates a new `Value1PayloadPayload`.
                             ///
                             /// - Parameters:
@@ -55897,6 +56344,7 @@ public enum Operations {
                             ///   - createdBy:
                             ///   - createdAt:
                             ///   - updatedAt:
+                            ///   - failure_reason:
                             public init(
                                 id: Swift.String,
                                 workspaceId: Swift.String,
@@ -55915,7 +56363,8 @@ public enum Operations {
                                 timeoutAt: Swift.String? = nil,
                                 createdBy: Swift.String,
                                 createdAt: Swift.String? = nil,
-                                updatedAt: Swift.String? = nil
+                                updatedAt: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil
                             ) {
                                 self.id = id
                                 self.workspaceId = workspaceId
@@ -55935,6 +56384,7 @@ public enum Operations {
                                 self.createdBy = createdBy
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
+                                self.failure_reason = failure_reason
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
@@ -55955,6 +56405,7 @@ public enum Operations {
                                 case createdBy
                                 case createdAt
                                 case updatedAt
+                                case failure_reason
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value1`.
@@ -55985,6 +56436,8 @@ public enum Operations {
                             public var status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload
                             /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/updated_at`.
                             public var updated_at: Foundation.Date?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/failure_reason`.
+                            public var failure_reason: Swift.String?
                             /// Creates a new `Value2PayloadPayload`.
                             ///
                             /// - Parameters:
@@ -55992,22 +56445,26 @@ public enum Operations {
                             ///   - title:
                             ///   - status:
                             ///   - updated_at:
+                            ///   - failure_reason:
                             public init(
                                 id: Swift.String,
                                 title: Swift.String,
                                 status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload,
-                                updated_at: Foundation.Date? = nil
+                                updated_at: Foundation.Date? = nil,
+                                failure_reason: Swift.String? = nil
                             ) {
                                 self.id = id
                                 self.title = title
                                 self.status = status
                                 self.updated_at = updated_at
+                                self.failure_reason = failure_reason
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
                                 case title
                                 case status
                                 case updated_at
+                                case failure_reason
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value2`.
@@ -56724,6 +57181,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -56745,6 +57204,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -56763,7 +57223,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -56783,6 +57244,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -56803,6 +57265,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/application\/json`.
@@ -57175,6 +57638,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload`.
                         public struct logsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload/id`.
@@ -57241,6 +57706,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         ///   - logs:
                         public init(
                             id: Swift.String,
@@ -57261,6 +57727,7 @@ public enum Operations {
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil,
                             logs: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.logsPayload? = nil
                         ) {
                             self.id = id
@@ -57281,6 +57748,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                             self.logs = logs
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -57302,6 +57770,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                             case logs
                         }
                     }
@@ -57822,6 +58291,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_on_complete`.
                         @frozen public enum notify_on_completePayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case registered = "registered"
@@ -57853,6 +58324,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         ///   - notify_on_complete:
                         ///   - notify_skip_reason:
                         public init(
@@ -57874,6 +58346,7 @@ public enum Operations {
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil,
                             notify_on_complete: Operations.patch_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.notify_on_completePayload? = nil,
                             notify_skip_reason: Swift.String? = nil
                         ) {
@@ -57895,6 +58368,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                             self.notify_on_complete = notify_on_complete
                             self.notify_skip_reason = notify_skip_reason
                         }
@@ -57917,6 +58391,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                             case notify_on_complete
                             case notify_skip_reason
                         }
@@ -58406,6 +58881,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -58427,6 +58904,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -58445,7 +58923,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -58465,6 +58944,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -58485,6 +58965,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/application\/json`.
@@ -59110,6 +59591,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -59131,6 +59614,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -59149,7 +59633,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -59169,6 +59654,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -59189,6 +59675,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/application\/json`.
@@ -59814,6 +60301,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -59835,6 +60324,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -59853,7 +60343,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -59873,6 +60364,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -59893,6 +60385,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/application\/json`.
@@ -66648,6 +67141,61 @@ public enum Operations {
                                 public var activeSessionCurrentActivity: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/active_session_state`.
                                 public var active_session_state: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session`.
+                                public struct last_sessionPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/id`.
+                                    public var id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/status`.
+                                    public var status: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/agent_id`.
+                                    public var agent_id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/started_at`.
+                                    public var started_at: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/failure_reason`.
+                                    public var failure_reason: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/chat_id`.
+                                    public var chat_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/created_by_actor_id`.
+                                    public var created_by_actor_id: Swift.String
+                                    /// Creates a new `last_sessionPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - id:
+                                    ///   - status:
+                                    ///   - agent_id:
+                                    ///   - started_at:
+                                    ///   - failure_reason:
+                                    ///   - chat_id:
+                                    ///   - created_by_actor_id:
+                                    public init(
+                                        id: Swift.String,
+                                        status: Swift.String,
+                                        agent_id: Swift.String,
+                                        started_at: Swift.String? = nil,
+                                        failure_reason: Swift.String? = nil,
+                                        chat_id: Swift.String? = nil,
+                                        created_by_actor_id: Swift.String
+                                    ) {
+                                        self.id = id
+                                        self.status = status
+                                        self.agent_id = agent_id
+                                        self.started_at = started_at
+                                        self.failure_reason = failure_reason
+                                        self.chat_id = chat_id
+                                        self.created_by_actor_id = created_by_actor_id
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case id
+                                        case status
+                                        case agent_id
+                                        case started_at
+                                        case failure_reason
+                                        case chat_id
+                                        case created_by_actor_id
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session`.
+                                public var last_session: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.last_sessionPayload?
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/createdBy`.
                                 public var createdBy: Swift.String
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/createdAt`.
@@ -66857,6 +67405,7 @@ public enum Operations {
                                 ///   - activeSessionId:
                                 ///   - activeSessionCurrentActivity:
                                 ///   - active_session_state:
+                                ///   - last_session:
                                 ///   - createdBy:
                                 ///   - createdAt:
                                 ///   - updatedAt:
@@ -66877,6 +67426,7 @@ public enum Operations {
                                     activeSessionId: Swift.String? = nil,
                                     activeSessionCurrentActivity: Swift.String? = nil,
                                     active_session_state: Swift.String? = nil,
+                                    last_session: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.last_sessionPayload? = nil,
                                     createdBy: Swift.String,
                                     createdAt: Swift.String? = nil,
                                     updatedAt: Swift.String? = nil,
@@ -66897,6 +67447,7 @@ public enum Operations {
                                     self.activeSessionId = activeSessionId
                                     self.activeSessionCurrentActivity = activeSessionCurrentActivity
                                     self.active_session_state = active_session_state
+                                    self.last_session = last_session
                                     self.createdBy = createdBy
                                     self.createdAt = createdAt
                                     self.updatedAt = updatedAt
@@ -66918,6 +67469,7 @@ public enum Operations {
                                     case activeSessionId
                                     case activeSessionCurrentActivity
                                     case active_session_state
+                                    case last_session
                                     case createdBy
                                     case createdAt
                                     case updatedAt
@@ -70233,6 +70785,61 @@ public enum Operations {
                                 public var activeSessionCurrentActivity: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/active_session_state`.
                                 public var active_session_state: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session`.
+                                public struct last_sessionPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/id`.
+                                    public var id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/status`.
+                                    public var status: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/agent_id`.
+                                    public var agent_id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/started_at`.
+                                    public var started_at: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/failure_reason`.
+                                    public var failure_reason: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/chat_id`.
+                                    public var chat_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/created_by_actor_id`.
+                                    public var created_by_actor_id: Swift.String
+                                    /// Creates a new `last_sessionPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - id:
+                                    ///   - status:
+                                    ///   - agent_id:
+                                    ///   - started_at:
+                                    ///   - failure_reason:
+                                    ///   - chat_id:
+                                    ///   - created_by_actor_id:
+                                    public init(
+                                        id: Swift.String,
+                                        status: Swift.String,
+                                        agent_id: Swift.String,
+                                        started_at: Swift.String? = nil,
+                                        failure_reason: Swift.String? = nil,
+                                        chat_id: Swift.String? = nil,
+                                        created_by_actor_id: Swift.String
+                                    ) {
+                                        self.id = id
+                                        self.status = status
+                                        self.agent_id = agent_id
+                                        self.started_at = started_at
+                                        self.failure_reason = failure_reason
+                                        self.chat_id = chat_id
+                                        self.created_by_actor_id = created_by_actor_id
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case id
+                                        case status
+                                        case agent_id
+                                        case started_at
+                                        case failure_reason
+                                        case chat_id
+                                        case created_by_actor_id
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session`.
+                                public var last_session: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.last_sessionPayload?
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/createdBy`.
                                 public var createdBy: Swift.String
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/createdAt`.
@@ -70442,6 +71049,7 @@ public enum Operations {
                                 ///   - activeSessionId:
                                 ///   - activeSessionCurrentActivity:
                                 ///   - active_session_state:
+                                ///   - last_session:
                                 ///   - createdBy:
                                 ///   - createdAt:
                                 ///   - updatedAt:
@@ -70462,6 +71070,7 @@ public enum Operations {
                                     activeSessionId: Swift.String? = nil,
                                     activeSessionCurrentActivity: Swift.String? = nil,
                                     active_session_state: Swift.String? = nil,
+                                    last_session: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.last_sessionPayload? = nil,
                                     createdBy: Swift.String,
                                     createdAt: Swift.String? = nil,
                                     updatedAt: Swift.String? = nil,
@@ -70482,6 +71091,7 @@ public enum Operations {
                                     self.activeSessionId = activeSessionId
                                     self.activeSessionCurrentActivity = activeSessionCurrentActivity
                                     self.active_session_state = active_session_state
+                                    self.last_session = last_session
                                     self.createdBy = createdBy
                                     self.createdAt = createdAt
                                     self.updatedAt = updatedAt
@@ -70503,6 +71113,7 @@ public enum Operations {
                                     case activeSessionId
                                     case activeSessionCurrentActivity
                                     case active_session_state
+                                    case last_session
                                     case createdBy
                                     case createdAt
                                     case updatedAt

@@ -6382,6 +6382,114 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
 		})
 
+		it('list_triggers sends agent_id, status and q as API filters and keeps them on the next page', async () => {
+			const agentId = '11111111-1111-4111-8111-111111111111'
+			const calls: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				calls.push(urlStr)
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '3' }),
+						json: () =>
+							Promise.resolve(
+								['t-1', 't-2'].map((id, i) => ({
+									id,
+									type: 'cron',
+									name: `PR merge sweep ${id}`,
+									enabled: true,
+									targetActorId: agentId,
+									createdAt: new Date(2026, 0, 1, 0, 0, 10 - i).toISOString(),
+								})),
+							),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			const first = (await handler({
+				workspace_id: 'ws-1',
+				limit: 1,
+				agent_id: agentId,
+				status: 'disabled',
+				q: 'merge sweep',
+			})) as { structuredContent: { next_cursor?: string } }
+			const next = first.structuredContent.next_cursor
+			expect(next).toBeDefined()
+			await handler({
+				workspace_id: 'ws-1',
+				limit: 1,
+				cursor: next,
+				agent_id: agentId,
+				status: 'disabled',
+				q: 'merge sweep',
+			})
+			const triggerCalls = calls.filter((u) => u.includes('/api/triggers'))
+			expect(triggerCalls).toHaveLength(2)
+			for (const u of triggerCalls) {
+				const params = new URL(u, 'http://x').searchParams
+				expect(params.get('target_actor_id')).toBe(agentId)
+				expect(params.get('enabled')).toBe('false')
+				expect(params.get('q')).toBe('merge sweep')
+			}
+			expect(new URL(triggerCalls[1], 'http://x').searchParams.get('cursor_id')).toBe('t-1')
+		})
+
+		it('list_triggers sends no filter params when none are given', async () => {
+			const calls: string[] = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				calls.push(url as string)
+				return {
+					ok: true,
+					headers: new Headers({ 'X-Total-Count': '0' }),
+					json: () => Promise.resolve([]),
+				} as Response
+			})
+			await getHandler('list_triggers')({ workspace_id: 'ws-1' })
+			const params = new URL(calls.find((u) => u.includes('/api/triggers')) as string, 'http://x')
+				.searchParams
+			for (const key of ['target_actor_id', 'enabled', 'q']) expect(params.has(key)).toBe(false)
+		})
+
+		it('list_triggers compact leaves the action prompt out of the rows and the card', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				if ((url as string).includes('/api/triggers')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '2' }),
+						json: () =>
+							Promise.resolve(
+								['t-1', 't-2'].map((id) => ({
+									id,
+									type: 'cron',
+									name: `Trigger ${id}`,
+									enabled: true,
+									targetActorId: null,
+									actionPrompt: 'A very long prompt',
+								})),
+							),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			type Result = {
+				content: Array<{ text: string }>
+				structuredContent: { heroCard: { objects: Array<Record<string, unknown>> } }
+			}
+			const full = (await handler({ workspace_id: 'ws-1' })) as Result
+			expect(full.content[0].text).toContain('A very long prompt')
+			expect(full.structuredContent.heroCard.objects[0].actionPrompt).toBe('A very long prompt')
+
+			const compact = (await handler({ workspace_id: 'ws-1', compact: true })) as Result
+			expect(compact.content[0].text).not.toContain('A very long prompt')
+			expect(compact.content[0].text).toContain('t-1')
+			for (const object of compact.structuredContent.heroCard.objects) {
+				expect(object).not.toHaveProperty('actionPrompt')
+			}
+		})
+
 		// Regression: same bug as `list_actors returns every row…` above. See
 		// that test for the fuller comment; both tools share the fix.
 		it('list_triggers returns every row when paged with limit > 25 (no silent 25-row clamp)', async () => {
