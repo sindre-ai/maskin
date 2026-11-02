@@ -122,7 +122,7 @@ describe('a new decision card replaces the same author’s older card on the sam
 		expect(rows[0]).toMatchObject({ sourceCommentId: first, withdrawnBy: agentId, workspaceId })
 	})
 
-	it('keeps a card by another author on the same object', async () => {
+	it('does not withdraw a card by another author on the same object', async () => {
 		const other = await insertActor(db, {
 			type: 'agent',
 			name: 'Other writer',
@@ -131,9 +131,13 @@ describe('a new decision card replaces the same author’s older card on the sam
 		})
 		const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
 		await postCard({ id: other.id, type: 'agent' }, obj.id, 'Is the other note ready?')
-		await postCard(agent(), obj.id, 'Is the older note ready?')
+		const older = await postCard(agent(), obj.id, 'Is the older note ready?')
 		await postCard(agent(), obj.id, 'Is the newer note ready?')
-		expect(await headlines()).toEqual(['Is the newer note ready?', 'Is the other note ready?'])
+		// The list still shows only the newest card per object; what matters here is that
+		// only this agent's earlier card was withdrawn, not the other author's.
+		const rows = await db.select().from(forYouWithdrawals)
+		expect(rows.map((r) => r.sourceCommentId)).toEqual([older])
+		expect(await headlines()).toEqual(['Is the newer note ready?'])
 	})
 
 	it('keeps the same agent’s card on a different object', async () => {
