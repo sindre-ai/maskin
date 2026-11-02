@@ -17,6 +17,7 @@ vi.mock('node:fs', () => ({
 
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { decodeCursor, encodeCursor } from '../cursor'
 import {
 	type IntegrationRow,
 	integrationSortKey,
@@ -213,6 +214,8 @@ describe('list tools put the same payload on both channels', () => {
 
 	const textOf = (res: Result) =>
 		JSON.parse(res.content[0]?.text ?? 'null') as Record<string, unknown>
+	// list_triggers keeps its rows in the text and the hero card only, so read rows from the text.
+	const rowsOf = (res: Result, key: string) => textOf(res)[key] as Array<Record<string, unknown>>
 	const idsOf = (res: Result) =>
 		(res.structuredContent.integrations as Array<{ id: string }>).map((r) => r.id)
 
@@ -404,6 +407,364 @@ describe('list tools put the same payload on both channels', () => {
 				expect(text[c.rows]).toEqual(res.structuredContent[c.rows])
 			})
 		}
+	})
+
+	describe('the four tools with filters (list_triggers, list_loops, list_workspace_skills, list_extensions)', () => {
+		const created = (i: number) => `2026-06-${String(30 - (i % 28)).padStart(2, '0')}T00:00:00.000Z`
+		const agentId = uuid('77777777', 1)
+
+		/** Answer each API route with its own fixture; anything else is an empty list. */
+		function stubRoutes(routes: Array<[string, unknown]>) {
+			return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const hit = routes.find(([part]) => String(url).includes(part))
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(hit ? hit[1] : []),
+				} as Response
+			})
+		}
+
+		/**
+		 * The /api/triggers route as the tool uses it: filters, the (createdAt desc, id) keyset,
+		 * a limit and the total in X-Total-Count.
+		 */
+		function stubTriggersApi(rows: Array<Record<string, unknown>>) {
+			return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = new URL(String(url), 'http://x')
+				if (!u.pathname.endsWith('/api/triggers')) {
+					return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+				}
+				const p = u.searchParams
+				let hits = rows.filter(
+					(r) =>
+						(!p.get('target_actor_id') || r.targetActorId === p.get('target_actor_id')) &&
+						(!p.get('enabled') || r.enabled === (p.get('enabled') === 'true')) &&
+						(!p.get('q') ||
+							String(r.name)
+								.toLowerCase()
+								.includes(String(p.get('q')).toLowerCase())),
+				)
+				hits = [...hits].sort((a, b) =>
+					a.createdAt !== b.createdAt
+						? String(a.createdAt) < String(b.createdAt)
+							? 1
+							: -1
+						: String(a.id) < String(b.id)
+							? -1
+							: 1,
+				)
+				const total = hits.length
+				const at = hits.findIndex(
+					(r) => r.createdAt === p.get('cursor_created_at') && r.id === p.get('cursor_id'),
+				)
+				if (p.get('cursor_id') && at >= 0) hits = hits.slice(at + 1)
+				const page = hits.slice(0, Number(p.get('limit') ?? hits.length))
+				return {
+					ok: true,
+					headers: new Headers({ 'X-Total-Count': String(total) }),
+					json: () => Promise.resolve(page),
+				} as Response
+			})
+		}
+
+		function extensionsFixture(count: number) {
+			const statuses: Record<string, string[]> = {}
+			const customExtensions: Record<string, { name: string; types: string[]; enabled?: boolean }> =
+				{}
+			for (let i = 0; i < count; i++) {
+				statuses[`type_${i}`] = ['todo', 'done']
+				customExtensions[`custom_${String(i).padStart(3, '0')}`] = {
+					name: i % 2 === 0 ? `Billing ${i}` : `Support ${i}`,
+					types: [`type_${i}`],
+					enabled: i % 3 !== 0,
+				}
+			}
+			return [
+				{
+					id: wsId,
+					name: 'Workspace',
+					settings: { statuses, custom_extensions: customExtensions },
+				},
+			]
+		}
+
+		const triggerRows = Array.from({ length: 60 }, (_, i) => ({
+			id: uuid('33333333', i),
+			workspaceId: wsId,
+			name: i % 4 === 0 ? `Weekly sweep ${i}` : `Trigger ${i}`,
+			type: i % 3 === 0 ? 'cron' : 'event',
+			enabled: i % 2 === 0,
+			targetActorId: i % 5 === 0 ? agentId : null,
+			createdAt: created(i),
+		}))
+		const loopRows = Array.from({ length: 60 }, (_, i) => ({
+			id: uuid('11111111', i),
+			workspaceId: wsId,
+			name: i % 3 === 0 ? `Sales loop ${i}` : `Loop ${i}`,
+			status: 'draft',
+			createdAt: created(i),
+		}))
+		const skillRows = Array.from({ length: 60 }, (_, i) => ({
+			id: uuid('44444444', i),
+			name: `skill-${i}`,
+			description: i % 4 === 0 ? 'Handles invoices' : 'Something else',
+			createdAt: created(i),
+		}))
+
+		interface FilterCase {
+			tool: string
+			rows: string
+			filter: Record<string, unknown>
+			/** True for a row the filter keeps, read off the unfiltered rows the tool returns. */
+			keep: (row: Record<string, unknown>) => boolean
+			stub: () => void
+		}
+
+		const cases: FilterCase[] = [
+			{
+				tool: 'list_triggers',
+				rows: 'triggers',
+				filter: { agent_id: agentId },
+				keep: (row) => row.targetActorId === agentId,
+				stub: () => stubTriggersApi(triggerRows),
+			},
+			{
+				tool: 'list_loops',
+				rows: 'loops',
+				filter: { q: 'SALES' },
+				keep: (row) => String(row.name).startsWith('Sales'),
+				stub: () => stubRoutes([['/api/loops', { loops: loopRows }]]),
+			},
+			{
+				tool: 'list_workspace_skills',
+				rows: 'skills',
+				filter: { q: 'invoice' },
+				keep: (row) => String(row.description).includes('invoices'),
+				stub: () => stubRoutes([['/skills', skillRows]]),
+			},
+			{
+				tool: 'list_extensions',
+				rows: 'extensions',
+				filter: { enabled: false },
+				keep: (row) => row.enabled === false,
+				stub: () => stubRoutes([['/api/workspaces', extensionsFixture(30)]]),
+			},
+		]
+
+		/** What the filter should keep, counted on the unfiltered rows the tool itself returns. */
+		async function counts(c: FilterCase) {
+			c.stub()
+			const res = await call(c.tool, { limit: 100 })
+			const rows = rowsOf(res, c.rows)
+			const kept = rows.filter(c.keep).length
+			expect(kept).toBeGreaterThan(5)
+			expect(kept).toBeLessThan(rows.length)
+			return { all: rows.length, kept }
+		}
+
+		async function walk(c: FilterCase, args: Record<string, unknown>) {
+			const ids: string[] = []
+			const pages: Result[] = []
+			let cursor: string | undefined
+			for (let hop = 0; hop < 30; hop++) {
+				const res = await call(c.tool, { ...args, ...(cursor ? { cursor } : {}) })
+				pages.push(res)
+				ids.push(...rowsOf(res, c.rows).map((r) => r.id as string))
+				cursor = res.structuredContent.next_cursor as string | undefined
+				if (!cursor) break
+			}
+			return { ids, pages }
+		}
+
+		for (const c of cases) {
+			describe(c.tool, () => {
+				it('carries limit, returned, has_more and total in the page block, and next_cursor, on both channels', async () => {
+					const { kept } = await counts(c)
+					const res = await call(c.tool, { ...c.filter, limit: 5 })
+
+					expect(Object.keys(res.structuredContent.page as object).sort()).toEqual([
+						'has_more',
+						'limit',
+						'returned',
+						'total',
+					])
+					expect(res.structuredContent.page).toEqual({
+						limit: 5,
+						returned: 5,
+						total: kept,
+						has_more: true,
+					})
+					expect(typeof res.structuredContent.next_cursor).toBe('string')
+					expect(textOf(res).page).toEqual(res.structuredContent.page)
+					expect(textOf(res).next_cursor).toBe(res.structuredContent.next_cursor)
+				})
+
+				it('returns fewer rows than the unfiltered call, and the total is the filtered count', async () => {
+					const { all, kept } = await counts(c)
+					const unfiltered = await call(c.tool, { limit: 100 })
+					const filtered = await call(c.tool, { ...c.filter, limit: 100 })
+
+					expect((unfiltered.structuredContent.page as { total: number }).total).toBe(all)
+					expect((filtered.structuredContent.page as { total: number }).total).toBe(kept)
+					expect(rowsOf(filtered, c.rows).length).toBe(kept)
+					expect(filtered.structuredContent.page).toMatchObject({ has_more: false })
+					expect(filtered.structuredContent).not.toHaveProperty('next_cursor')
+				})
+
+				it('walks the filtered set once: every match exactly once, then has_more false', async () => {
+					const { kept } = await counts(c)
+					const { ids, pages } = await walk(c, { ...c.filter, limit: 7 })
+
+					expect(ids).toHaveLength(kept)
+					expect(new Set(ids).size).toBe(kept)
+					const last = pages[pages.length - 1]
+					expect(last?.structuredContent.page).toMatchObject({ has_more: false })
+					expect(last?.structuredContent).not.toHaveProperty('next_cursor')
+					// The total stays the filtered count on every hop of the walk.
+					for (const page of pages) {
+						expect((page.structuredContent.page as { total: number }).total).toBe(kept)
+					}
+				})
+
+				it('hands out a cursor that decodes and re-encodes to itself', async () => {
+					c.stub()
+					const res = await call(c.tool, { ...c.filter, limit: 3 })
+					const cursor = res.structuredContent.next_cursor as string
+					const state = decodeCursor(cursor)
+					expect(state).not.toBeNull()
+					const { v: _v, ...rest } = state as NonNullable<typeof state>
+					expect(encodeCursor(rest)).toBe(cursor)
+				})
+
+				it('says Default 25, max 100 in its description, and serves a page of 100', async () => {
+					expect(tools[c.tool as keyof typeof tools].description).toContain('Default 25, max 100')
+					c.stub()
+					const res = await call(c.tool, { limit: 100 })
+					expect((res.structuredContent.page as { limit: number }).limit).toBe(100)
+				})
+			})
+		}
+
+		describe('list_triggers filters', () => {
+			it('keeps only the triggers that run one agent, enabled ones, or a word of the name', async () => {
+				stubTriggersApi(triggerRows)
+				const total = async (args: Record<string, unknown>) =>
+					(
+						(await call('list_triggers', { limit: 100, ...args })).structuredContent.page as {
+							total: number
+						}
+					).total
+
+				expect(await total({ agent_id: agentId })).toBe(12)
+				expect(await total({ status: 'enabled' })).toBe(30)
+				expect(await total({ status: 'disabled' })).toBe(30)
+				expect(await total({ q: 'weekly SWEEP' })).toBe(15)
+				// Rows 0, 20 and 40: this agent, enabled and a weekly name.
+				expect(await total({ agent_id: agentId, status: 'enabled', q: 'weekly' })).toBe(3)
+			})
+
+			it('lists every one of 247 triggers once with a page of 100, including the full-page probe', async () => {
+				const many = Array.from({ length: 247 }, (_, i) => ({
+					id: uuid('88888888', i),
+					workspaceId: wsId,
+					name: `Trigger ${i}`,
+					type: 'event',
+					enabled: true,
+					targetActorId: null,
+					createdAt: `2026-05-${String((i % 28) + 1).padStart(2, '0')}T00:00:00.000Z`,
+				}))
+				stubTriggersApi(many)
+				const seen = new Set<string>()
+				const hasMore: boolean[] = []
+				let cursor: string | undefined
+				for (let hop = 0; hop < 20; hop++) {
+					const res = await call('list_triggers', { limit: 100, ...(cursor ? { cursor } : {}) })
+					for (const r of rowsOf(res, 'triggers')) seen.add(r.id as string)
+					hasMore.push((res.structuredContent.page as { has_more: boolean }).has_more)
+					cursor = res.structuredContent.next_cursor as string | undefined
+					if (!cursor) break
+				}
+				expect(seen.size).toBe(247)
+				expect(hasMore).toEqual([true, true, false])
+			})
+		})
+
+		describe('list_loops status filter', () => {
+			// /api/loops folds stored pilot, live and archived into draft; the objects route has the truth.
+			const stored = ['draft', 'pilot', 'live', 'archived', 'paused', 'supervised']
+			const storedObjects = loopRows.map((l, i) => ({
+				id: l.id,
+				status: stored[i % stored.length],
+				createdAt: l.createdAt,
+			}))
+			const idsFor = (statuses: string[]) =>
+				loopRows.filter((_, i) => statuses.includes(stored[i % stored.length] as string)).length
+
+			it('filters on the stored status, as one string or as a list', async () => {
+				const spy = stubRoutes([
+					['/api/objects', storedObjects],
+					['/api/loops', { loops: loopRows }],
+				])
+				const one = await call('list_loops', { status: 'archived', limit: 100 })
+				expect(one.structuredContent.page).toMatchObject({ total: idsFor(['archived']) })
+
+				const many = await call('list_loops', { status: ['Pilot', 'live'], limit: 100 })
+				expect(many.structuredContent.page).toMatchObject({ total: idsFor(['pilot', 'live']) })
+				expect((many.structuredContent.loops as unknown[]).length).toBe(idsFor(['pilot', 'live']))
+
+				const objectCalls = spy.mock.calls
+					.map((c) => String(c[0]))
+					.filter((u) => u.includes('/api/objects'))
+				expect(objectCalls[0]).toContain('type=loop')
+				expect(objectCalls[0]).toContain('include_archived=true')
+			})
+
+			it('combines status with q and does not read the objects route without a status', async () => {
+				const spy = stubRoutes([
+					['/api/objects', storedObjects],
+					['/api/loops', { loops: loopRows }],
+				])
+				await call('list_loops', { q: 'sales', limit: 100 })
+				expect(
+					spy.mock.calls.map((c) => String(c[0])).some((u) => u.includes('/api/objects')),
+				).toBe(false)
+
+				const both = await call('list_loops', { status: 'live', q: 'sales', limit: 100 })
+				const expected = loopRows.filter(
+					(l, i) => stored[i % stored.length] === 'live' && l.name.startsWith('Sales'),
+				).length
+				expect(both.structuredContent.page).toMatchObject({ total: expected })
+			})
+		})
+
+		describe('list_extensions filters', () => {
+			it('filters on enabled and on a word of the id or name', async () => {
+				stubRoutes([['/api/workspaces', extensionsFixture(30)]])
+				const enabled = await call('list_extensions', { enabled: true, limit: 100 })
+				const rows = enabled.structuredContent.extensions as Array<{ enabled: boolean }>
+				expect(rows.length).toBeGreaterThan(0)
+				expect(rows.every((r) => r.enabled)).toBe(true)
+
+				const billing = await call('list_extensions', { q: 'billing', limit: 100 })
+				expect(billing.structuredContent.page).toMatchObject({ total: 15 })
+				const byId = await call('list_extensions', { q: 'CUSTOM_007', limit: 100 })
+				expect(byId.structuredContent.page).toMatchObject({ total: 1 })
+			})
+		})
+	})
+
+	describe('list_objects and search_objects are unchanged', () => {
+		it('keep the page block they had: no has_more and no total', async () => {
+			stubFetch([
+				{ id: uuid('99999999', 1), type: 'task', title: 'A', createdAt: day(1), updatedAt: day(1) },
+			])
+			const listed = await call('list_objects', { limit: 5 })
+			expect(listed.structuredContent.page).toEqual({ limit: 5, returned: 1 })
+
+			const searched = await call('search_objects', { q: 'a', limit: 5 })
+			expect(searched.structuredContent.page).toEqual({ limit: 1, offset: 0, returned: 1 })
+		})
 	})
 })
 

@@ -48,6 +48,7 @@ import {
 	matchesIntegrationFilters,
 	summarizeIntegrations,
 } from './integrations-list.js'
+import { inSnapshot, matchesText, normalizeStatusFilter } from './list-filters.js'
 import { buildListPayload, listText } from './list-response.js'
 import {
 	READ_TOOL_NAMES,
@@ -615,6 +616,48 @@ function countNonMaskinMcpServers(tools: unknown): number {
 		?.mcpServers
 	if (!mcpServers || typeof mcpServers !== 'object') return 0
 	return Object.keys(mcpServers).filter((name) => name !== 'maskin').length
+}
+
+/**
+ * The stored status of every loop in the workspace, keyed by loop id. `/api/loops` reports a
+ * folded status (stored pilot, live and archived all come back as draft), so a status filter
+ * reads the objects route, which returns the status as stored. Walks the route's own keyset to
+ * the end, archived loops included.
+ */
+async function fetchStoredLoopStatuses(
+	config: McpConfig,
+	workspaceId: string | undefined,
+): Promise<Map<string, string>> {
+	const pageSize = LIST_ENDPOINT_MAX_LIMIT
+	const snapshotAt = toSnapshotAt(new Date())
+	const statuses = new Map<string, string>()
+	let after: { createdAt: string; id: string } | null = null
+	// Bounded so a route that stops advancing cannot loop forever; 100 pages is 10,000 loops.
+	for (let hop = 0; hop < 100; hop++) {
+		const params = new URLSearchParams({
+			type: 'loop',
+			include_archived: 'true',
+			sort: 'createdAt',
+			order: 'desc',
+			limit: String(pageSize),
+			snapshot_at: snapshotAt,
+		})
+		if (after) {
+			params.set('cursor_created_at', after.createdAt)
+			params.set('cursor_id', after.id)
+		}
+		const rows = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
+			workspaceId,
+		})) as Array<{ id: string; status?: string | null; createdAt?: string | null }>
+		if (!Array.isArray(rows)) break
+		for (const row of rows) {
+			if (typeof row.status === 'string') statuses.set(row.id, row.status)
+		}
+		const last = rows[rows.length - 1]
+		if (rows.length < pageSize || !last?.createdAt) break
+		after = { createdAt: last.createdAt, id: last.id }
+	}
+	return statuses
 }
 
 /** Parse an `X-Total-Count`-style header, falling back to a default. */
@@ -2690,6 +2733,7 @@ async function buildCollectionHeroCard(
 
 interface RawTrigger {
 	id: string
+	workspaceId?: string | null
 	name: string
 	type: string
 	config: Record<string, unknown> | null
@@ -5298,17 +5342,6 @@ export function createMcpServer(config: McpConfig) {
 				cursor: args.cursor,
 				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
-			const params = new URLSearchParams()
-			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
-			// there is no room for it, so a full page is probed with a one-row call.
-			params.set('limit', String(Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)))
-			params.set('snapshot_at', pagination.snapshotAt)
-			params.set('order', pagination.order)
-			if (pagination.cursor) {
-				params.set('cursor_created_at', pagination.cursor.k.sortValue)
-				params.set('cursor_id', pagination.cursor.k.id)
-			}
-			const skillsPath = `/api/workspaces/${wsId}/skills`
 			type SkillListRow = {
 				id: string
 				name: string
@@ -5316,47 +5349,42 @@ export function createMcpServer(config: McpConfig) {
 				isValid?: boolean
 				createdAt?: string | null
 			}
-			let raw = (await apiCall(config, 'GET', `${skillsPath}?${params}`, undefined, {
+			// The skills route returns every skill when it gets no limit, and the rows carry no
+			// SKILL.md body, so the filter and the page are cut here, on the whole set.
+			const all = (await apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, {
 				workspaceId: wsId,
 			})) as SkillListRow[]
-			const lastRaw = raw[raw.length - 1]
-			if (
-				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
-				lastRaw?.createdAt &&
-				raw.length === pagination.limit
-			) {
-				const probeParams = new URLSearchParams(params)
-				probeParams.set('limit', '1')
-				probeParams.set('cursor_created_at', lastRaw.createdAt)
-				probeParams.set('cursor_id', lastRaw.id)
-				const probe = (await apiCall(config, 'GET', `${skillsPath}?${probeParams}`, undefined, {
-					workspaceId: wsId,
-				})) as SkillListRow[]
-				raw = [...raw, ...probe]
-			}
-			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw)
-			const result = trimmed as SkillListRow[]
+			const matching = inSnapshot(
+				(Array.isArray(all) ? all : []).filter((skill) =>
+					matchesText(args.q, skill.name, skill.description),
+				),
+				pagination.snapshotAt,
+				(skill) => skill.createdAt,
+			)
+			const { page: result, nextCursor } = paginateClientSide<SkillListRow>({
+				rows: matching,
+				limit: pagination.limit,
+				snapshotAt: pagination.snapshotAt,
+				order: pagination.order,
+				cursor: pagination.cursor,
+				getSortValue: (row) => row.createdAt ?? null,
+				getId: (row) => row.id,
+			})
+			const payload = buildListPayload({
+				key: 'skills',
+				rows: result,
+				limit: pagination.limit,
+				nextCursor,
+				total: matching.length,
+			})
 			return {
 				_meta: meta(
 					'list_workspace_skills',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText(result),
-					},
-				],
-				structuredContent: {
-					skills: result,
-					page: {
-						limit: pagination.limit,
-						returned: result.length,
-						...(nextCursor ? { next_cursor: nextCursor } : {}),
-					},
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 				// If the token cap trims this page, the walk resumes after the last row
 				// that actually ships instead of ending at the pre-trim page.
 				[RESUME_CURSOR]: (lastShipped: unknown) => {
@@ -6347,12 +6375,18 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: args.cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
+			})
 			// `/api/triggers` still expects an `offset` query param — the cursor
 			// keyset supersedes it for actual pagination, so this tool always
 			// sends 0 rather than accept an offset param from the caller.
 			const offset = 0
-			const fetchCap = pagination.limit + 1
+			// The `+ 1` sentinel tells us whether more rows follow; at the endpoint cap
+			// there is no room for it, so a full page is probed with a one-row call.
+			const fetchCap = Math.min(pagination.limit + 1, LIST_ENDPOINT_MAX_LIMIT)
 			const params = new URLSearchParams({ limit: String(fetchCap), offset: String(offset) })
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
@@ -6363,13 +6397,27 @@ export function createMcpServer(config: McpConfig) {
 			if (args.agent_id) params.set('target_actor_id', args.agent_id)
 			if (args.status) params.set('enabled', String(args.status === 'enabled'))
 			if (args.q) params.set('q', args.q)
-			const { data, response } = await apiCallWithResponse(
-				config,
-				'GET',
-				`/api/triggers?${params}`,
-				undefined,
-				{ workspaceId: args.workspace_id },
-			)
+			const first = await apiCallWithResponse(config, 'GET', `/api/triggers?${params}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			const { response } = first
+			let data = first.data
+			const lastFetched = Array.isArray(data) ? (data[data.length - 1] as RawTrigger) : undefined
+			if (
+				pagination.limit === LIST_ENDPOINT_MAX_LIMIT &&
+				lastFetched?.createdAt &&
+				Array.isArray(data) &&
+				data.length === pagination.limit
+			) {
+				const probeParams = new URLSearchParams(params)
+				probeParams.set('limit', '1')
+				probeParams.set('cursor_created_at', lastFetched.createdAt)
+				probeParams.set('cursor_id', lastFetched.id)
+				const probe = await apiCall(config, 'GET', `/api/triggers?${probeParams}`, undefined, {
+					workspaceId: args.workspace_id,
+				})
+				data = [...data, ...(Array.isArray(probe) ? probe : [])]
+			}
 			const rawRows = Array.isArray(data) ? (data as RawTrigger[]) : []
 			const { nextCursor, trimmed } = encodeNextCursor(
 				pagination,
@@ -6427,6 +6475,13 @@ export function createMcpServer(config: McpConfig) {
 							}),
 						)
 					: trimmedData
+			const payload = buildListPayload({
+				key: 'triggers',
+				rows: Array.isArray(enriched) ? enriched : [],
+				limit: pagination.limit,
+				nextCursor,
+				total: totalCount,
+			})
 			return {
 				_meta: uiMeta(
 					'list_triggers',
@@ -6434,25 +6489,13 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText(enriched),
-					},
-				],
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				// The rows already ride in heroCard, so only the page block and cursor sit beside it;
+				// the text carries the whole payload. Rows here too would ship them twice, untrimmed.
 				structuredContent: {
 					heroCard,
-					...(nextCursor
-						? {
-								next_cursor: nextCursor,
-								page: {
-									limit: rows.length,
-									offset,
-									returned: rows.length,
-									next_cursor: nextCursor,
-								},
-							}
-						: {}),
+					page: payload.page,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
 		},
@@ -6965,12 +7008,30 @@ export function createMcpServer(config: McpConfig) {
 			const pagination = resolveListPagination({
 				limit: (args as { limit?: number }).limit,
 				cursor: (args as { cursor?: string }).cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			const data = (await apiCall(config, 'GET', '/api/loops', undefined, {
 				workspaceId: args.workspace_id,
 			})) as { loops: Array<Record<string, unknown>> }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const loops = Array.isArray(data?.loops) ? data.loops : []
+			const allLoops = Array.isArray(data?.loops) ? data.loops : []
+			// /api/loops folds the stored status into its own pill values, so a status filter reads
+			// the stored status of each loop from the objects route instead.
+			const wantedStatuses = normalizeStatusFilter(args.status)
+			const storedStatuses = wantedStatuses
+				? await fetchStoredLoopStatuses(config, args.workspace_id)
+				: null
+			const loops = inSnapshot(
+				allLoops.filter((loop) => {
+					if (wantedStatuses && storedStatuses) {
+						const status = storedStatuses.get(loop.id as string) ?? String(loop.status ?? '')
+						if (!wantedStatuses.includes(status.toLowerCase())) return false
+					}
+					return matchesText(args.q, loop.name as string | undefined)
+				}),
+				pagination.snapshotAt,
+				(loop) => loop.createdAt as string | null | undefined,
+			)
 			const { page: pagedLoops, nextCursor } = paginateClientSide({
 				rows: loops,
 				limit: pagination.limit,
@@ -8779,11 +8840,20 @@ export function createMcpServer(config: McpConfig) {
 						]
 					: []
 
-			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
+			const result = [
+				...moduleExtensions,
+				...trackedCustomExtensions,
+				...untrackedExtensions,
+			].filter(
+				(ext) =>
+					(args.enabled === undefined || ext.enabled === args.enabled) &&
+					matchesText(args.q, ext.id, ext.name),
+			)
 
 			const pagination = resolveListPagination({
 				limit: (args as { limit?: number }).limit,
 				cursor: (args as { cursor?: string }).cursor,
+				maxLimit: LIST_ENDPOINT_MAX_LIMIT,
 			})
 			// Extensions are derived from workspace settings + registered modules —
 			// there's no per-row insert timestamp, so cursor uses the id string and

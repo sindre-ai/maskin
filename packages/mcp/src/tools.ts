@@ -1058,9 +1058,14 @@ export const tools = {
 	// NOT the same as per-agent skills (those live under an agent's own file store).
 	list_workspace_skills: {
 		description:
-			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. Find a skill with `q`, a word of its name or description. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			q: z
+				.string()
+				.min(1)
+				.optional()
+				.describe('Only skills whose name or description contains this text. Ignores case.'),
 			limit: z
 				.number()
 				.int()
@@ -1522,7 +1527,7 @@ export const tools = {
 	},
 	list_triggers: {
 		description:
-			'List triggers in the workspace, newest first. Filter by `agent_id` (the agent a trigger runs), `status` (enabled or disabled) and `q` (words in the trigger name); filters combine with AND and carry through the cursor. Set `compact` for short rows without the action prompt. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. Any parameter not listed here is rejected with an error.',
+			'List triggers in the workspace, newest first. Filter by `agent_id` (the agent a trigger runs), `status` (enabled or disabled) and `q` (words in the trigger name); filters combine with AND and carry through the cursor. Set `compact` for short rows without the action prompt. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page. Any parameter not listed here is rejected with an error.',
 		// Strict: an unknown parameter is an error, never a silently ignored filter.
 		inputSchema: z
 			.object({
@@ -1705,9 +1710,20 @@ export const tools = {
 	},
 	list_loops: {
 		description:
-			'List every Loop in the workspace as a lean id/name index — each row is just `{id, workspaceId, name, url}`. Use this to find loop ids, then call get_loop with a specific id for live stats (status pill, entry/close conditions, member-object counts, median time-to-close) and the `steps` view (each trigger nested with its resolved agent). To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop". Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List every Loop in the workspace as a lean id/name index — each row is just `{id, workspaceId, name, url}`. Use this to find loop ids, then call get_loop with a specific id for live stats (status pill, entry/close conditions, member-object counts, median time-to-close) and the `steps` view (each trigger nested with its resolved agent). To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop". Narrow the index with `status` and `q` (a word of the name). Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			status: z
+				.union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+				.optional()
+				.describe(
+					'Only loops in this status, or in any of these statuses when you pass a list: draft, pilot, supervised, live, paused, archived. Ignores case.',
+				),
+			q: z
+				.string()
+				.min(1)
+				.optional()
+				.describe('Only loops whose name contains this text. Ignores case.'),
 			limit: z
 				.number()
 				.int()
@@ -2498,9 +2514,20 @@ export const tools = {
 	// ─── Extensions ──────────────────────────────────────────
 	list_extensions: {
 		description:
-			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create. Paginated via a stable cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create. Narrow the list with `enabled` and `q` (a word of the id or name). Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			enabled: z
+				.boolean()
+				.optional()
+				.describe(
+					'true: only extensions enabled in the workspace. false: only the ones that are not.',
+				),
+			q: z
+				.string()
+				.min(1)
+				.optional()
+				.describe('Only extensions whose id or name contains this text. Ignores case.'),
 			limit: z
 				.number()
 				.int()
