@@ -172,6 +172,10 @@ struct LoopDetailContent: View {
 						outputs: store.outputs, sourceName: store.loop.displayName, producesStyle: true)
 					if store.outputs.isEmpty { emptyNote("Nothing produced yet. Pages and PDFs this flow makes land here.") }
 					LoopInMotionSection(store: store)
+					LoopTriggersSection(
+						steps: store.steps,
+						agentNames: store.loop.agentIDs.compactMap { store.directory.name($0) },
+						onOpenTrigger: onOpenTrigger)
 				case .activity:
 					if let timeline {
 						FlowTimelineView(model: timeline)

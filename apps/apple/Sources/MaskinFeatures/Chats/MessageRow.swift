@@ -143,6 +143,8 @@ struct MessageRow: View {
 	var onRetrySend: () -> Void = {}
 	/// Swipe right (and the menu's Reply) start a reply; nil when there is nothing to quote.
 	var onReply: (() -> Void)?
+	/// Tap on the quote inside a reply: scroll to the message it quotes. Nil when it is not in the chat.
+	var onQuoteTap: (() -> Void)?
 	/// The thread under this message, when it has replies; the pill under the bubble opens it.
 	var threadSummary: ThreadSummary?
 	var onOpenThread: () -> Void = {}
@@ -372,7 +374,7 @@ struct MessageRow: View {
 							.environment(\.markdownHugsContent, true)
 						} else {
 							VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-								if let quote { QuoteBlock(author: quote.author, text: quote.text, onInverse: true) }
+								if let quote { QuoteBlock(author: quote.author, text: quote.text, onInverse: true, onTap: onQuoteTap) }
 								if !bodyText.isEmpty {
 									if let layout {
 										// The card sits nested in the same ink bubble as the words around it.
@@ -448,7 +450,7 @@ struct MessageRow: View {
 					Text(message.content).maskinSymbol(emojiSize)
 				} else if !attachmentsOnly {
 					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-						if let quote { QuoteBlock(author: quote.author, text: quote.text) }
+						if let quote { QuoteBlock(author: quote.author, text: quote.text, onTap: onQuoteTap) }
 						if !bodyText.isEmpty {
 							if let layout {
 								linkedBody(layout.parts)

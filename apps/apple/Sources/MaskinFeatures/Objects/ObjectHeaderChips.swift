@@ -11,6 +11,8 @@ struct ObjectHeaderView: View {
 	let object: WorkObject
 	/// False renders the chips as plain faces (snapshots: `Menu` does not draw offscreen).
 	var interactiveChips = true
+	/// "Message" on the working card: takes the reader to the conversation. Hidden when `nil`.
+	var onMessage: (() -> Void)?
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
@@ -38,18 +40,8 @@ struct ObjectHeaderView: View {
 			ObjectHeaderChips(store: store, object: object, interactive: interactiveChips)
 				.padding(.top, MaskinSpace.s8)
 
-			if let activity = object.activeActivity, !activity.isEmpty {
-				HStack(spacing: MaskinSpace.s3) {
-					DetailWorkingBars()
-					Text(activity).lineLimit(1)
-				}
-				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
-				.foregroundStyle(MaskinColor.sigInk)
-				.padding(.horizontal, MaskinSpace.s7)
-				.frame(minHeight: MaskinSpace.s13)
-				.background(MaskinColor.sigTint, in: Capsule())
-				.padding(.top, MaskinSpace.s5)
-				.accessibilityLabel("Working: \(activity)")
+			if object.hasActiveSession {
+				workingCard(activity: object.activeActivity).padding(.top, MaskinSpace.s7)
 			}
 
 			if let updated = object.updatedAt {
@@ -62,6 +54,36 @@ struct ObjectHeaderView: View {
 				.padding(.top, MaskinSpace.s7)
 			}
 		}
+	}
+
+	/// "Forge is working" with what it is doing, and a way to message it.
+	private func workingCard(activity: String?) -> some View {
+		let who = store.ownerName ?? "An agent"
+		return HStack(spacing: MaskinSpace.s6) {
+			DetailWorkingBars()
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				Text("\(who) is working")
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
+					.foregroundStyle(MaskinColor.ink)
+				if let activity, !activity.isEmpty {
+					Text(activity).lineLimit(1)
+						.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+						.foregroundStyle(MaskinColor.ink4)
+				}
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			if let onMessage {
+				Button("Message", action: onMessage)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
+					.foregroundStyle(MaskinColor.ink)
+					.frame(minHeight: MaskinSpace.touchMin)
+			}
+		}
+		.padding(.horizontal, MaskinSpace.s8)
+		.padding(.vertical, MaskinSpace.s3)
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl, style: .continuous))
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel(activity.map { "\(who) is working: \($0)" } ?? "\(who) is working")
 	}
 
 	private var archivedBanner: some View {

@@ -313,7 +313,10 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		return ScrollViewReader { proxy in
 			ScrollView {
 				LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
-					ObjectDetailContent(store: store, part: .header, onEdit: { editing = true }) { EmptyView() }
+					ObjectDetailContent(
+							store: store, part: .header, onEdit: { editing = true },
+							onMessage: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } }
+						) { EmptyView() }
 						.padding(.horizontal, MaskinSpace.s11)
 						.padding(.top, MaskinSpace.s2)
 						.padding(.bottom, MaskinSpace.s7)

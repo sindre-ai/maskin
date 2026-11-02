@@ -22,17 +22,28 @@ struct ObjectActivityView: View {
 	/// Pins "now" for snapshots; the live page uses the clock.
 	var now: Date = Date()
 
+	@State private var filter: ActivityFilter = .all
+
+	private var loadState: ActivityLoadState {
+		.of(fetched: store.hasFetched, revalidateFailed: store.freshness.lastRevalidateFailed)
+	}
+
 	var body: some View {
-		let days = ActivityGrouping.days(store.timeline.filter(include), now: now)
+		let days = ActivityGrouping.days(filter.apply(to: store.timeline.filter(include)), now: now)
 		VStack(alignment: .leading, spacing: 0) {
+			ActivityFilterChips(selected: $filter)
+				.padding(.bottom, MaskinSpace.s3)
 			if days.isEmpty {
-				if store.hasFetched {
-					Text("No activity yet. Start the conversation below.")
+				switch loadState {
+				case .failed:
+					ActivityLoadFailed { Task { await store.refresh() } }
+				case .loading:
+					LoadingSkeleton(rows: 3)
+				case .ready:
+					Text(filter == .all ? "No activity yet. Start the conversation below." : "Nothing under \(filter.title) yet.")
 						.maskinText(.subhead)
 						.foregroundStyle(MaskinColor.ink4)
 						.padding(.top, MaskinSpace.s5)
-				} else {
-					LoadingSkeleton(rows: 2)
 				}
 			}
 			ForEach(days) { day in
@@ -56,6 +67,60 @@ struct ObjectActivityView: View {
 					.padding(.top, MaskinSpace.s9)
 			}
 		}
+		.accessibilityElement(children: .contain)
+	}
+}
+
+/// All · Comments · Updates: a quiet pill row above the timeline; the chosen one is soft-filled.
+struct ActivityFilterChips: View {
+	@Binding var selected: ActivityFilter
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			ForEach(ActivityFilter.allCases) { option in
+				let active = option == selected
+				Button {
+					MaskinHaptics.play(.selection)
+					selected = option
+				} label: {
+					Text(option.title)
+						.maskinText(.subhead)
+						.fontWeight(active ? .bold : .semibold)
+						.foregroundStyle(active ? MaskinColor.ink : MaskinColor.ink4)
+						.padding(.horizontal, MaskinSpace.s7)
+						.frame(height: MaskinSpace.s14)
+						.background(active ? MaskinSurface.fill : Color.clear, in: Capsule())
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.maskinPressed(.shrink))
+				.accessibilityAddTraits(active ? .isSelected : [])
+			}
+			Spacer(minLength: 0)
+		}
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel("Filter activity")
+	}
+}
+
+/// "Activity did not load" with a way back, in place of the skeleton when the first fetch failed.
+struct ActivityLoadFailed: View {
+	let retry: () -> Void
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			Text("Activity did not load").maskinText(.body).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink)
+			Text("Your connection dropped. Nothing was lost.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			Button("Try again", action: retry)
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.sigInk)
+				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(MaskinSpace.s9)
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 		.accessibilityElement(children: .contain)
 	}
 }

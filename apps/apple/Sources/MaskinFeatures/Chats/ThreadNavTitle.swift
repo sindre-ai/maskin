@@ -69,6 +69,8 @@ struct ThreadNavTitle: View {
 	let title: String
 	var status: ThreadNavStatus?
 	var onTap: (() -> Void)?
+	/// What a tap does, for VoiceOver; defaults to opening the flow.
+	var hint: String?
 
 	var body: some View {
 		let content = VStack(spacing: 0) {
@@ -88,7 +90,7 @@ struct ThreadNavTitle: View {
 		if let onTap {
 			Button(action: onTap) { content.contentShape(Rectangle()) }
 				.buttonStyle(.maskinPressed)
-				.accessibilityHint("Opens the flow")
+				.accessibilityHint(hint ?? "Opens the flow")
 		} else {
 			content
 		}

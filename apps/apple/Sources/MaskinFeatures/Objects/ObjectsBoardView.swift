@@ -246,12 +246,31 @@ struct ObjectsBoardColumnView: View {
 		.draggable(object.id)
 		// The same move without dragging, for VoiceOver and a steady hand.
 		.contextMenu {
-			Menu("Move to", systemImage: "arrow.right") {
-				ForEach(store.directory.schema.statuses(for: object.type).filter { $0 != object.status }, id: \.self) {
-					status in
-					Button(MaskinStatus.sentenceLabel(for: status)) { onMove(object.id, status) }
+			Menu("Move to", systemImage: "arrow.right") { moveItems(object) }
+		}
+		// The visible "···": Move to, one tap away without a long press.
+		.overlay(alignment: .bottomTrailing) {
+			if !picking.isActive {
+				Menu {
+					Section("Move to") { moveItems(object) }
+				} label: {
+					Image(systemName: "ellipsis")
+						.maskinSymbol(MaskinFontSize.t16, weight: .semibold)
+						.foregroundStyle(MaskinColor.ink4)
+						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
 				}
+				.accessibilityLabel("Move \(object.displayTitle)")
 			}
+		}
+	}
+}
+
+extension ObjectsBoardColumnView {
+	/// The statuses an object can move to (its own is left out).
+	@ViewBuilder fileprivate func moveItems(_ object: WorkObject) -> some View {
+		ForEach(store.directory.schema.statuses(for: object.type).filter { $0 != object.status }, id: \.self) { status in
+			Button(MaskinStatus.sentenceLabel(for: status)) { onMove(object.id, status) }
 		}
 	}
 }

@@ -282,7 +282,12 @@ struct ChatThreadView: View {
 	private var toolbarContent: some ToolbarContent {
 		ToolbarItem(placement: .principal) {
 			ThreadNavTitle(
-				title: navTitle, status: navStatus, onTap: titleAction)
+				title: navTitle, status: navStatus,
+				onTap: titleAction ?? {
+					newTitle = store.title
+					renaming = true
+				},
+				hint: titleAction == nil ? "Renames the chat" : nil)
 		}
 		// One group so iOS keeps everything in the bar instead of folding into a "More" overflow.
 		ToolbarItemGroup(placement: .primaryAction) {
@@ -528,6 +533,7 @@ struct ChatThreadView: View {
 		}
 		ThreadTranscript(
 			store: store, lazy: lazy, onEdit: beginEdit(_:), onReply: reply(to:), onFillStep: { composer.fill($0) },
+			onJumpToMessage: { scroll(to: $0, proxy: proxy) },
 			onOpenThread: { message in
 				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
@@ -987,6 +993,8 @@ struct ThreadTranscript: View {
 	var onReply: (ChatMessage) -> Void = { _ in }
 	/// An intro's fill step: put its prompt in the composer.
 	var onFillStep: (String) -> Void = { _ in }
+	/// A tap on a reply's quote: scroll to the message with this id.
+	var onJumpToMessage: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
@@ -1148,6 +1156,12 @@ struct ThreadTranscript: View {
 		return actions
 	}
 
+	/// The message a reply's quote points at, when it is in the loaded chat.
+	private func quoteTarget(of message: ChatMessage) -> ChatMessage? {
+		guard let quote = message.quotedReply else { return nil }
+		return QuoteJump.original(of: quote, replyID: message.id, in: store.messages)
+	}
+
 	@ViewBuilder
 	private func row(
 		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
@@ -1191,6 +1205,7 @@ struct ThreadTranscript: View {
 				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: message.content.isEmpty ? nil : { onReply(message) },
+				onQuoteTap: quoteTarget(of: message).map { target in { onJumpToMessage(target.id) } },
 				threadSummary: store.threadSummary(for: message),
 				onOpenThread: { onOpenThread(message) },
 				onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },
