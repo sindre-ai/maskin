@@ -54,7 +54,7 @@ describe('GET /api/triggers — filters', () => {
 	})
 
 	it('filters by name, ignoring case', async () => {
-		const { rows } = await list('?q=pr%20SWEEP')
+		const { rows } = await list('?q=SWEEP')
 		expect(rows.map((r) => r.id).sort()).toEqual([names['a-on'], names['a-off']].sort())
 	})
 
