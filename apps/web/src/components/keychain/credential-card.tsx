@@ -2,6 +2,7 @@ import { AgentAccess } from '@/components/integrations/agent-access'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import { CredentialEditDialog } from '@/components/keychain/credential-edit-dialog'
 import { credentialName, credentialTypeLabel } from '@/components/keychain/keychain-parts'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	ResponsiveDialog,
@@ -11,6 +12,7 @@ import {
 	ResponsiveDialogHeader,
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useRemoveCredential } from '@/hooks/use-integrations'
 import type { IntegrationResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -23,6 +25,7 @@ import { useState } from 'react'
  */
 export function CredentialCard({ credential }: { credential: IntegrationResponse }) {
 	const { workspace, workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const remove = useRemoveCredential(workspaceId)
 	const [confirming, setConfirming] = useState(false)
 	const [editing, setEditing] = useState(false)
@@ -62,28 +65,34 @@ export function CredentialCard({ credential }: { credential: IntegrationResponse
 					canRemove ? (
 						<div className="flex shrink-0 items-center gap-1">
 							{canEdit && (
+								<ViewerTooltip>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="text-muted-foreground"
+										aria-label={`Edit ${name}`}
+										disabled={!canWrite}
+										onClick={() => setEditing(true)}
+									>
+										Edit
+									</Button>
+								</ViewerTooltip>
+							)}
+							<ViewerTooltip>
 								<Button
 									variant="ghost"
 									size="sm"
-									className="text-muted-foreground"
-									aria-label={`Edit ${name}`}
-									onClick={() => setEditing(true)}
+									className="shrink-0 text-muted-foreground hover:text-error"
+									aria-label={`Remove ${name}`}
+									disabled={!canWrite}
+									onClick={() => {
+										remove.reset()
+										setConfirming(true)
+									}}
 								>
-									Edit
+									Remove
 								</Button>
-							)}
-							<Button
-								variant="ghost"
-								size="sm"
-								className="shrink-0 text-muted-foreground hover:text-error"
-								aria-label={`Remove ${name}`}
-								onClick={() => {
-									remove.reset()
-									setConfirming(true)
-								}}
-							>
-								Remove
-							</Button>
+							</ViewerTooltip>
 						</div>
 					) : null
 				}

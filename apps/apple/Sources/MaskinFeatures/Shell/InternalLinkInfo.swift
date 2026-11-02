@@ -4,12 +4,17 @@ import SwiftUI
 
 extension InternalLinkDirectory {
 	/// What an in-app link should look like: an icon and kind now, the thing's own name once the
-	/// directory has fetched it. Nil for anything that isn't a link into Maskin.
+	/// directory has fetched it. A GitHub pull request or issue is described from its address alone,
+	/// and marked as leaving the app. Nil for anything else.
 	func info(for url: URL) -> MarkdownLinkInfo? {
+		if let github = GitHubLink(url: url) {
+			return MarkdownLinkInfo(
+				symbol: github.symbol, kindLabel: github.kindLabel, title: github.title, leavesApp: true)
+		}
 		guard let link = DeepLink(url: url) else { return nil }
 		switch link {
-		case .object(_, let id):
-			switch lookup(id) {
+		case .object(let workspace, let id):
+			switch lookup(id, workspace: workspace) {
 			case .object(let found):
 				return MarkdownLinkInfo(
 					symbol: MaskinObjectType.symbol(for: found.type) ?? "doc.text", kindLabel: Self.label(forType: found.type),

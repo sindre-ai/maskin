@@ -1577,7 +1577,7 @@ describe('Conversations Integration', () => {
 		})
 	})
 
-	describe('sessions_conversation_actor_active_uniq', () => {
+	describe('sessions_conversation_actor_thread_active_uniq', () => {
 		it('rejects a second active interactive session for the same (conversation, agent) pair', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)

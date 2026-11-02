@@ -7,6 +7,7 @@ import { FormError } from '@/components/shared/form-error'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -33,6 +34,7 @@ import {
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
 import { Textarea } from '@/components/ui/textarea'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useCreateWorkspaceSkill,
 	useDeleteWorkspaceSkill,
@@ -45,6 +47,7 @@ import {
 import { ApiError, type WorkspaceSkillListItem, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { parseSkillMd, skillNameSchema } from '@maskin/shared'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { zipSync } from 'fflate'
@@ -125,6 +128,7 @@ type UploadSummary = { imported: number; failed: { name: string; reason: string 
 
 function SkillsPage() {
 	const { workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 	const { sort, order } = useSearch({ from: '/_authed/$workspaceId/settings/skills' })
 	const { data: skills, isLoading } = useWorkspaceSkills(workspaceId)
@@ -262,7 +266,7 @@ function SkillsPage() {
 		onDrop: (e: React.DragEvent) => {
 			e.preventDefault()
 			setIsDragging(false)
-			if (e.dataTransfer.files.length > 0) {
+			if (canWrite && e.dataTransfer.files.length > 0) {
 				void handleFiles(e.dataTransfer.files)
 			}
 		},
@@ -283,10 +287,12 @@ function SkillsPage() {
 				onImportFolder={openFolderPicker}
 				disabled={isUploading}
 			/>
-			<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
-				<Plus size={14} className="mr-1" />
-				Create skill
-			</Button>
+			<ViewerTooltip>
+				<Button size="sm" disabled={!canWrite} onClick={() => setDialog({ kind: 'create' })}>
+					<Plus size={14} className="mr-1" />
+					Create skill
+				</Button>
+			</ViewerTooltip>
 		</div>
 	)
 
@@ -326,10 +332,16 @@ function SkillsPage() {
 									onImportFolder={openFolderPicker}
 									disabled={isUploading}
 								/>
-								<Button size="sm" onClick={() => setDialog({ kind: 'create' })}>
-									<Plus size={14} className="mr-1" />
-									Create skill
-								</Button>
+								<ViewerTooltip>
+									<Button
+										size="sm"
+										disabled={!canWrite}
+										onClick={() => setDialog({ kind: 'create' })}
+									>
+										<Plus size={14} className="mr-1" />
+										Create skill
+									</Button>
+								</ViewerTooltip>
 							</div>
 						}
 					/>
@@ -411,15 +423,18 @@ function ImportSkillButton({
 	onImportFolder: () => void
 	disabled: boolean
 }) {
+	const canWrite = useCanWrite()
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger asChild>
-				<Button variant="outline" size="sm" disabled={disabled}>
-					<FileUp size={14} className="mr-1" />
-					Import
-					<ChevronDown size={14} className="ml-1" />
-				</Button>
-			</DropdownMenuTrigger>
+			<ViewerTooltip>
+				<DropdownMenuTrigger asChild>
+					<Button variant="outline" size="sm" disabled={disabled || !canWrite}>
+						<FileUp size={14} className="mr-1" />
+						Import
+						<ChevronDown size={14} className="ml-1" />
+					</Button>
+				</DropdownMenuTrigger>
+			</ViewerTooltip>
 			<DropdownMenuContent align="start">
 				<DropdownMenuItem onClick={onImportFile}>
 					<FileUp size={14} className="mr-2" />
@@ -445,6 +460,7 @@ function SkillRow({
 	onEdit: () => void
 	onDelete: () => void
 }) {
+	const canWrite = useCanWrite()
 	const [expanded, setExpanded] = useState(false)
 	const replaceInputRef = useRef<HTMLInputElement>(null)
 	const replaceFolderInputRef = useRef<HTMLInputElement>(null)
@@ -578,14 +594,21 @@ function SkillRow({
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-						<DropdownMenuItem onClick={onEdit}>
-							<Pencil size={14} className="mr-2" />
-							Edit
-						</DropdownMenuItem>
-						<DropdownMenuItem onClick={onDelete} className="text-error focus:text-error">
-							<Trash2 size={14} className="mr-2" />
-							Delete
-						</DropdownMenuItem>
+						{/* A disabled menu item ignores the pointer, so its explanation hangs off a wrapper. */}
+						<div title={canWrite ? undefined : VIEWER_READ_ONLY_MESSAGE}>
+							<DropdownMenuItem onClick={onEdit} disabled={!canWrite}>
+								<Pencil size={14} className="mr-2" />
+								Edit
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								onClick={onDelete}
+								disabled={!canWrite}
+								className="text-error focus:text-error"
+							>
+								<Trash2 size={14} className="mr-2" />
+								Delete
+							</DropdownMenuItem>
+						</div>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
@@ -608,26 +631,30 @@ function SkillRow({
 							<Download size={14} className="mr-1" />
 							{downloading ? 'Preparing...' : 'Download .zip'}
 						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={handleReplaceClick}
-							disabled={uploadMutation.isPending}
-							aria-label={`Replace bundle for ${skill.name}`}
-						>
-							<RefreshCw size={14} className="mr-1" />
-							{uploadMutation.isPending ? 'Uploading...' : 'Replace bundle'}
-						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={handleReplaceFolderClick}
-							disabled={uploadMutation.isPending}
-							aria-label={`Replace bundle for ${skill.name} with a folder`}
-						>
-							<FolderUp size={14} className="mr-1" />
-							{uploadMutation.isPending ? 'Uploading...' : 'Replace with folder'}
-						</Button>
+						<ViewerTooltip>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={handleReplaceClick}
+								disabled={!canWrite || uploadMutation.isPending}
+								aria-label={`Replace bundle for ${skill.name}`}
+							>
+								<RefreshCw size={14} className="mr-1" />
+								{uploadMutation.isPending ? 'Uploading...' : 'Replace bundle'}
+							</Button>
+						</ViewerTooltip>
+						<ViewerTooltip>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={handleReplaceFolderClick}
+								disabled={!canWrite || uploadMutation.isPending}
+								aria-label={`Replace bundle for ${skill.name} with a folder`}
+							>
+								<FolderUp size={14} className="mr-1" />
+								{uploadMutation.isPending ? 'Uploading...' : 'Replace with folder'}
+							</Button>
+						</ViewerTooltip>
 						<input
 							ref={replaceInputRef}
 							type="file"
@@ -710,6 +737,8 @@ function SkillDialog({
 	const existing = useWorkspaceSkill(workspaceId, editingName)
 	const createMutation = useCreateWorkspaceSkill(workspaceId)
 	const updateMutation = useUpdateWorkspaceSkill(workspaceId)
+	// A viewer can open a skill to read it; the fields and Save stay off.
+	const canWrite = useCanWrite()
 
 	const [name, setName] = useState(editingName ?? '')
 	const [content, setContent] = useState(isEdit ? '' : SKILL_TEMPLATE)
@@ -724,9 +753,10 @@ function SkillDialog({
 	const pending = createMutation.isPending || updateMutation.isPending
 	const loadingExisting = isEdit && existing.isLoading
 	const canSave =
-		!pending && !loadingExisting && name.trim().length > 0 && content.trim().length > 0
+		canWrite && !pending && !loadingExisting && name.trim().length > 0 && content.trim().length > 0
 
 	const handleSave = () => {
+		if (!canWrite) return
 		setError(null)
 		const trimmedName = name.trim()
 
@@ -781,6 +811,7 @@ function SkillDialog({
 							onChange={(e) => setName(e.target.value)}
 							placeholder="e.g. deploy, review-pr"
 							autoFocus={!isEdit}
+							readOnly={!canWrite}
 						/>
 					</div>
 					<div>
@@ -792,6 +823,7 @@ function SkillDialog({
 							placeholder={SKILL_TEMPLATE}
 							className="min-h-[280px] font-mono text-sm"
 							disabled={loadingExisting}
+							readOnly={!canWrite}
 						/>
 						{isEdit && (
 							<p className="mt-1 text-xs text-muted-foreground">
@@ -807,9 +839,11 @@ function SkillDialog({
 					<Button variant="ghost" onClick={onClose} disabled={pending}>
 						Cancel
 					</Button>
-					<Button onClick={handleSave} disabled={!canSave}>
-						{pending ? 'Saving...' : 'Save'}
-					</Button>
+					<ViewerTooltip>
+						<Button onClick={handleSave} disabled={!canSave}>
+							{pending ? 'Saving...' : 'Save'}
+						</Button>
+					</ViewerTooltip>
 				</ResponsiveDialogFooter>
 			</ResponsiveDialogContent>
 		</ResponsiveDialog>

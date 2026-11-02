@@ -20,6 +20,10 @@ protocol LiveVoiceDriving: AnyObject {
 	/// from messages arriving in the chat.
 	var capturesOwnTranscript: Bool { get }
 	var agentWords: String? { get }
+	/// Whether the conversation is up, for the call orb: false while a call is being set up.
+	var isConnected: Bool { get }
+	/// Live audio levels for the call orb; nil when the driver has none (the dictation loop).
+	var levels: CallLevelMeter? { get }
 
 	func begin(existing: [ChatMessage])
 	func end()
@@ -31,10 +35,13 @@ protocol LiveVoiceDriving: AnyObject {
 extension LiveVoiceController: LiveVoiceDriving {
 	var capturesOwnTranscript: Bool { false }
 	var agentWords: String? { nil }
+	var isConnected: Bool { true }
+	var levels: CallLevelMeter? { nil }
 }
 
 extension RealtimeVoiceCall {
 	/// The Realtime call talks over the person and has no pauses to hand back.
 	var notice: String? { nil }
 	var isYourTurn: Bool { false }
+	var levels: CallLevelMeter? { meter }
 }

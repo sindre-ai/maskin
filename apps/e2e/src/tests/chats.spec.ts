@@ -34,7 +34,7 @@ async function setUpConversation(api: TestAPI, workspaceId: string, apiKey: stri
 	// A trial workspace allows a single human seat — this spec needs two.
 	await grantPlanHeadroom(apiKey, workspaceId)
 	const secondHuman = await createTestActor({ name: `E2E Chat Partner ${Date.now()}` })
-	await api.addWorkspaceMember(workspaceId, secondHuman.id)
+	await api.addHumanByInvite(workspaceId, secondHuman)
 	const agent = await api.createAgentActor(`E2E Chat Agent ${Date.now()}`)
 	await api.addWorkspaceMember(workspaceId, agent.id)
 

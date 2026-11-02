@@ -19,6 +19,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -27,6 +28,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
@@ -66,6 +68,7 @@ interface ProposedEdit {
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -158,12 +161,13 @@ function LoopDetailRoute() {
 	// `/loops` since the current route's data has just been removed. Mirrors the
 	// agent-detail trash affordance restored in PR #1667.
 	const handleDelete = useCallback(() => {
+		if (!canWrite) return
 		deleteObject.mutate(loopId, {
 			onSuccess: () => {
 				navigate({ to: '/$workspaceId/loops', params: { workspaceId } })
 			},
 		})
-	}, [deleteObject, loopId, navigate, workspaceId])
+	}, [deleteObject, loopId, navigate, workspaceId, canWrite])
 
 	// An utterance is read back as a diff against the plan snapshot `/loops/new`
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
@@ -196,7 +200,7 @@ function LoopDetailRoute() {
 	)
 
 	const applyProposedEdit = useCallback(() => {
-		if (!proposedEdit) return
+		if (!proposedEdit || !canWrite) return
 		updateObject.mutate(
 			{
 				id: loopId,
@@ -217,7 +221,7 @@ function LoopDetailRoute() {
 				onError: () => toast.error('Could not apply that change'),
 			},
 		)
-	}, [proposedEdit, updateObject, loopId])
+	}, [proposedEdit, updateObject, loopId, canWrite])
 
 	if (loopLoading && !loop) {
 		return (
@@ -291,11 +295,13 @@ function LoopDetailRoute() {
 	// re-earns trust rather than snapping back to full autonomy. The trigger
 	// re-enable is handled server-side by the status hook in
 	// PATCH /api/objects/:id, so this only writes the status.
-	const togglePause = () =>
+	const togglePause = () => {
+		if (!canWrite) return
 		updateObject.mutate({
 			id: loop.id,
 			data: { status: isPaused ? 'learning' : 'paused' },
 		})
+	}
 
 	return (
 		<>
@@ -308,14 +314,16 @@ function LoopDetailRoute() {
 						// LoopUtteranceInput at the bottom of the page on mobile.
 						<div className="flex items-center gap-2">
 							<span className="text-xs text-error">Delete this loop?</span>
-							<Button
-								variant="destructive"
-								size="sm"
-								onClick={handleDelete}
-								disabled={deleteObject.isPending}
-							>
-								{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="destructive"
+									size="sm"
+									onClick={handleDelete}
+									disabled={deleteObject.isPending || !canWrite}
+								>
+									{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
+								</Button>
+							</ViewerTooltip>
 							<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
 								Cancel
 							</Button>
@@ -340,18 +348,24 @@ function LoopDetailRoute() {
 								{pill.label}
 							</span>
 							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-7 w-7 text-muted-foreground"
-										aria-label="More"
-									>
-										<MoreHorizontal size={15} />
-									</Button>
-								</DropdownMenuTrigger>
+								<ViewerTooltip>
+									<DropdownMenuTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7 text-muted-foreground"
+											aria-label="More"
+											disabled={!canWrite}
+										>
+											<MoreHorizontal size={15} />
+										</Button>
+									</DropdownMenuTrigger>
+								</ViewerTooltip>
 								<DropdownMenuContent align="end">
-									<DropdownMenuItem onSelect={togglePause} disabled={updateObject.isPending}>
+									<DropdownMenuItem
+										onSelect={togglePause}
+										disabled={updateObject.isPending || !canWrite}
+									>
 										{isPaused ? (
 											<>
 												<Play size={14} /> Resume loop
@@ -364,6 +378,7 @@ function LoopDetailRoute() {
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										onSelect={() => setConfirmDelete(true)}
+										disabled={!canWrite}
 										className="text-error focus:text-error"
 									>
 										<Trash2 size={14} /> Delete loop
@@ -378,7 +393,7 @@ function LoopDetailRoute() {
 				<EditableTitle
 					value={loop.name}
 					entityId={loop.id}
-					onChange={object ? handleUpdateTitle : undefined}
+					onChange={object && canWrite ? handleUpdateTitle : undefined}
 					ariaLabel="Loop title"
 					placeholder="Untitled loop"
 				/>

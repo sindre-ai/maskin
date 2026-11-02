@@ -1,5 +1,7 @@
 import { FormError } from '@/components/shared/form-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useCardAnswer, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useContinueSession, useSendSessionInput } from '@/hooks/use-sessions'
@@ -52,6 +54,8 @@ export function IntegrationAccessRequestCard({
 	const helper = request.reply_to_session === true
 	const continueSession = useContinueSession(workspaceId, conversationId)
 	const sendInput = useSendSessionInput(workspaceId)
+	// Allowing access and declining both answer the agent, which a viewer cannot do.
+	const canWrite = useCanWrite()
 
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
@@ -200,14 +204,27 @@ export function IntegrationAccessRequestCard({
 				</p>
 			) : null}
 			<FormError error={error ?? undefined} />
-			<div className="flex flex-wrap items-center gap-2">
-				<Button type="button" size="sm" disabled={busy || !canAllow} onClick={() => void allow()}>
-					Allow
-				</Button>
-				<Button type="button" size="sm" variant="outline" disabled={busy} onClick={decline}>
-					Not now
-				</Button>
-			</div>
+			<ViewerTooltip className="flex">
+				<div className="flex flex-wrap items-center gap-2">
+					<Button
+						type="button"
+						size="sm"
+						disabled={busy || !canAllow || !canWrite}
+						onClick={() => void allow()}
+					>
+						Allow
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						disabled={busy || !canWrite}
+						onClick={decline}
+					>
+						Not now
+					</Button>
+				</div>
+			</ViewerTooltip>
 		</fieldset>
 	)
 }

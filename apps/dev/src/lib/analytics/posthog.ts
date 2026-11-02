@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { workspaces } from '@maskin/db/schema'
+import { actors, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { logger } from '../logger'
+import { admitPosthogEvent } from './event-budget'
 
 const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'
 const CAPTURE_TIMEOUT_MS = 2_000
@@ -30,6 +31,24 @@ let readPrivacy: PrivacyReader | null = null
 const privacyCache = new Map<string, PrivacyEntry>()
 
 /**
+ * Who an event is about. 'human' keeps the value the web and the saved insights
+ * already use (actor_type = 'human' on file_saved and object_updated).
+ */
+export type PosthogActorType = 'human' | 'agent' | 'trigger' | 'system'
+
+const ACTOR_TYPES: readonly string[] = ['human', 'agent', 'trigger', 'system']
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// An actor never changes type, so a long window is safe; the cap bounds memory.
+const ACTOR_TYPE_CACHE_TTL_MS = 10 * 60_000
+const ACTOR_TYPE_CACHE_CAP = 2_000
+
+type ActorTypeReader = (actorId: string) => Promise<PosthogActorType>
+type ActorTypeEntry = { expiresAt: number; value: Promise<PosthogActorType> }
+
+let readActorType: ActorTypeReader | null = null
+const actorTypeCache = new Map<string, ActorTypeEntry>()
+
+/**
  * Wires the workspace privacy lookup to the database. Called once at startup.
  * Until it is called, no workspace-scoped event leaves the process: the web
  * honours the same two settings, and an unreadable setting must not mean "send".
@@ -51,12 +70,66 @@ export function configurePosthogPrivacy(db: Database): void {
 			anonymize: privacy?.anonymize_workspace === true,
 		}
 	}
+	actorTypeCache.clear()
+	readActorType = async (actorId) => {
+		const [row] = await db
+			.select({ type: actors.type })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+		if (row?.type === 'human' || row?.type === 'agent') return row.type
+		return 'system'
+	}
 }
 
-/** Test-only: drops the lookup and its cache. */
+/** Test-only: drops the lookups and their caches. */
 export function __resetPosthogPrivacyForTesting(): void {
 	readPrivacy = null
 	privacyCache.clear()
+	readActorType = null
+	actorTypeCache.clear()
+}
+
+/**
+ * The actor type of an event: what the caller set, else 'trigger' for trigger_*
+ * events, else the type of the actor the distinct id names. A distinct id that
+ * is not an actor (a workspace, a session, a customer) is the system.
+ */
+async function resolveActorType(
+	event: string,
+	distinctId: string,
+	properties: PosthogEventProps,
+): Promise<PosthogActorType> {
+	const given = properties.actor_type
+	if (typeof given === 'string' && ACTOR_TYPES.includes(given)) return given as PosthogActorType
+	if (event.startsWith('trigger_')) return 'trigger'
+	const reader = readActorType
+	if (!reader || !UUID_RE.test(distinctId)) return 'system'
+	const now = Date.now()
+	let entry = actorTypeCache.get(distinctId)
+	if (!entry || entry.expiresAt <= now) {
+		const created: ActorTypeEntry = {
+			expiresAt: now + ACTOR_TYPE_CACHE_TTL_MS,
+			value: reader(distinctId),
+		}
+		entry = created
+		actorTypeCache.set(distinctId, created)
+		// A failed read must not be served for the rest of the window.
+		created.value.catch(() => {
+			if (actorTypeCache.get(distinctId) === created) actorTypeCache.delete(distinctId)
+		})
+		if (actorTypeCache.size > ACTOR_TYPE_CACHE_CAP) {
+			for (const [k, e] of actorTypeCache) {
+				if (e.expiresAt <= now) actorTypeCache.delete(k)
+			}
+		}
+	}
+	try {
+		return await entry.value
+	} catch {
+		// Sent as the system: no profile is created for a type we could not read.
+		return 'system'
+	}
 }
 
 function cachedPrivacy(workspaceId: string): Promise<WorkspacePrivacy> {
@@ -124,6 +197,13 @@ export function warnIfPosthogKeyUnset(): void {
  * `workspace_id` (billing customers, install telemetry) have no workspace
  * setting to honour and are sent as before.
  *
+ * Volume: each event name is sampled or capped per UTC day, see
+ * `event-budget.ts`; tier 1 events are never touched.
+ *
+ * Shared properties: every event carries `surface: 'backend'` and an `actor_type`
+ * (human, agent, trigger or system). Events whose actor is not a human are sent
+ * with the person-profile flag off, so only people get a profile.
+ *
  * Contract: never throws, never blocks the caller. If `POSTHOG_API_KEY` is
  * unset (local dev, CI without analytics), we log once at debug and return.
  * If the request fails, we log at warn — the agent's Slack post still
@@ -149,10 +229,14 @@ export async function capturePosthogEvent(
 		logger.debug('PostHog capture skipped — empty distinct id', { event })
 		return
 	}
+	const admission = admitPosthogEvent(event)
+	if (!admission.send) return
 	const host = process.env.POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST
 
 	let outId = distinctId
-	let outProps = properties
+	let outProps: PosthogEventProps = admission.sampleRate
+		? { ...properties, sample_rate: admission.sampleRate }
+		: properties
 	try {
 		const workspaceId = properties.workspace_id
 		if (typeof workspaceId === 'string' && workspaceId.trim()) {
@@ -163,7 +247,7 @@ export async function capturePosthogEvent(
 			}
 			if (privacy.anonymize) {
 				outId = hashDistinctId(distinctId)
-				outProps = stripIdentifiers(properties)
+				outProps = stripIdentifiers(outProps)
 			}
 		}
 	} catch (err) {
@@ -172,6 +256,16 @@ export async function capturePosthogEvent(
 			error: String(err),
 		})
 		return
+	}
+
+	// Every event says where it came from and who acted. Only people get a
+	// profile: an agent, trigger or system id as the person is one profile each.
+	const actorType = await resolveActorType(event, distinctId, properties)
+	outProps = {
+		...outProps,
+		surface: 'backend',
+		actor_type: actorType,
+		...(actorType === 'human' ? {} : { $process_person_profile: false }),
 	}
 
 	const body = {

@@ -30,6 +30,7 @@ describe('Helper sessions end on their result (Integration)', () => {
 	let agentId: string
 	let humanId: string
 	let onHelperResult: ReturnType<typeof vi.fn>
+	let onLimitResult: ReturnType<typeof vi.fn>
 	let finalizer: InteractiveTurnFinalizer
 
 	async function feed(sessionId: string, content: string) {
@@ -61,7 +62,8 @@ describe('Helper sessions end on their result (Integration)', () => {
 		if (!workspace) throw new Error('failed to seed workspace')
 		workspaceId = workspace.id
 		onHelperResult = vi.fn().mockResolvedValue(undefined)
-		finalizer = new InteractiveTurnFinalizer(db, { onHelperResult })
+		onLimitResult = vi.fn().mockResolvedValue(undefined)
+		finalizer = new InteractiveTurnFinalizer(db, { onHelperResult, onLimitResult })
 	})
 
 	it('ends the session when it returns a result with nothing pending', async () => {
@@ -111,6 +113,75 @@ describe('Helper sessions end on their result (Integration)', () => {
 		await feed(session.id, `${resultLine()}\n`)
 
 		expect(onHelperResult).not.toHaveBeenCalled()
+	})
+
+	describe('a limit error that leaves the CLI running', () => {
+		const limitText = "You've hit your session limit · resets 2:20pm (Europe/Copenhagen)"
+
+		function interactive() {
+			return insertSession(db, workspaceId, agentId, humanId, {
+				interactive: true,
+				conversationId: null,
+				status: 'running',
+				config: { interactive: true },
+			})
+		}
+
+		it('ends a session whose final result is a limit error', async () => {
+			const session = await interactive()
+			if (!session) throw new Error('no session')
+
+			await feed(session.id, `${resultLine({ is_error: true, result: limitText })}\n`)
+
+			expect(onLimitResult).toHaveBeenCalledWith(session.id, { isError: true, text: limitText })
+			expect(onHelperResult).not.toHaveBeenCalled()
+		})
+
+		it('leaves a helper to its own ending, once', async () => {
+			const session = await helper({})
+			if (!session) throw new Error('no session')
+
+			await feed(session.id, `${resultLine({ is_error: true, result: limitText })}\n`)
+
+			expect(onHelperResult).toHaveBeenCalledOnce()
+			expect(onLimitResult).not.toHaveBeenCalled()
+		})
+
+		it('does not end a session that only quotes the banner', async () => {
+			const session = await interactive()
+			if (!session) throw new Error('no session')
+
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: `Another session said: ${limitText}` })}\n`,
+			)
+			await feed(session.id, `${resultLine({ result: limitText })}\n`)
+
+			expect(onLimitResult).not.toHaveBeenCalled()
+		})
+
+		it('does not end a session on an old limit result that a later turn has followed', async () => {
+			const session = await interactive()
+			if (!session) throw new Error('no session')
+			const [old] = await db
+				.insert(sessionLogs)
+				.values({
+					sessionId: session.id,
+					stream: 'stdout',
+					content: `${resultLine({ is_error: true, result: limitText })}\n`,
+				})
+				.returning()
+			if (!old) throw new Error('failed to insert log')
+			await feed(session.id, `${resultLine({ result: 'Back after the reset' })}\n`)
+
+			await finalizer.onStdout(
+				session.id,
+				`${resultLine({ is_error: true, result: limitText })}\n`,
+				old.id,
+			)
+
+			expect(onLimitResult).not.toHaveBeenCalled()
+		})
 	})
 })
 

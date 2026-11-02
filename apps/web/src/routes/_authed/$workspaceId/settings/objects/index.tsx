@@ -1,11 +1,14 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -24,6 +27,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/objects/')(
 
 function ObjectsPage() {
 	const { workspace, workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 
 	const settings = workspace.settings as Record<string, unknown>
@@ -48,7 +52,7 @@ function ObjectsPage() {
 
 	const handleAdd = () => {
 		const trimmed = newName.trim()
-		if (!trimmed || currentFields.some((f) => f.name === trimmed)) return
+		if (!canWrite || !trimmed || currentFields.some((f) => f.name === trimmed)) return
 
 		const newField: FieldDefinition = {
 			name: trimmed,
@@ -102,15 +106,18 @@ function ObjectsPage() {
 					</div>
 				</div>
 				{!showAdd && (
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => setShowAdd(true)}
-						className="self-start shrink-0 sm:self-auto"
-					>
-						<Plus size={14} className="mr-1" />
-						Add property
-					</Button>
+					<ViewerTooltip className="inline-flex self-start shrink-0 sm:self-auto">
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={!canWrite}
+							onClick={() => setShowAdd(true)}
+							className="self-start shrink-0 sm:self-auto"
+						>
+							<Plus size={14} className="mr-1" />
+							Add property
+						</Button>
+					</ViewerTooltip>
 				)}
 			</div>
 
@@ -148,7 +155,10 @@ function ObjectsPage() {
 						<Button type="button" variant="ghost" onClick={() => setShowAdd(false)}>
 							Cancel
 						</Button>
-						<Button onClick={handleAdd} disabled={!newName.trim() || updateWorkspace.isPending}>
+						<Button
+							onClick={handleAdd}
+							disabled={!newName.trim() || updateWorkspace.isPending || !canWrite}
+						>
 							Create
 						</Button>
 					</div>
@@ -197,6 +207,7 @@ function RelationshipTypesEditor({
 	workspace: import('@/lib/api').WorkspaceWithRole
 	workspaceId: string
 }) {
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const [newType, setNewType] = useState('')
 
@@ -211,7 +222,7 @@ function RelationshipTypesEditor({
 
 	const handleAdd = () => {
 		const trimmed = newType.trim().toLowerCase().replace(/\s+/g, '_')
-		if (!trimmed || relationshipTypes.includes(trimmed)) return
+		if (!canWrite || !trimmed || relationshipTypes.includes(trimmed)) return
 		const updated = [...relationshipTypes, trimmed]
 		updateWorkspace.mutate({
 			settings: { ...settings, relationship_types: updated },
@@ -220,6 +231,7 @@ function RelationshipTypesEditor({
 	}
 
 	const handleRemove = (type: string) => {
+		if (!canWrite) return
 		const updated = relationshipTypes.filter((t) => t !== type)
 		updateWorkspace.mutate({
 			settings: { ...settings, relationship_types: updated },
@@ -238,9 +250,10 @@ function RelationshipTypesEditor({
 						{type.replace(/_/g, ' ')}
 						<button
 							type="button"
-							className="text-muted-foreground hover:text-error ml-0.5"
+							className="text-muted-foreground hover:text-error ml-0.5 disabled:pointer-events-none disabled:opacity-50"
 							onClick={() => handleRemove(type)}
-							title={`Remove ${type}`}
+							disabled={!canWrite}
+							title={canWrite ? `Remove ${type}` : VIEWER_READ_ONLY_MESSAGE}
 						>
 							×
 						</button>
@@ -253,16 +266,19 @@ function RelationshipTypesEditor({
 					value={newType}
 					onChange={(e) => setNewType(e.target.value)}
 					onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-					placeholder="New relationship type"
+					placeholder={canWrite ? 'New relationship type' : VIEWER_READ_ONLY_MESSAGE}
+					disabled={!canWrite}
 					className="flex-1"
 				/>
-				<Button
-					variant="secondary"
-					onClick={handleAdd}
-					disabled={!newType.trim() || updateWorkspace.isPending}
-				>
-					Add
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="secondary"
+						onClick={handleAdd}
+						disabled={!newType.trim() || updateWorkspace.isPending || !canWrite}
+					>
+						Add
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)

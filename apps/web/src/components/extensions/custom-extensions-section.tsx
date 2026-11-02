@@ -1,8 +1,10 @@
 import { AddExtensionDialog } from '@/components/extensions/add-extension-dialog'
 import { mcpReady, mcpToolCount } from '@/components/extensions/mcp-form'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useExtensions } from '@/hooks/use-extensions'
 import type { ExtensionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -37,6 +39,7 @@ function extensionKinds(ext: ExtensionResponse): string {
  */
 export function CustomExtensionsSection() {
 	const { workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 	const { data: extensions, isLoading, isError } = useExtensions(workspaceId)
 	const [adding, setAdding] = useState(false)
@@ -52,10 +55,17 @@ export function CustomExtensionsSection() {
 						Custom MCPs and webhooks a workspace can wire up without a code change.
 					</p>
 				</div>
-				<Button size="sm" onClick={() => setAdding(true)} className="shrink-0">
-					<Plus size={14} />
-					Add extension
-				</Button>
+				<ViewerTooltip>
+					<Button
+						size="sm"
+						onClick={() => setAdding(true)}
+						disabled={!canWrite}
+						className="shrink-0"
+					>
+						<Plus size={14} />
+						Add extension
+					</Button>
+				</ViewerTooltip>
 			</div>
 
 			{isLoading ? (
@@ -88,19 +98,22 @@ export function CustomExtensionsSection() {
 						)
 					})}
 					<li>
-						<button
-							type="button"
-							onClick={() => setAdding(true)}
-							className="flex w-full items-center justify-between gap-4 rounded-xl border border-dashed border-border bg-card p-3 text-left transition-colors hover:border-border-strong"
-						>
-							<div className="min-w-0">
-								<span className="block truncate text-[13px] font-semibold">Add an extension</span>
-								<span className="block truncate text-xs text-muted-foreground">
-									Paste an MCP URL, wire a webhook, or both.
-								</span>
-							</div>
-							<Plus size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-						</button>
+						<ViewerTooltip className="flex w-full">
+							<button
+								type="button"
+								onClick={() => setAdding(true)}
+								disabled={!canWrite}
+								className="flex w-full items-center justify-between gap-4 rounded-xl border border-dashed border-border bg-card p-3 text-left transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+							>
+								<div className="min-w-0">
+									<span className="block truncate text-[13px] font-semibold">Add an extension</span>
+									<span className="block truncate text-xs text-muted-foreground">
+										Paste an MCP URL, wire a webhook, or both.
+									</span>
+								</div>
+								<Plus size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+							</button>
+						</ViewerTooltip>
 					</li>
 				</ul>
 			)}

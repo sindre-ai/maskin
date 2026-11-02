@@ -582,7 +582,13 @@ enum MarkdownInline {
 				attr[run.range].backgroundColor = onInverse ? MaskinSurface.onInverse.opacity(0.16) : MaskinSurface.fill
 				attr[run.range].font = base.weight(.semibold)
 				attr[run.range].underlineStyle = nil
-				if isAddress { edits.append((run.range, .text(info.title ?? info.kindLabel))) }
+				// A link that leaves the app ends in a small arrow (a text glyph: a symbol cannot sit in a link).
+				let arrow = info.leavesApp ? "\u{00A0}\u{2197}\u{FE0E}" : ""
+				if isAddress {
+					edits.append((run.range, .text((info.title ?? info.kindLabel) + arrow)))
+				} else if !arrow.isEmpty {
+					edits.append((run.range, .text(String(attr[run.range].characters) + arrow)))
+				}
 			} else if let link = run.link, MarkdownLinkPolicy.decision(for: link) == .reject {
 				// tel:, sms:, facetime:, maskin:// ...: shown as plain text, never tappable.
 				attr[run.range].link = nil

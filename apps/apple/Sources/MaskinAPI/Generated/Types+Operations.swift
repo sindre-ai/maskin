@@ -7661,6 +7661,8 @@ public enum Operations {
     ///
     /// POST because it generates — one small model call, on demand, only when someone asks to hear it. The result is cached for the rest of the UTC day under a fingerprint of the workspace state, so asking again costs nothing unless something actually changed. Falls back to deterministic prose when the workspace has no chat-callable credentials, so this never fails for want of a model.
     ///
+    /// A read-only viewer is served the day's cached brief, or the deterministic prose when nothing is cached yet. A viewer never triggers a model call or writes the cache.
+    ///
     /// - Remark: HTTP `POST /api/briefing/spoken`.
     /// - Remark: Generated from `#/paths//api/briefing/spoken/post`.
     public enum post_sol_api_sol_briefing_sol_spoken {
@@ -10793,6 +10795,8 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/llm_config`.
                     public var llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/mailbox`.
+                    public var mailbox: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/default_workspace_id`.
                     public var default_workspace_id: Swift.String?
                     /// Creates a new `jsonPayload`.
@@ -10806,6 +10810,7 @@ public enum Operations {
                     ///   - memory:
                     ///   - llm_provider:
                     ///   - llm_config:
+                    ///   - mailbox:
                     ///   - default_workspace_id:
                     public init(
                         name: Swift.String? = nil,
@@ -10816,6 +10821,7 @@ public enum Operations {
                         memory: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.memoryPayload? = nil,
                         llm_provider: Swift.String? = nil,
                         llm_config: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.llm_configPayload? = nil,
+                        mailbox: Swift.String? = nil,
                         default_workspace_id: Swift.String? = nil
                     ) {
                         self.name = name
@@ -10826,6 +10832,7 @@ public enum Operations {
                         self.memory = memory
                         self.llm_provider = llm_provider
                         self.llm_config = llm_config
+                        self.mailbox = mailbox
                         self.default_workspace_id = default_workspace_id
                     }
                     public enum CodingKeys: String, CodingKey {
@@ -10837,6 +10844,7 @@ public enum Operations {
                         case memory
                         case llm_provider
                         case llm_config
+                        case mailbox
                         case default_workspace_id
                     }
                 }
@@ -17006,6 +17014,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_configured`.
                         public var llm_configured: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_configuredPayload
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints`.
+                        public struct llm_key_hintsPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints/anthropic`.
+                            public var anthropic: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints/openai`.
+                            public var openai: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints/custom_llm`.
+                            public var custom_llm: Swift.String?
+                            /// Creates a new `llm_key_hintsPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.String? = nil,
+                                openai: Swift.String? = nil,
+                                custom_llm: Swift.String? = nil
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/llm_key_hints`.
+                        public var llm_key_hints: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_key_hintsPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/enterprise`.
@@ -17031,6 +17070,7 @@ public enum Operations {
                         ///   - name:
                         ///   - settings:
                         ///   - llm_configured:
+                        ///   - llm_key_hints:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -17045,6 +17085,7 @@ public enum Operations {
                             name: Swift.String,
                             settings: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.settingsPayload? = nil,
                             llm_configured: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_configuredPayload,
+                            llm_key_hints: Operations.get_sol_api_sol_workspaces.Output.Ok.Body.jsonPayloadPayload.llm_key_hintsPayload? = nil,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -17059,6 +17100,7 @@ public enum Operations {
                             self.name = name
                             self.settings = settings
                             self.llm_configured = llm_configured
+                            self.llm_key_hints = llm_key_hints
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -17074,6 +17116,7 @@ public enum Operations {
                             case name
                             case settings
                             case llm_configured
+                            case llm_key_hints
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -18488,6 +18531,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_configured`.
                         public var llm_configured: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_configuredPayload
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints`.
+                        public struct llm_key_hintsPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints/anthropic`.
+                            public var anthropic: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints/openai`.
+                            public var openai: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints/custom_llm`.
+                            public var custom_llm: Swift.String?
+                            /// Creates a new `llm_key_hintsPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.String? = nil,
+                                openai: Swift.String? = nil,
+                                custom_llm: Swift.String? = nil
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/llm_key_hints`.
+                        public var llm_key_hints: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_key_hintsPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/responses/201/content/json/enterprise`.
@@ -18507,6 +18581,7 @@ public enum Operations {
                         ///   - name:
                         ///   - settings:
                         ///   - llm_configured:
+                        ///   - llm_key_hints:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -18518,6 +18593,7 @@ public enum Operations {
                             name: Swift.String,
                             settings: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.settingsPayload? = nil,
                             llm_configured: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_configuredPayload,
+                            llm_key_hints: Operations.post_sol_api_sol_workspaces.Output.Created.Body.jsonPayload.llm_key_hintsPayload? = nil,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -18529,6 +18605,7 @@ public enum Operations {
                             self.name = name
                             self.settings = settings
                             self.llm_configured = llm_configured
+                            self.llm_key_hints = llm_key_hints
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -18541,6 +18618,7 @@ public enum Operations {
                             case name
                             case settings
                             case llm_configured
+                            case llm_key_hints
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -20380,6 +20458,37 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_configured`.
                         public var llm_configured: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_configuredPayload
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints`.
+                        public struct llm_key_hintsPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints/anthropic`.
+                            public var anthropic: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints/openai`.
+                            public var openai: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints/custom_llm`.
+                            public var custom_llm: Swift.String?
+                            /// Creates a new `llm_key_hintsPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - anthropic:
+                            ///   - openai:
+                            ///   - custom_llm:
+                            public init(
+                                anthropic: Swift.String? = nil,
+                                openai: Swift.String? = nil,
+                                custom_llm: Swift.String? = nil
+                            ) {
+                                self.anthropic = anthropic
+                                self.openai = openai
+                                self.custom_llm = custom_llm
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case anthropic
+                                case openai
+                                case custom_llm
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/llm_key_hints`.
+                        public var llm_key_hints: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_key_hintsPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/onboardingEnabled`.
                         public var onboardingEnabled: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/responses/200/content/json/enterprise`.
@@ -20399,6 +20508,7 @@ public enum Operations {
                         ///   - name:
                         ///   - settings:
                         ///   - llm_configured:
+                        ///   - llm_key_hints:
                         ///   - onboardingEnabled:
                         ///   - enterprise:
                         ///   - billingOwnerId:
@@ -20410,6 +20520,7 @@ public enum Operations {
                             name: Swift.String,
                             settings: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.settingsPayload? = nil,
                             llm_configured: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_configuredPayload,
+                            llm_key_hints: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.llm_key_hintsPayload? = nil,
                             onboardingEnabled: Swift.Bool,
                             enterprise: Swift.Bool,
                             billingOwnerId: Swift.String? = nil,
@@ -20421,6 +20532,7 @@ public enum Operations {
                             self.name = name
                             self.settings = settings
                             self.llm_configured = llm_configured
+                            self.llm_key_hints = llm_key_hints
                             self.onboardingEnabled = onboardingEnabled
                             self.enterprise = enterprise
                             self.billingOwnerId = billingOwnerId
@@ -20433,6 +20545,7 @@ public enum Operations {
                             case name
                             case settings
                             case llm_configured
+                            case llm_key_hints
                             case onboardingEnabled
                             case enterprise
                             case billingOwnerId
@@ -21645,7 +21758,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Caller is a member but not a human admin or owner, or the workspace has reached its seat cap
+            /// Caller is a member but not a human admin or owner, or the actor is missing or is not an agent created in this workspace
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/403`.
             ///
@@ -21783,7 +21896,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace not found, caller is not a member of it, or actor not found
+            /// Workspace not found, or the caller is not a member of it
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/members/post/responses/404`.
             ///
@@ -29403,21 +29516,27 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config/scope`.
                             public var scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload?
+                            /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config/skip_when_idle`.
+                            public var skip_when_idle: Swift.Bool?
                             /// Creates a new `configPayload`.
                             ///
                             /// - Parameters:
                             ///   - expression:
                             ///   - scope:
+                            ///   - skip_when_idle:
                             public init(
                                 expression: Swift.String,
-                                scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload? = nil
+                                scope: Operations.post_sol_api_sol_triggers.Input.Body.jsonPayload.Case1Payload.configPayload.scopePayload? = nil,
+                                skip_when_idle: Swift.Bool? = nil
                             ) {
                                 self.expression = expression
                                 self.scope = scope
+                                self.skip_when_idle = skip_when_idle
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case expression
                                 case scope
+                                case skip_when_idle
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case1/config`.
@@ -30387,21 +30506,27 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1/scope`.
                             public var scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload?
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1/skip_when_idle`.
+                            public var skip_when_idle: Swift.Bool?
                             /// Creates a new `Value1Payload`.
                             ///
                             /// - Parameters:
                             ///   - expression:
                             ///   - scope:
+                            ///   - skip_when_idle:
                             public init(
                                 expression: Swift.String,
-                                scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload? = nil
+                                scope: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Body.jsonPayload.configPayload.Value1Payload.scopePayload? = nil,
+                                skip_when_idle: Swift.Bool? = nil
                             ) {
                                 self.expression = expression
                                 self.scope = scope
+                                self.skip_when_idle = skip_when_idle
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case expression
                                 case scope
+                                case skip_when_idle
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value1`.
@@ -45667,6 +45792,7 @@ public enum Operations {
                     /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                     /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                     /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                    /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                     ///
                     /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                     /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -45718,6 +45844,39 @@ public enum Operations {
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/destructive`.
                             public var destructive: Swift.Bool?
+                            /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status`.
+                            public struct set_statusPayload: Codable, Hashable, Sendable {
+                                /// The status to put the object in, e.g. "active".
+                                ///
+                                /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status/status`.
+                                public var status: Swift.String
+                                /// The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                ///
+                                /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status/object_id`.
+                                public var object_id: Swift.String?
+                                /// Creates a new `set_statusPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - status: The status to put the object in, e.g. "active".
+                                ///   - object_id: The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                public init(
+                                    status: Swift.String,
+                                    object_id: Swift.String? = nil
+                                ) {
+                                    self.status = status
+                                    self.object_id = object_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case status
+                                    case object_id
+                                }
+                            }
+                            /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status`.
+                            public var set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
                             /// Creates a new `optionsPayloadPayload`.
                             ///
                             /// - Parameters:
@@ -45725,22 +45884,26 @@ public enum Operations {
                             ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                             ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                             ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                            ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                             public init(
                                 label: Swift.String,
                                 consequences: [Swift.String],
                                 recommended: Swift.Bool? = nil,
-                                destructive: Swift.Bool? = nil
+                                destructive: Swift.Bool? = nil,
+                                set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
                             ) {
                                 self.label = label
                                 self.consequences = consequences
                                 self.recommended = recommended
                                 self.destructive = destructive
+                                self.set_status = set_status
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case label
                                 case consequences
                                 case recommended
                                 case destructive
+                                case set_status
                             }
                         }
                         /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -45818,6 +45981,43 @@ public enum Operations {
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/drafts`.
                         public var drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload?
+                        /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/only_while_status`.
+                        public var only_while_status: [Swift.String]?
+                        /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/no_status_action`.
+                        public var no_status_action: Swift.Bool?
+                        /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp`.
+                        public struct status_stampPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp/status`.
+                            public var status: Swift.String
+                            /// Creates a new `status_stampPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - object_id:
+                            ///   - status:
+                            public init(
+                                object_id: Swift.String,
+                                status: Swift.String
+                            ) {
+                                self.object_id = object_id
+                                self.status = status
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case object_id
+                                case status
+                            }
+                        }
+                        /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp`.
+                        public var status_stamp: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.status_stampPayload?
                         /// Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/draft`.
@@ -45891,6 +46091,9 @@ public enum Operations {
                         ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                         ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                         ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
+                        ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                        ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                        ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
                         ///   - draft: Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.
                         public init(
                             title: Swift.String,
@@ -45898,6 +46101,9 @@ public enum Operations {
                             ask: Swift.String,
                             options: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayload,
                             drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload? = nil,
+                            only_while_status: [Swift.String]? = nil,
+                            no_status_action: Swift.Bool? = nil,
+                            status_stamp: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.status_stampPayload? = nil,
                             draft: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftPayload? = nil
                         ) {
                             self.title = title
@@ -45905,6 +46111,9 @@ public enum Operations {
                             self.ask = ask
                             self.options = options
                             self.drafts = drafts
+                            self.only_while_status = only_while_status
+                            self.no_status_action = no_status_action
+                            self.status_stamp = status_stamp
                             self.draft = draft
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -45913,12 +46122,16 @@ public enum Operations {
                             case ask
                             case options
                             case drafts
+                            case only_while_status
+                            case no_status_action
+                            case status_stamp
                             case draft
                         }
                     }
                     /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                     /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                     /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                    /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                     ///
                     /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                     /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -46054,6 +46267,55 @@ public enum Operations {
                         public var unresolved_mentions: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/warning`.
                         public var warning: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action`.
+                        public struct status_actionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/applied`.
+                            public var applied: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/status`.
+                            public var status: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/reason`.
+                            @frozen public enum reasonPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case moved_on = "moved_on"
+                                case not_found = "not_found"
+                                case invalid_status = "invalid_status"
+                            }
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/reason`.
+                            public var reason: Operations.post_sol_api_sol_events.Output.Created.Body.jsonPayload.status_actionPayload.reasonPayload?
+                            /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action/current_status`.
+                            public var current_status: Swift.String?
+                            /// Creates a new `status_actionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - applied:
+                            ///   - object_id:
+                            ///   - status:
+                            ///   - reason:
+                            ///   - current_status:
+                            public init(
+                                applied: Swift.Bool,
+                                object_id: Swift.String,
+                                status: Swift.String? = nil,
+                                reason: Operations.post_sol_api_sol_events.Output.Created.Body.jsonPayload.status_actionPayload.reasonPayload? = nil,
+                                current_status: Swift.String? = nil
+                            ) {
+                                self.applied = applied
+                                self.object_id = object_id
+                                self.status = status
+                                self.reason = reason
+                                self.current_status = current_status
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case applied
+                                case object_id
+                                case status
+                                case reason
+                                case current_status
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/json/status_action`.
+                        public var status_action: Operations.post_sol_api_sol_events.Output.Created.Body.jsonPayload.status_actionPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -46068,6 +46330,7 @@ public enum Operations {
                         ///   - description:
                         ///   - unresolved_mentions:
                         ///   - warning:
+                        ///   - status_action:
                         public init(
                             id: Swift.Double,
                             workspaceId: Swift.String,
@@ -46079,7 +46342,8 @@ public enum Operations {
                             createdAt: Swift.String? = nil,
                             description: Swift.String? = nil,
                             unresolved_mentions: [Swift.String]? = nil,
-                            warning: Swift.String? = nil
+                            warning: Swift.String? = nil,
+                            status_action: Operations.post_sol_api_sol_events.Output.Created.Body.jsonPayload.status_actionPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -46092,6 +46356,7 @@ public enum Operations {
                             self.description = description
                             self.unresolved_mentions = unresolved_mentions
                             self.warning = warning
+                            self.status_action = status_action
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -46105,6 +46370,7 @@ public enum Operations {
                             case description
                             case unresolved_mentions
                             case warning
+                            case status_action
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/events/POST/responses/201/content/application\/json`.
@@ -47241,6 +47507,33 @@ public enum Operations {
                             public var suggested_name: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/hint`.
                             public var hint: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agentsPayload`.
+                            public struct target_agentsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agentsPayload/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agentsPayload/name`.
+                                public var name: Swift.String
+                                /// Creates a new `target_agentsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - name:
+                                public init(
+                                    id: Swift.String,
+                                    name: Swift.String
+                                ) {
+                                    self.id = id
+                                    self.name = name
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case name
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agents`.
+                            public typealias target_agentsPayload = [Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.target_agentsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request/target_agents`.
+                            public var target_agents: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.target_agentsPayload?
                             /// Creates a new `keychain_requestPayload`.
                             ///
                             /// - Parameters:
@@ -47249,18 +47542,21 @@ public enum Operations {
                             ///   - kind:
                             ///   - suggested_name:
                             ///   - hint:
+                            ///   - target_agents:
                             public init(
                                 session_id: Swift.String,
                                 reply_to_session: Swift.Bool? = nil,
                                 kind: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.kindPayload,
                                 suggested_name: Swift.String? = nil,
-                                hint: Swift.String? = nil
+                                hint: Swift.String? = nil,
+                                target_agents: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload.keychain_requestPayload.target_agentsPayload? = nil
                             ) {
                                 self.session_id = session_id
                                 self.reply_to_session = reply_to_session
                                 self.kind = kind
                                 self.suggested_name = suggested_name
                                 self.hint = hint
+                                self.target_agents = target_agents
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
@@ -47268,6 +47564,7 @@ public enum Operations {
                                 case kind
                                 case suggested_name
                                 case hint
+                                case target_agents
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata/keychain_request`.
@@ -52191,6 +52488,33 @@ public enum Operations {
                             public var suggested_name: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/hint`.
                             public var hint: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agentsPayload`.
+                            public struct target_agentsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agentsPayload/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agentsPayload/name`.
+                                public var name: Swift.String
+                                /// Creates a new `target_agentsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - name:
+                                public init(
+                                    id: Swift.String,
+                                    name: Swift.String
+                                ) {
+                                    self.id = id
+                                    self.name = name
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case name
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agents`.
+                            public typealias target_agentsPayload = [Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.target_agentsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request/target_agents`.
+                            public var target_agents: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.target_agentsPayload?
                             /// Creates a new `keychain_requestPayload`.
                             ///
                             /// - Parameters:
@@ -52199,18 +52523,21 @@ public enum Operations {
                             ///   - kind:
                             ///   - suggested_name:
                             ///   - hint:
+                            ///   - target_agents:
                             public init(
                                 session_id: Swift.String,
                                 reply_to_session: Swift.Bool? = nil,
                                 kind: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.kindPayload,
                                 suggested_name: Swift.String? = nil,
-                                hint: Swift.String? = nil
+                                hint: Swift.String? = nil,
+                                target_agents: Operations.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload.metadataPayload.keychain_requestPayload.target_agentsPayload? = nil
                             ) {
                                 self.session_id = session_id
                                 self.reply_to_session = reply_to_session
                                 self.kind = kind
                                 self.suggested_name = suggested_name
                                 self.hint = hint
+                                self.target_agents = target_agents
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case session_id
@@ -52218,6 +52545,7 @@ public enum Operations {
                                 case kind
                                 case suggested_name
                                 case hint
+                                case target_agents
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/POST/requestBody/json/metadata/keychain_request`.
@@ -66629,6 +66957,7 @@ public enum Operations {
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                                 /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -66680,6 +67009,39 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/destructive`.
                                         public var destructive: Swift.Bool?
+                                        /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
+                                        public struct set_statusPayload: Codable, Hashable, Sendable {
+                                            /// The status to put the object in, e.g. "active".
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status/status`.
+                                            public var status: Swift.String
+                                            /// The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status/object_id`.
+                                            public var object_id: Swift.String?
+                                            /// Creates a new `set_statusPayload`.
+                                            ///
+                                            /// - Parameters:
+                                            ///   - status: The status to put the object in, e.g. "active".
+                                            ///   - object_id: The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                            public init(
+                                                status: Swift.String,
+                                                object_id: Swift.String? = nil
+                                            ) {
+                                                self.status = status
+                                                self.object_id = object_id
+                                            }
+                                            public enum CodingKeys: String, CodingKey {
+                                                case status
+                                                case object_id
+                                            }
+                                        }
+                                        /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
+                                        public var set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
@@ -66687,22 +67049,26 @@ public enum Operations {
                                         ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                                        ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
-                                            destructive: Swift.Bool? = nil
+                                            destructive: Swift.Bool? = nil,
+                                            set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
+                                            self.set_status = set_status
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
                                             case consequences
                                             case recommended
                                             case destructive
+                                            case set_status
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -66990,6 +67356,43 @@ public enum Operations {
                                     public typealias draftsPayload = [Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
                                     public var drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
+                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
+                                    public var only_while_status: [Swift.String]?
+                                    /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/no_status_action`.
+                                    public var no_status_action: Swift.Bool?
+                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
+                                    public struct status_stampPayload: Codable, Hashable, Sendable {
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp/object_id`.
+                                        public var object_id: Swift.String
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp/status`.
+                                        public var status: Swift.String
+                                        /// Creates a new `status_stampPayload`.
+                                        ///
+                                        /// - Parameters:
+                                        ///   - object_id:
+                                        ///   - status:
+                                        public init(
+                                            object_id: Swift.String,
+                                            status: Swift.String
+                                        ) {
+                                            self.object_id = object_id
+                                            self.status = status
+                                        }
+                                        public enum CodingKeys: String, CodingKey {
+                                            case object_id
+                                            case status
+                                        }
+                                    }
+                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
+                                    public var status_stamp: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload?
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft`.
                                     public struct draftPayload: Codable, Hashable, Sendable {
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/id`.
@@ -67273,6 +67676,9 @@ public enum Operations {
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
+                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                                    ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -67280,6 +67686,9 @@ public enum Operations {
                                         ask: Swift.String,
                                         options: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
+                                        only_while_status: [Swift.String]? = nil,
+                                        no_status_action: Swift.Bool? = nil,
+                                        status_stamp: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload? = nil,
                                         draft: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
                                     ) {
                                         self.title = title
@@ -67287,6 +67696,9 @@ public enum Operations {
                                         self.ask = ask
                                         self.options = options
                                         self.drafts = drafts
+                                        self.only_while_status = only_while_status
+                                        self.no_status_action = no_status_action
+                                        self.status_stamp = status_stamp
                                         self.draft = draft
                                     }
                                     public enum CodingKeys: String, CodingKey {
@@ -67295,12 +67707,16 @@ public enum Operations {
                                         case ask
                                         case options
                                         case drafts
+                                        case only_while_status
+                                        case no_status_action
+                                        case status_stamp
                                         case draft
                                     }
                                 }
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                                 /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -70126,6 +70542,7 @@ public enum Operations {
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                                 /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -70177,6 +70594,39 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/destructive`.
                                         public var destructive: Swift.Bool?
+                                        /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
+                                        public struct set_statusPayload: Codable, Hashable, Sendable {
+                                            /// The status to put the object in, e.g. "active".
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status/status`.
+                                            public var status: Swift.String
+                                            /// The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                            ///
+                                            /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status/object_id`.
+                                            public var object_id: Swift.String?
+                                            /// Creates a new `set_statusPayload`.
+                                            ///
+                                            /// - Parameters:
+                                            ///   - status: The status to put the object in, e.g. "active".
+                                            ///   - object_id: The object to move when it is not the one this comment is on, e.g. the bet a task comment is about. Defaults to the object this comment is on.
+                                            public init(
+                                                status: Swift.String,
+                                                object_id: Swift.String? = nil
+                                            ) {
+                                                self.status = status
+                                                self.object_id = object_id
+                                            }
+                                            public enum CodingKeys: String, CodingKey {
+                                                case status
+                                                case object_id
+                                            }
+                                        }
+                                        /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
+                                        public var set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload?
                                         /// Creates a new `optionsPayloadPayload`.
                                         ///
                                         /// - Parameters:
@@ -70184,22 +70634,26 @@ public enum Operations {
                                         ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                                        ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                                         public init(
                                             label: Swift.String,
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
-                                            destructive: Swift.Bool? = nil
+                                            destructive: Swift.Bool? = nil,
+                                            set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil
                                         ) {
                                             self.label = label
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
+                                            self.set_status = set_status
                                         }
                                         public enum CodingKeys: String, CodingKey {
                                             case label
                                             case consequences
                                             case recommended
                                             case destructive
+                                            case set_status
                                         }
                                     }
                                     /// 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
@@ -70487,6 +70941,43 @@ public enum Operations {
                                     public typealias draftsPayload = [Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
                                     public var drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
+                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
+                                    public var only_while_status: [Swift.String]?
+                                    /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/no_status_action`.
+                                    public var no_status_action: Swift.Bool?
+                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
+                                    public struct status_stampPayload: Codable, Hashable, Sendable {
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp/object_id`.
+                                        public var object_id: Swift.String
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp/status`.
+                                        public var status: Swift.String
+                                        /// Creates a new `status_stampPayload`.
+                                        ///
+                                        /// - Parameters:
+                                        ///   - object_id:
+                                        ///   - status:
+                                        public init(
+                                            object_id: Swift.String,
+                                            status: Swift.String
+                                        ) {
+                                            self.object_id = object_id
+                                            self.status = status
+                                        }
+                                        public enum CodingKeys: String, CodingKey {
+                                            case object_id
+                                            case status
+                                        }
+                                    }
+                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
+                                    public var status_stamp: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload?
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft`.
                                     public struct draftPayload: Codable, Hashable, Sendable {
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/draft/id`.
@@ -70770,6 +71261,9 @@ public enum Operations {
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
+                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
+                                    ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -70777,6 +71271,9 @@ public enum Operations {
                                         ask: Swift.String,
                                         options: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
+                                        only_while_status: [Swift.String]? = nil,
+                                        no_status_action: Swift.Bool? = nil,
+                                        status_stamp: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload? = nil,
                                         draft: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
                                     ) {
                                         self.title = title
@@ -70784,6 +71281,9 @@ public enum Operations {
                                         self.ask = ask
                                         self.options = options
                                         self.drafts = drafts
+                                        self.only_while_status = only_while_status
+                                        self.no_status_action = no_status_action
+                                        self.status_stamp = status_stamp
                                         self.draft = draft
                                     }
                                     public enum CodingKeys: String, CodingKey {
@@ -70792,12 +71292,16 @@ public enum Operations {
                                         case ask
                                         case options
                                         case drafts
+                                        case only_while_status
+                                        case no_status_action
+                                        case status_stamp
                                         case draft
                                     }
                                 }
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
                                 /// title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;
@@ -81261,7 +81765,7 @@ public enum Operations {
     }
     /// Transcribe a short voice recording (chat dictation)
     ///
-    /// Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused.
+    /// Sends the audio to a speech-to-text model on OpenRouter (default Voxtral Small, override with MASKIN_TRANSCRIPTION_MODEL) and returns the text. Requires X-Workspace-Id; the call is billed to the operator account, so a read-only viewer is refused. Upstream failures are told apart: 429 busy, 503 provider account or key refused (401/402), 504 timeout or no answer, 502 any other provider error.
     ///
     /// - Remark: HTTP `POST /api/transcriptions`.
     /// - Remark: Generated from `#/paths//api/transcriptions/post`.
@@ -82018,7 +82522,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// The speech provider failed
+            /// The speech provider answered with an error other than 401, 402 or 429
             ///
             /// - Remark: Generated from `#/paths//api/transcriptions/post/responses/502`.
             ///
@@ -82036,6 +82540,282 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "badGateway",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct ServiceUnavailable: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/503/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body
+                /// Creates a new `ServiceUnavailable`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable.Body) {
+                    self.body = body
+                }
+            }
+            /// The speech provider refused our key or account (401 or 402): transcription is not available on this server until the operator fixes it. Retrying will not help.
+            ///
+            /// - Remark: Generated from `#/paths//api/transcriptions/post/responses/503`.
+            ///
+            /// HTTP response code: `503 serviceUnavailable`.
+            case serviceUnavailable(Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable)
+            /// The associated value of the enum case if `self` is `.serviceUnavailable`.
+            ///
+            /// - Throws: An error if `self` is not `.serviceUnavailable`.
+            /// - SeeAlso: `.serviceUnavailable`.
+            public var serviceUnavailable: Operations.post_sol_api_sol_transcriptions.Output.ServiceUnavailable {
+                get throws {
+                    switch self {
+                    case let .serviceUnavailable(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "serviceUnavailable",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct GatewayTimeout: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/transcriptions/POST/responses/504/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body
+                /// Creates a new `GatewayTimeout`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout.Body) {
+                    self.body = body
+                }
+            }
+            /// The request to the speech provider timed out or could not be made
+            ///
+            /// - Remark: Generated from `#/paths//api/transcriptions/post/responses/504`.
+            ///
+            /// HTTP response code: `504 gatewayTimeout`.
+            case gatewayTimeout(Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout)
+            /// The associated value of the enum case if `self` is `.gatewayTimeout`.
+            ///
+            /// - Throws: An error if `self` is not `.gatewayTimeout`.
+            /// - SeeAlso: `.gatewayTimeout`.
+            public var gatewayTimeout: Operations.post_sol_api_sol_transcriptions.Output.GatewayTimeout {
+                get throws {
+                    switch self {
+                    case let .gatewayTimeout(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "gatewayTimeout",
                             response: self
                         )
                     }

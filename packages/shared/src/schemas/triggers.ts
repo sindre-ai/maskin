@@ -24,6 +24,10 @@ export const cronScopeSchema = z.object({
 export const cronConfigSchema = z.object({
 	expression: z.string(),
 	scope: cronScopeSchema.optional(),
+	// Opt-in: skip a tick when no person has acted in the workspace since this
+	// trigger last fired. Stops scheduled sweeps from spending a customer's
+	// allowance on a workspace nobody is using.
+	skip_when_idle: z.boolean().optional(),
 })
 
 export const conditionOperatorSchema = z.enum([

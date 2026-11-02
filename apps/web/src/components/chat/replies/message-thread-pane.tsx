@@ -72,13 +72,15 @@ export function MessageThreadPane({
 		workspaceId,
 		conversationId,
 		everything,
+		{ threadRootId: rootId },
 	)
 
 	// A turn that has no message tag yet (its first moments) hangs under the newest message. When
-	// that message is a reply in this thread, the wait belongs here, not in the main chat.
+	// that message is a reply in this thread, the wait belongs here, not in the main chat. This
+	// thread's own session always waits here, whichever message is newest.
 	const newest = everything[everything.length - 1]
-	const fallbackHere =
-		newest && newest.threadRootId === rootId && !newest.threadAlsoInChannel ? fallback : []
+	const newestIsHere = !!newest && newest.threadRootId === rootId && !newest.threadAlsoInChannel
+	const fallbackHere = fallback.filter((turn) => turn.threadRootId === rootId || newestIsHere)
 
 	const markRead = useMarkThreadRead(conversationId, workspaceId)
 	const markReadMutate = markRead.mutate

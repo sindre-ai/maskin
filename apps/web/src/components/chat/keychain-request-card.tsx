@@ -1,9 +1,11 @@
 import { SecretInput } from '@/components/keychain/secret-input'
 import { FormError } from '@/components/shared/form-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useContinueSession } from '@/hooks/use-sessions'
@@ -48,8 +50,8 @@ export function keychainUseHint(kind: 'api_key' | 'login', name: string): string
  *
  * The person types the key, or the username and password, straight into this card, and
  * it goes to the vault: the value never passes through the agent or the message. It is
- * saved for the workspace but shared only with the agents in this chat (changeable on
- * the credential's page). Saving stops the agent's idle session and posts a short
+ * saved for the workspace but shared only with the agents in this chat, plus any the asker
+ * named as needing it (changeable on the credential's page). Saving stops the agent's idle session and posts a short
  * message, which starts a fresh session that has the credential (an API key in its environment;
  * a login to type with desktop_type, never to read).
  *
@@ -71,33 +73,51 @@ export function KeychainRequestCard({
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// A helper is not in this chat and was stopped to take the key, so its follow-up carries on.
 	const continueSession = useContinueSession(workspaceId, conversationId)
+	// Saving writes to the workspace, which a viewer cannot do.
+	const canWrite = useCanWrite()
 	// The Keychain pages only exist behind this flag, so the link and the pointer would dead-end.
 
+	const targetIds = useMemo(
+		() => new Set((request.target_agents ?? []).map((a) => a.id)),
+		[request.target_agents],
+	)
 	const agents = useMemo(() => {
 		const inChat = (conversation?.participants ?? [])
 			.filter((p) => p.actorType === 'agent')
 			.map((p) => ({ id: p.actorId, name: p.actorName }))
-		return inChat.some((a) => a.id === askingAgentId)
-			? inChat
-			: [{ id: askingAgentId, name: 'The agent that asked' }, ...inChat]
-	}, [conversation?.participants, askingAgentId])
+		const known = new Set(inChat.map((a) => a.id))
+		const named = (request.target_agents ?? []).filter((a) => !known.has(a.id))
+		const withTargets = [...inChat, ...named]
+		return withTargets.some((a) => a.id === askingAgentId)
+			? withTargets
+			: [{ id: askingAgentId, name: 'The agent that asked' }, ...withTargets]
+	}, [conversation?.participants, askingAgentId, request.target_agents])
 
 	const [name, setName] = useState(request.suggested_name ?? '')
 	const [secret, setSecret] = useState('')
 	const [username, setUsername] = useState('')
 	const [password, setPassword] = useState('')
-	// Everyone in the chat by default; only a person's untick removes an agent.
-	const [unselected, setUnselected] = useState<ReadonlySet<string>>(new Set())
+	// What the person ticked or unticked; an agent they have not touched keeps its default.
+	const [choices, setChoices] = useState<ReadonlyMap<string, boolean>>(new Map())
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	const [savedName, setSavedName] = useState<string | null>(null)
 	const [agentStillRunning, setAgentStillRunning] = useState(false)
 
-	const selectedIds = agents.map((a) => a.id).filter((id) => !unselected.has(id))
+	// Everyone in the chat by default. When the asker named who needs it, the chat agents
+	// that are neither named nor the asker start unticked, still tickable.
+	const isChecked = (id: string) =>
+		choices.get(id) ?? (targetIds.size === 0 || targetIds.has(id) || id === askingAgentId)
+	const selectedIds = agents.map((a) => a.id).filter(isChecked)
 	const nameProblem = name.trim() ? checkCredentialName(name) : null
 	const hasValue = isLogin ? username.trim().length > 0 && password.length > 0 : secret.length > 0
 	const canSave =
-		!busy && name.trim().length > 0 && !nameProblem && hasValue && selectedIds.length > 0
+		!busy &&
+		canWrite &&
+		name.trim().length > 0 &&
+		!nameProblem &&
+		hasValue &&
+		selectedIds.length > 0
 
 	// Saved earlier (a reload, or another tab): same session, same kind, after this card.
 	const savedEarlier = (integrations ?? []).find(
@@ -263,14 +283,9 @@ export function KeychainRequestCard({
 					<div key={agent.id} className="flex items-center gap-2">
 						<Checkbox
 							id={`kr-agent-${request.session_id}-${agent.id}`}
-							checked={!unselected.has(agent.id)}
+							checked={isChecked(agent.id)}
 							onCheckedChange={(checked) =>
-								setUnselected((prev) => {
-									const next = new Set(prev)
-									if (checked) next.delete(agent.id)
-									else next.add(agent.id)
-									return next
-								})
+								setChoices((prev) => new Map(prev).set(agent.id, checked === true))
 							}
 						/>
 						<Label htmlFor={`kr-agent-${request.session_id}-${agent.id}`} className="font-normal">
@@ -279,16 +294,19 @@ export function KeychainRequestCard({
 					</div>
 				))}
 				<p className="text-xs text-muted-foreground">
-					Saved for this workspace. You can change who can use it in Settings → Keychain.
+					The agents in this chat, the one that asked and any it named. Saved for the whole
+					workspace; only the ticked agents can use it. You can change that in Settings → Keychain.
 				</p>
 			</fieldset>
 
 			<FormError error={error ?? undefined} />
-			<div className="flex justify-end">
-				<Button type="submit" disabled={!canSave}>
-					{busy ? 'Saving…' : 'Save to Keychain'}
-				</Button>
-			</div>
+			<ViewerTooltip className="flex justify-end">
+				<div className="flex justify-end">
+					<Button type="submit" disabled={!canSave}>
+						{busy ? 'Saving…' : 'Save to Keychain'}
+					</Button>
+				</div>
+			</ViewerTooltip>
 		</form>
 	)
 }

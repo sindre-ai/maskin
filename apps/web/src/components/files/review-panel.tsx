@@ -1,9 +1,11 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ActorListItem, FileCommentDto } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -455,6 +457,7 @@ function CommentCard({
 	const author = actorsById.get(comment.authorId)
 	const resolvedActor = comment.resolvedBy ? actorsById.get(comment.resolvedBy) : null
 	const isResolved = Boolean(comment.resolvedAt)
+	const canWrite = useCanWrite()
 
 	const textAnchor = comment.textAnchor ?? null
 
@@ -519,26 +522,32 @@ function CommentCard({
 						<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
 							Resolved {resolvedActor?.name ? `· ${resolvedActor.name}` : ''}
 						</span>
+						<ViewerTooltip className="ml-auto inline-flex">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								className="ml-auto h-6 px-2 text-[11px]"
+								disabled={!canWrite}
+								onClick={() => onReopen(comment)}
+							>
+								Reopen
+							</Button>
+						</ViewerTooltip>
+					</>
+				) : (
+					<ViewerTooltip className="ml-auto inline-flex">
 						<Button
 							type="button"
 							variant="ghost"
 							size="sm"
 							className="ml-auto h-6 px-2 text-[11px]"
-							onClick={() => onReopen(comment)}
+							disabled={!canWrite}
+							onClick={() => onResolve(comment)}
 						>
-							Reopen
+							<Check size={12} /> Resolve
 						</Button>
-					</>
-				) : (
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="ml-auto h-6 px-2 text-[11px]"
-						onClick={() => onResolve(comment)}
-					>
-						<Check size={12} /> Resolve
-					</Button>
+					</ViewerTooltip>
 				)}
 			</footer>
 		</article>
@@ -657,6 +666,7 @@ function DraftCard({
 	onPostDraft: (draft: FileCommentDraft) => void
 }) {
 	const [localBody, setLocalBody] = useState(draft.body)
+	const canWrite = useCanWrite()
 	const textAnchor = draft.textAnchor
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: a click on the card supplements the quote button, which is the keyboard way to the same highlight
@@ -712,16 +722,18 @@ function DraftCard({
 				>
 					Discard
 				</Button>
-				<Button
-					type="button"
-					variant="secondary"
-					size="sm"
-					className="ml-auto h-7 px-2 text-xs"
-					disabled={localBody.trim().length === 0}
-					onClick={() => onPostDraft({ ...draft, body: localBody })}
-				>
-					Save draft
-				</Button>
+				<ViewerTooltip className="ml-auto inline-flex">
+					<Button
+						type="button"
+						variant="secondary"
+						size="sm"
+						className="ml-auto h-7 px-2 text-xs"
+						disabled={localBody.trim().length === 0 || !canWrite}
+						onClick={() => onPostDraft({ ...draft, body: localBody })}
+					>
+						Save draft
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</article>
 	)
@@ -746,6 +758,7 @@ function PanelFoot({
 	const disabledReason = deriveDisabledReason(provenance, target, unsentCount)
 	const isSending = sendState.phase === 'sending'
 	const isSent = sendState.phase === 'sent'
+	const canWrite = useCanWrite()
 
 	if (isSent) {
 		return (
@@ -776,17 +789,21 @@ function PanelFoot({
 					? 'Add comments on the stage, then send the round.'
 					: `${unsentCount} comment${unsentCount === 1 ? '' : 's'} ready to send.`}
 			</div>
-			<Button
-				type="button"
-				size="sm"
-				className="h-8 text-xs"
-				disabled={disabledReason !== null || unsentCount === 0 || !target || isSending}
-				onClick={() => target && onSendRound(target.id)}
-				title={disabledReason ?? undefined}
-				data-testid="panel-send-round"
-			>
-				{isSending ? 'Sending…' : `Send round${target ? ` · ${target.title}` : ''}`}
-			</Button>
+			<ViewerTooltip className="flex flex-col">
+				<Button
+					type="button"
+					size="sm"
+					className="h-8 text-xs"
+					disabled={
+						disabledReason !== null || unsentCount === 0 || !target || isSending || !canWrite
+					}
+					onClick={() => target && onSendRound(target.id)}
+					title={disabledReason ?? undefined}
+					data-testid="panel-send-round"
+				>
+					{isSending ? 'Sending…' : `Send round${target ? ` · ${target.title}` : ''}`}
+				</Button>
+			</ViewerTooltip>
 		</div>
 	)
 }
