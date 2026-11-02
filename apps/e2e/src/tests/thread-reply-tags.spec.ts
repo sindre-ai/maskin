@@ -50,6 +50,12 @@ test.describe('Chat — thread reply with tags inside the text', () => {
 			await expect(reply.getByRole('link', { name: `@Threaddev ${stamp}` })).toBeVisible()
 			await picture(page, testInfo, `thread-reply-sent-${vp.width}`)
 
+			// A reply is addressed to the thread's agent: the recipient shows as a pill again after a
+			// send and its id rides on every reply until the pill is removed.
+			await pane(page)
+				.getByRole('button', { name: /^Remove mention / })
+				.click()
+
 			// A name typed without the picker stays plain text and sends no id.
 			await box.click()
 			await page.keyboard.type('and x@Threaddev too')
