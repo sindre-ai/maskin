@@ -197,8 +197,11 @@ export function AgentStatusPill({
 	status,
 	pulse = false,
 	variant = 'pill',
+	neutral = false,
 }: {
 	status: PortraitStatus
+	/** Draws a running pill on the neutral plate the other statuses use (the agents list). */
+	neutral?: boolean
 	/** Swaps the leading glyph for a status dot that pulses while the agent is
 	 *  live — the agent-detail header's treatment (mockup 2360). Everywhere else
 	 *  keeps the icon so the pill still reads at row density. */
@@ -230,7 +233,7 @@ export function AgentStatusPill({
 		<span
 			className={cn(
 				'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-semibold',
-				meta.pillBg,
+				neutral ? 'bg-muted' : meta.pillBg,
 				meta.pillText,
 			)}
 		>
@@ -295,8 +298,9 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 	running: {
 		label: 'Working',
 		Icon: Play,
+		// v3: the hero pill carries the Working-now card's cobalt tint; the list passes `neutral`.
 		pillBg: 'bg-status-in_progress-bg',
-		pillText: 'text-success',
+		pillText: 'text-foreground',
 		dot: 'bg-success',
 		glyph: 'text-success',
 		inlineText: 'text-status-in_progress-text',

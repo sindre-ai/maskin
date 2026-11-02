@@ -1,4 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -19,6 +20,7 @@ interface SettingsNavItem {
 		| '/$workspaceId/settings/skills'
 		| '/$workspaceId/settings/mcp'
 		| '/$workspaceId/settings/billing'
+		| '/$workspaceId/settings/notifications'
 		| '/$workspaceId/settings/keys'
 		| '/$workspaceId/settings/keychain'
 	exact?: boolean
@@ -30,14 +32,14 @@ const WORKSPACE_NAV: SettingsNavItem[] = [
 	{ label: 'General', to: '/$workspaceId/settings', exact: true },
 	{ label: 'Members', to: '/$workspaceId/settings/members' },
 	{ label: 'Integrations', to: '/$workspaceId/settings/integrations' },
-	{ label: 'Extensions', to: '/$workspaceId/settings/extensions' },
 	{ label: 'Billing', to: '/$workspaceId/settings/billing' },
+	{ label: 'Notifications', to: '/$workspaceId/settings/notifications' },
 ]
 const AGENTS_NAV: SettingsNavItem[] = [
 	{ label: 'Skills', to: '/$workspaceId/settings/skills' },
 	{ label: 'Item types', to: '/$workspaceId/settings/objects' },
 ]
-const ACCESS_NAV: SettingsNavItem[] = [{ label: 'MCP', to: '/$workspaceId/settings/mcp' }]
+const ACCESS_NAV: SettingsNavItem[] = [{ label: 'Keys and MCP', to: '/$workspaceId/settings/mcp' }]
 
 // Keys is listed only for workspaces holding the `byollm_allowed` ops grant —
 // for everyone else the page has no content to show. It stays a real route
@@ -70,12 +72,9 @@ function SettingsLayout() {
 			{/* The screen's <h1> belongs to the shared top nav, not the page body. */}
 			{/* On a sub-page the crumb leaf is the page's own label (Settings › Integrations); a
 			    "Settings" title here would name the leaf "Settings" a second time. */}
-			<PageHeader
-				title={isGeneral ? 'Settings' : undefined}
-				subtitle={isGeneral ? workspace?.name : undefined}
-			/>
-			<div className="grid gap-x-8 gap-y-4 md:grid-cols-[200px_minmax(0,1fr)]">
-				<nav aria-label="Settings sections" className="md:col-start-1 md:pt-1">
+			<PageHeader title={isGeneral ? 'Settings' : undefined} hideTitle={isGeneral} />
+			<div className="grid grid-cols-[minmax(0,1fr)] gap-x-8 gap-y-4 md:grid-cols-[200px_minmax(0,1fr)]">
+				<nav aria-label="Settings sections" className="min-w-0 md:col-start-1 md:pt-1">
 					<div className="flex gap-4 overflow-x-auto pb-2 md:flex-col md:gap-5 md:pb-0">
 						{groups.map((group) => (
 							<div key={group.label} className="flex shrink-0 flex-col gap-0.5 md:shrink">
@@ -110,6 +109,7 @@ function SettingsLayout() {
 					</div>
 				</nav>
 				<div className="min-w-0 md:col-start-2">
+					{isGeneral && <SettingsPageTitle title="Settings" />}
 					<Outlet />
 				</div>
 			</div>

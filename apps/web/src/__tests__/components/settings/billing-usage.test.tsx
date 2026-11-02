@@ -19,6 +19,7 @@ import {
 	BillingUsageDetails,
 	BillingUsageSummary,
 	type WorkspaceModelUsage,
+	billingPeriodLabel,
 	useWorkspaceModelUsage,
 } from '@/components/settings/billing-usage'
 import { api } from '@/lib/api'
@@ -62,8 +63,8 @@ describe('BillingUsageSummary', () => {
 		const { container } = render(<BillingUsageSummary usage={buildUsage()} />)
 
 		expect(screen.getByText('$12.50')).toBeInTheDocument()
-		expect(screen.getByText('model usage this month')).toBeInTheDocument()
-		expect(screen.getByText(/resets/)).toBeInTheDocument()
+		expect(screen.getByText('Model usage this month')).toBeInTheDocument()
+		expect(billingPeriodLabel(buildUsage())).toMatch(/resets/)
 		expect(container.querySelector('[style*="width"]')).toBeNull()
 	})
 

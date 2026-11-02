@@ -5,6 +5,7 @@ import { useDuration } from '@/hooks/use-duration'
 import { useCreateSession, useStopSession } from '@/hooks/use-sessions'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatDurationCoarse } from '@/lib/format-duration'
 import { toastSessionCreateError } from '@/lib/session-errors'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -142,7 +143,7 @@ export function AgentWorkingNowCard({
 	const { workspaceId } = useWorkspace()
 	const stop = useStopSession(workspaceId)
 	const canWrite = useCanWrite()
-	const duration = useDuration(session.startedAt)
+	const duration = useDuration(session.startedAt, formatDurationCoarse)
 
 	return (
 		<FocusPlate

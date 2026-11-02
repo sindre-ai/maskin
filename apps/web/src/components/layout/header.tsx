@@ -68,8 +68,16 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Billing',
 		parent: '/_authed/$workspaceId/settings/',
 	},
+	'/_authed/$workspaceId/settings/notifications': {
+		label: 'Notifications',
+		parent: '/_authed/$workspaceId/settings/',
+	},
+	'/_authed/$workspaceId/settings/keychain/': {
+		label: 'Keychain',
+		parent: '/_authed/$workspaceId/settings/',
+	},
 	'/_authed/$workspaceId/settings/mcp': {
-		label: 'MCP',
+		label: 'Keys and MCP',
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/objects/': {

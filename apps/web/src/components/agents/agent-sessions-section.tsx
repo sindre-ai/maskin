@@ -12,11 +12,12 @@ import {
 	useCreateSession,
 	usePauseSession,
 	useResumeSession,
+	useStopSession,
 } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { formatDurationBetween } from '@/lib/format-duration'
+import { formatDurationCoarse } from '@/lib/format-duration'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
 import { useWorkspace } from '@/lib/workspace-context'
 import { isViewerRefusal } from '@/lib/workspace-role'
@@ -329,7 +330,7 @@ export function AgentSessionsSection({
 }
 
 function RunningFor({ startedAt }: { startedAt: string | null }) {
-	const duration = useDuration(startedAt)
+	const duration = useDuration(startedAt, formatDurationCoarse)
 	return <>{duration ? `Running for ${duration}` : 'Running'}</>
 }
 
@@ -371,23 +372,20 @@ function SessionCard({
 	const createSession = useCreateSession(workspaceId)
 	const pauseSession = usePauseSession(workspaceId)
 	const resumeSession = useResumeSession(workspaceId)
+	const stopSession = useStopSession(workspaceId)
 	// Pause, resume and restart all act on the session, which a viewer cannot do.
 	const canWrite = useCanWrite()
 
 	const name = title
 
-	// Mockup 2444 offers Restart on running / paused / waiting rows; a failed or stopped run can be run again too. There is no
+	// A running row offers Stop (v3 screenshot 21), not Restart. Restart is on paused / waiting rows; a failed or stopped run can be run again too. There is no
 	// restart endpoint — a restart is a fresh run of the same prompt, which is
 	// exactly what `useCreateSession` does. It carries the trigger too, so the new
 	// run keeps the trigger's name as its title.
 	const prompt = session.actionPrompt?.trim() ?? ''
 	const canRestart =
 		prompt.length > 0 &&
-		(state === 'running' ||
-			state === 'paused' ||
-			state === 'waiting' ||
-			state === 'failed' ||
-			state === 'stopped')
+		(state === 'paused' || state === 'waiting' || state === 'failed' || state === 'stopped')
 
 	const handleRestart = () =>
 		createSession.mutate(
@@ -445,6 +443,20 @@ function SessionCard({
 		</ViewerTooltip>
 	)
 
+	const stopButton = (
+		<ViewerTooltip>
+			<Button
+				size="sm"
+				variant="outline"
+				className="h-7 rounded-full px-3 text-xs font-semibold"
+				onClick={() => stopSession.mutate(thread.latestId)}
+				disabled={stopSession.isPending || !canWrite}
+			>
+				{stopSession.isPending ? 'Stopping…' : 'Stop'}
+			</Button>
+		</ViewerTooltip>
+	)
+
 	const restartButton = (
 		<ViewerTooltip>
 			<Button
@@ -456,13 +468,18 @@ function SessionCard({
 			>
 				<RotateCcw size={12} aria-hidden />
 				<span className="sr-only md:not-sr-only">
-					{createSession.isPending ? 'Restarting…' : 'Restart'}
+					{createSession.isPending ? 'Retrying…' : 'Retry'}
 				</span>
 			</Button>
 		</ViewerTooltip>
 	)
 
-	const duration = formatDurationBetween(session.startedAt, session.completedAt)
+	const duration = session.startedAt
+		? formatDurationCoarse(
+				(session.completedAt ? new Date(session.completedAt).getTime() : Date.now()) -
+					new Date(session.startedAt).getTime(),
+			)
+		: null
 	const rowStyle = COMPACT_STYLE[state] ?? {
 		dot: meta.dot,
 		pill: cn(meta.iconBg, meta.iconFg),
@@ -530,6 +547,7 @@ function SessionCard({
 				{label}
 			</button>
 			{(canPause || canResume) && <span className="shrink-0">{pauseResumeButton}</span>}
+			{canPause && <span className="shrink-0">{stopButton}</span>}
 			{canRestart && <span className="shrink-0">{restartButton}</span>}
 			<button
 				type="button"

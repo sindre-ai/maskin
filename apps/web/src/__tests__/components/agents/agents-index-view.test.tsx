@@ -511,7 +511,7 @@ describe('AgentsIndexView', () => {
 		it('renders the row status as a pill', () => {
 			mount([agentBrian()], [brianRunningSession()])
 			const status = screen.getByText('Working', { selector: 'span.rounded-full' })
-			expect(status.className).toContain('bg-status-in_progress-bg')
+			expect(status.className).toContain('bg-muted')
 		})
 
 		it('gives a failed agent See why instead of Call', () => {

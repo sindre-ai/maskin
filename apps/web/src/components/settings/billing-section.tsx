@@ -9,7 +9,6 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import type {
 	BillingPlan,
@@ -312,7 +311,7 @@ export function BillingSection({
 	if (usageQuery.isLoading) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Maskin Subscription</Label>
+				<h2 className="px-2 pb-1 text-xs font-semibold text-foreground">Maskin Subscription</h2>
 				<p className="text-xs text-muted-foreground">Loading…</p>
 			</div>
 		)
@@ -321,7 +320,7 @@ export function BillingSection({
 	if (usageQuery.isError || !usageQuery.data) {
 		return (
 			<div>
-				<Label className="mb-1 text-bold">Maskin Subscription</Label>
+				<h2 className="px-2 pb-1 text-xs font-semibold text-foreground">Maskin Subscription</h2>
 				<p className="text-xs text-error">
 					{usageQuery.error?.message ?? 'Could not load subscription state.'}
 				</p>
@@ -345,7 +344,7 @@ export function BillingSection({
 
 	return (
 		<div>
-			<Label className="mb-1 text-bold">Maskin Subscription</Label>
+			<h2 className="px-2 pb-1 text-xs font-semibold text-foreground">Maskin Subscription</h2>
 			<p className="text-xs text-muted-foreground mb-3">
 				Hosted LLM — pay Maskin, no API key needed. Included usage per period, billed at actual
 				dollar cost, then buy prepaid usage credits any time to keep going — you choose the amount,

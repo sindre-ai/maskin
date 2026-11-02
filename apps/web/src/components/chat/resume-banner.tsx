@@ -71,15 +71,17 @@ export function ResumeBanner({ conversationId, messages, lastReadMessageId }: Re
 	const overflow = unread.length - lines.length
 
 	return (
-		<div className="rounded-xl border-l-2 border-brand bg-secondary p-3.5">
+		<div className="rounded-lg border-l-2 border-brand bg-muted px-3.5 py-3">
 			<div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-				<span className="eyebrow">Picking up where you left off</span>
+				<span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+					Picking up where you left off
+				</span>
 				<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
 					last spoke
 					<RelativeTime date={lastRead.createdAt} />
 				</span>
 			</div>
-			<ul className="flex flex-col gap-1 text-xs leading-normal text-muted-foreground">
+			<ul className="flex flex-col gap-1 text-[12.5px] leading-normal text-muted-foreground">
 				{lines.map((m) => (
 					<li key={m.id} className="flex gap-2">
 						<span aria-hidden className="shrink-0 text-brand-subtle-foreground">

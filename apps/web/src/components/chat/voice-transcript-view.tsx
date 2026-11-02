@@ -37,11 +37,10 @@ export function VoiceTranscriptView({
 					returnFocusTo.current.focus()
 				}}
 			>
-				<header className="flex flex-col gap-1 border-b border-border px-5 py-4 pr-16">
-					<SheetTitle className="text-lg font-bold tracking-tight">Transcript</SheetTitle>
-					<SheetDescription className="font-mono text-[13px] font-semibold">
-						{durationSeconds ? `${formatCallClock(durationSeconds)} · ` : ''}
-						{lines.length} {lines.length === 1 ? 'line' : 'lines'}
+				<header className="flex flex-col gap-1 px-5 pb-4 pt-6 pr-16">
+					<SheetTitle className="text-3xl font-extrabold tracking-tight">Transcript</SheetTitle>
+					<SheetDescription className="text-sm text-muted-foreground">
+						Live meeting{durationSeconds ? ` · ${formatCallClock(durationSeconds)}` : ''}
 					</SheetDescription>
 				</header>
 				{lines.length === 0 ? (
@@ -49,16 +48,19 @@ export function VoiceTranscriptView({
 						No spoken lines were saved for this call.
 					</p>
 				) : (
-					<ol className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
+					<ol className="mx-5 flex flex-1 flex-col overflow-y-auto border-t border-border">
 						{lines.map((line) => (
-							<li key={line.id} className="grid grid-cols-[3.5rem_1fr] gap-x-3">
-								<span className="pt-0.5 font-mono text-[11px] font-semibold text-muted-foreground">
+							<li
+								key={line.id}
+								className="flex items-start justify-between gap-4 border-b border-border py-3"
+							>
+								<div className="min-w-0">
+									<p className="text-base font-semibold text-foreground">{line.speaker}</p>
+									<p className="text-sm text-muted-foreground">{line.text}</p>
+								</div>
+								<span className="shrink-0 pt-0.5 font-mono text-sm text-muted-foreground">
 									{formatCallClock(line.t)}
 								</span>
-								<div className="min-w-0">
-									<p className="text-[13px] font-semibold text-foreground">{line.speaker}</p>
-									<p className="text-sm text-foreground">{line.text}</p>
-								</div>
 							</li>
 						))}
 					</ol>

@@ -51,11 +51,11 @@ describe('SettingsLayout', () => {
 			'General',
 			'Members',
 			'Integrations',
-			'Extensions',
 			'Billing',
+			'Notifications',
 			'Skills',
 			'Item types',
-			'MCP',
+			'Keys and MCP',
 			'Keychain',
 		])
 	})

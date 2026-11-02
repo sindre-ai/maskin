@@ -66,28 +66,25 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page).toHaveURL(new RegExp(`q=${TOKEN}`))
 			await expect(page).toHaveURL(/types=agent/)
 
-			// Counts live inside the Type menu and come from the endpoint: one agent, one result.
-			const typePill = page.getByRole('button', { name: 'Type: Agents' })
+			// Counts sit in the Type rows and come from the endpoint: one agent, one result.
+			const typeRows = page.getByRole('region', { name: 'Type' })
+			const agentsRow = typeRows.getByRole('button', { name: 'Agents 1' })
 			await expect(page.getByText(/^1 result for/)).toBeVisible({ timeout: 20_000 })
 			await expect(page.getByRole('option', { name: new RegExp(`${TOKEN} Agent`) })).toBeVisible()
-			await typePill.click()
-			await expect(
-				page.getByRole('menuitemcheckbox', { name: 'Agents' }).filter({ hasText: '1' }),
-			).toBeVisible()
-			await page.keyboard.press('Escape')
+			await expect(agentsRow).toBeVisible()
+			await expect(agentsRow).toContainText('Selected')
 
-			// Pills are 44px on touch widths (under md), 34px for a mouse at md and up, and reachable by keyboard.
-			const pillBox = await typePill.boundingBox()
-			expect(pillBox?.height).toBeGreaterThanOrEqual(
-				(page.viewportSize()?.width ?? 0) < 768 ? 44 : 34,
-			)
-			await typePill.focus()
-			await expect(typePill).toBeFocused()
+			// Rows are 44px high, reachable by keyboard.
+			const rowBox = await agentsRow.boundingBox()
+			expect(rowBox?.height).toBeGreaterThanOrEqual(44)
+			await agentsRow.focus()
+			await expect(agentsRow).toBeFocused()
 
-			// The Status pill narrows by group. An idle agent is In progress.
-			await page.getByRole('button', { name: 'Status' }).click()
-			await page.getByRole('menuitemcheckbox', { name: 'In progress' }).click()
-			await page.keyboard.press('Escape')
+			// The Status rows narrow by group. An idle agent is In progress.
+			await page
+				.getByRole('region', { name: 'Status' })
+				.getByRole('button', { name: /^In progress/ })
+				.click()
 			await expect(page).toHaveURL(/statuses=in_progress/)
 
 			// A reload restores the same view.

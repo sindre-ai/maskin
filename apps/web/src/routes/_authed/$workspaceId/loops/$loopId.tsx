@@ -12,6 +12,7 @@ import {
 	readStoredPlan,
 } from '@/components/loops/loop-proposed-edit'
 import { LoopStats } from '@/components/loops/loop-stats'
+import { LoopTags } from '@/components/loops/loop-tags'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
@@ -160,6 +161,17 @@ function LoopDetailRoute() {
 			} catch (err) {
 				toast.error('Could not save your changes')
 				throw err
+			}
+		},
+		[loopId, updateObject],
+	)
+
+	const handleUpdateTags = useCallback(
+		async (tags: string[]) => {
+			try {
+				await updateObject.mutateAsync({ id: loopId, data: { metadata: { tags } } })
+			} catch {
+				toast.error('Could not save your changes')
 			}
 		},
 		[loopId, updateObject],
@@ -440,7 +452,7 @@ function LoopDetailRoute() {
 					onChange={object && canWrite ? handleUpdateTitle : undefined}
 					ariaLabel="Flow title"
 					placeholder="Untitled flow"
-					className="text-[clamp(24px,3vw,30px)]"
+					className="text-[clamp(24px,3vw,33px)]"
 				/>
 
 				{/* The loop's promise, written the same way an object's document body
@@ -540,6 +552,12 @@ function LoopDetailRoute() {
 								<LoopFirstRunBanner triggers={loopTriggers} />
 							</div>
 						)}
+
+						<LoopTags
+							tags={loop.tags}
+							canWrite={canWrite && !!object}
+							onChange={handleUpdateTags}
+						/>
 
 						<TargetsAndOwners loop={loop} actors={actors} />
 

@@ -1,4 +1,4 @@
-import { StatusPill, type StatusPillTone } from '@/components/integrations/drive/status-pill'
+import type { StatusPillTone } from '@/components/integrations/drive/status-pill'
 import { cn } from '@/lib/cn'
 import type { ReactNode } from 'react'
 
@@ -51,9 +51,11 @@ export function ProviderCard({
 	return (
 		<div
 			className={cn(
-				'flex flex-wrap items-center gap-3 border border-border',
-				chat ? 'rounded-2xl bg-secondary px-4 py-3.5' : 'rounded-xl bg-card',
-				!chat && (compact ? 'p-3' : 'px-4 py-3.5'),
+				'flex flex-wrap items-center gap-3',
+				settingsRow && 'border-b border-border-subtle px-2 py-3.5',
+				!settingsRow && 'border border-border',
+				chat ? 'rounded-2xl bg-secondary px-4 py-3.5' : !settingsRow && 'rounded-xl bg-card',
+				!chat && compact && 'p-3',
 			)}
 		>
 			{!settingsRow && (
@@ -107,9 +109,15 @@ export function ProviderCard({
 				{notes}
 			</div>
 			{status && settingsRow && (
-				<StatusPill soft tone={status.tone}>
+				<span
+					className={cn(
+						'shrink-0 text-[13px] font-medium',
+						status.tone === 'ok' ? 'text-success' : 'text-warning',
+					)}
+					aria-label={status.label}
+				>
 					{status.label}
-				</StatusPill>
+				</span>
 			)}
 			{actions}
 			{footer && <div className="basis-full">{footer}</div>}

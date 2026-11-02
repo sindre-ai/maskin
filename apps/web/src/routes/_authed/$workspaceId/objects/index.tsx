@@ -172,7 +172,7 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 // unlike a status or driver pin, they mean the same thing on day one as they
 // do on day one hundred, so they are safe to pre-place in the chip row.
 const DEFAULT_GROUP_BY = 'status'
-const DEFAULT_PINNED_FILTERS = ['quick:fresh', 'quick:starred']
+const DEFAULT_PINNED_FILTERS = ['quick:waiting', 'quick:starred', 'quick:fresh']
 
 function ObjectsRoute() {
 	// Below md the Display control is its icon, so the title keeps its room.
@@ -1204,7 +1204,7 @@ function ObjectsRoute() {
 					},
 					{
 						id: 'waiting',
-						label: 'Waiting on you',
+						label: 'To decide',
 						count: attentionCounts.waiting,
 						active: attention === 'waiting',
 						onToggle: () => toggleAttention('waiting'),

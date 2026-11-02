@@ -1,5 +1,6 @@
 import { CredentialCard } from '@/components/keychain/credential-card'
 import { isKeychainCredential } from '@/components/keychain/keychain-parts'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useIntegrations } from '@/hooks/use-integrations'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
@@ -19,8 +21,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keychain/')
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const INTRO =
-	'Credentials your agents use to reach external services. Each key is encrypted at rest, assigned to specific agents or flows, and every use is logged.'
+const INTRO = 'Secrets the agents may use, with who can read them.'
 
 function AddCredentialButton({ workspaceId, label }: { workspaceId: string; label: string }) {
 	const canWrite = useCanWrite()
@@ -28,7 +29,7 @@ function AddCredentialButton({ workspaceId, label }: { workspaceId: string; labe
 	if (!canWrite) {
 		return (
 			<ViewerTooltip>
-				<Button size="sm" disabled className="max-md:h-11">
+				<Button disabled className={PILL_BUTTON}>
 					<Plus size={14} className="mr-1" />
 					{label}
 				</Button>
@@ -36,7 +37,7 @@ function AddCredentialButton({ workspaceId, label }: { workspaceId: string; labe
 		)
 	}
 	return (
-		<Button asChild size="sm" className="max-md:h-11">
+		<Button asChild className={PILL_BUTTON}>
 			<Link to="/$workspaceId/settings/keychain/new" params={{ workspaceId }}>
 				<Plus size={14} className="mr-1" />
 				{label}
@@ -57,16 +58,8 @@ function KeychainPage() {
 	)
 
 	return (
-		<div className="max-w-[720px]">
-			<div className="mb-3 flex flex-wrap items-start gap-2">
-				<div className="min-w-0 flex-1 basis-64">
-					<h2 className="settings-label">Keychain</h2>
-					<p className="mt-1 text-[13px] text-muted-foreground">{INTRO}</p>
-				</div>
-				{credentials.length > 0 && (
-					<AddCredentialButton workspaceId={workspaceId} label="Add credential" />
-				)}
-			</div>
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Keychain" subtitle={INTRO} />
 
 			{isLoading ? (
 				<ListSkeleton />
@@ -118,11 +111,17 @@ function KeychainPage() {
 					</ul>
 				</div>
 			) : (
-				<div className="flex flex-col gap-3">
-					{credentials.map((credential) => (
-						<CredentialCard key={credential.id} credential={credential} />
-					))}
-				</div>
+				<section>
+					<h2 className="px-2 pb-1.5 text-xs font-semibold text-foreground">Secrets</h2>
+					<div className="border-t border-border-subtle">
+						{credentials.map((credential) => (
+							<CredentialCard key={credential.id} credential={credential} />
+						))}
+					</div>
+					<div className="mt-5 flex px-2">
+						<AddCredentialButton workspaceId={workspaceId} label="Add secret" />
+					</div>
+				</section>
 			)}
 		</div>
 	)

@@ -386,7 +386,7 @@ function LoopsRoute() {
 										</h2>
 									)}
 									{view === 'cards' ? (
-										<div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2">
+										<div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2 xl:grid-cols-3">
 											{group.items.map((loop) => {
 												const failed = failedByLoopId.get(loop.id) ?? null
 												return (

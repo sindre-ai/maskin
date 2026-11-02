@@ -1,3 +1,4 @@
+import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { DeleteWorkspaceDialog } from '@/components/settings/delete-workspace-dialog'
 import { SettingsLinkRow } from '@/components/settings/settings-link-row'
 import { RouteError } from '@/components/shared/route-error'
@@ -76,8 +77,12 @@ function GeneralPage() {
 			<WorkspaceToolsSection />
 			{getStoredActor()?.type === 'human' && <DevicesSection />}
 
-			{workspace.billingOwnerId !== null && workspace.billingOwnerId === getStoredActor()?.id && (
-				<DangerSection />
+			{getStoredActor()?.type === 'human' && (
+				<DangerSection
+					canDeleteWorkspace={
+						workspace.billingOwnerId !== null && workspace.billingOwnerId === getStoredActor()?.id
+					}
+				/>
 			)}
 		</div>
 	)
@@ -154,30 +159,44 @@ function DevicesSection() {
 	)
 }
 
-function DangerSection() {
+function DangerSection({ canDeleteWorkspace }: { canDeleteWorkspace: boolean }) {
 	const { workspace, workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const [open, setOpen] = useState(false)
+	const [accountOpen, setAccountOpen] = useState(false)
 
 	return (
 		<SettingsSection title="Danger zone">
-			<ViewerTooltip className="flex w-full">
-				<button
-					type="button"
-					disabled={!canWrite}
-					onClick={() => setOpen(true)}
-					className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-semibold text-destructive disabled:opacity-50"
-				>
-					Delete workspace
-					<ChevronRight size={18} aria-hidden className="text-muted-foreground" />
-				</button>
-			</ViewerTooltip>
-			<DeleteWorkspaceDialog
-				workspaceId={workspaceId}
-				workspaceName={workspace.name}
-				open={open}
-				onOpenChange={setOpen}
-			/>
+			{canDeleteWorkspace && (
+				<>
+					<ViewerTooltip className="flex w-full">
+						<button
+							type="button"
+							disabled={!canWrite}
+							onClick={() => setOpen(true)}
+							className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-semibold text-destructive disabled:opacity-50"
+						>
+							Delete workspace
+							<ChevronRight size={18} aria-hidden className="text-muted-foreground" />
+						</button>
+					</ViewerTooltip>
+					<DeleteWorkspaceDialog
+						workspaceId={workspaceId}
+						workspaceName={workspace.name}
+						open={open}
+						onOpenChange={setOpen}
+					/>
+				</>
+			)}
+			<button
+				type="button"
+				onClick={() => setAccountOpen(true)}
+				className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-semibold text-destructive"
+			>
+				Delete account
+				<ChevronRight size={18} aria-hidden className="text-muted-foreground" />
+			</button>
+			{accountOpen && <DeleteAccountDialog open={accountOpen} onOpenChange={setAccountOpen} />}
 		</SettingsSection>
 	)
 }

@@ -1,13 +1,9 @@
-import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { RelativeTime } from '@/components/shared/relative-time'
-import { TypeBadge } from '@/components/shared/type-badge'
 import { cn } from '@/lib/cn'
-import { statusLabel } from '@/lib/constants'
+import { TYPE_LABELS, statusLabel } from '@/lib/constants'
 import { highlightText } from '@/lib/search-highlight'
 import { rowSub, rowTitle } from '@/lib/search/row-display'
 import type { SearchResultRow, SearchSourceGroup } from '@maskin/shared'
-import { MessageSquare, RefreshCw, Zap } from 'lucide-react'
-import { statusDotClass } from './search-chips'
+import { ChevronRight } from 'lucide-react'
 
 export const GROUP_LABEL: Record<SearchSourceGroup, string> = {
 	chats: 'Chats',
@@ -36,12 +32,6 @@ const GROUP_ORDER: SearchSourceGroup[] = [
 	'automations',
 ]
 
-const GROUP_GLYPH: Partial<Record<SearchSourceGroup, typeof MessageSquare>> = {
-	chats: MessageSquare,
-	loops: RefreshCw,
-	automations: Zap,
-}
-
 /** DOM id of a result option; the field points at it with aria-activedescendant. */
 export function optionId(listboxId: string, row: SearchResultRow): string {
 	return `${listboxId}-${row.group}-${row.id}`
@@ -68,47 +58,12 @@ interface RowProps {
 	onOpen: (row: SearchResultRow) => void
 }
 
-export function RowIcon({
-	row,
-}: { row: Pick<SearchResultRow, 'id' | 'group' | 'type' | 'title'> }) {
-	const Glyph = GROUP_GLYPH[row.group]
-	if (row.group === 'objects') {
-		return <TypeBadge type={row.type} variant="tile" className="size-7 shrink-0 rounded-lg" />
-	}
-	if (row.group === 'agents') {
-		return (
-			<ActorAvatar
-				id={row.id}
-				name={row.title}
-				type="agent"
-				className="size-7 shrink-0 text-[10px]"
-			/>
-		)
-	}
-	if (row.group === 'people') {
-		return (
-			<ActorAvatar
-				id={row.id}
-				name={row.title}
-				type="human"
-				className="size-7 shrink-0 text-[10px]"
-			/>
-		)
-	}
-	return Glyph ? (
-		<span
-			aria-hidden="true"
-			className="grid size-7 shrink-0 place-items-center rounded-lg bg-secondary text-muted-foreground"
-		>
-			<Glyph className="size-[15px]" />
-		</span>
-	) : null
-}
-
-// v3 row: a kind tile, the title over one meta line ("Item · Waiting on you · Strategist"),
-// and the date at the right. The matched snippet is for chats only.
+// v3 row: the title over one grey meta line ("Bet · Proposed") with a chevron at the right.
+// The matched snippet is for chats only.
 function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 	const sub = rowSub(row)
+	const kind =
+		row.group === 'objects' ? (TYPE_LABELS[row.type] ?? KIND_WORD.objects) : KIND_WORD[row.group]
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard use goes through the search field (combobox with aria-activedescendant), not through focus on the row
 		<div
@@ -119,27 +74,18 @@ function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 			aria-selected={active}
 			onClick={() => onOpen(row)}
 			className={cn(
-				'flex w-full cursor-pointer items-center gap-3 border-t border-border px-1 py-2.5 text-left transition-colors hover:bg-secondary max-lg:min-h-11 pointer-coarse:min-h-11',
+				'flex w-full cursor-pointer items-center gap-3 border-t border-border px-2 py-2.5 text-left transition-colors hover:bg-secondary max-lg:min-h-11 pointer-coarse:min-h-11',
 				active && 'bg-secondary',
 			)}
 		>
-			<RowIcon row={row} />
 			<span className="flex min-w-0 flex-1 flex-col">
-				<span className="truncate text-sm font-medium text-foreground">
+				<span className="truncate text-[15px] font-medium text-foreground">
 					{highlightText(rowTitle(row), query)}
 				</span>
-				<span className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-muted-foreground">
-					{row.group === 'people' ? null : (
-						<span
-							aria-hidden="true"
-							className={cn('size-1.5 shrink-0 rounded-full', statusDotClass(row.statusGroup))}
-						/>
-					)}
-					<span className="truncate">
-						{[KIND_WORD[row.group], row.group === 'people' ? null : statusLabel(row.status), sub]
-							.filter(Boolean)
-							.join(' · ')}
-					</span>
+				<span className="truncate text-[13px] text-muted-foreground">
+					{[kind, row.group === 'people' ? null : statusLabel(row.status), sub]
+						.filter(Boolean)
+						.join(' · ')}
 				</span>
 				{row.group === 'chats' && row.snippet ? (
 					<span className="truncate text-xs leading-normal text-muted-foreground">
@@ -147,13 +93,7 @@ function ResultRow({ row, query, id, active, onOpen }: RowProps) {
 					</span>
 				) : null}
 			</span>
-			{row.updatedAt ? (
-				<RelativeTime
-					date={row.updatedAt}
-					compact
-					className="shrink-0 text-xs text-muted-foreground"
-				/>
-			) : null}
+			<ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
 		</div>
 	)
 }
@@ -200,7 +140,7 @@ export function SearchResultList({
 			aria-label="Search results"
 			aria-busy={dimmed}
 			className={cn(
-				'flex flex-col px-3 pb-8 pt-3 transition-opacity md:px-5 [&_mark]:bg-warning/25 [&_mark]:text-foreground',
+				'flex flex-col pb-8 pt-1 transition-opacity [&_mark]:bg-warning/25 [&_mark]:text-foreground',
 				dimmed && 'opacity-60',
 			)}
 		>
@@ -218,7 +158,7 @@ export function SearchResultList({
 							>
 								<div
 									aria-hidden="true"
-									className="px-1 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+									className="px-2 pb-2 pt-4 text-[13px] font-semibold text-muted-foreground"
 								>
 									{GROUP_LABEL[group]} · {groupRows.length}
 								</div>

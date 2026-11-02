@@ -34,6 +34,7 @@ import { Route as AuthedWorkspaceIdChatsIndexRouteImport } from './routes/_authe
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
 import { Route as AuthedWorkspaceIdTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/triggers/$triggerId'
 import { Route as AuthedWorkspaceIdSettingsSkillsRouteImport } from './routes/_authed/$workspaceId/settings/skills'
+import { Route as AuthedWorkspaceIdSettingsNotificationsRouteImport } from './routes/_authed/$workspaceId/settings/notifications'
 import { Route as AuthedWorkspaceIdSettingsMembersRouteImport } from './routes/_authed/$workspaceId/settings/members'
 import { Route as AuthedWorkspaceIdSettingsMcpRouteImport } from './routes/_authed/$workspaceId/settings/mcp'
 import { Route as AuthedWorkspaceIdSettingsKeysRouteImport } from './routes/_authed/$workspaceId/settings/keys'
@@ -192,6 +193,12 @@ const AuthedWorkspaceIdSettingsSkillsRoute =
   AuthedWorkspaceIdSettingsSkillsRouteImport.update({
     id: '/skills',
     path: '/skills',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
+const AuthedWorkspaceIdSettingsNotificationsRoute =
+  AuthedWorkspaceIdSettingsNotificationsRouteImport.update({
+    id: '/notifications',
+    path: '/notifications',
     getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
   } as any)
 const AuthedWorkspaceIdSettingsMembersRoute =
@@ -363,6 +370,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -408,6 +416,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -459,6 +468,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings/keys': typeof AuthedWorkspaceIdSettingsKeysRoute
   '/_authed/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/_authed/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
+  '/_authed/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
   '/_authed/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/_authed/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -510,6 +520,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/keys'
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
+    | '/$workspaceId/settings/notifications'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents/'
@@ -555,6 +566,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/keys'
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
+    | '/$workspaceId/settings/notifications'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents'
@@ -605,6 +617,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings/keys'
     | '/_authed/$workspaceId/settings/mcp'
     | '/_authed/$workspaceId/settings/members'
+    | '/_authed/$workspaceId/settings/notifications'
     | '/_authed/$workspaceId/settings/skills'
     | '/_authed/$workspaceId/triggers/$triggerId'
     | '/_authed/$workspaceId/agents/'
@@ -811,6 +824,13 @@ declare module '@tanstack/react-router' {
       path: '/skills'
       fullPath: '/$workspaceId/settings/skills'
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsSkillsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
+    '/_authed/$workspaceId/settings/notifications': {
+      id: '/_authed/$workspaceId/settings/notifications'
+      path: '/notifications'
+      fullPath: '/$workspaceId/settings/notifications'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsNotificationsRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsRoute
     }
     '/_authed/$workspaceId/settings/members': {
@@ -1021,6 +1041,7 @@ interface AuthedWorkspaceIdSettingsRouteChildren {
   AuthedWorkspaceIdSettingsKeysRoute: typeof AuthedWorkspaceIdSettingsKeysRoute
   AuthedWorkspaceIdSettingsMcpRoute: typeof AuthedWorkspaceIdSettingsMcpRoute
   AuthedWorkspaceIdSettingsMembersRoute: typeof AuthedWorkspaceIdSettingsMembersRoute
+  AuthedWorkspaceIdSettingsNotificationsRoute: typeof AuthedWorkspaceIdSettingsNotificationsRoute
   AuthedWorkspaceIdSettingsSkillsRoute: typeof AuthedWorkspaceIdSettingsSkillsRoute
   AuthedWorkspaceIdSettingsIndexRoute: typeof AuthedWorkspaceIdSettingsIndexRoute
   AuthedWorkspaceIdSettingsExtensionsExtIdRoute: typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
@@ -1042,6 +1063,8 @@ const AuthedWorkspaceIdSettingsRouteChildren: AuthedWorkspaceIdSettingsRouteChil
     AuthedWorkspaceIdSettingsMcpRoute: AuthedWorkspaceIdSettingsMcpRoute,
     AuthedWorkspaceIdSettingsMembersRoute:
       AuthedWorkspaceIdSettingsMembersRoute,
+    AuthedWorkspaceIdSettingsNotificationsRoute:
+      AuthedWorkspaceIdSettingsNotificationsRoute,
     AuthedWorkspaceIdSettingsSkillsRoute: AuthedWorkspaceIdSettingsSkillsRoute,
     AuthedWorkspaceIdSettingsIndexRoute: AuthedWorkspaceIdSettingsIndexRoute,
     AuthedWorkspaceIdSettingsExtensionsExtIdRoute:

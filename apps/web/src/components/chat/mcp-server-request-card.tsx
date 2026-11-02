@@ -9,8 +9,9 @@ import {
 } from '@/components/chat/request-card-parts'
 import {
 	REQUEST_CARD,
-	REQUEST_CARD_BUTTON,
-	REQUEST_CARD_QUIET_BUTTON,
+	REQUEST_CARD_ACTIONS,
+	REQUEST_CARD_DECLINE,
+	REQUEST_CARD_PRIMARY,
 } from '@/components/chat/request-card-styles'
 import { SecretInput } from '@/components/keychain/secret-input'
 import { FormError } from '@/components/shared/form-error'
@@ -364,14 +365,14 @@ export function McpServerRequestCard({
 				<p className="text-xs text-muted-foreground">Only a person can add a tool server.</p>
 			) : null}
 			<FormError error={error ?? undefined} />
-			<div className="flex flex-wrap items-center gap-2">
-				<Button type="submit" className={REQUEST_CARD_BUTTON} disabled={!canSubmit}>
+			<div className={REQUEST_CARD_ACTIONS}>
+				<Button type="submit" className={REQUEST_CARD_PRIMARY} disabled={!canSubmit}>
 					{busy ? 'Adding…' : savedServerId ? 'Give to this agent' : 'Add'}
 				</Button>
 				<Button
 					type="button"
 					variant="ghost"
-					className={REQUEST_CARD_QUIET_BUTTON}
+					className={REQUEST_CARD_DECLINE}
 					disabled={busy}
 					onClick={decline}
 				>

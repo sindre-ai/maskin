@@ -135,6 +135,7 @@ describe('GeneralPage', () => {
 			'Privacy and data',
 			'Workspace tools',
 			'Devices',
+			'Danger zone',
 		])
 	})
 

@@ -48,7 +48,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 const AGENTS_DISPLAY_KEY = 'agents'
 const DEFAULT_GROUP_BY = 'team'
-
 export const AGENT_STATUSES = ['working', 'idle', 'failed'] as const
 type StatusBucket = (typeof AGENT_STATUSES)[number]
 
@@ -690,6 +689,15 @@ function AgentRowItem({
 						</TooltipTrigger>
 						<TooltipContent className="max-w-xs">{outcome}</TooltipContent>
 					</Tooltip>
+					{row.team !== NO_TEAM && (
+						// The Team column takes over from xl; below it (or with the column off) the team
+						// reads under the outcome, as in the narrow v3 list.
+						<span
+							className={cn('truncate text-[13px] text-muted-foreground', showTeam && 'xl:hidden')}
+						>
+							{row.team}
+						</span>
+					)}
 					{showActivity && (
 						// Below md the Latest column is hidden, so its text wraps under the
 						// outcome instead — readable on touch with no hover.
@@ -722,7 +730,7 @@ function AgentRowItem({
 					</span>
 				)}
 				<span className="shrink-0 text-[13px] md:w-[100px]">
-					<AgentStatusPill status={portrait} pulse />
+					<AgentStatusPill status={portrait} pulse neutral />
 				</span>
 			</Link>
 			<DropdownMenu>

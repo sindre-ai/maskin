@@ -69,7 +69,9 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 
 			// The human-in-the-loop promise must be readable on a phone, not just
 			// on a desktop-width row.
-			await expect(page.getByText('nothing moves until you say so')).toBeVisible()
+			await expect(
+				page.getByText('Nothing moves until you say so. Undo stays for 30 seconds.'),
+			).toBeVisible()
 
 			// Both tinted surfaces read in either colour mode.
 			await page.emulateMedia({ colorScheme: 'light' })

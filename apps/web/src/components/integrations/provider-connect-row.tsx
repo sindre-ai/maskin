@@ -45,6 +45,18 @@ const INTRO_SUBTITLES: Record<IntegrationToolState, string> = {
 	missing: 'Not connected yet',
 }
 
+/** What each tool is for, in a few words (mockup Settings, Integrations). */
+const PROVIDER_TAGLINES: Record<string, string> = {
+	github: 'Pull requests',
+	gmail: 'Drafts and sending',
+	'google-drive': 'Files',
+	'linkedin-unipile': 'Posting and outreach',
+	linear: 'Issues',
+	posthog: 'Product analytics',
+	resend: 'Email sending',
+	slack: 'Channels and triggers',
+}
+
 export function ProviderRow({
 	provider,
 	integration,
@@ -140,10 +152,14 @@ export function ProviderRow({
 				: `Update needed — reconnect to grant ${missingCount} new permission${missingCount === 1 ? '' : 's'}`
 			: provider.externalIdDisplay === 'email' && integration.externalId
 				? `Connected as ${integration.externalId}`
-				: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
-		: provider.events.length > 0
-			? `${provider.events.length} event types available`
-			: 'Available to connect'
+				: integration.externalId
+					? `Connected · Installation ${integration.externalId}`
+					: (variant === 'settings' && PROVIDER_TAGLINES[provider.name]) || 'Connected'
+		: variant === 'settings' && PROVIDER_TAGLINES[provider.name]
+			? PROVIDER_TAGLINES[provider.name]
+			: provider.events.length > 0
+				? `${provider.events.length} event types available`
+				: 'Available to connect'
 
 	// The intro's quiet row says plainly where the tool stands for this agent, in
 	// place of the event count and the install id.
@@ -175,7 +191,7 @@ export function ProviderRow({
 				isConnected
 					? needsReconnect
 						? { tone: 'warn', label: 'Reconnect needed' }
-						: { tone: 'ok', label: 'Active' }
+						: { tone: 'ok', label: 'Connected' }
 					: undefined
 			}
 			notes={
@@ -257,8 +273,11 @@ export function ProviderRow({
 						<ViewerTooltip>
 							<Button
 								size="sm"
-								className={PILL_BUTTON}
-								variant={introState ? 'outline' : undefined}
+								className={cn(
+									PILL_BUTTON,
+									!introState && variant === 'settings' && 'text-brand hover:text-brand-hover',
+								)}
+								variant={introState ? 'outline' : variant === 'settings' ? 'ghost' : undefined}
 								onClick={handleConnect}
 								disabled={connect.isPending || !canWrite}
 								aria-label={introState ? `${connectLabel} ${provider.displayName}` : undefined}

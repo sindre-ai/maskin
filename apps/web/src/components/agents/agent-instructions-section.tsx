@@ -17,6 +17,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
+import { Link } from '@tanstack/react-router'
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -44,6 +45,7 @@ export function describeDraft(draft: string): string {
 }
 
 export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
+	const { workspaceId } = useWorkspace()
 	const [open, setOpen] = useState(false)
 	const [expanded, setExpanded] = useState(false)
 	const canWrite = useCanWrite()
@@ -61,17 +63,32 @@ export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
 				id="agent-instructions-heading"
 				title="Instructions"
 				action={
-					<ViewerTooltip>
-						<Button
-							variant="ghost"
-							size="sm"
-							className="h-7 shrink-0 px-2 text-sm font-semibold text-brand hover:text-brand-hover"
-							disabled={!canWrite}
-							onClick={() => setOpen(true)}
+					<div className="flex items-center gap-1">
+						<ViewerTooltip>
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-7 shrink-0 px-2 text-[13px] font-semibold text-muted-foreground hover:text-foreground"
+								disabled={!canWrite}
+								onClick={() => setOpen(true)}
+							>
+								Edit
+							</Button>
+						</ViewerTooltip>
+						{/* v3: instructions are changed by telling the agent in chat. */}
+						<Link
+							to="/$workspaceId/chats/new"
+							params={{ workspaceId }}
+							search={{
+								agentId: agent.id,
+								agentName: agent.name,
+								text: 'Change your instructions: ',
+							}}
+							className="px-2 text-[13px] font-semibold text-brand hover:text-brand-hover"
 						>
-							Edit
-						</Button>
-					</ViewerTooltip>
+							Change in chat
+						</Link>
+					</div>
 				}
 			/>
 			<div className="rounded-xl border border-border bg-background px-4 py-3.5 text-[15px] leading-normal text-foreground">

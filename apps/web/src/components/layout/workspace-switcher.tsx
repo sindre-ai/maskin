@@ -25,7 +25,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, ChevronDown, Plus } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { getActorAvatarPaletteClass } from '../shared/actor-avatar'
 import { NewWorkspaceDialog } from './new-workspace-dialog'
@@ -165,12 +165,12 @@ export function WorkspaceSwitcher() {
 						</SidebarMenuButton>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent
-						className="w-[--radix-dropdown-menu-trigger-width] min-w-[212px]"
-						side={isMobile ? 'bottom' : 'right'}
+						className="w-[--radix-dropdown-menu-trigger-width] min-w-[260px]"
+						side="bottom"
 						align="start"
 						sideOffset={4}
 					>
-						<DropdownMenuLabel className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+						<DropdownMenuLabel className="px-2 py-1 text-xs font-semibold text-muted-foreground">
 							Workspaces
 						</DropdownMenuLabel>
 						{isLoading ? (
@@ -193,27 +193,13 @@ export function WorkspaceSwitcher() {
 									<DropdownMenuItem
 										key={ws.id}
 										onSelect={() => handleSelect(ws)}
-										className="gap-2.5 max-md:min-h-11"
+										className="gap-2 max-md:min-h-11"
 									>
-										{/* Each workspace gets its own identity colour, the way
-										    the mockup gives V / N / P three different plates. */}
-										<span
-											className={cn(
-												'flex size-6 shrink-0 items-center justify-center rounded-[7px] text-[10px] font-bold',
-												getActorAvatarPaletteClass(ws.id),
-											)}
-										>
-											{ws.name.charAt(0).toUpperCase()}
+										{/* v3: a plain list, the current workspace ticked on the left. */}
+										<span className="flex size-4 shrink-0 items-center justify-center">
+											{isCurrent && <Check className="size-3.5 text-brand" />}
 										</span>
-										<span className="flex min-w-0 flex-1 flex-col">
-											<span className="truncate text-[12.5px] font-semibold text-foreground">
-												{ws.name}
-											</span>
-											<span className="truncate text-[10.5px] text-muted-foreground">
-												{membersLabel(ws.memberCount)}
-											</span>
-										</span>
-										{isCurrent && <Check className="size-3 shrink-0 text-foreground" />}
+										<span className="truncate text-[13px]">{ws.name}</span>
 									</DropdownMenuItem>
 								)
 							})
@@ -227,9 +213,8 @@ export function WorkspaceSwitcher() {
 								setOpenMobile(false)
 								requestAnimationFrame(() => setCreateOpen(true))
 							}}
-							className="gap-2 text-muted-foreground max-md:min-h-11"
+							className="gap-2 pl-8 text-[13px] text-muted-foreground max-md:min-h-11"
 						>
-							<Plus className="size-3.5 shrink-0" />
 							<span className="truncate">New workspace</span>
 						</DropdownMenuItem>
 						{/* Closing the drawer is not cosmetic on mobile: the sidebar is a
@@ -242,7 +227,7 @@ export function WorkspaceSwitcher() {
 								setOpenMobile(false)
 								navigate({ to: '/$workspaceId/settings', params: { workspaceId } })
 							}}
-							className="gap-2 text-muted-foreground max-md:min-h-11"
+							className="gap-2 pl-8 text-[13px] text-muted-foreground max-md:min-h-11"
 						>
 							<span className="truncate">Workspace settings</span>
 						</DropdownMenuItem>

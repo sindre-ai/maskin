@@ -1,4 +1,5 @@
 import { McpConnectionSection } from '@/components/settings/mcp-connection'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -17,11 +18,14 @@ function McpPage() {
 	const { workspaceId } = useWorkspace()
 
 	return (
-		<div className="max-w-[760px] space-y-6">
-			<McpConnectionSection workspaceId={workspaceId} />
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Keys and MCP" />
+			<div className="space-y-6 px-2">
+				<McpConnectionSection workspaceId={workspaceId} />
 
-			<div className="border-t border-border pt-6">
-				<ApiKeySection />
+				<div className="border-t border-border pt-6">
+					<ApiKeySection />
+				</div>
 			</div>
 		</div>
 	)

@@ -16,7 +16,7 @@ export function TrialCard({ workspaceId }: { workspaceId: string }) {
 	return (
 		<section
 			aria-label="Trial"
-			className="rounded-xl bg-warning/10 p-3 group-data-[collapsible=icon]:hidden"
+			className="rounded-xl bg-ask-surface p-3 group-data-[collapsible=icon]:hidden"
 		>
 			<p className="text-[13px] font-bold text-warning">{state.title}</p>
 			<p className="mt-0.5 text-xs text-warning">Choose a plan to keep your agents running.</p>

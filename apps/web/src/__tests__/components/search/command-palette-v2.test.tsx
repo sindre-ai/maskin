@@ -31,6 +31,20 @@ vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: actorsRef.curre
 vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => ({ data: { pages: [{ conversations: chatsRef.current }] } }),
 }))
+vi.mock('@/hooks/use-for-you', () => ({
+	useForYou: () => ({
+		data: {
+			items: [
+				{
+					entity_type: 'object',
+					entity_id: '00000000-0000-4000-8000-0000000000f1',
+					object: { title: 'Review the launcher' },
+					curated: { headline: 'Review the launcher' },
+				},
+			],
+		},
+	}),
+}))
 vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: loopsRef.current }) }))
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: () => ({ data: { items: [] } }),
@@ -155,11 +169,9 @@ describe('launcher with an empty field', () => {
 		await screen.findByRole('option', { name: /Review the launcher/ })
 		expect(groupLabels()).toEqual(['Needs you', 'Recent', 'Commands', 'Go to', 'Search'])
 		expect(screen.getByRole('option', { name: /Recent bet/ })).toBeInTheDocument()
-		// Needs you comes from the shared status group, three rows at most.
-		expect(api.search.query).toHaveBeenCalledWith(
-			'ws-1',
-			expect.objectContaining({ statuses: 'needs_you', limit: '3' }),
-			expect.anything(),
+		// Needs you comes from the For you decisions, tagged DECISION.
+		expect(screen.getByRole('option', { name: /Review the launcher/ })).toHaveTextContent(
+			'DECISION',
 		)
 		expect(trackCommandPaletteOpened).toHaveBeenCalledWith({ surface: 'command_palette' })
 	})
@@ -167,8 +179,7 @@ describe('launcher with an empty field', () => {
 	it('does not ask the endpoint for Jump to rows until something is typed', async () => {
 		renderLauncher()
 		await screen.findByRole('option', { name: /Review the launcher/ })
-		const calls = vi.mocked(api.search.query).mock.calls
-		expect(calls.every(([, params]) => params?.statuses === 'needs_you')).toBe(true)
+		expect(api.search.query).not.toHaveBeenCalled()
 	})
 })
 

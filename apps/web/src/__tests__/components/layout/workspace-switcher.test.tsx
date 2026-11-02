@@ -99,7 +99,7 @@ describe('WorkspaceSwitcher', () => {
 		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
 		const { Wrapper } = makeWrapper()
 		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
-		expect(screen.getByText('Workspace Alpha')).toBeInTheDocument()
+		expect(screen.getAllByText('Workspace Alpha').length).toBeGreaterThan(0)
 	})
 
 	it('lists every workspace with the current one marked when opened (AC-U2)', async () => {
@@ -238,7 +238,7 @@ describe('WorkspaceSwitcher', () => {
 		expect(trackOpened).toHaveBeenCalledTimes(1)
 	})
 
-	it('shows the member count as a sub-line on each workspace row', async () => {
+	it('lists each workspace by name only, with no member sub-line', async () => {
 		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
 		const { Wrapper } = makeWrapper()
 		const user = userEvent.setup()
@@ -246,9 +246,10 @@ describe('WorkspaceSwitcher', () => {
 
 		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
 
-		expect(screen.getByText('9 members')).toBeInTheDocument()
-		// A workspace of one reads as "just you", never "1 members".
-		expect(screen.getByText('just you')).toBeInTheDocument()
+		expect(screen.getAllByText('Workspace Alpha').length).toBeGreaterThan(0)
+		expect(screen.getByText('Workspace Beta')).toBeInTheDocument()
+		expect(screen.queryByText('9 members')).toBeNull()
+		expect(screen.queryByText('just you')).toBeNull()
 	})
 
 	it('opens the new-workspace dialog from the switcher', async () => {

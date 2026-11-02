@@ -107,6 +107,10 @@ test.describe('Settings v3 (part 1)', () => {
 				account,
 			}) => {
 				await page.goto(`/${account.workspaceId}/settings/objects`)
+				await page
+					.getByRole('link', { name: /propert(y|ies)$/ })
+					.first()
+					.click()
 
 				const name = `Budget ${Date.now()}`
 				await page.getByRole('button', { name: 'Add property' }).click()

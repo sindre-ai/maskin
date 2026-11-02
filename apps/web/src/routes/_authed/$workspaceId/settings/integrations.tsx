@@ -6,6 +6,7 @@ import {
 	type ResendConnectPrefill,
 } from '@/components/integrations/resend/resend-connect-dialog'
 import { ToolsSection } from '@/components/integrations/tools-section'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { EditorBanner } from '@/components/shared/editor-banner'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -138,7 +139,8 @@ function IntegrationsPage() {
 	const resendAwaitingSecret = awaitingSecretByProvider.get('resend') ?? []
 
 	return (
-		<div>
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Integrations" />
 			{connectError && (
 				<EditorBanner
 					tone="danger"
@@ -160,22 +162,25 @@ function IntegrationsPage() {
 					description="No integration providers are configured on the server"
 				/>
 			) : (
-				<div className="space-y-2">
-					{visibleProviders.map((provider) => (
-						<ProviderConnectRow
-							key={provider.name}
-							provider={provider}
-							installations={activeByProvider.get(provider.name) ?? []}
-							workspaceId={workspaceId}
-						/>
-					))}
-					{resendAwaitingSecret.length > 0 && (
-						<ResendResumeSection
-							rows={resendAwaitingSecret}
-							onResume={(prefill) => setResendDialog({ open: true, prefill })}
-						/>
-					)}
-				</div>
+				<section>
+					<h2 className="px-2 pb-1.5 text-xs font-semibold text-foreground">Connected tools</h2>
+					<div className="border-t border-border-subtle">
+						{visibleProviders.map((provider) => (
+							<ProviderConnectRow
+								key={provider.name}
+								provider={provider}
+								installations={activeByProvider.get(provider.name) ?? []}
+								workspaceId={workspaceId}
+							/>
+						))}
+						{resendAwaitingSecret.length > 0 && (
+							<ResendResumeSection
+								rows={resendAwaitingSecret}
+								onResume={(prefill) => setResendDialog({ open: true, prefill })}
+							/>
+						)}
+					</div>
+				</section>
 			)}
 			<ToolsSection workspaceId={workspaceId} />
 			<SelectGithubInstallationDialog

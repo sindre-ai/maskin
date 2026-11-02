@@ -397,14 +397,14 @@ describe('ObjectsPage chip strip — Include: archived', () => {
 // Mockup 658–673: the control row carries the filters the user pinned out of
 // the Display panel; the panel itself holds one collapsible section per axis.
 describe('ObjectsPage — pinned filter chips', () => {
-	it('pins New last 7 days and Starred out of the box', () => {
+	it('pins To decide, Starred and New last 7 days out of the box', () => {
 		render(<ObjectsPage />)
 		expect(screen.getByTestId('toolbar')).toHaveAttribute(
 			'data-pinned',
-			'quick:fresh,quick:starred',
+			'quick:waiting,quick:starred,quick:fresh',
 		)
 		const labels = screen.getAllByTestId('quick-chip').map((el) => el.textContent)
-		expect(labels).toEqual(['New last 7 days', '★ Starred'])
+		expect(labels).toEqual(['To decide', '★ Starred', 'New last 7 days'])
 	})
 
 	it('builds one filter section per axis, each summarising its current value', () => {
@@ -450,7 +450,7 @@ describe('ObjectsPage — pinned filter chips', () => {
 		await waitFor(() =>
 			expect(screen.getByTestId('toolbar')).toHaveAttribute(
 				'data-pinned',
-				'quick:fresh,quick:starred,status:active',
+				'quick:waiting,quick:starred,quick:fresh,status:active',
 			),
 		)
 		expect(screen.getAllByTestId('quick-chip').map((el) => el.textContent)).toContain(

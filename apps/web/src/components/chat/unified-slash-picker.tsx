@@ -1,11 +1,11 @@
 import { Skeleton } from '@/components/shared/loading-skeleton'
-import { TypeBadge } from '@/components/shared/type-badge'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { trackChatSlashPickerError } from '@/lib/analytics'
 import { type ObjectResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { TYPE_LABELS } from '@/lib/constants'
 import { useQuery } from '@tanstack/react-query'
 import { Box, Sparkles } from 'lucide-react'
 import {
@@ -247,7 +247,7 @@ export const UnifiedChatSlashPicker = forwardRef<
 		<Popover open={open} onOpenChange={onOpenChange}>
 			{anchor ? <PopoverAnchor asChild>{anchor}</PopoverAnchor> : null}
 			<PopoverContent
-				className="w-[380px] p-0"
+				className="w-97.5 p-0"
 				align="start"
 				side="top"
 				sideOffset={8}
@@ -396,8 +396,14 @@ function Section({
 	return (
 		<div className="mb-1 last:mb-0">
 			<div className="flex items-center gap-1 px-2 py-1">
-				<span className="eyebrow">{heading}</span>
-				{sub ? <span className="eyebrow text-muted-foreground/80">· {sub}</span> : null}
+				<span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+					{heading}
+				</span>
+				{sub ? (
+					<span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+						· {sub}
+					</span>
+				) : null}
 			</div>
 			<div className="flex flex-col">{children}</div>
 		</div>
@@ -431,10 +437,13 @@ function ReferenceRow({ id, object, selected, onClick, onMouseEnter }: Reference
 				selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
 			)}
 		>
-			<TypeBadge type={object.type} variant="dot" />
 			<span className="min-w-0 flex-1">
-				<span className="block truncate">{object.title || 'Untitled'}</span>
-				<span className="block truncate text-[11px] text-muted-foreground">{object.type}</span>
+				<span className="block truncate text-[13.5px] font-semibold">
+					{object.title || 'Untitled'}
+				</span>
+				<span className="block truncate text-[11.5px] text-muted-foreground">
+					{TYPE_LABELS[object.type] ?? object.type}
+				</span>
 			</span>
 		</button>
 	)
@@ -466,9 +475,9 @@ function CreateRow({ id, label, sub, selected, onClick, onMouseEnter }: CreateRo
 		>
 			<Sparkles size={14} aria-hidden className="text-muted-foreground" />
 			<span className="min-w-0 flex-1">
-				<span className="block truncate font-semibold">{label}</span>
+				<span className="block truncate text-[13.5px] font-semibold">{label}</span>
 				{sub ? (
-					<span className="block truncate text-[11px] text-muted-foreground">{sub}</span>
+					<span className="block truncate text-[11.5px] text-muted-foreground">{sub}</span>
 				) : null}
 			</span>
 		</button>

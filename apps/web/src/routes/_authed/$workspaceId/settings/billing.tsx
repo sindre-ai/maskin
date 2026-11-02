@@ -1,5 +1,11 @@
 import { BillingSection } from '@/components/settings/billing-section'
-import { BillingUsageDetails, useWorkspaceModelUsage } from '@/components/settings/billing-usage'
+import {
+	BillingUsageDetails,
+	BillingUsageSummary,
+	billingPeriodLabel,
+	useWorkspaceModelUsage,
+} from '@/components/settings/billing-usage'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { RouteError } from '@/components/shared/route-error'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -24,6 +30,13 @@ function BillingPage() {
 
 	return (
 		<div className="flex max-w-[940px] flex-col gap-6">
+			<SettingsPageTitle
+				title="Billing"
+				subtitle={usage.isLoading ? undefined : billingPeriodLabel(usage)}
+			/>
+			<div className="-mt-1 px-2">
+				<BillingUsageSummary usage={usage} />
+			</div>
 			<BillingSection workspaceId={workspaceId} enterprise={Boolean(workspace.enterprise)} />
 			<BillingUsageDetails usage={usage} />
 		</div>

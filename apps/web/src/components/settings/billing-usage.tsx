@@ -59,37 +59,31 @@ function IncompleteUsageNotice({ usage }: { usage: WorkspaceModelUsage }) {
  */
 export function BillingUsageSummary({ usage }: { usage: WorkspaceModelUsage }) {
 	if (usage.isLoading) {
-		return <Skeleton className="h-8 w-48" />
+		return <Skeleton className="h-12 w-48" />
 	}
 
 	return (
-		<div className="flex flex-wrap items-baseline gap-3">
-			<p className="min-w-0 flex-1 sm:min-w-[190px]">
-				{usage.isError ? (
-					<span className="text-xs text-muted-foreground">
-						Model usage is unavailable right now.
-					</span>
-				) : usage.hasUsage ? (
-					<>
-						<span className="text-[27px] font-bold tabular-nums tracking-tight text-foreground">
-							{formatUsd(usage.totalCostUsd)}
-						</span>
-						<span className="ml-2 text-xs text-muted-foreground">model usage this month</span>
-					</>
-				) : (
-					<span className="text-xs text-muted-foreground">
-						No model usage recorded this month yet.
-					</span>
-				)}
-			</p>
-			<p className="text-xs text-muted-foreground sm:text-right">
-				since {DAY_FORMAT.format(usage.periodStart)} · resets {DAY_FORMAT.format(usage.resetsAt)}
-			</p>
-			<div className="w-full">
-				<IncompleteUsageNotice usage={usage} />
-			</div>
+		<div>
+			{usage.isError ? (
+				<p className="text-xs text-muted-foreground">Model usage is unavailable right now.</p>
+			) : usage.hasUsage ? (
+				<>
+					<p className="text-[27px] font-bold tabular-nums leading-tight tracking-tight text-foreground">
+						{formatUsd(usage.totalCostUsd)}
+					</p>
+					<p className="text-[13px] text-muted-foreground">Model usage this month</p>
+				</>
+			) : (
+				<p className="text-xs text-muted-foreground">No model usage recorded this month yet.</p>
+			)}
+			<IncompleteUsageNotice usage={usage} />
 		</div>
 	)
+}
+
+/** "since 1 Oct · resets 1 Nov" — the billing period the usage figures cover. */
+export function billingPeriodLabel(usage: WorkspaceModelUsage): string {
+	return `since ${DAY_FORMAT.format(usage.periodStart)} · resets ${DAY_FORMAT.format(usage.resetsAt)}`
 }
 
 /**

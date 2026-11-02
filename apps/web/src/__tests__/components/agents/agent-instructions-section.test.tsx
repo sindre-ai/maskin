@@ -5,6 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
+
 const updateMutate = vi.fn()
 let updatePending = false
 
@@ -37,6 +42,7 @@ describe('AgentInstructionsSection', () => {
 		expect(screen.getByRole('heading', { name: 'Instructions', level: 2 })).toBeInTheDocument()
 		expect(screen.getByText('You are Planner. Shape the next bet.')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Change in chat' })).toBeInTheDocument()
 	})
 
 	it('falls back to a placeholder when no prompt is set', () => {

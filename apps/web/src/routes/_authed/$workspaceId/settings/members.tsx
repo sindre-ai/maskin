@@ -1,6 +1,7 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { InviteMemberDialog } from '@/components/settings/invite-member-dialog'
 import { PendingInviteRow } from '@/components/settings/pending-invite-row'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -133,41 +134,10 @@ function MembersPage() {
 		}
 	}
 
-	const count = members?.length ?? 0
-
 	return (
 		<div className="max-w-[760px]">
-			<div className="mb-3 flex items-center gap-2 px-2">
-				<h2 className="text-xs font-semibold text-foreground">Members</h2>
-				<span className="text-[13px] text-muted-foreground">
-					{count} {count === 1 ? 'person or agent' : 'people & agents'}
-				</span>
-				<DropdownMenu>
-					<ViewerTooltip className="ml-auto inline-flex">
-						<DropdownMenuTrigger asChild>
-							<Button
-								variant="outline"
-								size="sm"
-								className={cn('ml-auto', PILL_BUTTON)}
-								disabled={!canWrite}
-							>
-								<Plus size={14} className="mr-1" />
-								Add member
-							</Button>
-						</DropdownMenuTrigger>
-					</ViewerTooltip>
-					<DropdownMenuContent align="end">
-						<DropdownMenuItem onClick={() => setShowInviteDialog(true)}>
-							<UserPlus size={14} className="mr-2" />
-							Invite member
-						</DropdownMenuItem>
-						<DropdownMenuItem onClick={handleCreateAgent}>
-							<Bot size={14} className="mr-2" />
-							Create agent
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
+			<SettingsPageTitle title="Members" />
+			<h2 className="px-2 pb-1.5 text-xs font-semibold text-foreground">People</h2>
 
 			{roleError && (
 				<p className="mb-3 text-sm text-error" role="alert">
@@ -263,6 +233,29 @@ function MembersPage() {
 					})}
 				</div>
 			)}
+
+			<div className="mt-5 flex px-2">
+				<DropdownMenu>
+					<ViewerTooltip className="inline-flex">
+						<DropdownMenuTrigger asChild>
+							<Button className={PILL_BUTTON} disabled={!canWrite}>
+								<Plus size={14} className="mr-1" />
+								Add member
+							</Button>
+						</DropdownMenuTrigger>
+					</ViewerTooltip>
+					<DropdownMenuContent align="start">
+						<DropdownMenuItem onClick={() => setShowInviteDialog(true)}>
+							<UserPlus size={14} className="mr-2" />
+							Invite member
+						</DropdownMenuItem>
+						<DropdownMenuItem onClick={handleCreateAgent}>
+							<Bot size={14} className="mr-2" />
+							Create agent
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			</div>
 
 			{!!pendingInvites?.length && (
 				<section className="mt-6" aria-label="Pending invites">

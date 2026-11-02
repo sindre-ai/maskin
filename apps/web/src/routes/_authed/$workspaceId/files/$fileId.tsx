@@ -1,5 +1,6 @@
 import { useEditableMarkdown } from '@/components/files/editable-markdown-stage'
 import { isHtml } from '@/components/files/file-body'
+import { FileReadView } from '@/components/files/file-read-view'
 import { PinFileButton } from '@/components/files/pin-file-button'
 import { ProvenanceStrip } from '@/components/files/provenance-strip'
 import { type ReviewFilter, ReviewPanel } from '@/components/files/review-panel'
@@ -73,6 +74,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 interface FileViewerSearch {
 	round?: string
 	panel?: 'open' | 'closed'
+	// `edit` opens a markdown file in the editor instead of the text-first view.
+	view?: 'edit'
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/files/$fileId')({
@@ -81,6 +84,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/files/$fileId')({
 	validateSearch: (search: Record<string, unknown>): FileViewerSearch => ({
 		round: typeof search.round === 'string' ? search.round : undefined,
 		panel: search.panel === 'open' || search.panel === 'closed' ? search.panel : undefined,
+		view: search.view === 'edit' ? 'edit' : undefined,
 	}),
 })
 
@@ -141,6 +145,12 @@ function FileViewerPage() {
 	// page owns which card is open, which quotes no longer match, and the
 	// request for the editor to scroll to a highlight.
 	const textMode = useEditableMarkdown(file)
+	// A markdown file opens text-first; the editor and review panel are one tap
+	// away, and a deep link to a round or the panel goes straight to them.
+	const [editing, setEditing] = useState<boolean>(
+		search.view === 'edit' || search.panel === 'open' || Boolean(search.round),
+	)
+	const readMode = textMode && !editing && !panelOpen
 	const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
 	const [orphanedIds, setOrphanedIds] = useState<ReadonlySet<string>>(() => new Set())
 	const [scrollRequest, setScrollRequest] = useState<TextCommentScrollRequest | null>(null)
@@ -491,7 +501,22 @@ function FileViewerPage() {
 		)
 	}
 
-	const strip = (
+	const askAboutFile = () => {
+		const first = attachers[0]
+		navigate({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId },
+			search: {
+				text: `About ${file.name}: `,
+				objectId: first?.id,
+				objectTitle: first?.title,
+				objectType: first?.type,
+			},
+		})
+	}
+	const author = actors?.find((a) => a.id === file.createdBy)?.name ?? null
+
+	const strip = readMode ? null : (
 		<ProvenanceStrip
 			workspaceId={workspaceId}
 			attachers={attachers}
@@ -575,16 +600,27 @@ function FileViewerPage() {
 			<ViewerShell panelOpen={panelOpen} strip={strip}>
 				<div className="flex min-h-0 flex-1 overflow-hidden">
 					<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-						<TextCommentsProvider value={textCommentsValue}>
-							<ViewerStage
+						{readMode ? (
+							<FileReadView
 								file={file}
-								variantOverride={variantOverride}
-								mockupPreset={mockupPreset}
-								annotateMode={annotateMode}
-								pins={stagePins}
-								onPinPlace={handlePinPlace}
+								workspaceId={workspaceId}
+								authorName={author}
+								attachers={attachers}
+								onOpenEditor={() => setEditing(true)}
+								onAsk={askAboutFile}
 							/>
-						</TextCommentsProvider>
+						) : (
+							<TextCommentsProvider value={textCommentsValue}>
+								<ViewerStage
+									file={file}
+									variantOverride={variantOverride}
+									mockupPreset={mockupPreset}
+									annotateMode={annotateMode}
+									pins={stagePins}
+									onPinPlace={handlePinPlace}
+								/>
+							</TextCommentsProvider>
+						)}
 					</div>
 					{panelOpen && panelLayout === 'inline' && (
 						<ReviewPanel {...commonPanelProps} layout="inline" />

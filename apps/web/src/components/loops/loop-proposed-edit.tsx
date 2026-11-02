@@ -110,7 +110,7 @@ export function LoopProposedEdit({
 					Leave it
 				</Button>
 				<span className="ml-auto text-[11px] text-muted-foreground">
-					nothing moves until you say so
+					Nothing moves until you say so. Undo stays for 30 seconds.
 				</span>
 			</div>
 		</div>

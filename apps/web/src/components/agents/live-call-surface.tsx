@@ -6,6 +6,7 @@
  */
 
 import { AgentAvatar } from '@/components/agents/voice-call-dialog'
+import { Button } from '@/components/ui/button'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/cn'
 import {
@@ -264,37 +265,123 @@ function LiveCallPanel({ view, layout }: { view: VoiceCallView; layout: 'panel' 
 	}
 
 	return (
+		// `dark` re-resolves the semantic tokens inside the panel: the call is the
+		// one surface drawn on a dark stage in both themes (v3 live call).
 		<aside
 			aria-label={`Call with ${view.agent.name}`}
 			data-voice-call-surface="panel"
-			className="flex w-[300px] shrink-0 flex-col border-l border-border bg-background lg:w-[340px]"
+			className="dark relative flex w-[300px] shrink-0 flex-col border-l border-border bg-background text-foreground lg:w-[340px]"
 		>
-			<div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-				<span className="flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-brand-subtle-foreground">
-					<span aria-hidden="true" className="size-2 rounded-full bg-brand" />
-					Live
-				</span>
-				<span className="flex items-center gap-2 font-mono text-[13px] font-semibold text-foreground">
-					{formatCallClock(elapsed)}
-					{collapse}
-				</span>
+			<div className="absolute right-3 top-3">{collapse}</div>
+			<div className="flex flex-col items-center gap-0.5 px-12 pt-8 text-center">
+				<p className="truncate text-base font-bold">{view.agent.name}</p>
+				<span className="font-mono text-xs text-muted-foreground">{formatCallClock(elapsed)}</span>
 			</div>
-			<div className="flex flex-1 flex-col items-center gap-3 overflow-y-auto px-4 pt-8">
-				<AgentAvatar agent={view.agent} state={view.state} sizeClass="size-24 text-3xl" />
-				<p className="text-lg font-bold text-foreground">{view.agent.name}</p>
+			<div className="flex flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-4 py-6">
+				<Orb speaking={speaking} thinking={view.state === 'live-agent-thinking'} />
 				<p aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
 					<Bars active={speaking} />
 					{status}
 				</p>
 				<div className="flex w-full flex-col gap-2">
 					<Notice view={view} />
-					<Caption view={view} />
 				</div>
 			</div>
-			<div className="border-t border-border">
-				<Controls view={view} />
+			<div className="flex flex-col items-center gap-4 px-4 pb-6">
+				{view.captionsOn && (
+					<p
+						className={cn(
+							'text-center',
+							view.caption
+								? 'text-xl font-bold text-foreground'
+								: 'text-base text-muted-foreground',
+						)}
+					>
+						{view.caption ?? `Captions appear here when ${view.agent.name} speaks.`}
+					</p>
+				)}
+				<PanelControls view={view} />
 			</div>
 		</aside>
+	)
+}
+
+/** The call's orb: a glowing sphere, with two pulsing rings while the agent speaks. */
+function Orb({ speaking, thinking }: { speaking: boolean; thinking: boolean }) {
+	return (
+		<div className="relative flex size-40 items-center justify-center" aria-hidden="true">
+			{speaking && (
+				<>
+					<span className="absolute inset-0 rounded-full border border-brand/50 motion-safe:animate-ping" />
+					<span className="absolute inset-0 rounded-full border border-brand/30 motion-safe:animate-ping [animation-delay:1.2s]" />
+				</>
+			)}
+			<span
+				className={cn(
+					'size-40 rounded-full bg-[radial-gradient(circle_at_30%_28%,var(--ask-border),var(--brand)_62%)] shadow-[0_0_80px_color-mix(in_oklab,var(--brand)_45%,transparent)]',
+					thinking && 'motion-safe:animate-pulse',
+				)}
+			/>
+		</div>
+	)
+}
+
+/** Mute and End are the two calls to action; the rest sit quietly above them. */
+function PanelControls({ view }: { view: VoiceCallView }) {
+	const muted = view.state === 'live-muted'
+	const quiet = [
+		{
+			label: view.speakerOn ? 'Speaker off' : 'Speaker on',
+			node: view.speakerOn ? <Volume2 size={16} /> : <VolumeX size={16} />,
+			onClick: view.toggleSpeaker,
+			pressed: !view.speakerOn,
+		},
+		{
+			label: view.captionsOn ? 'Hide captions' : 'Show captions',
+			node: <Captions size={16} />,
+			onClick: view.toggleCaptions,
+			pressed: false,
+		},
+		{ label: 'Pull up', node: <Search size={16} />, onClick: view.pullUp, pressed: undefined },
+	]
+	return (
+		<div className="flex flex-col items-center gap-3">
+			<div className="flex items-center gap-1">
+				{quiet.map((item) => (
+					<button
+						key={item.label}
+						type="button"
+						aria-label={item.label}
+						aria-pressed={item.pressed}
+						title={item.label}
+						onClick={item.onClick}
+						className="inline-flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:text-warning"
+					>
+						{item.node}
+					</button>
+				))}
+			</div>
+			<div className="flex items-center gap-3">
+				<Button
+					type="button"
+					variant="secondary"
+					aria-label={muted ? 'Unmute' : 'Mute'}
+					aria-pressed={muted}
+					onClick={view.toggleMute}
+					className="h-11 rounded-full px-6 text-base font-semibold"
+				>
+					{muted ? 'Unmute' : 'Mute'}
+				</Button>
+				<Button
+					type="button"
+					aria-label="End call"
+					onClick={view.end}
+					className="h-11 rounded-full px-6 text-base font-semibold"
+				>
+					End
+				</Button>
+			</div>
+		</div>
 	)
 }
 

@@ -134,7 +134,7 @@ test.describe('Loops list page', () => {
 			await expect(page.getByText('Sales pipeline')).toBeVisible()
 		})
 
-		test(`/triggers redirects to /loops and lists its triggers there at ${viewport.label}`, async ({
+		test(`/triggers is the Settings triggers page and lists its triggers at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -153,10 +153,13 @@ test.describe('Loops list page', () => {
 
 			await page.goto(`/${account.workspaceId}/triggers`)
 
-			// The v2 sidebar has no Triggers entry — the bookmark must land on Loops.
-			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops$`), { timeout: 10000 })
-			await expect(page.getByText('Not tied to a flow')).toBeVisible()
-			await expect(page.getByText('Nightly sweep', { exact: true })).toBeVisible()
+			// /triggers is its own page (Settings -> Workspace tools -> Triggers); it does not redirect.
+			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers$`), {
+				timeout: 10000,
+			})
+			await expect(page.getByText('Nightly sweep', { exact: true })).toBeVisible({
+				timeout: 10000,
+			})
 		})
 
 		test(`a workspace with triggers but no loops still lists them at ${viewport.label}`, async ({

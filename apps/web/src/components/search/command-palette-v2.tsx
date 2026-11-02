@@ -2,6 +2,7 @@ import { type CreatableType, CreatePicker } from '@/components/shared/create-pic
 import { useActors } from '@/hooks/use-actors'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useForYou } from '@/hooks/use-for-you'
 import { useLoops } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObjects } from '@/hooks/use-objects'
@@ -20,6 +21,7 @@ import { trackCommandPaletteOpened } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { statusLabel } from '@/lib/constants'
+import { cardHeadline } from '@/lib/foryou-card-kind'
 import {
 	askRowTitle,
 	emptyStateText,
@@ -92,9 +94,9 @@ const KIND_BY_GROUP: Record<SearchResultRow['group'], string> = {
 	automations: 'AUTOMATION',
 }
 
-/** The kind column: ITEM / FLOW / CHAT as v3 draws it. Rows in Needs you are decisions. */
-function resultKind(group: string, row: SearchResultRow): string {
-	return group === 'Needs you' && row.group === 'objects' ? 'DECISION' : KIND_BY_GROUP[row.group]
+/** The kind column: ITEM / FLOW / CHAT as v3 draws it. */
+function resultKind(row: SearchResultRow): string {
+	return KIND_BY_GROUP[row.group]
 }
 const MAX_NEEDS_YOU = 3
 
@@ -382,19 +384,8 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	const typedSettled = queryText({ ...parts, text: debouncedText }) === query
 	const settled = Boolean(data) && !isPlaceholderData && !isFetching && !isError && typedSettled
 
-	// With nothing typed, the first group is what needs the person: the Needs you status group.
-	const needsYou = useSearchQuery(
-		workspaceId,
-		{
-			text: '',
-			types: [],
-			statuses: ['needs_you'],
-			updated: '',
-			sort: 'recent',
-			limit: MAX_NEEDS_YOU,
-		},
-		isEmpty,
-	)
+	// With nothing typed, the first group is what needs the person: the For you decisions.
+	const { data: forYou } = useForYou(workspaceId)
 	const { data: objects } = useObjects(workspaceId)
 	// Chats and loops fill the empty-field Recent list; agents give the Ask row its Chief of Staff.
 	const { data: chatPages } = useConversationsInfinite(workspaceId, undefined, {
@@ -461,7 +452,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	): PaletteRow => ({
 		id: `${group}-${row.group}-${row.id}`,
 		group,
-		kind: resultKind(group, row),
+		kind: resultKind(row),
 		title: rowTitle(row),
 		sub: rowSub(row),
 		snippet: row.snippet ?? undefined,
@@ -479,12 +470,22 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		const groups: { label: string; rows: PaletteRow[] }[] = []
 
 		if (isEmpty) {
-			const needs = (needsYou.data?.results ?? []).slice(0, MAX_NEEDS_YOU)
+			const needs = (forYou?.items ?? []).slice(0, MAX_NEEDS_YOU)
 			groups.push({
 				label: 'Needs you',
-				rows: needs.map((row, index) =>
-					resultRow(row, 'Needs you', index + 1, needs.length, false),
-				),
+				rows: needs.map((item) => ({
+					id: `needs-you-${item.entity_id}`,
+					group: 'Needs you',
+					kind: 'DECISION',
+					title: item.object?.title?.trim() || cardHeadline(item),
+					run: () => {
+						onClose()
+						navigate({
+							to: '/$workspaceId/objects/$objectId',
+							params: { workspaceId, objectId: item.entity_id },
+						})
+					},
+				})),
 			})
 			const byId = new Map((objects ?? []).map((o) => [o.id, o]))
 			const items = buildRecents({
@@ -812,7 +813,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 									onMouseMove={() => setActiveId(row.id)}
 									onClick={row.run}
 									className={cn(
-										'group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 max-lg:min-h-11 pointer-coarse:min-h-11',
+										'group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.75 max-lg:min-h-11 pointer-coarse:min-h-11',
 										row.id === activeId && 'bg-secondary',
 									)}
 								>

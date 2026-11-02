@@ -90,6 +90,7 @@ vi.mock('@/hooks/use-duration', () => ({
 
 vi.mock('@/lib/format-duration', () => ({
 	formatDurationBetween: () => '5m',
+	formatDurationCoarse: () => '5 min',
 }))
 
 vi.mock('@/components/ui/spinner', () => ({

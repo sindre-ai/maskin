@@ -1,5 +1,6 @@
 import { PropertyTypeGrid, propertyTypeLabel } from '@/components/objects/property-type-grid'
 import { SettingsLinkRow } from '@/components/settings/settings-link-row'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
@@ -17,12 +18,12 @@ import {
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
-import { cn } from '@/lib/cn'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
-import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Link, createFileRoute } from '@tanstack/react-router'
+import { ChevronRight, Plus } from 'lucide-react'
+import { useState } from 'react'
 
 interface FieldDefinition {
 	name: string
@@ -32,6 +33,9 @@ interface FieldDefinition {
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/objects/')({
+	validateSearch: (search: Record<string, unknown>): { type?: string } => ({
+		type: typeof search.type === 'string' ? search.type : undefined,
+	}),
 	component: ObjectsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
@@ -50,21 +54,17 @@ function ObjectsPage() {
 		.map((t) => ({ value: t.value, label: t.label }))
 		.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
 	const typeValues = objectTypes.map((t) => t.value)
-	const [activeType, setActiveType] = useState(typeValues[0])
-
-	useEffect(() => {
-		if (typeValues.length > 0 && !typeValues.includes(activeType)) {
-			setActiveType(typeValues[0])
-		}
-	}, [typeValues, activeType])
+	// No ?type= shows the list of types; a type opens its properties (mockup: Item types).
+	const { type: typeParam } = Route.useSearch()
+	const activeType = typeParam && typeValues.includes(typeParam) ? typeParam : undefined
 
 	const [showAdd, setShowAdd] = useState(false)
 	const [newName, setNewName] = useState('')
 	const [newType, setNewType] = useState<FieldDefinition['type']>('text')
 	const [newEnumValues, setNewEnumValues] = useState('')
 
-	const currentFields = fieldDefs[activeType] ?? []
-	const activeLabel = objectTypes.find((t) => t.value === activeType)?.label ?? activeType
+	const currentFields = activeType ? (fieldDefs[activeType] ?? []) : []
+	const activeLabel = objectTypes.find((t) => t.value === activeType)?.label ?? ''
 	const trimmedName = newName.trim()
 	const isDuplicate = currentFields.some((f) => f.name === trimmedName)
 
@@ -75,7 +75,7 @@ function ObjectsPage() {
 	}
 
 	const handleAdd = () => {
-		if (!canWrite || !trimmedName || isDuplicate) return
+		if (!canWrite || !activeType || !trimmedName || isDuplicate) return
 
 		const newField: FieldDefinition = {
 			name: trimmedName,
@@ -104,79 +104,87 @@ function ObjectsPage() {
 
 	return (
 		<div className="max-w-[760px]">
-			<p className="mb-4 px-2 text-[13px] text-muted-foreground">
-				What your agents can create and track.
-			</p>
-
-			<h2 className="px-2 pb-2 text-xs font-semibold text-foreground">Types</h2>
-			<div className="-mx-1 mb-6 overflow-x-auto px-1">
-				<div className="inline-flex gap-1 rounded-full bg-secondary p-1">
-					{objectTypes.map((type) => (
-						<button
-							key={type.value}
-							type="button"
-							aria-pressed={activeType === type.value}
-							className={cn(
-								'min-h-11 whitespace-nowrap rounded-full px-4 py-1.5 text-[12.5px] font-semibold transition-colors md:min-h-0',
-								activeType === type.value
-									? 'bg-primary text-primary-foreground'
-									: 'text-muted-foreground hover:text-foreground',
-							)}
-							onClick={() => setActiveType(type.value)}
-						>
-							{type.label}
-						</button>
-					))}
-				</div>
-			</div>
-
-			<div className="flex items-center justify-between gap-3 px-2 pb-1.5">
-				<h2 className="text-xs font-semibold text-foreground">Properties</h2>
-				<ViewerTooltip className="inline-flex shrink-0">
-					<Button
-						size="sm"
-						disabled={!canWrite}
-						onClick={() => setShowAdd(true)}
-						className="max-md:h-11"
-					>
-						<Plus size={14} aria-hidden />
-						Add property
-					</Button>
-				</ViewerTooltip>
-			</div>
-
-			{currentFields.length === 0 ? (
-				<div className="border-y border-border-subtle">
-					<EmptyState
-						title={`No properties for ${activeLabel.toLowerCase()} items`}
-						description="Create a property to add structured data to your items"
-					/>
-				</div>
-			) : (
-				<ul className="divide-y divide-border-subtle border-y border-border-subtle">
-					{currentFields.map((field) => (
-						<li key={field.name}>
-							<SettingsLinkRow
-								title={field.name}
-								description={`${propertyTypeLabel(field.type)}${field.values ? ` · ${field.values.join(', ')}` : ''}`}
-								to="/$workspaceId/settings/objects/$propertyName"
-								params={{ workspaceId, propertyName: field.name }}
-								search={{ type: activeType }}
+			{activeType ? (
+				<>
+					<SettingsPageTitle title={activeLabel} />
+					<h2 className="px-2 pb-1.5 text-xs font-semibold text-foreground">Properties</h2>
+					{currentFields.length === 0 ? (
+						<div className="border-y border-border-subtle">
+							<EmptyState
+								title={`No properties for ${activeLabel.toLowerCase()} items`}
+								description="Create a property to add structured data to your items"
 							/>
-						</li>
-					))}
-				</ul>
+						</div>
+					) : (
+						<ul className="divide-y divide-border-subtle border-y border-border-subtle">
+							{currentFields.map((field) => (
+								<li key={field.name}>
+									<SettingsLinkRow
+										title={field.name}
+										description={`${propertyTypeLabel(field.type)}${field.values ? ` · ${field.values.join(', ')}` : ''}`}
+										to="/$workspaceId/settings/objects/$propertyName"
+										params={{ workspaceId, propertyName: field.name }}
+										search={{ type: activeType }}
+									/>
+								</li>
+							))}
+						</ul>
+					)}
+					<div className="mt-5 flex gap-2 px-2">
+						<ViewerTooltip className="inline-flex shrink-0">
+							<Button className={PILL_BUTTON} disabled={!canWrite} onClick={() => setShowAdd(true)}>
+								<Plus size={14} aria-hidden className="mr-1" />
+								Add property
+							</Button>
+						</ViewerTooltip>
+						<Button asChild variant="outline" className={PILL_BUTTON}>
+							<Link to="/$workspaceId/settings/objects" params={{ workspaceId }} search={{}}>
+								All item types
+							</Link>
+						</Button>
+					</div>
+				</>
+			) : (
+				<>
+					<SettingsPageTitle title="Item types" subtitle="What your agents can create and track." />
+					<h2 className="px-2 pb-1.5 text-xs font-semibold text-foreground">Types</h2>
+					<ul className="divide-y divide-border-subtle border-y border-border-subtle">
+						{objectTypes.map((t) => {
+							const count = (fieldDefs[t.value] ?? []).length
+							return (
+								<li key={t.value}>
+									<Link
+										to="/$workspaceId/settings/objects"
+										params={{ workspaceId }}
+										search={{ type: t.value }}
+										className="flex min-h-11 items-center justify-between gap-4 px-2 py-3.5 transition-colors hover:bg-secondary/60"
+									>
+										<span className="text-[15px] font-semibold">{t.label}</span>
+										<span className="flex items-center gap-2 text-[13px] text-muted-foreground">
+											{count} {count === 1 ? 'property' : 'properties'}
+											<ChevronRight size={18} aria-hidden />
+										</span>
+									</Link>
+								</li>
+							)
+						})}
+					</ul>
+				</>
 			)}
 
-			<h2 className="px-2 pt-8 pb-1.5 text-xs font-semibold text-foreground">Extensions</h2>
-			<div className="border-y border-border-subtle">
-				<SettingsLinkRow
-					title="Extensions"
-					description="Calendar, webhooks, CRM and MCP add types and fields."
-					to="/$workspaceId/settings/extensions"
-					params={{ workspaceId }}
-				/>
-			</div>
+			{!activeType && (
+				<>
+					<h2 className="px-2 pt-8 pb-1.5 text-xs font-semibold text-foreground">Extensions</h2>
+					<div className="border-y border-border-subtle">
+						<SettingsLinkRow
+							title="Extensions"
+							description="Calendar, webhooks, CRM and MCP add types and fields."
+							to="/$workspaceId/settings/extensions"
+							params={{ workspaceId }}
+						/>
+					</div>
+				</>
+			)}
 
 			<ResponsiveDialog
 				open={showAdd}
@@ -247,9 +255,11 @@ function ObjectsPage() {
 			</ResponsiveDialog>
 
 			{/* Relationship types section */}
-			<div className="mt-8 border-t border-border pt-6">
-				<RelationshipTypesEditor workspace={workspace} workspaceId={workspaceId} />
-			</div>
+			{!activeType && (
+				<div className="mt-8 border-t border-border pt-6">
+					<RelationshipTypesEditor workspace={workspace} workspaceId={workspaceId} />
+				</div>
+			)}
 		</div>
 	)
 }

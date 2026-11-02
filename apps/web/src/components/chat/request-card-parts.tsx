@@ -13,27 +13,21 @@ import { toast } from 'sonner'
  * `request-card-styles.ts`.
  */
 
-/** Icon tile, bold title and a one-line reason. */
+/** Bold title and, under it, the reason in green. The icon is no longer drawn (v3). */
 export function RequestCardHeader({
-	icon: Icon,
 	title,
 	children,
 }: {
-	icon: LucideIcon
+	icon?: LucideIcon
 	title: ReactNode
 	children?: ReactNode
 }) {
 	return (
-		<div className="flex items-start gap-2.5">
-			<span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
-				<Icon className="size-3.5" aria-hidden />
-			</span>
-			<div className="min-w-0">
-				<h3 className="text-[15px] font-bold leading-7">{title}</h3>
-				{children ? (
-					<p className="break-words text-[13px] text-muted-foreground">{children}</p>
-				) : null}
-			</div>
+		<div className="min-w-0">
+			<h3 className="mb-1 text-[15px] font-bold leading-tight">{title}</h3>
+			{children ? (
+				<p className="mt-2 break-words text-[12.5px] font-semibold text-success">{children}</p>
+			) : null}
 		</div>
 	)
 }
@@ -49,8 +43,10 @@ export function RequestCardRow({
 	action?: ReactNode
 }) {
 	return (
-		<div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg bg-border/50 px-3 py-2 text-[13px]">
-			<span className="w-20 shrink-0 text-xs font-semibold text-muted-foreground">{label}</span>
+		<div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg bg-muted px-2.5 py-[7px] text-[12.5px]">
+			<span className="w-[4.5rem] shrink-0 text-[12.5px] font-semibold text-muted-foreground">
+				{label}
+			</span>
 			{/* The basis wraps the value under its label in a narrow thread pane. */}
 			<span className="min-w-0 flex-1 basis-32 break-words">{children}</span>
 			{action}

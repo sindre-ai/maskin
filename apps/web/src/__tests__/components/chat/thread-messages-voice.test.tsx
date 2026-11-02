@@ -109,8 +109,8 @@ describe('ThreadMessages — voice call boundaries', () => {
 
 		const boundaries = screen.getAllByTestId('voice-call-boundary')
 		expect(boundaries.map((b) => b.getAttribute('data-variant'))).toEqual(['start', 'end'])
-		expect(boundaries[0]?.textContent).toMatch(/^Voice call · 2:14 · /)
-		expect(boundaries[1]?.textContent).toBe('Call ended')
+		expect(boundaries[0]?.textContent).toMatch(/^Live meeting · started /)
+		expect(boundaries[1]?.textContent).toMatch(/^Live meeting · ended /)
 
 		// No receipts for this call, so its spoken lines are drawn as ever, with
 		// the head divider in the first voice message's row and the tail in the last.
@@ -118,9 +118,11 @@ describe('ThreadMessages — voice call boundaries', () => {
 			document.querySelector(`[data-message-id="${id}"]`),
 		) as HTMLElement[]
 		expect(
-			within(rows[1] as HTMLElement).getByText('Voice call', { exact: false }),
+			within(rows[1] as HTMLElement).getByText('Live meeting · started', { exact: false }),
 		).toBeInTheDocument()
-		expect(within(rows[2] as HTMLElement).getByText('Call ended')).toBeInTheDocument()
+		expect(
+			within(rows[2] as HTMLElement).getByText('Live meeting · ended', { exact: false }),
+		).toBeInTheDocument()
 		expect(within(rows[0] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
 		expect(within(rows[3] as HTMLElement).queryByTestId('voice-call-boundary')).toBeNull()
 		expect(screen.getByText('search for the flows v4 bet')).toBeInTheDocument()

@@ -121,6 +121,7 @@ function TriggerCard({ trigger, workspaceId }: { trigger: TriggerResponse; works
 			</Link>
 			<ViewerTooltip>
 				<Switch
+					className="data-[state=checked]:bg-brand"
 					checked={trigger.enabled}
 					disabled={!canWrite || updateTrigger.isPending}
 					aria-label={`${trigger.enabled ? 'Turn off' : 'Turn on'} ${trigger.name}`}

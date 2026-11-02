@@ -85,7 +85,9 @@ describe('LoopProposedEdit', () => {
 		expect(screen.getByText('PROPOSED EDIT')).toBeInTheDocument()
 		expect(screen.getByText('never').className).toMatch(/line-through/)
 		expect(screen.getByText('before publishing').className).toMatch(/font-semibold/)
-		expect(screen.getByText('nothing moves until you say so')).toBeInTheDocument()
+		expect(
+			screen.getByText('Nothing moves until you say so. Undo stays for 30 seconds.'),
+		).toBeInTheDocument()
 	})
 
 	it('writes nothing on render — the change only lands on Make the change', async () => {

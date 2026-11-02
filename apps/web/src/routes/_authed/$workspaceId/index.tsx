@@ -837,7 +837,7 @@ function ForYouFeed() {
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="flex w-full max-w-280 flex-col">
 					<p
-						className="pb-4 text-base font-bold leading-relaxed text-foreground"
+						className="pb-4 text-base font-semibold leading-relaxed text-foreground"
 						data-testid="foryou-greeting"
 					>
 						{lead}

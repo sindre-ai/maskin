@@ -74,17 +74,14 @@ function buildLabel(
 		endedAt,
 	}: { durationMs?: number; startedAt?: string | Date; endedAt?: string | Date },
 ): string {
-	if (variant === 'end') return 'Call ended'
-	const parts: string[] = ['Voice call']
-	if (typeof durationMs === 'number' && durationMs >= 0) {
-		parts.push(formatVoiceCallDuration(durationMs))
+	// v3: "LIVE MEETING · STARTED 14:02" / "LIVE MEETING · ENDED 15:02" (the
+	// eyebrow class uppercases). The duration lives on the summary card.
+	if (variant === 'end') {
+		const end = toDate(endedAt)
+		return end ? `Live meeting · ended ${formatClock(end)}` : 'Live meeting · ended'
 	}
 	const start = toDate(startedAt)
-	const end = toDate(endedAt)
-	if (start && end) {
-		parts.push(`${formatClock(start)} → ${formatClock(end)}`)
-	}
-	return parts.join(' · ')
+	return start ? `Live meeting · started ${formatClock(start)}` : 'Live meeting'
 }
 
 /**

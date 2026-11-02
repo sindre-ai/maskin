@@ -7,8 +7,9 @@ import {
 } from '@/components/chat/request-card-parts'
 import {
 	REQUEST_CARD,
-	REQUEST_CARD_BUTTON,
-	REQUEST_CARD_QUIET_BUTTON,
+	REQUEST_CARD_ACTIONS,
+	REQUEST_CARD_DECLINE,
+	REQUEST_CARD_PRIMARY,
 } from '@/components/chat/request-card-styles'
 import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
@@ -239,11 +240,11 @@ export function KeychainAccessRequestCard({
 					chat or run, until you remove it in Settings → Keychain.
 				</li>
 			</ul>
-			<div className="flex flex-wrap items-center gap-2">
+			<div className={REQUEST_CARD_ACTIONS}>
 				{helper ? null : (
 					<Button
 						type="button"
-						className={REQUEST_CARD_BUTTON}
+						className={REQUEST_CARD_PRIMARY}
 						disabled={busy}
 						onClick={() => void allow('chat')}
 					>
@@ -252,7 +253,7 @@ export function KeychainAccessRequestCard({
 				)}
 				<Button
 					type="button"
-					className={REQUEST_CARD_BUTTON}
+					className={REQUEST_CARD_PRIMARY}
 					variant={helper ? 'default' : 'outline'}
 					disabled={busy}
 					onClick={() => void allow('always')}
@@ -262,7 +263,7 @@ export function KeychainAccessRequestCard({
 				<Button
 					type="button"
 					variant="ghost"
-					className={REQUEST_CARD_QUIET_BUTTON}
+					className={REQUEST_CARD_DECLINE}
 					disabled={busy}
 					onClick={decline}
 				>
