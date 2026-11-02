@@ -36,19 +36,21 @@ type Group = { id: string | null; name: string; cents: number }
  * group up on its own would push the parts past the total.
  */
 function apportion(groups: Group[], total: number): UsageBreakdownRow[] {
-	const floors = groups.map((g) => Math.floor(Number(g.cents.toFixed(6))))
-	let leftover = total - floors.reduce((a, b) => a + b, 0)
-	const byFraction = groups
-		.map((g, i) => ({ i, fraction: g.cents - floors[i] }))
-		.sort((a, b) => b.fraction - a.fraction || a.i - b.i)
-	for (const { i } of byFraction) {
+	const parts = groups.map((g) => {
+		const floor = Math.floor(Number(g.cents.toFixed(6)))
+		return { id: g.id, name: g.name, usd_cents: floor, fraction: g.cents - floor }
+	})
+	let leftover = total - parts.reduce((a, p) => a + p.usd_cents, 0)
+	// Array sort is stable, so equal fractions keep their original order.
+	const byFraction = [...parts].sort((a, b) => b.fraction - a.fraction)
+	for (const part of byFraction) {
 		if (leftover <= 0) break
-		floors[i] += 1
+		part.usd_cents += 1
 		leftover -= 1
 	}
-	return groups
-		.map((g, i) => ({ id: g.id, name: g.name, usd_cents: floors[i] }))
-		.filter((r) => r.usd_cents > 0)
+	return parts
+		.filter((p) => p.usd_cents > 0)
+		.map((p) => ({ id: p.id, name: p.name, usd_cents: p.usd_cents }))
 		.sort(
 			(a, b) =>
 				b.usd_cents - a.usd_cents ||
