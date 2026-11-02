@@ -7811,6 +7811,41 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'gmail_save_attachment',
+		{
+			description: tools.gmail_save_attachment.description,
+			inputSchema: tools.gmail_save_attachment.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const reply = (text: string, isError = false) => ({
+				_meta: meta('gmail_save_attachment', config, args.workspace_id),
+				content: [{ type: 'text' as const, text }],
+				...(isError ? { isError: true } : {}),
+			})
+			try {
+				const saved = await apiCall(
+					config,
+					'POST',
+					'/api/integrations/gmail/save-attachment',
+					{ message_id: args.message_id, attachment_id: args.attachment_id },
+					{ workspaceId: args.workspace_id },
+				)
+				return reply(JSON.stringify(saved))
+			} catch (err) {
+				// The server words every refusal for the agent, so pass it on as a result.
+				if (parseApiErrorStatus(err) === null) throw err
+				const detail = (err instanceof Error ? err.message : String(err)).replace(
+					/^API error \d{3}:\s*/,
+					'',
+				)
+				return reply(`Not saved. ${detail}`, true)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'resend_send_email',
 		{
 			description: tools.resend_send_email.description,

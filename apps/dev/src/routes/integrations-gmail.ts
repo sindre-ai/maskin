@@ -2,14 +2,21 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, actors, objects } from '@maskin/db/schema'
 import { type DecisionDraft, commentDecisionSchema, readChanges } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
+import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { canRead, canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
 import { IntegrationAuthRevokedError, ScopeDeniedError } from '../lib/integrations/errors'
 import { getIntegrationCredential } from '../lib/integrations/lookup'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { contentHash, shownDraftText } from '../lib/integrations/providers/gmail/approval-hash'
+import {
+	GmailAttachmentError,
+	fetchGmailAttachment,
+	storeAttachmentFile,
+} from '../lib/integrations/providers/gmail/attachment'
 import {
 	GmailSendError,
 	type OutgoingEmail,
@@ -59,6 +66,8 @@ type Env = {
 		db: Database
 		actorId: string
 		workspaceRole?: string
+		storageProvider: StorageProvider
+		maskinSessionId?: string
 	}
 }
 
@@ -141,10 +150,15 @@ const fail = (
 ): Fail => ({ status, body: createApiError(code, message, undefined, suggestion) })
 
 /** The workspace's Gmail login, read through Keychain so the read is gated and audited. */
-const readGmailCredential = (db: Database, workspaceId: string, actorId: string) =>
+const readGmailCredential = (
+	db: Database,
+	workspaceId: string,
+	actorId: string,
+	target: 'gmail:send' | 'gmail:read-attachment' = 'gmail:send',
+) =>
 	getIntegrationCredential(db, workspaceId, 'gmail', actorId, {
 		fallbackToAnyActor: true,
-		ctx: readContextFor(actorId, 'gmail:send'),
+		ctx: readContextFor(actorId, target),
 	})
 
 function sendFailureFor(err: GmailSendError): Fail {
@@ -728,6 +742,192 @@ app.openapi(sendRoute, async (c) => {
 		if (err.code === 'UNKNOWN_OUTCOME') await settle('unknown')
 		else await settle('released')
 		const f = sendFailureFor(err)
+		return c.json(f.body, f.status)
+	}
+})
+
+const SAVE_TOOL_NAME = 'gmail_save_attachment'
+
+const saveAttachmentBodySchema = z.object({
+	message_id: z.string().min(1).max(64),
+	attachment_id: z.string().min(1).max(4096),
+})
+
+const saveAttachmentRoute = createRoute({
+	method: 'post',
+	path: '/save-attachment',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Save one Gmail attachment as a workspace file',
+	description:
+		'Reads one attachment of one message of the connected Gmail account and stores it as a workspace file. Needs "Read" or "Read & write" access to Gmail. The name and type come from the message, not the caller.',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: saveAttachmentBodySchema } }, required: true },
+	},
+	responses: {
+		201: {
+			description: 'Saved',
+			content: {
+				'application/json': {
+					schema: z.object({
+						file_id: z.string().uuid(),
+						name: z.string(),
+						mime_type: z.string(),
+						size_bytes: z.number().int(),
+						url: z.string(),
+					}),
+				},
+			},
+		},
+		400: { description: 'Invalid', content: { 'application/json': { schema: errorSchema } } },
+		403: { description: 'Not allowed', content: { 'application/json': { schema: errorSchema } } },
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+		409: { description: 'Conflict', content: { 'application/json': { schema: errorSchema } } },
+		413: { description: 'Too large', content: { 'application/json': { schema: errorSchema } } },
+		422: { description: 'Refused', content: { 'application/json': { schema: errorSchema } } },
+		502: { description: 'Gmail error', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+function attachmentFailureFor(
+	err: GmailAttachmentError,
+): Fail | { status: 413; body: Fail['body'] } {
+	switch (err.code) {
+		case 'INVALID_INPUT':
+			return fail(400, 'BAD_REQUEST', err.message)
+		case 'NOT_FOUND':
+			return fail(404, 'NOT_FOUND', err.message)
+		case 'TOO_LARGE':
+			return { status: 413, body: createApiError('BAD_REQUEST', err.message) }
+		case 'RECONSENT_REQUIRED':
+		case 'INSUFFICIENT_SCOPE':
+			return fail(409, 'CONFLICT', err.message)
+		case 'REJECTED':
+			return fail(422, 'BAD_REQUEST', err.message)
+		default:
+			return fail(502, 'INTERNAL_ERROR', err.message)
+	}
+}
+
+app.openapi(saveAttachmentRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const input = c.req.valid('json')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	let credential: Awaited<ReturnType<typeof readGmailCredential>>
+	try {
+		credential = await readGmailCredential(db, workspaceId, actorId, 'gmail:read-attachment')
+	} catch (err) {
+		if (err instanceof ScopeDeniedError) {
+			const f = fail(
+				403,
+				'FORBIDDEN',
+				'You do not have access to Gmail in this workspace. A workspace admin can grant it under Settings → Integrations.',
+			)
+			return c.json(f.body, f.status)
+		}
+		throw err
+	}
+	if (!credential) {
+		const f = fail(
+			404,
+			'NOT_FOUND',
+			'Gmail is not connected in this workspace.',
+			'Ask a person to connect Gmail in Settings → Integrations.',
+		)
+		return c.json(f.body, f.status)
+	}
+	// Reading one attachment is a read of the mailbox, so "Read" is enough.
+	const access = (await resolveAgentAccess(db, workspaceId, credential.id, actorId)) ?? 'none'
+	if (!canRead(access)) {
+		const f = fail(
+			403,
+			'FORBIDDEN',
+			accessDeniedMessage({
+				providerLabel: 'Gmail',
+				toolName: SAVE_TOOL_NAME,
+				kind: 'read',
+				access,
+			}),
+		)
+		return c.json(f.body, f.status)
+	}
+
+	let frontendUrl: string
+	try {
+		frontendUrl = frontendBaseUrl()
+	} catch (err) {
+		logger.error('Cannot mint file URL', { error: String(err) })
+		const f = fail(502, 'INTERNAL_ERROR', 'File URL not configured')
+		return c.json(f.body, f.status)
+	}
+
+	let accessToken: string
+	try {
+		accessToken = await new TokenManager().getValidToken(db, credential.id, getProvider('gmail'))
+	} catch (err) {
+		if (err instanceof IntegrationAuthRevokedError) {
+			const f = fail(
+				409,
+				'CONFLICT',
+				'Gmail cannot be used right now. A person needs to reconnect Gmail in Settings → Integrations.',
+			)
+			return c.json(f.body, f.status)
+		}
+		throw err
+	}
+
+	try {
+		const attachment = await fetchGmailAttachment(
+			accessToken,
+			input.message_id,
+			input.attachment_id,
+		)
+		const file = await storeAttachmentFile(
+			{ db, storage: c.get('storageProvider') },
+			{ workspaceId, actorId, ...attachment },
+		)
+		try {
+			await recordEvent(db, {
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'file',
+				entityId: file.id,
+				data: {
+					id: file.id,
+					name: file.name,
+					mimeType: file.mimeType,
+					sizeBytes: file.sizeBytes,
+					source: 'gmail-attachment',
+					gmail_message_id: input.message_id,
+				},
+				provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
+			})
+		} catch (bookkeepingErr) {
+			logger.error('Gmail attachment saved but the record of it failed', {
+				workspaceId,
+				fileId: file.id,
+				error: bookkeepingErr instanceof Error ? bookkeepingErr.message : String(bookkeepingErr),
+			})
+		}
+		return c.json(
+			{
+				file_id: file.id,
+				name: file.name,
+				mime_type: file.mimeType,
+				size_bytes: file.sizeBytes,
+				url: fileViewerUrl(frontendUrl, workspaceId, file.id),
+			},
+			201,
+		)
+	} catch (err) {
+		if (!(err instanceof GmailAttachmentError)) throw err
+		logger.warn('Gmail attachment save failed', { workspaceId, code: err.code })
+		const f = attachmentFailureFor(err)
 		return c.json(f.body, f.status)
 	}
 })
