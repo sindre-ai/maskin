@@ -32495,7 +32495,7 @@
 					"integrations"
 				],
 				"summary": "Save one Gmail attachment as a workspace file",
-				"description": "Reads one attachment of one message of the connected Gmail account and stores it as a workspace file. Needs \"Read\" or \"Read & write\" access to Gmail. The name and type come from the message, not the caller.",
+				"description": "Reads one attachment of one message of the connected Gmail account and stores it as a workspace file. The attachment is matched by part_id first (attachment ids change between reads). Needs \"Read\" or \"Read & write\" access to Gmail. The name and type come from the message, not the caller.",
 				"parameters": [
 					{
 						"schema": {
@@ -32523,6 +32523,11 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 4096
+									},
+									"part_id": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
 									}
 								},
 								"required": [

@@ -774,6 +774,7 @@ const SAVE_TOOL_NAME = 'gmail_save_attachment'
 const saveAttachmentBodySchema = z.object({
 	message_id: z.string().min(1).max(64),
 	attachment_id: z.string().min(1).max(4096),
+	part_id: z.string().min(1).max(64).optional(),
 })
 
 const saveAttachmentRoute = createRoute({
@@ -783,7 +784,7 @@ const saveAttachmentRoute = createRoute({
 	tags: ['integrations'],
 	summary: 'Save one Gmail attachment as a workspace file',
 	description:
-		'Reads one attachment of one message of the connected Gmail account and stores it as a workspace file. Needs "Read" or "Read & write" access to Gmail. The name and type come from the message, not the caller.',
+		'Reads one attachment of one message of the connected Gmail account and stores it as a workspace file. The attachment is matched by part_id first (attachment ids change between reads). Needs "Read" or "Read & write" access to Gmail. The name and type come from the message, not the caller.',
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: saveAttachmentBodySchema } }, required: true },
@@ -914,6 +915,7 @@ app.openapi(saveAttachmentRoute, async (c) => {
 			accessToken,
 			input.message_id,
 			input.attachment_id,
+			input.part_id,
 		)
 		const file = await storeAttachmentFile({ db, storage }, { workspaceId, actorId, ...attachment })
 		try {
