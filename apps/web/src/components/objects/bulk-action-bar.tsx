@@ -256,8 +256,9 @@ export function BulkActionBar({
 								disabled={!canWrite}
 							>
 								<SelectTrigger
+									size="pill"
 									aria-label="Set status"
-									className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
+									className="data-[placeholder]:text-foreground"
 								>
 									<SelectValue placeholder="Status" />
 								</SelectTrigger>
@@ -285,8 +286,9 @@ export function BulkActionBar({
 							disabled={ownerOptions.length === 0 || !onOwnerChange || !canWrite}
 						>
 							<SelectTrigger
+								size="pill"
 								aria-label="Set driver"
-								className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
+								className="data-[placeholder]:text-foreground"
 							>
 								<SelectValue placeholder="Driver" />
 							</SelectTrigger>

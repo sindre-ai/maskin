@@ -87,6 +87,19 @@ describe('Header', () => {
 		expect(screen.getByRole('button', { name: 'More ways to start' })).toBeInTheDocument()
 	})
 
+	it.each([
+		['/_authed/$workspaceId/objects/', 'objects'],
+		['/_authed/$workspaceId/loops/', 'loops'],
+		['/_authed/$workspaceId/agents/', 'agents'],
+	])('labels the primary New button "New chat" on %s', (routeId, segment) => {
+		vi.mocked(useMatches).mockReturnValue([
+			{ routeId, pathname: `/ws-1/${segment}`, params: { workspaceId: 'ws-1' } },
+		] as ReturnType<typeof useMatches>)
+		render(<Header />)
+		expect(screen.getByRole('button', { name: 'New chat' })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^New (item|flow|agent)$/ })).toBeNull()
+	})
+
 	it('shows breadcrumbs from route matches', () => {
 		vi.mocked(useMatches).mockReturnValue([
 			{
@@ -179,6 +192,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		})
 
 		render(<Header />)
@@ -202,6 +216,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		}
 		vi.mocked(useMatches).mockReturnValue([
 			{
@@ -237,6 +252,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		})
 
 		render(<Header />)
@@ -265,6 +281,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		})
 		render(<Header />)
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
@@ -299,6 +316,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -335,6 +353,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -373,6 +392,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		})
 
 		render(<Header />)
@@ -424,6 +444,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		})
 		vi.mocked(useMatches).mockReturnValue([
 			{
@@ -455,6 +476,7 @@ describe('Header leadingActions', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setGutter: vi.fn(),
 		})
 		render(<Header />)
 

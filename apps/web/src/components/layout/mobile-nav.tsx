@@ -1,10 +1,11 @@
+import { useSidebar } from '@/components/ui/sidebar'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { trackNavItemClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { Link, useMatchRoute } from '@tanstack/react-router'
-import { Layers, MessageSquare, RefreshCw, Zap } from 'lucide-react'
+import { Link, useMatchRoute, useRouterState } from '@tanstack/react-router'
+import { Layers, MessageSquare, MoreHorizontal, RefreshCw, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 
 // On mobile (≤767px) the sidebar becomes an off-canvas sheet, so the fixed bottom
@@ -31,8 +32,23 @@ const baseItems: MobileNavItem[] = [
 	{ key: 'loops', label: 'Flows', to: '/$workspaceId/loops', icon: RefreshCw },
 ]
 
+// The bar only shows on list pages. Screens that own a bottom composer or are full-screen
+// detail pages (an open chat, an item, a flow, an agent, a session, a file, settings, search)
+// hide it so it never collides with a composer or an action bar.
+const LIST_SEGMENTS = new Set(['chats', 'loops', 'objects', 'agents', 'marketplace'])
+
+export function showsMobileNav(pathname: string, workspaceId: string): boolean {
+	const prefix = `/${workspaceId}`
+	if (pathname !== prefix && !pathname.startsWith(`${prefix}/`)) return false
+	const segments = pathname.slice(prefix.length).split('/').filter(Boolean)
+	if (segments.length === 0) return true
+	return segments.length === 1 && LIST_SEGMENTS.has(segments[0] as string)
+}
+
 export function MobileNav() {
 	const { workspaceId } = useWorkspace()
+	const pathname = useRouterState({ select: (state) => state.location.pathname })
+	const { setOpenMobile } = useSidebar()
 	const enabledModules = useEnabledModules()
 	const matchRoute = useMatchRoute()
 
@@ -48,10 +64,13 @@ export function MobileNav() {
 		return [...baseItems, objectsItem]
 	}, [enabledModules])
 
+	if (!showsMobileNav(pathname, workspaceId)) return null
+
 	return (
 		<nav
 			aria-label="Primary"
-			className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] md:hidden"
+			data-testid="mobile-nav"
+			className="shrink-0 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] md:hidden"
 		>
 			<div className="flex items-stretch justify-around">
 				{items.map((item) => {
@@ -70,7 +89,7 @@ export function MobileNav() {
 							onClick={() => trackNavItemClicked({ item_key: item.key, source: 'bottom-nav' })}
 							aria-label={`${item.label}, ${isActive ? 'current page' : 'navigate to'}`}
 							className={cn(
-								'flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium transition-colors duration-150',
+								'flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-1.5 text-[11px] font-medium transition-colors duration-150',
 								isActive ? 'text-foreground' : 'text-muted-foreground',
 							)}
 						>
@@ -79,6 +98,15 @@ export function MobileNav() {
 						</Link>
 					)
 				})}
+				<button
+					type="button"
+					onClick={() => setOpenMobile(true)}
+					aria-label="More"
+					className="flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors duration-150"
+				>
+					<MoreHorizontal size={18} aria-hidden />
+					<span className="leading-none">More</span>
+				</button>
 			</div>
 		</nav>
 	)

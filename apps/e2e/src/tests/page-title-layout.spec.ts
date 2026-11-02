@@ -5,7 +5,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 /**
  * The shared page title and margin spec: every screen's <h1> is 34px from 1024,
  * 28px at 768 and 24px below, sits on a 16 / 32 / 28px side margin at 375 / 768 / 1024, and
- * shares one left edge with the page content. Requires a live backend.
+ * shares one left edge with the page content. For you uses a 48px margin from 1024. Requires a live backend.
  */
 
 const SCREENS = [
@@ -20,8 +20,9 @@ function expectedTitleSize(width: number) {
 	return width >= 1024 ? '34px' : width >= 768 ? '28px' : '24px'
 }
 
-function expectedEdge(width: number) {
-	return width >= 1024 ? 28 : width >= 768 ? 32 : 16
+// For you is the one screen with the wide gutter: 48px from lg, the rest stay at 28.
+function expectedEdge(width: number, wide = false) {
+	return width >= 1024 ? (wide ? 48 : 28) : width >= 768 ? 32 : 16
 }
 
 async function expectNoHorizontalScroll(page: Page) {
@@ -57,7 +58,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				const box = await h1.boundingBox()
 				expect(root).not.toBeNull()
 				expect(
-					Math.abs((box?.x ?? 0) - ((root?.x ?? 0) + expectedEdge(vp.width))),
+					Math.abs((box?.x ?? 0) - ((root?.x ?? 0) + expectedEdge(vp.width, screen.path === ''))),
 				).toBeLessThanOrEqual(1)
 				await expectNoHorizontalScroll(page)
 			})

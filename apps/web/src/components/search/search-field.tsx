@@ -127,13 +127,19 @@ export function SearchField({
 			className={cn(
 				'flex min-w-0 flex-1 items-center gap-1.5',
 				palette
-					? 'min-h-12 px-3.5 py-1'
+					? 'min-h-14 px-4.5 py-1'
 					: 'min-h-[50px] rounded-lg border border-input bg-background px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30',
 			)}
 		>
 			{/* Pills and the input wrap onto more lines on a narrow screen, so none is hidden; the clear button stays at the end of the first line. */}
 			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
-				<Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+				<Search
+					aria-hidden="true"
+					className={cn(
+						'shrink-0 text-muted-foreground',
+						palette ? 'mr-1.5 size-[18px]' : 'size-4',
+					)}
+				/>
 
 				{parts.pills.map((pill, index) => (
 					<PillButton
@@ -162,7 +168,7 @@ export function SearchField({
 						parts.pills.length > 0
 							? 'Add words…'
 							: palette
-								? 'Run a command or jump to…'
+								? 'Search or run a command'
 								: 'Search everything…'
 					}
 					onChange={(e) => onTextChange(e.target.value, composing.current)}
@@ -176,7 +182,7 @@ export function SearchField({
 					onKeyDown={onKeyDown}
 					className={cn(
 						'min-w-[8ch] flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground',
-						palette ? 'h-[30px] text-[13.5px]' : 'h-[34px] text-[14px]',
+						palette ? 'h-[34px] text-base' : 'h-[34px] text-[14px]',
 					)}
 				/>
 

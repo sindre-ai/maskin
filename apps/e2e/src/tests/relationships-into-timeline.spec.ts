@@ -6,8 +6,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // activity timeline. The rebuilt object-detail shell keeps the projection (a
 // linked object renders as a timeline row at the edge's created_at) and keeps
 // SSE invalidation, but retires the legacy Timeline ⇄ Table "Relationship
-// view" radio group of AC-U12 / AC-T7: the shell's own Timeline | Related
-// segmented control replaces it, and is covered by
+// view" radio group of AC-U12 / AC-T7: the shell's own Overview / Related /
+// Activity tabs replace it, and are covered by
 // object-detail-properties.spec.ts.
 
 // The v2 timeline folds a run of three or more low-signal rows — link rows
@@ -49,7 +49,7 @@ test.describe('Relationships into the timeline (AC-U11)', () => {
 				type: 'informs',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 			await expect(
 				page.getByRole('heading', { level: 1, name: 'Relationships timeline bet' }),
 			).toBeVisible({ timeout: 10000 })

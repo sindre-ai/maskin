@@ -223,9 +223,47 @@ describe('AgentSessionsSection', () => {
 		expect(screen.getByText('Draft the ship notes')).toBeInTheDocument()
 		expect(screen.getByText('Publish the roundup')).toBeInTheDocument()
 
-		// State labels appear (as the pill + inside the expanded body when opened).
-		expect(screen.getByText('Running')).toBeInTheDocument()
-		expect(screen.getByText('Completed')).toBeInTheDocument()
+		// The calm row names the state in plain words: Working, Done, Failed.
+		expect(screen.getByText('Working')).toBeInTheDocument()
+		// "Done" is also a filter chip on the Sessions tab, so it is found twice.
+		expect(screen.getAllByText('Done')).toHaveLength(2)
+	})
+
+	it('filters the Sessions tab by the All / Running / Done / Failed chips', async () => {
+		const agent = buildActorResponse({ id: 'agent-chips', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-a',
+				actorId: 'agent-chips',
+				status: 'running',
+				actionPrompt: 'Live run',
+			}),
+			buildSessionResponse({
+				id: 's-b',
+				actorId: 'agent-chips',
+				status: 'completed',
+				actionPrompt: 'Finished run',
+			}),
+			buildSessionResponse({
+				id: 's-c',
+				actorId: 'agent-chips',
+				status: 'failed',
+				actionPrompt: 'Broken run',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getByRole('button', { name: 'Failed' }))
+		expect(screen.getByText('Broken run')).toBeInTheDocument()
+		expect(screen.queryByText('Live run')).not.toBeInTheDocument()
+		expect(screen.queryByText('Finished run')).not.toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Done' }))
+		expect(screen.getByText('Finished run')).toBeInTheDocument()
+		expect(screen.queryByText('Broken run')).not.toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'All' }))
+		expect(screen.getAllByRole('listitem')).toHaveLength(3)
 	})
 
 	it('has no dropdown: Open shows the run in the side panel and closing it removes the panel', async () => {

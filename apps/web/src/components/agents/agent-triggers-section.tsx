@@ -10,18 +10,12 @@ import { useTriggers, useUpdateTrigger } from '@/hooks/use-triggers'
 import type { ActorResponse, TriggerResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { Bell, ChevronRight, Clock, Plus, Zap } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 /** Triggers listed before the section collapses behind "Show all". */
 const COLLAPSED_TRIGGERS = 3
-
-const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
-	event: Zap,
-	cron: Clock,
-	reminder: Bell,
-}
 
 function sortTriggers(a: TriggerResponse, b: TriggerResponse): number {
 	if (a.enabled !== b.enabled) return a.enabled ? -1 : 1
@@ -50,38 +44,13 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 		showAll || !isTruncated ? agentTriggers : agentTriggers.slice(0, COLLAPSED_TRIGGERS)
 
 	return (
-		<section aria-labelledby="agent-triggers-heading" className="flex flex-col gap-2.5">
+		<section aria-labelledby="agent-triggers-heading" className="flex flex-col gap-3">
+			{/* v16 opens the tab on the rows; the heading stays for screen readers. */}
 			<AgentSectionHeading
 				id="agent-triggers-heading"
 				title="Triggers"
 				note={agentTriggers.length > 0 ? String(agentTriggers.length) : undefined}
-				action={
-					<div className="flex items-center gap-1">
-						{isTruncated && (
-							<Button
-								variant="ghost"
-								size="sm"
-								className="h-7 shrink-0 px-2 text-xs font-medium"
-								aria-expanded={showAll}
-								onClick={() => setShowAll((v) => !v)}
-							>
-								{showAll ? 'Show fewer' : `Show all ${agentTriggers.length}`}
-							</Button>
-						)}
-						<ViewerTooltip>
-							<Button
-								variant="ghost"
-								size="sm"
-								className="h-7 shrink-0 px-2 text-xs font-medium"
-								disabled={!canWrite}
-								onClick={() => setCreateOpen(true)}
-							>
-								<Plus size={14} aria-hidden />
-								New trigger
-							</Button>
-						</ViewerTooltip>
-					</div>
-				}
+				srOnly
 			/>
 
 			{isLoading ? (
@@ -101,6 +70,31 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 					))}
 				</ul>
 			)}
+			<div className="flex items-center gap-2">
+				<ViewerTooltip>
+					<Button
+						variant="outline"
+						size="sm"
+						className="h-8 rounded-full px-3.5 text-[13px] font-semibold"
+						disabled={!canWrite}
+						onClick={() => setCreateOpen(true)}
+					>
+						<Plus size={14} aria-hidden />
+						New trigger
+					</Button>
+				</ViewerTooltip>
+				{isTruncated && (
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-8 px-2 text-[13px] font-semibold text-muted-foreground"
+						aria-expanded={showAll}
+						onClick={() => setShowAll((v) => !v)}
+					>
+						{showAll ? 'Show fewer' : `Show all ${agentTriggers.length}`}
+					</Button>
+				)}
+			</div>
 			{/* The picker has no way to preselect the agent yet, so the new trigger
 			    is pointed at this agent on its own page. */}
 			<CreatePicker open={createOpen} onOpenChange={setCreateOpen} defaultType="trigger" />
@@ -111,22 +105,20 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 function TriggerCard({ trigger, workspaceId }: { trigger: TriggerResponse; workspaceId: string }) {
 	const canWrite = useCanWrite()
 	const updateTrigger = useUpdateTrigger(workspaceId)
-	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
 
 	return (
-		<div className="flex items-center gap-2.5 border-b border-border py-2.5">
-			<span
-				aria-hidden
-				className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
+		<div className="flex items-center gap-3 border-b border-border px-1 py-3 leading-snug">
+			<Link
+				to="/$workspaceId/triggers/$triggerId"
+				params={{ workspaceId, triggerId: trigger.id }}
+				className="flex min-w-0 flex-1 flex-col gap-0.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				aria-label={`Open ${trigger.name}`}
 			>
-				<Icon className="size-3.5" />
-			</span>
-			<div className="flex min-w-0 flex-1 flex-col">
-				<span className="truncate text-sm font-medium text-foreground">{trigger.name}</span>
-				<span className="truncate text-[11px] text-muted-foreground">
+				<span className="truncate text-[15px] font-semibold text-foreground">{trigger.name}</span>
+				<span className="truncate text-[13px] text-muted-foreground">
 					{describeTrigger(trigger)}
 				</span>
-			</div>
+			</Link>
 			<ViewerTooltip>
 				<Switch
 					checked={trigger.enabled}
@@ -140,15 +132,6 @@ function TriggerCard({ trigger, workspaceId }: { trigger: TriggerResponse; works
 					}
 				/>
 			</ViewerTooltip>
-			<Link
-				to="/$workspaceId/triggers/$triggerId"
-				params={{ workspaceId, triggerId: trigger.id }}
-				className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-				aria-label={`Open ${trigger.name}`}
-			>
-				Open
-				<ChevronRight className="size-3" aria-hidden />
-			</Link>
 		</div>
 	)
 }

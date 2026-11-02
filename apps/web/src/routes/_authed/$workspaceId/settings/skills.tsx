@@ -46,6 +46,7 @@ import {
 } from '@/hooks/use-workspace-skills'
 import { ApiError, type WorkspaceSkillListItem, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { parseSkillMd, skillNameSchema } from '@maskin/shared'
@@ -288,7 +289,12 @@ function SkillsPage() {
 				disabled={isUploading}
 			/>
 			<ViewerTooltip>
-				<Button size="sm" disabled={!canWrite} onClick={() => setDialog({ kind: 'create' })}>
+				<Button
+					size="sm"
+					className={PILL_BUTTON}
+					disabled={!canWrite}
+					onClick={() => setDialog({ kind: 'create' })}
+				>
 					<Plus size={14} className="mr-1" />
 					Create skill
 				</Button>
@@ -428,7 +434,12 @@ function ImportSkillButton({
 		<DropdownMenu>
 			<ViewerTooltip>
 				<DropdownMenuTrigger asChild>
-					<Button variant="outline" size="sm" disabled={disabled || !canWrite}>
+					<Button
+						variant="outline"
+						size="sm"
+						className={PILL_BUTTON}
+						disabled={disabled || !canWrite}
+					>
 						<FileUp size={14} className="mr-1" />
 						Import
 						<ChevronDown size={14} className="ml-1" />
@@ -532,11 +543,11 @@ function SkillRow({
 	}
 
 	return (
-		<div className="rounded-lg border border-border bg-card transition-colors hover:border-border-strong">
+		<div className="rounded-xl border border-border bg-card transition-colors hover:border-border-strong">
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete */}
 			<div
 				onClick={handleRowClick}
-				className="flex items-center gap-3 p-4 cursor-pointer hover:bg-accent rounded-lg"
+				className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-accent rounded-xl"
 			>
 				{skill.isFolder && (
 					<ChevronRight
@@ -559,7 +570,7 @@ function SkillRow({
 								<AlertTriangle size={14} />
 							</span>
 						)}
-						<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
+						<p className="text-[15px] font-semibold text-foreground truncate">{skill.name}</p>
 						{skill.isFolder && (
 							<span
 								className="shrink-0 inline-flex items-center gap-1 rounded-md bg-card px-1.5 py-0.5 text-xs text-muted-foreground"
@@ -571,7 +582,7 @@ function SkillRow({
 						)}
 					</div>
 					{skill.description ? (
-						<p className="text-xs text-muted-foreground truncate">{skill.description}</p>
+						<p className="text-[13px] text-muted-foreground truncate">{skill.description}</p>
 					) : !skill.isValid ? (
 						<p className="text-xs text-warning truncate">
 							{skill.isFolder

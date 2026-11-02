@@ -7,7 +7,7 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { type AgentTab, parseAgentTab } from '@/lib/agent-detail'
+import { type AgentTab, DEFAULT_AGENT_TAB, parseAgentTab } from '@/lib/agent-detail'
 import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -16,7 +16,7 @@ import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/$agentId')({
 	component: AgentDetailPage,
-	// `?tab=sessions` opens a tab directly; anything else is the Overview.
+	// `?tab=sessions` opens a tab directly; anything else (the retired `overview` too) is Setup.
 	validateSearch: (search: Record<string, unknown>): { tab?: AgentTab } => ({
 		tab: parseAgentTab(search.tab),
 	}),
@@ -28,7 +28,7 @@ function AgentDetailPage() {
 	const { tab } = Route.useSearch()
 	const navigate = Route.useNavigate()
 	const onTabChange = (next: AgentTab) =>
-		navigate({ search: { tab: next === 'overview' ? undefined : next }, replace: true })
+		navigate({ search: { tab: next === DEFAULT_AGENT_TAB ? undefined : next }, replace: true })
 	const { workspaceId } = useWorkspace()
 	// Use list-derived hook to check existence (returns undefined for new IDs, no 404)
 	const { data: agentListItem, isLoading } = useAgent(agentId, workspaceId)
@@ -144,5 +144,5 @@ function AgentDetailLoaded({
 		)
 	}
 
-	return <AgentDetailView agent={agent} tab={tab ?? 'overview'} onTabChange={onTabChange} />
+	return <AgentDetailView agent={agent} tab={tab ?? DEFAULT_AGENT_TAB} onTabChange={onTabChange} />
 }

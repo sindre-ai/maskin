@@ -57,69 +57,72 @@ export function WebhookSection({
 		const cfg = ext.webhookConfig
 		const scheme = SIGNATURE_SCHEMES.find((s) => s.value === cfg?.signatureScheme)
 		return (
-			<section
-				className="rounded-xl border border-border bg-card p-4"
-				aria-labelledby="webhook-heading"
-			>
-				<div className="flex items-start justify-between gap-3">
-					<div>
-						<h2 id="webhook-heading" className="text-[13px] font-bold">
-							Incoming webhook
-						</h2>
-						<p className="text-xs text-muted-foreground">
-							The vendor pushes events into this workspace.
-						</p>
-					</div>
+			<section aria-labelledby="webhook-heading">
+				<div className="flex items-center justify-between gap-3 px-1 pb-1.5">
+					<h2 id="webhook-heading" className="settings-label">
+						Webhook
+					</h2>
 					<ViewerTooltip>
-						<Button variant="secondary" size="sm" disabled={!canWrite} onClick={onEdit}>
+						<Button
+							variant="secondary"
+							size="sm"
+							disabled={!canWrite}
+							onClick={onEdit}
+							className="max-md:h-11"
+						>
 							Edit
 						</Button>
 					</ViewerTooltip>
 				</div>
 
-				<div className="mt-4 grid gap-4">
-					<div className="grid gap-1.5">
-						<Label>Webhook URL</Label>
-						<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-							<code className="block min-w-0 flex-1 break-all rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs">
+				<dl className="divide-y divide-border-subtle rounded-xl border border-border bg-card">
+					<div className="flex flex-col gap-1.5 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+						<dt className="text-[13px] text-muted-foreground sm:w-28 sm:shrink-0">Endpoint</dt>
+						<dd className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+							<code className="block min-w-0 flex-1 break-all rounded-md bg-muted px-2 py-1 font-mono text-xs">
 								{ext.webhookUrl}
 							</code>
 							{ext.webhookUrl && (
 								<CopyButton text={ext.webhookUrl} label ariaLabel="Copy webhook URL" />
 							)}
-						</div>
-						<div>
-							<ViewerTooltip>
-								<Button
-									variant="ghost"
-									size="sm"
-									disabled={!canWrite}
-									onClick={onRegenerateToken}
-									className="-ml-3 text-muted-foreground"
-								>
-									<RefreshCw size={14} />
-									Regenerate token
-								</Button>
-							</ViewerTooltip>
-						</div>
+						</dd>
 					</div>
-
-					<div className="grid gap-1.5">
-						<Label>Signing secret</Label>
-						<MaskedSecret aria-label="Signing secret (hidden)" />
+					<div className="flex flex-col gap-1.5 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+						<dt className="text-[13px] text-muted-foreground sm:w-28 sm:shrink-0">Secret</dt>
+						<dd className="min-w-0 flex-1">
+							<MaskedSecret aria-label="Signing secret (hidden)" />
+							<p className="mt-1 text-xs text-muted-foreground">
+								Shown once, when you save it. Edit the webhook to set a new one.
+							</p>
+						</dd>
 					</div>
-
-					<dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-xs sm:grid-cols-2">
-						<div>
-							<dt className="text-muted-foreground">Signature scheme</dt>
-							<dd className="font-medium">{scheme?.label}</dd>
-						</div>
-						<div>
-							<dt className="text-muted-foreground">Signature header</dt>
-							<dd className="font-mono">{cfg?.signatureHeader}</dd>
-						</div>
-					</dl>
-				</div>
+					<div className="flex flex-col gap-1.5 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+						<dt className="text-[13px] text-muted-foreground sm:w-28 sm:shrink-0">Signature</dt>
+						<dd className="min-w-0 flex-1 text-[13px]">
+							{scheme?.label}
+							{cfg?.signatureHeader ? (
+								<>
+									{' · '}
+									<span className="font-mono text-xs">{cfg.signatureHeader}</span>
+								</>
+							) : null}
+						</dd>
+					</div>
+					<div className="px-4 py-2">
+						<ViewerTooltip>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={!canWrite}
+								onClick={onRegenerateToken}
+								className="-ml-3 text-muted-foreground max-md:h-11"
+							>
+								<RefreshCw size={14} />
+								Regenerate token
+							</Button>
+						</ViewerTooltip>
+					</div>
+				</dl>
 			</section>
 		)
 	}

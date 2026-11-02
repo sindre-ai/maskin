@@ -55,6 +55,7 @@ function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
+	const isGeneral = !!matchRoute({ to: '/$workspaceId/settings', params: { workspaceId } })
 	const groups: { label: string; items: SettingsNavItem[] }[] = [
 		{ label: 'Workspace', items: WORKSPACE_NAV },
 		{ label: 'Agents', items: AGENTS_NAV },
@@ -67,7 +68,12 @@ function SettingsLayout() {
 	return (
 		<div className="mx-auto w-full max-w-6xl">
 			{/* The screen's <h1> belongs to the shared top nav, not the page body. */}
-			<PageHeader title="Settings" subtitle={workspace?.name} />
+			{/* On a sub-page the crumb leaf is the page's own label (Settings › Integrations); a
+			    "Settings" title here would name the leaf "Settings" a second time. */}
+			<PageHeader
+				title={isGeneral ? 'Settings' : undefined}
+				subtitle={isGeneral ? workspace?.name : undefined}
+			/>
 			<div className="grid gap-x-8 gap-y-4 md:grid-cols-[200px_minmax(0,1fr)]">
 				<nav aria-label="Settings sections" className="md:col-start-1 md:pt-1">
 					<div className="flex gap-4 overflow-x-auto pb-2 md:flex-col md:gap-5 md:pb-0">
@@ -87,7 +93,7 @@ function SettingsLayout() {
 													to={item.to}
 													params={{ workspaceId }}
 													className={cn(
-														'block whitespace-nowrap rounded-[10px] px-3 py-2 text-sm transition-colors',
+														'block whitespace-nowrap rounded-[10px] px-3 py-2 text-sm transition-colors max-md:flex max-md:min-h-11 max-md:items-center',
 														isActive
 															? 'bg-secondary font-bold text-foreground'
 															: 'font-medium text-muted-foreground hover:bg-secondary hover:text-foreground',

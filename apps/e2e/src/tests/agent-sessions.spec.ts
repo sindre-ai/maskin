@@ -62,8 +62,8 @@ test.describe('Agent detail — Sessions section', () => {
 			const section = page.getByRole('region', { name: 'Sessions', exact: true })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 
-			// The section note says what you can do here (mockup 2427), not a count.
-			await expect(section.getByText('open, pause or restart')).toBeVisible()
+			// The note stays for screen readers; v16 opens the tab on the chips, not on a heading.
+			await expect(section.getByText('open, pause or restart')).toBeAttached()
 
 			// Empty state shows when the agent hasn't run anything yet — proves the
 			// section renders even without data on the deployed slot.

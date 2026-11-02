@@ -61,13 +61,11 @@ export function AgentCallButton({
 		<Button
 			type="button"
 			variant={
-				variant === 'composer'
+				variant === 'composer' || variant === 'row' || (variant === 'detail' && secondary)
 					? 'outline'
-					: variant === 'row' || (variant === 'detail' && secondary)
-						? 'secondary'
-						: variant === 'icon'
-							? 'ghost'
-							: 'default'
+					: variant === 'icon'
+						? 'ghost'
+						: 'default'
 			}
 			size={variant === 'icon' || variant === 'composer' ? 'icon' : 'sm'}
 			className={cn(
@@ -80,7 +78,7 @@ export function AgentCallButton({
 				// Hover-reveal only from md up: mobile has no hover, so below md the
 				// button is always inline. Focus (keyboard, or a tap that lands on the
 				// row) also reveals it, so it is never unreachable.
-				// v11: a soft pill with the word Call, always visible (no hover reveal).
+				// v16: an outlined pill with the word Call, always visible (no hover reveal).
 				variant === 'row' && 'h-[30px] w-16 shrink-0 rounded-full px-0 text-[13px] font-semibold',
 				// Plain ghost icon like Copy, Pin and Archive beside it. Disabled drops
 				// the muted plate so it dims instead of showing a grey square.
@@ -92,7 +90,7 @@ export function AgentCallButton({
 			disabled={unavailable || !canWrite}
 			aria-label={`Call ${agent.name}`}
 		>
-			{variant === 'detail' && secondary ? (
+			{variant === 'detail' && (secondary || label === 'Live') ? (
 				<AudioLines size={14} aria-hidden="true" />
 			) : (
 				variant !== 'row' && <Phone size={variant === 'icon' ? 13 : 14} aria-hidden="true" />

@@ -14,6 +14,7 @@ import {
 } from '@/hooks/use-integrations'
 import { ApiError, type CustomMcpServerSpec, type IntegrationResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { FileJson, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
@@ -76,7 +77,7 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 	return (
 		<section aria-labelledby="tools-heading" className="mt-8 space-y-2">
 			<h2 id="tools-heading" className="settings-label">
-				Custom tools
+				Tool servers
 			</h2>
 
 			<ProviderCard
@@ -126,22 +127,24 @@ export function ToolsSection({ workspaceId }: { workspaceId: string }) {
 						<Button
 							size="sm"
 							variant="outline"
+							className={PILL_BUTTON}
 							disabled={!canWrite}
 							onClick={() => setAdding(true)}
 						>
 							<Plus className="mr-1 h-3.5 w-3.5" />
-							Add server
+							Add tool server
 						</Button>
 					</ViewerTooltip>
 					<ViewerTooltip>
 						<Button
 							size="sm"
 							variant="outline"
+							className={PILL_BUTTON}
 							disabled={!canWrite}
 							onClick={() => setImportOpen(true)}
 						>
 							<FileJson className="mr-1 h-3.5 w-3.5" />
-							Import .mcp.json
+							Import from Claude
 						</Button>
 					</ViewerTooltip>
 				</div>
@@ -185,6 +188,7 @@ function ServerRow({
 			name={name}
 			subtitle={describeServer(row)}
 			tone="connected"
+			status={{ tone: 'ok', label: 'Active' }}
 			actions={
 				canEdit &&
 				(confirmDelete ? (

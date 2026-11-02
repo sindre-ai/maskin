@@ -1,4 +1,3 @@
-import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { useObjects } from '@/hooks/use-objects'
 import type { ActorResponse } from '@/lib/api'
@@ -7,17 +6,13 @@ import { Link } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
 import { useMemo } from 'react'
 
-/** Items shown before the list stops; the heading carries the full count. */
-const SHOWN = 5
-
 /**
- * "Driving": the items this agent is the driver of (the objects list's `driver` filter), A to
- * Z by title. Nothing is drawn while there are none, so an agent that drives nothing has no
- * empty heading.
+ * The Items tab (v3's "Driving"): the items this agent is the driver of (the objects list's
+ * `driver` filter), A to Z by title. An agent that drives nothing says so.
  */
-export function AgentDrivingSection({ agent, total }: { agent: ActorResponse; total?: number }) {
+export function AgentDrivingSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
-	const { data: objects } = useObjects(workspaceId, { driver: agent.id, limit: '100' })
+	const { data: objects, isLoading } = useObjects(workspaceId, { driver: agent.id, limit: '100' })
 
 	const items = useMemo(
 		() =>
@@ -29,25 +24,20 @@ export function AgentDrivingSection({ agent, total }: { agent: ActorResponse; to
 		[objects],
 	)
 
-	if (items.length === 0) return null
-	const shown = items.slice(0, SHOWN)
-	const count = total ?? items.length
+	if (items.length === 0) {
+		if (isLoading) return null
+		return <p className="px-1 text-[15px] text-muted-foreground">Not driving any items yet.</p>
+	}
 
 	return (
-		<section aria-labelledby="agent-driving-heading" className="flex flex-col gap-2.5">
-			<AgentSectionHeading
-				id="agent-driving-heading"
-				title="Driving"
-				quiet
-				note={count > SHOWN ? `${SHOWN} of ${count}` : undefined}
-			/>
+		<section aria-label="Items" className="flex flex-col">
 			<ul className="flex flex-col border-t border-border">
-				{shown.map((item) => (
+				{items.map((item) => (
 					<li key={item.id}>
 						<Link
 							to="/$workspaceId/objects/$objectId"
 							params={{ workspaceId, objectId: item.id }}
-							className="flex items-center gap-3 border-b border-border px-1 py-3 text-[15px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							className="flex items-center gap-3 border-b border-border px-1 py-3 text-[15px] leading-snug transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						>
 							<span className="min-w-0 flex-1 truncate text-foreground">{item.title}</span>
 							<span className="text-[13px] font-semibold">

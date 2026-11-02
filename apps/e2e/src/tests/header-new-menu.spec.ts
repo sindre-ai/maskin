@@ -48,6 +48,17 @@ test.describe('Header New menu', () => {
 		})
 	}
 
+	for (const path of ['objects', 'loops', 'agents']) {
+		test(`the primary New button reads "New chat" on /${path}`, async ({ page, account }) => {
+			await page.goto(`/${account.workspaceId}/${path}`)
+			const primary = page.locator('header').getByRole('button', { name: 'New chat', exact: true })
+			await expect(primary).toBeVisible({ timeout: 15_000 })
+			await expect(
+				page.locator('header').getByRole('button', { name: /^New (item|flow|agent)$/ }),
+			).toHaveCount(0)
+		})
+	}
+
 	test('New chat navigates to the new-conversation composer', async ({ page, account }) => {
 		// For You has its own inline composer for "New chat" (see
 		// ForYouHeaderActions/onStartConversation) — every other page navigates

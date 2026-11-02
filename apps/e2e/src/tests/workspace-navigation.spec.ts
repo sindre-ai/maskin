@@ -33,6 +33,22 @@ test.describe('Workspace Navigation', () => {
 		expect(labels.slice(3)).toEqual(labels.length > 3 ? ['Items'] : [])
 	})
 
+	test('More opens the sidebar drawer, and the bar is hidden on a full-screen page at 375px', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 812 })
+		await page.goto(`/${account.workspaceId}`)
+		const bar = page.getByRole('navigation', { name: 'Primary' })
+		await expect(bar).toBeVisible({ timeout: 15_000 })
+		await bar.getByRole('button', { name: 'More' }).click()
+		await expect(page.getByRole('link', { name: 'Marketplace' })).toBeVisible()
+		await page.keyboard.press('Escape')
+
+		await page.goto(`/${account.workspaceId}/chats/new`)
+		await expect(page.getByRole('navigation', { name: 'Primary' })).toHaveCount(0)
+	})
+
 	test('redirects unauthenticated users to login', async ({ browser }) => {
 		const context = await browser.newContext()
 		const page = await context.newPage()

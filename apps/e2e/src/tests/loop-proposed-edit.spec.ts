@@ -51,7 +51,9 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-			const composer = page.getByPlaceholder('Listening — speak in plain words')
+			const composer = page.getByPlaceholder(
+				/^(Say what should change about this flow|Message .+, who drives .+)$/,
+			)
 			await expect(composer).toBeVisible({ timeout: 10000 })
 
 			await composer.fill(UTTERANCE)
@@ -89,7 +91,9 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		const composer = page.getByPlaceholder('Listening — speak in plain words')
+		const composer = page.getByPlaceholder(
+			/^(Say what should change about this flow|Message .+, who drives .+)$/,
+		)
 		await expect(composer).toBeVisible({ timeout: 10000 })
 		await composer.fill(UTTERANCE)
 		await composer.press('Enter')
@@ -100,7 +104,9 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 
 		// The stored plan is untouched — saying it again re-proposes the same diff.
 		await page.reload()
-		const composerAfter = page.getByPlaceholder('Listening — speak in plain words')
+		const composerAfter = page.getByPlaceholder(
+			/^(Say what should change about this flow|Message .+, who drives .+)$/,
+		)
 		await expect(composerAfter).toBeVisible({ timeout: 10000 })
 		await composerAfter.fill(UTTERANCE)
 		await composerAfter.press('Enter')
@@ -118,7 +124,9 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		const composer = page.getByPlaceholder('Listening — speak in plain words')
+		const composer = page.getByPlaceholder(
+			/^(Say what should change about this flow|Message .+, who drives .+)$/,
+		)
 		await expect(composer).toBeVisible({ timeout: 10000 })
 		await composer.fill(UTTERANCE)
 		await composer.press('Enter')
@@ -132,7 +140,9 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 		// the sentence it was parsed from (the next refinement builds on that
 		// sentence rather than the original).
 		await page.reload()
-		await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible({
+		await expect(
+			page.getByPlaceholder(/^(Say what should change about this flow|Message .+, who drives .+)$/),
+		).toBeVisible({
 			timeout: 10000,
 		})
 

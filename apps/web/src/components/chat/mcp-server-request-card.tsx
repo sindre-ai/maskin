@@ -1,6 +1,19 @@
+import {
+	REQUEST_CARD_LINK,
+	RequestCardHeader,
+	RequestCardReadOnly,
+	RequestCardRow,
+	RequestCardSummary,
+	capFirst,
+	useAskingAgentName,
+} from '@/components/chat/request-card-parts'
+import {
+	REQUEST_CARD,
+	REQUEST_CARD_BUTTON,
+	REQUEST_CARD_QUIET_BUTTON,
+} from '@/components/chat/request-card-styles'
 import { SecretInput } from '@/components/keychain/secret-input'
 import { FormError } from '@/components/shared/form-error'
-import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -73,6 +86,7 @@ export function McpServerRequestCard({
 	const sendInput = useSendSessionInput(workspaceId)
 	// Saving and declining both write to the workspace, which a viewer cannot do.
 	const canWrite = useCanWrite()
+	const agentName = useAskingAgentName(conversationId, workspaceId, askingAgentId)
 
 	const [name, setName] = useState(request.name)
 	const [secretEnv, setSecretEnv] = useState<Record<string, string>>({})
@@ -191,38 +205,61 @@ export function McpServerRequestCard({
 		})
 	}
 
+	// Asking again is a plain message the agent answers with a new card.
+	const askAgain = () => {
+		setDeclinedNow(false)
+		const content = `Please ask me to add the ${request.name} tool server again.`
+		if (helper) {
+			sendInput.mutate({ id: request.session_id, content, conversationId })
+			return
+		}
+		sendMessage.mutate({ content })
+	}
+
 	if (doneName || declined) {
 		return (
-			<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm">
-				<Plug className="size-4 text-muted-foreground" aria-hidden />
-				<span>
-					{doneName ? (
-						<>
-							Added <strong>{doneName}</strong> and gave it to this agent.
-						</>
-					) : (
-						<>
-							Declined <strong>{request.name}</strong>.
-						</>
-					)}
-				</span>
+			<RequestCardSummary
+				icon={Plug}
+				note={
+					agentStillRunning
+						? 'The agent is still running without it. Stop it from the chat, then send a message to start it again with the server.'
+						: null
+				}
+				actions={
+					doneName ? (
+						<Link
+							to="/$workspaceId/settings/integrations"
+							params={{ workspaceId }}
+							search={{ select_github: undefined, error: undefined, return_to: undefined }}
+							className={REQUEST_CARD_LINK}
+						>
+							Manage
+						</Link>
+					) : canWrite ? (
+						<button type="button" className={REQUEST_CARD_LINK} onClick={askAgain}>
+							Ask again
+						</button>
+					) : null
+				}
+			>
 				{doneName ? (
-					<Link
-						to="/$workspaceId/settings/integrations"
-						params={{ workspaceId }}
-						search={{ select_github: undefined, error: undefined, return_to: undefined }}
-						className="text-xs text-muted-foreground underline"
-					>
-						Manage in Integrations
-					</Link>
-				) : null}
-				{agentStillRunning ? (
-					<p className="w-full text-xs text-muted-foreground">
-						The agent is still running without it. Stop it from the chat, then send a message to
-						start it again with the server.
-					</p>
-				) : null}
-			</div>
+					<>
+						Added <strong>{doneName}</strong> and gave it to {agentName}.
+					</>
+				) : (
+					<>
+						Declined <strong>{request.name}</strong> for {agentName}.
+					</>
+				)}
+			</RequestCardSummary>
+		)
+	}
+
+	if (!canWrite) {
+		return (
+			<RequestCardReadOnly icon={Plug} title="Viewer role">
+				Only a person with edit access can add a tool server.
+			</RequestCardReadOnly>
 		)
 	}
 
@@ -238,37 +275,31 @@ export function McpServerRequestCard({
 
 	return (
 		<form
-			className="mt-2 flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-muted/40 p-4"
+			className={REQUEST_CARD}
 			aria-label={`Add ${request.name}`}
 			onSubmit={(e) => {
 				e.preventDefault()
 				void add()
 			}}
 		>
-			<div className="flex items-start gap-2">
-				<Plug className="mt-0.5 size-4 shrink-0" aria-hidden />
-				<div className="min-w-0">
-					<h3 className="text-sm font-semibold">Add the {request.name} tool server?</h3>
-					<p className="mt-0.5 text-xs text-muted-foreground">
-						{request.hint ? `${request.hint} ` : ''}It is saved for this workspace and given to this
-						agent only, with read and write access. You can change that in Settings → Integrations.
-					</p>
-				</div>
-			</div>
+			<RequestCardHeader icon={Plug} title={`Add the ${request.name} tool server?`}>
+				{request.hint ? `${request.hint} ` : `${capFirst(agentName)} asked for it. `}It is saved for
+				this workspace and given to this agent only.
+			</RequestCardHeader>
 
-			<div className="space-y-1">
+			<div className="space-y-1.5">
 				{command ? (
 					<>
-						<p className="text-xs font-medium">Runs this command inside the agent</p>
-						<code className="block break-all rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs">
+						<p className="text-xs font-semibold">Runs inside the agent</p>
+						<code className="block break-all rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs">
 							{command}
 						</code>
 					</>
 				) : null}
 				{request.url ? (
 					<>
-						<p className="text-xs font-medium">Connects to</p>
-						<code className="block break-all rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs">
+						<p className="text-xs font-semibold">Connects to</p>
+						<code className="block break-all rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs">
 							{request.url}
 						</code>
 					</>
@@ -283,6 +314,9 @@ export function McpServerRequestCard({
 					</ul>
 				) : null}
 			</div>
+
+			{/* A server that runs inside the agent cannot be limited to reading. */}
+			<RequestCardRow label="Access">Read and write, this agent only</RequestCardRow>
 
 			{savedServerId ? (
 				<p className="text-xs text-muted-foreground">
@@ -313,13 +347,14 @@ export function McpServerRequestCard({
 									id={id}
 									value={values[field.name] ?? ''}
 									onChange={(v) => setValues((prev) => ({ ...prev, [field.name]: v }))}
+									placeholder="Paste the key"
 								/>
 							</div>
 						)
 					})}
 					{secretFields.length > 0 ? (
 						<p className="text-xs text-muted-foreground">
-							What you type goes straight into the server's settings, so the agent never sees it.
+							What you type goes into the server settings. The agent never sees it.
 						</p>
 					) : null}
 				</>
@@ -329,22 +364,20 @@ export function McpServerRequestCard({
 				<p className="text-xs text-muted-foreground">Only a person can add a tool server.</p>
 			) : null}
 			<FormError error={error ?? undefined} />
-			<ViewerTooltip className="flex">
-				<div className="flex flex-wrap items-center gap-2">
-					<Button type="submit" size="sm" disabled={!canSubmit}>
-						{busy ? 'Adding…' : savedServerId ? 'Give to this agent' : 'Add'}
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
-						disabled={busy || !canWrite}
-						onClick={decline}
-					>
-						Not now
-					</Button>
-				</div>
-			</ViewerTooltip>
+			<div className="flex flex-wrap items-center gap-2">
+				<Button type="submit" className={REQUEST_CARD_BUTTON} disabled={!canSubmit}>
+					{busy ? 'Adding…' : savedServerId ? 'Give to this agent' : 'Add'}
+				</Button>
+				<Button
+					type="button"
+					variant="ghost"
+					className={REQUEST_CARD_QUIET_BUTTON}
+					disabled={busy}
+					onClick={decline}
+				>
+					Not now
+				</Button>
+			</div>
 		</form>
 	)
 }

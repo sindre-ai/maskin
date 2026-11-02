@@ -391,4 +391,48 @@ test.describe('Loops list page', () => {
 		// The agent's own "Meet Relay" intro chat feeds the same loop, so the label shows twice.
 		await expect(page.getByText('feeds Churn watch').first()).toBeVisible()
 	})
+
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`Cards are the default view and List stays a choice at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			test.setTimeout(150000)
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await clearSeededAutomations(account.api, account.workspaceId)
+			for (const title of ['Alpha flow', 'Beta flow']) {
+				await account.api.createObject(account.workspaceId, {
+					type: 'loop',
+					title,
+					status: 'learning',
+					metadata: { targets: [{ label: 'deals', source: 'manual', actual: 4, target: 10 }] },
+				})
+			}
+			await page.goto(`/${account.workspaceId}/loops`)
+
+			const cards = page.getByTestId('loop-card')
+			await expect(cards).toHaveCount(2, { timeout: 45000 })
+			await expect(cards.first().getByText('4 of 10')).toBeVisible()
+			await expect(page.getByTestId('flows-brief')).toContainText('No flows need you.')
+
+			// One column below md, two from md up.
+			const boxes = await cards.evaluateAll((nodes) =>
+				nodes.map((n) => {
+					const r = n.getBoundingClientRect()
+					return { x: r.x, y: r.y }
+				}),
+			)
+			if (viewport.width < 768) expect(boxes[1].x).toBe(boxes[0].x)
+			else expect(boxes[1].y).toBe(boxes[0].y)
+
+			// Choosing List sticks across a reload.
+			await page.getByRole('button', { name: /^Display/ }).click()
+			await page.getByText('View: List', { exact: true }).click()
+			await page.keyboard.press('Escape')
+			await expect(page.getByTestId('loop-card')).toHaveCount(0)
+			await page.reload()
+			await expect(page.getByText('Alpha flow')).toBeVisible({ timeout: 45000 })
+			await expect(page.getByTestId('loop-card')).toHaveCount(0)
+		})
+	}
 })

@@ -1,5 +1,11 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AssignedInChatRow } from '@/components/loops/assigned-in-chat-row'
+import {
+	type FailedAgent,
+	buildFlowsBrief,
+	failedAgentForLoop,
+} from '@/components/loops/loop-brief'
+import { LoopCard } from '@/components/loops/loop-card'
 import { isLiveLoopPill } from '@/components/loops/loop-pill'
 import { LoopRow } from '@/components/loops/loop-row'
 import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
@@ -35,10 +41,9 @@ import type {
 	DisplaySettingsBody,
 	LoopSummary,
 } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { ChevronRight, RefreshCw } from 'lucide-react'
+import { LayoutList, RefreshCw, Rows3 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 // Display settings are keyed by object type; `loop` is a real object type, so
@@ -52,6 +57,19 @@ const LOOP_ORDER_COLUMNS = [
 	{ id: 'name', label: 'Name', canHide: false },
 	{ id: 'inProgressCount', label: 'In progress', canHide: false },
 ]
+
+type FlowsView = 'cards' | 'list'
+const VIEW_STORAGE_KEY = 'maskin-flows-view'
+
+/** The saved view choice; null when the person never chose one (Cards then). */
+function readSavedView(): FlowsView | null {
+	try {
+		const saved = window.localStorage.getItem(VIEW_STORAGE_KEY)
+		return saved === 'cards' || saved === 'list' ? saved : null
+	} catch {
+		return null
+	}
+}
 
 type LoopTab = 'all' | 'to-decide' | 'running'
 
@@ -108,6 +126,17 @@ function LoopsRoute() {
 	const [tab, setTab] = useState<LoopTab>('all')
 	const [areaFilter, setAreaFilter] = useState<string | undefined>(undefined)
 	const [query, setQuery] = useState('')
+	const [savedView, setSavedView] = useState<FlowsView | null>(readSavedView)
+	const view: FlowsView = savedView ?? 'cards'
+	const chooseView = useCallback((next: FlowsView | null) => {
+		setSavedView(next)
+		try {
+			if (next) window.localStorage.setItem(VIEW_STORAGE_KEY, next)
+			else window.localStorage.removeItem(VIEW_STORAGE_KEY)
+		} catch {
+			// Storage unavailable: the choice holds for this visit only.
+		}
+	}, [])
 
 	const { data: billingUsage } = useBillingUsage(workspaceId)
 	const showNoCreditsPill =
@@ -194,6 +223,17 @@ function LoopsRoute() {
 		return map
 	}, [loops])
 
+	// A flow's newest failed agent, from the sessions already loaded for this page.
+	const failedByLoopId = useMemo(() => {
+		const map = new Map<string, FailedAgent>()
+		for (const loop of loops ?? []) {
+			const failed = failedAgentForLoop(loop, sessions, actors)
+			if (failed) map.set(loop.id, failed)
+		}
+		return map
+	}, [loops, sessions, actors])
+	const brief = useMemo(() => buildFlowsBrief(loops ?? [], failedByLoopId), [loops, failedByLoopId])
+
 	const hasLoops = sortedLoops.length > 0
 	const words = useMemo(() => query.trim().toLowerCase().split(/\s+/).filter(Boolean), [query])
 	const visibleLoops = useMemo(
@@ -254,13 +294,6 @@ function LoopsRoute() {
 		return sections
 	}, [sortedLoops, tab, areaFilter])
 	const activeFilterCount = (tab !== 'all' ? 1 : 0) + (areaFilter !== undefined ? 1 : 0)
-	// The attention chip under the title: how many loops wait on the viewer.
-	// Clicking it narrows the list to those loops, clicking again clears it.
-	const needYouCount = useMemo(
-		() => sortedLoops.filter((l) => matchesTab(l, 'to-decide')).length,
-		[sortedLoops],
-	)
-
 	// Sections follow the loops' first free-form tag (`metadata.tags`: team,
 	// business unit, ...), A to Z, untagged last. With no tags anywhere the list
 	// stays one flat run with no headers.
@@ -283,13 +316,17 @@ function LoopsRoute() {
 		<div>
 			<PageHeader
 				title="Flows"
-				subtitle={String(loops?.length ?? 0)}
 				actions={
 					<>
 						<PageSearchInput value={query} onChange={setQuery} label="Search flows" />
 						<DisplayPanel
 							iconOnly={isMobile}
-							showView={false}
+							viewChoices={[
+								{ id: 'cards', label: 'Cards', icon: <LayoutList size={15} aria-hidden="true" /> },
+								{ id: 'list', label: 'List', icon: <Rows3 size={15} aria-hidden="true" /> },
+							]}
+							viewChoice={view}
+							onViewChoiceChange={(id) => chooseView(id === 'list' ? 'list' : 'cards')}
 							filterSections={filterSections}
 							activeFilterCount={activeFilterCount}
 							filtersLabel="Filters"
@@ -306,6 +343,7 @@ function LoopsRoute() {
 							onOrderChange={(value) => writeSettings({ order: value })}
 							onResetToDefault={() => {
 								writeSettings(null)
+								chooseView(null)
 								setTab('all')
 								setAreaFilter(undefined)
 							}}
@@ -313,22 +351,14 @@ function LoopsRoute() {
 					</>
 				}
 			/>
-			{needYouCount > 0 && (
-				<button
-					type="button"
-					aria-pressed={tab === 'to-decide'}
-					onClick={() => setTab(tab === 'to-decide' ? 'all' : 'to-decide')}
-					className={cn(
-						'mb-6 inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[11.5px] font-semibold transition-colors',
-						tab === 'to-decide'
-							? 'bg-brand text-brand-foreground'
-							: 'bg-brand/10 text-brand hover:bg-brand/15',
-					)}
+			{hasLoops && !loopsLoading && (
+				<p
+					data-testid="flows-brief"
+					className="mb-6 max-w-[64ch] text-base md:-mt-1.5 leading-[1.55] text-muted-foreground"
 				>
-					<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
-					{needYouCount} need{needYouCount === 1 ? 's' : ''} you
-					<ChevronRight size={12} aria-hidden="true" />
-				</button>
+					<strong className="font-bold text-foreground">{brief.lead}</strong>
+					{brief.clauses.length > 0 && ` ${brief.clauses.join(' ')}`}
+				</p>
 			)}
 			{loopsLoading ? (
 				<ListSkeleton />
@@ -355,16 +385,34 @@ function LoopsRoute() {
 											{group.label || 'No team'}
 										</h2>
 									)}
-									{group.items.map((loop) => (
-										<LoopRow
-											key={loop.id}
-											loop={loop}
-											actors={actors}
-											busyAgentCount={loop.agentIds.filter((id) => workingAgentIds.has(id)).length}
-											showNoCreditsPill={showNoCreditsPill}
-											onNoCreditsClick={() => setBuyCreditsOpen(true)}
-										/>
-									))}
+									{view === 'cards' ? (
+										<div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2">
+											{group.items.map((loop) => {
+												const failed = failedByLoopId.get(loop.id) ?? null
+												return (
+													<LoopCard
+														key={loop.id}
+														loop={loop}
+														failed={failed}
+														needsYou={loop.pill === 'waiting_on_you' || failed !== null}
+													/>
+												)
+											})}
+										</div>
+									) : (
+										group.items.map((loop) => (
+											<LoopRow
+												key={loop.id}
+												loop={loop}
+												actors={actors}
+												busyAgentCount={
+													loop.agentIds.filter((id) => workingAgentIds.has(id)).length
+												}
+												showNoCreditsPill={showNoCreditsPill}
+												onNoCreditsClick={() => setBuyCreditsOpen(true)}
+											/>
+										))
+									)}
 								</div>
 							))
 						) : (
@@ -412,7 +460,7 @@ function LoopsRoute() {
 								description="Automations that run on their own — outside any flow — show up here."
 							/>
 						) : (
-							<div className="flex flex-col gap-2 pt-3">
+							<div className="flex flex-col pt-3">
 								{standaloneTriggers.map((trigger) => {
 									const agent = actors?.find((a) => a.id === trigger.targetActorId)
 									return (

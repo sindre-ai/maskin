@@ -34,12 +34,12 @@ test.describe('Agent detail — Works in', () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			const section = page.getByRole('region', { name: 'Works in' })
-			await expect(section).toBeVisible({ timeout: 10_000 })
-			const row = section.getByRole('link', { name: /Customer feedback loop/ })
+			// "Works in" is a row of flow chips in the hero, above the tabs.
+			await expect(page.getByText('Works in', { exact: true })).toBeVisible({ timeout: 10_000 })
+			const row = page.getByRole('link', { name: /Customer feedback loop/ })
 			await expect(row).toBeVisible()
 
-			// The section inherits LoopRow's pill colours — legible in both schemes.
+			// The chip is legible in both schemes.
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
 				await expect(row).toBeVisible()
@@ -58,10 +58,9 @@ test.describe('Agent detail — Works in', () => {
 
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			const section = page.getByRole('region', { name: 'Works in' })
 			// Nothing is drawn for an agent that works in no loop.
-			await expect(page.getByRole('tab', { name: /^Overview/ })).toBeVisible({ timeout: 10_000 })
-			await expect(section).toHaveCount(0)
+			await expect(page.getByRole('tab', { name: /^Setup/ })).toBeVisible({ timeout: 10_000 })
+			await expect(page.getByText('Works in', { exact: true })).toHaveCount(0)
 		})
 	}
 })

@@ -163,20 +163,13 @@ describe('ListRow pending ask', () => {
 	})
 	const actors = [buildActorListItem({ id: 'actor-1', name: 'Scout', type: 'agent' })]
 
-	it('renders the brand-tinted "Ask" pill on the shipped brand tokens', () => {
+	it('renders the ask line as the asking agent and the question only', () => {
 		renderRow({ ask, actors })
-		const pill = screen.getByText('Ask')
-		// `--brand-subtle` pairs with `--brand-subtle-foreground` and both invert
-		// across themes.
-		expect(pill.className).toContain('bg-brand-subtle')
-		expect(pill.className).toContain('text-brand-subtle-foreground')
-	})
-
-	it('renders the v11 ask line (pill, asker name, then the question)', () => {
-		renderRow({ ask, actors })
-		const name = screen.getByText('Scout asks')
-		expect(name.className).toContain('font-semibold')
-		expect(name.parentElement?.textContent).toBe('AskScout asksShip on Friday or Monday?')
+		const question = screen.getByText('Ship on Friday or Monday?')
+		// No visible "Ask" tag; the "<agent> asks" wording is screen-reader only.
+		expect(screen.queryByText('Ask')).toBeNull()
+		expect(screen.getByText('Scout asks').className).toContain('sr-only')
+		expect(question.parentElement?.textContent).toBe('Scout asksShip on Friday or Monday?')
 	})
 
 	it('truncates ask text at ~90 chars with a trailing ellipsis', () => {
@@ -203,73 +196,5 @@ describe('ListRow pending ask', () => {
 		renderRow({ ask: { ...ask, status: 'resolved' }, actors })
 		expect(screen.queryByText('Ask')).toBeNull()
 		expect(screen.queryByText('Scout asks')).toBeNull()
-	})
-})
-
-describe('ListRow D1 · loop chip', () => {
-	it('renders a "↺ Loop · {name}" chip after the title when the row is in a loop', () => {
-		renderRow({ loop: { id: 'loop-1', name: 'signal-triage' } })
-		expect(screen.getByText(/↺ Flow · signal-triage/)).toBeInTheDocument()
-	})
-
-	it('renders no chip (and reserves no space) when the row is in no loop', () => {
-		renderRow({ loop: undefined })
-		expect(screen.queryByText(/↺ Flow/)).toBeNull()
-	})
-})
-
-describe('ListRow D2 · driver working ring', () => {
-	const driver = buildActorListItem({ id: 'agent-1', name: 'Scout', type: 'agent' })
-
-	it('wraps the driver avatar in a working ring when active_session_state is running', () => {
-		const { container } = render(
-			<ListRow
-				{...baseProps}
-				object={buildObjectResponse({
-					id: 'obj-1',
-					driver: driver.id,
-					activeSessionId: 'sess-1',
-					active_session_state: 'running',
-				})}
-				isSelected={false}
-				actors={[driver]}
-			/>,
-		)
-		expect(container.querySelector('.actor-avatar-working-ring')).not.toBeNull()
-	})
-
-	it('renders no ring when a session is tied but not running (paused, pending, etc.)', () => {
-		const { container } = render(
-			<ListRow
-				{...baseProps}
-				object={buildObjectResponse({
-					id: 'obj-1',
-					driver: driver.id,
-					activeSessionId: 'sess-1',
-					active_session_state: 'paused',
-				})}
-				isSelected={false}
-				actors={[driver]}
-			/>,
-		)
-		expect(container.querySelector('.actor-avatar-working-ring')).toBeNull()
-	})
-
-	it("renders no <AgentWorkingBadge> alongside the ring — the ring is the row's only working indicator", () => {
-		render(
-			<ListRow
-				{...baseProps}
-				object={buildObjectResponse({
-					id: 'obj-1',
-					activeSessionId: 'sess-1',
-					active_session_state: 'running',
-				})}
-				isSelected={false}
-			/>,
-		)
-		// The old right-side badge rendered a "Scout working" / spinner pill.
-		// Under D2 that badge is gone entirely — the ring is the row's only
-		// working indicator.
-		expect(screen.queryByText(/working/i)).toBeNull()
 	})
 })

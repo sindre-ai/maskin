@@ -54,15 +54,21 @@ test.describe('Loop detail page', () => {
 			).toBeVisible()
 			// Scoped to the stat block — the labels also read in prose elsewhere on
 			// the page, which otherwise makes these ambiguous.
+			await page.getByRole('tab', { name: 'Setup' }).click()
 			const stats = page.getByTestId('loop-stats')
 			await expect(stats.getByText('Cycles running')).toBeVisible()
 			await expect(stats.getByText('Closed this month')).toBeVisible()
 			await expect(stats.getByText('Median cycle time')).toBeVisible()
 			await expect(stats.getByText('Asks waiting')).toBeVisible()
 			await expect(stats.getByText('Next fire')).toBeVisible()
+			await page.getByRole('tab', { name: 'Overview' }).click()
 			await expect(page.getByText('The flow, right now')).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
-			await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible()
+			await expect(
+				page.getByPlaceholder(
+					/^(Say what should change about this flow|Message .+, who drives .+)$/,
+				),
+			).toBeVisible()
 			// Step rows show the trigger's title, not its action prompt (#2777).
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
 			// The right-now note reads as one line: primitives · triggers on ·
@@ -70,21 +76,31 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
 			// The shared object timeline replaces the old loop-specific activity
 			// and changes sections — same Activity rule the object page carries.
-			await expect(page.getByText('Activity', { exact: true })).toBeVisible()
+			// It lives on the Activity tab; Overview carries the story and stats.
+			await page.getByRole('tab', { name: 'Activity' }).click()
 			// The filter chips carry their count in the label — `All (3)`.
 			await expect(page.getByRole('button', { name: /^All \(\d+\)$/ })).toBeVisible()
+			await page.getByRole('tab', { name: 'Overview' }).click()
+			// The tab strip never scrolls the page sideways.
+			const overflow = await page.evaluate(() => ({
+				scroll: document.documentElement.scrollWidth,
+				client: document.documentElement.clientWidth,
+			}))
+			expect(overflow.scroll).toBeLessThanOrEqual(overflow.client)
 
 			// The composer is the last thing in the reader column — it sits below
 			// the timeline, not above the story. Compare document order rather
 			// than bounding boxes: the composer is `sticky bottom-0`, so while the
 			// timeline is below the fold its pinned y is the smaller number at
 			// every viewport where the page scrolls.
-			const composer = page.getByPlaceholder('Listening — speak in plain words')
+			const composer = page.getByPlaceholder(
+				/^(Say what should change about this flow|Message .+, who drives .+)$/,
+			)
 			const composerFollowsActivity = await composer.evaluate((node) => {
-				const activity = [...document.querySelectorAll('span')].find(
+				const activity = [...document.querySelectorAll('[role="tab"]')].find(
 					(el) => el.textContent?.trim() === 'Activity',
 				)
-				if (!activity) throw new Error('missing Activity label')
+				if (!activity) throw new Error('missing Activity tab')
 				// DOCUMENT_POSITION_FOLLOWING — the composer comes after it.
 				return Boolean(activity.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
 			})
@@ -191,7 +207,9 @@ test.describe('Loop detail page', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		const input = page.getByPlaceholder('Listening — speak in plain words')
+		const input = page.getByPlaceholder(
+			/^(Say what should change about this flow|Message .+, who drives .+)$/,
+		)
 		await expect(input).toBeVisible({ timeout: 10000 })
 
 		await input.fill('Tighten the close timeline')

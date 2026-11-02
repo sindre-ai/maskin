@@ -71,7 +71,7 @@ export function ResumeBanner({ conversationId, messages, lastReadMessageId }: Re
 	const overflow = unread.length - lines.length
 
 	return (
-		<div className="rounded-lg border-l-2 border-brand bg-muted p-3.5">
+		<div className="rounded-xl border-l-2 border-brand bg-secondary p-3.5">
 			<div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
 				<span className="eyebrow">Picking up where you left off</span>
 				<span className="flex items-center gap-1 text-[11px] text-muted-foreground">

@@ -1,5 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
+import { itemsNeedingYou, loopCounters } from '@/components/loops/loop-counters'
+import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
@@ -14,11 +16,14 @@ import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
 import { TimelineTab } from '@/components/objects/timeline-tab'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EditableTitle } from '@/components/shared/editable-title'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { StatusBadge } from '@/components/shared/status-badge'
+import { TypeBadge } from '@/components/shared/type-badge'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,10 +36,12 @@ import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
+import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
 import { trackAskBannerDecideClicked } from '@/lib/analytics'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
@@ -65,6 +72,19 @@ interface ProposedEdit {
 	nextSource: string
 }
 
+function SetupBlock({ label, text }: { label: string; text: string | null }) {
+	return (
+		<section className="flex flex-col gap-2">
+			<span className="font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
+				{label}
+			</span>
+			<p className="text-[14px] leading-[1.55] text-foreground">
+				{text?.trim() ? text : 'Not set yet.'}
+			</p>
+		</section>
+	)
+}
+
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
@@ -91,6 +111,7 @@ function LoopDetailRoute() {
 		{ enabled: childIds.length > 0 },
 	)
 	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
+	const { data: needsInputNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
@@ -98,6 +119,7 @@ function LoopDetailRoute() {
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [tab, setTab] = useState('overview')
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
 	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
@@ -216,12 +238,40 @@ function LoopDetailRoute() {
 			{
 				onSuccess: () => {
 					setProposedEdit(null)
-					toast.success('Flow updated')
+					// Undo re-applies the values the edit replaced. 30 s is long enough
+					// to notice a wrong read-back, short enough that it never silently
+					// reverts later changes.
+					const previous = object?.metadata
+					toast.success('Flow updated', {
+						duration: 30_000,
+						action: previous
+							? {
+									label: 'Undo',
+									onClick: () =>
+										updateObject.mutate(
+											{
+												id: loopId,
+												data: {
+													metadata: {
+														plan: typeof previous.plan === 'string' ? previous.plan : '',
+														plan_source:
+															typeof previous.plan_source === 'string' ? previous.plan_source : '',
+													},
+												},
+											},
+											{
+												onSuccess: () => toast.success('Change undone'),
+												onError: () => toast.error('Could not undo that change'),
+											},
+										),
+								}
+							: undefined,
+					})
 				},
 				onError: () => toast.error('Could not apply that change'),
 			},
 		)
-	}, [proposedEdit, updateObject, loopId, canWrite])
+	}, [proposedEdit, updateObject, loopId, canWrite, object?.metadata])
 
 	if (loopLoading && !loop) {
 		return (
@@ -285,6 +335,17 @@ function LoopDetailRoute() {
 	const asksWaiting = loop.waitingCount
 	const nextFire = nextFireLabel(nextFireAt(loopTriggers))
 	const pill = LOOP_PILL_STYLES[loop.pill]
+	// The flow's driver is the object's own `driver`; no driver, no pill.
+	const driver = object?.driver ? actors?.find((a) => a.id === object.driver) : undefined
+	const counters = loopCounters(children ?? [], statusChains)
+	const needsYouRows = itemsNeedingYou(
+		children ?? [],
+		needsInputNotifications ?? [],
+		getStoredActor()?.id,
+	)
+	const sortedChildren = [...(children ?? [])].sort((a, b) =>
+		(a.title ?? '').localeCompare(b.title ?? '', undefined, { sensitivity: 'base', numeric: true }),
+	)
 	const isPaused = loop.status === 'paused'
 	// Built but never run: no children have entered it and nothing has happened.
 	const isPreFirstRun = childIds.length === 0 && (activityEvents?.length ?? 0) === 0
@@ -330,23 +391,6 @@ function LoopDetailRoute() {
 						</div>
 					) : (
 						<>
-							<span
-								data-testid="loop-pill"
-								className={cn(
-									'inline-flex items-center gap-1.5 text-[11.5px] font-semibold',
-									pill.text,
-								)}
-							>
-								<span
-									aria-hidden="true"
-									className={cn(
-										'size-1.5 rounded-full',
-										pill.dot,
-										isLiveLoopPill(loop.pill) && 'animate-pulse',
-									)}
-								/>
-								{pill.label}
-							</span>
 							<DropdownMenu>
 								<ViewerTooltip>
 									<DropdownMenuTrigger asChild>
@@ -389,23 +433,27 @@ function LoopDetailRoute() {
 					)
 				}
 			/>
-			<div className="mx-auto flex w-full max-w-3xl flex-col">
+			<div className="flex w-full min-w-0 flex-col">
 				<EditableTitle
 					value={loop.name}
 					entityId={loop.id}
 					onChange={object && canWrite ? handleUpdateTitle : undefined}
 					ariaLabel="Flow title"
 					placeholder="Untitled flow"
+					className="text-[clamp(24px,3vw,30px)]"
 				/>
 
 				{/* The loop's promise, written the same way an object's document body
 				    is — the description IS the summary now. */}
 				{object && (
-					<ObjectDetailBody
-						object={object}
-						workspaceId={workspaceId}
-						onContentChange={handleUpdateContent}
-					/>
+					// Pulled up under the title, as the prototype sets the promise close to it.
+					<div className="-mt-4">
+						<ObjectDetailBody
+							object={object}
+							workspaceId={workspaceId}
+							onContentChange={handleUpdateContent}
+						/>
+					</div>
 				)}
 
 				{isInstalledFromMarketplace && (
@@ -418,68 +466,170 @@ function LoopDetailRoute() {
 					</Link>
 				)}
 
-				{/* Stable aria-live wrapper for the D3 AskBanner. The wrapper element
+				<div className="mt-4 flex flex-wrap items-center gap-2">
+					<span
+						data-testid="loop-pill"
+						className="inline-flex h-8 items-center gap-2 rounded-full border border-border px-3 text-[13px] font-semibold text-foreground"
+					>
+						<span
+							aria-hidden="true"
+							className={cn(
+								'size-2 rounded-full',
+								pill.dot,
+								isLiveLoopPill(loop.pill) && 'animate-pulse',
+							)}
+						/>
+						{LOOP_PILL_STYLES[loop.status].label}
+						{loop.pill === 'waiting_on_you' && (
+							<span className={LOOP_PILL_STYLES.waiting_on_you.text}>· Needs you</span>
+						)}
+					</span>
+					{driver && (
+						<span
+							data-testid="loop-driver"
+							className="inline-flex h-8 items-center gap-2 rounded-full border border-border px-3 text-[13px]"
+						>
+							<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
+							<span className="font-semibold text-foreground">{driver.name}</span>
+							<span className="text-muted-foreground">drives</span>
+						</span>
+					)}
+				</div>
+
+				<div className="mt-6">
+					<LoopDetailTabs
+						tabs={[
+							{ value: 'overview', label: 'Overview' },
+							{ value: 'items', label: 'Items', count: childIds.length },
+							{ value: 'activity', label: 'Activity' },
+							{ value: 'setup', label: 'Setup' },
+						]}
+						value={tab}
+						onChange={setTab}
+					/>
+				</div>
+
+				{tab === 'overview' && (
+					<div role="tabpanel" className="mt-8 flex flex-col gap-8">
+						{/* Stable aria-live wrapper for the D3 AskBanner. The wrapper element
 				    is permanent so screen readers announce the banner appearance
 				    without racing the DOM swap — banner content swaps in and out of
 				    the wrapper, the wrapper does not swap. Never put aria-live on
 				    the banner. */}
-				<div
-					aria-live="polite"
-					aria-atomic="true"
-					data-testid="ask-banner-live-region"
-					className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
-				>
-					{askBannerVisible && (
-						<AskBanner
-							agentName={askAgentName}
-							askText={askText}
-							jumpHref={decideJumpHref}
-							onDecideClick={handleDecideClick}
-							pendingCount={pendingCount}
-							avatarId={askAgentActor?.id}
-							avatarType={askAvatarType}
-						/>
-					)}
-				</div>
+						<div
+							aria-live="polite"
+							aria-atomic="true"
+							data-testid="ask-banner-live-region"
+							className={cn(askBannerVisible ? '' : 'sr-only')}
+						>
+							{askBannerVisible && (
+								<AskBanner
+									agentName={askAgentName}
+									askText={askText}
+									jumpHref={decideJumpHref}
+									onDecideClick={handleDecideClick}
+									pendingCount={pendingCount}
+									avatarId={askAgentActor?.id}
+									avatarType={askAvatarType}
+								/>
+							)}
+						</div>
 
-				<div className="mt-5">
-					<LoopStats
-						loop={loop}
-						cyclesRunning={cyclesRunning}
-						asksWaiting={asksWaiting}
-						nextFire={nextFire}
-					/>
-				</div>
+						{isPreFirstRun && (
+							<div>
+								<LoopFirstRunBanner triggers={loopTriggers} />
+							</div>
+						)}
 
-				{isPreFirstRun && (
-					<div className="mt-4">
-						<LoopFirstRunBanner triggers={loopTriggers} />
+						<TargetsAndOwners loop={loop} actors={actors} />
+
+						{counters.length > 0 && (
+							<section
+								aria-label="Progress"
+								data-testid="loop-counters"
+								className="grid grid-cols-3 gap-3 sm:flex"
+							>
+								{counters.map((c) => (
+									<div key={c.key} className="rounded-2xl bg-muted px-4 py-3.5 sm:w-44">
+										<p className="text-[26px] font-bold leading-none tracking-tight tabular-nums text-foreground">
+											{c.count}
+										</p>
+										<p className="mt-1.5 text-[13px] text-muted-foreground">{c.label}</p>
+									</div>
+								))}
+							</section>
+						)}
+
+						{needsYouRows.length > 0 && (
+							<section
+								aria-label="Needs you"
+								data-testid="loop-needs-you"
+								className="flex flex-col"
+							>
+								<span className="text-[13px] font-semibold text-muted-foreground">Needs you</span>
+								<p className="mt-2 text-[14px] font-semibold text-foreground">
+									{needsYouRows.length === 1
+										? '1 item is waiting for you'
+										: `${needsYouRows.length} items are waiting for you`}
+								</p>
+								{needsYouRows.map(({ item, ask }) => (
+									<Link
+										key={item.id}
+										to="/$workspaceId/objects/$objectId"
+										params={{ workspaceId, objectId: item.id }}
+										className="mt-2 flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2.5 transition-colors duration-150 hover:bg-muted"
+									>
+										<span className="truncate text-[14px] font-semibold text-foreground">
+											{item.title ?? 'Untitled'}
+										</span>
+										<span className="truncate text-[12.5px] text-muted-foreground">
+											{ask.title}
+										</span>
+									</Link>
+								))}
+							</section>
+						)}
+
+						<div>
+							<LoopFlow
+								workspaceId={workspaceId}
+								triggers={loopTriggers}
+								actors={actors}
+								childObjects={children ?? []}
+								loop={loop}
+							/>
+						</div>
 					</div>
 				)}
 
-				<TargetsAndOwners loop={loop} actors={actors} />
+				{tab === 'items' && (
+					<div role="tabpanel" className="mt-8 flex flex-col">
+						{sortedChildren.length === 0 ? (
+							<EmptyState
+								title="No items in this flow yet"
+								description="Items show up here once the flow starts working on them."
+							/>
+						) : (
+							sortedChildren.map((child) => (
+								<Link
+									key={child.id}
+									to="/$workspaceId/objects/$objectId"
+									params={{ workspaceId, objectId: child.id }}
+									className="flex items-center gap-3 border-b border-border px-1 py-3 transition-colors duration-150 hover:bg-muted"
+								>
+									<TypeBadge type={child.type} variant="dot" />
+									<span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-foreground">
+										{child.title ?? 'Untitled'}
+									</span>
+									<StatusBadge status={child.status} variant="word" className="text-[12px]" />
+								</Link>
+							))
+						)}
+					</div>
+				)}
 
-				<div className="mt-7">
-					<LoopFlow
-						workspaceId={workspaceId}
-						triggers={loopTriggers}
-						actors={actors}
-						childObjects={children ?? []}
-						loop={loop}
-					/>
-				</div>
-
-				{/* The same Activity block object detail carries (mockup 1138–1143):
-				    a mono micro-heading on a hairline rule, then the shared timeline.
-				    A loop is an object, so this is the object's own event stream. */}
-				{object && (
-					<div className="mt-9">
-						<div className="flex items-center gap-2.5">
-							<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
-								Activity
-							</span>
-							<div className="h-px flex-1 bg-muted" />
-						</div>
+				{tab === 'activity' && object && (
+					<div role="tabpanel" className="mt-8">
 						<TimelineTab
 							object={object}
 							loopUnread={{ loopId }}
@@ -488,9 +638,49 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
+				{tab === 'setup' && (
+					<div role="tabpanel" className="mt-8 flex flex-col gap-8">
+						<LoopStats
+							loop={loop}
+							cyclesRunning={cyclesRunning}
+							asksWaiting={asksWaiting}
+							nextFire={nextFire}
+						/>
+						<SetupBlock label="Starts when" text={loop.entryCondition} />
+						<SetupBlock label="Ends when" text={loop.closeCondition} />
+						<section className="flex flex-col gap-3">
+							<span className="font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
+								Agents
+							</span>
+							{loop.agentIds.length === 0 ? (
+								<p className="text-[13px] text-muted-foreground">No agents are attached yet.</p>
+							) : (
+								loop.agentIds.map((id) => {
+									const agent = actors?.find((a) => a.id === id)
+									if (!agent) return null
+									return (
+										<Link
+											key={id}
+											to="/$workspaceId/agents/$agentId"
+											params={{ workspaceId, agentId: id }}
+											className="flex items-center gap-2.5 text-[14px] font-semibold text-foreground hover:underline"
+										>
+											<ActorAvatar id={agent.id} name={agent.name} type={agent.type} />
+											{agent.name}
+										</Link>
+									)
+								})
+							)}
+						</section>
+					</div>
+				)}
+
 				<LoopUtteranceInput
 					ref={composerRef}
 					loop={loop}
+					placeholder={
+						driver ? `Message ${driver.name}, who drives ${loop.name ?? 'this flow'}` : undefined
+					}
 					showSuggestions={!proposedEdit}
 					onUtterance={handleUtterance}
 				>

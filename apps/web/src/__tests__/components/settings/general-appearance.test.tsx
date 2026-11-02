@@ -8,6 +8,14 @@ const mockSetTheme = vi.fn()
 const mockTheme = { current: 'light' as 'light' | 'dark' | 'system' }
 const mockWorkspace = { current: buildWorkspaceWithRole({ settings: {} }) }
 
+// General now links to Triggers and device sign-in; the real Link needs a router.
+vi.mock('@tanstack/react-router', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-router')>()),
+	Link: ({ children, to }: { children: React.ReactNode; to?: string }) => (
+		<a href={to}>{children}</a>
+	),
+}))
+
 vi.mock('@/lib/workspace-context', async (importOriginal) => ({
 	// Keep the real WorkspaceContext: useCanWrite reads it directly.
 	...(await importOriginal<typeof import('@/lib/workspace-context')>()),

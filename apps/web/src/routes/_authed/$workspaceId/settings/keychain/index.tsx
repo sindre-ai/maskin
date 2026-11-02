@@ -12,7 +12,7 @@ import { useIntegrations } from '@/hooks/use-integrations'
 import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
+import { ClipboardPaste, KeyRound, Link2, MessageSquare, Plus } from 'lucide-react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/keychain/')({
 	component: KeychainPage,
@@ -28,7 +28,7 @@ function AddCredentialButton({ workspaceId, label }: { workspaceId: string; labe
 	if (!canWrite) {
 		return (
 			<ViewerTooltip>
-				<Button size="sm" disabled>
+				<Button size="sm" disabled className="max-md:h-11">
 					<Plus size={14} className="mr-1" />
 					{label}
 				</Button>
@@ -36,7 +36,7 @@ function AddCredentialButton({ workspaceId, label }: { workspaceId: string; labe
 		)
 	}
 	return (
-		<Button asChild size="sm">
+		<Button asChild size="sm" className="max-md:h-11">
 			<Link to="/$workspaceId/settings/keychain/new" params={{ workspaceId }}>
 				<Plus size={14} className="mr-1" />
 				{label}
@@ -60,8 +60,8 @@ function KeychainPage() {
 		<div className="max-w-[720px]">
 			<div className="mb-3 flex flex-wrap items-start gap-2">
 				<div className="min-w-0 flex-1 basis-64">
-					<h2 className="text-sm font-bold text-foreground">Keychain</h2>
-					<p className="mt-1 text-xs text-muted-foreground">{INTRO}</p>
+					<h2 className="settings-label">Keychain</h2>
+					<p className="mt-1 text-[13px] text-muted-foreground">{INTRO}</p>
 				</div>
 				{credentials.length > 0 && (
 					<AddCredentialButton workspaceId={workspaceId} label="Add credential" />
@@ -77,10 +77,8 @@ function KeychainPage() {
 					onRetry={() => refetch()}
 				/>
 			) : credentials.length === 0 ? (
-				<div className="flex flex-col items-center rounded-lg border border-border px-4 py-10 text-center">
-					<div className="text-4xl" aria-hidden>
-						🔑
-					</div>
+				<div className="flex flex-col items-center rounded-xl border border-border px-4 py-10 text-center">
+					<KeyRound size={32} aria-hidden className="text-muted-foreground" />
 					<h3 className="mt-3 text-[17px] font-bold text-foreground">
 						One place for every credential your agents need
 					</h3>
@@ -93,22 +91,22 @@ function KeychainPage() {
 						<AddCredentialButton workspaceId={workspaceId} label="Add your first credential" />
 					</div>
 					<ul className="mt-6 grid w-full gap-3 text-left sm:grid-cols-3">
-						<li className="rounded-lg border border-border p-3">
-							<div aria-hidden>📋</div>
+						<li className="rounded-xl border border-border p-3">
+							<ClipboardPaste size={16} aria-hidden className="text-muted-foreground" />
 							<div className="mt-2 text-sm font-semibold">Paste</div>
 							<p className="mt-1 text-xs text-muted-foreground">
 								API key, Bearer, or Basic Auth — for any service you have a raw secret for.
 							</p>
 						</li>
-						<li className="rounded-lg border border-border p-3">
-							<div aria-hidden>🔗</div>
+						<li className="rounded-xl border border-border p-3">
+							<Link2 size={16} aria-hidden className="text-muted-foreground" />
 							<div className="mt-2 text-sm font-semibold">OAuth</div>
 							<p className="mt-1 text-xs text-muted-foreground">
 								Connect a service you own; bring your OAuth app, we run the dance.
 							</p>
 						</li>
-						<li className="rounded-lg border border-brand/40 bg-brand-subtle p-3">
-							<div aria-hidden>💬</div>
+						<li className="rounded-xl border border-brand/40 bg-brand-subtle p-3">
+							<MessageSquare size={16} aria-hidden className="text-brand-subtle-foreground" />
 							<div className="mt-2 flex items-center gap-1.5 text-sm font-semibold">
 								Chat capture <Badge className="px-1.5 py-0 text-[10px]">NEW</Badge>
 							</div>

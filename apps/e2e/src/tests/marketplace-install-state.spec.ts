@@ -13,13 +13,12 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // Exact — an item card titled e.g. "Influencer Manager Agent" also contains "Manage".
 const MANAGE = { name: 'Manage', exact: true }
+// The catalogue row (v16) says Open where the detail page says Manage.
+const OPEN = { name: 'Open', exact: true }
 
 test.describe('Marketplace install state', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`card flips to Installed + Manage and back at ${viewport.label}`, async ({
-			page,
-			account,
-		}) => {
+		test(`row flips to Added + Open and back at ${viewport.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
@@ -31,17 +30,17 @@ test.describe('Marketplace install state', () => {
 			expect(loopName).toBeTruthy()
 
 			// Fresh workspace: not installed yet.
-			const installButton = card.getByRole('button', { name: /^install$/i })
+			const installButton = card.getByRole('button', { name: /^add$/i })
 			await expect(installButton).toBeVisible()
-			await expect(card.getByText('Installed')).toHaveCount(0)
+			await expect(card.getByText('Added')).toHaveCount(0)
 
 			await installButton.click()
 
 			// The footer flips to the installed pair (mockup 2596–2597).
-			await expect(card.getByText('Installed')).toBeVisible({ timeout: 20000 })
-			const manage = card.getByRole('link', MANAGE)
+			await expect(card.getByText('Added')).toBeVisible({ timeout: 20000 })
+			const manage = card.getByRole('link', OPEN)
 			await expect(manage).toBeVisible()
-			await expect(card.getByRole('button', { name: /^install$/i })).toHaveCount(0)
+			await expect(card.getByRole('button', { name: /^add$/i })).toHaveCount(0)
 
 			// The state is server-backed, not local: it survives a reload.
 			await page.reload()
@@ -49,8 +48,8 @@ test.describe('Marketplace install state', () => {
 				.getByRole('region', { name: 'Flows' })
 				.locator('article')
 				.filter({ has: page.getByRole('heading', { name: loopName ?? '', level: 3 }) })
-			await expect(reloadedCard.getByText('Installed')).toBeVisible({ timeout: 20000 })
-			await expect(reloadedCard.getByRole('link', MANAGE)).toBeVisible()
+			await expect(reloadedCard.getByText('Added')).toBeVisible({ timeout: 20000 })
+			await expect(reloadedCard.getByRole('link', OPEN)).toBeVisible()
 
 			// Detail page: the action bar sits above the scroll region, so the
 			// breadcrumb, Manage and ⋯ are all on screen without scrolling.
@@ -103,10 +102,10 @@ test.describe('Marketplace install state', () => {
 				.getByRole('region', { name: 'Flows' })
 				.locator('article')
 				.filter({ has: page.getByRole('heading', { name: loopName ?? '', level: 3 }) })
-			await expect(revertedCard.getByRole('button', { name: /^install$/i })).toBeVisible({
+			await expect(revertedCard.getByRole('button', { name: /^add$/i })).toBeVisible({
 				timeout: 20000,
 			})
-			await expect(revertedCard.getByText('Installed')).toHaveCount(0)
+			await expect(revertedCard.getByText('Added')).toHaveCount(0)
 		})
 	}
 
@@ -123,8 +122,8 @@ test.describe('Marketplace install state', () => {
 		const loopsSection = page.getByRole('region', { name: 'Flows' })
 		await expect(loopsSection).toBeVisible({ timeout: 20000 })
 		const card = loopsSection.locator('article').first()
-		await card.getByRole('button', { name: /^install$/i }).click()
-		await expect(card.getByText('Installed')).toBeVisible({ timeout: 20000 })
+		await card.getByRole('button', { name: /^add$/i }).click()
+		await expect(card.getByText('Added')).toBeVisible({ timeout: 20000 })
 
 		await card.getByRole('link', { name: /^Open / }).click({ position: { x: 10, y: 10 } })
 		const detail = page.getByRole('main')

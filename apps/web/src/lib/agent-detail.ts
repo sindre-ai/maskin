@@ -1,10 +1,13 @@
 import type { SessionResponse } from '@/lib/api'
 
 /** The tabs of the agent page, in the order they are drawn. */
-export const AGENT_TABS = ['overview', 'sessions', 'setup', 'triggers', 'computer'] as const
+export const AGENT_TABS = ['setup', 'triggers', 'items', 'sessions', 'computer'] as const
 export type AgentTab = (typeof AGENT_TABS)[number]
 
-/** Reads the `tab` search param: anything that is not a known tab is the Overview. */
+/** The tab the page opens on; an unknown or retired `?tab=` (the old `overview`) lands here. */
+export const DEFAULT_AGENT_TAB: AgentTab = 'setup'
+
+/** Reads the `tab` search param: anything that is not a known tab is left for the default. */
 export function parseAgentTab(value: unknown): AgentTab | undefined {
 	return typeof value === 'string' && (AGENT_TABS as readonly string[]).includes(value)
 		? (value as AgentTab)
@@ -13,7 +16,6 @@ export function parseAgentTab(value: unknown): AgentTab | undefined {
 
 const LIVE_STATUSES = new Set(['running', 'starting', 'pending'])
 const FAILED_STATUSES = new Set(['failed', 'timeout'])
-const FINISHED_STATUSES = new Set(['completed', 'failed', 'timeout', 'user_stopped'])
 
 type SessionLike = Pick<SessionResponse, 'id' | 'status' | 'createdAt'>
 
@@ -37,25 +39,4 @@ export function deriveAgentFocus<T extends SessionLike>(sessions: T[]): AgentFoc
 	const latest = newestFirst[0]
 	if (latest && FAILED_STATUSES.has(latest.status)) return { kind: 'failed', session: latest }
 	return null
-}
-
-export interface AgentStats {
-	/** Runs the page knows about. */
-	sessions: number
-	/** Runs that ended, and how many of those ended well. Null until one has ended. */
-	finished: { total: number; completed: number } | null
-}
-
-export function deriveAgentStats(sessions: SessionLike[]): AgentStats {
-	const finished = sessions.filter((s) => FINISHED_STATUSES.has(s.status))
-	return {
-		sessions: sessions.length,
-		finished:
-			finished.length > 0
-				? {
-						total: finished.length,
-						completed: finished.filter((s) => s.status === 'completed').length,
-					}
-				: null,
-	}
 }

@@ -48,10 +48,11 @@ export function heldNote(iso: string | null | undefined, now: number = Date.now(
  * - `waiting` — the ball is with an agent (you answered last)
  * - `fyi`     — nothing to decide, just new activity
  * - `done`    — decided in this sitting; the green receipt strip
+ * - `later`   — set aside on this device until a chosen time (`foryou-later.ts`)
  */
-export type FeedBucket = 'needs' | 'waiting' | 'fyi' | 'done'
+export type FeedBucket = 'needs' | 'waiting' | 'fyi' | 'done' | 'later'
 
-export const BUCKET_ORDER: readonly FeedBucket[] = ['needs', 'waiting', 'fyi', 'done']
+export const BUCKET_ORDER: readonly FeedBucket[] = ['needs', 'waiting', 'fyi', 'done', 'later']
 
 export function bucketRank(bucket: FeedBucket): number {
 	const index = BUCKET_ORDER.indexOf(bucket)

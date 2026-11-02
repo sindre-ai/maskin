@@ -1,15 +1,26 @@
+import { PropertyTypeGrid, propertyTypeLabel } from '@/components/objects/property-type-grid'
+import { SettingsLinkRow } from '@/components/settings/settings-link-row'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -34,14 +45,18 @@ function ObjectsPage() {
 	const fieldDefs =
 		(settings?.field_definitions as Record<string, FieldDefinition[]> | undefined) ?? {}
 
-	const objectTypes = useAvailableObjectTypes().map((t) => t.value)
-	const [activeType, setActiveType] = useState(objectTypes[0])
+	// A to Z by the label people see, not by registration order.
+	const objectTypes = useAvailableObjectTypes()
+		.map((t) => ({ value: t.value, label: t.label }))
+		.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+	const typeValues = objectTypes.map((t) => t.value)
+	const [activeType, setActiveType] = useState(typeValues[0])
 
 	useEffect(() => {
-		if (objectTypes.length > 0 && !objectTypes.includes(activeType)) {
-			setActiveType(objectTypes[0])
+		if (typeValues.length > 0 && !typeValues.includes(activeType)) {
+			setActiveType(typeValues[0])
 		}
-	}, [objectTypes, activeType])
+	}, [typeValues, activeType])
 
 	const [showAdd, setShowAdd] = useState(false)
 	const [newName, setNewName] = useState('')
@@ -49,13 +64,21 @@ function ObjectsPage() {
 	const [newEnumValues, setNewEnumValues] = useState('')
 
 	const currentFields = fieldDefs[activeType] ?? []
+	const activeLabel = objectTypes.find((t) => t.value === activeType)?.label ?? activeType
+	const trimmedName = newName.trim()
+	const isDuplicate = currentFields.some((f) => f.name === trimmedName)
+
+	const resetForm = () => {
+		setNewName('')
+		setNewType('text')
+		setNewEnumValues('')
+	}
 
 	const handleAdd = () => {
-		const trimmed = newName.trim()
-		if (!canWrite || !trimmed || currentFields.some((f) => f.name === trimmed)) return
+		if (!canWrite || !trimmedName || isDuplicate) return
 
 		const newField: FieldDefinition = {
-			name: trimmed,
+			name: trimmedName,
 			type: newType,
 			...(newType === 'enum' && newEnumValues.trim()
 				? {
@@ -75,125 +98,156 @@ function ObjectsPage() {
 		updateWorkspace.mutate({
 			settings: { ...settings, field_definitions: updatedDefs },
 		})
-		setNewName('')
-		setNewType('text')
-		setNewEnumValues('')
+		resetForm()
 		setShowAdd(false)
 	}
 
 	return (
-		<div>
-			<h2 className="eyebrow mb-3">Properties</h2>
+		<div className="max-w-[760px]">
+			<p className="mb-4 px-2 text-[13px] text-muted-foreground">
+				What your agents can create and track.
+			</p>
 
-			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
-				<div className="-ml-1 overflow-x-auto px-1">
-					<div className="inline-flex rounded-lg border border-border">
-						{objectTypes.map((type) => (
-							<button
-								key={type}
-								type="button"
-								className={cn(
-									'whitespace-nowrap px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-lg last:rounded-r-lg',
-									activeType === type
-										? 'bg-foreground text-background'
-										: 'bg-background text-muted-foreground hover:bg-secondary hover:text-foreground',
-								)}
-								onClick={() => setActiveType(type)}
-							>
-								{type}
-							</button>
-						))}
-					</div>
-				</div>
-				{!showAdd && (
-					<ViewerTooltip className="inline-flex self-start shrink-0 sm:self-auto">
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!canWrite}
-							onClick={() => setShowAdd(true)}
-							className="self-start shrink-0 sm:self-auto"
+			<h2 className="px-2 pb-2 text-xs font-semibold text-foreground">Types</h2>
+			<div className="-mx-1 mb-6 overflow-x-auto px-1">
+				<div className="inline-flex gap-1 rounded-full bg-secondary p-1">
+					{objectTypes.map((type) => (
+						<button
+							key={type.value}
+							type="button"
+							aria-pressed={activeType === type.value}
+							className={cn(
+								'min-h-11 whitespace-nowrap rounded-full px-4 py-1.5 text-[12.5px] font-semibold transition-colors md:min-h-0',
+								activeType === type.value
+									? 'bg-primary text-primary-foreground'
+									: 'text-muted-foreground hover:text-foreground',
+							)}
+							onClick={() => setActiveType(type.value)}
 						>
-							<Plus size={14} className="mr-1" />
-							Add property
-						</Button>
-					</ViewerTooltip>
-				)}
-			</div>
-
-			{showAdd && (
-				<div className="mb-4 rounded-xl border border-border bg-card p-4 shadow-sm space-y-3">
-					<Input
-						type="text"
-						value={newName}
-						onChange={(e) => setNewName(e.target.value)}
-						placeholder="Property name (e.g. Due Date)"
-						autoFocus
-					/>
-					<div className="flex gap-1 flex-wrap">
-						{(['text', 'number', 'date', 'boolean', 'enum'] as const).map((t) => (
-							<Button
-								key={t}
-								type="button"
-								variant={newType === t ? 'default' : 'secondary'}
-								size="sm"
-								onClick={() => setNewType(t)}
-							>
-								{t}
-							</Button>
-						))}
-					</div>
-					{newType === 'enum' && (
-						<Input
-							type="text"
-							value={newEnumValues}
-							onChange={(e) => setNewEnumValues(e.target.value)}
-							placeholder="Options (comma-separated, e.g. low, medium, high)"
-						/>
-					)}
-					<div className="flex justify-end gap-2">
-						<Button type="button" variant="ghost" onClick={() => setShowAdd(false)}>
-							Cancel
-						</Button>
-						<Button
-							onClick={handleAdd}
-							disabled={!newName.trim() || updateWorkspace.isPending || !canWrite}
-						>
-							Create
-						</Button>
-					</div>
-				</div>
-			)}
-
-			{currentFields.length === 0 ? (
-				<EmptyState
-					title={`No properties for ${activeType}s`}
-					description="Create a property to add structured data to your items"
-				/>
-			) : (
-				<div className="space-y-2">
-					{currentFields.map((field) => (
-						<Link
-							key={field.name}
-							to="/$workspaceId/settings/objects/$propertyName"
-							params={{ workspaceId, propertyName: field.name }}
-							search={{ type: activeType }}
-							className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md"
-						>
-							<div className="flex-1">
-								<p className="text-sm font-medium text-foreground">{field.name}</p>
-								<p className="text-xs text-muted-foreground">
-									{field.type}
-									{field.values ? ` · ${field.values.join(', ')}` : ''}
-								</p>
-							</div>
-						</Link>
+							{type.label}
+						</button>
 					))}
 				</div>
+			</div>
+
+			<div className="flex items-center justify-between gap-3 px-2 pb-1.5">
+				<h2 className="text-xs font-semibold text-foreground">Properties</h2>
+				<ViewerTooltip className="inline-flex shrink-0">
+					<Button
+						size="sm"
+						disabled={!canWrite}
+						onClick={() => setShowAdd(true)}
+						className="max-md:h-11"
+					>
+						<Plus size={14} aria-hidden />
+						Add property
+					</Button>
+				</ViewerTooltip>
+			</div>
+
+			{currentFields.length === 0 ? (
+				<div className="border-y border-border-subtle">
+					<EmptyState
+						title={`No properties for ${activeLabel.toLowerCase()} items`}
+						description="Create a property to add structured data to your items"
+					/>
+				</div>
+			) : (
+				<ul className="divide-y divide-border-subtle border-y border-border-subtle">
+					{currentFields.map((field) => (
+						<li key={field.name}>
+							<SettingsLinkRow
+								title={field.name}
+								description={`${propertyTypeLabel(field.type)}${field.values ? ` · ${field.values.join(', ')}` : ''}`}
+								to="/$workspaceId/settings/objects/$propertyName"
+								params={{ workspaceId, propertyName: field.name }}
+								search={{ type: activeType }}
+							/>
+						</li>
+					))}
+				</ul>
 			)}
 
+			<h2 className="px-2 pt-8 pb-1.5 text-xs font-semibold text-foreground">Extensions</h2>
+			<div className="border-y border-border-subtle">
+				<SettingsLinkRow
+					title="Extensions"
+					description="Calendar, webhooks, CRM and MCP add types and fields."
+					to="/$workspaceId/settings/extensions"
+					params={{ workspaceId }}
+				/>
+			</div>
+
+			<ResponsiveDialog
+				open={showAdd}
+				onOpenChange={(open) => {
+					setShowAdd(open)
+					if (!open) resetForm()
+				}}
+			>
+				<ResponsiveDialogContent>
+					<ResponsiveDialogHeader>
+						<ResponsiveDialogTitle>Add property</ResponsiveDialogTitle>
+						<ResponsiveDialogDescription className="sr-only">
+							Name the property and pick what kind of value it holds.
+						</ResponsiveDialogDescription>
+					</ResponsiveDialogHeader>
+					<form
+						className="space-y-4"
+						onSubmit={(e) => {
+							e.preventDefault()
+							handleAdd()
+						}}
+					>
+						<div className="space-y-1.5">
+							<Label htmlFor="property-name">Name</Label>
+							<Input
+								id="property-name"
+								type="text"
+								value={newName}
+								onChange={(e) => setNewName(e.target.value)}
+								placeholder="e.g. Budget"
+								autoFocus
+							/>
+							{isDuplicate && (
+								<p className="text-xs text-error">
+									{activeLabel} already has a property called {trimmedName}.
+								</p>
+							)}
+						</div>
+						<div className="space-y-1.5">
+							<span className="settings-label block">Type</span>
+							<PropertyTypeGrid value={newType} onChange={setNewType} />
+						</div>
+						{newType === 'enum' && (
+							<div className="space-y-1.5">
+								<Label htmlFor="property-options">Options</Label>
+								<Input
+									id="property-options"
+									type="text"
+									value={newEnumValues}
+									onChange={(e) => setNewEnumValues(e.target.value)}
+									placeholder="Comma-separated, e.g. low, medium, high"
+								/>
+							</div>
+						)}
+						<ResponsiveDialogFooter>
+							<Button type="button" variant="ghost" onClick={() => setShowAdd(false)}>
+								Cancel
+							</Button>
+							<Button
+								type="submit"
+								disabled={!trimmedName || isDuplicate || updateWorkspace.isPending || !canWrite}
+							>
+								Add property
+							</Button>
+						</ResponsiveDialogFooter>
+					</form>
+				</ResponsiveDialogContent>
+			</ResponsiveDialog>
+
 			{/* Relationship types section */}
-			<div className="border-t border-border pt-6 mt-6">
+			<div className="mt-8 border-t border-border pt-6">
 				<RelationshipTypesEditor workspace={workspace} workspaceId={workspaceId} />
 			</div>
 		</div>

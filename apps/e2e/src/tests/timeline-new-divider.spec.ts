@@ -128,7 +128,7 @@ test.describe('Object timeline — NEW divider (D8)', () => {
 				onMarkRead: (body) => markReadBodies.push(body),
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}`)
+			await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}?tab=activity`)
 
 			// The divider uses ARIA separator + a labelled pill so screen-reader
 			// users can jump to the first unread comment below it. The label is
@@ -169,7 +169,7 @@ test.describe('Object timeline — NEW divider (D8)', () => {
 			unread_count: 0,
 		})
 
-		await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}`)
+		await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}?tab=activity`)
 
 		// The three seeded comments render, but there is no divider and no
 		// Mark all read button — zero unread must not reserve visual space
@@ -197,7 +197,7 @@ test.describe('Object timeline — NEW divider (D8)', () => {
 			unread_count: 0,
 		})
 
-		await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}`)
+		await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}?tab=activity`)
 
 		await expect(page.getByText('Latest reply on the bet.')).toBeVisible({ timeout: 15000 })
 		await expect(page.getByText('First remote comment.')).toBeVisible()
@@ -226,7 +226,7 @@ test.describe('Object timeline — NEW divider (D8)', () => {
 				return route.fallback()
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}`)
+			await page.goto(`/${account.workspaceId}/objects/${OBJECT_ID}?tab=activity`)
 
 			await expect(page.getByText('Activity did not load')).toBeVisible({ timeout: 30000 })
 			await expect(page.getByText('Your connection dropped. Nothing was lost.')).toBeVisible()

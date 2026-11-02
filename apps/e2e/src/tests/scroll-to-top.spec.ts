@@ -48,7 +48,7 @@ test('scroll_to_top fires once with the signed-off schema after a full-viewport 
 			.catch(() => {})
 	})
 
-	await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+	await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 	// The title is a static <h1> on the v2 detail shell — wait for it to carry
 	// the bet's title before scrolling.
 	await expect(

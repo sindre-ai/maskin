@@ -71,7 +71,7 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 					trackNavItemClicked({ item_key: 'agents', source: 'footer' })
 					setOpenMobile(false)
 				}}
-				className="flex h-10 items-center gap-2.5 rounded-[10px] border border-sidebar-border px-2.5 transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:hidden"
+				className="flex h-9 items-center gap-2.5 rounded-[10px] border border-sidebar-border px-2.5 transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:hidden"
 			>
 				<span
 					aria-hidden="true"

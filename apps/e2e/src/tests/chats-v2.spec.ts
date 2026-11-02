@@ -202,6 +202,30 @@ test.describe('Chats v2 — layout', () => {
 	})
 })
 
+test.describe('Chats v2 — filter pill (v16)', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`the filter pill sits under the search field and opens at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const chats = await seedChats(account.api, account.workspaceId)
+			await page.goto(`/${account.workspaceId}/chats`)
+			await expect(page.getByTestId('conversation-list').getByText(chats.plain)).toBeVisible({
+				timeout: 15_000,
+			})
+			const pill = page.getByRole('button', { name: /^Filter conversations/ })
+			const search = page.getByRole('searchbox', { name: 'Search chats' })
+			const pillBox = await pill.boundingBox()
+			const searchBox = await search.boundingBox()
+			expect(pillBox?.height).toBe(vp.width < 768 ? 44 : 34)
+			expect((pillBox?.y ?? 0) >= (searchBox?.y ?? 0) + (searchBox?.height ?? 0)).toBe(true)
+			await pill.click()
+			await expect(page.getByRole('menuitemradio', { name: 'Pinned' })).toBeVisible()
+		})
+	}
+})
+
 test.describe('Chats v2 — list title and column', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`the Chats title sits at the shared top-left of the page at ${vp.label}`, async ({
@@ -292,8 +316,9 @@ test.describe('Chats v2 — participants popover', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			await page.getByRole('button', { name: /participants — manage/ }).click()
 
-			await expect(page.getByText('In this chat')).toBeVisible({ timeout: 10_000 })
-			await expect(page.getByText('Add someone — person or agent')).toBeVisible()
+			await expect(page.getByText('People · 1')).toBeVisible({ timeout: 10_000 })
+			await expect(page.getByPlaceholder('Add a person or an agent')).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Leave chat' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Copy link to this chat' })).toBeVisible()
 			// Deliberately absent — see participants-popover.tsx: a mailto link
 			// promises access to someone who is not in the workspace.
@@ -304,9 +329,9 @@ test.describe('Chats v2 — participants popover', () => {
 			// The owner's sub-line names their relationship to the chat.
 			await expect(page.getByText('You · owner of this chat')).toBeVisible()
 
-			await page.getByPlaceholder('Search people and agents…').fill(agent.name)
+			await page.getByPlaceholder('Add a person or an agent').fill(agent.name)
 			await page.getByRole('option', { name: new RegExp(agent.name) }).click()
-			// The added agent moves up into the "In this chat" list.
+			// The added agent moves up into the Agents group.
 			await expect(page.getByText(agent.name).first()).toBeVisible({ timeout: 10_000 })
 		})
 	}

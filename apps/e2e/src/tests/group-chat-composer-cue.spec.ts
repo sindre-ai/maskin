@@ -8,6 +8,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  */
 
 const NEUTRAL = 'Message this conversation'
+const NEUTRAL_PLACEHOLDER = 'Message · @ to mention'
 const HINT_NOBODY = 'No agent will reply. Tag one with @.'
 
 /** Holds the requests the cue depends on for `ms`, so loading states can be observed. */
@@ -50,7 +51,7 @@ test.describe('Group chat composer cue', () => {
 			await expect(box).toBeVisible({ timeout: 15_000 })
 
 			// Nobody would answer, but nothing is said on arrival: the box is not focused.
-			await expect(box).toHaveAttribute('placeholder', NEUTRAL)
+			await expect(box).toHaveAttribute('placeholder', NEUTRAL_PLACEHOLDER)
 			await expect(page.getByText(HINT_NOBODY)).toHaveCount(0)
 
 			await box.click()
@@ -64,11 +65,11 @@ test.describe('Group chat composer cue', () => {
 			const hintBox = await hint.boundingBox()
 			expect(hintBox?.height ?? 0).toBeLessThanOrEqual(34)
 
-			// A decorative info glyph leads the text, and 8 px separate it from the control row.
+			// A decorative info glyph leads the text, and 8 px separate it from the bar above it.
 			await expect(hint.locator('svg')).toHaveAttribute('aria-hidden', 'true')
-			const sendBox = await page.getByRole('button', { name: 'Send message' }).boundingBox()
-			const hintBottom = (hintBox?.y ?? 0) + (hintBox?.height ?? 0)
-			expect(Math.round((sendBox?.y ?? 0) - hintBottom)).toBe(8)
+			const barBox = await box.locator('xpath=..').boundingBox()
+			const barBottom = (barBox?.y ?? 0) + (barBox?.height ?? 0)
+			expect(Math.round((hintBox?.y ?? 0) - barBottom)).toBe(8)
 
 			// Picking a tag leaves the box empty, so the cue placeholder shows behind the chip.
 			await box.press('@')
@@ -93,7 +94,7 @@ test.describe('Group chat composer cue', () => {
 
 			// While the requests are held: neutral text, no hint, and typing works.
 			await expect(box).toBeEnabled()
-			await expect(box).toHaveAttribute('placeholder', NEUTRAL)
+			await expect(box).toHaveAttribute('placeholder', NEUTRAL_PLACEHOLDER)
 			await box.fill('typed while loading')
 			await expect(box).toHaveValue('typed while loading')
 			await expect(page.getByText(HINT_NOBODY)).toHaveCount(0)
@@ -126,7 +127,7 @@ test.describe('Group chat composer cue', () => {
 
 		const box = page.getByRole('textbox', { name: NEUTRAL })
 		await box.fill('hello both')
-		await expect(box).toHaveAttribute('placeholder', NEUTRAL)
+		await expect(box).toHaveAttribute('placeholder', NEUTRAL_PLACEHOLDER)
 		await expect(page.getByText(HINT_NOBODY)).toBeVisible()
 	})
 })

@@ -1,4 +1,5 @@
 import { AppSidebar } from '@/components/layout/sidebar'
+import { useBillingUsage } from '@/hooks/use-billing'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +9,10 @@ vi.mock('@/hooks/use-enabled-modules', () => ({
 
 vi.mock('@/hooks/use-for-you', () => ({
 	useForYou: vi.fn(() => ({ data: { items: [] } })),
+}))
+
+vi.mock('@/hooks/use-billing', () => ({
+	useBillingUsage: vi.fn(() => ({ data: undefined })),
 }))
 
 vi.mock('@/hooks/use-chat-unread', () => ({
@@ -198,5 +203,35 @@ describe('AppSidebar', () => {
 		} as unknown as ReturnType<typeof useForYou>)
 		render(<AppSidebar />)
 		expect(screen.queryByLabelText(/unread$/)).not.toBeInTheDocument()
+	})
+
+	describe('trial card', () => {
+		const DAY = 24 * 60 * 60 * 1000
+		const usage = (plan: string, ms: number | null) =>
+			({ data: { plan, period_resets_in_ms: ms } }) as unknown as ReturnType<typeof useBillingUsage>
+
+		it('shows the days left and an Upgrade link above Marketplace on a trial', () => {
+			vi.mocked(useBillingUsage).mockReturnValue(usage('trial', 4.2 * DAY))
+			render(<AppSidebar />)
+			const title = screen.getByText('Trial ends in 5 days')
+			expect(screen.getByText('Choose a plan to keep your agents running.')).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Upgrade' })).toBeInTheDocument()
+			expect(
+				title.compareDocumentPosition(screen.getByText('Marketplace')) &
+					Node.DOCUMENT_POSITION_FOLLOWING,
+			).toBeTruthy()
+		})
+
+		it('is hidden on a paid plan', () => {
+			vi.mocked(useBillingUsage).mockReturnValue(usage('pro', 20 * DAY))
+			render(<AppSidebar />)
+			expect(screen.queryByText(/Trial ends/)).not.toBeInTheDocument()
+		})
+
+		it('is hidden once the trial has ended', () => {
+			vi.mocked(useBillingUsage).mockReturnValue(usage('trial', 0))
+			render(<AppSidebar />)
+			expect(screen.queryByText(/Trial ends/)).not.toBeInTheDocument()
+		})
 	})
 })

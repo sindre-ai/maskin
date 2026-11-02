@@ -59,6 +59,7 @@ describe('bucketRank', () => {
 		expect(bucketRank('needs')).toBeLessThan(bucketRank('waiting'))
 		expect(bucketRank('waiting')).toBeLessThan(bucketRank('fyi'))
 		expect(bucketRank('fyi')).toBeLessThan(bucketRank('done'))
+		expect(bucketRank('done')).toBeLessThan(bucketRank('later'))
 	})
 })
 

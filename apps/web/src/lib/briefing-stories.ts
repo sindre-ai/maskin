@@ -130,6 +130,15 @@ export function tellMeMoreMessage(headline: string): string {
 }
 
 /**
+ * What "Ask about this slide" puts in the conversation box: the slide named, so the question
+ * after it has its subject. The reader finishes the sentence; nothing is sent.
+ */
+export function askAboutSlideDraft(headline: string, position: number, total: number): string {
+	const where = total > 1 ? ` (briefing ${position} of ${total})` : ''
+	return `About "${headline}"${where}: `
+}
+
+/**
  * The attachments of the chat a reader's question starts: the page goes along as a real
  * attachment (a file chip in the chat, and the agent is handed its file id), followed by any
  * files the reader attached in the composer.

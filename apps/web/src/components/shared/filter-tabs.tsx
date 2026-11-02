@@ -5,6 +5,7 @@ import {
 	DropdownMenuRadioItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { PILL_TRIGGER_CLASS } from '@/components/ui/select'
 import { cn } from '@/lib/cn'
 import { fitChips } from '@/lib/fit-chips'
 import { ChevronDown } from 'lucide-react'
@@ -218,26 +219,20 @@ function FoldablePillTabs<T extends string | undefined>({
 								type="button"
 								aria-label={`More (${folded.length})`}
 								className={cn(
-									'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border font-semibold transition-colors duration-150',
-									isChip ? 'h-8 px-3.5 text-[13px]' : 'h-7 px-3 text-[11.5px]',
-									activeFolded
-										? 'border-primary bg-primary text-primary-foreground'
-										: isChip
-											? 'border-transparent bg-muted text-foreground hover:bg-border'
-											: 'border-border bg-transparent text-muted-foreground hover:border-border-hover hover:text-foreground',
+									PILL_TRIGGER_CLASS,
+									'inline-flex duration-150',
+									activeFolded &&
+										'border-primary bg-primary text-primary-foreground hover:border-primary',
 								)}
 							>
 								{activeFolded ? activeFolded.label : 'More'}
 								<span
 									aria-hidden="true"
-									className={cn(
-										'tabular-nums',
-										isChip ? 'text-[13px] font-medium opacity-60' : 'text-[10.5px] opacity-70',
-									)}
+									className={cn('tabular-nums', 'text-[13px] font-medium opacity-60')}
 								>
 									{activeFolded ? (activeFolded.count ?? folded.length) : foldedCount}
 								</span>
-								<ChevronDown aria-hidden="true" size={isChip ? 10 : 11} className="opacity-70" />
+								<ChevronDown aria-hidden="true" className="size-3.5 opacity-70" />
 							</button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="start">
@@ -275,14 +270,9 @@ function FoldablePillTabs<T extends string | undefined>({
 						<TabButton tab={tab} value={value} onChange={() => {}} variant={variant} />
 					</span>
 				))}
-				<span
-					className={cn(
-						'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border font-semibold',
-						isChip ? 'h-8 px-3.5 text-[13px]' : 'h-7 px-3 text-[11.5px]',
-					)}
-				>
-					More <span className="text-[10.5px]">000</span>
-					<ChevronDown size={11} />
+				<span className={cn(PILL_TRIGGER_CLASS, 'inline-flex')}>
+					More <span className="text-[13px]">000</span>
+					<ChevronDown className="size-3.5" />
 				</span>
 			</div>
 		</div>

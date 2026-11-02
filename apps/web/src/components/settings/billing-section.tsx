@@ -19,9 +19,10 @@ import type {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
+import { trialCardState } from '@/lib/trial'
 import { OWNERSHIP_CAPS, SEAT_CAPS } from '@maskin/shared'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Clock, ExternalLink } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
@@ -351,6 +352,8 @@ export function BillingSection({
 				nothing is auto-charged.
 			</p>
 
+			<TrialBanner usage={usage} onChoosePlan={() => setPlansOpenOverride(true)} />
+
 			<UsageBanner
 				usage={usage}
 				badge={badge}
@@ -416,6 +419,37 @@ export function BillingSection({
 	)
 }
 
+/**
+ * Amber card above the credits: how long the trial has left and the way to pick
+ * a plan. Only on the trial plan, and only while there is time left (the expiry
+ * banner owns the ended state). "Choose a plan" opens the plan comparison below.
+ */
+function TrialBanner({
+	usage,
+	onChoosePlan,
+}: {
+	usage: BillingUsageResponse
+	onChoosePlan: () => void
+}) {
+	const state = trialCardState(usage)
+	if (!state) return null
+	return (
+		<div
+			data-testid="trial-banner"
+			className="mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 p-4"
+		>
+			<Clock size={16} aria-hidden className="shrink-0 text-warning" />
+			<div className="min-w-0 flex-1">
+				<p className="text-[13px] font-bold text-warning">{state.title}</p>
+				<p className="text-xs text-warning">Choose a plan to keep agents running.</p>
+			</div>
+			<Button size="sm" onClick={onChoosePlan} className="max-md:h-11">
+				Choose a plan
+			</Button>
+		</div>
+	)
+}
+
 function UsageBanner({
 	usage,
 	badge,
@@ -453,8 +487,8 @@ function UsageBanner({
 		<div
 			data-testid="usage-banner"
 			className={cn(
-				'rounded-lg border p-3 space-y-3',
-				needsAttention ? 'border-warning/30 bg-warning/10' : 'border-border bg-bg-surface',
+				'space-y-3 rounded-xl border p-4',
+				needsAttention ? 'border-warning/30 bg-warning/10' : 'border-border bg-card',
 			)}
 		>
 			<div className="flex items-center justify-between gap-2">
@@ -563,7 +597,7 @@ function PlanCard({
 	cta: PlanCta | null
 }) {
 	return (
-		<div className="flex flex-col rounded-lg border border-border bg-bg-surface p-3 gap-3">
+		<div className="flex flex-col rounded-xl border border-border bg-card p-4 gap-3">
 			<div>
 				<div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 					{config.eyebrow}

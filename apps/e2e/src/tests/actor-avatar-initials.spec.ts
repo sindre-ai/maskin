@@ -35,7 +35,7 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 				status: 'opportunity',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 			// The object title is a static <h1> on the v2 detail shell — wait on it
 			// to know the object has loaded.
 			await expect(
@@ -126,7 +126,7 @@ test.describe('ActorAvatar — punctuated agent names skip punctuation', () => {
 				content: 'Authored by the punctuated agent',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 			await expect(
 				page.getByRole('heading', { level: 1, name: 'Bet for punctuated initials' }),
 			).toBeVisible({ timeout: 20000 })

@@ -1,6 +1,4 @@
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
-import { SearchRowTitle } from '@/components/shared/search-row'
-import { TypeBadge } from '@/components/shared/type-badge'
 import { useActors } from '@/hooks/use-actors'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
@@ -21,6 +19,7 @@ import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import { trackCommandPaletteOpened } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
+import { statusLabel } from '@/lib/constants'
 import {
 	askRowTitle,
 	emptyStateText,
@@ -51,7 +50,6 @@ import {
 	Bot,
 	Check,
 	CircleDot,
-	type LucideIcon,
 	MessagesSquare,
 	Plus,
 	RefreshCw,
@@ -64,7 +62,6 @@ import {
 } from 'lucide-react'
 import {
 	type KeyboardEvent as ReactKeyboardEvent,
-	type ReactNode,
 	useCallback,
 	useEffect,
 	useId,
@@ -76,7 +73,7 @@ import {
 import { toast } from 'sonner'
 import { ParticipantMenu } from './participant-menu'
 import { SearchField } from './search-field'
-import { RowIcon, orderRows } from './search-results'
+import { orderRows } from './search-results'
 import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 
 // The ⌘K launcher. It is the search page's field in a smaller
@@ -85,6 +82,20 @@ import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 // results come. Enter on the Search row, or ⌘↵, hands the words and the pills to /search.
 
 const MAX_JUMP_ROWS = 6
+
+const KIND_BY_GROUP: Record<SearchResultRow['group'], string> = {
+	objects: 'ITEM',
+	loops: 'FLOW',
+	chats: 'CHAT',
+	agents: 'AGENT',
+	people: 'PERSON',
+	automations: 'AUTOMATION',
+}
+
+/** The kind column: ITEM / FLOW / CHAT as v3 draws it. Rows in Needs you are decisions. */
+function resultKind(group: string, row: SearchResultRow): string {
+	return group === 'Needs you' && row.group === 'objects' ? 'DECISION' : KIND_BY_GROUP[row.group]
+}
 const MAX_NEEDS_YOU = 3
 
 interface PaletteRow {
@@ -96,7 +107,6 @@ interface PaletteRow {
 	sub?: string
 	/** Matched text from the item's body, shown as a grey line under the title. */
 	snippet?: string
-	icon: ReactNode
 	run: () => void
 }
 
@@ -106,45 +116,30 @@ interface PaletteCommand {
 	sub?: string
 	/** Extra words that find this row, e.g. the pre-rename name ("loop" for Flows). */
 	keywords?: string[]
-	icon: LucideIcon
 	run: () => void
-}
-
-function GlyphTile({ icon: Icon }: { icon: LucideIcon }) {
-	return (
-		<span
-			aria-hidden="true"
-			className="grid size-[22px] shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
-		>
-			<Icon className="size-[13px]" />
-		</span>
-	)
 }
 
 const VIEWS: {
 	title: string
 	path: (workspaceId: string) => string
-	icon: LucideIcon
 	keywords?: string[]
 }[] = [
-	{ title: 'For you', path: (w) => `/${w}`, icon: CircleDot },
-	{ title: 'Chats', path: (w) => `/${w}/chats`, icon: MessagesSquare },
+	{ title: 'For you', path: (w) => `/${w}` },
+	{ title: 'Chats', path: (w) => `/${w}/chats` },
 	{
 		title: 'Flows',
 		path: (w) => `/${w}/loops`,
-		icon: RefreshCw,
 		keywords: ['loop', 'loops'],
 	},
-	{ title: 'Agents', path: (w) => `/${w}/agents`, icon: Bot },
 	{
 		title: 'Items',
 		path: (w) => `/${w}/objects`,
-		icon: Table2,
 		keywords: ['object', 'objects'],
 	},
-	{ title: TRIGGERS_PAGE.title, path: (w) => `/${w}/${TRIGGERS_PAGE.path}`, icon: Zap },
-	{ title: 'Marketplace', path: (w) => `/${w}/marketplace`, icon: Store },
-	{ title: 'Settings', path: (w) => `/${w}/settings`, icon: Settings },
+	{ title: 'Agents', path: (w) => `/${w}/agents` },
+	{ title: TRIGGERS_PAGE.title, path: (w) => `/${w}/${TRIGGERS_PAGE.path}` },
+	{ title: 'Marketplace', path: (w) => `/${w}/marketplace` },
+	{ title: 'Settings', path: (w) => `/${w}/settings` },
 ]
 
 /**
@@ -254,14 +249,12 @@ export function CommandPaletteV2() {
 				id: 'new-chat',
 				title: 'New chat',
 				sub: 'talk to your agents',
-				icon: MessagesSquare,
 				run: openChat,
 			},
 			...objectTypes.map((type) => ({
 				id: `new-${type.value}`,
 				title: `New ${typeLabel(type.value).toLowerCase()}`,
 				sub: 'an agent structures it from what you say',
-				icon: Plus,
 				run: () => openCreate('object', type.value),
 			})),
 			{
@@ -269,21 +262,18 @@ export function CommandPaletteV2() {
 				title: 'New flow',
 				keywords: ['loop', 'new loop'],
 				sub: 'describe it and Maskin wires it',
-				icon: RefreshCw,
 				run: () => navigateTo(`/${workspaceId}/loops/new`),
 			},
 			{
 				id: 'new-agent',
 				title: 'New agent',
 				sub: 'hire one for an outcome',
-				icon: Sparkles,
 				run: () => openCreate('agent'),
 			},
 			{
 				id: 'mark-all-read',
 				title: 'Mark all read',
 				sub: 'clear For you',
-				icon: Check,
 				run: markAllRead,
 			},
 		],
@@ -362,6 +352,7 @@ interface PanelProps {
 function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProps) {
 	const navigate = useNavigate()
 	const { workspace } = useWorkspace()
+	const typeLabel = useObjectTypeLabel()
 	const panelRef = useRef<HTMLDivElement>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
 	const listboxId = useId()
@@ -490,11 +481,10 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	): PaletteRow => ({
 		id: `${group}-${row.group}-${row.id}`,
 		group,
-		kind: row.type.replace(/_/g, ' ').toUpperCase(),
+		kind: resultKind(group, row),
 		title: rowTitle(row),
 		sub: rowSub(row),
 		snippet: row.snippet ?? undefined,
-		icon: <RowIcon row={row} />,
 		// A row from the previous answer must not open while the new one is on its way.
 		run: () => {
 			if (withQuery && !settled) return
@@ -543,20 +533,14 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					const common = {
 						id: `recent-${item.kind}-${item.id}`,
 						group: 'Recent',
-						kind: (item.type ?? item.kind).toUpperCase(),
+						kind: item.kind === 'object' ? 'ITEM' : item.kind === 'chat' ? 'CHAT' : 'FLOW',
 						title: item.title,
 					}
 					if (item.kind === 'object') {
 						const object = byId.get(item.id)
 						return {
 							...common,
-							icon: (
-								<TypeBadge
-									type={object?.type ?? 'task'}
-									variant="tile"
-									className="size-[22px] shrink-0 rounded-md"
-								/>
-							),
+							sub: object ? `${typeLabel(object.type)} · ${statusLabel(object.status)}` : undefined,
 							run: () => {
 								track()
 								pushRecentObject(workspaceId, item.id)
@@ -566,7 +550,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					}
 					return {
 						...common,
-						icon: <GlyphTile icon={item.kind === 'chat' ? MessagesSquare : RefreshCw} />,
 						run: () => {
 							track()
 							navigateTo(`/${workspaceId}/${item.kind === 'chat' ? 'chats' : 'loops'}/${item.id}`)
@@ -589,7 +572,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					kind: 'COMMAND',
 					title: c.title,
 					sub: c.sub,
-					icon: <GlyphTile icon={c.icon} />,
 					run: c.run,
 				})),
 			})
@@ -601,7 +583,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 				group: 'Go to',
 				kind: 'GO TO',
 				title: view.title,
-				icon: <GlyphTile icon={view.icon} />,
 				run: () => navigateTo(view.path(workspaceId)),
 			}))
 			// Typing a settings page name ("keychain") adds a Settings › Keychain row.
@@ -611,7 +592,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					group: 'Go to',
 					kind: 'GO TO',
 					title: page.title,
-					icon: <GlyphTile icon={Settings} />,
 					run: () => navigateTo(`/${workspaceId}/${page.path}`),
 				}),
 			)
@@ -646,7 +626,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						: settled
 							? searchRowSub(total)
 							: undefined,
-					icon: <GlyphTile icon={Search} />,
 					run: handOver,
 				},
 			],
@@ -671,7 +650,6 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						kind: 'ASK',
 						title: askRowTitle(query),
 						sub: 'opens a new chat, nothing is sent',
-						icon: <GlyphTile icon={Sparkles} />,
 						run: () => {
 							onClose()
 							navigate({
@@ -754,7 +732,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	const noMatches = nothingFound && settled
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] max-sm:items-end max-sm:pt-0">
+		<div className="fixed inset-0 z-50 flex items-start justify-center pt-22.5 max-sm:items-end max-sm:pt-0">
 			<button
 				type="button"
 				aria-label="Close palette"
@@ -768,7 +746,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 				aria-modal="true"
 				aria-label="Command palette"
 				onKeyDown={onPanelKeyDown}
-				className="relative mx-auto flex w-full max-w-150 flex-col overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
+				className="relative mx-auto flex max-h-140 w-full max-w-150 flex-col overflow-hidden bg-popover text-popover-foreground shadow-2xl ring-1 ring-border max-sm:max-h-[92dvh] max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
 			>
 				<div className="flex items-center border-b border-border">
 					<SearchField
@@ -795,7 +773,9 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						onModEnter={handOver}
 						onEscape={onEscape}
 					/>
-					<span className="mr-4 hidden shrink-0 text-xs text-muted-foreground sm:inline">Esc</span>
+					<span className="mr-4.5 hidden shrink-0 text-[13px] text-muted-foreground sm:inline">
+						Esc
+					</span>
 				</div>
 
 				{/* The @ menu takes the results' place while it is open; the results stay mounted underneath. */}
@@ -817,7 +797,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 					aria-label="Commands and results"
 					aria-busy={loading || isFetching}
 					className={cn(
-						'max-h-[360px] min-h-0 flex-1 overflow-auto p-1.5 max-sm:max-h-none',
+						'max-h-105 min-h-0 flex-1 overflow-auto p-1.5 max-sm:max-h-none [&_mark]:bg-warning/25 [&_mark]:text-foreground',
 						menu.open && 'hidden',
 					)}
 				>
@@ -830,7 +810,10 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 							// The previous answer stays on screen, dimmed, while a new one loads.
 							className={cn(group.label === 'Jump to' && !settled && data && 'opacity-60')}
 						>
-							<div aria-hidden="true" className="eyebrow px-2.5 pb-1 pt-2">
+							<div
+								aria-hidden="true"
+								className="px-2.5 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+							>
 								{group.label}
 							</div>
 							{group.label === 'Jump to' && loading ? <ResultsSkeleton /> : null}
@@ -849,35 +832,34 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 									onMouseMove={() => setActiveId(row.id)}
 									onClick={row.run}
 									className={cn(
-										'group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 max-[1024.02px]:min-h-11',
-										row.id === activeId && 'bg-accent text-accent-foreground',
+										'group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 max-[1024.02px]:min-h-11',
+										row.id === activeId && 'bg-secondary',
 									)}
 								>
-									{row.icon}
 									<span className="flex min-w-0 flex-1 flex-col">
-										<SearchRowTitle
-											title={row.title}
-											sub={row.sub}
-											query={hasQuery ? query : ''}
-											className="min-w-0 font-semibold"
-										/>
+										<span className="truncate text-sm font-semibold text-foreground">
+											{highlightText(row.title, hasQuery ? query : '')}
+										</span>
+										{row.sub ? (
+											<span className="truncate text-xs font-normal text-muted-foreground">
+												{row.sub}
+											</span>
+										) : null}
 										{hasQuery && row.snippet ? (
 											<span className="truncate text-xs font-normal text-muted-foreground">
 												{highlightText(row.snippet, query)}
 											</span>
 										) : null}
 									</span>
-									<span className="shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
+									<span className="shrink-0 font-mono text-[11px] font-semibold text-muted-foreground">
 										{row.kind}
 									</span>
-									<kbd
-										className={cn(
-											'hidden shrink-0 rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground',
-											row.id === activeId && 'inline-flex',
-										)}
+									<span
+										aria-hidden="true"
+										className="w-4 shrink-0 text-center font-mono text-[11px] text-muted-foreground"
 									>
-										↵
-									</kbd>
+										{row.id === activeId ? '↵' : ''}
+									</span>
 								</div>
 							))}
 						</div>
@@ -895,7 +877,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 				</div>
 
 				{/* Keyboard hints mean nothing on a phone or tablet: no footer there. */}
-				<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground max-sm:hidden pointer-coarse:hidden">
+				<div className="flex shrink-0 items-center gap-4 border-t border-border bg-secondary px-4 py-2 text-[11.5px] text-muted-foreground max-sm:hidden pointer-coarse:hidden">
 					<span>↑↓ navigate</span>
 					<span>↵ run</span>
 					<span>{shortcutLabel('↵')} search everything</span>

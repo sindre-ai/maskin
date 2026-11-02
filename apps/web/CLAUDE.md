@@ -9,7 +9,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 3. **Instant feedback** — Every action is optimistic. SSE drives real-time updates. No loading spinners for mutations.
 4. **Linear/Apple aesthetic** — Clean, minimal, monospace accents, tight spacing, keyboard-driven.
 5. **Light/dark mode** — Defaults to light. User can choose system/light/dark in settings. Both modes are first-class.
-6. **Solid blue-grey + cobalt (v11)** — cool blue-grey neutrals with a cobalt brand accent and amber for warning/at-risk states, no glass/blur. Source of truth: the web v11 design handoff (colours only; the font stays Schibsted Grotesk + JetBrains Mono). Never re-introduce frosted or translucent surfaces — overlays are solid with a shadow.
+6. **Solid neutral grey + cobalt (v16)** — neutral greys with a cobalt brand accent and amber for warning/at-risk states, no glass/blur. Source of truth: the web v16 prototype's palette (the handoff README token list is stale; colours only; the font stays Schibsted Grotesk + JetBrains Mono). Never re-introduce frosted or translucent surfaces — overlays are solid with a shadow.
 7. **Document-first detail** — Each object opens as a Notion-like document: title, dynamic metadata badges, markdown content, linked objects.
 8. **Composable-ready** — Architecture the component system so blocks/views can be added incrementally.
 
@@ -89,8 +89,8 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 
 ### Visual Style — v2
 - Light + dark with full token parity — both are first-class.
-- Light mode: blue-grey neutrals (ink `#0e1422` on `#f8fafd`, white cards), cobalt brand `#1f4fe0` for links and primary actions, amber for warning/at-risk, pastel status badges.
-- Dark mode: `#0f1215` field, `#262b31` borders, ink `#e9ecef` (also the filled primary button), cobalt lifted to `#5b86ff` for legibility.
+- Light mode: neutral greys (ink `#10131a` on white, sidebar `#f6f7f9`), cobalt brand `#2545c8` for links and primary actions, amber for warning/at-risk, pastel status badges.
+- Dark mode: `#0d0f13` field, `#23272e` borders, ink `#e8eaee` (also the filled primary button), cobalt lifted to `#6a8cff` for legibility.
 - Overlays are **solid**, elevated by shadow only — no glass, no blur.
 - Fonts: Schibsted Grotesk (sans, variable 400–900) + JetBrains Mono (mono) — self-hosted from `/public/fonts/`, see `src/styles/typography.md`.
 - Base border radius: 10px (`--radius: 0.625rem`) — the `sm`/`md`/`lg`/`xl`/`2xl` scale steps 6/8/10/14/16px, matched to the v2 mockup's chip / menu-item / control / card / modal usage.

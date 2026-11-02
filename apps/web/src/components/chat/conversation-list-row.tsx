@@ -1,4 +1,4 @@
-import { getActorInitials } from '@/components/shared/actor-avatar'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import {
 	DropdownMenu,
@@ -47,7 +47,7 @@ export function ConversationListRow({
 		: null
 
 	return (
-		<div className="group/row relative">
+		<div className="group/row relative border-t border-border first:border-t-0">
 			<Link
 				to="/$workspaceId/chats/$conversationId"
 				params={{ workspaceId, conversationId: conversation.id }}
@@ -55,34 +55,30 @@ export function ConversationListRow({
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
 			>
 				{lead ? (
-					// Decorative: the row's title and snippet already name who is talking.
-					<span
-						aria-hidden
+					// The row's title and snippet already name who is talking; agents get their pictogram.
+					<ActorAvatar
+						name={lead.actorName}
+						type={lead.actorType}
+						id={lead.actorId}
+						size="md"
 						className={cn(
-							'mt-px grid size-8 shrink-0 place-items-center rounded-[9px] text-[11px] font-bold',
+							'mt-px size-8 shrink-0 rounded-[9px] text-[11px] font-bold',
 							isUnread
 								? 'bg-brand-subtle text-brand-subtle-foreground'
 								: 'bg-secondary text-foreground',
 						)}
-					>
-						{getActorInitials(lead.actorName)}
-					</span>
+					/>
 				) : null}
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-1.5 pr-7">
 						<span
 							className={cn(
 								'min-w-0 flex-1 truncate text-sm text-foreground',
-								isUnread ? 'font-bold' : 'font-medium',
+								isUnread ? 'font-bold' : 'font-semibold',
 							)}
 						>
 							{conversation.title}
 						</span>
-						<RelativeTime
-							date={conversation.lastMessageAt ?? conversation.createdAt}
-							format="clock"
-							className="shrink-0 text-xs text-muted-foreground"
-						/>
 					</div>
 					<div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-muted-foreground">
 						{isUnread ? (
@@ -113,6 +109,11 @@ export function ConversationListRow({
 								'No messages yet'
 							)}
 						</span>
+						<RelativeTime
+							date={conversation.lastMessageAt ?? conversation.createdAt}
+							format="clock"
+							className="ml-auto shrink-0 text-xs"
+						/>
 					</div>
 					{threadUnread > 0 ? (
 						<span className="mt-0.5 block text-[11px] font-medium text-brand">

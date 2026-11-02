@@ -1,5 +1,5 @@
 import type { NewMenuPrimaryOverride } from '@/components/shared/new-menu'
-import { type PageHeaderCrumb, usePageHeader } from '@/lib/page-header-context'
+import { type PageGutter, type PageHeaderCrumb, usePageHeader } from '@/lib/page-header-context'
 import { useEffect } from 'react'
 
 export function PageHeader({
@@ -15,6 +15,7 @@ export function PageHeader({
 	newMenuPrimaryOverride,
 	newMenuDisabled,
 	hideTitle,
+	gutter,
 }: {
 	// Rendered by the shared top nav as the screen's <h1>, not inline here —
 	// v2 has exactly one title per screen and it lives in the nav row.
@@ -50,6 +51,8 @@ export function PageHeader({
 	// that draws its own title. `title` is still published, so the crumb chain
 	// and document title keep working.
 	hideTitle?: boolean
+	// 'wide' widens the side padding from 28px to 48px from `lg:` (For you).
+	gutter?: PageGutter
 }) {
 	const {
 		setTitle,
@@ -64,6 +67,7 @@ export function PageHeader({
 		setNewMenuPrimaryOverride,
 		setNewMenuDisabled,
 		setHideTitle,
+		setGutter,
 	} = usePageHeader()
 
 	useEffect(() => {
@@ -125,6 +129,11 @@ export function PageHeader({
 		setHideTitle(hideTitle)
 		return () => setHideTitle(undefined)
 	}, [hideTitle, setHideTitle])
+
+	useEffect(() => {
+		setGutter(gutter)
+		return () => setGutter(undefined)
+	}, [gutter, setGutter])
 
 	// The title is published to the nav row above; nothing renders in the page body.
 	return null

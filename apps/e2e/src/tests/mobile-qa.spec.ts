@@ -365,7 +365,8 @@ test.describe('Mobile + iPad QA — critical controls ship gate', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			const ids = await seedObjects(account)
 
-			await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
+			// The composer lives in the Activity tab (v16).
+			await page.goto(`/${account.workspaceId}/objects/${ids.betId}?tab=activity`)
 			await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
 				timeout: 10000,
 			})
@@ -394,7 +395,7 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		// 2. Object detail — drive directly to the seeded bet (no unread thread is required;
 		//    the brief's flow is "land → object → comment" and the unread feed depends on
 		//    cross-actor activity that this single-actor fixture can't synthesize).
-		await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
+		await page.goto(`/${account.workspaceId}/objects/${ids.betId}?tab=activity`)
 		await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
 			timeout: 10000,
 		})

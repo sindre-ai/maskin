@@ -4,6 +4,7 @@ import { trackForyouCardAction } from '@/lib/analytics'
 import type { EventResponse } from '@/lib/api'
 import { decisionOfEvent } from '@/lib/comment-decision'
 import { actionIdFromLabel } from '@/lib/foryou-card-kind'
+import { Check } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 
 /**
@@ -85,9 +86,12 @@ export function CommentDecisionBlock({
 
 	if (answer) {
 		return (
-			<p className="text-muted-foreground mt-2 text-xs">
-				Answered: <span className="text-foreground font-semibold">{answer}</span>
-			</p>
+			<div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+				<Check size={13} className="shrink-0 text-success" aria-hidden />
+				<span>
+					Answered: <span className="text-foreground font-semibold">{answer}</span>
+				</span>
+			</div>
 		)
 	}
 

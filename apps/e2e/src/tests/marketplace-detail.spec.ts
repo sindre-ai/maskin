@@ -123,7 +123,7 @@ test.describe('Marketplace detail pages', () => {
 
 		const card = agentsSection
 			.locator('article')
-			.filter({ has: page.getByRole('button', { name: /^install$/i }) })
+			.filter({ has: page.getByRole('button', { name: /^add$/i }) })
 			.first()
 		await expect(card).toBeVisible()
 		const itemName = (await card.locator('h3').first().textContent())?.trim()
@@ -139,11 +139,9 @@ test.describe('Marketplace detail pages', () => {
 		// locator.click() — never auto-scrolls, so the first "not yet installed"
 		// card must be scrolled into view first: with enough marketplace items
 		// already installed in this workspace, it can sit below the fold.
-		// `.first()` is the card's kind eyebrow: a single-type loop card now also
-		// carries a kind chip below the description with the same label, so an
-		// unqualified match is ambiguous. Either element proves the point — both
-		// are inert text under the card's full-bleed overlay link.
-		const chip = card.getByText(/^(Agent|Trigger|Skill|Integration)$/).first()
+		// The description is inert text under the row's full-bleed overlay link,
+		// so clicking it must open the detail page.
+		const chip = card.locator('p').first()
 		await chip.scrollIntoViewIfNeeded()
 		const chipBox = await chip.boundingBox()
 		if (!chipBox) throw new Error('missing chip bounding box')
@@ -168,8 +166,8 @@ test.describe('Marketplace detail pages', () => {
 
 		// The Install button is the one part of the card that must NOT
 		// navigate — it installs the item in place instead of opening it.
-		await stableCard.getByRole('button', { name: /^install$/i }).click()
-		await expect(stableCard.getByText('Installed')).toBeVisible()
+		await stableCard.getByRole('button', { name: /^add$/i }).click()
+		await expect(stableCard.getByText('Added')).toBeVisible()
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/marketplace$`))
 	})
 

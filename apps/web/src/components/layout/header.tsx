@@ -1,5 +1,5 @@
 import { NavSearch } from '@/components/layout/nav-search'
-import { NewMenu, type PrimaryKind } from '@/components/shared/new-menu'
+import { NewMenu } from '@/components/shared/new-menu'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -21,22 +21,17 @@ import { Fragment } from 'react'
 interface RouteConfig {
 	label: string
 	parent?: string
-	// Which create action the split New button's label half runs on this screen
-	// (mockup `newPrimary`). Screens that create nothing in particular fall
-	// through to a new chat.
-	primary?: PrimaryKind
 }
 
 const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/': { label: 'For you' },
 	'/_authed/$workspaceId/search': { label: 'Search' },
-	'/_authed/$workspaceId/objects/': { label: 'Items', primary: 'object' },
+	'/_authed/$workspaceId/objects/': { label: 'Items' },
 	'/_authed/$workspaceId/objects/$objectId': {
 		label: 'Item Details',
 		parent: '/_authed/$workspaceId/objects/',
-		primary: 'object',
 	},
-	'/_authed/$workspaceId/agents/': { label: 'Agents', primary: 'agent' },
+	'/_authed/$workspaceId/agents/': { label: 'Agents' },
 	// Triggers keeps its own list route (deep links and bookmarks still resolve)
 	// even though the v2 nav reaches triggers through Loops. Without an entry
 	// here the screen renders with no title at all.
@@ -44,7 +39,7 @@ const routeConfig: Record<string, RouteConfig> = {
 	// Screens that render their own heading in the page body (Briefing, Chats'
 	// conversation list, the new-chat composer) are deliberately absent — an
 	// entry here would put a second heading of the same name in the nav row.
-	'/_authed/$workspaceId/triggers/': { label: 'Triggers', primary: 'loop' },
+	'/_authed/$workspaceId/triggers/': { label: 'Triggers' },
 	'/_authed/$workspaceId/settings/skills': {
 		label: 'Skills',
 		parent: '/_authed/$workspaceId/settings/',
@@ -91,7 +86,6 @@ const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/triggers/$triggerId': {
 		label: 'Trigger Details',
 		parent: '/_authed/$workspaceId/loops/',
-		primary: 'loop',
 	},
 	// The mockup (1584) shows a middle crumb — `Loops › Not tied to a loop › name`
 	// — but that middle term is the trigger's owning loop, or the literal
@@ -99,16 +93,14 @@ const routeConfig: Record<string, RouteConfig> = {
 	// route, which cannot know either. A hardcoded middle crumb would be wrong on
 	// every loop-owned trigger, so the chain stays `Loops › name`. Restoring it
 	// means letting the page publish its own crumb, since only it has the loop.
-	'/_authed/$workspaceId/loops/': { label: 'Flows', primary: 'loop' },
+	'/_authed/$workspaceId/loops/': { label: 'Flows' },
 	'/_authed/$workspaceId/loops/new': {
 		label: 'New flow',
 		parent: '/_authed/$workspaceId/loops/',
-		primary: 'loop',
 	},
 	'/_authed/$workspaceId/loops/$loopId': {
 		label: 'Flow Details',
 		parent: '/_authed/$workspaceId/loops/',
-		primary: 'loop',
 	},
 	'/_authed/$workspaceId/marketplace/': { label: 'Marketplace' },
 	'/_authed/$workspaceId/marketplace/$loopId/': {
@@ -149,6 +141,7 @@ export function Header() {
 		newMenuPrimaryOverride,
 		newMenuDisabled,
 		hideTitle,
+		gutter,
 	} = usePageHeader()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
@@ -192,7 +185,10 @@ export function Header() {
 	// search, split New button or back arrow competing for the row.
 	if (crumb) {
 		return (
-			<header className="flex flex-none flex-wrap items-center gap-2 border-b border-border px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:px-8 lg:px-7">
+			<header // v16: no rule under the bar; from md the content sits 22px under the buttons (the shell
+				// pads it 32px, so the bar pulls 10px back).
+				className="flex flex-none flex-wrap items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:-mb-2.5 md:px-8 md:pt-5 md:pb-0 lg:px-7"
+			>
 				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
 				<Link
 					to={crumb.parentTo}
@@ -204,6 +200,26 @@ export function Header() {
 				<span aria-hidden="true" className="shrink-0 text-xs text-border-strong">
 					›
 				</span>
+				{crumb.middle && (
+					<>
+						{crumb.middle.to ? (
+							<Link
+								to={crumb.middle.to}
+								params={crumb.middle.params}
+								className="min-w-0 max-w-40 truncate text-xs text-muted-foreground transition-colors hover:text-foreground"
+							>
+								{crumb.middle.label}
+							</Link>
+						) : (
+							<span className="min-w-0 max-w-40 truncate text-xs text-muted-foreground">
+								{crumb.middle.label}
+							</span>
+						)}
+						<span aria-hidden="true" className="shrink-0 text-xs text-border-strong">
+							›
+						</span>
+					</>
+				)}
 				<span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
 					{crumb.label}
 				</span>
@@ -212,7 +228,7 @@ export function Header() {
 				    (mockup 925–946 puts it at `order:10`). */}
 				<NewMenu
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
-					primaryKind={leafConfig?.primary ?? 'chat'}
+					primaryKind="chat"
 					primaryOverride={newMenuPrimaryOverride}
 					disabled={newMenuDisabled}
 				/>
@@ -221,7 +237,14 @@ export function Header() {
 	}
 
 	return (
-		<header className="flex flex-none flex-wrap items-center gap-2 gap-y-1.5 px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-1.5 md:px-8 lg:px-7">
+		<header
+			className={cn(
+				'flex flex-none flex-wrap items-center gap-2 gap-y-1.5 px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-1.5 md:px-8',
+				// v16: the first content row sits 16px under the title (the shell pads it 32px).
+				'md:-mb-5',
+				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
+			)}
+		>
 			<SidebarTrigger className="md:hidden -ml-1 h-[30px] w-[30px] shrink-0" />
 			{isDetail && (
 				<Button
@@ -279,7 +302,7 @@ export function Header() {
 				>
 					{/* hideTitle: a two-pane page draws its own title; the context's
 					    title stays published for the crumb and document title. */}
-					{!hideTitle && <h1 className="page-title truncate">{headingText}</h1>}
+					{!hideTitle && <h1 className="page-title truncate md:py-0.5">{headingText}</h1>}
 					{subtitle && (
 						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
 					)}
@@ -303,7 +326,7 @@ export function Header() {
 				<NewMenu
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
 					hideObjectSection={isObjectDetail}
-					primaryKind={leafConfig?.primary ?? 'chat'}
+					primaryKind="chat"
 					primaryOverride={newMenuPrimaryOverride}
 					disabled={newMenuDisabled}
 				/>

@@ -264,6 +264,33 @@ describe('LoopPlanCard — NEEDS THESE CONNECTED', () => {
 		expect(screen.queryByText(/connect slack to enable/i)).not.toBeInTheDocument()
 	})
 
+	it('blocks Create while a required provider is not connected', () => {
+		render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, { wrapper: TestWrapper })
+		expect(screen.getByRole('button', { name: /create flow/i })).toBeDisabled()
+	})
+
+	it('unblocks Create once the operator skips the missing connection', async () => {
+		const user = userEvent.setup()
+		render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, { wrapper: TestWrapper })
+		await user.click(screen.getByRole('button', { name: /skip for now/i }))
+		expect(screen.getByRole('button', { name: /create flow/i })).toBeEnabled()
+	})
+
+	it('says what runs next once the flow is created', () => {
+		render(<LoopPlanCard {...baseProps({ plan: slackPlan(), created: true, createdId: 'l1' })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText(/next: connect slack so the triggers can fire/i)).toBeInTheDocument()
+	})
+
+	it('enables Create when every required provider is connected', () => {
+		mockIntegrations.mockReturnValue([
+			{ id: 'int-1', provider: 'slack', status: 'active', config: {} },
+		])
+		render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, { wrapper: TestWrapper })
+		expect(screen.getByRole('button', { name: /create flow/i })).toBeEnabled()
+	})
+
 	it('renders a "no integrations required" note when the plan needs nothing', () => {
 		render(<LoopPlanCard {...baseProps()} />, { wrapper: TestWrapper })
 		expect(screen.getByText('NEEDS THESE CONNECTED')).toBeInTheDocument()

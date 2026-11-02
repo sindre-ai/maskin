@@ -10,7 +10,7 @@ import {
 	OtherWorkspaceLink,
 	useOtherWorkspaceLabel,
 } from '@/components/chat/linked-object-reference'
-import { ActorAvatar, getActorInitials } from '@/components/shared/actor-avatar'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
@@ -457,12 +457,13 @@ export function MessageBubble({
 	const canRetryAgent = message.id > 0 && message.kind === 'message'
 	return (
 		<div className="group flex items-start gap-[11px]">
-			<span
-				aria-hidden
-				className="mt-0.5 grid size-[30px] shrink-0 place-items-center rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
-			>
-				{getActorInitials(message.actorName)}
-			</span>
+			<ActorAvatar
+				name={message.actorName}
+				type={message.actorType ?? 'agent'}
+				id={message.actorId}
+				size="md"
+				className="mt-0.5 size-[30px] shrink-0 rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
+			/>
 			<div className={cn('relative min-w-0 flex-1', spawnInfo && 'pr-2')}>
 				{spawnInfo ? (
 					// S2 · agent-side messages can also spawn sessions (an agent that
@@ -497,7 +498,7 @@ export function MessageBubble({
 					<div className="mt-1.5">{liftedAttachments ?? fileList}</div>
 				) : null}
 				{message.content.length > 0 ? (
-					<div className="mt-0.5 text-[15px] leading-[1.4] [&_p]:text-[15px] [&_p]:leading-[1.4]">
+					<div className="mt-0.5 text-base leading-[1.45] [&_li]:text-foreground [&_p]:text-base [&_p]:leading-[1.45] [&_p]:text-foreground">
 						{/* `renderVisuals` turns a ```chart fenced block into the bounded
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
@@ -554,6 +555,7 @@ export function MessageBubble({
 					<KeychainRequestCard
 						workspaceId={workspaceId}
 						conversationId={message.conversationId}
+						messageId={message.id}
 						messageCreatedAt={message.createdAt}
 						askingAgentId={message.actorId}
 						request={message.metadata.keychain_request}

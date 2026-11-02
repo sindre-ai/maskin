@@ -57,7 +57,7 @@ function ChatsListTitle() {
 
 // Cancels MainScrollArea's padding (`px-4 pt-4`, `md:px-8 md:py-8`, `lg:px-7`
 // in `$workspaceId.tsx`) so the split pane runs edge to edge. Keep in step.
-const SHELL_BLEED = '-mx-4 -my-4 md:-mx-8 md:-my-8 lg:-mx-7'
+const SHELL_BLEED = '-mx-4 -my-4 md:-mx-8 md:-mt-3 md:-mb-8 lg:-mx-7'
 
 function ChatsLayout() {
 	const { workspaceId } = useWorkspace()

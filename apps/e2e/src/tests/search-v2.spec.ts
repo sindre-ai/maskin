@@ -66,23 +66,28 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page).toHaveURL(new RegExp(`q=${TOKEN}`))
 			await expect(page).toHaveURL(/types=agent/)
 
-			// Counts come from the endpoint: one agent, one result.
-			const typeChips = page.getByRole('group', { name: 'Filter by type' })
-			await expect(typeChips.getByRole('button', { name: 'Agents (1)' })).toBeVisible({
-				timeout: 20_000,
-			})
-			await expect(page.getByText(/^1 result for/)).toBeVisible()
+			// Counts live inside the Type menu and come from the endpoint: one agent, one result.
+			const typePill = page.getByRole('button', { name: 'Type: Agents' })
+			await expect(page.getByText(/^1 result for/)).toBeVisible({ timeout: 20_000 })
 			await expect(page.getByRole('option', { name: new RegExp(`${TOKEN} Agent`) })).toBeVisible()
+			await typePill.click()
+			await expect(
+				page.getByRole('menuitemcheckbox', { name: 'Agents' }).filter({ hasText: '1' }),
+			).toBeVisible()
+			await page.keyboard.press('Escape')
 
-			// Chips are 44px on touch viewports and reachable by keyboard.
-			const chipBox = await typeChips.getByRole('button', { name: 'Agents (1)' }).boundingBox()
-			expect(chipBox?.height).toBeGreaterThanOrEqual(44)
-			await typeChips.getByRole('button', { name: 'Agents (1)' }).focus()
-			await expect(typeChips.getByRole('button', { name: 'Agents (1)' })).toBeFocused()
+			// Pills are 44px on touch widths (under md), 34px for a mouse at md and up, and reachable by keyboard.
+			const pillBox = await typePill.boundingBox()
+			expect(pillBox?.height).toBeGreaterThanOrEqual(
+				(page.viewportSize()?.width ?? 0) < 768 ? 44 : 34,
+			)
+			await typePill.focus()
+			await expect(typePill).toBeFocused()
 
-			// The status row narrows by group. An idle agent is In progress.
-			const statusChips = page.getByRole('group', { name: 'Filter by status' })
-			await statusChips.getByRole('button', { name: /^In progress/ }).click()
+			// The Status pill narrows by group. An idle agent is In progress.
+			await page.getByRole('button', { name: 'Status' }).click()
+			await page.getByRole('menuitemcheckbox', { name: 'In progress' }).click()
+			await page.keyboard.press('Escape')
 			await expect(page).toHaveURL(/statuses=in_progress/)
 
 			// A reload restores the same view.

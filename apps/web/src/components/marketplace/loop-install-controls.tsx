@@ -4,6 +4,7 @@ import { Link } from '@tanstack/react-router'
 import { Check } from 'lucide-react'
 import { useState } from 'react'
 import { InstallButton } from './install-button'
+import { ROW_ACTION_CLASS, RowPill } from './marketplace-row'
 import { UninstallDialog } from './uninstall-dialog'
 
 interface LoopInstallControlsProps {
@@ -13,6 +14,8 @@ interface LoopInstallControlsProps {
 	/** Marketplace surface; the detail page passes `'detail'` so its installs
 	 * carry a `source` marker on `loop_installed`. Catalogue default: absent. */
 	source?: 'detail'
+	/** Catalogue row (v16): state pills + one outline action (Add / Open) on one line. */
+	row?: boolean
 }
 
 /** Install/Manage action cluster for a marketplace loop — shared by the catalog
@@ -25,10 +28,63 @@ export function LoopInstallControls({
 	loop,
 	install,
 	source,
+	row = false,
 }: LoopInstallControlsProps) {
 	const [uninstallOpen, setUninstallOpen] = useState(false)
 	const locked = install?.isLocked ?? false
 	const forked = install ? !install.isLocked : false
+
+	if (row) {
+		return (
+			<>
+				{install && locked && install.hasUpdate ? (
+					<RowPill tone="tint">v{install.availableVersion} available</RowPill>
+				) : null}
+				{install ? <RowPill>{forked ? 'Forked' : 'Added'}</RowPill> : null}
+				{install ? (
+					install.objectId ? (
+						<Button asChild size="sm" variant="outline" className={ROW_ACTION_CLASS}>
+							<Link
+								to="/$workspaceId/loops/$loopId"
+								params={{ workspaceId, loopId: install.objectId }}
+							>
+								Open
+							</Link>
+						</Button>
+					) : (
+						// Older installs carry no provisioned flow, so Open has nowhere to go.
+						<Button
+							size="sm"
+							variant="outline"
+							className={ROW_ACTION_CLASS}
+							onClick={() => setUninstallOpen(true)}
+						>
+							Remove
+						</Button>
+					)
+				) : (
+					<InstallButton
+						workspaceId={workspaceId}
+						loopId={loop.id}
+						label="Add"
+						variant="outline"
+						className={ROW_ACTION_CLASS}
+						source={source}
+					/>
+				)}
+				{install ? (
+					<UninstallDialog
+						open={uninstallOpen}
+						onOpenChange={setUninstallOpen}
+						workspaceId={workspaceId}
+						installedLoopId={install.id}
+						loopName={loop.name}
+						isLocked={locked}
+					/>
+				) : null}
+			</>
+		)
+	}
 
 	return (
 		<>

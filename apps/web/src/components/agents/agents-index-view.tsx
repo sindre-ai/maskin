@@ -2,6 +2,7 @@ import { AgentCallButton } from '@/components/agents/agent-call-button'
 import {
 	AgentStatusPill,
 	type PortraitStatus,
+	agentAvatarStatus,
 	agentTileClass,
 	describeFocus,
 	getPortraitStatus,
@@ -664,7 +665,7 @@ function AgentRowItem({
 
 	return (
 		// A hairline under every row; the whole row is the click target (mockup 15).
-		<li className="group/row flex items-center border-b border-border-subtle px-2">
+		<li className="group/row flex items-center border-b border-border-subtle px-2 first:border-t">
 			<Link
 				to="/$workspaceId/agents/$agentId"
 				params={{ workspaceId, agentId: agent.id }}
@@ -675,6 +676,7 @@ function AgentRowItem({
 					type={agent.type}
 					size="md"
 					id={agent.id}
+					status={agentAvatarStatus(portrait)}
 					className={cn(
 						'size-8 shrink-0 rounded-lg text-[11px] font-bold',
 						agentTileClass(portrait),
@@ -729,7 +731,7 @@ function AgentRowItem({
 						type="button"
 						variant="ghost"
 						size="icon"
-						className="mx-1 size-7 shrink-0 text-muted-foreground"
+						className="mx-1 size-7 shrink-0 text-muted-foreground/60 hover:text-foreground"
 						aria-label={`More for ${agent.name}`}
 					>
 						<Ellipsis size={16} aria-hidden />
@@ -764,7 +766,7 @@ function AgentRowItem({
 			{portrait === 'failed' ? (
 				<Button
 					asChild
-					variant="secondary"
+					variant="outline"
 					className="h-[30px] w-16 shrink-0 rounded-full px-0 text-[13px] font-semibold"
 				>
 					<Link to="/$workspaceId/agents/$agentId" params={{ workspaceId, agentId: agent.id }}>

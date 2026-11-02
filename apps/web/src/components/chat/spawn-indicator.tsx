@@ -114,7 +114,7 @@ export function SpawnChip({ info, className }: { info: MessageSpawnInfo; classNa
 	return (
 		<span
 			className={cn(
-				'inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-sunken px-2 py-0.5 text-[10.5px] font-medium text-muted-foreground',
+				'inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-[11px] font-medium text-muted-foreground',
 				className,
 			)}
 			data-testid="spawn-chip"

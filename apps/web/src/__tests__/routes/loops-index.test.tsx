@@ -30,6 +30,7 @@ vi.mock('@/hooks/use-actors', () => ({
 const mockUseWorkspaceSessions = vi.fn()
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: () => mockUseWorkspaceSessions(),
+	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 const mockUseConversations = vi.fn()
@@ -239,20 +240,25 @@ describe('LoopsPage', () => {
 		expect(screen.getByText('No flows running here yet')).toBeInTheDocument()
 	})
 
-	it('shows an attention chip that narrows the list to loops waiting on you', async () => {
-		const user = userEvent.setup()
+	it('says in plain text how many flows need you, with a clause per flow that says why', () => {
 		mockUseLoops.mockReturnValue({
 			data: [
-				buildLoop({ id: 'l-wait', name: 'Needs a decision', pill: 'waiting_on_you' }),
+				buildLoop({
+					id: 'l-wait',
+					name: 'Needs a decision',
+					pill: 'waiting_on_you',
+					waitingCount: 2,
+				}),
 				buildLoop({ id: 'l-calm', name: 'Calm flow' }),
 			],
 			isLoading: false,
 		})
 		render(<LoopsPage />)
 
-		await user.click(screen.getByRole('button', { name: /1 needs you/ }))
-		expect(screen.getByText('Needs a decision')).toBeInTheDocument()
-		expect(screen.queryByText('Calm flow')).not.toBeInTheDocument()
+		const brief = screen.getByTestId('flows-brief')
+		expect(brief).toHaveTextContent('1 of 2 flows need you.')
+		expect(brief).toHaveTextContent('Needs a decision: 2 items wait for you.')
+		expect(brief).not.toHaveTextContent('Calm flow')
 	})
 
 	it('groups loops under their first tag, A to Z, untagged last', () => {

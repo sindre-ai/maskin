@@ -432,3 +432,43 @@ describe('FeedCard — mention author vs object driver', () => {
 		expect(screen.queryByText('Waiting on Magnus')).not.toBeInTheDocument()
 	})
 })
+
+describe('FeedCard — Later', () => {
+	it('offers no Later control unless the route wires it', () => {
+		renderCard()
+		expect(screen.queryByRole('button', { name: 'Later' })).not.toBeInTheDocument()
+	})
+
+	it('opens the times, says it is this browser only, and reports the pick', async () => {
+		const onLater = vi.fn()
+		const user = userEvent.setup()
+		renderCard({ onLater })
+
+		await user.click(screen.getByRole('button', { name: 'Later' }))
+		expect(screen.getByText('Only you are reminded. This browser only.')).toBeInTheDocument()
+		await user.click(screen.getByRole('menuitem', { name: 'Tomorrow, 08:00' }))
+
+		expect(onLater).toHaveBeenCalledTimes(1)
+		expect(onLater.mock.calls[0]?.[0]).toMatchObject({ label: 'Tomorrow, 08:00' })
+		expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+	})
+
+	it('offers no Later on a card with nothing to decide', () => {
+		const item = buildItem({ latest_mention: buildMention({ decision: undefined }) })
+		renderCard({ item, onLater: vi.fn() })
+		expect(screen.queryByRole('button', { name: 'Later' })).not.toBeInTheDocument()
+	})
+
+	it('shows a set-aside card as one row that brings it back', async () => {
+		const onBringBack = vi.fn()
+		const user = userEvent.setup()
+		renderCard({ laterLabel: 'Tomorrow, 08:00', onBringBack })
+
+		expect(
+			screen.getByText('Later · back tomorrow, 08:00 · only you are reminded, this browser only'),
+		).toBeInTheDocument()
+		expect(screen.queryByTestId('comment-input')).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: /bring back/i }))
+		expect(onBringBack).toHaveBeenCalledTimes(1)
+	})
+})

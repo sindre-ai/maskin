@@ -79,7 +79,7 @@ describe('New chat — group-chat cue', () => {
 		await addRecipient(user, 'Forge')
 		await addRecipient(user, 'Sentinel')
 
-		expect(box()).toHaveAttribute('placeholder', 'Message this conversation')
+		expect(box()).toHaveAttribute('placeholder', 'Message · @ to mention')
 		expect(screen.getByText('No agent will reply. Tag one with @.')).toBeInTheDocument()
 	})
 

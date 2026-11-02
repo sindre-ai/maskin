@@ -1,4 +1,5 @@
 import { DeleteWorkspaceDialog } from '@/components/settings/delete-workspace-dialog'
+import { SettingsLinkRow } from '@/components/settings/settings-link-row'
 import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
@@ -72,6 +73,8 @@ function GeneralPage() {
 			<DefaultWorkspaceSection />
 			<ThemePicker />
 			<PrivacySection />
+			<WorkspaceToolsSection />
+			{getStoredActor()?.type === 'human' && <DevicesSection />}
 
 			{workspace.billingOwnerId !== null && workspace.billingOwnerId === getStoredActor()?.id && (
 				<DangerSection />
@@ -121,6 +124,33 @@ function SettingsRow({
 			</div>
 			{children ? <div className="shrink-0">{children}</div> : null}
 		</div>
+	)
+}
+
+function WorkspaceToolsSection() {
+	const { workspaceId } = useWorkspace()
+	return (
+		<SettingsSection title="Workspace tools">
+			<SettingsLinkRow
+				title="Triggers"
+				description="Every trigger, including ones not tied to a flow"
+				to="/$workspaceId/triggers"
+				params={{ workspaceId }}
+			/>
+		</SettingsSection>
+	)
+}
+
+function DevicesSection() {
+	return (
+		<SettingsSection title="Devices">
+			<SettingsLinkRow
+				title="Sign in a device"
+				description="Apple TV, Mac or a maskin://connect link"
+				to="/tv"
+				search={{ code: '' }}
+			/>
+		</SettingsSection>
 	)
 }
 

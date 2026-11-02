@@ -1,13 +1,11 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Skeleton } from '@/components/shared/loading-skeleton'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
 	type WorkspaceModelUsage,
 	type WorkspaceUsageRow,
 	useWorkspaceModelUsage,
 } from '@/hooks/use-workspace-model-usage'
 import { cn } from '@/lib/cn'
-import { useState } from 'react'
 
 /**
  * Model usage for the billing page (mockup 2803–2813 and 2841–2858).
@@ -95,14 +93,12 @@ export function BillingUsageSummary({ usage }: { usage: WorkspaceModelUsage }) {
 }
 
 /**
- * "Usage details and limits" disclosure (mockup 2841–2858) — one row per agent
+ * "Usage details" list (mockup 2841–2858, v3 3l "By agent") — one row per agent
  * that ran this month, its share of the total, and the workspace total. The
  * mockup's usage-limit control below the rows has no endpoint to write to, so
  * it is not rendered.
  */
 export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
-	const [open, setOpen] = useState(false)
-
 	const summary = usage.isLoading
 		? 'loading…'
 		: usage.isError
@@ -114,17 +110,19 @@ export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
 				: 'no agent sessions this month'
 
 	return (
-		<Collapsible open={open} onOpenChange={setOpen} className="border-t border-border pt-4">
-			<CollapsibleTrigger className="flex w-full items-center gap-3 text-left transition-opacity hover:opacity-70">
-				<span className="min-w-0 flex-1">
-					<span className="block text-[12.5px] font-semibold text-foreground">Usage details</span>
-					<span className="block text-xs text-muted-foreground">{summary}</span>
+		<section aria-labelledby="billing-usage-heading" className="border-t border-border pt-4">
+			<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+				<h2 id="billing-usage-heading" className="text-[13px] font-semibold text-foreground">
+					Usage details
+				</h2>
+				{/* The split is by agent only: usage is recorded per actor, so there is no
+				    per-model or per-flow breakdown to show yet. */}
+				<span className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">
+					By agent
 				</span>
-				<span className="shrink-0 text-xs font-semibold text-muted-foreground">
-					{open ? 'Hide' : 'Show'}
-				</span>
-			</CollapsibleTrigger>
-			<CollapsibleContent className="pt-4">
+				<span className="text-xs text-muted-foreground">{summary}</span>
+			</div>
+			<div className="pt-4">
 				<div className="pb-3 empty:hidden">
 					<IncompleteUsageNotice usage={usage} />
 				</div>
@@ -149,8 +147,8 @@ export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
 							: 'No agent has finished a session this month, so there is nothing to break down yet.'}
 					</p>
 				)}
-			</CollapsibleContent>
-		</Collapsible>
+			</div>
+		</section>
 	)
 }
 
@@ -159,30 +157,32 @@ function UsageRow({ row, total }: { row: WorkspaceUsageRow; total: number }) {
 	const pct = Math.round(share * 100)
 
 	return (
-		<div className="flex items-center gap-3 border-b border-border py-3 last:border-b-0">
+		<div className="flex items-start gap-3 border-b border-border py-3 last:border-b-0">
 			<ActorAvatar name={row.name} type={row.type} size="md" id={row.id} className="shrink-0" />
-			<span className="min-w-0 flex-1">
-				<span className="block truncate text-[12.5px] font-semibold text-foreground">
-					{row.name}
-				</span>
+			<div className="min-w-0 flex-1">
+				<div className="flex items-baseline gap-3">
+					<span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
+						{row.name}
+					</span>
+					<span className="shrink-0 text-[13px] font-semibold tabular-nums text-foreground">
+						{formatUsd(row.costUsd)}
+					</span>
+				</div>
 				<span className="block text-[11px] text-muted-foreground">
 					{row.sessions} session{row.sessions === 1 ? '' : 's'} · {compactTokens.format(row.tokens)}{' '}
 					tokens
 				</span>
-			</span>
-			<span
-				className="hidden h-[5px] w-[84px] shrink-0 overflow-hidden rounded-full bg-muted sm:block"
-				title={`${pct}% of this month's model usage`}
-			>
 				<span
-					aria-hidden
-					className={cn('block h-full rounded-full bg-primary')}
-					style={{ width: `${pct}%` }}
-				/>
-			</span>
-			<span className="w-[58px] shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-foreground">
-				{formatUsd(row.costUsd)}
-			</span>
+					className="mt-1.5 block h-1 overflow-hidden rounded-full bg-muted"
+					title={`${pct}% of this month's model usage`}
+				>
+					<span
+						aria-hidden
+						className="block h-full rounded-full bg-primary"
+						style={{ width: `${pct}%` }}
+					/>
+				</span>
+			</div>
 		</div>
 	)
 }

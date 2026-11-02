@@ -3,7 +3,7 @@ import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
-import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -185,7 +185,7 @@ function MarketplaceRoute() {
 
 			<nav
 				aria-label="Marketplace filters"
-				className="mb-5 flex flex-col gap-2 md:flex-row md:items-center"
+				className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-start"
 			>
 				<div className="min-w-0 flex-1" data-testid="marketplace-filter-chips">
 					<ChipStrip
@@ -225,14 +225,7 @@ function MarketplaceRoute() {
 						onRetry={refetch ? () => refetch() : undefined}
 					/>
 				) : isLoading ? (
-					<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-					</div>
+					<ListSkeleton rows={8} />
 				) : isMarketplaceEmpty ? (
 					<EmptyState
 						title="No flows yet"
@@ -291,11 +284,13 @@ function ChipStrip({
 	return (
 		<FilterTabs
 			aria-label="Catalog filters"
-			variant="pill"
+			variant="chip"
 			tabs={tabs}
 			value={active}
 			onChange={(value) => onSelect(value)}
-			className="pb-1 max-sm:[&>button]:min-h-11"
+			// v16 wraps the chips onto further lines; below md they stay one
+			// scrollable strip so the list is not pushed down the phone screen.
+			className="pb-1 md:flex-wrap md:overflow-x-visible md:pb-0 max-md:[&>button]:min-h-11"
 		/>
 	)
 }

@@ -7,6 +7,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { ApiError } from '@/lib/api'
+import { type ObjectDetailTab, parseObjectDetailTab } from '@/lib/object-detail-tab'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
@@ -15,11 +16,19 @@ import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')({
 	component: ObjectDetailPage,
+	// `?tab=related` opens a tab directly; anything else is the Overview.
+	validateSearch: (search: Record<string, unknown>): { tab?: ObjectDetailTab } => ({
+		tab: parseObjectDetailTab(search.tab),
+	}),
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
+	const { tab } = Route.useSearch()
+	const navigateTab = Route.useNavigate()
+	const onTabChange = (next: ObjectDetailTab) =>
+		navigateTab({ search: { tab: next === 'overview' ? undefined : next }, replace: true })
 	const { workspaceId, workspace } = useWorkspace()
 	// Derive default statuses from workspace settings (first status per type)
 	const settings = workspace.settings as Record<string, unknown>
@@ -97,7 +106,7 @@ function ObjectDetailPage() {
 
 	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
-		return <ObjectDetailShell object={object} />
+		return <ObjectDetailShell object={object} tab={tab} onTabChange={onTabChange} />
 	}
 
 	// Create mode — show form with document-like sections

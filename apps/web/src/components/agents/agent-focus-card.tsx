@@ -39,7 +39,7 @@ function FocusPlate({
 			role={role}
 			data-testid={testId}
 			className={cn(
-				'flex flex-col gap-3 rounded-2xl px-[18px] py-3.5 sm:flex-row sm:items-center',
+				'flex flex-col gap-3 rounded-2xl px-[18px] py-4 leading-tight sm:flex-row sm:items-center',
 				tone === 'live' ? 'bg-status-in_progress-bg' : 'bg-muted',
 			)}
 		>
@@ -104,7 +104,7 @@ export function AgentFailedBanner({
 						<ViewerTooltip>
 							<Button
 								size="sm"
-								className="h-9 rounded-full px-4 text-[13px] font-semibold"
+								className="h-[30px] rounded-full px-4 text-[13px] font-semibold"
 								onClick={retry}
 								disabled={createSession.isPending || !canWrite}
 							>
@@ -115,7 +115,7 @@ export function AgentFailedBanner({
 					<Button
 						size="sm"
 						variant="outline"
-						className="h-9 rounded-full bg-background px-4 text-[13px] font-semibold"
+						className="h-[30px] rounded-full bg-background px-4 text-[13px] font-semibold"
 						onClick={onSeeLog}
 					>
 						See log
@@ -158,7 +158,7 @@ export function AgentWorkingNowCard({
 					<Button
 						size="sm"
 						variant="ghost"
-						className="px-3 text-sm font-semibold text-brand hover:bg-transparent hover:text-brand-hover"
+						className="h-[30px] px-3 text-sm font-semibold text-brand hover:bg-transparent hover:text-brand-hover"
 						onClick={onWatch}
 					>
 						Watch
@@ -166,7 +166,7 @@ export function AgentWorkingNowCard({
 					<Button
 						size="sm"
 						variant="ghost"
-						className="px-3 text-sm font-semibold hover:bg-transparent"
+						className="h-[30px] px-3 text-sm font-semibold hover:bg-transparent"
 						onClick={onMessage}
 					>
 						Message
@@ -175,7 +175,7 @@ export function AgentWorkingNowCard({
 						<Button
 							size="sm"
 							variant="ghost"
-							className="px-3 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground"
+							className="h-[30px] px-3 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground"
 							onClick={() => stop.mutate(session.id)}
 							disabled={stop.isPending || !canWrite}
 						>

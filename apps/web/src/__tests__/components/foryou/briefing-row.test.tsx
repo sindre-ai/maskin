@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -72,6 +72,18 @@ describe('BriefingRow', () => {
 		expect(screen.queryByTestId('briefing-row')).toBeNull()
 	})
 
+	it('draws no "Briefings" heading above the tiles', () => {
+		renderRow()
+		expect(screen.queryByRole('heading', { name: /briefings/i })).toBeNull()
+	})
+
+	it('marks an unseen tile with a NEW pill and draws no kind label', () => {
+		renderRow()
+		const tiles = screen.getAllByTestId('briefing-card')
+		expect(within(tiles[0]).getByText('New')).toBeInTheDocument()
+		expect(within(tiles[0]).queryByText('Briefing')).toBeNull()
+	})
+
 	it('shows one card per briefing, titled by its page, marked new', () => {
 		renderRow()
 		expect(
@@ -117,6 +129,20 @@ describe('BriefingRow', () => {
 		await user.click(screen.getByRole('button', { name: 'Previous briefing' }))
 
 		expect(screen.getByText(/1 of 2/)).toBeInTheDocument()
+	})
+
+	it('"Ask about this slide" fills the existing composer with the slide and sends nothing', async () => {
+		const user = userEvent.setup()
+		renderRow()
+		await user.click(screen.getByRole('button', { name: /Two bets stalled/ }))
+
+		await user.click(screen.getByRole('button', { name: /ask about this slide/i }))
+
+		const box = screen.getByRole('textbox', { name: 'Talk about this briefing' })
+		expect(box).toHaveValue('About "Two bets stalled; one needs your call" (briefing 1 of 2): ')
+		await waitFor(() => expect(box).toHaveFocus())
+		expect(screen.getAllByRole('textbox', { name: 'Talk about this briefing' })).toHaveLength(1)
+		expect(mockCreateConversation).not.toHaveBeenCalled()
 	})
 
 	it('"Tell me more" sends the question to the author with the page attached, then opens the chat', async () => {

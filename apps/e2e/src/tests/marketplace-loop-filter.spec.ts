@@ -42,34 +42,45 @@ test.describe('Marketplace loop filter', () => {
 			const title = page.getByRole('heading', { level: 1, name: 'Marketplace' })
 			const titleBox = await title.boundingBox()
 			if (!titleBox) throw new Error('missing title bounding box')
-			await expect(title).toHaveCSS('font-size', viewport.width >= 768 ? '34px' : '24px')
+			// The shared page title scale: 34px from 1024, 28px at 768, 24px below.
+			await expect(title).toHaveCSS(
+				'font-size',
+				viewport.width >= 1024 ? '34px' : viewport.width >= 768 ? '28px' : '24px',
+			)
 
 			const typeChips = page.getByTestId('marketplace-filter-chips')
 			const chipBox = await typeChips.boundingBox()
 			if (!chipBox) throw new Error('missing chip bounding box')
 
-			expect(Math.abs(chipBox.x - titleBox.x)).toBeLessThanOrEqual(1)
+			// From 768 the title and the chips start on one left edge (on a phone the
+			// header leads with the sidebar toggle, so the title sits right of it).
+			if (viewport.width >= 768) {
+				expect(Math.abs(chipBox.x - titleBox.x)).toBeLessThanOrEqual(1)
+			}
 
-			if (viewport.width < 768) {
-				// Mobile: the filter chip row sits above the (now full-width, stacked) search input.
-				expect(chipBox.y + chipBox.height).toBeLessThanOrEqual(filterBox.y + 1)
-				expect(filterBox.width).toBeGreaterThan(viewport.width * 0.85)
+			// The visible box of the search field is its pill (the label around the input).
+			const pill = await visibleFilter.locator('xpath=ancestor::label').boundingBox()
+			if (!pill) throw new Error('missing filter pill bounding box')
+
+			if (viewport.width < 1024) {
+				// Phone and iPad portrait: the chip row sits above the stacked search field.
+				expect(chipBox.y + chipBox.height).toBeLessThanOrEqual(pill.y + 1)
+				if (viewport.width < 768) expect(pill.width).toBeGreaterThan(viewport.width * 0.85)
 			} else {
-				// Desktop / tablet: filter shares a row with the chip strip (type and
+				// Desktop / iPad landscape: filter shares a row with the chip strip (type and
 				// use-case filters are a single combined list), sits to its right, above
 				// the grid, right-aligned at ~320px. Uses the chip-row wrapper's clipped
 				// bounding box, not an individual chip's, since the wrapper is
 				// overflow-x-auto and a single chip's layout box can exceed the visible
 				// clipped region.
-				expect(
-					Math.abs(filterBox.y + filterBox.height / 2 - (chipBox.y + chipBox.height / 2)),
-				).toBeLessThan(4)
-				expect(filterBox.x).toBeGreaterThan(chipBox.x + chipBox.width)
-				expect(filterBox.y + filterBox.height).toBeLessThanOrEqual(loopsBox.y + 1)
-				expect(Math.round(filterBox.width)).toBeGreaterThanOrEqual(300)
-				expect(Math.round(filterBox.width)).toBeLessThanOrEqual(340)
+				// The chips wrap onto further lines (v16), so the filter lines up with
+				// the first chip line, not the middle of the whole strip.
+				expect(Math.abs(pill.y - chipBox.y)).toBeLessThan(4)
+				expect(pill.x).toBeGreaterThan(chipBox.x + chipBox.width - 1)
+				expect(pill.y + pill.height).toBeLessThanOrEqual(loopsBox.y + 1)
+				expect(Math.round(pill.width)).toBe(288)
 				const loopsRight = loopsBox.x + loopsBox.width
-				const filterRight = filterBox.x + filterBox.width
+				const filterRight = pill.x + pill.width
 				expect(Math.abs(loopsRight - filterRight)).toBeLessThan(24)
 			}
 		})

@@ -1,4 +1,5 @@
 import {
+	askAboutSlideDraft,
 	briefingChatAttachments,
 	briefingHeadline,
 	isBriefingSeen,
@@ -138,5 +139,17 @@ describe('tellMeMoreMessage', () => {
 		expect(tellMeMoreMessage('Two bets stalled')).toBe(
 			'Tell me more about this briefing: "Two bets stalled"',
 		)
+	})
+})
+
+describe('askAboutSlideDraft', () => {
+	it('names the slide and where it sits in the row', () => {
+		expect(askAboutSlideDraft('Two bets stalled', 2, 5)).toBe(
+			'About "Two bets stalled" (briefing 2 of 5): ',
+		)
+	})
+
+	it('leaves out the position when there is only one briefing', () => {
+		expect(askAboutSlideDraft('Two bets stalled', 1, 1)).toBe('About "Two bets stalled": ')
 	})
 })

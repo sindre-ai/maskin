@@ -10,6 +10,7 @@ import { type LoopPlan, describeLoopPlan, summariseLoopPlan } from '@/lib/loop-p
 import { getRequiredIntegrationsForPlan } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Check, Plus } from 'lucide-react'
+import { useState } from 'react'
 
 export function defaultLoopName(plan: LoopPlan): string {
 	const base = plan.objectTypes[0]?.name ?? 'Flow'
@@ -38,6 +39,61 @@ function NewBadge({ children }: { children: string }) {
 	)
 }
 
+/** Providers the plan needs that this workspace has not connected yet, by
+ *  display name. Shared by the pinned row, the footer line and the Create gate
+ *  so all three always agree. */
+function useMissingIntegrations(plan: LoopPlan, workspaceId: string) {
+	const { data: providers } = useProviders()
+	const { data: integrations } = useIntegrations(workspaceId)
+	const providerByName = new Map((providers ?? []).map((p) => [p.name, p]))
+	const connectedNames = new Set(
+		(integrations ?? []).filter((row) => row.status === 'active').map((row) => row.provider),
+	)
+	const known = getRequiredIntegrationsForPlan(plan.triggers).filter((name) =>
+		providerByName.has(name),
+	)
+	const missing = known
+		.filter((name) => !connectedNames.has(name))
+		.map((name) => providerByName.get(name)?.displayName ?? name)
+	return { known, missing, providerByName, connectedNames }
+}
+
+/** The plan as a numbered run of steps: what fires, who does it, and the one
+ *  place it stops for the operator (mockup 3f). */
+function StepDiagram({ plan }: { plan: LoopPlan }) {
+	if (plan.triggers.length === 0 && !plan.stopForOperator) return null
+	return (
+		<ol aria-label="Steps" className="flex flex-col gap-2 border-b border-border px-5 py-4">
+			{plan.triggers.map((t, i) => (
+				<li
+					// biome-ignore lint/suspicious/noArrayIndexKey: plan-derived triggers have no stable id and order is deterministic
+					key={i}
+					className="flex items-start gap-2.5"
+				>
+					<span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-muted font-mono text-[10px] font-bold text-muted-foreground">
+						{i + 1}
+					</span>
+					<span className="min-w-0 text-xs leading-relaxed text-foreground">
+						<span className="font-semibold">{t.targetAgent}</span>{' '}
+						<span className="text-muted-foreground">
+							{t.thenWrites
+								.map((w) => `${w.act.replace('_', ' ')} ${w.type ?? ''}`.trim())
+								.join(', ')}
+						</span>
+					</span>
+				</li>
+			))}
+			{plan.stopForOperator && (
+				<li className="flex items-start gap-2.5">
+					<span className="inline-flex shrink-0 items-center rounded-md bg-ask-surface px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-foreground ring-1 ring-ask-border">
+						Stops for you
+					</span>
+				</li>
+			)}
+		</ol>
+	)
+}
+
 export interface LoopPlanCardProps {
 	plan: LoopPlan
 	onCreate: () => void
@@ -58,6 +114,9 @@ export function LoopPlanCard({
 	workspaceId,
 }: LoopPlanCardProps) {
 	const canWrite = useCanWrite()
+	const { missing } = useMissingIntegrations(plan, workspaceId)
+	const [skipped, setSkipped] = useState(false)
+	const blocked = missing.length > 0 && !skipped
 	const title = created ? 'Flow created' : defaultLoopName(plan)
 	return (
 		<div className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
@@ -73,7 +132,16 @@ export function LoopPlanCard({
 				<p className="text-xs leading-relaxed text-muted-foreground">
 					{created ? CREATED_DESCRIPTION : describeLoopPlan(plan)}
 				</p>
+				{created && (
+					<p className="text-xs font-semibold leading-relaxed text-foreground">
+						{missing.length > 0
+							? `Next: connect ${missing.join(', ')} so the triggers can fire.`
+							: 'Next: open the flow and attach its triggers.'}
+					</p>
+				)}
 			</div>
+
+			{!created && <StepDiagram plan={plan} />}
 
 			<div className="flex max-h-[50vh] flex-col gap-5 overflow-y-auto px-5 py-4 lg:max-h-[60vh]">
 				<section>
@@ -213,16 +281,21 @@ export function LoopPlanCard({
 						</div>
 					</section>
 				)}
-
-				{plan.triggers.length > 0 && (
-					<NeedsConnectedSection plan={plan} workspaceId={workspaceId} />
-				)}
 			</div>
+
+			{!created && plan.triggers.length > 0 && (
+				<NeedsConnectedSection
+					plan={plan}
+					workspaceId={workspaceId}
+					skipped={skipped}
+					onSkip={() => setSkipped(true)}
+				/>
+			)}
 
 			<div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted px-5 py-3.5">
 				{created ? (
 					<>
-						<Button size="sm" asChild>
+						<Button size="sm" className="max-md:min-h-11" asChild>
 							<Link
 								to="/$workspaceId/loops/$loopId"
 								params={{ workspaceId, loopId: createdId ?? '' }}
@@ -230,18 +303,29 @@ export function LoopPlanCard({
 								Open flow
 							</Link>
 						</Button>
-						<Button size="sm" variant="ghost" onClick={onStartOver}>
+						<Button size="sm" variant="ghost" className="max-md:min-h-11" onClick={onStartOver}>
 							Start over
 						</Button>
 					</>
 				) : (
 					<>
-						<V4FooterSummary plan={plan} workspaceId={workspaceId} />
-						<Button size="sm" variant="ghost" onClick={onStartOver} disabled={creating}>
+						<FooterSummary plan={plan} workspaceId={workspaceId} />
+						<Button
+							size="sm"
+							variant="ghost"
+							className="max-md:min-h-11"
+							onClick={onStartOver}
+							disabled={creating}
+						>
 							Start over
 						</Button>
 						<ViewerTooltip>
-							<Button size="sm" onClick={onCreate} disabled={creating || !canWrite}>
+							<Button
+								size="sm"
+								className="max-md:min-h-11"
+								onClick={onCreate}
+								disabled={creating || !canWrite || blocked}
+							>
 								{creating ? (
 									'Creating…'
 								) : (
@@ -271,22 +355,25 @@ export function LoopPlanCard({
  * chip auto-flips to ✓ connected on return via TanStack Query's window-focus
  * refetch (no page reload of /loops/new).
  */
-function NeedsConnectedSection({ plan, workspaceId }: { plan: LoopPlan; workspaceId: string }) {
-	const providerRefs = getRequiredIntegrationsForPlan(plan.triggers)
-	const { data: providers } = useProviders()
-	const { data: integrations } = useIntegrations(workspaceId)
-	const providerByName = new Map((providers ?? []).map((p) => [p.name, p]))
-	const connectedNames = new Set(
-		(integrations ?? []).filter((row) => row.status === 'active').map((row) => row.provider),
+function NeedsConnectedSection({
+	plan,
+	workspaceId,
+	skipped,
+	onSkip,
+}: {
+	plan: LoopPlan
+	workspaceId: string
+	skipped: boolean
+	onSkip: () => void
+}) {
+	const { known, missing, providerByName, connectedNames } = useMissingIntegrations(
+		plan,
+		workspaceId,
 	)
-
-	// Drop providers the server doesn't offer — a keyword match in a plan
-	// clause is not enough on its own.
-	const known = providerRefs.filter((name) => providerByName.has(name))
 
 	if (known.length === 0) {
 		return (
-			<section aria-label="Integrations required">
+			<section aria-label="Integrations required" className="border-t border-border px-5 py-3.5">
 				<SectionLabel>NEEDS THESE CONNECTED</SectionLabel>
 				<p className="mt-2.5 text-[11.5px] leading-snug text-muted-foreground">
 					No integrations required — this plan runs on Maskin alone.
@@ -296,8 +383,22 @@ function NeedsConnectedSection({ plan, workspaceId }: { plan: LoopPlan; workspac
 	}
 
 	return (
-		<section aria-label="Integrations required">
-			<SectionLabel>NEEDS THESE CONNECTED</SectionLabel>
+		<section aria-label="Integrations required" className="border-t border-border px-5 py-3.5">
+			<div className="flex items-center gap-2">
+				<SectionLabel>NEEDS THESE CONNECTED</SectionLabel>
+				{missing.length > 0 && !skipped && (
+					<Button size="sm" variant="ghost" className="ml-auto max-md:min-h-11" onClick={onSkip}>
+						Skip for now
+					</Button>
+				)}
+			</div>
+			{missing.length > 0 && (
+				<p className="mt-1.5 text-[11.5px] leading-snug text-muted-foreground">
+					{skipped
+						? 'Skipped. The flow is created, but these steps cannot run until they are connected.'
+						: 'Connect these first, or skip them, to create the flow.'}
+				</p>
+			)}
 			<ul className="mt-2.5 flex flex-col gap-1.5">
 				{known.map((providerName) => {
 					const provider = providerByName.get(providerName)
@@ -327,14 +428,10 @@ function NeedsConnectedSection({ plan, workspaceId }: { plan: LoopPlan; workspac
 									>
 										needs connecting
 									</span>
-									{/* Opens the workspace's integrations page in a new tab so
-									 *  /loops/new stays mounted. On return, TanStack Query's
-									 *  window-focus refetch pulls the fresh integrations list and
-									 *  the chip flips to ✓ connected without a page reload.
-									 *  Plain `<a>` — the typed TanStack Link on the integrations
-									 *  route requires the `search` schema even for an empty
-									 *  navigation, and we only ever open this in a new tab. */}
-									<Button size="sm" variant="outline" asChild>
+									{/* Opens in a new tab so /loops/new stays mounted; the window-focus
+									 *  refetch flips the row to connected on return. Plain `<a>`: the typed
+									 *  Link on the integrations route demands its search schema. */}
+									<Button size="sm" variant="outline" className="max-md:min-h-11" asChild>
 										<a
 											href={`/${workspaceId}/settings/integrations`}
 											target="_blank"
@@ -353,23 +450,9 @@ function NeedsConnectedSection({ plan, workspaceId }: { plan: LoopPlan; workspac
 	)
 }
 
-/** Footer sentence when the v4 flag is on. Mounts the integrations queries
- *  only under the flag boundary, so a legacy render never hits them. */
-function V4FooterSummary({ plan, workspaceId }: { plan: LoopPlan; workspaceId: string }) {
-	const { data: providers } = useProviders()
-	const { data: integrations } = useIntegrations(workspaceId)
-	const providerByName = new Map((providers ?? []).map((p) => [p.name, p]))
-	const connectedNames = new Set(
-		(integrations ?? []).filter((row) => row.status === 'active').map((row) => row.provider),
-	)
-	const required = getRequiredIntegrationsForPlan(plan.triggers)
-	const missing: string[] = []
-	for (const name of required) {
-		const provider = providerByName.get(name)
-		if (!provider) continue
-		if (connectedNames.has(name)) continue
-		missing.push(provider.displayName)
-	}
+/** Footer sentence: what the card holds, and what Create will do next. */
+function FooterSummary({ plan, workspaceId }: { plan: LoopPlan; workspaceId: string }) {
+	const { missing } = useMissingIntegrations(plan, workspaceId)
 	const summaryLine = summariseLoopPlan(plan)
 	const connectSentence = missing.length > 0 ? buildConnectSentence(missing) : null
 	return (

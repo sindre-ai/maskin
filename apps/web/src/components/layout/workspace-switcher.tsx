@@ -193,7 +193,7 @@ export function WorkspaceSwitcher() {
 									<DropdownMenuItem
 										key={ws.id}
 										onSelect={() => handleSelect(ws)}
-										className="gap-2.5"
+										className="gap-2.5 max-md:min-h-11"
 									>
 										{/* Each workspace gets its own identity colour, the way
 										    the mockup gives V / N / P three different plates. */}
@@ -227,7 +227,7 @@ export function WorkspaceSwitcher() {
 								setOpenMobile(false)
 								requestAnimationFrame(() => setCreateOpen(true))
 							}}
-							className="gap-2 text-muted-foreground"
+							className="gap-2 text-muted-foreground max-md:min-h-11"
 						>
 							<Plus className="size-3.5 shrink-0" />
 							<span className="truncate">New workspace</span>
@@ -242,7 +242,7 @@ export function WorkspaceSwitcher() {
 								setOpenMobile(false)
 								navigate({ to: '/$workspaceId/settings', params: { workspaceId } })
 							}}
-							className="gap-2 text-muted-foreground"
+							className="gap-2 text-muted-foreground max-md:min-h-11"
 						>
 							<span className="truncate">Workspace settings</span>
 						</DropdownMenuItem>

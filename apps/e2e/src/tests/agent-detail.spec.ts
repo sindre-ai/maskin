@@ -75,7 +75,7 @@ test.describe('Agent detail — header and Usage block', () => {
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			await expect(page.getByRole('tab', { name: /^Overview/ })).toBeVisible({ timeout: 15_000 })
+			await expect(page.getByRole('tab', { name: /^Setup/ })).toBeVisible({ timeout: 15_000 })
 			await openAgentTab(page, 'setup')
 			await expect(page.getByRole('region', { name: 'Instructions' })).toBeVisible({
 				timeout: 15_000,

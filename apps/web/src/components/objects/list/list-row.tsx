@@ -50,12 +50,6 @@ export interface ListRowProps {
 	 *  Absent for a type the workspace no longer defines, where the raw key is
 	 *  the only honest label left. */
 	typeLabel?: string
-	/** First `in_loop` edge on this object, resolved client-side by
-	 *  `useObjectLoops` in list-view. Renders as the D1 loop chip immediately
-	 *  after the title; absent = no chip (no reserved space, per the D1
-	 *  acceptance criterion). Multi-loop objects show only the first edge in
-	 *  creation-time order — the caller picks that edge, the row renders it. */
-	loop?: { id: string; name: string }
 }
 
 export function ListRow({
@@ -73,7 +67,6 @@ export function ListRow({
 	columnVisibility,
 	anySelected,
 	typeLabel,
-	loop,
 }: ListRowProps) {
 	const { isStarred, isSaving: isStarSaving, toggle: toggleStar } = useStar(object.id)
 	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
@@ -84,9 +77,8 @@ export function ListRow({
 	const priorStatusRaw = object.metadata?.previous_status
 	const priorStatus = isArchived && typeof priorStatusRaw === 'string' ? priorStatusRaw : null
 	const hasPendingAsk = ask?.status === 'pending'
-	const askActorName = hasPendingAsk
-		? (actors?.find((a) => a.id === ask.sourceActorId)?.name ?? 'Agent')
-		: null
+	const askActor = hasPendingAsk ? actors?.find((a) => a.id === ask.sourceActorId) : undefined
+	const askActorName = hasPendingAsk ? (askActor?.name ?? 'Agent') : null
 	// Ask-line text: SPEC copy is `{who} asks — "{text}"` where `{text}` is
 	// the notification's title, ellipsis at ~90 chars. `content` is a longer
 	// free-form body only some notifications carry — falls back to `title` so
@@ -276,39 +268,24 @@ export function ListRow({
 					>
 						{object.title || 'Untitled'}
 					</Link>
-					{loop && (
-						// D1 · Loop chip. Position: after the title, before the right-
-						// side status chip. Copy verbatim per SPEC: `↺ Loop · {name}`.
-						// The chip itself never truncates (`shrink-0`) — the title
-						// truncates first, exactly as the D1 spec asks.
-						<Link
-							to="/$workspaceId/loops/$loopId"
-							params={{ workspaceId, loopId: loop.id }}
-							onClick={(e) => e.stopPropagation()}
-							className={cn(
-								'shrink-0 rounded-full border border-border bg-muted/60 px-2 py-0.5',
-								'text-[10px] font-medium leading-none text-muted-foreground',
-								'transition-colors hover:text-foreground hover:underline',
-								'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-							)}
-						>
-							↺ Flow · {loop.name}
-						</Link>
-					)}
-					{betStatus && showBetStatusIndicator && (
+					{betStatus && showBetStatusIndicator && betStatus.state !== 'idle' && (
 						<IndicatorBadgeRow result={betStatus} className="shrink-0" />
 					)}
 				</div>
 				{hasPendingAsk && (
-					// D3 · Ask line under the title (v11): a brand-tinted `Ask` pill,
-					// then `{who} asks` in the ink colour and the question muted.
-					// Multi-ask overflow renders `+ N more` as plain text — not a
-					// link, per the D3 spec's explicit "plain text, not a link".
+					// Ask line under the title (v16): the asking agent's avatar, then the
+					// question only. The "Ask" tag and "<agent> asks" are gone; the name
+					// stays available to assistive tech. Multi-ask overflow renders
+					// `+ N more` as plain text, never a link.
 					<p className="flex min-w-0 items-center gap-1.5 text-[12.5px] leading-snug text-muted-foreground">
-						<span className="shrink-0 rounded-full bg-brand-subtle px-[7px] py-px text-[11px] font-bold leading-4 text-brand-subtle-foreground">
-							Ask
-						</span>
-						<span className="shrink-0 font-semibold text-foreground">{askActorName} asks</span>
+						<ActorAvatar
+							id={askActor?.id}
+							name={askActorName ?? 'Agent'}
+							type={askActor?.type ?? 'agent'}
+							className="shrink-0"
+							tile
+						/>
+						<span className="sr-only">{askActorName} asks</span>
 						<span className="truncate">{askText}</span>
 						{extraAskCount > 0 && (
 							<span className="shrink-0 text-muted-foreground/80">+ {extraAskCount} more</span>

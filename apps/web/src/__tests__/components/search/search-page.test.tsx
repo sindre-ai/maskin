@@ -244,7 +244,8 @@ describe('SearchPageV2 @ menu', () => {
 })
 
 describe('SearchPageV2 results', () => {
-	it('shows the field, chips with the endpoint counts, one result count and grouped rows', async () => {
+	it('shows the field, filter pills with the endpoint counts in their menus, one result count and grouped rows', async () => {
+		const user = userEvent.setup()
 		searchState.current = { q: 'hans' }
 		renderPage()
 
@@ -253,15 +254,26 @@ describe('SearchPageV2 results', () => {
 		expect(screen.getByText(/2 results/, { selector: 'p' })).toBeInTheDocument()
 		expect(screen.queryByText(/matches/)).not.toBeInTheDocument()
 
-		const types = screen.getByRole('group', { name: 'Filter by type' })
-		expect(within(types).getByRole('button', { name: 'Chats (1)' })).toBeInTheDocument()
-		expect(within(types).getByRole('button', { name: 'Flows (1)' })).toBeInTheDocument()
-		// Zero-count chips are hidden unless selected.
-		expect(within(types).queryByRole('button', { name: /Agents/ })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Type' }))
+		const types = await screen.findByRole('menu')
+		const chats = within(types).getByRole('menuitemcheckbox', { name: 'Chats' })
+		expect(chats).toHaveTextContent('1')
+		expect(within(types).getByRole('menuitemcheckbox', { name: 'Flows' })).toHaveTextContent('1')
+		// Zero-count types are hidden unless selected.
+		expect(
+			within(types).queryByRole('menuitemcheckbox', { name: /Agents/ }),
+		).not.toBeInTheDocument()
+		await user.keyboard('{Escape}')
 
-		const statuses = screen.getByRole('group', { name: 'Filter by status' })
-		expect(within(statuses).getByRole('button', { name: 'In progress (1)' })).toBeInTheDocument()
-		expect(within(statuses).queryByRole('button', { name: /Needs you/ })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Status' }))
+		const statuses = await screen.findByRole('menu')
+		expect(
+			within(statuses).getByRole('menuitemcheckbox', { name: 'In progress' }),
+		).toHaveTextContent('1')
+		expect(
+			within(statuses).queryByRole('menuitemcheckbox', { name: /Needs you/ }),
+		).not.toBeInTheDocument()
+		await user.keyboard('{Escape}')
 
 		expect(screen.getByRole('group', { name: 'Chats' })).toBeInTheDocument()
 		expect(screen.getByRole('group', { name: 'Flows' })).toBeInTheDocument()
@@ -299,9 +311,9 @@ describe('SearchPageV2 results', () => {
 
 		await waitFor(() => expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument())
 		expect(screen.getAllByText('Searching…').length).toBeGreaterThan(0)
-		// The field and chips are usable while it loads, chip counts are dashes.
+		// The field and the filter pills are usable while it loads.
 		expect(field()).toBeEnabled()
-		expect(screen.getByRole('button', { name: 'Chats' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Type' })).toBeInTheDocument()
 	})
 
 	it('shows the cap line when the endpoint says the list is cut', async () => {
@@ -325,28 +337,31 @@ describe('SearchPageV2 results', () => {
 })
 
 describe('SearchPageV2 chips under a failed source', () => {
-	it('keeps the failed group chip with a dash so it does not read as no matches', async () => {
+	it('keeps the failed group row with a dash so it does not read as no matches', async () => {
+		const user = userEvent.setup()
 		searchState.current = { q: 'hans' }
 		vi.mocked(api.search.query).mockResolvedValue(response({ partial: ['loops'] }))
 		renderPage()
 		await screen.findByRole('option', { name: /Hans on pricing/ })
 
-		const types = screen.getByRole('group', { name: 'Filter by type' })
-		const loops = within(types).getByRole('button', { name: 'Flows' })
-		expect(loops).toHaveTextContent('–')
+		await user.click(screen.getByRole('button', { name: 'Type' }))
+		const types = await screen.findByRole('menu')
+		expect(within(types).getByRole('menuitemcheckbox', { name: 'Flows' })).toHaveTextContent('–')
 		// A source that answered with zero is still hidden.
-		expect(within(types).queryByRole('button', { name: /Agents/ })).not.toBeInTheDocument()
+		expect(
+			within(types).queryByRole('menuitemcheckbox', { name: /Agents/ }),
+		).not.toBeInTheDocument()
 	})
 })
 
 describe('SearchPageV2 idle', () => {
-	it('shows the type chips without a count or a dash when nothing has been asked', () => {
+	it('shows the type menu without a count or a dash when nothing has been asked', async () => {
+		const user = userEvent.setup()
 		renderPage()
-		const types = screen.getByRole('group', { name: 'Filter by type' })
-		expect(within(types).getByRole('button', { name: 'Chats' })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Type' }))
+		const types = await screen.findByRole('menu')
+		expect(within(types).getByRole('menuitemcheckbox', { name: 'Chats' })).toBeInTheDocument()
 		expect(within(types).queryByText('–')).not.toBeInTheDocument()
-		const statuses = screen.getByRole('group', { name: 'Filter by status' })
-		expect(within(statuses).queryByText('–')).not.toBeInTheDocument()
 		expect(api.search.query).not.toHaveBeenCalled()
 	})
 })
@@ -512,7 +527,9 @@ describe('SearchPageV2 chips', () => {
 		renderPage()
 		await screen.findByRole('option', { name: /Hans on pricing/ })
 
-		await user.click(screen.getByRole('button', { name: 'Flows (1)' }))
+		await user.click(screen.getByRole('button', { name: 'Type' }))
+		await user.click(await screen.findByRole('menuitemcheckbox', { name: 'Flows' }))
+		await user.keyboard('{Escape}')
 		expect(screen.getByRole('button', { name: 'Remove filter: Flows' })).toBeInTheDocument()
 		expect(trackSearchFilterChanged).toHaveBeenCalledWith({
 			surface: 'search_view',
@@ -538,15 +555,15 @@ describe('SearchPageV2 chips', () => {
 	})
 })
 
-describe('SearchPageV2 Display', () => {
-	it('sets the sort from the menu and shows how many Display settings changed', async () => {
+describe('SearchPageV2 Sort and Updated', () => {
+	it('sets the sort from the Sort pill and shows it on the pill', async () => {
 		const user = userEvent.setup()
 		searchState.current = { q: 'hans' }
 		renderPage()
 		await screen.findByRole('option', { name: /Hans on pricing/ })
 
-		await user.click(screen.getByRole('button', { name: 'Display' }))
-		await user.click(await screen.findByRole('radio', { name: 'A to Z' }))
+		await user.click(screen.getByRole('button', { name: 'Sort: Relevance' }))
+		await user.click(await screen.findByRole('menuitemradio', { name: 'A to Z' }))
 
 		expect(trackSearchFilterChanged).toHaveBeenCalledWith({
 			surface: 'search_view',
@@ -563,7 +580,7 @@ describe('SearchPageV2 Display', () => {
 				expect.anything(),
 			),
 		)
-		expect(screen.getByRole('button', { name: 'Display (1 changed)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Sort: A to Z' })).toBeInTheDocument()
 	})
 
 	it('closes on Escape', async () => {
@@ -571,11 +588,11 @@ describe('SearchPageV2 Display', () => {
 		searchState.current = { q: 'hans' }
 		renderPage()
 		await screen.findByRole('option', { name: /Hans on pricing/ })
-		await user.click(screen.getByRole('button', { name: 'Display' }))
-		expect(await screen.findByRole('radio', { name: 'Relevance' })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Sort: Relevance' }))
+		expect(await screen.findByRole('menuitemradio', { name: 'Relevance' })).toBeInTheDocument()
 		await user.keyboard('{Escape}')
 		await waitFor(() =>
-			expect(screen.queryByRole('radio', { name: 'Relevance' })).not.toBeInTheDocument(),
+			expect(screen.queryByRole('menuitemradio', { name: 'Relevance' })).not.toBeInTheDocument(),
 		)
 	})
 })

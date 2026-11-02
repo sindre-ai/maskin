@@ -7,7 +7,6 @@ import { AgentDrivingSection } from '@/components/agents/agent-driving-section'
 import { AgentExtensionsSection } from '@/components/agents/agent-extensions-section'
 import { AgentFailedBanner, AgentWorkingNowCard } from '@/components/agents/agent-focus-card'
 import { AgentInstructionsSection } from '@/components/agents/agent-instructions-section'
-import { AgentLoopsSection } from '@/components/agents/agent-loops-section'
 import { getPortraitStatus } from '@/components/agents/agent-portrait-card'
 import { AgentRunPauseButton } from '@/components/agents/agent-run-pause-button'
 import { AgentSessionsSection } from '@/components/agents/agent-sessions-section'
@@ -21,11 +20,10 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
-import { useLoops } from '@/hooks/use-loops'
 import { useObjectFacets } from '@/hooks/use-objects'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
-import { type AgentTab, deriveAgentFocus, deriveAgentStats } from '@/lib/agent-detail'
+import { type AgentTab, DEFAULT_AGENT_TAB, deriveAgentFocus } from '@/lib/agent-detail'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
@@ -35,11 +33,8 @@ import { Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-/** Recent sessions shown on the Overview before "See all". */
-const RECENT_SESSIONS = 3
-
 const TAB_TRIGGER_CLASS =
-	'rounded-none border-b-2 border-transparent px-0 pt-2 pb-3 text-[15px] font-semibold text-muted-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none'
+	'rounded-none border-b-2 border-transparent px-0 pt-2.5 pb-[11px] text-[15px] font-semibold leading-snug text-muted-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-foreground data-[state=active]:shadow-none'
 
 export function AgentDetailView({
 	agent,
@@ -54,7 +49,6 @@ export function AgentDetailView({
 	const { workspaceId } = useWorkspace()
 	const { data: sessions } = useActorSessions(agent.id, workspaceId)
 	const { data: triggers } = useTriggers(workspaceId)
-	const { data: loops } = useLoops(workspaceId)
 	const { data: drivenFacets } = useObjectFacets(workspaceId, { driver: agent.id })
 	const run = useAgentRun(workspaceId)
 	const pause = useAgentPause(workspaceId)
@@ -62,7 +56,7 @@ export function AgentDetailView({
 	const canWrite = useCanWrite()
 	const navigate = useNavigate()
 	const [confirmDelete, setConfirmDelete] = useState(false)
-	const [ownTab, setOwnTab] = useState<AgentTab>('overview')
+	const [ownTab, setOwnTab] = useState<AgentTab>(DEFAULT_AGENT_TAB)
 	const tab = controlledTab ?? ownTab
 	// The run open in the side panel. The banner and the Working-now card open runs too, so
 	// the page owns it and hands it to whichever sessions list is on screen.
@@ -81,11 +75,6 @@ export function AgentDetailView({
 	const portrait = getPortraitStatus(agent, deriveAgentStatus(agent.id, sessionsByAgent))
 	const isDisabled = portrait === 'paused'
 	const focus = useMemo(() => deriveAgentFocus(sessionList), [sessionList])
-	const stats = useMemo(() => deriveAgentStats(sessionList), [sessionList])
-	const flowCount = useMemo(
-		() => (loops ?? []).filter((loop) => loop.agentIds.includes(agent.id)).length,
-		[loops, agent.id],
-	)
 	const triggerCount = useMemo(
 		() => (triggers ?? []).filter((t) => t.targetActorId === agent.id).length,
 		[triggers, agent.id],
@@ -96,15 +85,15 @@ export function AgentDetailView({
 	)
 
 	// A run is opened through its thread (a follow-up carries on in the run it continues).
-	// The panel lives in the sessions list, which only the Overview and Sessions tabs have,
-	// so opening a run from the banner brings the person to the Overview first.
+	// The panel lives in the sessions list, which only the Sessions tab has, so opening a run
+	// from the banner brings the person to Sessions first.
 	const openRun = useCallback(
 		(sessionId: string) => {
 			const thread = buildBackgroundThreads(sessionList, agent.name).find((t) =>
 				t.sessionIds.includes(sessionId),
 			)
 			if (!thread) return
-			if (tab !== 'overview' && tab !== 'sessions') changeTab('overview')
+			if (tab !== 'sessions') changeTab('sessions')
 			setOpenSessionId(thread.id)
 		},
 		[sessionList, agent.name, tab, changeTab],
@@ -210,23 +199,6 @@ export function AgentDetailView({
 			)
 		: ''
 
-	const statItems = [
-		stats.sessions > 0 && {
-			value: stats.sessions >= 100 ? '100+' : String(stats.sessions),
-			label: stats.sessions === 1 ? 'Session' : 'Sessions',
-		},
-		stats.finished && {
-			value: `${stats.finished.completed} of ${stats.finished.total}`,
-			label: 'Finished well',
-		},
-		flowCount > 0 && { value: String(flowCount), label: flowCount === 1 ? 'Flow' : 'Flows' },
-		drivenFacets &&
-			drivenFacets.total > 0 && {
-				value: String(drivenFacets.total),
-				label: drivenFacets.total === 1 ? 'Item driven' : 'Items driven',
-			},
-	].filter((x): x is { value: string; label: string } => !!x)
-
 	return (
 		<>
 			{/* `Agents › {name}` in the compact detail bar, with Message, Live and the
@@ -263,30 +235,12 @@ export function AgentDetailView({
 					/>
 				) : null}
 
-				{statItems.length > 0 && (
-					<dl className="flex flex-wrap gap-x-8 gap-y-3 px-1">
-						{statItems.map((stat) => (
-							<div key={stat.label} className="flex flex-col">
-								<dd className="text-3xl font-bold tracking-tight text-foreground">{stat.value}</dd>
-								<dt className="text-[13px] text-muted-foreground">{stat.label}</dt>
-							</div>
-						))}
-					</dl>
-				)}
-
 				<Tabs value={tab} onValueChange={(v) => changeTab(v as AgentTab)}>
 					<TabsList
 						variant="default"
 						aria-label="Agent sections"
-						className="h-auto w-full justify-start gap-6 overflow-x-auto rounded-none border-b border-border bg-transparent p-0 px-1"
+						className="h-auto w-full justify-start gap-6 overflow-x-auto rounded-none border-b border-border bg-transparent p-0"
 					>
-						<TabsTrigger value="overview" className={TAB_TRIGGER_CLASS}>
-							Overview
-						</TabsTrigger>
-						<TabsTrigger value="sessions" className={TAB_TRIGGER_CLASS}>
-							Sessions
-							<TabCount count={stats.sessions} />
-						</TabsTrigger>
 						<TabsTrigger value="setup" className={TAB_TRIGGER_CLASS}>
 							Setup
 						</TabsTrigger>
@@ -294,47 +248,96 @@ export function AgentDetailView({
 							Triggers
 							<TabCount count={triggerCount} />
 						</TabsTrigger>
+						<TabsTrigger value="items" className={TAB_TRIGGER_CLASS}>
+							Items
+							<TabCount count={drivenFacets?.total ?? 0} />
+						</TabsTrigger>
+						<TabsTrigger value="sessions" className={TAB_TRIGGER_CLASS}>
+							Sessions
+							<TabCount count={sessionList.length} />
+						</TabsTrigger>
 						<TabsTrigger value="computer" className={TAB_TRIGGER_CLASS}>
 							Computer
 						</TabsTrigger>
 					</TabsList>
 
-					<TabsContent value="overview" className="mt-6 flex flex-col gap-6">
+					<TabsContent value="setup" className="mt-4 flex flex-col gap-6">
+						<AgentInstructionsSection agent={agent} />
+						<AgentExtensionsSection agent={agent} />
+						<AgentSkillsSection agent={agent} />
+						<AgentAccessSection agent={agent} />
+						{/* Model and "Reset to defaults" (v3) wait for backend support. */}
+						{!agent.isSystem && (
+							<SetupDelete
+								disabled={!canWrite}
+								onDelete={handleDelete}
+								pending={deleteActor.isPending}
+							/>
+						)}
+					</TabsContent>
+					<TabsContent value="triggers" className="mt-5">
+						<AgentTriggersSection agent={agent} />
+					</TabsContent>
+					<TabsContent value="items" className="mt-5">
+						<AgentDrivingSection agent={agent} />
+					</TabsContent>
+					<TabsContent value="sessions" className="mt-5 flex flex-col gap-6">
 						<AgentSessionsSection
 							agent={agent}
-							compact
-							limit={RECENT_SESSIONS}
-							onSeeAll={() => changeTab('sessions')}
 							openId={openSessionId}
 							onOpenIdChange={setOpenSessionId}
 						/>
-						<AgentDrivingSection agent={agent} total={drivenFacets?.total} />
-						<AgentLoopsSection agent={agent} />
 						<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 						<AgentComposer agent={agent} />
 					</TabsContent>
-					<TabsContent value="sessions" className="mt-6">
-						<AgentSessionsSection
-							agent={agent}
-							openId={openSessionId}
-							onOpenIdChange={setOpenSessionId}
-						/>
-					</TabsContent>
-					<TabsContent value="setup" className="mt-6 flex flex-col gap-6">
-						<AgentInstructionsSection agent={agent} />
-						<AgentSkillsSection agent={agent} />
-						<AgentAccessSection agent={agent} />
-						<AgentExtensionsSection agent={agent} />
-					</TabsContent>
-					<TabsContent value="triggers" className="mt-6">
-						<AgentTriggersSection agent={agent} />
-					</TabsContent>
-					<TabsContent value="computer" className="mt-6">
+					<TabsContent value="computer" className="mt-5">
 						<AgentComputerSection agent={agent} />
 					</TabsContent>
 				</Tabs>
 			</div>
 		</>
+	)
+}
+
+/** The Setup tab's danger row: its own inline confirm, apart from the bar's trash icon. */
+function SetupDelete({
+	disabled,
+	pending,
+	onDelete,
+}: {
+	disabled: boolean
+	pending: boolean
+	onDelete: () => void
+}) {
+	const [confirming, setConfirming] = useState(false)
+	return (
+		<section className="flex items-center justify-between gap-3 border-t border-border pt-4">
+			<p className="text-[15px] text-muted-foreground">
+				{confirming ? 'Remove it for good?' : 'Removes the agent and its setup.'}
+			</p>
+			{confirming ? (
+				<div className="flex items-center gap-2">
+					<Button variant="destructive" size="sm" onClick={onDelete} disabled={pending}>
+						{pending ? 'Removing...' : 'Remove'}
+					</Button>
+					<Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+						Keep
+					</Button>
+				</div>
+			) : (
+				<ViewerTooltip>
+					<Button
+						variant="outline"
+						size="sm"
+						className="text-error"
+						disabled={disabled}
+						onClick={() => setConfirming(true)}
+					>
+						Delete this agent
+					</Button>
+				</ViewerTooltip>
+			)}
+		</section>
 	)
 }
 

@@ -108,7 +108,7 @@ test.describe('For You sections', () => {
 				await mockFeed(page, account.workspaceId)
 				await page.goto(`/${account.workspaceId}`)
 
-				const decide = page.getByRole('heading', { name: /^To decide\s*2$/ })
+				const decide = page.getByRole('heading', { name: /^Decisions\s*2$/ })
 				const updates = page.getByRole('heading', { name: /^Updates for you\s*3$/ })
 				await expect(decide).toBeVisible()
 				await expect(updates).toBeVisible()
@@ -139,10 +139,10 @@ test.describe('For You sections', () => {
 		await expect(page.getByRole('heading', { name: /^Updates for you\s*3$/ })).toBeVisible()
 		await page.getByRole('button', { name: 'Mark all read' }).click()
 		await expect(page.getByRole('heading', { name: /Updates for you/ })).toHaveCount(0)
-		await expect(page.getByRole('heading', { name: /^To decide\s*2$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: /^Decisions\s*2$/ })).toBeVisible()
 
 		await page.reload()
-		await expect(page.getByRole('heading', { name: /^To decide\s*2$/ })).toBeVisible()
+		await expect(page.getByRole('heading', { name: /^Decisions\s*2$/ })).toBeVisible()
 		await expect(page.getByRole('heading', { name: /Updates for you/ })).toHaveCount(0)
 	})
 })

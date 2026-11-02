@@ -1,12 +1,13 @@
 import { type Page, expect } from '@playwright/test'
 
-export type AgentTab = 'overview' | 'sessions' | 'setup' | 'triggers' | 'computer'
+/** v3 order: Setup (the first tab, where the page opens), Triggers, Items, Sessions, Computer. */
+export type AgentTab = 'setup' | 'triggers' | 'items' | 'sessions' | 'computer'
 
 const TAB_LABEL: Record<AgentTab, RegExp> = {
-	overview: /^Overview/,
-	sessions: /^Sessions/,
 	setup: /^Setup/,
 	triggers: /^Triggers/,
+	items: /^Items/,
+	sessions: /^Sessions/,
 	computer: /^Computer/,
 }
 

@@ -328,7 +328,9 @@ describe('IntegrationsPage', () => {
 
 			const header = screen.getByRole('button', { name: /GitHub · 2/ })
 			expect(header).toHaveAttribute('aria-expanded', 'false')
-			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: /Connect another installation/ }),
+			).not.toBeInTheDocument()
 		})
 
 		it('defaults to collapsed when only one installation exists', () => {
@@ -342,7 +344,9 @@ describe('IntegrationsPage', () => {
 			const header = screen.getByRole('button', { name: /GitHub · 1/ })
 			expect(header).toHaveAttribute('aria-expanded', 'false')
 			expect(screen.queryByText('vaerksted-ai')).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: /Connect another installation/ }),
+			).not.toBeInTheDocument()
 		})
 
 		it('toggles the nested list when the header is clicked — no chevron, header IS the toggle', async () => {
@@ -382,7 +386,28 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
 
-			await user.click(screen.getByRole('button', { name: /Add another/ }))
+			await user.click(screen.getByRole('button', { name: /Connect another installation/ }))
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
+		})
+
+		it('marks each installation Active, or Reconnect needed when its token lacks a new scope', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					twoInstallations[0],
+					{ ...twoInstallations[1], needsReconnect: true, missingScopes: ['workflow'] },
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
+			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
+
+			expect(screen.getAllByLabelText('Active')).toHaveLength(1)
+			expect(screen.getAllByLabelText('Reconnect needed')).toHaveLength(1)
+
+			// Reconnect runs the provider's normal sign-in, which updates the row in place.
+			await user.click(screen.getByRole('button', { name: 'Reconnect' }))
 			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
 		})
 
@@ -935,7 +960,9 @@ describe('IntegrationsPage', () => {
 			await user.click(screen.getByRole('button', { name: /LinkedIn/ }))
 			await screen.findByText('Magnus')
 			expect(screen.queryByRole('button', { name: /Connect your account/ })).not.toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: /Connect another installation/ }),
+			).not.toBeInTheDocument()
 		})
 
 		it('still states the per-identity price once accounts are connected', async () => {

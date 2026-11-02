@@ -1,3 +1,4 @@
+import { type PictogramShape, getAgentPictogram } from '@/lib/agent-pictogram'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
@@ -110,6 +111,9 @@ type ActorAvatarProps = {
 	/** The v11 list-row driver: a 26px rounded-square plate in the neutral muted
 	 *  fill with ink initials, instead of the round coloured avatar. */
 	tile?: boolean
+	/** v16 status dot on an agent's tile (from 24px up): green while it works, red
+	 *  when its last run failed. Omit for an idle agent. Ignored for non-agents. */
+	status?: 'working' | 'failed'
 }
 
 /**
@@ -156,6 +160,7 @@ function ActorAvatarView({
 	tone = 'subtle',
 	working = false,
 	tile = false,
+	status,
 }: ActorAvatarProps) {
 	// Track the specific url that failed so a caller swapping imageUrl resets the fallback
 	// automatically — without a useEffect that biome flags for missing dep semantics.
@@ -172,26 +177,48 @@ function ActorAvatarView({
 	const paletteClass = getActorAvatarPaletteClass(id ?? name, tone)
 	const showImage = Boolean(imageUrl) && !imageFailed
 
+	// Agents are drawn as a tinted tile with a pictogram (v16); people and anything
+	// else keep the round initials plate. An uploaded picture still covers either.
+	const pictogram = _type === 'agent' ? getAgentPictogram(name) : null
+
 	const baseClasses = cn(
-		'relative inline-flex items-center justify-center rounded-full font-medium select-none',
+		'relative inline-flex items-center justify-center font-medium select-none',
+		pictogram ? (size === 'sm' ? 'rounded-md' : 'rounded-lg') : 'rounded-full',
 		paletteClass,
 		sizeClasses,
 		tile && 'size-[26px] rounded-lg bg-muted text-[10.5px] font-bold text-foreground',
 		className,
+		// Last, so the team tint wins over a caller's plain or status fill.
+		pictogram?.tintClass,
 	)
 
 	const content = (
 		<>
-			<span className="leading-none" aria-hidden={showImage ? 'true' : undefined}>
-				{initials}
-			</span>
+			{pictogram ? (
+				<PictogramMark shapes={pictogram.shapes} />
+			) : (
+				<span className="leading-none" aria-hidden={showImage ? 'true' : undefined}>
+					{initials}
+				</span>
+			)}
+			{pictogram && status && size !== 'sm' ? (
+				<span
+					aria-hidden="true"
+					data-avatar-status={status}
+					className={cn(
+						'absolute -bottom-0.5 -right-0.5 rounded-full border-2 border-background',
+						size === 'xl' ? 'size-3.5' : 'size-2.5',
+						status === 'failed' ? 'bg-error' : 'bg-success motion-safe:animate-pulse',
+					)}
+				/>
+			) : null}
 			{imageUrl && !imageFailed ? (
 				<img
 					src={imageUrl}
 					alt=""
 					className={cn(
 						'absolute inset-0 h-full w-full object-cover',
-						tile ? 'rounded-lg' : 'rounded-full',
+						tile || pictogram ? 'rounded-[inherit]' : 'rounded-full',
 					)}
 					onError={() => setFailedUrl(imageUrl)}
 					draggable={false}
@@ -229,6 +256,77 @@ function ActorAvatarView({
 				{content}
 			</span>
 		</WorkingRing>
+	)
+}
+
+/** The pictogram itself: 62% of the tile, painted with the tile's ink colour. */
+function PictogramMark({ shapes }: { shapes: PictogramShape[] }) {
+	return (
+		<svg
+			viewBox="0 0 24 24"
+			className="size-[62%]"
+			fill="none"
+			aria-hidden="true"
+			focusable="false"
+			data-pictogram
+		>
+			{shapes.map((shape, i) => {
+				const key = `${shape[0]}-${i}`
+				switch (shape[0]) {
+					case 'c':
+						return <circle key={key} cx={shape[1]} cy={shape[2]} r={shape[3]} fill="currentColor" />
+					case 'rg':
+						return (
+							<circle
+								key={key}
+								cx={shape[1]}
+								cy={shape[2]}
+								r={shape[3]}
+								stroke="currentColor"
+								strokeWidth={shape[4]}
+							/>
+						)
+					case 'p':
+						return <path key={key} d={shape[1]} fill="currentColor" />
+					case 'l':
+						return (
+							<path
+								key={key}
+								d={shape[1]}
+								stroke="currentColor"
+								strokeWidth={shape[2]}
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+						)
+					case 'r':
+						return (
+							<rect
+								key={key}
+								x={shape[1]}
+								y={shape[2]}
+								width={shape[3]}
+								height={shape[4]}
+								rx={shape[5]}
+								fill="currentColor"
+							/>
+						)
+					case 'ro':
+						return (
+							<rect
+								key={key}
+								x={shape[1]}
+								y={shape[2]}
+								width={shape[3]}
+								height={shape[4]}
+								rx={shape[5]}
+								stroke="currentColor"
+								strokeWidth={2.6}
+							/>
+						)
+				}
+			})}
+		</svg>
 	)
 }
 

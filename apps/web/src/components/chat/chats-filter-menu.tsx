@@ -6,6 +6,7 @@ import {
 	DropdownMenuRadioItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { PILL_TRIGGER_CLASS } from '@/components/ui/select'
 import { cn } from '@/lib/cn'
 import { ChevronDown } from 'lucide-react'
 
@@ -46,15 +47,16 @@ export function ChatsFilterMenu({
 					variant="ghost"
 					size="sm"
 					className={cn(
-						'h-8 shrink-0 gap-1 rounded-full bg-secondary px-3 text-[13px] font-semibold text-foreground hover:bg-secondary/70',
-						isFiltered && 'ring-1 ring-border-strong',
+						PILL_TRIGGER_CLASS,
+						'inline-flex hover:bg-background',
+						isFiltered && 'border-border-strong',
 					)}
 					aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
 				>
 					<span className="whitespace-nowrap">
 						{isFiltered ? chatsFilterLabel(value) : 'All chats'}
 					</span>
-					<ChevronDown size={12} aria-hidden />
+					<ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-44">

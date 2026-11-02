@@ -17,7 +17,7 @@ function McpPage() {
 	const { workspaceId } = useWorkspace()
 
 	return (
-		<div className="max-w-lg space-y-6">
+		<div className="max-w-[760px] space-y-6">
 			<McpConnectionSection workspaceId={workspaceId} />
 
 			<div className="border-t border-border pt-6">
@@ -42,9 +42,9 @@ function ApiKeySection() {
 
 	return (
 		<div>
-			<Label className="mb-1 text-muted-foreground">API key</Label>
+			<Label className="mb-1 text-[15px] font-semibold text-foreground">API key</Label>
 			<div className="flex items-center gap-2">
-				<code className="flex-1 rounded-md border border-border bg-muted px-3 py-2 text-sm font-mono truncate select-all">
+				<code className="flex-1 rounded-xl border border-border bg-muted px-3 py-2 text-sm font-mono truncate select-all">
 					{apiKey}
 				</code>
 				<Button variant="outline" size="icon" onClick={handleCopy}>

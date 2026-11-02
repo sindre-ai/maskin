@@ -70,70 +70,61 @@ export function SubAgentRow({ workspaceId, session, depNames, onClick }: SubAgen
 				search={{ session: session.id } as never}
 				onClick={onClick}
 				className={cn(
-					'flex flex-col items-start gap-1 rounded-md px-2 py-1.5 transition-colors md:flex-row md:items-center md:gap-2',
+					'flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors max-md:min-h-11',
 					'hover:bg-muted focus-visible:bg-muted focus-visible:outline-none',
 					flash && 'bg-brand/10',
 				)}
 				aria-label={`Sub-agent ${session.actorName}: ${pill}`}
 			>
-				<div className="flex min-w-0 flex-1 items-center gap-2">
-					<ActorAvatar
-						id={session.actorId}
-						name={session.actorName}
-						type="agent"
-						size="sm"
-						className="shrink-0"
-					/>
-					<span className="shrink-0 text-[12.5px] font-semibold text-foreground">
+				<ActorAvatar
+					id={session.actorId}
+					name={session.actorName}
+					type="agent"
+					size="sm"
+					className="shrink-0"
+				/>
+				<div className="min-w-0 flex-1">
+					<span className="block truncate text-[13px] font-semibold text-foreground">
 						{session.actorName}
 					</span>
-					<span className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground">
-						{session.actionPrompt}
-					</span>
+					<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[12px] text-muted-foreground">
+						<span className="min-w-0 truncate">{session.actionPrompt}</span>
+						{depClause ? (
+							<>
+								{/* Desktop: full names. Phones truncate the list to a bare count, swapped
+								    at the same `md:` boundary as the rest of the chat. */}
+								<span className={cn(clauseClass, 'hidden md:inline')} title={depClause}>
+									· after {depClause}
+								</span>
+								<span className={cn(clauseClass, 'md:hidden')} title={depClause}>
+									· after {depNames.length}
+								</span>
+							</>
+						) : null}
+						{pill === 'WORKING' && elapsedRunning ? (
+							<span className={clauseClass}>· {elapsedRunning}</span>
+						) : null}
+						{pill === 'DONE' && elapsedCompleted ? (
+							<span className={clauseClass}>· {elapsedCompleted}</span>
+						) : null}
+						{pill === 'WORKING' && session.currentActivity ? (
+							<span className={clauseClass}>· {session.currentActivity}</span>
+						) : null}
+						{pill === 'FAILED' ? (
+							<span className="text-[11px] text-destructive">· {failureText(session.result)}</span>
+						) : null}
+					</div>
 				</div>
-				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-					<span
-						className={cn(
-							'font-mono text-[10px] font-bold uppercase tracking-wider leading-none rounded px-1.5 py-1',
-							STRIP_PILL_CLASSES[pill],
-							flash && 'ring-2 ring-brand',
-						)}
-					>
-						{pill}
-					</span>
-					{pill === 'WORKING' ? (
-						<span
-							className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-brand"
-							aria-hidden
-						/>
-					) : null}
-					{depClause ? (
-						<>
-							{/* Desktop: full names. The mobile rule (design spec
-							    Responsive) truncates the list to a bare count, so the
-							    two forms are swapped at the same `md:` boundary that
-							    flips the row from stacked to inline. */}
-							<span className={cn(clauseClass, 'hidden md:inline')} title={depClause}>
-								· behind {depClause}
-							</span>
-							<span className={cn(clauseClass, 'md:hidden')} title={depClause}>
-								· behind {depNames.length}
-							</span>
-						</>
-					) : null}
-					{pill === 'WORKING' && elapsedRunning ? (
-						<span className={clauseClass}>· {elapsedRunning}</span>
-					) : null}
-					{pill === 'DONE' && elapsedCompleted ? (
-						<span className={clauseClass}>· {elapsedCompleted}</span>
-					) : null}
-					{pill === 'WORKING' && session.currentActivity ? (
-						<span className={clauseClass}>· {session.currentActivity}</span>
-					) : null}
-					{pill === 'FAILED' ? (
-						<span className="text-[11px] text-destructive">· {failureText(session.result)}</span>
-					) : null}
-				</div>
+				{/* The text stays upper case for the tests and screen readers; it reads "Working". */}
+				<span
+					className={cn(
+						'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold leading-none lowercase first-letter:uppercase',
+						STRIP_PILL_CLASSES[pill],
+						flash && 'ring-2 ring-brand',
+					)}
+				>
+					{pill}
+				</span>
 			</Link>
 		</li>
 	)

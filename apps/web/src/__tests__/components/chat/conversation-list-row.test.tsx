@@ -76,8 +76,8 @@ describe('ConversationListRow', () => {
 	it('plates who the conversation is with, never the viewer', () => {
 		renderRow(buildConversation())
 		// Two participants, one of them the viewer — only the counterpart plates.
-		expect(screen.getByText('BA')).toBeInTheDocument()
-		expect(screen.queryByText('ME')).not.toBeInTheDocument()
+		expect(screen.getByTitle('Billing Agent')).toBeInTheDocument()
+		expect(screen.queryByTitle('Me')).not.toBeInTheDocument()
 	})
 
 	it('plates the first counterpart only', () => {
@@ -98,7 +98,8 @@ describe('ConversationListRow', () => {
 				],
 			}),
 		)
-		expect(screen.getByText('BA')).toBeInTheDocument()
+		expect(screen.getByTitle('Billing Agent')).toBeInTheDocument()
+		expect(screen.queryByTitle('Relay')).not.toBeInTheDocument()
 	})
 
 	it('plates the only participant in a thread the viewer is alone in', () => {
@@ -121,13 +122,13 @@ describe('ConversationListRow', () => {
 		expect(screen.queryByLabelText(/unread/)).not.toBeInTheDocument()
 	})
 
-	it('bolds the title while unread and leaves it medium once read', () => {
+	it('bolds the title while unread and leaves it semibold once read', () => {
 		const { unmount } = renderRow(buildConversation({ unread_count: 1 }))
 		expect(screen.getByText('Billing retries').className).toContain('font-bold')
 		unmount()
 
 		renderRow(buildConversation({ unread_count: 0 }))
-		expect(screen.getByText('Billing retries').className).toContain('font-medium')
+		expect(screen.getByText('Billing retries').className).toContain('font-semibold')
 	})
 
 	it('keeps the snippet to one line', () => {

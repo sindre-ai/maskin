@@ -1,5 +1,5 @@
 import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import * as React from 'react'
 import { buildObjectResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
@@ -64,6 +64,7 @@ vi.mock('@/hooks/use-events', () => ({
 const actorsStore: { data: Array<Record<string, unknown>> } = { data: [] }
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: actorsStore.data }),
+	useActor: (id: string) => ({ data: actorsStore.data.find((a) => a.id === id) }),
 }))
 
 vi.mock('@/hooks/use-notifications', () => ({
@@ -87,6 +88,14 @@ vi.mock('@/hooks/use-workspaces', () => ({
 vi.mock('@/hooks/use-relationships', () => ({
 	useCreateRelationship: () => ({ mutate: vi.fn() }),
 	useDeleteRelationship: () => ({ mutate: vi.fn() }),
+}))
+
+// The Message composer is the shared Composer behind AgentComposer (own suite); a stub keeps
+// this one on the shell's wiring.
+vi.mock('@/components/agents/agent-composer', () => ({
+	AgentComposer: ({ agent }: { agent: { name: string } }) => (
+		<textarea aria-label={`Message ${agent.name}`} placeholder={`Message ${agent.name}…`} />
+	),
 }))
 
 vi.mock('@/components/shared/markdown-content', () => ({
@@ -120,7 +129,7 @@ describe('ObjectDetailShell', () => {
 		expect(screen.getByText(/Should we ship this\?/)).toBeInTheDocument()
 	})
 
-	it('Answer it moves focus to the answer control', () => {
+	it('Answer it opens the Activity tab and moves focus to the answer control', async () => {
 		const object = buildObjectResponse({
 			type: 'bet',
 			metadata: { _ask: 'Should we ship this?' },
@@ -129,10 +138,11 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 
-		const textarea = screen.getByPlaceholderText(/commands, @ mentions/i)
-		const answerButton = screen.getByRole('button', { name: /answer it/i })
-		fireEvent.click(answerButton)
-		expect(document.activeElement).toBe(textarea)
+		// The composer lives in the Activity tab; the Overview does not mount it.
+		expect(screen.queryByPlaceholderText(/commands, @ mentions/i)).toBeNull()
+		fireEvent.click(screen.getByRole('button', { name: /answer it/i }))
+		const textarea = await screen.findByPlaceholderText(/commands, @ mentions/i)
+		await waitFor(() => expect(document.activeElement).toBe(textarea))
 	})
 
 	it('omits the ask banner when no _ask metadata', () => {
@@ -143,9 +153,9 @@ describe('ObjectDetailShell', () => {
 		expect(screen.queryByText(/Open question/)).not.toBeInTheDocument()
 	})
 
-	it('renders comment input at the bottom of the shell', () => {
+	it('renders comment input at the bottom of the Activity tab', () => {
 		const object = buildObjectResponse({ type: 'bet' })
-		render(<ObjectDetailShell object={object} />, {
+		render(<ObjectDetailShell object={object} tab="activity" />, {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 		// The object page's composer is the single-row bar (mockup 1358–1366).
@@ -157,7 +167,7 @@ describe('ObjectDetailShell', () => {
 	it('opens the @mention dropdown above the docked comment bar', () => {
 		actorsStore.data = [{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }]
 		const object = buildObjectResponse({ type: 'bet' })
-		render(<ObjectDetailShell object={object} />, {
+		render(<ObjectDetailShell object={object} tab="activity" />, {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 
@@ -170,17 +180,38 @@ describe('ObjectDetailShell', () => {
 		expect(dropdown).not.toHaveClass('mt-1')
 	})
 
-	// Mockup 1138–1143: one Activity heading + a 2-way Timeline | Related
-	// segmented control. The old third "Activity" tab folded into Timeline.
-	it('mounts a Timeline / Related segmented control below the body', () => {
+	// v16: one column with three tabs; the old Timeline / Related segmented control is gone.
+	it('mounts Overview / Related / Activity tabs, Overview first', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailShell object={object} />, {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
-		expect(screen.queryByRole('tab', { name: /^Activity$/ })).toBeNull()
-		expect(screen.getByRole('tab', { name: /^Timeline$/ })).toBeInTheDocument()
-		// Related trigger carries the live count (0 with no seeded relationships).
-		expect(screen.getByRole('tab', { name: /^Related 0$/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /^Overview$/ })).toHaveAttribute('data-state', 'active')
+		expect(screen.getByRole('tab', { name: /^Related/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /^Activity/ })).toBeInTheDocument()
+		expect(screen.queryByRole('tab', { name: /^Timeline$/ })).toBeNull()
+	})
+
+	it('shows no Message switch when the item has no agent to message', () => {
+		const object = buildObjectResponse({ type: 'bet' })
+		render(<ObjectDetailShell object={object} tab="activity" />, {
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
+		})
+		expect(screen.queryByRole('tab', { name: /^Message/ })).toBeNull()
+	})
+
+	it('swaps to the one Message composer when the owner is an agent', () => {
+		actorsStore.data = [{ id: 'agent-1', name: 'Bob', type: 'agent', email: null, isSystem: false }]
+		const object = buildObjectResponse({ type: 'bet', driver: 'agent-1' })
+		render(<ObjectDetailShell object={object} tab="activity" />, {
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
+		})
+		expect(screen.getByPlaceholderText(/commands, @ mentions/i)).toBeInTheDocument()
+		const messageTab = screen.getByRole('tab', { name: 'Message Bob' })
+		fireEvent.mouseDown(messageTab)
+		fireEvent.click(messageTab)
+		expect(screen.queryByPlaceholderText(/commands, @ mentions/i)).toBeNull()
+		expect(screen.getByPlaceholderText('Message Bob…')).toBeInTheDocument()
 	})
 
 	it('mounts the properties drawer behind the header toggle', () => {

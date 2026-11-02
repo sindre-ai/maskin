@@ -13,7 +13,7 @@ export function MarketplaceHeaderIdentity({ count }: MarketplaceHeaderIdentityPr
 			<h1 className="page-title truncate">Marketplace</h1>
 			{typeof count === 'number' ? (
 				<span
-					className="shrink-0 text-sm text-muted-foreground tabular-nums"
+					className="hidden shrink-0 text-sm text-muted-foreground tabular-nums sm:inline"
 					data-testid="marketplace-count"
 				>
 					{count} in the catalog

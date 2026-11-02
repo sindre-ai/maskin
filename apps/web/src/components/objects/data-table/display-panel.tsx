@@ -358,7 +358,7 @@ export function DisplayPanel({
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-8 gap-1.5 rounded-full bg-muted px-3.5 text-sm font-semibold text-foreground hover:bg-muted/70"
+						className="h-8 gap-1.5 rounded-full border border-border bg-background px-3.5 text-sm font-semibold text-foreground hover:bg-accent"
 					>
 						<SlidersHorizontal size={13} aria-hidden="true" />
 						Display

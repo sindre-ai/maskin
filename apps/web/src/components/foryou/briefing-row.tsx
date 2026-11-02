@@ -12,7 +12,7 @@ import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { type BriefingCard, useBriefings } from '@/hooks/use-briefings'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import {
-	BRIEFING_FORMAT_LABEL,
+	askAboutSlideDraft,
 	briefingChatAttachments,
 	isBriefingSeen,
 	markBriefingSeen,
@@ -30,7 +30,14 @@ import {
 import { cn } from '@/lib/cn'
 import { prepareMiniAppHtml } from '@/lib/mini-app'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ArrowUpRight, ChevronLeft, ChevronRight, Loader2, MessageSquare } from 'lucide-react'
+import {
+	ArrowUpRight,
+	ChevronLeft,
+	ChevronRight,
+	Loader2,
+	MessageCircleQuestion,
+	MessageSquare,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -50,27 +57,25 @@ function BriefingTile({
 			aria-label={`${card.author.name}: ${card.headline}${seen ? '' : ', new'}`}
 			data-testid="briefing-card"
 			data-seen={seen}
-			className="flex h-31 w-60 shrink-0 snap-start flex-col rounded-xl border border-border bg-card p-3 text-left shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-brand-subtle"
+			className="flex h-31 w-60 shrink-0 snap-start flex-col rounded-xl border border-border bg-card p-4.5 text-left shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-brand-subtle"
 		>
-			<span className="flex items-center gap-2">
-				<span className="eyebrow truncate">{BRIEFING_FORMAT_LABEL}</span>
-				{!seen && (
-					<span aria-hidden="true" className="ml-auto size-1.5 shrink-0 rounded-full bg-brand" />
-				)}
-			</span>
 			<span
 				className={cn(
-					'mt-1.5 line-clamp-2 text-[19px] font-bold leading-[1.2] tracking-[-0.02em] text-pretty',
+					'line-clamp-2 text-[19px] font-bold leading-[1.2] tracking-[-0.02em] text-pretty',
 					seen ? 'text-muted-foreground' : 'text-foreground',
 				)}
 			>
 				{card.headline}
 			</span>
 			<span className="mt-auto flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
-				<ActorAvatar name={card.author.name} type={card.author.type} size="sm" />
 				<span className="min-w-0 truncate">
 					{card.author.name} · <RelativeTime date={card.updatedAt} />
 				</span>
+				{!seen && (
+					<span className="ml-auto shrink-0 rounded-full bg-brand px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-brand-foreground">
+						New
+					</span>
+				)}
 			</span>
 		</button>
 	)
@@ -110,6 +115,8 @@ function BriefingViewer({
 	const defaultAgent = useDefaultChatAgent()
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [sendError, setSendError] = useState<string | null>(null)
+	// "Ask about this slide" fills and focuses the conversation's own composer; no new input.
+	const [fillRequest, setFillRequest] = useState<{ text: string; nonce: number } | null>(null)
 
 	// A person tagged in the composer overrides the recipient, like the brief drawer does.
 	const firstMentionId = selection.agents[0] ?? null
@@ -152,6 +159,14 @@ function BriefingViewer({
 		} catch {
 			toast.error("Couldn't start the chat — try again.")
 		}
+	}
+
+	const askAboutSlide = () => {
+		if (!card) return
+		setFillRequest((prev) => ({
+			text: askAboutSlideDraft(card.headline, index + 1, cards.length),
+			nonce: (prev?.nonce ?? 0) + 1,
+		}))
 	}
 
 	const onSend = async (content: string, extras?: { files: ChatSelectionFile[] }) => {
@@ -317,6 +332,16 @@ function BriefingViewer({
 								)}{' '}
 								Tell me more
 							</Button>
+							<Button
+								type="button"
+								variant="secondary"
+								size="sm"
+								className="rounded-full"
+								onClick={askAboutSlide}
+								disabled={createConversation.isPending}
+							>
+								<MessageCircleQuestion aria-hidden /> Ask about this slide
+							</Button>
 						</div>
 						<Composer
 							workspaceId={workspaceId}
@@ -335,6 +360,7 @@ function BriefingViewer({
 							onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 							externalError={sendError}
 							onDismissExternalError={() => setSendError(null)}
+							fillRequest={fillRequest}
 						/>
 					</div>
 				</aside>
@@ -373,17 +399,9 @@ export function BriefingRow({ workspaceId }: { workspaceId: string }) {
 
 	if (cards.length === 0) return null
 
-	const unreadCount = row.filter((card) => !isBriefingSeen(card, seen)).length
-
 	return (
-		<section aria-label="Briefings" data-testid="briefing-row" className="mt-3">
-			<h2 className="mb-2 flex items-baseline gap-2 text-xs font-semibold text-foreground">
-				Briefings
-				{unreadCount > 0 && (
-					<span className="font-normal text-muted-foreground">{unreadCount} unread</span>
-				)}
-			</h2>
-			<div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-2">
+		<section aria-label="Briefings" data-testid="briefing-row" className="mt-8 mb-6">
+			<div className="-mx-1 flex snap-x scroll-px-1 gap-4 [overflow-anchor:none] overflow-x-auto px-1 pb-2">
 				{row.map((card) => (
 					<BriefingTile
 						key={card.id}

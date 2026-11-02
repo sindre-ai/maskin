@@ -370,12 +370,11 @@ describe('ListView', () => {
 			asksByObjectId: new Map([['obj-1', ask]]),
 		})
 
-		// Pending-ask pill (bg-accent + text-accent-foreground per the "Needs
-		// you" accent-pairing rule) and the D3 ask line — SPEC copy is
-		// `{who} asks — "{text}"` with the asker's name in a bold span and
-		// the glue text on the parent paragraph.
-		expect(screen.getByText('Ask')).toBeInTheDocument()
+		// v16 ask line: the asker's avatar plus the question only. No visible
+		// "Ask" tag; "<agent> asks" stays as screen-reader text.
+		expect(screen.queryByText('Ask')).toBeNull()
 		const asker = screen.getByText('Alice asks')
+		expect(asker.className).toContain('sr-only')
 		expect(asker.parentElement?.textContent).toContain('Alice asksPlease approve this shipment')
 	})
 

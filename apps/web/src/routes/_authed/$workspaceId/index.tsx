@@ -40,6 +40,19 @@ import {
 	recommendedAction,
 } from '@/lib/foryou-card-kind'
 import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
+import {
+	type LaterOption,
+	addLater,
+	isSetAside,
+	laterForWorkspace,
+	laterKey,
+	laterToast,
+	nextLaterDue,
+	pruneLaterStore,
+	readLaterStore,
+	removeLater,
+	writeLaterStore,
+} from '@/lib/foryou-later'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
@@ -205,15 +218,85 @@ function ForYouFeed() {
 		[unreadRegular, typeFilter],
 	)
 
+	// "Later": cards set aside in this browser only (localStorage, never the server). The
+	// clock moves when the nearest one is due so it falls back into Decisions by itself.
+	const [laterStore, setLaterStore] = useState(() => readLaterStore())
+	const [laterClock, setLaterClock] = useState(() => Date.now())
+	const laterEntries = useMemo(
+		() => laterForWorkspace(laterStore, workspaceId),
+		[laterStore, workspaceId],
+	)
+	useEffect(() => {
+		const refresh = () => {
+			const now = Date.now()
+			setLaterClock(now)
+			setLaterStore((prev) => pruneLaterStore(prev, now))
+		}
+		const due = nextLaterDue(laterStore, Date.now())
+		// setTimeout overflows past ~24.8 days; the visibility refresh below catches the rest.
+		const timer =
+			due === null ? null : setTimeout(refresh, Math.min(due - Date.now() + 50, 2 ** 31 - 1))
+		const onVisible = () => document.visibilityState === 'visible' && refresh()
+		const onStorage = (event: StorageEvent) => {
+			if (event.key === null || event.key.startsWith('maskin:foryou-later:')) {
+				setLaterStore(readLaterStore())
+			}
+		}
+		document.addEventListener('visibilitychange', onVisible)
+		window.addEventListener('storage', onStorage)
+		return () => {
+			if (timer) clearTimeout(timer)
+			document.removeEventListener('visibilitychange', onVisible)
+			window.removeEventListener('storage', onStorage)
+		}
+	}, [laterStore])
+
+	const updateLater = useCallback((change: (store: typeof laterStore) => typeof laterStore) => {
+		setLaterStore((prev) => {
+			const next = change(prev)
+			if (next !== prev) writeLaterStore(next)
+			return next
+		})
+	}, [])
+
+	const bringBack = useCallback(
+		(item: UnreadItem) =>
+			updateLater((store) => removeLater(store, laterKey(workspaceId, feedItemKey(item)))),
+		[updateLater, workspaceId],
+	)
+
+	const setAside = useCallback(
+		(item: UnreadItem, option: LaterOption) => {
+			const storeKey = laterKey(workspaceId, feedItemKey(item))
+			updateLater((store) =>
+				addLater(
+					store,
+					storeKey,
+					{ until: option.until, label: option.label, eventId: item.latest_event_id ?? 0 },
+					Date.now(),
+				),
+			)
+			toast(laterToast(option.label), {
+				duration: UNDO_WINDOW_MS,
+				action: {
+					label: 'Undo',
+					onClick: () => updateLater((store) => removeLater(store, storeKey)),
+				},
+			})
+		},
+		[updateLater, workspaceId],
+	)
+
 	const bucketOf = useCallback(
 		(item: UnreadItem): FeedBucket => {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
+			if (isSetAside(laterEntries[key], item.latest_event_id, laterClock)) return 'later'
 			if (repliedKeys.has(key)) return 'waiting'
 			// Only an ask with options is something to decide; a plain mention is an update.
 			return classifyCardKind(item) === 'decision' ? 'needs' : 'fyi'
 		},
-		[decided, repliedKeys],
+		[decided, repliedKeys, laterEntries, laterClock],
 	)
 
 	// The feed is one flat column ordered by bucket — decisions first, then
@@ -693,6 +776,7 @@ function ForYouFeed() {
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
 			<PageHeader
+				gutter="wide"
 				title={greeting}
 				scrollLocked
 				actions={
@@ -739,7 +823,7 @@ function ForYouFeed() {
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="flex w-full max-w-280 flex-col">
 					<p
-						className="pb-4 text-lg font-semibold leading-[1.45] tracking-[-0.01em] text-foreground"
+						className="pb-4 text-base font-bold leading-relaxed text-foreground"
 						data-testid="foryou-greeting"
 					>
 						{lead}
@@ -759,7 +843,7 @@ function ForYouFeed() {
 						</div>
 					)}
 
-					<div className="flex flex-col gap-6 pt-1.5">
+					<div className="flex flex-col gap-8 pt-1.5">
 						{sections.map(({ bucket, items: sectionItems }, sectionIndex) => (
 							<section
 								key={bucket}
@@ -770,7 +854,7 @@ function ForYouFeed() {
 								<div className="flex items-center justify-between gap-2">
 									<h2
 										id={`foryou-section-${bucket}`}
-										className="flex items-baseline gap-1.5 text-xs font-semibold text-foreground"
+										className="flex items-baseline gap-1.5 text-[13px] font-bold text-foreground"
 									>
 										{SECTION_LABEL[bucket]}
 										<span
@@ -791,7 +875,7 @@ function ForYouFeed() {
 										</Button>
 									)}
 								</div>
-								<div className={cn('flex flex-col', mode === 'cards' ? 'gap-3' : 'gap-[7px]')}>
+								<div className={cn('flex flex-col', mode === 'cards' ? 'gap-4' : 'gap-[7px]')}>
 									{sectionItems.map((item) => {
 										const key = feedItemKey(item)
 										return (
@@ -818,6 +902,9 @@ function ForYouFeed() {
 												replied={repliedKeys.has(key)}
 												onReplied={() => handleReplied(item)}
 												onMarkRead={() => dismissAll([item], 'Marked as read')}
+												onLater={(option) => setAside(item, option)}
+												laterLabel={bucket === 'later' ? laterEntries[key]?.label : null}
+												onBringBack={() => bringBack(item)}
 											/>
 										)
 									})}
@@ -840,10 +927,11 @@ function ForYouFeed() {
 }
 
 const SECTION_LABEL: Record<FeedBucket, string> = {
-	needs: 'To decide',
+	needs: 'Decisions',
 	waiting: 'Waiting on an agent',
 	fyi: 'Updates for you',
 	done: 'Handled today',
+	later: 'Later',
 }
 
 export function greetingFor(name: string | undefined, now: Date): string {

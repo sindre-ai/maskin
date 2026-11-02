@@ -2,7 +2,6 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { Button } from '@/components/ui/button'
-import { useObjectLoops } from '@/hooks/use-object-loops'
 import { GROUP_PAGE_SIZE } from '@/hooks/use-objects'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
@@ -132,13 +131,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	const scrollRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 	const groupBy = grouping?.[0]
-	// D1 · Loop chip hydration. Reverse-index `in_loop` edges for the visible
-	// page so each row can render its first-loop chip. The hook fires ONE
-	// bounded batch of relationship queries after the list resolves — no
-	// server shape change, per the D1 acceptance criterion. A row's chip is
-	// absent (no reserved space) when the object has no `in_loop` edge.
-	const visibleObjectIds = useMemo(() => data.map((o) => o.id), [data])
-	const { data: loopsByObjectId } = useObjectLoops(workspaceId, visibleObjectIds)
 
 	// Rows the user is blocking float to the top of the pool (mockup fixture
 	// 6655's `nyOf`). A stable partition, so within each half the API's own
@@ -382,7 +374,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				}
 				anySelected={selectedIdSet.size > 0}
 				typeLabel={objectTypeLabel?.(object.type)}
-				loop={loopsByObjectId.get(object.id)}
 			/>
 		))
 

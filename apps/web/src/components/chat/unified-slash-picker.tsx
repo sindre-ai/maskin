@@ -371,7 +371,7 @@ function UnifiedPickerBody({
 				</Section>
 			</div>
 			<div
-				className="flex items-center justify-between gap-2 border-border border-t px-3 py-2 text-[10.5px] text-muted-foreground"
+				className="flex items-center justify-between gap-2 border-border border-t px-3 py-2 text-[11px] text-muted-foreground"
 				aria-hidden
 			>
 				<span className="truncate">{footer}</span>
@@ -427,7 +427,7 @@ function ReferenceRow({ id, object, selected, onClick, onMouseEnter }: Reference
 			onClick={onClick}
 			onMouseEnter={onMouseEnter}
 			className={cn(
-				'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-foreground',
+				'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground max-md:min-h-11',
 				selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
 			)}
 		>
@@ -460,7 +460,7 @@ function CreateRow({ id, label, sub, selected, onClick, onMouseEnter }: CreateRo
 			onClick={onClick}
 			onMouseEnter={onMouseEnter}
 			className={cn(
-				'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-foreground',
+				'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground max-md:min-h-11',
 				selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
 			)}
 		>

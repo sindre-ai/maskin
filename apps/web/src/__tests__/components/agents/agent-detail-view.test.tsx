@@ -49,9 +49,6 @@ vi.mock('@/components/agents/agent-sessions-section', () => ({
 vi.mock('@/components/agents/agent-triggers-section', () => ({
 	AgentTriggersSection: () => null,
 }))
-vi.mock('@/components/agents/agent-loops-section', () => ({
-	AgentLoopsSection: () => null,
-}))
 vi.mock('@/components/agents/agent-instructions-section', () => ({
 	AgentInstructionsSection: () => null,
 }))
@@ -204,10 +201,10 @@ describe('AgentDetailView tabs and status', () => {
 			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
 		})
 		expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
-			'Overview',
-			'Sessions',
 			'Setup',
 			'Triggers',
+			'Items8',
+			'Sessions',
 			'Computer',
 		])
 		expect(screen.getByRole('tab', { name: 'Computer' })).toHaveAttribute('aria-selected', 'true')
@@ -217,11 +214,11 @@ describe('AgentDetailView tabs and status', () => {
 	it('reports a tab change to the route', async () => {
 		const user = userEvent.setup()
 		const onTabChange = vi.fn()
-		render(<AgentDetailView agent={agent} tab="overview" onTabChange={onTabChange} />, {
+		render(<AgentDetailView agent={agent} tab="setup" onTabChange={onTabChange} />, {
 			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
 		})
-		await user.click(screen.getByRole('tab', { name: 'Setup' }))
-		expect(onTabChange).toHaveBeenCalledWith('setup')
+		await user.click(screen.getByRole('tab', { name: 'Triggers' }))
+		expect(onTabChange).toHaveBeenCalledWith('triggers')
 	})
 
 	it('shows the Working-now card for a live run', () => {
@@ -299,7 +296,7 @@ describe('AgentDetailView tabs and status', () => {
 		expect(screen.queryByTestId('agent-failed-banner')).toBeNull()
 	})
 
-	it('draws the stats row from what is known and hides the rest', () => {
+	it('has no stats row; the counts ride on the tabs', () => {
 		sessionsMock.data = [
 			buildSessionResponse({ id: 'a', actorId: agent.id, status: 'completed' }),
 			buildSessionResponse({ id: 'b', actorId: agent.id, status: 'failed' }),
@@ -307,9 +304,15 @@ describe('AgentDetailView tabs and status', () => {
 		render(<AgentDetailView agent={agent} />, {
 			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
 		})
-		expect(screen.getByText('Sessions', { selector: 'dt' })).toBeInTheDocument()
-		expect(screen.getByText('1 of 2')).toBeInTheDocument()
-		expect(screen.getByText('Items driven')).toBeInTheDocument()
-		expect(screen.queryByText('Flows')).toBeNull()
+		expect(screen.queryByText('Finished well')).toBeNull()
+		expect(screen.getByRole('tab', { name: 'Items 8' })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: 'Sessions 2' })).toBeInTheDocument()
+	})
+
+	it('opens on Setup', () => {
+		render(<AgentDetailView agent={agent} />, {
+			wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+		})
+		expect(screen.getByRole('tab', { name: 'Setup' })).toHaveAttribute('aria-selected', 'true')
 	})
 })

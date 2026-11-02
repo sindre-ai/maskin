@@ -1,4 +1,4 @@
-import { MobileNav } from '@/components/layout/mobile-nav'
+import { MobileNav, showsMobileNav } from '@/components/layout/mobile-nav'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,6 +21,12 @@ vi.mock('@/lib/analytics', () => ({
 	trackNavItemClicked: (p: { item_key: string; source: string }) => trackNav(p),
 }))
 
+const mockSetOpenMobile = vi.fn()
+vi.mock('@/components/ui/sidebar', () => ({
+	useSidebar: () => ({ setOpenMobile: mockSetOpenMobile }),
+}))
+
+let mockPathname = '/ws-1'
 const mockMatch = vi.fn<({ to }: { to?: string }) => boolean>()
 const linkCalls: Array<{ to?: string; params?: Record<string, string>; label?: string }> = []
 vi.mock('@tanstack/react-router', () => ({
@@ -44,9 +50,13 @@ vi.mock('@tanstack/react-router', () => ({
 		)
 	},
 	useMatchRoute: () => mockMatch,
+	useRouterState: ({ select }: { select: (s: unknown) => unknown }) =>
+		select({ location: { pathname: mockPathname } }),
 }))
 beforeEach(() => {
 	linkCalls.length = 0
+	mockPathname = '/ws-1'
+	mockSetOpenMobile.mockReset()
 })
 
 vi.mock('@/lib/workspace-context', () => ({
@@ -121,5 +131,52 @@ describe('MobileNav', () => {
 		for (const call of linkCalls) {
 			expect(call.params).toEqual({ workspaceId: 'ws-1' })
 		}
+	})
+
+	it('ends with a More button that opens the sidebar drawer', () => {
+		mockUseEnabledModules.mockReturnValue([])
+		mockMatch.mockReturnValue(false)
+		render(<MobileNav />)
+		fireEvent.click(screen.getByRole('button', { name: 'More' }))
+		expect(mockSetOpenMobile).toHaveBeenCalledWith(true)
+	})
+
+	it('draws nothing on a screen that owns a composer', () => {
+		mockUseEnabledModules.mockReturnValue([])
+		mockMatch.mockReturnValue(false)
+		mockPathname = '/ws-1/chats/abc'
+		const { container } = render(<MobileNav />)
+		expect(container).toBeEmptyDOMElement()
+	})
+})
+
+describe('showsMobileNav', () => {
+	it.each([
+		'/ws-1',
+		'/ws-1/',
+		'/ws-1/chats',
+		'/ws-1/loops',
+		'/ws-1/objects',
+		'/ws-1/agents',
+		'/ws-1/marketplace',
+	])('shows on the list page %s', (path) => {
+		expect(showsMobileNav(path, 'ws-1')).toBe(true)
+	})
+
+	it.each([
+		'/ws-1/chats/abc',
+		'/ws-1/chats/new',
+		'/ws-1/objects/abc',
+		'/ws-1/loops/abc',
+		'/ws-1/agents/abc',
+		'/ws-1/sessions/abc',
+		'/ws-1/files/abc',
+		'/ws-1/settings',
+		'/ws-1/settings/keys',
+		'/ws-1/search',
+		'/ws-1/marketplace/abc',
+		'/other',
+	])('hides on %s', (path) => {
+		expect(showsMobileNav(path, 'ws-1')).toBe(false)
 	})
 })

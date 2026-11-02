@@ -38,7 +38,7 @@ for (const vp of [...SHIP_GATE_VIEWPORTS, SHORT_VIEWPORT]) {
 				status: 'opportunity',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
 
 			// The placeholder is "Comment…" on mobile and a longer form on
 			// desktop, so match only the shared prefix.

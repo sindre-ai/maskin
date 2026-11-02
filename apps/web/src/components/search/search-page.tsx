@@ -51,9 +51,9 @@ import type { SearchResponse, SearchResultRow } from '@maskin/shared'
 import { useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { DisplayMenu } from './display-menu'
+import { SortPill, UpdatedPill } from './display-menu'
 import { ParticipantMenu } from './participant-menu'
-import { StatusChips, TypeChips } from './search-chips'
+import { ParticipantFilter, StatusFilter, TypeFilter } from './search-chips'
 import { SearchField } from './search-field'
 import { SearchResultList, optionId, orderRows } from './search-results'
 import {
@@ -394,35 +394,37 @@ export function SearchPageV2() {
 						</div>
 					</div>
 
-					<TypeChips
-						chips={typeChips}
-						dimmed={staleChips}
-						// With nothing asked there is no answer coming, so no dash either.
-						showCounts={enabled}
-						onToggle={(key) => toggleFilter('type', key)}
-					/>
-					<div className="flex items-start gap-2">
-						<StatusChips
+					{/* One row of v16 dropdown pills; the counts live inside the menus. */}
+					<div className="flex min-w-0 flex-wrap items-center gap-2">
+						<TypeFilter
+							chips={typeChips}
+							dimmed={staleChips}
+							// With nothing asked there is no answer coming, so no dash either.
+							showCounts={enabled}
+							onToggle={(key) => toggleFilter('type', key)}
+						/>
+						<StatusFilter
 							chips={statusChips}
 							dimmed={staleChips}
 							showCounts={enabled}
 							onToggle={(key) => toggleFilter('status', key)}
 						/>
-						<DisplayMenu
-							sort={sort}
-							updated={updated}
-							typeChips={typeChips}
-							onSortChange={(value) => {
-								track({
-									dimension: 'sort',
-									action: value === 'rel' ? 'reset' : 'set',
-									value,
-									kind: 'display_menu',
-									via: 'click',
-								})
-								dispatch({ type: 'setSort', value })
-							}}
-							onUpdatedChange={(value) => {
+						{participantOptions ? (
+							<ParticipantFilter
+								options={participantOptions}
+								selectedIds={participants}
+								onToggle={(option) => {
+									const index = parts.pills.findIndex(
+										(p) => p.kind === 'participant' && p.value === option.id,
+									)
+									if (index >= 0) onRemovePill(index)
+									else onPickParticipant(option, 'click')
+								}}
+							/>
+						) : null}
+						<UpdatedPill
+							value={updated}
+							onChange={(value) => {
 								track({
 									dimension: 'updated',
 									action: value === '' ? 'reset' : 'set',
@@ -432,7 +434,19 @@ export function SearchPageV2() {
 								})
 								dispatch({ type: 'setUpdated', value })
 							}}
-							onToggleType={(key) => toggleFilter('type', key, 'display_menu')}
+						/>
+						<SortPill
+							value={sort}
+							onChange={(value) => {
+								track({
+									dimension: 'sort',
+									action: value === 'rel' ? 'reset' : 'set',
+									value,
+									kind: 'display_menu',
+									via: 'click',
+								})
+								dispatch({ type: 'setSort', value })
+							}}
 						/>
 					</div>
 

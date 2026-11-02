@@ -127,6 +127,31 @@ test.describe('Bulk-select — archive action', () => {
 	}
 })
 
+test.describe('Bulk-select — dropdown pills (v16)', () => {
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`Status and Driver are pills and open @ ${viewport.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Pill Bet',
+				status: 'opportunity',
+			})
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+			await expect(page.getByText('Pill Bet')).toBeVisible({ timeout: 10000 })
+			await page.getByRole('checkbox', { name: 'Select row' }).first().click()
+
+			const status = page.getByRole('combobox', { name: 'Set status' })
+			await expect(status).toBeVisible()
+			const box = await status.boundingBox()
+			// 34px on pointer devices, 44px floor below md (touch widths).
+			expect(box?.height).toBe(viewport.width < 768 ? 44 : 34)
+			expect(await status.evaluate((el) => getComputedStyle(el).borderRadius)).not.toBe('0px')
+			await status.click()
+			await expect(page.getByRole('option').first()).toBeVisible()
+		})
+	}
+})
+
 test.describe('Bulk-select — shift-click range selection', () => {
 	// The list's range mechanism is shift-click (the DataTable era used touch
 	// drag-select, out of scope for the T2 list). A plain click anchors the

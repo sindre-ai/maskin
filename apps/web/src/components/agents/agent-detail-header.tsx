@@ -2,6 +2,7 @@ import { isCurrentActorAdmin } from '@/components/agents/agent-avatar-upload'
 import {
 	AgentStatusPill,
 	type PortraitStatus,
+	agentAvatarStatus,
 	agentTileClass,
 } from '@/components/agents/agent-portrait-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
@@ -61,13 +62,14 @@ export function AgentDetailHeader({
 		)
 
 	return (
-		<header className="flex items-start gap-4.5 px-1">
+		<header className="flex items-start gap-4.5 px-1 leading-tight">
 			<div className="relative shrink-0">
 				<ActorAvatar
 					name={agent.name}
 					type={agent.type}
 					size="xl"
 					tone="strong"
+					status={agentAvatarStatus(portrait)}
 					className={cn(
 						'size-17 rounded-2xl text-2xl font-bold [&>img]:rounded-2xl',
 						agentTileClass(portrait),
@@ -83,9 +85,9 @@ export function AgentDetailHeader({
 							onClick={() => avatarInputRef.current?.click()}
 							disabled={uploadAvatar.isPending}
 							aria-label={`Change profile picture for ${agent.name}`}
-							className="absolute inset-0 flex items-end justify-end rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed"
+							className="absolute inset-0 flex items-start justify-end rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed"
 						>
-							<span className="-mb-1 -mr-1 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
+							<span className="-mr-1 -mt-1 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
 								{uploadAvatar.isPending ? <Spinner className="size-3" /> : <Camera size={12} />}
 							</span>
 						</button>
@@ -111,7 +113,7 @@ export function AgentDetailHeader({
 					</>
 				)}
 			</div>
-			<div className="flex min-w-0 flex-1 flex-col gap-3">
+			<div className="flex min-w-0 flex-1 flex-col gap-2.5">
 				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
 					{/* Named explicitly: the heading's only child is the edit button,
 					    and a control contributes its *accessible name* to the name of
@@ -154,14 +156,14 @@ export function AgentDetailHeader({
 					/>
 				</p>
 				{flows.length > 0 && (
-					<div className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+					<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
 						<span>Works in</span>
 						{flows.map((flow) => (
 							<Link
 								key={flow.id}
 								to="/$workspaceId/loops/$loopId"
 								params={{ workspaceId, loopId: flow.id }}
-								className="rounded-full border border-border px-3 py-0.5 text-[13px] font-bold text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className="rounded-full border border-border px-3 py-0.5 text-[13px] font-semibold text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							>
 								{flow.name}
 							</Link>

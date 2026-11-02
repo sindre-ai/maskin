@@ -6,10 +6,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 const mockChatCapture = vi.fn()
+const mockRemove = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/lib/api')>()),
-	api: { integrations: { chatCapture: (...args: unknown[]) => mockChatCapture(...args) } },
+	api: {
+		integrations: {
+			chatCapture: (...args: unknown[]) => mockChatCapture(...args),
+			remove: (...args: unknown[]) => mockRemove(...args),
+		},
+	},
 }))
+
+let canWrite = true
+vi.mock('@/hooks/use-can-write', () => ({ useCanWrite: () => canWrite }))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -22,13 +31,16 @@ let integrations: IntegrationResponse[] = []
 vi.mock('@/hooks/use-conversation', () => ({
 	useConversation: () => ({ data: { participants } }),
 	useSendMessage: () => ({ mutate: sendMutate }),
+	useCardAnswer: () => null,
 }))
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => ({ data: integrations }),
 }))
 const continueMutate = vi.fn()
+const inputMutate = vi.fn()
 vi.mock('@/hooks/use-sessions', () => ({
 	useContinueSession: () => ({ mutate: continueMutate }),
+	useSendSessionInput: () => ({ mutate: inputMutate }),
 }))
 
 import { KeychainRequestCard, keychainUseHint } from '@/components/chat/keychain-request-card'
@@ -48,12 +60,17 @@ function renderCard(req: MessageKeychainRequest = request()) {
 			<KeychainRequestCard
 				workspaceId="ws-1"
 				conversationId="conv-1"
+				messageId={7}
 				messageCreatedAt="2026-10-19T10:00:00.000Z"
 				askingAgentId={ASKING_AGENT}
 				request={req}
 			/>
 		</TestWrapper>,
 	)
+}
+
+async function openSharing(user: ReturnType<typeof userEvent.setup>) {
+	await user.click(screen.getByRole('button', { name: 'Change' }))
 }
 
 async function fillLogin(user: ReturnType<typeof userEvent.setup>) {
@@ -69,6 +86,7 @@ beforeEach(() => {
 		{ actorId: 'agent-2', actorName: 'Analyst', actorType: 'agent' },
 	]
 	integrations = []
+	canWrite = true
 	mockChatCapture.mockResolvedValue({
 		integrationId: 'int-1',
 		undoExpiresAt: '2026-10-19T10:05:00.000Z',
@@ -80,13 +98,18 @@ beforeEach(() => {
 })
 
 describe('KeychainRequestCard', () => {
-	it('shows a login form with the suggested name and the hint, and every agent in the chat ticked', () => {
+	it('shows a login form with the suggested name and the hint, and every agent in the chat ticked', async () => {
+		const user = userEvent.setup()
 		renderCard(request({ hint: 'To read invoices.' }))
 
 		expect(screen.getByRole('form', { name: 'Add a login to the Keychain' })).toBeInTheDocument()
 		expect(screen.getByLabelText('Name')).toHaveValue('e-conomic')
 		expect(screen.getByText(/To read invoices\./)).toBeInTheDocument()
 		expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
+		// Shared with is one summary row until Change opens the list.
+		expect(screen.getByText('Bookkeeper, Analyst')).toBeInTheDocument()
+		expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+		await openSharing(user)
 		expect(screen.getByRole('checkbox', { name: 'Bookkeeper' })).toBeChecked()
 		expect(screen.getByRole('checkbox', { name: 'Analyst' })).toBeChecked()
 		// People in the chat are not agents and are not offered.
@@ -96,6 +119,7 @@ describe('KeychainRequestCard', () => {
 	it('lists a named target that is not in the chat as ticked, and unticks the chat agents that are not named', async () => {
 		const user = userEvent.setup()
 		renderCard(request({ target_agents: [{ id: 'agent-9', name: 'Infra & DevOps' }] }))
+		await openSharing(user)
 
 		expect(screen.getByRole('checkbox', { name: 'Infra & DevOps' })).toBeChecked()
 		// The asker stays ticked; the other chat agent starts unticked but can be ticked.
@@ -147,6 +171,7 @@ describe('KeychainRequestCard', () => {
 		const user = userEvent.setup()
 		renderCard()
 		await fillLogin(user)
+		await openSharing(user)
 		await user.click(screen.getByRole('checkbox', { name: 'Analyst' }))
 		// The value lives in component state only: never in either web storage.
 		expect(JSON.stringify({ ...localStorage })).not.toContain(PASSWORD)
@@ -190,6 +215,7 @@ describe('KeychainRequestCard', () => {
 		const user = userEvent.setup()
 		renderCard()
 		await fillLogin(user)
+		await openSharing(user)
 		await user.click(screen.getByRole('checkbox', { name: 'Bookkeeper' }))
 		await user.click(screen.getByRole('checkbox', { name: 'Analyst' }))
 
@@ -205,7 +231,7 @@ describe('KeychainRequestCard', () => {
 
 		expect(await screen.findByText(/to the Keychain\./)).toBeInTheDocument()
 		expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Manage in Keychain' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Manage' })).toBeInTheDocument()
 		expect(sendMutate).toHaveBeenCalledTimes(1)
 		const content = (sendMutate.mock.calls[0]?.[0] as { content: string }).content
 		expect(content).toContain('e-conomic')
@@ -312,6 +338,68 @@ describe('KeychainRequestCard', () => {
 		renderCard()
 
 		expect(screen.getByLabelText('Password')).toBeInTheDocument()
+	})
+})
+
+describe('KeychainRequestCard: answers', () => {
+	it('Not now: tells the agent, records the answer on the card, and saves nothing', async () => {
+		const user = userEvent.setup()
+		renderCard()
+
+		await user.click(screen.getByRole('button', { name: 'Not now' }))
+
+		expect(mockChatCapture).not.toHaveBeenCalled()
+		expect(sendMutate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				metadata: {
+					hidden_from_chat: true,
+					card_answer: { message_id: 7, outcome: 'declined' },
+				},
+			}),
+		)
+		expect(screen.getByText(/Declined/)).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Ask again' })).toBeInTheDocument()
+	})
+
+	it('Not now for a helper goes to its own session', async () => {
+		const user = userEvent.setup()
+		renderCard(request({ reply_to_session: true }))
+
+		await user.click(screen.getByRole('button', { name: 'Not now' }))
+
+		expect(sendMutate).not.toHaveBeenCalled()
+		expect(inputMutate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: SESSION_ID,
+				card_answer: { message_id: 7, outcome: 'declined' },
+			}),
+		)
+	})
+
+	it('Undo after saving removes the key and says so', async () => {
+		localStorage.setItem('maskin-actor', JSON.stringify({ id: 'human-1', type: 'human' }))
+		mockRemove.mockResolvedValue({ id: 'int-1', status: 'undone', sessionEnded: true })
+		const user = userEvent.setup()
+		renderCard()
+		await fillLogin(user)
+		await user.click(screen.getByRole('button', { name: 'Save to Keychain' }))
+		expect(await screen.findByText(/Shared with 2 agents\./)).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Undo' }))
+
+		expect(mockRemove).toHaveBeenCalledWith('int-1', 'ws-1')
+		expect(await screen.findByText(/from the Keychain\./)).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+		localStorage.removeItem('maskin-actor')
+	})
+
+	it('gives a viewer an action instead of a disabled form', () => {
+		canWrite = false
+		renderCard()
+
+		expect(screen.getByText('Only a person with edit access can save a key.')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Ask an admin' })).toBeEnabled()
+		expect(screen.queryByRole('button', { name: 'Save to Keychain' })).not.toBeInTheDocument()
 	})
 })
 

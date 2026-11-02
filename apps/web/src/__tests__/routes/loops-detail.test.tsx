@@ -38,6 +38,9 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 const mockUseTriggers = vi.fn()
+vi.mock('@/hooks/use-notifications', () => ({
+	useNotifications: () => ({ data: [] }),
+}))
 vi.mock('@/hooks/use-triggers', () => ({
 	useTriggers: () => mockUseTriggers(),
 }))

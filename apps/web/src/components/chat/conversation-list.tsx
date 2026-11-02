@@ -30,8 +30,8 @@ export function ConversationListHeader({
 }) {
 	return (
 		<div className="flex flex-none flex-col gap-3 px-4 pt-3 pb-3 lg:pl-7">
-			<div className="flex items-center gap-2">
-				<label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-full bg-secondary px-3 text-muted-foreground">
+			<div className="flex flex-col items-start gap-2">
+				<label className="flex h-[34px] w-full min-w-0 items-center gap-2 rounded-full bg-secondary max-md:min-h-11 pointer-coarse:min-h-11 px-3 text-muted-foreground">
 					<Search size={14} aria-hidden className="shrink-0" />
 					<input
 						type="search"

@@ -750,3 +750,42 @@ test.describe('For You v4 — the briefing viewer', () => {
 		}
 	}
 })
+
+test.describe('For You v16 - Ask about this slide', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`fills and focuses the one conversation box, then moves with the slide @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await mockFeed(page, account.workspaceId)
+			const posted: unknown[] = []
+			await page.route('**/api/conversations', async (route) => {
+				if (route.request().method() === 'POST') posted.push(route.request().postDataJSON())
+				await route.fallback()
+			})
+			await page.goto(`/${account.workspaceId}`)
+			await page.getByTestId('briefing-card').first().click()
+			const viewer = page.getByTestId('briefing-viewer')
+
+			const ask = viewer.getByRole('button', { name: 'Ask about this slide' })
+			await expect(ask).toBeVisible()
+			await ask.click()
+
+			const box = viewer.getByRole('textbox', { name: 'Talk about this briefing' })
+			await expect(viewer.getByRole('textbox')).toHaveCount(1)
+			await expect(box).toHaveValue(`About "${BRIEFING_PAGES[0].title}" (briefing 1 of 2): `)
+			await expect(box).toBeFocused()
+
+			// On the next slide the same control names that slide.
+			await viewer.getByRole('button', { name: 'Next briefing' }).click()
+			await viewer.getByRole('button', { name: 'Ask about this slide' }).click()
+			await expect(box).toHaveValue(`About "${BRIEFING_PAGES[1].title}" (briefing 2 of 2): `)
+
+			// Nothing was sent, and the sandbox is untouched.
+			expect(posted).toHaveLength(0)
+			await expect(viewer.locator('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
+			await assertNoHorizontalOverflow(page, vp.label)
+		})
+	}
+})

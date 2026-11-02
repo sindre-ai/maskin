@@ -62,10 +62,19 @@ test.describe('Agent detail v11 — tabs, crumb bar, banners', () => {
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			for (const tab of ['overview', 'sessions', 'setup', 'triggers', 'computer'] as const) {
+			for (const tab of ['setup', 'triggers', 'items', 'sessions', 'computer'] as const) {
 				await openAgentTab(page, tab)
 			}
 			await expect(page).toHaveURL(/tab=computer/)
+
+			// The retired Overview link lands on Setup, the first tab.
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}?tab=overview`)
+			await expect(page.getByRole('tab', { name: /^Setup/ })).toHaveAttribute(
+				'aria-selected',
+				'true',
+				{ timeout: 10_000 },
+			)
+			await expect(page.getByRole('tab', { name: /^Overview/ })).toHaveCount(0)
 			await expectNoHorizontalOverflow(page)
 
 			// The tab is in the URL, so a reload and a shared link land on it.
@@ -184,21 +193,14 @@ test.describe('Agent detail v11 — tabs, crumb bar, banners', () => {
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 
-			// Overview lists the recent runs with a status word each.
-			await expect(page.getByRole('heading', { name: 'Recent sessions' })).toBeVisible()
+			// The Sessions tab lists the runs with a status word each.
+			await openAgentTab(page, 'sessions')
 			await expect(
 				page.getByRole('button', { name: /^Open Fix duplicate bookings/ }).getByText('Working'),
 			).toBeVisible()
 			await expect(
 				page.getByRole('button', { name: /^Open Open the pull request/ }).getByText('Done'),
 			).toBeVisible()
-
-			// "See all" is the Sessions tab.
-			await page.getByRole('button', { name: 'See all' }).click()
-			await expect(page.getByRole('tab', { name: /^Sessions/ })).toHaveAttribute(
-				'aria-selected',
-				'true',
-			)
 		})
 
 		test(`failed banner offers Retry and See log @ ${vp.label}`, async ({ page, account }) => {

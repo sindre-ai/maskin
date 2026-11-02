@@ -134,6 +134,52 @@ export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
 	)
 }
 
+/**
+ * The status and owner pills (v16): the shared 34px dropdown pills. The page
+ * draws them on their own row under the Origin line; other hosts keep them on
+ * the identity's meta line.
+ */
+export function ObjectDetailPills({
+	object,
+	statuses,
+	members,
+	workspaceId,
+	creditsState,
+	onStatusChange,
+	onDriverChange,
+}: {
+	object: ObjectResponse
+	statuses: string[]
+	members: MemberResponse[]
+	workspaceId: string
+	creditsState?: 'empty' | 'ok' | 'unknown'
+	onStatusChange: (status: string) => void
+	onDriverChange: (driver: string | null) => void
+}) {
+	return (
+		<>
+			{statuses.length > 0 ? (
+				<StatusSelect
+					current={object.status}
+					options={statuses}
+					onChange={onStatusChange}
+					variant="chip"
+					heroAnchor
+				/>
+			) : (
+				object.status && <StatusPill status={object.status} />
+			)}
+			{creditsState === 'empty' && <PausedNoCreditsChip workspaceId={workspaceId} />}
+			<OwnerSelect
+				members={members}
+				currentOwnerId={object.driver ?? null}
+				onChange={onDriverChange}
+				variant="chip"
+			/>
+		</>
+	)
+}
+
 export function ObjectDetailIdentity({
 	object,
 	statuses,
@@ -143,7 +189,10 @@ export function ObjectDetailIdentity({
 	onStatusChange,
 	onDriverChange,
 	onTitleChange,
+	showPills = true,
 }: {
+	/** The page draws the pills on their own row (`ObjectDetailPills`) and turns them off here. */
+	showPills?: boolean
 	object: ObjectResponse
 	statuses: string[]
 	members: MemberResponse[]
@@ -172,24 +221,17 @@ export function ObjectDetailIdentity({
 				<span>{typeLabel(object.type)}</span>
 				{/* SPEC §D5: star sits left of the status chip on the detail meta row. */}
 				<DetailMetaStar objectId={object.id} />
-				{statuses.length > 0 ? (
-					<StatusSelect
-						current={object.status}
-						options={statuses}
-						onChange={onStatusChange}
-						variant="chip"
-						heroAnchor
+				{showPills && (
+					<ObjectDetailPills
+						object={object}
+						statuses={statuses}
+						members={members}
+						workspaceId={workspaceId}
+						creditsState={creditsState}
+						onStatusChange={onStatusChange}
+						onDriverChange={onDriverChange}
 					/>
-				) : (
-					object.status && <StatusPill status={object.status} />
 				)}
-				{creditsState === 'empty' && <PausedNoCreditsChip workspaceId={workspaceId} />}
-				<OwnerSelect
-					members={members}
-					currentOwnerId={object.driver ?? null}
-					onChange={onDriverChange}
-					variant="chip"
-				/>
 			</div>
 
 			<EditableTitle
@@ -197,7 +239,7 @@ export function ObjectDetailIdentity({
 				entityId={object.id}
 				onChange={onTitleChange}
 				ariaLabel="Item title"
-				className="mt-2.5"
+				className="mt-2.5 text-[clamp(24px,3vw,30px)]"
 			/>
 		</div>
 	)

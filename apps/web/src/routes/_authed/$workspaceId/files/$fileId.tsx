@@ -689,14 +689,22 @@ function TopBarActions({
 		<div className="flex flex-wrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
 			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
 			<Button
-				variant="ghost"
+				variant="outline"
 				size="sm"
+				className="max-md:h-11"
 				onClick={() => downloadFile(file)}
 				aria-label="Download file"
 			>
 				<Download size={14} />
+				<span className="hidden md:inline">Download</span>
 			</Button>
-			<Button variant="ghost" size="sm" onClick={onOpenLinked} aria-label="Linked items and files">
+			<Button
+				variant="ghost"
+				size="sm"
+				className="max-md:h-11"
+				onClick={onOpenLinked}
+				aria-label="Linked items and files"
+			>
 				<Link2 size={14} />
 				<span className="hidden md:inline">Linked</span>
 			</Button>
@@ -704,6 +712,7 @@ function TopBarActions({
 				<Button
 					variant={annotateMode ? 'secondary' : 'ghost'}
 					size="sm"
+					className="max-md:h-11"
 					onClick={onToggleAnnotate}
 					disabled={!canWrite}
 					aria-label="Toggle annotate mode"
@@ -716,6 +725,7 @@ function TopBarActions({
 			<Button
 				variant={panelOpen ? 'secondary' : 'ghost'}
 				size="sm"
+				className="max-md:h-11"
 				onClick={onTogglePanel}
 				aria-label={
 					commentCount === null
@@ -783,6 +793,7 @@ function ViewerMoreMenu({
 			<Button
 				variant="ghost"
 				size="sm"
+				className="max-md:h-11"
 				disabled
 				aria-label="More actions — no options for this file type"
 				title="More — no options for this file type"
@@ -798,7 +809,7 @@ function ViewerMoreMenu({
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button variant="ghost" size="sm" aria-label="More actions">
+				<Button variant="ghost" size="sm" className="max-md:h-11" aria-label="More actions">
 					<MoreHorizontal size={14} />
 				</Button>
 			</DropdownMenuTrigger>

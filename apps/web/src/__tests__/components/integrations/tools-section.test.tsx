@@ -101,7 +101,7 @@ describe('toolServerEnabled / summarizeToolServerAccess', () => {
 describe('ToolsSection', () => {
 	it('always shows Maskin as read & write and always on, with nothing to change', () => {
 		render(<ToolsSection workspaceId="ws-1" />)
-		const region = screen.getByRole('region', { name: 'Custom tools' })
+		const region = screen.getByRole('region', { name: 'Tool servers' })
 		expect(within(region).getByText('Maskin')).toBeInTheDocument()
 		expect(within(region).getByText(/Read & write · always on/)).toBeInTheDocument()
 		expect(within(region).queryByRole('switch')).not.toBeInTheDocument()
@@ -126,7 +126,7 @@ describe('ToolsSection', () => {
 	it('saves a new http server from the form', async () => {
 		const user = userEvent.setup()
 		render(<ToolsSection workspaceId="ws-1" />)
-		await user.click(screen.getByRole('button', { name: /Add server/ }))
+		await user.click(screen.getByRole('button', { name: /Add tool server/ }))
 		await user.type(screen.getByLabelText('Name'), 'Docs search')
 		await user.click(screen.getByRole('combobox', { name: 'Transport' }))
 		await user.click(await screen.findByRole('option', { name: 'HTTP' }))
@@ -160,7 +160,7 @@ describe('ToolsSection', () => {
 			}),
 		]
 		render(<ToolsSection workspaceId="ws-1" />)
-		await user.click(screen.getByRole('button', { name: /Add server/ }))
+		await user.click(screen.getByRole('button', { name: /Add tool server/ }))
 		await user.type(screen.getByLabelText('Name'), 'Billing')
 		await user.click(screen.getByRole('combobox', { name: 'Transport' }))
 		await user.click(await screen.findByRole('option', { name: 'HTTP' }))
@@ -198,7 +198,7 @@ describe('ToolsSection', () => {
 	it('offers no credential picker when nothing is saved in the Keychain', async () => {
 		const user = userEvent.setup()
 		render(<ToolsSection workspaceId="ws-1" />)
-		await user.click(screen.getByRole('button', { name: /Add server/ }))
+		await user.click(screen.getByRole('button', { name: /Add tool server/ }))
 		await user.click(screen.getByRole('button', { name: /^Add$/ }))
 		expect(screen.queryByRole('combobox', { name: /saved credential/i })).toBeNull()
 	})
@@ -225,8 +225,8 @@ describe('ToolsSection', () => {
 		render(<ToolsSection workspaceId="ws-1" />, {
 			wrapper: createWorkspaceWrapper({ role: 'viewer' }),
 		})
-		expect(screen.getByRole('button', { name: /Add server/ })).toBeDisabled()
-		expect(screen.getByRole('button', { name: /Import \.mcp\.json/ })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /Add tool server/ })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /Import from Claude/ })).toBeDisabled()
 	})
 })
 

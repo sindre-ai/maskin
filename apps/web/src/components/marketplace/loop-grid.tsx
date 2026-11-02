@@ -1,3 +1,4 @@
+import { groupLoopsByUseCase } from '@/components/marketplace/group-loops'
 import { ItemCard } from '@/components/marketplace/item-card'
 import { MarketplaceLoopCard } from '@/components/marketplace/marketplace-loop-card'
 import type {
@@ -66,31 +67,39 @@ export function LoopGrid({
 		}))
 		.filter((s) => s.loopCards.length > 0 || s.itemCards.length > 0)
 
+	const flowGroups = groupLoopsByUseCase(multiTypeLoops)
 	const hasLoops = showLoopsSection && multiTypeLoops.length > 0
 	if (!hasLoops && typedSections.length === 0) return null
 
 	return (
-		<div className={cn('space-y-8', className)}>
+		<div className={cn('space-y-1', className)}>
 			{hasLoops && (
-				<section className="space-y-3" aria-label="Flows">
-					<h2 className="text-sm font-semibold text-foreground">Flows</h2>
-					<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))]">
-						{multiTypeLoops.map((loop) => (
-							<MarketplaceLoopCard
-								key={loop.id}
-								workspaceId={workspaceId}
-								loop={loop}
-								install={installLookup?.(loop.id)}
-								items={itemsByLoop.get(loop.id)}
-							/>
+				<section aria-label="Flows">
+					<SectionHeader title="Flows" count={multiTypeLoops.length} />
+					<div>
+						{flowGroups.map((group) => (
+							<div key={group.name} data-testid="flow-group">
+								{flowGroups.length > 1 ? (
+									<SectionHeader title={group.name} count={group.loops.length} as="span" />
+								) : null}
+								{group.loops.map((loop) => (
+									<MarketplaceLoopCard
+										key={loop.id}
+										workspaceId={workspaceId}
+										loop={loop}
+										install={installLookup?.(loop.id)}
+										items={itemsByLoop.get(loop.id)}
+									/>
+								))}
+							</div>
 						))}
 					</div>
 				</section>
 			)}
 			{typedSections.map(({ type, loopCards, itemCards }) => (
-				<section key={type} className="space-y-3" aria-label={SECTION_TITLE[type]}>
-					<h2 className="text-sm font-semibold text-foreground">{SECTION_TITLE[type]}</h2>
-					<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))]">
+				<section key={type} aria-label={SECTION_TITLE[type]}>
+					<SectionHeader title={SECTION_TITLE[type]} count={loopCards.length + itemCards.length} />
+					<div>
 						{loopCards.map((loop) => (
 							<MarketplaceLoopCard
 								key={loop.id}
@@ -112,6 +121,27 @@ export function LoopGrid({
 					</div>
 				</section>
 			))}
+		</div>
+	)
+}
+
+// v16 group header: name in bold with the count beside it and a rule above;
+// the first row's own rule closes it. The count sits outside the <h2> so the
+// heading's accessible name stays the bare section name.
+function SectionHeader({
+	title,
+	count,
+	as: Title = 'h2',
+}: {
+	title: string
+	count: number
+	/** Flow sub-groups use a span so only the type section is a heading. */
+	as?: 'h2' | 'span'
+}) {
+	return (
+		<div className="flex items-baseline gap-2 border-t border-border px-2 pt-4 pb-1.5">
+			<Title className="text-sm font-bold text-foreground">{title}</Title>
+			<span className="text-[12.5px] text-muted-foreground tabular-nums">{count}</span>
 		</div>
 	)
 }

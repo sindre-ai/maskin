@@ -11,6 +11,9 @@ export interface PageHeaderCrumb {
 	parentLabel: string
 	parentTo: string
 	parentParams?: Record<string, string>
+	// Optional level between the parent and the label (`Items › Flow › Name`).
+	// A link when `to` is set, plain muted text otherwise.
+	middle?: { label: string; to?: string; params?: Record<string, string> }
 	label: string
 }
 
@@ -52,7 +55,11 @@ interface PageHeaderState {
 	newMenuDisabled?: boolean
 	// Render flag for the shared nav: skip the <h1> (the page draws its own).
 	hideTitle?: boolean
+	// Side padding from `lg:`. Default is 28px; 'wide' is 48px (For you).
+	gutter?: PageGutter
 }
+
+export type PageGutter = 'wide'
 
 interface PageHeaderContextValue extends PageHeaderState {
 	setTitle: (title: string | undefined) => void
@@ -67,6 +74,7 @@ interface PageHeaderContextValue extends PageHeaderState {
 	setNewMenuPrimaryOverride: (override: NewMenuPrimaryOverride | undefined) => void
 	setNewMenuDisabled: (disabled: boolean | undefined) => void
 	setHideTitle: (hideTitle: boolean | undefined) => void
+	setGutter: (gutter: PageGutter | undefined) => void
 }
 
 const PageHeaderContext = createContext<PageHeaderContextValue>({
@@ -82,6 +90,7 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 	setNewMenuPrimaryOverride: () => {},
 	setNewMenuDisabled: () => {},
 	setHideTitle: () => {},
+	setGutter: () => {},
 })
 
 export function PageHeaderProvider({ children }: { children: ReactNode }) {
@@ -135,6 +144,10 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 		setState((prev) => ({ ...prev, hideTitle }))
 	}, [])
 
+	const setGutter = useCallback((gutter: PageGutter | undefined) => {
+		setState((prev) => ({ ...prev, gutter }))
+	}, [])
+
 	return (
 		<PageHeaderContext.Provider
 			value={{
@@ -151,6 +164,7 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 				setNewMenuPrimaryOverride,
 				setNewMenuDisabled,
 				setHideTitle,
+				setGutter,
 			}}
 		>
 			{children}

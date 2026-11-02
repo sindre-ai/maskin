@@ -1,3 +1,4 @@
+import { TrialCard } from '@/components/billing/trial-card'
 import { UnreadBadge } from '@/components/shared/unread-badge'
 import {
 	Sidebar,
@@ -102,7 +103,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 					</SidebarMenu>
 				</SidebarGroup>
 			</SidebarContent>
-			<SidebarFooter className="gap-1.5 p-2.5">
+			<SidebarFooter className="gap-1.5 px-2.5 pt-2.5 pb-5">
+				<TrialCard workspaceId={workspaceId} />
 				<SidebarMenu className="gap-0">
 					<SidebarNavItem item={marketplaceItem} source="footer" />
 				</SidebarMenu>

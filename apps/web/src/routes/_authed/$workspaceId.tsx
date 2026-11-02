@@ -2,6 +2,7 @@ import { LiveCallSurface } from '@/components/agents/live-call-surface'
 import { VoiceCallHost } from '@/components/agents/voice-call-host'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { Header } from '@/components/layout/header'
+import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { CommandPaletteV2 } from '@/components/search/command-palette-v2'
 import { RouteError } from '@/components/shared/route-error'
@@ -137,6 +138,7 @@ function WorkspaceLayout() {
 										<MainScrollArea>
 											<Outlet />
 										</MainScrollArea>
+										<MobileNav />
 									</SidebarInset>
 									<LiveCallSurface />
 								</SidebarProvider>
@@ -259,11 +261,12 @@ function ContentPushShell({ children }: { children: ReactNode }) {
  * Padding steps up from `px-4 pt-4` on mobile to `px-8 py-8` from `md:` and `px-7` from `lg:` — the same side margin the shared header uses, so title and content share one left edge.
  */
 function MainScrollArea({ children }: { children: ReactNode }) {
-	const { scrollLocked } = usePageHeader()
+	const { scrollLocked, gutter } = usePageHeader()
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:px-8 md:py-8 lg:px-7',
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:px-8 md:py-8',
+				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}
 			data-scroll-root

@@ -1,6 +1,6 @@
 import { AgentCallButton } from '@/components/agents/agent-call-button'
 import { LiveCapsule } from '@/components/agents/live-call-surface'
-import { getActorInitials } from '@/components/shared/actor-avatar'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -186,9 +186,7 @@ export function ThreadHeader({
 			: 'You'
 		: names.join(', ')
 	const agentCount = participants.filter((p) => p.actorType === 'agent').length
-	const tileLabel = singleAgent
-		? getActorInitials(singleAgent.actorName)
-		: String(agentCount || participants.length)
+	const tileLabel = String(agentCount || participants.length)
 	const working = new Set(
 		(sessions ?? []).filter((x) => ACTIVE_STATUSES.has(x.status)).map((x) => x.actorId),
 	).size
@@ -209,11 +207,23 @@ export function ThreadHeader({
 					<ArrowLeft size={16} />
 				</Button>
 			) : (
-				<span
-					aria-hidden
-					className="hidden size-[34px] lg:grid shrink-0 place-items-center rounded-[10px] bg-secondary text-xs font-bold text-foreground"
-				>
-					{tileLabel}
+				<span className="hidden shrink-0 lg:block">
+					{singleAgent ? (
+						<ActorAvatar
+							name={singleAgent.actorName}
+							type="agent"
+							id={singleAgent.actorId}
+							size="md"
+							className="size-[34px] rounded-[10px] text-xs font-bold"
+						/>
+					) : (
+						<span
+							aria-hidden
+							className="grid size-[34px] place-items-center rounded-[10px] bg-secondary text-xs font-bold text-foreground"
+						>
+							{tileLabel}
+						</span>
+					)}
 				</span>
 			)}
 			<div className="min-w-[10rem] flex-1">
