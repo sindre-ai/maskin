@@ -14,8 +14,9 @@ import { logger } from '../../../logger'
  * existing install needs to reconnect.
  *
  * Narrow on purpose: one attachment of one message of the connected account. The caller names
- * a message id and an attachment id and nothing else. The file name and type come from the
- * message part that owns the attachment id, never from the caller, and no URL is taken.
+ * a message id, an attachment id and optionally the part id, and nothing else. The file name and
+ * type come from the message part that owns the attachment, never from the caller, and no URL
+ * is taken.
  * Reading is safe to repeat, so nothing here is claimed or retried specially.
  */
 
@@ -31,6 +32,8 @@ const MAX_PART_DEPTH = 20
 // refused before it reaches a URL, so an id cannot add a path segment or a query.
 const MESSAGE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 const ATTACHMENT_ID_RE = /^[A-Za-z0-9_-]{1,4096}$/
+// Gmail part ids look like "0", "1" or "1.2". Only compared, never put in a URL.
+const PART_ID_RE = /^[0-9.]{1,64}$/
 const MIME_TYPE_RE = /^[A-Za-z0-9][\w!#$&^.+-]{0,126}\/[A-Za-z0-9][\w!#$&^.+-]{0,126}$/
 
 export type GmailAttachmentErrorCode =
@@ -53,6 +56,7 @@ export class GmailAttachmentError extends Error {
 }
 
 interface MessagePart {
+	partId?: string
 	filename?: string
 	mimeType?: string
 	body?: { attachmentId?: string; size?: number }
@@ -77,14 +81,26 @@ export function sanitizeAttachmentName(raw: string | undefined): string {
 	return name.slice(0, MAX_NAME_LENGTH) || 'attachment'
 }
 
-function findPart(part: MessagePart, attachmentId: string, depth = 0): MessagePart | null {
-	if (part.body?.attachmentId === attachmentId) return part
-	if (depth >= MAX_PART_DEPTH) return null
-	for (const child of part.parts ?? []) {
-		const found = findPart(child, attachmentId, depth + 1)
-		if (found) return found
-	}
-	return null
+function collectAttachmentParts(part: MessagePart, out: MessagePart[] = [], depth = 0) {
+	if (part.body?.attachmentId) out.push(part)
+	if (depth >= MAX_PART_DEPTH) return out
+	for (const child of part.parts ?? []) collectAttachmentParts(child, out, depth + 1)
+	return out
+}
+
+/**
+ * Gmail attachment ids change between fetches of the same message, so the id the caller read
+ * never equals the one our own fetch returns. The part id is stable, so it is matched first;
+ * the caller's attachment id is a fallback, and a message with a single attachment needs neither.
+ */
+function findPart(payload: MessagePart, attachmentId: string, partId?: string): MessagePart | null {
+	const candidates = collectAttachmentParts(payload)
+	return (
+		(partId ? candidates.find((p) => p.partId === partId) : undefined) ??
+		candidates.find((p) => p.body?.attachmentId === attachmentId) ??
+		(candidates.length === 1 ? candidates[0] : undefined) ??
+		null
+	)
 }
 
 async function gmailGet<T>(accessToken: string, path: string): Promise<T> {
@@ -145,6 +161,7 @@ export async function fetchGmailAttachment(
 	accessToken: string,
 	messageId: string,
 	attachmentId: string,
+	partId?: string,
 ): Promise<GmailAttachment> {
 	if (!MESSAGE_ID_RE.test(messageId)) {
 		throw new GmailAttachmentError('INVALID_INPUT', 'That is not a Gmail message id.')
@@ -152,24 +169,30 @@ export async function fetchGmailAttachment(
 	if (!ATTACHMENT_ID_RE.test(attachmentId)) {
 		throw new GmailAttachmentError('INVALID_INPUT', 'That is not a Gmail attachment id.')
 	}
+	if (partId !== undefined && !PART_ID_RE.test(partId)) {
+		throw new GmailAttachmentError('INVALID_INPUT', 'That is not a Gmail part id.')
+	}
 
 	// The message tells which part owns the attachment id, and so its name and type.
 	const message = await gmailGet<{ payload?: MessagePart }>(
 		accessToken,
 		`/messages/${messageId}?format=full&fields=payload`,
 	)
-	const part = message.payload ? findPart(message.payload, attachmentId) : null
-	if (!part) {
+	const part = message.payload ? findPart(message.payload, attachmentId, partId) : null
+	const ownAttachmentId = part?.body?.attachmentId
+	if (!part || !ownAttachmentId) {
 		throw new GmailAttachmentError(
 			'NOT_FOUND',
-			'That message has no attachment with that id. Read the message again and use the ids it gives now: attachment ids can change between reads.',
+			'That message has no attachment with that part id or attachment id. Read the message again and pass the partId it lists next to the attachment.',
 		)
 	}
 	if ((part.body?.size ?? 0) > GMAIL_ATTACHMENT_MAX_BYTES) throw tooLarge()
 
+	// The bytes are fetched with the id from our own fetch of the message, which Gmail accepts;
+	// the caller's id may be stale by now.
 	const data = await gmailGet<{ data?: string }>(
 		accessToken,
-		`/messages/${messageId}/attachments/${encodeURIComponent(attachmentId)}`,
+		`/messages/${messageId}/attachments/${encodeURIComponent(ownAttachmentId)}`,
 	)
 	const bytes = Buffer.from(data.data ?? '', 'base64url')
 	if (bytes.byteLength > GMAIL_ATTACHMENT_MAX_BYTES) throw tooLarge()

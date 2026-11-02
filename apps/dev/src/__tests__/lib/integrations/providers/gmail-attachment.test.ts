@@ -43,6 +43,28 @@ const message = (part: Record<string, unknown> = {}) => ({
 	},
 })
 
+/** Two attachments, the way Gmail lists them: partId is stable, the attachment ids are per fetch. */
+const twoAttachments = () => ({
+	payload: {
+		mimeType: 'multipart/mixed',
+		parts: [
+			{ partId: '0', mimeType: 'text/plain', filename: '', body: { size: 5, data: 'aGVsbG8' } },
+			{
+				partId: '1',
+				mimeType: 'application/pdf',
+				filename: 'invoice.pdf',
+				body: { attachmentId: 'FRESH-1', size: BYTES.length },
+			},
+			{
+				partId: '2',
+				mimeType: 'application/pdf',
+				filename: 'receipt.pdf',
+				body: { attachmentId: 'FRESH-2', size: BYTES.length },
+			},
+		],
+	},
+})
+
 const attachmentData = (bytes: Buffer = BYTES) => ({
 	size: bytes.length,
 	data: bytes.toString('base64url'),
@@ -105,12 +127,54 @@ describe('fetchGmailAttachment', () => {
 	})
 
 	it('refuses an attachment id the message does not carry, without downloading anything', async () => {
-		fetchMock.mockResolvedValueOnce(json(200, message()))
+		fetchMock.mockResolvedValueOnce(json(200, twoAttachments()))
 
 		const err = await failure(fetchGmailAttachment('token', 'msg1', 'OTHER'))
 
 		expect(err.code).toBe('NOT_FOUND')
 		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('matches by part id when the message now carries a different attachment id than the caller read', async () => {
+		fetchMock
+			.mockResolvedValueOnce(json(200, twoAttachments()))
+			.mockResolvedValueOnce(json(200, attachmentData()))
+
+		const out = await fetchGmailAttachment('token', 'msg1', 'STALE-FROM-THE-READ-TOOL', '2')
+
+		expect(out.name).toBe('receipt.pdf')
+		// The bytes are fetched with the id from our own fetch, not the caller's stale one.
+		expect(fetchMock.mock.calls[1]?.[0]).toBe(
+			'https://gmail.googleapis.com/gmail/v1/users/me/messages/msg1/attachments/FRESH-2',
+		)
+	})
+
+	it('uses the only attachment when neither the part id nor the attachment id matches', async () => {
+		fetchMock
+			.mockResolvedValueOnce(json(200, message({ partId: '1' })))
+			.mockResolvedValueOnce(json(200, attachmentData()))
+
+		const out = await fetchGmailAttachment('token', 'msg1', 'STALE-FROM-THE-READ-TOOL')
+
+		expect(out.name).toBe('receipt-4711.pdf')
+		expect(fetchMock.mock.calls[1]?.[0]).toBe(
+			'https://gmail.googleapis.com/gmail/v1/users/me/messages/msg1/attachments/ATT-1',
+		)
+	})
+
+	it('refuses a part id no attachment has when the message has several attachments', async () => {
+		fetchMock.mockResolvedValueOnce(json(200, twoAttachments()))
+
+		const err = await failure(fetchGmailAttachment('token', 'msg1', 'STALE', '9'))
+
+		expect(err.code).toBe('NOT_FOUND')
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('refuses a part id that is not a Gmail part id', async () => {
+		const err = await failure(fetchGmailAttachment('token', 'msg1', 'ATT-1', '1/../x'))
+		expect(err.code).toBe('INVALID_INPUT')
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
 	it('refuses a message that is not in the connected account', async () => {

@@ -7828,7 +7828,11 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					'POST',
 					'/api/integrations/gmail/save-attachment',
-					{ message_id: args.message_id, attachment_id: args.attachment_id },
+					{
+						message_id: args.message_id,
+						attachment_id: args.attachment_id,
+						part_id: args.part_id,
+					},
 					{ workspaceId: args.workspace_id },
 				)
 				return reply(JSON.stringify(saved))

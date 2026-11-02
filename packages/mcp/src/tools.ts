@@ -2281,7 +2281,7 @@ export const tools = {
 	},
 	gmail_save_attachment: {
 		description:
-			'Save one attachment of a Gmail message as a workspace file. Google\'s hosted Gmail tools return no attachment bytes, so this is the way a receipt or document in a mail becomes a file you can use. Pass the message id and the attachment id from the message you read (attachment ids can change between reads, so use the ones from your latest read). It reads that one attachment of the connected account and nothing else; the file name and type come from the message. Needs "Read" or "Read & write" access to Gmail. Max 20 MB. Returns file_id, name, mime_type, size_bytes and a url. To send it on, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), then have a person approve it and call gmail_send_email.',
+			'Save one attachment of a Gmail message as a workspace file. Google\'s hosted Gmail tools return no attachment bytes, so this is the way a receipt or document in a mail becomes a file you can use. Pass the message id, the attachment id and the partId from the message you read. Attachment ids change on every read, so the attachment is found by part_id (the partId listed next to the attachment, for example "1"); always pass it.  It reads that one attachment of the connected account and nothing else; the file name and type come from the message. Needs "Read" or "Read & write" access to Gmail. Max 20 MB. Returns file_id, name, mime_type, size_bytes and a url. To send it on, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), then have a person approve it and call gmail_send_email.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			message_id: z.string().min(1).describe('The Gmail message id the attachment belongs to.'),
@@ -2289,6 +2289,13 @@ export const tools = {
 				.string()
 				.min(1)
 				.describe('The Gmail attachment id, as the message lists it (body.attachmentId).'),
+			part_id: z
+				.string()
+				.min(1)
+				.optional()
+				.describe(
+					'The partId the Gmail read tool lists next to the attachment, for example "1". Stable between reads, unlike the attachment id, so pass it.',
+				),
 		}),
 	},
 	resend_send_email: {

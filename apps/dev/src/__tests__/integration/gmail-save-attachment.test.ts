@@ -183,7 +183,13 @@ describe('POST /api/integrations/gmail/save-attachment', () => {
 		)
 		expect((await save(REQUEST)).status).toBe(404)
 
-		fetchMock.mockResolvedValueOnce(json(200, messageWithReceipt()))
+		const twoFiles = messageWithReceipt()
+		twoFiles.payload.parts.push({
+			mimeType: 'application/pdf',
+			filename: 'invoice.pdf',
+			body: { attachmentId: 'ATT-2', size: PDF.length },
+		})
+		fetchMock.mockResolvedValueOnce(json(200, twoFiles))
 		expect((await save({ ...REQUEST, attachment_id: 'OTHER' })).status).toBe(404)
 
 		expect(await filesOf(workspace.id)).toHaveLength(0)
