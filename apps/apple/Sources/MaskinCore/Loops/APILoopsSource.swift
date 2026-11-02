@@ -54,7 +54,7 @@ public struct APILoopsSource: LoopsAPI {
 		return LoopOverview(
 			members: members, posts: LoopOverviewBuilder.posts(from: graph.events),
 			outputs: LoopOverviewBuilder.outcomes(from: produced, files: metadata),
-			statusOrder: order)
+			statusOrder: order, driverID: graph.object.driverId)
 	}
 
 	public func latestPost(loopID: String) async throws -> LoopPost? {
@@ -222,6 +222,7 @@ public struct APILoopsSource: LoopsAPI {
 		var createdAt: String?
 		var updatedAt: String?
 		var targets: [TargetWire]?
+		var tags: [String]?
 
 		var model: LoopSummary {
 			LoopSummary(
@@ -231,7 +232,7 @@ public struct APILoopsSource: LoopsAPI {
 				closedCount: closedCount, medianTimeToClose: medianTimeToCloseMs.map { $0 / 1000 },
 				agentIDs: agentIds, triggerIDs: triggerIds, waitingCount: waitingCount,
 				createdAt: AutomationDates.parse(createdAt), updatedAt: AutomationDates.parse(updatedAt),
-				targets: targets?.map(\.model))
+				targets: targets?.map(\.model), tags: tags)
 		}
 	}
 

@@ -90,11 +90,15 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 	public var hiddenFromChat: Bool?
 	public var cardAnswer: ChatCardAnswer?
 	public var fromSuggestedStep: ChatSuggestedStepRef?
+	/// Server id of the message a reply quotes. Free-form message metadata, so no API change; it
+	/// lets the quote find its original exactly instead of matching text.
+	public var quotedMessageId: Int?
 
 	public init(
 		attachments: [ChatAttachmentRef]? = nil, mentions: [String]? = nil,
 		questionAnswer: ChatQuestionAnswer? = nil, hiddenFromChat: Bool? = nil,
-		cardAnswer: ChatCardAnswer? = nil, fromSuggestedStep: ChatSuggestedStepRef? = nil
+		cardAnswer: ChatCardAnswer? = nil, fromSuggestedStep: ChatSuggestedStepRef? = nil,
+		quotedMessageId: Int? = nil
 	) {
 		self.attachments = attachments?.isEmpty == true ? nil : attachments
 		self.mentions = mentions?.isEmpty == true ? nil : mentions
@@ -102,18 +106,19 @@ public struct ChatSendMetadata: Codable, Sendable, Equatable {
 		self.hiddenFromChat = hiddenFromChat == true ? true : nil
 		self.cardAnswer = cardAnswer
 		self.fromSuggestedStep = fromSuggestedStep
+		self.quotedMessageId = quotedMessageId
 	}
 
 	enum CodingKeys: String, CodingKey {
 		case attachments, mentions, questionAnswer = "question_answer"
 		case hiddenFromChat = "hidden_from_chat", cardAnswer = "card_answer"
-		case fromSuggestedStep = "from_suggested_step"
+		case fromSuggestedStep = "from_suggested_step", quotedMessageId = "quoted_message_id"
 	}
 
 	public var isEmpty: Bool {
 		attachments == nil && mentions == nil && questionAnswer == nil && hiddenFromChat == nil
 			&& cardAnswer == nil
-			&& fromSuggestedStep == nil
+			&& fromSuggestedStep == nil && quotedMessageId == nil
 	}
 
 	/// The same data as a `JSONValue`, so an optimistic bubble reads it exactly like a server row.

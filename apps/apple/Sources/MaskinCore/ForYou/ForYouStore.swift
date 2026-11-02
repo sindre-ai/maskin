@@ -31,6 +31,20 @@ public struct ForYouDisplayOptions: Sendable, Equatable, Codable {
 		self.showsHandled = showsHandled
 	}
 
+	/// Layout, sort, filter bar and Handled today are all at their defaults (the intent pill is a
+	/// filter, not a display option, so it does not count). Drives the Display button tint and Reset.
+	public var isDefaultDisplay: Bool {
+		mode == .cards && sort == .attention && !filterBarOn && showsHandled
+	}
+
+	/// Puts the four Display settings back; the chosen intent stays.
+	public mutating func resetDisplay() {
+		mode = .cards
+		sort = .attention
+		filterBarOn = false
+		showsHandled = true
+	}
+
 	// Hand-written so options saved before these existed (with a `typeFilter`) still decode.
 	public init(from decoder: any Decoder) throws {
 		let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -583,19 +597,11 @@ public final class ForYouStore {
 
 	// MARK: Header
 
-	/// "SUN 18 OCT" for the line above the title.
-	public func dateLine(at date: Date? = nil) -> String { ForYouHeader.dateLine(date ?? now()) }
-
-	/// The same day, written for VoiceOver.
-	public func spokenDate(at date: Date? = nil) -> String { ForYouHeader.spokenDate(date ?? now()) }
-
-	/// The one sentence under the title: what is blocked on the reader. It looks past the intent
+	/// The first sentence under the title: how many decisions are blocked on the reader. It looks past the intent
 	/// filter, which only narrows the list below.
 	public var blockedSummary: String? {
 		let blocking = build(deferred: false, ignoringIntent: true).filter { $0.bucket == .needs }
-		return ForYouHeader.summary(
-			blocking: blocking, loaded: phase == .loaded,
-			sender: { [self] in agent(of: $0)?.name ?? senderName(of: $0) })
+		return ForYouHeader.summary(blocking: blocking, loaded: phase == .loaded)
 	}
 
 	// MARK: Groups

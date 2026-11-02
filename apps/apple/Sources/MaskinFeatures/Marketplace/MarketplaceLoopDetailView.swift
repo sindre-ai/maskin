@@ -89,7 +89,7 @@ struct MarketplaceLoopDetailView: View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			switch store.state(of: loopID) {
 			case .notInstalled:
-				Button("Install flow") { Task { await store.installLoop(loopID) } }
+				Button("Install") { Task { await store.installLoop(loopID) } }
 					.buttonStyle(.primaryAction)
 			case .installing:
 				HStack(spacing: MaskinSpace.s4) {
@@ -126,7 +126,7 @@ struct MarketplaceLoopDetailView: View {
 
 	private func includes(_ items: [MarketplaceItem]) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			SectionHeader("Includes") {
+			SectionHeader("What it brings") {
 				Text("\(items.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
 			}
 			VStack(spacing: 0) {

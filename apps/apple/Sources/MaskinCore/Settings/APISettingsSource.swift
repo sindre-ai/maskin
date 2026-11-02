@@ -172,7 +172,8 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			return try ok.body.json.map {
 				ConnectedIntegration(
 					id: $0.id, provider: $0.provider, status: $0.status, externalId: $0.externalId,
-					missingScopes: $0.missingScopes?.count ?? 0, needsReconnect: $0.needsReconnect ?? false)
+					missingScopes: $0.missingScopes?.count ?? 0, needsReconnect: $0.needsReconnect ?? false,
+					displayName: $0.displayName)
 			}
 		default:
 			throw SettingsError("Couldn't load integrations.")

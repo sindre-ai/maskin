@@ -3,21 +3,22 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One agent: a hero with its identity and a one-tap run, then instructions, tools, setup and
-/// recent sessions. Name, role, instructions and tools are editable here; everything saves
-/// optimistically and rolls back with a notice if the server refuses.
+/// One agent: a hero with its editable identity, what it is doing now, and a vertical page menu (Setup,
+/// Triggers, Objects, Sessions, plus Computer while it has one). Name, what it owns, instructions
+/// and tools are editable here; everything saves optimistically and rolls back with a notice if
+/// the server refuses.
 struct AgentDetailView: View {
 	let store: AgentDetailStore
 	/// Called once the agent is deleted so the host can leave the screen.
 	var onDeleted: () -> Void = {}
 	/// The flows this agent works in, by name. Empty while loading or when it is in none.
 	var flows: [LoopSummary] = []
-	/// The workspace's triggers; the ones that wake this agent show as a card. Nil in previews.
+	/// The workspace's triggers; the ones that wake this agent show on its Triggers tab. Nil in previews.
 	var triggers: TriggersStore?
-	/// The objects this agent drives (its Objects tab). Empty while loading.
+	/// The objects this agent drives (its Overview). Empty while loading.
 	var objects: [WorkObject] = []
-	@State private var showRun = false
 	@State private var showNewTrigger = false
+	@State private var showComputer = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmReset = false
 	@State private var confirmDelete = false
@@ -46,13 +47,13 @@ struct AgentDetailView: View {
 						triggers: triggers?.triggers.filter { $0.targetActorID == profile.id } ?? [],
 						onToggleTrigger: { id, on in Task { await triggers?.setEnabled(id, on) } },
 						onNewTrigger: triggers == nil ? nil : { showNewTrigger = true },
-						onRun: { runTapped() },
-						onPause: { Task { await store.pause() } },
-						onReset: { confirmReset = true },
 						onStop: { sessionToStop = $0 },
+						onRetry: { session in Task { await store.retry(session) } },
 						onOpenLog: runtime == nil ? nil : { logSession = $0 },
 						onChangeInChat: { changeInChat() },
-						objects: objects, onOpenObject: { runtime?.openObject($0) })
+						objects: objects, onOpenObject: { runtime?.openObject($0) },
+						onOpenFlow: runtime == nil ? nil : { runtime?.openLoop($0) },
+						onOpenComputer: computerAction)
 				} else {
 					placeholder
 				}
@@ -62,42 +63,33 @@ struct AgentDetailView: View {
 			.frame(maxWidth: .infinity)
 		}
 		.ambientBackground()
-		.navigationTitle(store.profile?.name ?? "")
+		.navigationTitle("")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
 		.toolbar {
 			if store.profile != nil {
 				ToolbarItemGroup(placement: .primaryAction) {
+					Button { startChat(live: false) } label: { Image(systemName: "message") }
+						.accessibilityLabel("Message \(store.profile?.name ?? "agent")")
 					Button { startChat(live: true) } label: { Image(systemName: "waveform") }
 						.accessibilityLabel("Live with \(store.profile?.name ?? "agent")")
-					Button { startChat(live: false) } label: { Image(systemName: "plus") }
-						.accessibilityLabel("New chat with \(store.profile?.name ?? "agent")")
 					Menu {
-						if store.canReset {
-							Button { confirmReset = true } label: { Label("Reset to defaults", systemImage: "arrow.counterclockwise") }
+						if store.canEnable {
+							Button("Enable agent") { Task { await store.enable() } }
+						} else if store.canDisable {
+							Button("Disable agent") { Task { await store.disable() } }
 						}
+						if store.canReset { Button("Reset to defaults") { confirmReset = true } }
 						if store.canDelete {
-							Divider()
-							Button(role: .destructive) { confirmDelete = true } label: {
-								Label("Delete agent", systemImage: "trash")
-							}
+							Button("Delete agent", role: .destructive) { confirmDelete = true }
 						}
-					} label: {
-						Image(systemName: "ellipsis")
-					}
-					.accessibilityLabel("Agent actions")
+					} label: { Image(systemName: "ellipsis") }
+						.accessibilityLabel("More for \(store.profile?.name ?? "agent")")
 				}
 			}
 		}
 		.refreshable { await store.refresh() }
-		.sheet(isPresented: $showRun) {
-			RunAgentSheet(agentName: store.profile?.name ?? "this agent") { prompt in
-				await store.run(prompt: prompt)
-			}
-			.presentationDetents([.medium, .large])
-			.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
-		}
 		.sheet(item: $logSession) { session in
 			if let runtime, let workspaceID = runtime.environment.workspaceId {
 				NavigationStack {
@@ -114,6 +106,15 @@ struct AgentDetailView: View {
 				NewTriggerSheet(store: triggers, onCreated: { _ in }, presetAgentID: store.profile?.id)
 			}
 		}
+		#if os(iOS)
+		.fullScreenCover(isPresented: $showComputer) {
+			if let runtime, let profile = store.profile {
+				ComputerScreen(
+					agentName: profile.name, agentID: profile.id, environment: runtime.environment,
+					onDone: { showComputer = false })
+			}
+		}
+		#endif
 		.confirmationDialog(
 			"Reset \(store.profile?.name ?? "agent") to factory defaults?", isPresented: $confirmReset,
 			titleVisibility: .visible
@@ -149,13 +150,13 @@ struct AgentDetailView: View {
 		}
 	}
 
-	/// Resuming a paused agent needs no prompt; a fresh run asks what to do.
-	private func runTapped() {
-		if store.status == .paused {
-			Task { await store.run(prompt: nil) }
-		} else {
-			showRun = true
-		}
+	/// The Computer tab opens the live view. Only on iOS, where the viewer exists.
+	private var computerAction: (() -> Void)? {
+		#if os(iOS)
+		runtime == nil ? nil : { showComputer = true }
+		#else
+		nil
+		#endif
 	}
 
 	@ViewBuilder
@@ -179,416 +180,550 @@ struct AgentDetailContent: View {
 	/// The triggers that wake this agent, already filtered.
 	var triggers: [Trigger] = []
 	var onToggleTrigger: (String, Bool) -> Void = { _, _ in }
-	/// Nil hides the card's "New trigger" action (previews, or no trigger store).
+	/// Nil hides "New trigger" (previews, or no trigger store).
 	var onNewTrigger: (() -> Void)?
-	var onRun: () -> Void = {}
-	var onPause: () -> Void = {}
-	var onReset: () -> Void = {}
 	var onStop: (AgentSession) -> Void = { _ in }
-	/// Nil hides the log link on a session row (previews, snapshots).
+	var onRetry: (AgentSession) -> Void = { _ in }
+	/// Nil hides the log links (previews, snapshots).
 	var onOpenLog: ((AgentSession) -> Void)?
 	var onChangeInChat: () -> Void = {}
 	/// The objects this agent drives, and what tapping one does.
 	var objects: [WorkObject] = []
 	var onOpenObject: (String) -> Void = { _ in }
+	/// Nil hides the flow chips' action (they still show).
+	var onOpenFlow: ((String) -> Void)?
+	/// Nil hides the Computer tab.
+	var onOpenComputer: (() -> Void)?
 
-	/// The agent page's sub pages, listed under the hero: how it is set up, what wakes it, what it
-	/// drives, and what it has done.
-	enum Page: String, CaseIterable, Identifiable {
+	enum Tab: String, CaseIterable, Identifiable {
+		case overview = "Overview"
 		case setup = "Setup"
 		case triggers = "Triggers"
 		case objects = "Objects"
 		case sessions = "Sessions"
+		case computer = "Computer"
 		var id: String { rawValue }
+	}
 
-		var symbol: String {
-			switch self {
-			case .setup: "slider.horizontal.3"
-			case .triggers: "bolt"
-			case .objects: "square.stack"
-			case .sessions: "clock.arrow.circlepath"
-			}
+	private enum Field: Hashable { case name, owns, instructions }
+
+	@State private var tab: Tab = .overview
+	@State private var sessionFilter: AgentSessionFilter = .all
+	@State private var nameDraft = ""
+	@State private var ownsDraft = ""
+	@State private var instructionsDraft = ""
+	@FocusState private var focus: Field?
+
+	/// The pages the menu offers; Computer only while the agent has a live one.
+	private var pages: [Tab] {
+		Tab.allCases.filter {
+			$0 != .overview && ($0 != .computer || (onOpenComputer != nil && store.liveSession != nil))
 		}
 	}
 
 	var body: some View {
-		hero
-		if let live = store.liveSession {
-			card("Now") { LiveSessionRow(session: live) { onStop(live) } }
-		}
-		VStack(spacing: 0) {
-			ForEach(Page.allCases) { page in
-				NavigationLink {
-					subpage(page)
-				} label: {
-					pageRow(page)
+		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+			if tab == .overview {
+				hero
+				banner
+				statsRow
+				pageMenu
+			} else {
+				pageHeader
+				banner
+				switch tab {
+				case .setup: setup
+				case .triggers: triggersTab
+				case .objects: objectsPage
+				case .sessions: sessions
+				case .computer: computer
+				case .overview: EmptyView()
 				}
-				.buttonStyle(.plain)
-				if page != Page.allCases.last { Divider().overlay(MaskinSurface.separator) }
 			}
 		}
-		.padding(.horizontal, MaskinSpace.s10)
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.agentSurface()
+		.onChange(of: profile.name, initial: true) { _, name in if focus != .name { nameDraft = name } }
+		.onChange(of: profile.description, initial: true) { _, text in
+			if focus != .owns { ownsDraft = text ?? "" }
+		}
+		.onChange(of: profile.systemPrompt, initial: true) { _, text in
+			if focus != .instructions { instructionsDraft = text ?? "" }
+		}
+		.onChange(of: focus) { old, _ in
+			switch old {
+			case .name: commitName()
+			case .owns: commitOwns()
+			case .instructions: commitInstructions()
+			case nil: break
+			}
+		}
 	}
 
-	private func summary(_ page: Page) -> String {
+	// MARK: - Hero
+
+	private var hero: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s8) {
+			HStack(spacing: MaskinSpace.s9) {
+				ActorAvatar(
+					name: profile.name, kind: .agent, size: MaskinSpace.s14 * 2, seed: profile.id,
+					mood: AgentMood(store.status))
+				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+					TextField("Name", text: $nameDraft)
+						.maskinText(.title)
+						.foregroundStyle(MaskinColor.ink)
+						.focused($focus, equals: .name)
+						.submitLabel(.done)
+						.onSubmit { focus = nil }
+					AgentStatusLabel(status: store.status)
+				}
+			}
+			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+				Text("Owns").maskinText(.body).foregroundStyle(MaskinColor.ink4)
+				TextField("What does this agent own?", text: $ownsDraft, axis: .vertical)
+					.maskinText(.body)
+					.foregroundStyle(MaskinColor.ink)
+					.focused($focus, equals: .owns)
+					.padding(.bottom, MaskinSpace.s1)
+					.overlay(alignment: .bottom) {
+						Rectangle().stroke(MaskinSurface.line, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+							.frame(height: 1)
+					}
+			}
+			if !flows.isEmpty {
+				HStack(alignment: .center, spacing: MaskinSpace.s3) {
+					Text("Works in").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					ScrollView(.horizontal, showsIndicators: false) {
+						HStack(spacing: MaskinSpace.s3) {
+							ForEach(flows) { flow in flowChip(flow) }
+						}
+					}
+				}
+			}
+		}
+	}
+
+	@ViewBuilder
+	private func flowChip(_ flow: LoopSummary) -> some View {
+		let label = Text(AgentTeams.name(of: flow))
+			.maskinText(.subhead).fontWeight(.semibold)
+			.foregroundStyle(MaskinColor.ink)
+			.padding(.horizontal, MaskinSpace.s7)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.overlay(Capsule().strokeBorder(MaskinSurface.line))
+			.contentShape(Capsule())
+		if let onOpenFlow {
+			Button { onOpenFlow(flow.id) } label: { label }.buttonStyle(.maskinPressed(.shrink))
+		} else {
+			label
+		}
+	}
+
+	private func commitName() {
+		let name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !name.isEmpty else { nameDraft = profile.name; return }
+		guard name != profile.name else { return }
+		Task { await store.save(AgentEdit(name: name)) }
+	}
+
+	private func commitOwns() {
+		let text = ownsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard text != (profile.description ?? "") else { return }
+		Task { await store.save(AgentEdit(description: text)) }
+	}
+
+	private func commitInstructions() {
+		guard instructionsDraft != (profile.systemPrompt ?? "") else { return }
+		Task { await store.save(AgentEdit(systemPrompt: instructionsDraft)) }
+	}
+
+	// MARK: - Banner: failed, working now, or disabled
+
+	@ViewBuilder private var banner: some View {
+		if let live = store.liveSession, live.isActive {
+			workingNow(live)
+		} else if store.status == .paused {
+			Text("Disabled. Running sessions were held where they stopped. Enable the agent to continue.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.padding(MaskinSpace.s9)
+				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+		} else if store.status == .failed, let failed = store.sessions.first(where: \.isFailure) {
+			failedBanner(failed)
+		}
+	}
+
+	private func workingNow(_ live: AgentSession) -> some View {
+		let title = live.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+		return HStack(spacing: MaskinSpace.s7) {
+			Circle().fill(MaskinColor.sigInk).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+				.accessibilityHidden(true)
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				MonoLabel("Working now")
+				Text(title.isEmpty ? (live.currentActivity ?? "A run") : title)
+					.maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(3)
+				if let seconds = live.duration() {
+					Text("Running for \(AgentDuration.words(seconds))")
+						.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+				}
+			}
+			Spacer(minLength: MaskinSpace.s3)
+			if let onOpenLog { textButton("Watch", tint: MaskinColor.sigInk) { onOpenLog(live) } }
+			textButton("Stop", tint: MaskinColor.ink3) { onStop(live) }
+		}
+		.padding(MaskinSpace.s9)
+		.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+		.accessibilityElement(children: .contain)
+	}
+
+	private func failedBanner(_ session: AgentSession) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			HStack(spacing: MaskinSpace.s5) {
+				Circle().fill(MaskinStatus.alert.fg).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+					.accessibilityHidden(true)
+				Text("\(profile.name) stopped on its last run")
+					.maskinText(.headline).foregroundStyle(MaskinColor.ink)
+			}
+			Text("The run ended before it finished.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			HStack(spacing: MaskinSpace.s7) {
+				if store.canRun { textButton("Retry", tint: MaskinColor.sigInk) { onRetry(session) } }
+				if let onOpenLog { textButton("See log", tint: MaskinColor.ink) { onOpenLog(session) } }
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(MaskinSpace.s9)
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+		.accessibilityElement(children: .contain)
+	}
+
+	private func textButton(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+		Button(action: action) {
+			Text(title).maskinText(.body).fontWeight(.semibold).foregroundStyle(tint)
+				.frame(minHeight: MaskinSpace.touchMin)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.plain)
+	}
+
+	// MARK: - Stats and tabs
+
+	@ViewBuilder private var statsRow: some View {
+		let stats = store.stats
+		HStack(alignment: .top, spacing: MaskinSpace.s9) {
+			if stats.total > 0 { stat("\(stats.total)", stats.total == 1 ? "Session" : "Sessions") }
+			if let well = stats.finishedWell { stat(well, "Finished well") }
+			if !flows.isEmpty { stat("\(flows.count)", flows.count == 1 ? "Flow" : "Flows") }
+			if !objects.isEmpty { stat("\(objects.count)", objects.count == 1 ? "Item" : "Items") }
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	private func stat(_ value: String, _ label: String) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+			Text(value).maskinText(.title).foregroundStyle(MaskinColor.ink)
+			Text(label).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+		}
+		.accessibilityElement(children: .combine)
+	}
+
+	private func summary(_ page: Tab) -> String {
 		switch page {
 		case .setup: "Instructions, tools, skills"
 		case .triggers: triggers.isEmpty ? "None" : "\(triggers.count)"
 		case .objects: objects.isEmpty ? "None" : "\(objects.count)"
 		case .sessions: store.sessions.isEmpty ? "No runs yet" : "\(store.sessions.count) recent"
+		case .computer: "Live view"
+		case .overview: ""
 		}
 	}
 
-	private func pageRow(_ page: Page) -> some View {
-		HStack(spacing: MaskinSpace.s5) {
-			Image(systemName: page.symbol)
-				.foregroundStyle(MaskinColor.ink3)
-				.frame(width: MaskinSpace.s10)
-				.accessibilityHidden(true)
-			Text(page.rawValue).maskinText(.body).foregroundStyle(MaskinColor.ink)
-			Spacer(minLength: MaskinSpace.s3)
-			Text(summary(page)).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(1)
-			Image(systemName: "chevron.right")
-				.foregroundStyle(MaskinColor.ink5)
-				.accessibilityHidden(true)
+	private func icon(_ page: Tab) -> String {
+		switch page {
+		case .setup: "slider.horizontal.3"
+		case .triggers: "bolt"
+		case .objects: "square.stack.3d.up"
+		case .sessions: "clock"
+		case .computer: "display"
+		case .overview: "circle"
 		}
-		.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s3)
-		.contentShape(Rectangle())
-		.accessibilityElement(children: .combine)
 	}
 
-	private func subpage(_ page: Page) -> some View {
-		ScrollView {
-			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
-				switch page {
-				case .setup: setupCards
-				case .triggers: triggerCards
-				case .objects: objectCards
-				case .sessions: sessionCards
+	/// The vertical page menu under the hero: one row per page, each with its own summary.
+	private var pageMenu: some View {
+		VStack(spacing: 0) {
+			ForEach(pages) { page in
+				Button {
+					MaskinHaptics.play(.selection)
+					tab = page
+				} label: {
+					HStack(spacing: MaskinSpace.s7) {
+						Image(systemName: icon(page)).font(.body).foregroundStyle(MaskinColor.ink3)
+							.frame(width: MaskinSpace.s12).accessibilityHidden(true)
+						Text(page.rawValue).maskinText(.body).foregroundStyle(MaskinColor.ink)
+						Spacer(minLength: MaskinSpace.s3)
+						Text(summary(page)).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+						Image(systemName: "chevron.right")
+							.font(.footnote.weight(.semibold)).foregroundStyle(MaskinColor.ink5)
+							.accessibilityHidden(true)
+					}
+					.frame(minHeight: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+				Divider().overlay(MaskinSurface.separator)
+			}
+		}
+	}
+
+	/// A sub-page's header: back to the overview, then the page's name.
+	private var pageHeader: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			Button {
+				MaskinHaptics.play(.selection)
+				focus = nil
+				tab = .overview
+			} label: {
+				Label(profile.name, systemImage: "chevron.left")
+					.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.sigInk)
+					.frame(minHeight: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			Text(tab.rawValue).maskinText(.title).foregroundStyle(MaskinColor.ink)
+		}
+	}
+
+	// MARK: - Objects
+
+	@ViewBuilder private var objectsPage: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			if objects.isEmpty {
+				Text("Nothing yet. Message \(profile.name) to give it work.")
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			}
+			ForEach(objects) { object in
+				Button { onOpenObject(object.id) } label: {
+					HStack(spacing: MaskinSpace.s5) {
+						Text(object.title ?? "Untitled")
+							.maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(2)
+							.multilineTextAlignment(.leading)
+						Spacer(minLength: MaskinSpace.s3)
+						Text(MaskinStatus.label(for: object.status).capitalized)
+							.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+						Image(systemName: "chevron.right")
+							.font(.footnote.weight(.semibold)).foregroundStyle(MaskinColor.ink5)
+							.accessibilityHidden(true)
+					}
+					.frame(minHeight: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+				Divider().overlay(MaskinSurface.separator)
+			}
+		}
+	}
+
+	// MARK: - Sessions
+
+	@ViewBuilder private var sessions: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+			ScrollView(.horizontal, showsIndicators: false) {
+				HStack(spacing: MaskinSpace.s4) {
+					ForEach(AgentSessionFilter.allCases) { option in
+						AgentFilterChip(label: option.title, selected: option == sessionFilter) {
+							sessionFilter = option
+						}
+					}
 				}
 			}
-			.padding(MaskinSpace.s9)
-			.frame(maxWidth: 720, alignment: .leading)
-			.frame(maxWidth: .infinity)
+			let shown = store.sessions.filter(sessionFilter.matches)
+			if shown.isEmpty {
+				Text(store.sessions.isEmpty ? "No runs yet." : "No sessions match.")
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.padding(.top, MaskinSpace.s4)
+			}
+			ForEach(shown) { session in
+				sessionRow(session, actions: true)
+				Divider().overlay(MaskinSurface.separator)
+			}
 		}
-		.ambientBackground()
-		.navigationTitle(page.rawValue)
-		#if os(iOS)
-		.navigationBarTitleDisplayMode(.inline)
-		#endif
 	}
 
-	@ViewBuilder private var triggerCards: some View {
-		card("Triggers", action: onNewTrigger.map { ("New trigger", "plus", $0) }) {
+	private func sessionRow(_ session: AgentSession, actions: Bool) -> some View {
+		let colors = MaskinStatus.colors(for: session.status)
+		let title = session.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+		return HStack(spacing: MaskinSpace.s5) {
+			Button { onOpenLog?(session) } label: {
+				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s5) {
+					Circle().fill(colors.fg).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+						.accessibilityHidden(true)
+					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+						Text(title.isEmpty ? "Run" : title)
+							.maskinText(.body).foregroundStyle(MaskinColor.ink)
+							.lineLimit(3).multilineTextAlignment(.leading)
+						sessionMeta(session)
+					}
+					Spacer(minLength: 0)
+				}
+				.frame(minHeight: MaskinSpace.touchMin)
+				.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.disabled(onOpenLog == nil)
+			.accessibilityHint(onOpenLog == nil ? "" : "Opens the session log")
+			if actions {
+				if session.isStoppable {
+					textButton("Stop", tint: MaskinColor.ink3) { onStop(session) }
+				} else if session.canRetry, store.canRun {
+					textButton("Retry", tint: MaskinColor.sigInk) { onRetry(session) }
+				}
+			}
+			Text(session.stateLabel)
+				.maskinText(.caption).fontWeight(.semibold)
+				.foregroundStyle(colors.fg)
+				.padding(.horizontal, MaskinSpace.s5).padding(.vertical, MaskinSpace.s2)
+				.background(colors.bg, in: Capsule())
+				.fixedSize()
+		}
+	}
+
+	@ViewBuilder
+	private func sessionMeta(_ session: AgentSession) -> some View {
+		HStack(spacing: MaskinSpace.s2) {
+			if session.isActive, let seconds = session.duration() {
+				Text("Running for \(AgentDuration.words(seconds))")
+			} else {
+				if let seconds = session.duration() { Text(AgentDuration.words(seconds)) }
+				if session.activityDate != nil {
+					if session.duration() != nil { Text("·") }
+					RelativeTime(session.activityDate, style: .relative)
+				}
+			}
+		}
+		.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+	}
+
+	// MARK: - Setup
+
+	@ViewBuilder private var setup: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+				SectionHeader("Instructions") {
+					Button("Change in chat", action: onChangeInChat)
+						.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.sigInk)
+				}
+				TextField("What is this agent's job?", text: $instructionsDraft, axis: .vertical)
+					.maskinText(.body).foregroundStyle(MaskinColor.ink2)
+					.lineLimit(4...12)
+					.focused($focus, equals: .instructions)
+					.padding(MaskinSpace.s9)
+					.overlay(
+						RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
+							.strokeBorder(MaskinSurface.line))
+			}
+			if !profile.tools.isEmpty {
+				VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+					SectionHeader("Tools")
+					ForEach(profile.tools) { tool in
+						HStack {
+							Text(tool.name).maskinText(.body).foregroundStyle(MaskinColor.ink)
+							Spacer(minLength: MaskinSpace.s3)
+							MonoLabel("MCP")
+						}
+						.frame(minHeight: MaskinSpace.touchMin)
+						.accessibilityElement(children: .combine)
+						Divider().overlay(MaskinSurface.separator)
+					}
+				}
+			}
+			if !profile.skills.isEmpty {
+				VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+					SectionHeader("Skills")
+					ForEach(profile.skills, id: \.self) { skill in
+						Text(skill).maskinText(.body).foregroundStyle(MaskinColor.ink)
+							.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+							.frame(maxWidth: .infinity, alignment: .leading)
+						Divider().overlay(MaskinSurface.separator)
+					}
+				}
+			}
+			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+				SectionHeader("Model")
+				HStack {
+					Text("Model").maskinText(.body).foregroundStyle(MaskinColor.ink)
+					Spacer(minLength: MaskinSpace.s3)
+					Text(profile.llmProvider ?? "Workspace default")
+						.maskinText(.body).foregroundStyle(MaskinColor.ink4)
+				}
+				.frame(minHeight: MaskinSpace.touchMin)
+				.accessibilityElement(children: .combine)
+			}
+		}
+	}
+
+	private func outlinedButton(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+		Button(action: action) {
+			Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(tint)
+				.padding(.horizontal, MaskinSpace.s9)
+				.frame(minHeight: MaskinSpace.touchMin)
+				.overlay(Capsule().strokeBorder(MaskinSurface.line))
+				.contentShape(Capsule())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+	}
+
+	// MARK: - Triggers
+
+	@ViewBuilder private var triggersTab: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			if triggers.isEmpty {
 				Text("Nothing wakes this agent yet. Add a schedule or an event.")
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink4)
-			} else {
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			}
+			ForEach(triggers) { trigger in
+				HStack(spacing: MaskinSpace.s7) {
+					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+						Text(trigger.name).maskinText(.body).foregroundStyle(MaskinColor.ink).lineLimit(2)
+						Text(trigger.summary).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(3)
+					}
+					Spacer(minLength: MaskinSpace.s3)
+					Toggle(
+						"Enabled",
+						isOn: Binding(get: { trigger.enabled }, set: { onToggleTrigger(trigger.id, $0) })
+					)
+					.labelsHidden()
+					.accessibilityLabel("\(trigger.name) enabled")
+				}
+				.frame(minHeight: MaskinSpace.touchMin)
+				Divider().overlay(MaskinSurface.separator)
+			}
+			if let onNewTrigger {
+				outlinedButton("+ New trigger", tint: MaskinColor.ink, action: onNewTrigger)
+			}
+		}
+	}
+
+	// MARK: - Computer
+
+	@ViewBuilder private var computer: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+			if let live = store.liveSession {
+				let title = live.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
 				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-					ForEach(triggers) { trigger in
-						HStack(spacing: MaskinSpace.s5) {
-							Image(systemName: trigger.kind.symbol)
-								.foregroundStyle(trigger.enabled ? MaskinColor.ink3 : MaskinColor.ink5)
-								.accessibilityHidden(true)
-							VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-								Text(trigger.name)
-									.maskinText(.subhead)
-									.foregroundStyle(trigger.enabled ? MaskinColor.ink2 : MaskinColor.ink4)
-									.lineLimit(1)
-								Text(trigger.summary)
-									.maskinText(.caption)
-									.foregroundStyle(MaskinColor.ink5)
-									.lineLimit(2)
-							}
-							Spacer(minLength: MaskinSpace.s3)
-							Toggle(
-								"Enabled",
-								isOn: Binding(get: { trigger.enabled }, set: { onToggleTrigger(trigger.id, $0) })
-							)
-							.labelsHidden()
-							.controlSize(.small)
-							.accessibilityLabel("\(trigger.name) enabled")
-						}
+					Text("\(profile.name)'s computer").maskinText(.headline).foregroundStyle(MaskinColor.ink)
+					Text(title.isEmpty ? "Live" : "Live · \(title)")
+						.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					if let onOpenComputer {
+						Button(action: onOpenComputer) { Label("Open computer", systemImage: "display") }
+							.buttonStyle(.primaryAction)
 					}
 				}
-			}
-		}
-	}
-
-	@ViewBuilder private var setupCards: some View {
-		card("Instructions", action: ("Change in chat", "bubble.left", onChangeInChat)) {
-			if let prompt = profile.systemPrompt, !prompt.isEmpty {
-				Text(prompt)
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink2)
-					.lineLimit(10)
-					.frame(maxWidth: .infinity, alignment: .leading)
-			} else {
-				Text("No instructions yet. Tell this agent what its job is.")
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink4)
-			}
-		}
-		card("Tools") {
-			if profile.tools.isEmpty {
-				Text("No tools connected.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-			} else {
-				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-					ForEach(profile.tools) { tool in
-						HStack(spacing: MaskinSpace.s5) {
-							Image(systemName: "wrench.and.screwdriver")
-								.foregroundStyle(MaskinColor.ink4)
-								.accessibilityHidden(true)
-							Text(tool.name).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
-							Spacer(minLength: 0)
-							if let kind = tool.kind { MonoLabel(kind) }
-						}
-					}
-				}
-			}
-		}
-		card("Skills") {
-			if profile.skills.isEmpty {
-				Text("No skills.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-			} else {
-				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-					ForEach(profile.skills, id: \.self) { skill in
-						HStack(spacing: MaskinSpace.s5) {
-							Image(systemName: "sparkles")
-								.foregroundStyle(MaskinColor.ink4)
-								.accessibilityHidden(true)
-							Text(skill).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
-							Spacer(minLength: 0)
-						}
-					}
-				}
-			}
-		}
-		if !flows.isEmpty {
-			card("Flows") {
-				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-					ForEach(flows) { flow in
-						HStack(spacing: MaskinSpace.s5) {
-							Image(systemName: "arrow.triangle.2.circlepath")
-								.foregroundStyle(MaskinColor.ink4)
-								.accessibilityHidden(true)
-							Text(flow.displayName).maskinText(.subhead).foregroundStyle(MaskinColor.ink2).lineLimit(1)
-							Spacer(minLength: 0)
-						}
-					}
-				}
-			}
-		}
-		card("Setup") {
-			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-				fact("Model", profile.llmProvider ?? "Workspace default")
-			}
-		}
-	}
-
-	@ViewBuilder private var objectCards: some View {
-		card("Driving") {
-			if objects.isEmpty {
-				Text("Not driving any objects yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-			} else {
-				VStack(spacing: 0) {
-					ForEach(objects) { object in
-						Button { onOpenObject(object.id) } label: {
-							HStack(spacing: MaskinSpace.s5) {
-								VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-									Text(object.title ?? "Untitled")
-										.maskinText(.subhead)
-										.foregroundStyle(MaskinColor.ink2)
-										.lineLimit(2)
-									Text("\(object.type.capitalized) · \(object.status.replacingOccurrences(of: "_", with: " ").capitalized)")
-										.maskinText(.caption)
-										.foregroundStyle(MaskinColor.ink5)
-								}
-								Spacer(minLength: 0)
-								Image(systemName: "chevron.right")
-									.foregroundStyle(MaskinColor.ink5)
-									.accessibilityHidden(true)
-							}
-							.frame(minHeight: MaskinSpace.touchMin)
-							.contentShape(Rectangle())
-						}
-						.buttonStyle(.plain)
-						if object.id != objects.last?.id { Divider().overlay(MaskinSurface.separator) }
-					}
-				}
-			}
-		}
-	}
-
-	@ViewBuilder private var sessionCards: some View {
-		card("Recent sessions") {
-			if store.sessions.isEmpty {
-				Text("No runs yet.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-			} else {
-				VStack(spacing: 0) {
-					ForEach(store.sessions) { session in
-						if let onOpenLog {
-							Button { onOpenLog(session) } label: {
-								HStack {
-									SessionRow(session: session)
-									Image(systemName: "chevron.right").foregroundStyle(MaskinColor.ink5)
-										.accessibilityHidden(true)
-								}
-							}
-							.buttonStyle(.plain)
-							.accessibilityHint("Opens the session log")
-						} else {
-							SessionRow(session: session)
-						}
-						if session.id != store.sessions.last?.id { Divider().overlay(MaskinSurface.separator) }
-					}
-				}
-			}
-		}
-	}
-
-	/// Centered identity, then the one prominent action.
-	private var hero: some View {
-		VStack(spacing: MaskinSpace.s9) {
-			ActorAvatar(
-				name: profile.name, kind: .agent, size: MaskinSpace.s14 * 2 - MaskinSpace.s2, seed: profile.id,
-				mood: AgentMood(store.status))
-			VStack(spacing: MaskinSpace.s2) {
-				Text(profile.name)
-					.maskinText(.title)
-					.foregroundStyle(MaskinColor.ink)
-					.multilineTextAlignment(.center)
-				if let description = profile.description?.trimmingCharacters(in: .whitespacesAndNewlines),
-					!description.isEmpty
-				{
-					Text(description)
-						.maskinText(.subhead)
-						.foregroundStyle(MaskinColor.ink4)
-						.multilineTextAlignment(.center)
-				} else {
-					Text(profile.role)
-						.maskinText(.subhead)
-						.foregroundStyle(MaskinColor.ink4)
-						.multilineTextAlignment(.center)
-				}
-				AgentStatusLabel(status: store.status).padding(.top, MaskinSpace.s2)
-			}
-			.accessibilityElement(children: .combine)
-			actions
-		}
-		.frame(maxWidth: .infinity)
-		.padding(.vertical, MaskinSpace.s9)
-	}
-
-	private var actions: some View {
-		ViewThatFits(in: .horizontal) {
-			HStack(spacing: MaskinSpace.s5) { actionButtons }
-			VStack(spacing: MaskinSpace.s5) { actionButtons }
-		}
-		.frame(maxWidth: 420)
-	}
-
-	@ViewBuilder
-	private var actionButtons: some View {
-		runPauseButton
-	}
-
-	@ViewBuilder
-	private var runPauseButton: some View {
-		if AgentActions.canPause(store.status) {
-			Button(action: onPause) { Label(store.busy == .pause ? "Pausing…" : "Pause", systemImage: "pause.fill") }
-				.buttonStyle(.primaryAction)
-				.disabled(!store.canPause)
-		} else if store.status == .paused {
-			// No "Run now": work starts from Chat, Live or a trigger. Only a paused agent resumes here.
-			Button(action: onRun) {
-				Label(store.busy == .run ? "Starting…" : "Resume", systemImage: "play.fill")
-			}
-			.buttonStyle(.primaryAction)
-			.disabled(!store.canRun)
-		}
-	}
-
-	private func card<Content: View>(
-		_ title: String, action: (title: String, symbol: String, run: () -> Void)? = nil,
-		@ViewBuilder content: () -> Content
-	) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			HStack(alignment: .firstTextBaseline) {
-				SectionHeader(title)
-				if let action {
-					Spacer(minLength: 0)
-					Button(action: action.run) {
-						Label(action.title, systemImage: action.symbol).labelStyle(.titleOnly)
-					}
-					.maskinText(.caption)
-					.foregroundStyle(MaskinColor.ink3)
-					.accessibilityLabel("\(action.title) \(title.lowercased())")
-				}
-			}
-			content()
-				.padding(MaskinSpace.s10)
 				.frame(maxWidth: .infinity, alignment: .leading)
-				.agentSurface()
-		}
-	}
-
-	private func fact(_ label: String, _ value: String) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-			MonoLabel(label)
-			Text(value).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
-		}
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.accessibilityElement(children: .combine)
-	}
-}
-
-private struct LiveSessionRow: View {
-	let session: AgentSession
-	let onStop: () -> Void
-
-	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			Text(session.currentActivity ?? (session.isPaused ? "Paused" : "Working…"))
-				.maskinText(.subhead)
-				.foregroundStyle(MaskinColor.ink2)
-				.frame(maxWidth: .infinity, alignment: .leading)
-			if !session.prompt.isEmpty {
-				Text(session.prompt).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(2)
+				.padding(MaskinSpace.s9)
+				.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 			}
-			Button(role: .destructive, action: onStop) { Label("Stop session", systemImage: "stop.circle") }
-				.buttonStyle(.secondaryAction)
+			Text("When the agent gets stuck, for example on a sign-in or a captcha, it asks you in chat. You can watch its screen here and take over.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 		}
-	}
-}
-
-struct SessionRow: View {
-	let session: AgentSession
-
-	var body: some View {
-		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s7) {
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				Text(session.prompt.isEmpty ? "Run" : session.prompt)
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink2)
-					.lineLimit(2)
-				HStack(spacing: MaskinSpace.s3) {
-					RelativeTime(session.activityDate, style: .relative)
-					if let duration = session.duration() {
-						Text("· \(SessionDuration.format(duration))")
-					}
-				}
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink5)
-			}
-			Spacer(minLength: MaskinSpace.s3)
-			StatusBadge(session.status)
-		}
-		.padding(.vertical, MaskinSpace.s5)
-		.accessibilityElement(children: .combine)
 	}
 }
 
