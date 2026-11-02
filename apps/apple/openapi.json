@@ -37953,6 +37953,227 @@
 				}
 			}
 		},
+		"/api/billing/usage/breakdown": {
+			"get": {
+				"tags": [
+					"billing"
+				],
+				"summary": "Spend this period split by model, agent and flow",
+				"description": "Splits the same usage GET /usage totals (usd_cents_used) by model, by agent and by flow. Each split lists the top rows plus an other bucket, and its rows plus other add up to usd_cents_used. Sessions that belong to no flow are listed as \"No flow\". Enterprise workspaces are not metered, so every split is empty.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Usage split for the current billing period",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"usd_cents_used": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"by_model": {
+											"type": "object",
+											"properties": {
+												"rows": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"name": {
+																"type": "string"
+															},
+															"usd_cents": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															}
+														},
+														"required": [
+															"id",
+															"name",
+															"usd_cents"
+														]
+													},
+													"maxItems": 10
+												},
+												"other_usd_cents": {
+													"type": "integer",
+													"minimum": 0
+												}
+											},
+											"required": [
+												"rows",
+												"other_usd_cents"
+											]
+										},
+										"by_agent": {
+											"type": "object",
+											"properties": {
+												"rows": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"name": {
+																"type": "string"
+															},
+															"usd_cents": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															}
+														},
+														"required": [
+															"id",
+															"name",
+															"usd_cents"
+														]
+													},
+													"maxItems": 10
+												},
+												"other_usd_cents": {
+													"type": "integer",
+													"minimum": 0
+												}
+											},
+											"required": [
+												"rows",
+												"other_usd_cents"
+											]
+										},
+										"by_flow": {
+											"type": "object",
+											"properties": {
+												"rows": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": [
+																	"string",
+																	"null"
+																]
+															},
+															"name": {
+																"type": "string"
+															},
+															"usd_cents": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															}
+														},
+														"required": [
+															"id",
+															"name",
+															"usd_cents"
+														]
+													},
+													"maxItems": 10
+												},
+												"other_usd_cents": {
+													"type": "integer",
+													"minimum": 0
+												}
+											},
+											"required": [
+												"rows",
+												"other_usd_cents"
+											]
+										}
+									},
+									"required": [
+										"usd_cents_used",
+										"by_model",
+										"by_agent",
+										"by_flow"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/billing/checkout": {
 			"post": {
 				"x-viewer-policy": "writer",
