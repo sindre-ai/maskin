@@ -1592,14 +1592,9 @@ describe('empty input schema tools', () => {
 	})
 })
 
-describe('workspace_id required on create_objects and list_objects', () => {
+describe('workspace_id required on create_objects', () => {
 	it('create_objects requires workspace_id', () => {
 		const shape = tools.create_objects.inputSchema.shape
-		expect(shape.workspace_id.isOptional()).toBe(false)
-	})
-
-	it('list_objects requires workspace_id', () => {
-		const shape = tools.list_objects.inputSchema.shape
 		expect(shape.workspace_id.isOptional()).toBe(false)
 	})
 })
@@ -1609,6 +1604,7 @@ describe('workspace_id optional on most tools', () => {
 		'get_objects',
 		'update_objects',
 		'delete_object',
+		'list_objects',
 		'search_objects',
 		'list_relationships',
 		'delete_relationship',
