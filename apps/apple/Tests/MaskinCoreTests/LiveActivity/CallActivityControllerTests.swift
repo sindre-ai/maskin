@@ -111,7 +111,12 @@ struct CallActivityControllerTests {
 		controller.sync(snap(.speaking))
 		await settle()
 		#expect(host.updates.isEmpty)
-		try await Task.sleep(for: .milliseconds(200))
+		// Wait for the held update to land instead of sleeping a fixed time: a slow runner can take
+		// longer than any fixed sleep, and the update still lands.
+		let deadline = ContinuousClock.now + .seconds(3)
+		while host.updates.isEmpty, ContinuousClock.now < deadline {
+			try await Task.sleep(for: .milliseconds(20))
+		}
 		#expect(host.updates.map(\.phase) == [.speaking])
 	}
 

@@ -36,6 +36,12 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	/// The event a held-down Reply picked; the next comment threads under it.
 	@State private var replyingTo: TimelineItem?
 	@Environment(AppRuntime.self) private var appRuntime: AppRuntime?
+	/// The session whose log is open, the one awaiting a Stop confirm, and what Retry would run.
+	@State private var logSession: AgentSession?
+	@State private var stopTarget: ObjectSession?
+	@State private var retryPrompt: String?
+	@State private var retrying = false
+	@State private var sessionError: String?
 
 	public init(
 		environment: AppEnvironment, objectId: String, onOpenObject: ((String) -> Void)? = nil,
@@ -80,6 +86,70 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		guard !Task.isCancelled else { return }
 		referenceResults = found
 		searchingReferences = false
+	}
+
+	// MARK: Session
+
+	private var agentsSource: APIAgentsSource? {
+		environment.workspaceId.map { APIAgentsSource(client: environment.client, workspaceID: $0) }
+	}
+
+	private var sessionActions: ObjectSessionActions {
+		var actions = ObjectSessionActions()
+		actions.isRetrying = retrying
+		let hasSource = agentsSource != nil
+		if hasSource {
+			actions.onWatch = { openLog($0) }
+			actions.onSeeLog = { openLog($0) }
+			actions.onStop = { stopTarget = $0 }
+			if retryPrompt != nil { actions.onRetry = { retry($0) } }
+		}
+		if let appRuntime {
+			actions.onOpenChat = { id in
+				appRuntime.openChat(id)
+			}
+		}
+		return actions
+	}
+
+	private func openLog(_ session: ObjectSession) {
+		logSession = AgentSession(
+			id: session.id, actorID: session.agentID, status: session.status, startedAt: session.startedAt)
+	}
+
+	private func stop(_ session: ObjectSession) async {
+		guard let source = agentsSource else { return }
+		do {
+			try await source.stop(sessionID: session.id, idempotencyKey: UUID().uuidString)
+			await store.refresh()
+		} catch {
+			sessionError = "Couldn't stop it. Try again."
+		}
+	}
+
+	private func retry(_ session: ObjectSession) {
+		guard let source = agentsSource, let prompt = retryPrompt, !retrying else { return }
+		retrying = true
+		Task {
+			defer { retrying = false }
+			do {
+				_ = try await source.run(agentID: session.agentID, prompt: prompt, idempotencyKey: UUID().uuidString)
+				await store.refresh()
+			} catch {
+				sessionError = "Couldn't start it again. Try again."
+			}
+		}
+	}
+
+	/// What Retry would run: the failed session's own prompt, read from the agent's sessions.
+	/// Without it Retry stays hidden rather than guess one.
+	private func loadRetryPrompt() async {
+		retryPrompt = nil
+		guard let source = agentsSource, let session = store.object?.lastSession, session.isFailed,
+			let found = try? await source.sessions(agentID: session.agentID, limit: 20).first(where: { $0.id == session.id }),
+			!found.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+		else { return }
+		retryPrompt = found.prompt
 	}
 
 	// MARK: Comments
@@ -225,6 +295,30 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				}
 			}
 		}
+		.task(id: store.object?.lastSession?.id) { await loadRetryPrompt() }
+		.confirmationDialog("Stop this session?", isPresented: Binding(get: { stopTarget != nil }, set: { if !$0 { stopTarget = nil } }), titleVisibility: .visible) {
+			Button("Stop session", role: .destructive) {
+				if let target = stopTarget { Task { await stop(target) } }
+				stopTarget = nil
+			}
+		} message: {
+			Text("The agent stops where it is. Nothing already done is undone.")
+		}
+		.alert("Something went wrong", isPresented: Binding(get: { sessionError != nil }, set: { if !$0 { sessionError = nil } })) {
+			Button("OK", role: .cancel) {}
+		} message: {
+			Text(sessionError ?? "")
+		}
+		.sheet(item: $logSession) { session in
+			if let workspaceID = environment.workspaceId {
+				NavigationStack {
+					SessionLogsView(
+						sessionID: session.id,
+						api: APISessionLogsSource(client: environment.client, workspaceID: workspaceID),
+						session: session)
+				}
+			}
+		}
 		.sheet(isPresented: $editing) {
 			if let object = store.object {
 				EditObjectSheet(object: object) { patch in await store.edit(patch) }
@@ -315,7 +409,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
 					ObjectDetailContent(
 							store: store, part: .header, onEdit: { editing = true },
-							onMessage: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } }
+							onMessage: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } },
+							sessionActions: sessionActions
 						) { EmptyView() }
 						.padding(.horizontal, MaskinSpace.s11)
 						.padding(.top, MaskinSpace.s2)
@@ -324,7 +419,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						ObjectDetailContent(
 							store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true },
 							onReply: startReply,
-							onShowActivity: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } }
+							onShowActivity: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } },
+							sessionActions: sessionActions
 						) { decision }
 						.padding(.horizontal, MaskinSpace.s9)
 						.padding(.top, MaskinSpace.s5)
