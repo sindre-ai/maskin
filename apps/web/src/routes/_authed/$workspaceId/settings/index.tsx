@@ -187,8 +187,7 @@ function PrivacySection() {
 		<div>
 			<h2 className="settings-label mb-1.5">PRIVACY &amp; DATA</h2>
 			<p className="mb-3 max-w-prose text-xs leading-relaxed text-muted-foreground">
-				Usage events feed the Synthesizer so the team sees how the workspace is really used. No
-				object titles, no content, no PII.
+				Helps the Maskin team see how Maskin is used. Names and content are never included.
 			</p>
 			<div className="space-y-2.5">
 				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
@@ -197,7 +196,8 @@ function PrivacySection() {
 							Share product usage with Maskin
 						</span>
 						<span className="text-xs text-muted-foreground">
-							Bet lifecycle, agent sessions, trigger fires. No content, no PII.
+							Shares which features you use and how many agent runs happen. The Maskin team sees it.
+							It never includes names or content.
 						</span>
 					</div>
 					<ViewerTooltip>
