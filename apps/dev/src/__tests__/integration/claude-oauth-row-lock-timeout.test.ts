@@ -31,33 +31,48 @@ const fresh: EncryptedOAuthData = {
 describe('Claude OAuth slot writes — bounded wait on a locked workspaces row', () => {
 	it('persistRefreshedSlot and recordFailoverTransition fail inside the lock timeout instead of waiting', async () => {
 		const actor = await insertActor(db)
-		const ws = await insertWorkspace(db, actor.id, {
+		// One locked row per writer. Two writers queued on the same row are not
+		// independent: when the first gives up and drops its tuple lock, the second
+		// can be granted it just before its own lock_timeout fires and then waits
+		// out a second full lock_timeout on the holder's transaction. That stacked
+		// wait is still bounded, but by statement_timeout (57014 at ~10s), not by
+		// lock_timeout (55P03 at ~5s), so asserting on it was a coin flip under CI
+		// load. With a single waiter per row each writer gets exactly one wait.
+		const persistWs = await insertWorkspace(db, actor.id, {
+			settings: { claude_oauth: { primary: fresh, failover: { active_slot: 'primary' } } },
+		})
+		const failoverWs = await insertWorkspace(db, actor.id, {
 			settings: { claude_oauth: { primary: fresh, failover: { active_slot: 'primary' } } },
 		})
 
-		let release!: () => void
-		const held = new Promise<void>((resolve) => {
-			release = resolve
-		})
-		let lockTaken!: () => void
-		const lockAcquired = new Promise<void>((resolve) => {
-			lockTaken = resolve
-		})
-		// The "stuck holder": takes the row lock and sits on it.
-		const holder = db.transaction(async (tx) => {
-			await tx.select().from(workspaces).where(eq(workspaces.id, ws.id)).for('update').limit(1)
-			lockTaken()
-			await held
-		})
-		await lockAcquired
+		// The "stuck holders": each takes a row lock and sits on it.
+		const releases: Array<() => void> = []
+		const holders: Array<Promise<void>> = []
+		for (const id of [persistWs.id, failoverWs.id]) {
+			let lockTaken!: () => void
+			const lockAcquired = new Promise<void>((resolve) => {
+				lockTaken = resolve
+			})
+			const held = new Promise<void>((resolve) => {
+				releases.push(resolve)
+			})
+			holders.push(
+				db.transaction(async (tx) => {
+					await tx.select().from(workspaces).where(eq(workspaces.id, id)).for('update').limit(1)
+					lockTaken()
+					await held
+				}),
+			)
+			await lockAcquired
+		}
 
 		try {
 			const startedAt = Date.now()
 			const [persist, failover] = await Promise.allSettled([
-				persistRefreshedSlot(db, ws.id, 'primary', fresh),
+				persistRefreshedSlot(db, persistWs.id, 'primary', fresh),
 				recordFailoverTransition({
 					db,
-					workspaceId: ws.id,
+					workspaceId: failoverWs.id,
 					actorId: actor.id,
 					fromSlot: 'primary',
 					toSlot: 'backup',
@@ -74,8 +89,8 @@ describe('Claude OAuth slot writes — bounded wait on a locked workspaces row',
 			expect(elapsedMs).toBeGreaterThanOrEqual(WORKSPACE_ROW_LOCK_TIMEOUT_MS - 500)
 			expect(elapsedMs).toBeLessThan(WORKSPACE_ROW_LOCK_TIMEOUT_MS + 5_000)
 		} finally {
-			release()
-			await holder
+			for (const release of releases) release()
+			await Promise.all(holders)
 		}
 	})
 
