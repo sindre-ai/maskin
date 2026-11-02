@@ -43,8 +43,28 @@ vi.mock('@/hooks/use-user-display-settings', () => ({
 	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+// The panel is stubbed to its filter rows, so the tests can press them.
 vi.mock('@/components/objects/data-table/display-panel', () => ({
-	DisplayPanel: () => <button type="button">Display</button>,
+	DisplayPanel: ({
+		filterSections,
+	}: {
+		filterSections?: {
+			id: string
+			label: string
+			options: { id: string; label: string; onToggle: () => void }[]
+		}[]
+	}) => (
+		<div>
+			<button type="button">Display</button>
+			{filterSections?.flatMap((section) =>
+				section.options.map((option) => (
+					<button key={`${section.id}-${option.id}`} type="button" onClick={option.onToggle}>
+						{`${section.label}: ${option.label}`}
+					</button>
+				)),
+			)}
+		</div>
+	),
 }))
 
 vi.mock('@/components/shared/create-picker', () => ({
@@ -53,11 +73,18 @@ vi.mock('@/components/shared/create-picker', () => ({
 }))
 
 vi.mock('@/components/layout/page-header', () => ({
-	PageHeader: ({ title, subtitle }: { title: string; subtitle?: string }) => (
-		<h1>
-			{title}
-			{subtitle ? ` ${subtitle}` : ''}
-		</h1>
+	PageHeader: ({
+		title,
+		subtitle,
+		actions,
+	}: { title: string; subtitle?: string; actions?: React.ReactNode }) => (
+		<div>
+			<h1>
+				{title}
+				{subtitle ? ` ${subtitle}` : ''}
+			</h1>
+			{actions}
+		</div>
 	),
 }))
 
@@ -241,6 +268,83 @@ describe('LoopsPage', () => {
 
 		const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
 		expect(headings.slice(0, 3)).toEqual(['Marketing', 'Product', 'No team'])
+	})
+
+	describe('search and Display filters', () => {
+		const loops = () => [
+			buildLoop({ id: 'l1', name: 'Seo loop', tags: ['Marketing'], content: 'Ranks pages' }),
+			buildLoop({ id: 'l2', name: 'Delivery loop', tags: ['Product'] }),
+			buildLoop({ id: 'l3', name: 'Loose loop', tags: [] }),
+		]
+
+		it('narrows the list by every typed word, in name, description or tag', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({ data: loops(), isLoading: false })
+			render(<LoopsPage />)
+
+			await user.type(
+				screen.getAllByRole('searchbox', { name: 'Search flows' })[0],
+				'ranks marketing',
+			)
+			expect(screen.getByText('Seo loop')).toBeInTheDocument()
+			expect(screen.queryByText('Delivery loop')).not.toBeInTheDocument()
+			expect(screen.queryByText('Loose loop')).not.toBeInTheDocument()
+		})
+
+		it('says so when nothing matches', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({ data: loops(), isLoading: false })
+			render(<LoopsPage />)
+
+			await user.type(screen.getAllByRole('searchbox', { name: 'Search flows' })[0], 'zzzz')
+			expect(screen.getByText('No flows match.')).toBeInTheDocument()
+		})
+
+		it('offers an Area row with one option per first tag, A to Z, untagged last', () => {
+			mockUseLoops.mockReturnValue({ data: loops(), isLoading: false })
+			render(<LoopsPage />)
+
+			const areas = screen.getAllByRole('button', { name: /^Area: / }).map((b) => b.textContent)
+			expect(areas).toEqual(['Area: Marketing', 'Area: Product', 'Area: No team'])
+		})
+
+		it('narrows to one area and back again', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({ data: loops(), isLoading: false })
+			render(<LoopsPage />)
+
+			await user.click(screen.getByRole('button', { name: 'Area: Product' }))
+			expect(screen.getByText('Delivery loop')).toBeInTheDocument()
+			expect(screen.queryByText('Seo loop')).not.toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { name: 'Area: Product' }))
+			expect(screen.getByText('Seo loop')).toBeInTheDocument()
+		})
+
+		it('has no Area row while no flow carries a tag', () => {
+			mockUseLoops.mockReturnValue({
+				data: [buildLoop({ id: 'l3', name: 'Loose loop', tags: [] })],
+				isLoading: false,
+			})
+			render(<LoopsPage />)
+			expect(screen.queryByRole('button', { name: /^Area: / })).not.toBeInTheDocument()
+		})
+
+		it('has a Show row that narrows to flows waiting on you', async () => {
+			const user = userEvent.setup()
+			mockUseLoops.mockReturnValue({
+				data: [
+					buildLoop({ id: 'l-wait', name: 'Needs a decision', pill: 'waiting_on_you' }),
+					buildLoop({ id: 'l-calm', name: 'Calm loop' }),
+				],
+				isLoading: false,
+			})
+			render(<LoopsPage />)
+
+			await user.click(screen.getByRole('button', { name: 'Show: Needs you' }))
+			expect(screen.getByText('Needs a decision')).toBeInTheDocument()
+			expect(screen.queryByText('Calm loop')).not.toBeInTheDocument()
+		})
 	})
 
 	it('treats a trigger the loop names in triggerIds as tied, not standalone', () => {

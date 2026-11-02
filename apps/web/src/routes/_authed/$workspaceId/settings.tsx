@@ -8,82 +8,102 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings')({
 	component: SettingsLayout,
 })
 
-const settingsNav = [
-	{ label: 'General', to: '/$workspaceId/settings' as const, exact: true },
-	{ label: 'Objects', to: '/$workspaceId/settings/objects' as const },
-	{ label: 'Members', to: '/$workspaceId/settings/members' as const },
-	{ label: 'Integrations', to: '/$workspaceId/settings/integrations' as const },
-	{ label: 'Extensions', to: '/$workspaceId/settings/extensions' as const },
-	{ label: 'Skills', to: '/$workspaceId/settings/skills' as const },
-	{ label: 'MCP', to: '/$workspaceId/settings/mcp' as const },
-	{ label: 'Billing', to: '/$workspaceId/settings/billing' as const },
+interface SettingsNavItem {
+	label: string
+	to:
+		| '/$workspaceId/settings'
+		| '/$workspaceId/settings/objects'
+		| '/$workspaceId/settings/members'
+		| '/$workspaceId/settings/integrations'
+		| '/$workspaceId/settings/extensions'
+		| '/$workspaceId/settings/skills'
+		| '/$workspaceId/settings/mcp'
+		| '/$workspaceId/settings/billing'
+		| '/$workspaceId/settings/keys'
+		| '/$workspaceId/settings/keychain'
+	exact?: boolean
+}
+
+// Grouped as in the v11 mockup: what belongs to the workspace, what shapes the
+// agents, and how access is granted.
+const WORKSPACE_NAV: SettingsNavItem[] = [
+	{ label: 'General', to: '/$workspaceId/settings', exact: true },
+	{ label: 'Members', to: '/$workspaceId/settings/members' },
+	{ label: 'Integrations', to: '/$workspaceId/settings/integrations' },
+	{ label: 'Extensions', to: '/$workspaceId/settings/extensions' },
+	{ label: 'Billing', to: '/$workspaceId/settings/billing' },
 ]
+const AGENTS_NAV: SettingsNavItem[] = [
+	{ label: 'Skills', to: '/$workspaceId/settings/skills' },
+	{ label: 'Objects', to: '/$workspaceId/settings/objects' },
+]
+const ACCESS_NAV: SettingsNavItem[] = [{ label: 'MCP', to: '/$workspaceId/settings/mcp' }]
 
 // Keys is listed only for workspaces holding the `byollm_allowed` ops grant —
 // for everyone else the page has no content to show. It stays a real route
 // regardless, because onboarding and the failed-session card both deep-link it.
-const keysNavItem = {
-	label: 'Keys',
-	to: '/$workspaceId/settings/keys' as const,
-	exact: false,
-}
+const keysNavItem: SettingsNavItem = { label: 'Keys', to: '/$workspaceId/settings/keys' }
 
 // Keychain is listed only while its flag is on. The Keychain routes read the flag
 // themselves, so a typed-in URL answers not found when it is off.
-const keychainNavItem = {
+const keychainNavItem: SettingsNavItem = {
 	label: 'Keychain',
-	to: '/$workspaceId/settings/keychain' as const,
-	exact: false,
+	to: '/$workspaceId/settings/keychain',
 }
 
 function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
-	// Keychain sits right under Integrations: the two are where access is managed.
-	const at = settingsNav.findIndex((item) => item.label === 'Integrations') + 1
-	const navItems = [
-		...settingsNav.slice(0, at),
-		keychainNavItem,
-		...settingsNav.slice(at),
-		...(workspace?.enterprise ? [keysNavItem] : []),
+	const groups: { label: string; items: SettingsNavItem[] }[] = [
+		{ label: 'Workspace', items: WORKSPACE_NAV },
+		{ label: 'Agents', items: AGENTS_NAV },
+		{
+			label: 'Access',
+			items: [...ACCESS_NAV, keychainNavItem, ...(workspace?.enterprise ? [keysNavItem] : [])],
+		},
 	]
 
 	return (
 		<div className="mx-auto w-full max-w-6xl">
-			{/* The screen's <h1> belongs to the shared top nav (mockup 155–279), not
-			    the page body — PageHeader publishes it and renders nothing here. */}
+			{/* The screen's <h1> belongs to the shared top nav, not the page body. */}
 			<PageHeader title="Settings" subtitle={workspace?.name} />
-			<div className="flex flex-col gap-6 md:flex-row md:gap-8">
-				<nav
-					aria-label="Settings sections"
-					className="md:w-[172px] md:shrink-0 md:border-r md:border-border-subtle md:pr-2"
-				>
-					<ul className="flex gap-0.5 overflow-x-auto pb-2 md:flex-col md:pb-0">
-						{navItems.map((item) => {
-							const isActive = item.exact
-								? !!matchRoute({ to: item.to, params: { workspaceId } })
-								: !!matchRoute({ to: item.to, params: { workspaceId }, fuzzy: true })
-							return (
-								<li key={item.to}>
-									<Link
-										to={item.to}
-										params={{ workspaceId }}
-										className={cn(
-											'block whitespace-nowrap rounded-md px-3 py-2 text-[12.5px] transition-colors',
-											isActive
-												? 'bg-muted font-bold text-foreground'
-												: 'font-medium text-muted-foreground hover:bg-muted hover:text-foreground',
-										)}
-									>
-										{item.label}
-									</Link>
-								</li>
-							)
-						})}
-					</ul>
+			<div className="grid gap-x-8 gap-y-4 md:grid-cols-[200px_minmax(0,1fr)]">
+				<nav aria-label="Settings sections" className="md:col-start-1 md:pt-1">
+					<div className="flex gap-4 overflow-x-auto pb-2 md:flex-col md:gap-5 md:pb-0">
+						{groups.map((group) => (
+							<div key={group.label} className="flex shrink-0 flex-col gap-0.5 md:shrink">
+								<div className="px-3 pb-1 text-xs font-semibold text-muted-foreground">
+									{group.label}
+								</div>
+								<ul className="flex gap-0.5 md:flex-col">
+									{group.items.map((item) => {
+										const isActive = item.exact
+											? !!matchRoute({ to: item.to, params: { workspaceId } })
+											: !!matchRoute({ to: item.to, params: { workspaceId }, fuzzy: true })
+										return (
+											<li key={item.to}>
+												<Link
+													to={item.to}
+													params={{ workspaceId }}
+													className={cn(
+														'block whitespace-nowrap rounded-[10px] px-3 py-2 text-sm transition-colors',
+														isActive
+															? 'bg-secondary font-bold text-foreground'
+															: 'font-medium text-muted-foreground hover:bg-secondary hover:text-foreground',
+													)}
+												>
+													{item.label}
+												</Link>
+											</li>
+										)
+									})}
+								</ul>
+							</div>
+						))}
+					</div>
 				</nav>
-				<div className="min-w-0 flex-1">
+				<div className="min-w-0 md:col-start-2">
 					<Outlet />
 				</div>
 			</div>

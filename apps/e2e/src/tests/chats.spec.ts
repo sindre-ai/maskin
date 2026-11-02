@@ -1,6 +1,7 @@
 import type { Browser, Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { TestAPI, createTestActor } from '../helpers/api.helper'
+import { headerMenuItem } from '../helpers/chat-header'
 import { sendFromComposer } from '../helpers/composer.helper'
 import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
@@ -117,16 +118,18 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			timeout: 10_000,
 		})
 
-		await page.getByRole('button', { name: 'Pin conversation' }).click()
-		await expect(page.getByRole('button', { name: 'Unpin conversation' })).toBeVisible()
+		await (await headerMenuItem(page, 'Pin conversation')).click()
+		await expect(await headerMenuItem(page, 'Unpin conversation')).toBeVisible()
+		await page.keyboard.press('Escape')
 
 		await page.reload()
-		await expect(page.getByRole('button', { name: 'Unpin conversation' })).toBeVisible({
+		await expect(await headerMenuItem(page, 'Unpin conversation')).toBeVisible({
 			timeout: 10_000,
 		})
 
-		await page.getByRole('button', { name: 'Archive conversation' }).click()
-		await expect(page.getByRole('button', { name: 'Unarchive conversation' })).toBeVisible()
+		await (await headerMenuItem(page, 'Archive conversation')).click()
+		await expect(await headerMenuItem(page, 'Unarchive conversation')).toBeVisible()
+		await page.keyboard.press('Escape')
 
 		// A second participant posts a message while the primary actor isn't
 		// looking — it should surface as unread in the conversation list.
@@ -186,7 +189,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			)
 			.toBeGreaterThan(0)
 
-		await partnerPage.getByRole('button', { name: 'Mark as unread' }).click()
+		await (await headerMenuItem(partnerPage, 'Mark as unread')).click()
 		await expect(partnerPage.getByText('Marked as unread')).toBeVisible({ timeout: 10_000 })
 
 		// The reset is persisted, not just optimistic client state: the cursor

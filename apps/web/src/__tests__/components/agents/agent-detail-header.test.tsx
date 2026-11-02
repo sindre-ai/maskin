@@ -16,12 +16,21 @@ vi.mock('@/hooks/use-actors', async (importOriginal) => ({
 	useUpdateActor: () => ({ mutate: updateMutate, isPending: false }),
 }))
 
+vi.mock('@tanstack/react-router', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-router')>()),
+	Link: ({ children }: { children: React.ReactNode }) => <a href="/flow">{children}</a>,
+}))
+
+const loopsMock = vi.hoisted(() => ({ data: [] as unknown[] }))
+vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: loopsMock.data }) }))
+
 beforeEach(() => {
+	loopsMock.data = []
 	updateMutate.mockReset()
 })
 
 describe('AgentDetailHeader', () => {
-	it('renders name, status pill, team, and "Owns one outcome" line', () => {
+	it('renders name, status pill and the "Owns" line', () => {
 		const agent = buildActorResponse({
 			id: 'agent-1',
 			type: 'agent',
@@ -29,60 +38,65 @@ describe('AgentDetailHeader', () => {
 			description: 'Shapes the next bet',
 			agentState: 'idle',
 		})
-		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
 			wrapper: createWorkspaceWrapper({ name: 'Product Team' }),
 		})
 		expect(screen.getByRole('heading', { name: 'Planner' })).toBeInTheDocument()
-		expect(screen.getByText(/Owns one outcome:/)).toBeInTheDocument()
+		expect(screen.getByText(/^Owns/)).toBeInTheDocument()
 		expect(screen.getByText('Shapes the next bet')).toBeInTheDocument()
-		expect(screen.getByText('Product Team')).toBeInTheDocument()
+		expect(screen.queryByText('Works in')).toBeNull()
 		expect(screen.getByText('Idle')).toBeInTheDocument()
 	})
 
 	it('falls back when the agent has no description', () => {
 		const agent = buildActorResponse({ name: 'Unclaimed', description: null, type: 'agent' })
-		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 		expect(screen.getByText('No outcome set yet')).toBeInTheDocument()
 	})
 
-	// v2 dropped the dot and the plate here — the identity row is one line of
-	// text, so the status is the coloured word alone (mockup 2321).
-	it('states a running agent as a bare coloured word, with no dot or plate', () => {
+	it('draws a running agent as a pill with a pulsing dot', () => {
 		const agent = buildActorResponse({
 			id: 'agent-run',
 			type: 'agent',
 			name: 'Runner',
 			agentState: 'running',
 		})
-		const { container } = render(
-			<AgentDetailHeader agent={agent} portrait="running" onMessage={() => {}} />,
-			{
-				wrapper: createWorkspaceWrapper(),
-			},
-		)
-		const status = screen.getByText('Running')
-		expect(status.className).toContain('text-status-in_progress-text')
-		expect(status.className).not.toContain('bg-status-in_progress-bg')
-		expect(container.querySelector('.animate-pulse')).toBeNull()
+		const { container } = render(<AgentDetailHeader agent={agent} portrait="running" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		const status = screen.getByText('Working')
+		expect(status.className).toContain('bg-status-in_progress-bg')
+		expect(container.querySelector('.animate-pulse')).not.toBeNull()
+	})
+
+	it('lists the flows the agent works in, A to Z, and hides the row when there are none', () => {
+		const agent = buildActorResponse({ id: 'agent-flows', type: 'agent', name: 'Planner' })
+		loopsMock.data = [
+			{ id: 'l2', name: 'Zeta flow', agentIds: ['agent-flows'] },
+			{ id: 'l1', name: 'Alpha flow', agentIds: ['agent-flows'] },
+			{ id: 'l3', name: 'Someone else', agentIds: ['other'] },
+		]
+		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		const chips = screen.getAllByRole('link').map((a) => a.textContent)
+		expect(chips).toEqual(['Alpha flow', 'Zeta flow'])
 	})
 
 	it('does not pulse when the agent is idle', () => {
 		const agent = buildActorResponse({ id: 'agent-idle', type: 'agent', name: 'Idler' })
-		const { container } = render(
-			<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />,
-			{
-				wrapper: createWorkspaceWrapper(),
-			},
-		)
+		const { container } = render(<AgentDetailHeader agent={agent} portrait="idle" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
 		expect(container.querySelector('.animate-pulse')).toBeNull()
 	})
 
 	it('saves a renamed agent when the inline name field is committed', async () => {
 		const user = userEvent.setup()
 		const agent = buildActorResponse({ id: 'agent-edit', type: 'agent', name: 'Planner' })
-		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 
@@ -105,7 +119,7 @@ describe('AgentDetailHeader', () => {
 			name: 'Planner',
 			description: null,
 		})
-		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 
@@ -121,7 +135,7 @@ describe('AgentDetailHeader', () => {
 	it('discards the draft on Escape without saving', async () => {
 		const user = userEvent.setup()
 		const agent = buildActorResponse({ id: 'agent-esc', type: 'agent', name: 'Planner' })
-		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 
@@ -139,7 +153,7 @@ describe('AgentDetailHeader', () => {
 			name: 'Managed',
 			installedLoopId: '11111111-1111-4111-8111-111111111111',
 		})
-		render(<AgentDetailHeader agent={agent} portrait="idle" onMessage={() => {}} />, {
+		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 		expect(screen.queryByRole('button', { name: 'Edit agent name' })).toBeNull()

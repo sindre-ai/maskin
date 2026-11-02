@@ -1,5 +1,5 @@
 import { AgentLoopsSection } from '@/components/agents/agent-loops-section'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildActorResponse, buildLoopSummary } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
@@ -66,7 +66,7 @@ describe('AgentLoopsSection', () => {
 		expect(screen.getByRole('link')).toHaveAttribute('href', '/ws-1/loops/loop-mine')
 	})
 
-	it('shows the section heading with a count', async () => {
+	it('shows the section heading above the flows', async () => {
 		listLoops.mockResolvedValue({
 			loops: [
 				buildLoopSummary({ id: 'l1', name: 'One', agentIds: ['agent-1'] }),
@@ -76,21 +76,20 @@ describe('AgentLoopsSection', () => {
 
 		render(<AgentLoopsSection agent={agent()} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(
-			await screen.findByRole('heading', { name: 'Loops it runs', level: 2 }),
-		).toBeInTheDocument()
+		expect(await screen.findByRole('heading', { name: 'Works in', level: 2 })).toBeInTheDocument()
 		expect(await screen.findByText('One')).toBeInTheDocument()
-		expect(screen.getByText('2')).toBeInTheDocument()
+		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
 
-	it('shows an empty state when the agent runs no loops', async () => {
+	it('draws nothing when the agent runs no loops', async () => {
 		listLoops.mockResolvedValue({
 			loops: [buildLoopSummary({ id: 'loop-other', agentIds: ['agent-2'] })],
 		})
 
 		render(<AgentLoopsSection agent={agent()} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(await screen.findByText('Not tied to a loop yet')).toBeInTheDocument()
+		await waitFor(() => expect(listLoops).toHaveBeenCalled())
+		expect(screen.queryByRole('heading', { name: 'Works in' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
 	})
 })

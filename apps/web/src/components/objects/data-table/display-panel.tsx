@@ -21,17 +21,8 @@ import { cn } from '@/lib/cn'
 import { DEFAULT_ORDER, DEFAULT_SORT } from '@/lib/objects-filter-model'
 import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
-import {
-	ArrowDown,
-	ArrowUp,
-	Check,
-	ChevronDown,
-	LayoutGrid,
-	List as ListIcon,
-	RotateCcw,
-	SlidersHorizontal,
-} from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Check, ChevronDown, RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { forwardRef, useMemo, useState } from 'react'
 import { DisplayFilterSection, type DisplayFilterSectionModel } from './display-filter-section'
 
 export interface DisplayPanelColumn {
@@ -41,6 +32,13 @@ export interface DisplayPanelColumn {
 }
 
 export type DisplayPanelView = 'list' | 'board'
+
+/** One entry of a custom View rail (replaces the built-in List | Board pair). */
+export interface DisplayPanelViewChoice {
+	id: string
+	label: string
+	icon?: React.ReactNode
+}
 
 export interface DisplayPanelProps {
 	// View (List | Board)
@@ -97,68 +95,86 @@ export interface DisplayPanelProps {
 	iconOnly?: boolean
 	// Sections — surfaces that don't have a board view can opt out of the View pills.
 	showView?: boolean
+	// Custom View rail (e.g. For you: Cards | List). When set it replaces the
+	// built-in List | Board pair; selection is driven by `viewChoice` and reported
+	// through `onViewChoiceChange`.
+	viewChoices?: DisplayPanelViewChoice[]
+	viewChoice?: string
+	onViewChoiceChange?: (id: string) => void
+	// Heading of the FILTERS block ("Filters" by default; For you reads "Show").
+	filtersLabel?: string
+	// Text of the small button beside the FILTERS heading ("Reset" by default;
+	// the design reads "Reset filters").
+	resetFiltersLabel?: string
+	// Text of the footer row ("Reset all" by default; the design reads "Reset display").
+	resetLabel?: string
+	// Overrides the count on the trigger and the "has active filters" state, for
+	// callers whose filters live only in `filterSections`.
+	activeFilterCount?: number
 }
 
-// The mockup's 9.5px mono section markers (931/940/948/956) — the `.eyebrow`
-// utility already encodes exactly that treatment.
+// Section marker: 11px bold uppercase sans in a 32px row (design: ORDERING,
+// GROUPING, FILTERS, PROPERTIES). Kept as one shared header so every section
+// reads the same.
 function SectionHeader({ children }: { children: React.ReactNode }) {
-	return <p className="eyebrow">{children}</p>
+	return (
+		<p className="flex h-8 items-center px-2.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+			{children}
+		</p>
+	)
 }
 
-// The mockup's PROPERTIES pill (line 710): borderless, fully rounded, filled
-// with the muted surface when the property is shown and transparent when it is
-// hidden. Deliberately not the bordered popover-picker treatment — a bordered
-// pill reads as a button you press once, and this row is a set of toggles whose
-// on/off state has to be legible at a glance across six of them.
-function PropertyPill({
-	active,
-	onClick,
+// Every row of the panel is a plain menu row: 36px on pointer devices, 44px on
+// touch, label left, value right.
+const ROW_CLS =
+	'flex h-11 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted md:h-9 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent'
+
+// `Label … value ▾`. Forwards its ref and props so it can be a DropdownMenu
+// trigger (the value pickers) or a plain button (the Order toggle).
+const ValueRow = forwardRef<
+	HTMLButtonElement,
+	React.ComponentPropsWithoutRef<'button'> & {
+		label: string
+		value: string
+		caret?: React.ReactNode
+	}
+>(({ label, value, caret, className, ...props }, ref) => (
+	<button ref={ref} type="button" className={cn(ROW_CLS, className)} {...props}>
+		<span className="shrink-0">{label}</span>
+		<span className="flex-1" />
+		<span className="min-w-0 truncate text-xs font-medium capitalize text-muted-foreground">
+			{value}
+		</span>
+		{caret ?? <ChevronDown size={10} aria-hidden="true" className="shrink-0 opacity-60" />}
+	</button>
+))
+ValueRow.displayName = 'ValueRow'
+
+// A row with a brand check on the left while on (View rows, Properties).
+function CheckRow({
+	checked,
+	hint,
 	children,
-}: {
-	active?: boolean
-	onClick?: () => void
-	children: React.ReactNode
-}) {
+	...props
+}: React.ComponentPropsWithoutRef<'button'> & { checked: boolean; hint?: string }) {
 	return (
-		<button
-			type="button"
-			aria-pressed={active}
-			onClick={onClick}
-			className={cn(
-				'inline-flex items-center rounded-full px-2.5 py-[3px] text-xs transition-colors',
-				active
-					? 'bg-muted font-semibold text-foreground'
-					: 'font-medium text-muted-foreground hover:bg-muted hover:text-foreground',
-			)}
-		>
-			{children}
+		<button type="button" aria-pressed={checked} className={ROW_CLS} {...props}>
+			<span className="flex w-4 shrink-0 justify-center text-brand">
+				{checked && <Check size={14} aria-hidden="true" />}
+			</span>
+			<span className="min-w-0 flex-1 truncate">{children}</span>
+			{hint && <span className="shrink-0 text-xs font-medium text-muted-foreground">{hint}</span>}
 		</button>
 	)
 }
 
-function PickerRow({
-	label,
-	value,
-	placeholder,
-	children,
-	trailing,
-}: {
-	label: string
-	value?: string
-	placeholder: string
-	children: React.ReactNode
-	trailing?: React.ReactNode
-}) {
-	return (
-		<div className="flex items-center gap-2">
-			<span className="w-16 shrink-0 text-xs text-muted-foreground">{label}</span>
-			<div className="flex flex-1 items-center gap-1.5">
-				{children}
-				{trailing}
-				<span className="sr-only">{value ?? placeholder}</span>
-			</div>
-		</div>
-	)
+// "Newest first" reads right for a date column; anything else is a plain
+// ascending/descending reading.
+const DATE_SORT_RE = /(at|date|created|updated|activity|latest|seen)$/i
+function orderLabel(sort: string | undefined, order: 'asc' | 'desc' | undefined): string {
+	const date = !!sort && DATE_SORT_RE.test(sort)
+	if (order === 'asc') return date ? 'Oldest first ↑' : 'Ascending ↑'
+	return date ? 'Newest first ↓' : 'Descending ↓'
 }
 
 const DROPDOWN_CLS = 'min-w-[10rem] max-h-64 overflow-y-auto'
@@ -198,6 +214,13 @@ export function DisplayPanel({
 	onResetToDefault,
 	iconOnly = false,
 	showView = true,
+	viewChoices,
+	viewChoice,
+	onViewChoiceChange,
+	filtersLabel = 'Filters',
+	resetFiltersLabel = 'Reset',
+	resetLabel = 'Reset all',
+	activeFilterCount: activeFilterCountOverride,
 }: DisplayPanelProps) {
 	// Switching View closes the panel — on mobile it renders as a full-width
 	// bottom Sheet that would otherwise sit on top of the just-switched-to
@@ -232,10 +255,11 @@ export function DisplayPanel({
 		(value) => value !== '',
 	).length
 	const activeFilterCount =
+		activeFilterCountOverride ??
 		(activeStatuses.length > 0 ? 1 : 0) +
-		(activeDrivers.length > 0 ? 1 : 0) +
-		activeMetadataFilterCount +
-		(includeArchived ? 1 : 0)
+			(activeDrivers.length > 0 ? 1 : 0) +
+			activeMetadataFilterCount +
+			(includeArchived ? 1 : 0)
 	const hasActiveFilters = activeFilterCount > 0
 	const pinnedTokenSet = useMemo(() => new Set(pinnedFilters ?? []), [pinnedFilters])
 	const showShow = !!onIncludeArchivedChange
@@ -326,292 +350,248 @@ export function DisplayPanel({
 						)}
 					</Button>
 				) : (
-					/* The v2 Display affordance, identical on the three screens that carry
-					   it (mockup 669 / 1259 / 2059): a 28px *borderless* text control with
-					   a quiet caret, filling only on hover. It sits at the end of a row of
-					   filter chips, and a border here would read as one more chip. The
-					   active-filter count stays — the toolbar's removable pills only cover
-					   the axes it renders, so this is the one place a filter set from
-					   anywhere is always countable. */
+					/* The title-row Display control (design 12 to 14): a filled muted
+					   pill with a sliders glyph before the word and no caret. The
+					   active-filter count stays — the toolbar's removable pills only
+					   cover the axes it renders, so this is the one place a filter set
+					   from anywhere is always countable. */
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-7 gap-1.5 rounded-lg px-3 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
+						className="h-8 gap-1.5 rounded-full bg-muted px-3.5 text-sm font-semibold text-foreground hover:bg-muted/70"
 					>
+						<SlidersHorizontal size={13} aria-hidden="true" />
 						Display
 						{hasActiveFilters && (
 							<span className="rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
 								{activeFilterCount}
 							</span>
 						)}
-						<ChevronDown size={12} className="opacity-60" />
 					</Button>
 				)}
 			</ResponsivePopoverTrigger>
-			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-0">
-				<div className="min-h-0 overflow-y-auto md:max-h-[480px] text-left">
-					{/* View — segmented List | Board rail (mockup 694–697). */}
-					{showView && (
+			<ResponsivePopoverContent
+				align="end"
+				accessibleTitle="Display"
+				className="md:w-87.5 md:rounded-xl md:p-1.25 md:shadow-lg"
+			>
+				<div className="min-h-0 overflow-y-auto text-left md:max-h-112">
+					{/* View — two rows with a check on the active one. */}
+					{showView && viewChoices && viewChoices.length > 0 && (
 						<>
-							<div className="p-1.5">
-								<div className="flex gap-1 rounded-lg bg-muted p-1">
-									<button
-										type="button"
-										aria-pressed={view === 'list'}
-										onClick={() => handleViewChange('list')}
-										className={cn(
-											'inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md text-xs font-semibold transition-colors',
-											view === 'list'
-												? 'bg-background text-foreground shadow-xs'
-												: 'text-muted-foreground hover:text-foreground',
-										)}
+							<div>
+								{viewChoices.map((choice) => (
+									<CheckRow
+										key={choice.id}
+										checked={viewChoice === choice.id}
+										onClick={() => {
+											onViewChoiceChange?.(choice.id)
+											setOpen(false)
+										}}
 									>
-										<ListIcon size={15} aria-hidden="true" />
-										List
-									</button>
-									<button
-										type="button"
-										aria-pressed={view === 'board'}
-										disabled={!boardSupported}
-										title={
-											boardSupported
-												? undefined
-												: 'Board view needs configured statuses for this type'
-										}
-										onClick={boardSupported ? () => handleViewChange('board') : undefined}
-										className={cn(
-											'inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md text-xs font-semibold transition-colors',
-											view === 'board'
-												? 'bg-background text-foreground shadow-xs'
-												: 'text-muted-foreground hover:text-foreground',
-											!boardSupported && 'cursor-not-allowed opacity-50',
-										)}
-									>
-										<LayoutGrid size={15} aria-hidden="true" />
-										Board
-									</button>
-								</div>
+										View: {choice.label}
+									</CheckRow>
+								))}
 							</div>
-							<Separator />
+							<Separator className="my-1" />
+						</>
+					)}
+					{showView && !viewChoices && (
+						<>
+							<div>
+								<CheckRow checked={view === 'list'} onClick={() => handleViewChange('list')}>
+									View: List
+								</CheckRow>
+								<CheckRow
+									checked={view === 'board'}
+									disabled={!boardSupported}
+									hint={boardSupported ? undefined : 'needs one type with statuses'}
+									title={
+										boardSupported
+											? undefined
+											: 'Board view needs configured statuses for this type'
+									}
+									onClick={boardSupported ? () => handleViewChange('board') : undefined}
+								>
+									View: Board
+								</CheckRow>
+							</div>
+							<Separator className="my-1" />
 						</>
 					)}
 
 					{/* Ordering */}
 					{showOrdering && (
 						<>
-							<div className="p-3 space-y-2">
+							<div>
 								<SectionHeader>Ordering</SectionHeader>
-								<PickerRow label="Sort by" value={sortLabel} placeholder="Sort">
-									<DropdownMenu>
-										<DropdownMenuTrigger asChild>
-											<Button
-												variant="outline"
-												size="sm"
-												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<ValueRow label="Sort by" value={sortLabel ?? defaultSortLabel} />
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end" className={DROPDOWN_CLS}>
+										{orderingColumns.map((col) => (
+											<DropdownMenuItem
+												key={col.id}
+												onClick={() => onSortChange?.(col.id)}
+												className="capitalize"
 											>
-												<span className="truncate capitalize">{sortLabel ?? defaultSortLabel}</span>
-												<ChevronDown size={12} className="shrink-0 opacity-60" />
-											</Button>
-										</DropdownMenuTrigger>
-										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-											{orderingColumns.map((col) => (
-												<DropdownMenuItem
-													key={col.id}
-													onClick={() => onSortChange?.(col.id)}
-													className="capitalize"
-												>
-													<span className="flex-1">{col.label}</span>
-													{sort === col.id && <Check size={12} className="opacity-60" />}
-												</DropdownMenuItem>
-											))}
-										</DropdownMenuContent>
-									</DropdownMenu>
-									{sort !== BOARD_MANUAL_SORT && (
-										<button
-											type="button"
-											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
-											title={order === 'asc' ? 'Ascending' : 'Descending'}
-											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
-											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors"
-										>
-											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-										</button>
-									)}
-								</PickerRow>
+												<span className="flex-1">{col.label}</span>
+												{sort === col.id && <Check size={12} className="opacity-60" />}
+											</DropdownMenuItem>
+										))}
+									</DropdownMenuContent>
+								</DropdownMenu>
+								{sort !== BOARD_MANUAL_SORT && (
+									<ValueRow
+										label="Order"
+										value={orderLabel(sort, order)}
+										caret={<span />}
+										aria-label={`Order, ${order === 'asc' ? 'ascending' : 'descending'}`}
+										title={order === 'asc' ? 'Ascending' : 'Descending'}
+										onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
+									/>
+								)}
 							</div>
-							<Separator />
+							<Separator className="my-1" />
 						</>
 					)}
 
 					{/* Grouping */}
 					{showGrouping && (
 						<>
-							<div className="p-3 space-y-2">
+							<div>
 								<SectionHeader>Grouping</SectionHeader>
-								<PickerRow label="Group by" value={groupLabel ?? 'None'} placeholder="None">
-									<DropdownMenu>
-										<DropdownMenuTrigger asChild>
-											<Button
-												variant="outline"
-												size="sm"
-												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<ValueRow label="Group by" value={groupLabel ?? 'None'} />
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end" className={DROPDOWN_CLS}>
+										<DropdownMenuItem onClick={() => onGroupByChange?.(undefined)}>
+											<span className="flex-1">None</span>
+											{!groupBy && <Check size={12} className="opacity-60" />}
+										</DropdownMenuItem>
+										{groupingColumns.map((col) => (
+											<DropdownMenuItem
+												key={col.id}
+												onClick={() => onGroupByChange?.(col.id)}
+												className="capitalize"
 											>
-												<span className="truncate capitalize">{groupLabel ?? 'None'}</span>
-												<ChevronDown size={12} className="shrink-0 opacity-60" />
-											</Button>
-										</DropdownMenuTrigger>
-										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-											<DropdownMenuItem onClick={() => onGroupByChange?.(undefined)}>
-												<span className="flex-1">None</span>
-												{!groupBy && <Check size={12} className="opacity-60" />}
+												<span className="flex-1">{col.label}</span>
+												{groupBy === col.id && <Check size={12} className="opacity-60" />}
 											</DropdownMenuItem>
-											{groupingColumns.map((col) => (
-												<DropdownMenuItem
-													key={col.id}
-													onClick={() => onGroupByChange?.(col.id)}
-													className="capitalize"
-												>
-													<span className="flex-1">{col.label}</span>
-													{groupBy === col.id && <Check size={12} className="opacity-60" />}
-												</DropdownMenuItem>
-											))}
-										</DropdownMenuContent>
-									</DropdownMenu>
-								</PickerRow>
+										))}
+									</DropdownMenuContent>
+								</DropdownMenu>
 							</div>
-							<Separator />
+							<Separator className="my-1" />
 						</>
 					)}
 
-					{/* FILTERS — one collapsible row per axis, each expanding into its
-					 * values with counts and a Pin control (mockup 682–706). Pinning is
-					 * what lets this panel stay closed: the filters an operator actually
-					 * reaches for graduate to the toolbar's chip row. */}
+					{/* FILTERS — one `Label … value ▾` row per axis, each expanding into
+					 * its values with counts and a Pin control. Pinning is what lets this
+					 * panel stay closed: the filters an operator actually reaches for
+					 * graduate to the toolbar's chip row. */}
 					{((filterSections?.length ?? 0) > 0 ||
 						showMetadataFilters ||
 						activeMetadataFilterCount > 0 ||
 						// Legacy consumers drive status/driver straight off these callbacks.
 						(!filterSections?.length && (!!onStatusFilterChange || !!onDriverFilterChange))) && (
 						<>
-							<div className="p-1.5">
-								<div className="flex items-center justify-between px-2.5 pt-1 pb-1">
-									<SectionHeader>Filters</SectionHeader>
+							<div>
+								<div className="flex items-center justify-between pr-2.5">
+									<SectionHeader>{filtersLabel}</SectionHeader>
 									{hasActiveFilters && onResetFilters && (
 										<button
 											type="button"
-											className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+											className="text-xs text-muted-foreground transition-colors hover:text-foreground"
 											onClick={onResetFilters}
 										>
-											Reset
+											{resetFiltersLabel}
 										</button>
 									)}
 								</div>
 								{/* Legacy value pickers, for consumers that have not moved to
-								    `filterSections` yet (the Agents index still drives status from
-								    here). Rendered only in their absence so the two never stack. */}
-								{!filterSections?.length && (
-									<div className="space-y-2 p-3 pt-0">
-										{/* Status — grouped by type with separators, multi-select */}
-										{onStatusFilterChange && (
-											<div className="flex items-center gap-2">
-												<span className="w-16 shrink-0 text-xs text-muted-foreground">Status</span>
-												<DropdownMenu>
-													<DropdownMenuTrigger asChild disabled={!hasStatuses}>
-														<Button
-															variant={activeStatuses.length > 0 ? 'outline' : 'ghost'}
-															size="sm"
-															className={cn(
-																'h-7 gap-1.5 px-2 text-xs',
-																activeStatuses.length === 0 &&
-																	'text-muted-foreground hover:text-foreground',
-															)}
-														>
-															<span className="truncate capitalize">{statusTriggerLabel}</span>
-															{hasStatuses && (
-																<ChevronDown size={12} className="shrink-0 opacity-60" />
-															)}
-														</Button>
-													</DropdownMenuTrigger>
-													<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-														{typeEntries.map(([type, statuses], i) => (
-															<div key={type}>
-																{i > 0 && <DropdownMenuSeparator />}
-																<DropdownMenuLabel className="capitalize text-xs font-medium text-muted-foreground py-1">
-																	{type}
-																</DropdownMenuLabel>
-																{statuses.map((status) => (
-																	<DropdownMenuCheckboxItem
-																		key={status}
-																		checked={activeStatuses.includes(status)}
-																		onCheckedChange={() => toggleStatus(status)}
-																		className="capitalize"
-																	>
-																		{status.replace(/_/g, ' ')}
-																	</DropdownMenuCheckboxItem>
-																))}
-															</div>
-														))}
-													</DropdownMenuContent>
-												</DropdownMenu>
-												{activeStatuses.length > 0 && (
-													<button
-														type="button"
-														aria-label="Clear Status filter"
-														title="Clear Status filter"
-														onClick={() => onStatusFilterChange?.(undefined)}
-														className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-													>
-														Clear
-													</button>
-												)}
-											</div>
-										)}
-
-										{/* Filter by Driver */}
-										{onDriverFilterChange && (
-											<div className="flex items-center gap-2">
-												<span className="w-16 shrink-0 text-xs text-muted-foreground">Driver</span>
-												<DropdownMenu>
-													<DropdownMenuTrigger asChild disabled={!hasOwners}>
-														<Button
-															variant={activeDrivers.length > 0 ? 'outline' : 'ghost'}
-															size="sm"
-															className={cn(
-																'h-7 gap-1.5 px-2 text-xs',
-																activeDrivers.length === 0 &&
-																	'text-muted-foreground hover:text-foreground',
-															)}
-														>
-															<span className="truncate">{driverTriggerLabel}</span>
-															{hasOwners && (
-																<ChevronDown size={12} className="shrink-0 opacity-60" />
-															)}
-														</Button>
-													</DropdownMenuTrigger>
-													<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-														{driverOptions.map((actor) => (
+								    `filterSections` yet. Rendered only in their absence so the
+								    two never stack. */}
+								{!filterSections?.length && onStatusFilterChange && (
+									<div className="flex items-center">
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild disabled={!hasStatuses}>
+												<ValueRow
+													label="Status"
+													value={
+														activeStatuses.length === 0 ? 'Any' : (statusTriggerLabel ?? 'Any')
+													}
+													caret={hasStatuses ? undefined : <span />}
+												/>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end" className={DROPDOWN_CLS}>
+												{typeEntries.map(([type, statuses], i) => (
+													<div key={type}>
+														{i > 0 && <DropdownMenuSeparator />}
+														<DropdownMenuLabel className="capitalize text-xs font-medium text-muted-foreground py-1">
+															{type}
+														</DropdownMenuLabel>
+														{statuses.map((status) => (
 															<DropdownMenuCheckboxItem
-																key={actor.id}
-																checked={activeDrivers.includes(actor.id)}
-																onCheckedChange={() => toggleDriver(actor.id)}
+																key={status}
+																checked={activeStatuses.includes(status)}
+																onCheckedChange={() => toggleStatus(status)}
+																className="capitalize"
 															>
-																{actor.name}
+																{status.replace(/_/g, ' ')}
 															</DropdownMenuCheckboxItem>
 														))}
-													</DropdownMenuContent>
-												</DropdownMenu>
-												{activeDrivers.length > 0 && (
-													<button
-														type="button"
-														aria-label="Clear Driver filter"
-														title="Clear Driver filter"
-														onClick={() => onDriverFilterChange?.(undefined)}
-														className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+													</div>
+												))}
+											</DropdownMenuContent>
+										</DropdownMenu>
+										{activeStatuses.length > 0 && (
+											<button
+												type="button"
+												aria-label="Clear Status filter"
+												title="Clear Status filter"
+												onClick={() => onStatusFilterChange?.(undefined)}
+												className="shrink-0 px-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+											>
+												Clear
+											</button>
+										)}
+									</div>
+								)}
+								{!filterSections?.length && onDriverFilterChange && (
+									<div className="flex items-center">
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild disabled={!hasOwners}>
+												<ValueRow
+													label="Driver"
+													value={activeDrivers.length === 0 ? 'Any' : driverTriggerLabel}
+													caret={hasOwners ? undefined : <span />}
+												/>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end" className={DROPDOWN_CLS}>
+												{driverOptions.map((actor) => (
+													<DropdownMenuCheckboxItem
+														key={actor.id}
+														checked={activeDrivers.includes(actor.id)}
+														onCheckedChange={() => toggleDriver(actor.id)}
 													>
-														Clear
-													</button>
-												)}
-											</div>
+														{actor.name}
+													</DropdownMenuCheckboxItem>
+												))}
+											</DropdownMenuContent>
+										</DropdownMenu>
+										{activeDrivers.length > 0 && (
+											<button
+												type="button"
+												aria-label="Clear Driver filter"
+												title="Clear Driver filter"
+												onClick={() => onDriverFilterChange?.(undefined)}
+												className="shrink-0 px-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+											>
+												Clear
+											</button>
 										)}
 									</div>
 								)}
@@ -624,18 +604,16 @@ export function DisplayPanel({
 									/>
 								))}
 								{/* Custom-field filters — one row per workspace-defined field of
-								    the active type. The mockup has no equivalent (its fixture
-								    workspace defines none), so these keep the value-input shape
-								    they already had rather than being folded into the option
-								    lists above: a free-text or date field has no enumerable set
-								    of options to list, count, or pin. */}
+								    the active type. A free-text or date field has no enumerable
+								    set of options to list, count, or pin, so these keep the
+								    value-input shape rather than the option lists above. */}
 								{showMetadataFilters &&
 									filterableMetadataFields.map((field) => {
 										const current = metadataFilters?.[field.name] ?? ''
 										return (
 											<div key={field.name} className="flex items-center gap-2 px-2.5 py-1">
 												<span
-													className="w-16 shrink-0 truncate text-xs capitalize text-muted-foreground"
+													className="w-16 shrink-0 truncate text-sm font-medium capitalize text-foreground"
 													title={field.name}
 												>
 													{field.name.replace(/_/g, ' ')}
@@ -656,7 +634,7 @@ export function DisplayPanel({
 														aria-label={`Clear ${field.name} filter`}
 														title={`Clear ${field.name} filter`}
 														onClick={() => onMetadataFilterChange?.(field.name, undefined)}
-														className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+														className="text-xs text-muted-foreground transition-colors hover:text-foreground"
 													>
 														Clear
 													</button>
@@ -665,60 +643,51 @@ export function DisplayPanel({
 										)
 									})}
 								{unfilterableFieldCount > 0 && (
-									<p className="px-2.5 pb-1 text-[11px] text-muted-foreground">
+									<p className="px-2.5 pb-1 text-xs text-muted-foreground">
 										{unfilterableFieldCount} field{unfilterableFieldCount === 1 ? '' : 's'} can't be
 										filtered — field names must start with a letter and contain only letters,
 										numbers, and underscores.
 									</p>
 								)}
 							</div>
-							<Separator />
+							<Separator className="my-1" />
 						</>
 					)}
 
-					{/* PROPERTIES — a wrapped row of toggle pills (mockup 709–712).
-					 * One pill per hideable column; filled = shown in the list. */}
+					{/* PROPERTIES — one check row per hideable column. */}
 					{showProperties && (
 						<>
-							<div className="p-1.5">
-								<div className="px-2.5 pt-1 pb-1">
-									<SectionHeader>Properties</SectionHeader>
-								</div>
-								<div
-									data-testid="display-properties"
-									className="flex flex-wrap gap-1 px-2.5 pt-0.5 pb-1.5"
-								>
+							<div>
+								<SectionHeader>Properties</SectionHeader>
+								<div data-testid="display-properties">
 									{hideableColumns.map((col) => {
 										const isVisible = columnVisibility?.[col.id] !== false
 										return (
-											<PropertyPill
+											<CheckRow
 												key={col.id}
-												active={isVisible}
+												checked={isVisible}
 												onClick={() => onColumnVisibilityChange?.(col.id, !isVisible)}
 											>
 												<span className="capitalize">{col.label}</span>
-											</PropertyPill>
+											</CheckRow>
 										)
 									})}
 								</div>
 							</div>
-							<Separator />
+							<Separator className="my-1" />
 						</>
 					)}
 
-					{/* Show archived — the archived count sits between the label and
-					 * the switch (mockup 964). Only renders when the caller wires
-					 * `onIncludeArchivedChange`, so non-bet surfaces keep their shape. */}
+					{/* Show archived — the archived count sits between the label and the
+					 * switch. Only renders when the caller wires `onIncludeArchivedChange`,
+					 * so other surfaces keep their shape. */}
 					{showShow && (
-						<div className="p-1.5">
+						<div>
 							<label
 								htmlFor="display-include-archived"
 								className={cn(
-									// `relative` anchors the invisible `::before` hit surface so
-									// the visible row stays compact while the tap target meets
-									// 44 px — iOS/mobile canon.
-									'relative flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors hover:bg-accent',
-									"before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
+									'flex cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm font-medium transition-colors hover:bg-muted',
+									'h-11 md:h-9',
 								)}
 							>
 								<span className="text-foreground">Show archived</span>
@@ -736,23 +705,21 @@ export function DisplayPanel({
 						</div>
 					)}
 
-					{/* Reset all — restores every display axis. Always the final row
-						(mockup 716), with the muted "auto-saves" note that tells the
-						operator these choices persist without an explicit Save. */}
+					{/* Reset — restores every display axis. Always the final row, with
+					 * the muted "auto-saves" note that tells the operator these choices
+					 * persist without an explicit Save. */}
 					{onResetToDefault && (
 						<>
-							<Separator />
-							<div className="p-1">
-								<button
-									type="button"
-									onClick={onResetToDefault}
-									className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-								>
-									<RotateCcw size={12} aria-hidden="true" />
-									<span className="flex-1">Reset all</span>
-									<span className="text-[10.5px] text-border-strong">auto-saves</span>
-								</button>
-							</div>
+							<Separator className="my-1" />
+							<button
+								type="button"
+								onClick={onResetToDefault}
+								className={cn(ROW_CLS, 'text-muted-foreground hover:text-foreground')}
+							>
+								<RotateCcw size={12} aria-hidden="true" />
+								<span className="flex-1">{resetLabel}</span>
+								<span className="text-xs font-normal text-muted-foreground">auto-saves</span>
+							</button>
 						</>
 					)}
 				</div>
@@ -760,9 +727,6 @@ export function DisplayPanel({
 		</ResponsivePopover>
 	)
 
-	// The v2 toolbar carries no sort/group reading beside the trigger: the
-	// panel's own ORDERING and GROUPING rows already name the current choice,
-	// and a second copy outside the panel competed with the chip row for the
-	// same space. The wrapper stays so callers' layout assumptions hold.
+	// The wrapper stays so callers' layout assumptions hold.
 	return <div className="inline-flex items-center gap-2">{trigger}</div>
 }

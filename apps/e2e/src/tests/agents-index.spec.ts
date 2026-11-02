@@ -1,5 +1,42 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import type { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
+
+type Viewport = { width: number; height: number; label: string }
+
+/** The page's own search: the field from md up, an icon that opens an inline field below it. */
+async function openAgentsSearch(page: Page, vp: Viewport) {
+	if (vp.width < 1280) await page.getByRole('button', { name: 'Search agents' }).click()
+	const field = page.getByRole('searchbox', { name: 'Search agents' })
+	await expect(field).toBeVisible()
+	return field
+}
+
+/** Two flows with one agent each, so the Team chips have something to count. */
+async function seedTeams(account: { workspaceId: string; api: TestAPI }) {
+	const names = ['Alpha flow', 'Beta flow']
+	const agents: { id: string; name: string }[] = []
+	for (const [i, flow] of names.entries()) {
+		const agent = await account.api.createAgentActor(i === 0 ? 'Ada Atom' : 'Brian Bot')
+		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+		const trigger = await account.api.createTrigger(account.workspaceId, {
+			name: `${flow} trigger`,
+			type: 'cron',
+			action_prompt: 'Do the work',
+			target_actor_id: agent.id,
+			config: { expression: '0 3 * * *' },
+		})
+		await account.api.createObject(account.workspaceId, {
+			type: 'loop',
+			title: flow,
+			status: 'learning',
+			metadata: { trigger_ids: [trigger.id] },
+		})
+		agents.push({ id: agent.id, name: agent.name })
+	}
+	return agents
+}
 
 test.describe('Agents index', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
@@ -13,6 +50,8 @@ test.describe('Agents index', () => {
 			await account.api.addWorkspaceMember(account.workspaceId, ada.id)
 			const brian = await account.api.createAgentActor('Brian Bot')
 			await account.api.addWorkspaceMember(account.workspaceId, brian.id)
+			// The first-visit default is Team; this test is about the Status groups.
+			await account.api.saveDisplaySettings(account.workspaceId, 'agents', { groupBy: 'status' })
 
 			await page.goto(`/${account.workspaceId}/agents`)
 
@@ -92,16 +131,12 @@ test.describe('Agents index', () => {
 			await page.goto(`/${account.workspaceId}/agents`)
 			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({ timeout: 10_000 })
 
-			// The screen publishes its title (and, where there is room, its count)
-			// to the shared nav row.
+			// The screen publishes its title to the shared nav row, and the count
+			// beside it where there is room (from xl; the viewports here are below it).
 			await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible()
-			if (vp.width >= 640) {
-				// Every workspace also ships the built-in Workspace Coach, so the
-				// count is "the agents that exist", not just the two seeded here.
-				await expect(page.getByText(/\d+ agents · each owns one outcome/)).toBeVisible()
-			}
 
-			await expect(page.getByRole('searchbox', { name: 'Search agents' })).toBeVisible()
+			// The page's own search sits in the title row.
+			await openAgentsSearch(page, vp)
 
 			// The chip strip is reachable on touch at every viewport (no hover reveal),
 			// and legible in both colour schemes.
@@ -129,6 +164,8 @@ test.describe('Agents index', () => {
 
 			// The whole row is the click target — click its far right edge, well
 			// away from the name, and land on the agent.
+			// Grouped by team the row can sit below the fold.
+			await row.scrollIntoViewIfNeeded()
 			const box = await row.boundingBox()
 			if (!box) throw new Error('agent row has no bounding box')
 			await page.mouse.click(box.x + box.width - 30, box.y + box.height / 2)
@@ -150,12 +187,12 @@ test.describe('Agents index', () => {
 			const adaRow = page.getByRole('link', { name: /Ada Atom/ })
 			await expect(adaRow).toBeVisible({ timeout: 10_000 })
 
-			// Agents in no flow show "No team", from the lg breakpoint up.
+			// Agents in no flow show "No team", from the xl breakpoint up.
 			const team = adaRow.getByText('No team', { exact: true })
-			if (vp.width >= 1024) await expect(team).toBeVisible()
+			if (vp.width >= 1280) await expect(team).toBeVisible()
 			else await expect(team).toBeHidden()
 
-			const search = page.getByRole('searchbox', { name: 'Search agents' })
+			const search = await openAgentsSearch(page, vp)
 			await search.fill('brian')
 			await expect(page.getByRole('link', { name: /Brian Bot/ })).toBeVisible()
 			await expect(adaRow).toHaveCount(0)
@@ -176,6 +213,7 @@ test.describe('Agents index', () => {
 
 			const ada = await account.api.createAgentActor('Ada Atom')
 			await account.api.addWorkspaceMember(account.workspaceId, ada.id)
+			await account.api.saveDisplaySettings(account.workspaceId, 'agents', { groupBy: 'status' })
 
 			await page.goto(`/${account.workspaceId}/agents`)
 			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({ timeout: 10_000 })
@@ -192,7 +230,7 @@ test.describe('Agents index', () => {
 			// from 768px up, and neither crowds the phone layout.
 			const row = page.getByRole('link', { name: /Ada Atom/ })
 			const activity = row.getByText('Standing by', { exact: true }).locator('visible=true')
-			const sessions = row.getByText('0 sessions')
+			const sessions = row.locator('span.tabular-nums').filter({ hasText: /^0$/ })
 			// Below 768px the Latest text is not a column but a wrapped line under
 			// the outcome, so the same words are readable on touch without hover.
 			await expect(activity).toBeVisible()
@@ -226,15 +264,140 @@ test.describe('Agents index', () => {
 			const item = page.locator('li', { has: row }).last()
 			await expect(item).toHaveCSS('border-bottom-width', '1px')
 
-			// The status is a dot and a coloured word, not a filled pill, and it
-			// stays legible in both colour schemes.
+			// The status is a pill with a dot (v11) and stays legible in both colour schemes.
 			const status = row.getByText('Idle', { exact: true })
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
 				await expect(status).toBeVisible()
-				await expect(status).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
+		})
+
+		// The title row: page search and Display beside the shared search and New.
+		test(`both searches are reachable and the page does not scroll sideways @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await seedTeams(account)
+			await page.goto(`/${account.workspaceId}/agents`)
+			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({ timeout: 10_000 })
+
+			// The workspace search and the one New chat stay on the page.
+			await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible()
+			await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible()
+			// The page's own search: a field from xl up, an icon below it.
+			if (vp.width < 1280) {
+				await expect(page.getByRole('searchbox', { name: 'Search agents' })).toBeHidden()
+				await expect(page.getByRole('button', { name: 'Search agents' })).toBeVisible()
+			} else {
+				await expect(page.getByRole('searchbox', { name: 'Search agents' })).toBeVisible()
+			}
+			await expect(page.getByRole('button', { name: /^Display/ })).toBeVisible()
+
+			const overflow = await page.evaluate(() => ({
+				scroll: document.documentElement.scrollWidth,
+				client: document.documentElement.clientWidth,
+			}))
+			expect(overflow.scroll).toBeLessThanOrEqual(overflow.client)
+
+			// Opening the inline field takes over the title row, and closing it brings it back.
+			if (vp.width < 1280) {
+				await page.getByRole('button', { name: 'Search agents' }).click()
+				const field = page.getByRole('searchbox', { name: 'Search agents' })
+				await expect(field).toBeFocused()
+				await field.fill('brian')
+				await expect(page.getByRole('link', { name: /Ada Atom/ })).toHaveCount(0)
+				await page.getByRole('button', { name: 'Close search' }).click()
+				await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible()
+				// The filter outlives the field.
+				await expect(page.getByRole('link', { name: /Brian Bot/ })).toBeVisible()
+			}
+		})
+
+		test(`first visit groups by Team, and a saved Status choice survives a reload @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await seedTeams(account)
+			await page.goto(`/${account.workspaceId}/agents`)
+			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({ timeout: 10_000 })
+
+			// Nothing saved: the groups are teams, A to Z, the catch-all last.
+			await expect(page.getByRole('heading', { level: 3, name: 'Alpha flow' })).toBeVisible()
+			await expect(page.getByRole('heading', { level: 3, name: 'Beta flow' })).toBeVisible()
+			const headings = (await page.getByRole('heading', { level: 3 }).allTextContents()).map((h) =>
+				h.replace(/\d+$/, '').trim(),
+			)
+			// The workspace ships flows of its own, so check order, not the exact set.
+			expect(headings.indexOf('Alpha flow')).toBeLessThan(headings.indexOf('Beta flow'))
+			expect(headings.at(-1)).toBe('No team')
+			expect(headings.slice(0, -1)).toEqual(
+				[...headings.slice(0, -1)].sort((a, b) =>
+					a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }),
+				),
+			)
+
+			// Choose Status grouping in the Display menu; it is saved and wins on reload.
+			await page.getByRole('button', { name: /^Display/ }).click()
+			const saved = page.waitForResponse(
+				(r) => r.url().includes('/user-display-settings/agents') && r.request().method() === 'PUT',
+			)
+			await page.getByText('Group by', { exact: true }).click()
+			await page.getByRole('menuitem', { name: 'Status' }).click()
+			await saved
+			await page.keyboard.press('Escape')
+			await expect(page.getByRole('heading', { level: 3, name: /^Idle/ })).toBeVisible()
+
+			await page.reload()
+			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({ timeout: 10_000 })
+			await expect(page.getByRole('heading', { level: 3, name: /^Idle/ })).toBeVisible()
+			await expect(page.getByRole('heading', { level: 3, name: 'Alpha flow' })).toHaveCount(0)
+		})
+
+		test(`team chips filter, pills remove them and Clear all clears both @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await seedTeams(account)
+			await page.goto(`/${account.workspaceId}/agents`)
+			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({ timeout: 10_000 })
+
+			// One outlined chip per team, with its count; legible in both colour schemes.
+			const teams = page.getByRole('group', { name: 'Filter agents by team' })
+			const alpha = teams.getByRole('button', { name: 'Alpha flow (1)' })
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+				await expect(alpha).toBeVisible()
+				await expect(teams.getByRole('button', { name: 'Beta flow (1)' })).toBeVisible()
+				await expect(teams.getByRole('button', { name: /^No team \(\d+\)$/ })).toBeVisible()
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+
+			// A team chip narrows the list and adds a removable pill.
+			await alpha.click()
+			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible()
+			await expect(page.getByRole('link', { name: /Brian Bot/ })).toHaveCount(0)
+			await expect(page.getByText('Team:')).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Clear all' })).toHaveCount(0)
+
+			// Removing the pill brings everyone back.
+			await page.getByRole('button', { name: 'Remove Team filter' }).click()
+			await expect(page.getByRole('link', { name: /Brian Bot/ })).toBeVisible()
+
+			// Two filters make Clear all appear, and it clears both.
+			await alpha.click()
+			await page
+				.getByRole('group', { name: 'Filter agents by status' })
+				.getByRole('button', { name: /^Idle \(\d+\)$/ })
+				.click()
+			await expect(page.getByText('Status:')).toBeVisible()
+			await page.getByRole('button', { name: 'Clear all' }).click()
+			await expect(page.getByText('Team:')).toHaveCount(0)
+			await expect(page.getByText('Status:')).toHaveCount(0)
+			await expect(page.getByRole('link', { name: /Brian Bot/ })).toBeVisible()
 		})
 
 		// Latest is never hover-only: on md+ a tooltip carries the full text, below

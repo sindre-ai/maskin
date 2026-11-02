@@ -160,7 +160,7 @@ describe('MessageBubble', () => {
 	it('renders an own message as an ink plate with no avatar or name', () => {
 		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
 		const body = screen.getByText('Here is what I found.')
-		expect(body.parentElement?.className).toContain('bg-primary')
+		expect(body.parentElement?.className).toContain('bg-secondary')
 		expect(screen.queryByText('Me')).not.toBeInTheDocument()
 	})
 
@@ -179,7 +179,7 @@ describe('MessageBubble', () => {
 			)
 			expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
 			const chip = screen.getByRole('link', { name: /Retry window/ })
-			const plate = container.querySelector('.bg-primary')
+			const plate = container.querySelector('.bg-secondary')
 			expect(plate).toContainElement(chip)
 			expect(plate?.textContent).toContain('is this done?')
 			expect(plate?.textContent).toContain('thanks')
@@ -196,7 +196,7 @@ describe('MessageBubble', () => {
 					content: `is this done?\n${address}`,
 				}),
 			)
-			const plate = container.querySelector('.bg-primary')
+			const plate = container.querySelector('.bg-secondary')
 			const card = container.querySelector('[data-linked-card]')
 			expect(card).not.toBeNull()
 			expect(plate).toContainElement(card as HTMLElement)
@@ -216,7 +216,7 @@ describe('MessageBubble', () => {
 				}),
 			)
 			expect(container.querySelector('[data-linked-card]')).not.toBeNull()
-			expect(container.querySelector('.bg-primary')).toBeNull()
+			expect(container.querySelector('.bg-secondary')).toBeNull()
 		})
 
 		it('sets the width by what the message holds: a bubble with a card is min(520px, 88%), a lone card up to 460px, words fit their text', () => {
@@ -235,7 +235,7 @@ describe('MessageBubble', () => {
 			const { container } = renderBubble(
 				buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content: 'just words' }),
 			)
-			const words = container.querySelector('.bg-primary')?.parentElement
+			const words = container.querySelector('.bg-secondary')?.parentElement
 			expect(words).not.toHaveClass('w-[min(520px,88%)]')
 			expect(words).not.toHaveClass('max-w-[460px]')
 		})
@@ -256,7 +256,7 @@ describe('MessageBubble', () => {
 		expect(pullChip).toHaveAttribute('href', pull)
 		expect(pullChip).toHaveAttribute('target', '_blank')
 		expect(screen.getByRole('link', { name: 'Issue maskin #12, opens GitHub' })).toBeInTheDocument()
-		expect(container.querySelector('.bg-primary')).toContainElement(pullChip)
+		expect(container.querySelector('.bg-secondary')).toContainElement(pullChip)
 	})
 
 	it('draws a settings address in your own message as a settings chip that opens in a new tab', () => {
@@ -273,7 +273,7 @@ describe('MessageBubble', () => {
 		const chip = screen.getByRole('link', { name: 'Settings: Billing' })
 		expect(chip).toHaveAttribute('href', '/ws-1/settings/billing')
 		expect(chip).toHaveAttribute('target', '_blank')
-		expect(container.querySelector('.bg-primary')).toContainElement(chip)
+		expect(container.querySelector('.bg-secondary')).toContainElement(chip)
 	})
 
 	it('draws a Keys address in your own message as a chip only in an enterprise workspace', () => {
@@ -314,7 +314,7 @@ describe('MessageBubble', () => {
 		)
 		expect(screen.queryByText(address, { exact: false })).not.toBeInTheDocument()
 		const chip = screen.getByRole('link', { name: 'Launch plan' })
-		expect(container.querySelector('.bg-primary')).toContainElement(chip)
+		expect(container.querySelector('.bg-secondary')).toContainElement(chip)
 	})
 
 	it('draws a chat link alone on its line as a chat card, and one in a sentence as a chip', () => {
@@ -350,7 +350,7 @@ describe('MessageBubble', () => {
 		const label = screen.getByText('YOU ATTACHED')
 		expect(label.className).toContain('eyebrow')
 		// The chips row is a sibling of the plate, not a child of it.
-		expect(label.closest('div')?.className).not.toContain('bg-primary')
+		expect(label.closest('div')?.className).not.toContain('bg-secondary')
 	})
 
 	it('renders a REFERENCED rail under an agent message body', () => {
@@ -432,7 +432,7 @@ describe('MessageBubble — lifted attachments', () => {
 			ownMessage({ content: '', metadata: { attachments: [image] } }),
 		)
 		expect(screen.getByRole('button', { name: 'Image 1, shot.png, open' })).toBeInTheDocument()
-		expect(container.querySelector('.bg-primary')).toBeNull()
+		expect(container.querySelector('.bg-secondary')).toBeNull()
 	})
 
 	it('stacks the image block above a text bubble that holds only the text', () => {
@@ -440,7 +440,7 @@ describe('MessageBubble — lifted attachments', () => {
 			ownMessage({ content: 'Sunset from the ridge.', metadata: { attachments: [image] } }),
 		)
 		const tile = screen.getByRole('button', { name: 'Image 1, shot.png, open' })
-		const plate = container.querySelector('.bg-primary')
+		const plate = container.querySelector('.bg-secondary')
 		expect(plate).not.toBeNull()
 		expect(plate?.contains(tile)).toBe(false)
 		expect(
@@ -457,7 +457,7 @@ describe('MessageBubble — lifted attachments', () => {
 			}),
 		)
 		const card = screen.getByRole('link', { name: 'Open review.pdf' })
-		expect(container.querySelector('.bg-primary')?.contains(card)).toBe(false)
+		expect(container.querySelector('.bg-secondary')?.contains(card)).toBe(false)
 	})
 
 	it('draws attachments of another author under their name, left aligned', () => {
@@ -466,7 +466,7 @@ describe('MessageBubble — lifted attachments', () => {
 		)
 		expect(screen.getByRole('button', { name: 'Image 1, shot.png, open' })).toBeInTheDocument()
 		expect(container.querySelector('.items-start')).not.toBeNull()
-		expect(container.querySelector('.bg-primary')).toBeNull()
+		expect(container.querySelector('.rounded-2xl.bg-secondary')).toBeNull()
 	})
 
 	it('shows a file that was deleted as gone, with its name struck through', () => {
@@ -484,7 +484,9 @@ describe('MessageBubble — lifted attachments', () => {
 				metadata: { attachments: [pdf] },
 			}),
 		)
-		expect(container.querySelector('.bg-primary')).toContainElement(screen.getByText('review.pdf'))
+		expect(container.querySelector('.bg-secondary')).toContainElement(
+			screen.getByText('review.pdf'),
+		)
 	})
 })
 
@@ -647,7 +649,7 @@ describe('MessageBubble — own bubble fits its text', () => {
 	const own = (overrides: Partial<MessageResponse> = {}) =>
 		buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', ...overrides })
 	const columnOf = (container: HTMLElement) =>
-		container.querySelector<HTMLElement>('.bg-primary')?.closest<HTMLElement>('[style]')
+		container.querySelector<HTMLElement>('.bg-secondary')?.closest<HTMLElement>('[style]')
 
 	it('gives the column the width of the widest line of text', () => {
 		const { container } = renderBubble(own({ content: 'a long line\nand a shorter one' }))

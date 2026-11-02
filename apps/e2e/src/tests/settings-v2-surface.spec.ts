@@ -48,7 +48,7 @@ test.describe('Settings v2 surface', () => {
 					.getByRole('navigation', { name: 'Settings sections' })
 					.getByRole('link', { name: section.label, exact: true })
 				await expect(link).toBeVisible({ timeout: 10000 })
-				await expect(link).toHaveClass(/bg-muted/)
+				await expect(link).toHaveClass(/bg-secondary/)
 
 				await expectNoHorizontalOverflow(page)
 			}
@@ -62,13 +62,13 @@ test.describe('Settings v2 surface', () => {
 			await gotoSettings(page, account.workspaceId)
 
 			const headings = page.getByRole('heading', {
-				name: /WORKSPACE NAME|APPEARANCE|PRIVACY & DATA/,
+				name: /^(Workspace|Appearance|Privacy and data)$/,
 			})
 			await expect(headings).toHaveCount(3, { timeout: 10000 })
 			expect((await headings.allInnerTexts()).map((t) => t.trim())).toEqual([
-				'WORKSPACE NAME',
-				'APPEARANCE',
-				'PRIVACY & DATA',
+				'Workspace',
+				'Appearance',
+				'Privacy and data',
 			])
 
 			// Extensions live in their own section — General carries only the two
@@ -166,7 +166,7 @@ test.describe('Settings v2 surface', () => {
 /**
  * General's two typographic decisions (mockup 2697–2709).
  *
- * The section labels are the 11px sans caps, not the 8px mono `.eyebrow` used
+ * The section labels are 12px sans, not the 8px mono `.eyebrow` used
  * for the app's other micro-labels; and the selected Appearance option is the
  * solid near-black pill. Both are colour/size choices no structural assertion
  * catches — `--secondary` (#f6f6f7) on a white card renders as no selection at
@@ -174,21 +174,21 @@ test.describe('Settings v2 surface', () => {
  */
 test.describe('Settings > General — labels and Appearance', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`section labels use the 11px sans style at ${viewport.label}`, async ({
+		test(`section labels use the 12px sans style at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await gotoSettings(page, account.workspaceId)
 
-			for (const name of ['WORKSPACE NAME', 'APPEARANCE', 'PRIVACY & DATA']) {
-				const label = page.getByRole('heading', { name })
+			for (const name of ['Workspace', 'Appearance', 'Privacy and data']) {
+				const label = page.getByRole('heading', { name, exact: true })
 				await expect(label).toBeVisible({ timeout: 10000 })
 				const style = await label.evaluate((el) => {
 					const cs = getComputedStyle(el)
 					return { fontSize: cs.fontSize, fontFamily: cs.fontFamily, weight: cs.fontWeight }
 				})
-				expect(style.fontSize).toBe('11px')
+				expect(style.fontSize).toBe('12px')
 				expect(style.fontFamily).not.toMatch(/mono/i)
 				expect(Number(style.weight)).toBeGreaterThanOrEqual(600)
 			}

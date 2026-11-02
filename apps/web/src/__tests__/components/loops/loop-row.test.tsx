@@ -1,4 +1,4 @@
-import { LoopRow } from '@/components/loops/loop-row'
+import { LoopRow, loopProgress } from '@/components/loops/loop-row'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
@@ -216,5 +216,58 @@ describe('LoopRow', () => {
 			// fireEvent returns whether the default was allowed — false = preventDefault fired.
 			expect(clickEvent).toBe(false)
 		})
+	})
+})
+
+describe('loopProgress', () => {
+	const target = (actual: number, goal: number, label = 'customers closed') => ({
+		source: 'manual',
+		label,
+		actual,
+		target: goal,
+	})
+
+	it('is null for a flow without targets, so the row shows no progress line', () => {
+		expect(loopProgress(buildLoop({ targets: null }))).toBeNull()
+		expect(loopProgress(buildLoop({ targets: [] }))).toBeNull()
+	})
+
+	it('reads the first target as text and a percentage', () => {
+		const progress = loopProgress(buildLoop({ targets: [target(3, 10)] }))
+		expect(progress).toEqual({ text: '3 of 10 customers closed', percent: 30, missed: false })
+	})
+
+	it('calls a target with nothing done Missed, by the same rule as the target card', () => {
+		const progress = loopProgress(buildLoop({ targets: [target(0, 10)] }))
+		expect(progress?.missed).toBe(true)
+		expect(progress?.percent).toBe(0)
+	})
+
+	it('caps the bar at full when the target is beaten', () => {
+		const progress = loopProgress(buildLoop({ targets: [target(14, 10)] }))
+		expect(progress?.percent).toBe(100)
+	})
+})
+
+describe('LoopRow progress', () => {
+	it('draws a labelled progress bar and a Missed chip for a missed target', () => {
+		render(
+			<LoopRow
+				loop={buildLoop({
+					targets: [{ source: 'manual', label: 'customers closed', actual: 0, target: 10 }],
+				})}
+				actors={[]}
+			/>,
+		)
+		expect(
+			screen.getByRole('progressbar', { name: '0 of 10 customers closed' }),
+		).toBeInTheDocument()
+		expect(screen.getByText('Missed')).toBeInTheDocument()
+	})
+
+	it('draws no progress bar when the flow has no target', () => {
+		render(<LoopRow loop={buildLoop()} actors={[]} />)
+		expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+		expect(screen.queryByText('Missed')).not.toBeInTheDocument()
 	})
 })

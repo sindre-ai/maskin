@@ -12,6 +12,7 @@ export function AgentSectionHeading({
 	note,
 	noteClassName,
 	action,
+	quiet = false,
 }: {
 	id?: string
 	title: string
@@ -19,18 +20,27 @@ export function AgentSectionHeading({
 	/** Semantic token class for the note — used to turn it amber when paused. */
 	noteClassName?: string
 	action?: React.ReactNode
+	/** The smaller muted label (Driving, Works in) instead of the bold section title. */
+	quiet?: boolean
 }) {
 	return (
-		<div className="flex items-center gap-2">
-			<h2 id={id} className="shrink-0 text-sm font-semibold tracking-tight text-foreground">
+		<div className="flex items-center gap-2 px-1">
+			<h2
+				id={id}
+				className={
+					quiet
+						? 'shrink-0 text-sm font-semibold text-muted-foreground'
+						: 'shrink-0 text-[15px] font-bold tracking-tight text-foreground'
+				}
+			>
 				{title}
 			</h2>
 			{note && (
-				<span className={noteClassName ?? 'min-w-0 truncate text-[11px] text-muted-foreground'}>
+				<span className={noteClassName ?? 'min-w-0 truncate text-[13px] text-muted-foreground'}>
 					{note}
 				</span>
 			)}
-			<div className="mx-2 h-px flex-1 bg-border" aria-hidden />
+			<div className="flex-1" aria-hidden />
 			{action}
 		</div>
 	)

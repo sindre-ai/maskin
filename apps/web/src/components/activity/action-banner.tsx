@@ -59,7 +59,7 @@ export function ActionBanner({ events, workspaceId: _workspaceId }: ActionBanner
 		<div
 			className={cn(
 				'sticky top-0 z-10',
-				'-mx-4 md:-mx-8 lg:-mx-12 mb-6 px-4 md:px-8 lg:px-12 py-2.5',
+				'-mx-4 md:-mx-8 lg:-mx-7 mb-6 px-4 md:px-8 lg:px-7 py-2.5',
 				'bg-background border-y border-border',
 			)}
 		>

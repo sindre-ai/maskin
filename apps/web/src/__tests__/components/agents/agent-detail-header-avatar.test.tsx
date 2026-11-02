@@ -12,6 +12,8 @@ vi.mock('@/hooks/use-actors', () => ({
 	useUploadActorAvatar: () => ({ mutate: uploadMutate, isPending: false }),
 }))
 
+vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: [] }) }))
+
 let membersData: { actorId: string; role?: string }[] | undefined
 
 vi.mock('@/hooks/use-workspaces', () => ({
@@ -26,12 +28,9 @@ vi.mock('@/lib/auth', () => ({
 const agent = buildActorResponse({ id: 'agent-1', type: 'agent', name: 'Planner' })
 
 function renderHeader(overrides: Partial<typeof agent> = {}) {
-	return render(
-		<AgentDetailHeader agent={{ ...agent, ...overrides }} portrait="idle" onMessage={() => {}} />,
-		{
-			wrapper: createWorkspaceWrapper(),
-		},
-	)
+	return render(<AgentDetailHeader agent={{ ...agent, ...overrides }} portrait="idle" />, {
+		wrapper: createWorkspaceWrapper(),
+	})
 }
 
 beforeEach(() => {

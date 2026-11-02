@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { TestAPI } from '../helpers/api.helper'
+import { headerMenuItem } from '../helpers/chat-header'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -105,9 +106,9 @@ test.describe('Chats v2 — grouped list', () => {
 
 		await page.goto(`/${account.workspaceId}/chats`)
 		await expect(list.getByText(chats.plain)).toBeVisible({ timeout: 15_000 })
-		// Pinned sorts above the dated groups.
+		// Pinned sorts above Unread and Earlier; a chat the viewer wrote last is read.
 		await expect(list.getByText('Pinned', { exact: true })).toBeVisible()
-		await expect(list.getByText('Today', { exact: true })).toBeVisible()
+		await expect(list.getByText('Earlier', { exact: true })).toBeVisible()
 	})
 })
 
@@ -122,10 +123,6 @@ test.describe('Chats v2 — layout', () => {
 			await expect(list.getByText(chats.plain)).toBeVisible({ timeout: 15_000 })
 			await expectNoHorizontalOverflow(page)
 
-			// With nothing selected the list owns the whole content width.
-			const listBox = await list.boundingBox()
-			expect(listBox).not.toBeNull()
-
 			await list.getByText(chats.plain).click()
 			await expect(page.getByRole('heading', { name: chats.plain })).toBeVisible({
 				timeout: 15_000,
@@ -137,11 +134,9 @@ test.describe('Chats v2 — layout', () => {
 				await expect(list).toBeHidden()
 				await page.getByRole('button', { name: 'Back to conversations' }).click()
 			} else {
-				// Both panes are visible side by side, and the list has narrowed.
+				// Both panes are visible side by side.
 				await expect(list).toBeVisible()
-				const narrowed = await list.boundingBox()
-				expect(narrowed?.width ?? 0).toBeLessThan(listBox?.width ?? 0)
-				await page.getByRole('button', { name: 'Close conversation' }).click()
+				await (await headerMenuItem(page, 'Close conversation')).click()
 			}
 
 			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/chats/?(\\?.*)?$`))
@@ -165,22 +160,22 @@ test.describe('Chats v2 — layout', () => {
 		expect(newButton).not.toBeNull()
 		expect(Math.abs((newButton?.y ?? 0) - (search?.y ?? 0))).toBeLessThan(16)
 
-		// Icon-only at this width, but still named for assistive tech.
+		// The list's filter pill stays named for assistive tech and inside the viewport.
 		const filter = page.getByRole('button', { name: /^Filter conversations/ })
 		await expect(filter).toBeVisible()
-		expect((await filter.boundingBox())?.width ?? 999).toBeLessThan(56)
+		const box = await filter.boundingBox()
+		expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(VIEWPORTS.mobile.width)
 	})
 
-	test('the nav controls are all the same height', async ({ page, account }) => {
+	test('the search and filter pills are the same height', async ({ page, account }) => {
 		await seedChats(account.api, account.workspaceId)
 		await page.goto(`/${account.workspaceId}/chats`)
 		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
 
 		const heights = await Promise.all(
 			[
-				page.getByRole('button', { name: 'Search or run a command' }),
+				page.getByRole('searchbox', { name: 'Search chats' }).locator('xpath=..'),
 				page.getByRole('button', { name: /^Filter conversations/ }),
-				page.getByRole('button', { name: 'New chat' }).first(),
 			].map(async (l) => (await l.boundingBox())?.height ?? 0),
 		)
 		expect(heights.every((h) => h > 0)).toBe(true)
@@ -197,11 +192,11 @@ test.describe('Chats v2 — layout', () => {
 		await expect(page.getByRole('heading', { name: chats.plain })).toBeVisible({ timeout: 15_000 })
 		await expect(list).toBeVisible()
 
-		await page.getByRole('button', { name: 'Hide conversation list' }).click()
+		await (await headerMenuItem(page, 'Hide conversation list')).click()
 		await expect(page).toHaveURL(/[?&]wide=true/)
 		await expect(list).toBeHidden()
 
-		await page.getByRole('button', { name: 'Show conversation list' }).click()
+		await (await headerMenuItem(page, 'Show conversation list')).click()
 		await expect(list).toBeVisible()
 		await expect(page).not.toHaveURL(/wide=true/)
 	})
@@ -232,7 +227,7 @@ test.describe('Chats v2 — list title and column', () => {
 			expect(Math.abs((box?.y ?? 0) - 20)).toBeLessThanOrEqual(2)
 
 			// Section headers are present, and the list sits below the title row.
-			await expect(list.getByText('Today', { exact: true })).toBeVisible()
+			await expect(list.getByText('Earlier', { exact: true })).toBeVisible()
 			expect((listBox?.y ?? 0) >= (box?.y ?? 0) + (box?.height ?? 0) - 1).toBe(true)
 			await expectNoHorizontalOverflow(page)
 

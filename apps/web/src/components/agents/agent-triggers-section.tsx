@@ -93,7 +93,7 @@ export function AgentTriggersSection({ agent }: { agent: ActorResponse }) {
 					Nothing wakes this agent yet. Add a schedule or an event.
 				</p>
 			) : (
-				<ul className="flex flex-col gap-1.5">
+				<ul className="flex flex-col border-t border-border">
 					{shownTriggers.map((trigger) => (
 						<li key={trigger.id}>
 							<TriggerCard trigger={trigger} workspaceId={workspaceId} />
@@ -114,7 +114,7 @@ function TriggerCard({ trigger, workspaceId }: { trigger: TriggerResponse; works
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2">
+		<div className="flex items-center gap-2.5 border-b border-border py-2.5">
 			<span
 				aria-hidden
 				className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"

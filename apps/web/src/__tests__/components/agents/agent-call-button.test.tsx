@@ -36,9 +36,8 @@ describe('AgentCallButton', () => {
 		wrap(<AgentCallButton agent={agent} variant="row" shortcut={false} />)
 		const button = screen.getByRole('button', { name: 'Call Chief of Staff' })
 		expect(button).toHaveTextContent('Call')
-		// Hover-reveal only from md up; below md it is plain inline (no opacity-0).
-		expect(button.className).toContain('md:opacity-0')
-		expect(button.className).not.toMatch(/(^|\s)opacity-0/)
+		// Always visible (v11): no hover reveal.
+		expect(button.className).not.toContain('opacity-0')
 		await userEvent.click(button)
 		expect(screen.getByText('Call dialog for Chief of Staff')).toBeInTheDocument()
 	})

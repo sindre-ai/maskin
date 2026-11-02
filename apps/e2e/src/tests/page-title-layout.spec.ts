@@ -4,7 +4,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
  * The shared page title and margin spec: every screen's <h1> is 34px from 1024,
- * 28px at 768 and 24px below, sits on a 16 / 32 / 48px side margin at 375 / 768 / 1024, and
+ * 28px at 768 and 24px below, sits on a 16 / 32 / 28px side margin at 375 / 768 / 1024, and
  * shares one left edge with the page content. Requires a live backend.
  */
 
@@ -21,7 +21,7 @@ function expectedTitleSize(width: number) {
 }
 
 function expectedEdge(width: number) {
-	return width >= 1024 ? 48 : width >= 768 ? 32 : 16
+	return width >= 1024 ? 28 : width >= 768 ? 32 : 16
 }
 
 async function expectNoHorizontalScroll(page: Page) {

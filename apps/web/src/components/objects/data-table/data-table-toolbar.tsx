@@ -121,7 +121,7 @@ export function DataTableToolbar({
 		// Display panel pushed to the right edge (mockup 658–673). Wraps rather
 		// than scrolls — a chip that scrolled out of view would read as absent,
 		// and "absent filter" is the one thing this row exists to disprove.
-		<div className="flex min-h-7 flex-none flex-nowrap items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-visible pb-3">
+		<div className="flex min-h-8 flex-none flex-nowrap items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-visible pb-3">
 			{leading}
 			{quickChips.map((chip) => (
 				<button
@@ -130,8 +130,8 @@ export function DataTableToolbar({
 					aria-pressed={chip.active}
 					onClick={chip.onToggle}
 					className={cn(
-						'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3',
-						'text-[11.5px] font-semibold transition-colors',
+						'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5',
+						'text-[13px] font-semibold transition-colors',
 						chip.active
 							? 'border-primary bg-primary text-primary-foreground'
 							: 'border-border text-muted-foreground hover:border-border-hover hover:text-foreground',

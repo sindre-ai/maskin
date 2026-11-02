@@ -2,7 +2,7 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // T2 follow-up: the List row shows a pending-ask line ("<Agent> asks · <ask>")
-// and a "Waiting on you" pill while a needs_input notification targeting the
+// and a "Ask" pill while a needs_input notification targeting the
 // object is still pending. The pill is `bg-accent text-accent-foreground` (the
 // established accent-pairing rule), so it must be legible in both colour
 // schemes at every ship-gate viewport. Seeded straight through the
@@ -15,7 +15,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 test.describe('List row — pending-ask line + pill (ship gate)', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`pending ask renders the line + "Waiting on you" pill @ ${viewport.label}`, async ({
+		test(`pending ask renders the line + "Ask" pill @ ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -39,12 +39,12 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 			await expect(page.getByText('Ask Line Test Bet')).toBeVisible({ timeout: 10000 })
 
 			// The pill is the shorthand; the ask line carries actor + text.
-			await expect(page.getByText('Waiting on you')).toBeVisible()
+			await expect(page.getByText('Ask', { exact: true })).toBeVisible()
 			// The line names the asking actor. The source must be a workspace
 			// member (the API answers 404 for a foreign actor), so it reads by
 			// name. Only the actor name is its own span now ({who} asks — "{text}"
 			// splits the phrase across nodes), so match the phrase against the line.
-			await expect(page.getByText(/^Asker Bot asks —/)).toBeVisible()
+			await expect(page.getByText('Asker Bot asks')).toBeVisible()
 			await expect(page.getByText(/approve this bet/i).first()).toBeVisible()
 		})
 	}
@@ -52,7 +52,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 	// The pill sits on `bg-accent` — per the accent-pairing rule it carries a
 	// `text-accent-foreground` child, so it must stay readable in both schemes.
 	for (const colorScheme of ['light', 'dark'] as const) {
-		test(`"Waiting on you" pill is visible in ${colorScheme} mode`, async ({ page, account }) => {
+		test(`"Ask" pill is visible in ${colorScheme} mode`, async ({ page, account }) => {
 			await page.setViewportSize(SHIP_GATE_VIEWPORTS[0] ?? { width: 375, height: 812 })
 			await page.emulateMedia({ colorScheme })
 			const source = await account.api.createAgentActor('Asker Bot')
@@ -72,14 +72,14 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 
 			await page.goto(`/${account.workspaceId}/objects`)
 			await expect(page.getByText('Ask Scheme Test Bet')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('Waiting on you')).toBeVisible()
+			await expect(page.getByText('Ask', { exact: true })).toBeVisible()
 		})
 	}
 
 	// Regression guard for the reported bug: an ask that targets a different
-	// actor (or nobody) must not light up a personal "Waiting on you" signal for
+	// actor (or nobody) must not light up a personal "Ask" signal for
 	// this reader — that is the "waiting on me with nothing to do" symptom.
-	test('an ask targeting another actor shows no "Waiting on you" for this reader', async ({
+	test('an ask targeting another actor shows no "Ask" pill for this reader', async ({
 		page,
 		account,
 	}) => {
@@ -102,6 +102,6 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 
 		await page.goto(`/${account.workspaceId}/objects`)
 		await expect(page.getByText('Not My Ask Bet')).toBeVisible({ timeout: 10000 })
-		await expect(page.getByText('Waiting on you')).toHaveCount(0)
+		await expect(page.getByText('Ask', { exact: true })).toHaveCount(0)
 	})
 })

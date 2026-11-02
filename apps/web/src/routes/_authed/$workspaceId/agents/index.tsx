@@ -1,4 +1,4 @@
-import { AgentsIndexView, AgentsSearch } from '@/components/agents/agents-index-view'
+import { AgentsIndexView } from '@/components/agents/agents-index-view'
 import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -47,12 +47,6 @@ function AgentsRoute() {
 
 	const agents = useMemo(() => (actors ?? []).filter((a) => a.type === 'agent'), [actors])
 
-	// The nav row draws the title and this muted count — PageHeader renders
-	// nothing inline (mockup's `agentsHeadSub`).
-	const subtitle = agents.length
-		? `${agents.length} agent${agents.length === 1 ? '' : 's'} · each owns one outcome`
-		: undefined
-
 	if (isLoading || recentLoading) {
 		return (
 			<div>
@@ -69,19 +63,9 @@ function AgentsRoute() {
 
 	return (
 		<div>
-			<PageHeader
-				title="Agents"
-				subtitle={subtitle}
-				titleTabs={
-					agents.length > 0 ? (
-						<AgentsSearch
-							value={query}
-							onChange={setQuery}
-							className="hidden w-56 shrink-0 md:block"
-						/>
-					) : undefined
-				}
-			/>
+			{/* The list owns its header (search + Display need its state); the empty
+			    state publishes the bare title. */}
+			{agents.length === 0 && <PageHeader title="Agents" />}
 			{agents.length === 0 ? (
 				<EmptyState
 					emphasis="page"

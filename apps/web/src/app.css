@@ -278,12 +278,10 @@
 /* ------------------------------------------------------------------------- */
 /* v2 tokens                                                                 */
 /*                                                                           */
-/* Palette source: `Maskin App v2 Standalone.html` (attached to the parent   */
-/* bet, 2026-08-14) — zinc neutrals (Tailwind zinc ramp) + indigo brand      */
-/* accent + amber warning, matching the maskin.io landing page. v2           */
-/* supersedes the 2026-08-11 cool-zinc palette in full — the neutral family  */
-/* is still zinc, but the exact hexes, the `--brand` / `--brand-subtle`      */
-/* tokens, and the type/status badge remaps are all v2.                      */
+/* Palette source: the web v11 design handoff — cool blue-grey neutrals      */
+/* (ink #0e1422 on #f8fafd; dark #0f1215) + cobalt brand accent (#1f4fe0     */
+/* light, #5b86ff dark). Token names are unchanged from v2; only the values  */
+/* moved. The font stays Schibsted Grotesk + JetBrains Mono.                 */
 /* Raw hex values in this block are intentional — this is the sole place a  */
 /* colour literal is allowed; every consumer downstream must go through a   */
 /* semantic token (bg-background, text-foreground, border-border, etc.).    */
@@ -292,78 +290,78 @@
 	--radius: 0.625rem; /* 10px — base radius unit */
 
 	/* Neutral surface + text */
-	--background: #ffffff;
-	--foreground: #18181b;
+	--background: #f8fafd;
+	--foreground: #0e1422;
 	--card: #ffffff;
-	--card-foreground: #18181b;
+	--card-foreground: #0e1422;
 	--popover: #ffffff;
-	--popover-foreground: #18181b;
+	--popover-foreground: #0e1422;
 
 	/* Primary = the near-black used for solid buttons and titles */
-	--primary: #18181b;
+	--primary: #0e1422;
 	--primary-foreground: #ffffff;
 
 	/* Secondary + muted surfaces */
-	--secondary: #f6f6f7;
-	--secondary-foreground: #18181b;
-	--muted: #f4f4f5;
-	--muted-foreground: #71717a;
-	--accent: #f6f6f7;
-	--accent-foreground: #18181b;
+	--secondary: #edf1f8;
+	--secondary-foreground: #0e1422;
+	--muted: #edf1f8;
+	--muted-foreground: #566178;
+	--accent: #edf1f8;
+	--accent-foreground: #0e1422;
 
-	--destructive: #dc2626;
+	--destructive: #c8302a;
 	--destructive-foreground: #ffffff;
 
-	--border: #e4e4e7;
+	--border: #e1e7f0;
 	/* The quietest rule in v2 — the row-to-row hairline inside a long list,
 	   softer than --border so a list of rows reads as one block rather than a
 	   stack of cards (mockup 2327's `border-bottom:1px solid #f7f7f8`). */
-	--border-subtle: #f7f7f8;
-	--border-strong: #c4c4cc;
-	--border-hover: #c4c4cc;
+	--border-subtle: #edf1f8;
+	--border-strong: #c5cedd;
+	--border-hover: #c5cedd;
 	/* Hairline that separates panes without drawing a line the eye stops on
 	   (settings rail, chat message meta rules). Sits between the card surface
 	   and --border, nearer the surface. */
-	--border-subtle: #f7f7f8;
-	--input: #e4e4e7;
-	--ring: #a1a1aa;
+	--border-subtle: #edf1f8;
+	--input: #e1e7f0;
+	--ring: #8a9bbf;
 
 	/* Brand — the indigo used for links and primary actions on light surfaces */
-	--brand: #4f46e5;
+	--brand: #1f4fe0;
 	--brand-foreground: #ffffff;
-	--brand-hover: #4338ca;
+	--brand-hover: #1840b8;
 
 	/* v2 brand accent (indigo-600 / indigo-50 chip). */
-	--brand: #4f46e5;
+	--brand: #1f4fe0;
 	--brand-foreground: #ffffff;
-	--brand-subtle: #eef2ff;
-	--brand-subtle-foreground: #4338ca;
+	--brand-subtle: #e1eaff;
+	--brand-subtle-foreground: #1840b8;
 
 	/* v2 ask banner — warm parchment surface, semantically distinct from brand-subtle. */
-	--ask-surface: #fffdf7;
-	--ask-border: #f0e6d2;
+	--ask-surface: #fbf1dc;
+	--ask-border: #ebd9ae;
 
 	/* The index column of a two-pane screen — the chats list beside an open
 	   thread. One notch off --background so the pane reads as the quieter half
 	   of the split without becoming a card (mockup 273's `#fcfcfd`). Distinct
 	   from --sidebar, which is the app-wide nav rail. */
-	--surface-sunken: #fcfcfd;
+	--surface-sunken: #f3f6fb;
 
 	/* Today's brief card — zinc-700, the mockup's one inverted block in the
 	   light feed (Feed v4 line 108). Dark mode drops it to zinc-800 so it still
 	   reads as a raised block rather than a hole in the page. */
-	--brief-surface: #3f3f46;
-	--brief-surface-hover: #52525b;
-	--brief-foreground: #fafafa;
+	--brief-surface: #2b3550;
+	--brief-surface-hover: #3a4666;
+	--brief-foreground: #f8fafd;
 
 	/* Semantic */
-	--success: #16a34a;
+	--success: #0f7a52;
 	/* amber-800, not amber-700: `text-warning` is routinely drawn on a
 	   `bg-warning/10` tint (#f8eee6 over the light background), where amber-700
 	   lands at 4.39:1 — under WCAG AA for the 12px body sizes these controls
 	   use, and caught by the a11y route sweep on agent detail. */
-	--warning: #92400e;
-	--error: #dc2626;
+	--warning: #8a5a12;
+	--error: #c8302a;
 
 	/* Working-ring accent (violet-500). Named after the spec token, not the
 	   brand indigo — the driver-avatar ring is the ONE surface that carries it,
@@ -373,41 +371,41 @@
 	--violet: #8b5cf6;
 
 	/* Status badges */
-	--st-new-bg: #f4f4f5;
-	--st-new-text: #71717a;
-	--st-backlog-bg: #fafafa;
-	--st-backlog-text: #71717a;
-	--st-todo-bg: #f4f4f5;
-	--st-todo-text: #71717a;
+	--st-new-bg: #edf1f8;
+	--st-new-text: #566178;
+	--st-backlog-bg: #f3f6fb;
+	--st-backlog-text: #566178;
+	--st-todo-bg: #edf1f8;
+	--st-todo-text: #566178;
 	--st-processing-bg: #fef3c7;
 	--st-processing-text: #b45309;
-	--st-in_progress-bg: #dbeafe;
-	--st-in_progress-text: #1d4ed8;
-	--st-active-bg: #dcfce7;
-	--st-active-text: #15803d;
+	--st-in_progress-bg: #e1eaff;
+	--st-in_progress-text: #1840b8;
+	--st-active-bg: #dcf2e7;
+	--st-active-text: #0f7a52;
 	--st-opportunity-bg: #ede9fe;
 	--st-opportunity-text: #6d28d9;
-	--st-proposed-bg: #e0e7ff;
-	--st-proposed-text: #4338ca;
+	--st-proposed-bg: #e1eaff;
+	--st-proposed-text: #1840b8;
 	--st-clustered-bg: #ccfbf1;
 	--st-clustered-text: #0f766e;
-	--st-done-bg: #dcfce7;
-	--st-done-text: #15803d;
-	--st-completed-bg: #dcfce7;
-	--st-completed-text: #15803d;
-	--st-succeeded-bg: #dcfce7;
-	--st-succeeded-text: #15803d;
+	--st-done-bg: #dcf2e7;
+	--st-done-text: #0f7a52;
+	--st-completed-bg: #dcf2e7;
+	--st-completed-text: #0f7a52;
+	--st-succeeded-bg: #dcf2e7;
+	--st-succeeded-text: #0f7a52;
 	--st-blocked-bg: #ffe4e6;
 	--st-blocked-text: #be123c;
 	/* Failed + breached read as danger (red family), separate from blocked's
 	   rose "waiting on someone" tone. Kept aligned across both badges so
 	   the two failure-mode states read as the same visual family. */
-	--st-failed-bg: #fee2e2;
-	--st-failed-text: #b91c1c;
-	--st-paused-bg: #f4f4f5;
-	--st-paused-text: #71717a;
-	--st-discarded-bg: #f4f4f5;
-	--st-discarded-text: #a1a1aa;
+	--st-failed-bg: #fbe4e2;
+	--st-failed-text: #a8271f;
+	--st-paused-bg: #edf1f8;
+	--st-paused-text: #566178;
+	--st-discarded-bg: #edf1f8;
+	--st-discarded-text: #5e6a82;
 	--st-in_review-bg: #fef3c7;
 	--st-in_review-text: #b45309;
 	--st-validated-bg: #ede9fe;
@@ -416,28 +414,28 @@
 	--st-qualified-text: #0369a1;
 	--st-define-bg: #fef3c7;
 	--st-define-text: #a16207;
-	--st-live-bg: #dcfce7;
-	--st-live-text: #15803d;
+	--st-live-bg: #dcf2e7;
+	--st-live-text: #0f7a52;
 	--st-scored-bg: #fae8ff;
 	--st-scored-text: #a21caf;
-	--st-parked-bg: #f4f4f5;
-	--st-parked-text: #52525b;
-	--st-archived-bg: #ececee;
-	--st-archived-text: #52525b;
-	--st-holding-bg: #f4f4f5;
-	--st-holding-text: #52525b;
+	--st-parked-bg: #edf1f8;
+	--st-parked-text: #3d4960;
+	--st-archived-bg: #e6ebf3;
+	--st-archived-text: #3d4960;
+	--st-holding-bg: #edf1f8;
+	--st-holding-text: #3d4960;
 	--st-at_risk-bg: #fef3c7;
 	--st-at_risk-text: #b45309;
-	--st-breached-bg: #fee2e2;
-	--st-breached-text: #b91c1c;
+	--st-breached-bg: #fbe4e2;
+	--st-breached-text: #a8271f;
 
 	/* Type badges */
 	--tp-insight-bg: #fef3c7;
 	--tp-insight-text: #b45309;
-	--tp-bet-bg: #e0e7ff;
-	--tp-bet-text: #4338ca;
-	--tp-task-bg: #f4f4f5;
-	--tp-task-text: #71717a;
+	--tp-bet-bg: #e1eaff;
+	--tp-bet-text: #1840b8;
+	--tp-task-bg: #edf1f8;
+	--tp-task-text: #566178;
 	--tp-file-bg: #ecfeff;
 	--tp-file-text: #0e7490;
 	--tp-conversation-bg: #cffafe;
@@ -446,97 +444,94 @@
 	--tp-session-text: #86198f;
 
 	/* Sidebar */
-	--sidebar: #fafafa;
-	--sidebar-foreground: #18181b;
-	--sidebar-primary: #18181b;
+	--sidebar: #f3f6fb;
+	--sidebar-foreground: #0e1422;
+	--sidebar-primary: #0e1422;
 	--sidebar-primary-foreground: #ffffff;
-	--sidebar-accent: #f4f4f5;
-	--sidebar-accent-foreground: #18181b;
-	--sidebar-border: #e4e4e7;
-	--sidebar-ring: #a1a1aa;
+	--sidebar-accent: #e6ecf6;
+	--sidebar-accent-foreground: #0e1422;
+	--sidebar-border: #e1e7f0;
+	--sidebar-ring: #8a9bbf;
 }
 
 .dark {
-	/* v2 dark theme.
-	   The mockup only ships the light palette; dark values are derived by
-	   inverting the zinc neutral ramp (zinc-950/900/800/400/200/50) and
-	   lifting the indigo brand two stops (light `#4f46e5` → dark `#818cf8`)
-	   so it reads on a `#09090b` field. Same zinc + indigo family — the
-	   ramp is inverted, the character is not. */
-	--background: #09090b;
-	--foreground: #fafafa;
-	--card: #18181b;
-	--card-foreground: #fafafa;
-	--popover: #18181b;
-	--popover-foreground: #fafafa;
+	/* v11 dark theme — values from the handoff mockup's dark palette
+	   (bg #0f1215, ink #e9ecef, cobalt lifted to #5b86ff, tint = the live
+	   cobalt over the field). */
+	--background: #0f1215;
+	--foreground: #e9ecef;
+	--card: #14181d;
+	--card-foreground: #e9ecef;
+	--popover: #181c21;
+	--popover-foreground: #e9ecef;
 
-	--primary: #fafafa;
-	--primary-foreground: #18181b;
+	--primary: #e9ecef;
+	--primary-foreground: #0f1215;
 
-	--secondary: #27272a;
-	--secondary-foreground: #fafafa;
-	--muted: #27272a;
-	--muted-foreground: #a1a1aa;
-	--accent: #27272a;
-	--accent-foreground: #fafafa;
+	--secondary: #1c2127;
+	--secondary-foreground: #e9ecef;
+	--muted: #1c2127;
+	--muted-foreground: #8a929b;
+	--accent: #1c2127;
+	--accent-foreground: #e9ecef;
 
-	--destructive: #f87171;
-	--destructive-foreground: #18181b;
+	--destructive: #ff7a7a;
+	--destructive-foreground: #0f1215;
 
-	--border: #27272a;
-	--border-subtle: #212124;
-	--border-strong: #3f3f46;
-	--border-hover: #3f3f46;
+	--border: #262b31;
+	--border-subtle: #1d2227;
+	--border-strong: #3a424b;
+	--border-hover: #3a424b;
 	/* Same relationship inverted: one step up from --card (#18181b) rather
 	   than one step down from --background. */
-	--border-subtle: #1d1d20;
-	--input: #27272a;
-	--ring: #52525b;
+	--border-subtle: #1d2227;
+	--input: #262b31;
+	--ring: #4a5563;
 
 	/* Brand stays indigo but shifts one stop lighter so it reads on dark. */
-	--brand: #818cf8;
-	--brand-foreground: #18181b;
-	--brand-hover: #a5b4fc;
-	--brand-subtle: #1e1b4b;
-	--brand-subtle-foreground: #a5b4fc;
+	--brand: #5b86ff;
+	--brand-foreground: #05102b;
+	--brand-hover: #7fa0ff;
+	--brand-subtle: #222a3d;
+	--brand-subtle-foreground: #9db6ff;
 
 	/* v2 ask banner — warm parchment surface, dark derived by cooling the warm ramp one stop. */
-	--ask-surface: #1c1a14;
-	--ask-border: #3a2d1e;
+	--ask-surface: #2a2112;
+	--ask-border: #433319;
 
 	/* Dark keeps the same relationship — one notch off --background (#09090b),
 	   still below --card so the split reads the same way round. */
-	--surface-sunken: #0c0c0e;
+	--surface-sunken: #0c0f12;
 
-	--brief-surface: #27272a;
-	--brief-surface-hover: #3f3f46;
-	--brief-foreground: #fafafa;
+	--brief-surface: #1c222b;
+	--brief-surface-hover: #262e3a;
+	--brief-foreground: #e9ecef;
 
-	--success: #4ade80;
-	--warning: #fbbf24;
-	--error: #f87171;
+	--success: #3ddc97;
+	--warning: #e0a33a;
+	--error: #ff7a7a;
 
 	/* Working-ring accent — violet-400, lifted one stop for legibility on the
 	   zinc-950 dark field (same one-stop lift pattern the brand indigo uses
 	   below). */
 	--violet: #a78bfa;
 
-	--st-new-bg: #27272a;
-	--st-new-text: #a1a1aa;
-	--st-backlog-bg: #1f1f23;
-	--st-backlog-text: #a1a1aa;
-	--st-todo-bg: #27272a;
-	--st-todo-text: #a1a1aa;
+	--st-new-bg: #1c2127;
+	--st-new-text: #8a929b;
+	--st-backlog-bg: #181c21;
+	--st-backlog-text: #8a929b;
+	--st-todo-bg: #1c2127;
+	--st-todo-text: #8a929b;
 	--st-processing-bg: #422006;
 	--st-processing-text: #fbbf24;
-	--st-in_progress-bg: #172554;
-	--st-in_progress-text: #93c5fd;
+	--st-in_progress-bg: #222a3d;
+	--st-in_progress-text: #9db6ff;
 	--st-active-bg: #052e16;
 	--st-active-text: #86efac;
 	--st-opportunity-bg: #2e1065;
 	--st-opportunity-text: #c4b5fd;
-	--st-proposed-bg: #1e1b4b;
-	--st-proposed-text: #a5b4fc;
+	--st-proposed-bg: #222a3d;
+	--st-proposed-text: #9db6ff;
 	--st-clustered-bg: #042f2e;
 	--st-clustered-text: #5eead4;
 	--st-done-bg: #022c22;
@@ -549,10 +544,10 @@
 	--st-blocked-text: #fda4af;
 	--st-failed-bg: #450a0a;
 	--st-failed-text: #fca5a5;
-	--st-paused-bg: #27272a;
-	--st-paused-text: #a1a1aa;
-	--st-discarded-bg: #27272a;
-	--st-discarded-text: #71717a;
+	--st-paused-bg: #1c2127;
+	--st-paused-text: #8a929b;
+	--st-discarded-bg: #1c2127;
+	--st-discarded-text: #8a929b;
 	--st-in_review-bg: #422006;
 	--st-in_review-text: #fbbf24;
 	--st-validated-bg: #2e1065;
@@ -565,12 +560,12 @@
 	--st-live-text: #34d399;
 	--st-scored-bg: #4a044e;
 	--st-scored-text: #e879f9;
-	--st-parked-bg: #27272a;
-	--st-parked-text: #a1a1aa;
-	--st-archived-bg: #18181b;
-	--st-archived-text: #a1a1aa;
-	--st-holding-bg: #27272a;
-	--st-holding-text: #a1a1aa;
+	--st-parked-bg: #1c2127;
+	--st-parked-text: #8a929b;
+	--st-archived-bg: #14181d;
+	--st-archived-text: #8a929b;
+	--st-holding-bg: #1c2127;
+	--st-holding-text: #8a929b;
 	--st-at_risk-bg: #422006;
 	--st-at_risk-text: #fbbf24;
 	--st-breached-bg: #450a0a;
@@ -578,10 +573,10 @@
 
 	--tp-insight-bg: #422006;
 	--tp-insight-text: #fbbf24;
-	--tp-bet-bg: #1e1b4b;
-	--tp-bet-text: #a5b4fc;
-	--tp-task-bg: #27272a;
-	--tp-task-text: #a1a1aa;
+	--tp-bet-bg: #222a3d;
+	--tp-bet-text: #9db6ff;
+	--tp-task-bg: #1c2127;
+	--tp-task-text: #8a929b;
 	--tp-file-bg: #083344;
 	--tp-file-text: #67e8f9;
 	--tp-conversation-bg: #164e63;
@@ -589,14 +584,14 @@
 	--tp-session-bg: #4a044e;
 	--tp-session-text: #f0abfc;
 
-	--sidebar: #0a0a0b;
-	--sidebar-foreground: #fafafa;
-	--sidebar-primary: #fafafa;
-	--sidebar-primary-foreground: #18181b;
-	--sidebar-accent: #27272a;
-	--sidebar-accent-foreground: #fafafa;
-	--sidebar-border: #27272a;
-	--sidebar-ring: #52525b;
+	--sidebar: #12161a;
+	--sidebar-foreground: #e9ecef;
+	--sidebar-primary: #e9ecef;
+	--sidebar-primary-foreground: #0f1215;
+	--sidebar-accent: #1c2127;
+	--sidebar-accent-foreground: #e9ecef;
+	--sidebar-border: #262b31;
+	--sidebar-ring: #4a5563;
 }
 
 @layer base {

@@ -104,6 +104,7 @@ vi.mock('@/components/foryou/feed-card', () => ({
 	},
 }))
 vi.mock('@/components/foryou/foryou-header', () => ({
+	ForYouBulkMenu: () => null,
 	ForYouHeader: ({
 		bulkActions,
 	}: {

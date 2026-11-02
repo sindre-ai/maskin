@@ -70,6 +70,49 @@ describe('AgentSessionsSection', () => {
 		resumeSessionMutate.mockReset()
 	})
 
+	it('draws the compact list: newest N rows, a status word, See all, no per-row buttons', async () => {
+		const agent = buildActorResponse({ id: 'agent-c', type: 'agent' })
+		sessionsData.mockReturnValue(
+			['1', '2', '3', '4'].map((n) =>
+				buildSessionResponse({
+					id: `s-${n}`,
+					actorId: 'agent-c',
+					status: n === '4' ? 'failed' : 'completed',
+					actionPrompt: `Task ${n}`,
+					createdAt: `2026-01-0${n}T10:00:00Z`,
+				}),
+			),
+		)
+		const onSeeAll = vi.fn()
+		render(<AgentSessionsSection agent={agent} compact limit={3} onSeeAll={onSeeAll} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.getByRole('heading', { name: 'Recent sessions' })).toBeInTheDocument()
+		expect(screen.getAllByRole('listitem')).toHaveLength(3)
+		expect(screen.getByText('Failed')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /restart/i })).toBeNull()
+		await userEvent.click(screen.getByRole('button', { name: 'See all' }))
+		expect(onSeeAll).toHaveBeenCalled()
+	})
+
+	it('opens a run from its compact row', async () => {
+		const agent = buildActorResponse({ id: 'agent-d', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-one',
+				actorId: 'agent-d',
+				status: 'completed',
+				actionPrompt: 'Look',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} compact limit={3} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await userEvent.click(screen.getByRole('button', { name: 'Open Look' }))
+		expect(screen.getByText(/Panel for s-one/)).toBeInTheDocument()
+	})
+
 	it('offers Restart on a running session and reruns the same prompt', async () => {
 		const agent = buildActorResponse({ id: 'agent-a', type: 'agent' })
 		sessionsData.mockReturnValue([

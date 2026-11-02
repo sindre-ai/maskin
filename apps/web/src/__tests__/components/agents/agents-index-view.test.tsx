@@ -1,10 +1,12 @@
 import { AgentsIndexView, type AgentsLoop } from '@/components/agents/agents-index-view'
+import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
+import { queryKeys } from '@/lib/query-keys'
 import type { SessionStatsRow } from '@maskin/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildSessionResponse } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -96,24 +98,55 @@ const brianRunningSession = () =>
 		actionPrompt: 'Crunching numbers',
 	})
 
+// What the actor has saved for the Agents display. Most tests run as someone who
+// picked Status grouping, so the status-bucket assertions stand; `null` is a
+// first visit with nothing saved.
+type SavedDisplay = Record<string, unknown> | null
+const SAVED_STATUS_GROUPING: SavedDisplay = { groupBy: 'status' }
+
 function mount(
 	agents: ReturnType<typeof buildActorListItem>[],
 	sessions: ReturnType<typeof buildSessionResponse>[],
 	stats?: SessionStatsRow[],
 	loops?: AgentsLoop[],
+	// 'api' leaves the cache empty so hydration reads the mocked API.
+	saved: SavedDisplay | 'api' = SAVED_STATUS_GROUPING,
 ) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	})
+	if (saved !== 'api') {
+		queryClient.setQueryData(queryKeys.userDisplaySettings.detail('ws-1', 'agents'), {
+			object_type: 'agents',
+			name: 'default',
+			settings: saved ?? {},
+			updated_at: '2026-05-28T10:00:00.000Z',
+		})
+	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<WithQuery agents={agents} sessions={sessions} stats={stats} loops={loops} />
+			<PageHeaderProvider>
+				<TitleRow />
+				<WithQuery agents={agents} sessions={sessions} stats={stats} loops={loops} />
+			</PageHeaderProvider>
 		</QueryClientProvider>,
 	)
 }
 
-// The route owns the search text (its input sits in the title row); the view
-// renders the below-md copy of the input against the same state.
+// Stands in for the shared header: the view publishes its search and Display
+// through PageHeader `actions`, so the test renders them where the app would.
+function TitleRow() {
+	const { actions, title, subtitle } = usePageHeader()
+	return (
+		<div data-testid="title-row">
+			<h1>{title}</h1>
+			<span data-testid="subtitle">{subtitle}</span>
+			{actions}
+		</div>
+	)
+}
+
+// The route owns the search text; the input itself sits in the title row.
 function WithQuery(props: {
 	agents: ReturnType<typeof buildActorListItem>[]
 	sessions: ReturnType<typeof buildSessionResponse>[]
@@ -143,10 +176,8 @@ async function pickFromDisplayPanel(
 	if (!screen.queryByText(label)) {
 		await user.click(screen.getByRole('button', { name: /^Display/ }))
 	}
-	const row = screen.getByText(label)
-	// The picker row's first button is the dropdown trigger — the ordering row
-	// also carries an adjacent asc/desc toggle, so don't assume a single one.
-	await user.click(within(row.parentElement as HTMLElement).getAllByRole('button')[0])
+	// The picker row is itself the dropdown trigger (label left, value right).
+	await user.click(screen.getByText(label))
 	await user.click(screen.getByRole('menuitem', { name: option }))
 }
 
@@ -160,14 +191,27 @@ beforeEach(resetMockState)
 
 describe('AgentsIndexView', () => {
 	describe('search', () => {
-		it('narrows the list by typed words and says when nothing matches', async () => {
+		it('sits in the title row and narrows the list by typed words', async () => {
 			const user = userEvent.setup()
 			mount([agentAda(), agentBrian()], [])
-			await user.type(screen.getByRole('searchbox', { name: 'Search agents' }), 'architect')
+			const title = within(screen.getByTestId('title-row'))
+			await user.type(title.getByRole('searchbox', { name: 'Search agents' }), 'architect')
 			expect(screen.getByText('Brian')).toBeInTheDocument()
 			expect(screen.queryByText('Ada')).not.toBeInTheDocument()
-			await user.type(screen.getByRole('searchbox', { name: 'Search agents' }), ' zzz')
+			await user.type(title.getByRole('searchbox', { name: 'Search agents' }), ' zzz')
 			expect(screen.getByText('No agents match.')).toBeInTheDocument()
+		})
+	})
+
+	describe('title row', () => {
+		afterEach(() => {
+			vi.restoreAllMocks()
+		})
+
+		it('publishes the title and no count line', () => {
+			mount([agentAda(), agentBrian()], [])
+			expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Agents')
+			expect(screen.getByTestId('subtitle')).toBeEmptyDOMElement()
 		})
 	})
 
@@ -189,17 +233,111 @@ describe('AgentsIndexView', () => {
 
 		it('shows the first flow A to Z as the team, else No team', () => {
 			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
-			expect(screen.getByText('Alpha flow')).toBeInTheDocument()
-			expect(screen.getByText('Zeta flow')).toBeInTheDocument()
-			expect(screen.getByText('No team')).toBeInTheDocument()
+			// Each name is on its chip and in the Team column.
+			expect(screen.getAllByText('Alpha flow').length).toBeGreaterThan(1)
+			expect(screen.getAllByText('Zeta flow').length).toBeGreaterThan(1)
+			expect(screen.getAllByText('No team').length).toBeGreaterThan(1)
+		})
+
+		it('groups by team by default when nothing is saved, rows A to Z inside a group', async () => {
+			mount([agentCy(), agentBrian(), agentAda()], [], undefined, loops, null)
+			const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
+			expect(headings).toEqual(['Alpha flow', 'Zeta flow', 'No team'])
+			// Zeta flow holds Ada only (Brian's first flow is Alpha); No team holds Cy.
+			const links = screen.getAllByRole('link').map((l) => l.textContent ?? '')
+			expect(links[0]).toContain('Brian')
+			expect(links[1]).toContain('Ada')
+			expect(links[2]).toContain('Cy')
+		})
+
+		it('keeps a saved Status grouping instead of the Team default', () => {
+			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops, { groupBy: 'status' })
+			expect(screen.getByRole('heading', { name: /idle/i })).toBeInTheDocument()
+			expect(screen.queryByRole('heading', { name: 'Alpha flow' })).not.toBeInTheDocument()
 		})
 
 		it('groups by team with the catch-all last', async () => {
 			const user = userEvent.setup()
 			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
-			await pickFromDisplayPanel(user, 'Grouping', 'Team')
+			await pickFromDisplayPanel(user, 'Group by', 'Team')
 			const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
 			expect(headings).toEqual(['Alpha flow', 'Zeta flow', 'No team'])
+		})
+	})
+
+	describe('team chips and pills', () => {
+		const loops: AgentsLoop[] = [
+			{ name: 'Zeta flow', agentIds: ['agent-ada', 'agent-brian'] },
+			{ name: 'Alpha flow', agentIds: ['agent-brian'] },
+		]
+		const strip = () => screen.getByRole('group', { name: 'Filter agents by team' })
+
+		it('draws one chip per team with counts, the catch-all last', () => {
+			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
+			const names = within(strip())
+				.getAllByRole('button')
+				.map((b) => b.getAttribute('aria-label'))
+			expect(names).toEqual(['Alpha flow (1)', 'Zeta flow (1)', 'No team (1)'])
+		})
+
+		it('draws only the catch-all chip when no flow has an agent', () => {
+			mount([agentAda()], [], undefined, [])
+			const names = within(strip())
+				.getAllByRole('button')
+				.map((b) => b.getAttribute('aria-label'))
+			expect(names).toEqual(['No team (1)'])
+		})
+
+		it('filters by a team chip, shows a pill and removes it with its x', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
+			await user.click(within(strip()).getByRole('button', { name: 'Zeta flow (1)' }))
+			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: /Brian/ })).not.toBeInTheDocument()
+			expect(screen.getByText('Team:')).toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { name: 'Remove Team filter' }))
+			expect(screen.getByRole('link', { name: /Brian/ })).toBeInTheDocument()
+			expect(screen.queryByText('Team:')).not.toBeInTheDocument()
+		})
+
+		it('toggles a team chip off by pressing it again', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
+			const chip = () => within(strip()).getByRole('button', { name: 'Zeta flow (1)' })
+			await user.click(chip())
+			expect(chip()).toHaveAttribute('aria-pressed', 'true')
+			await user.click(chip())
+			expect(chip()).toHaveAttribute('aria-pressed', 'false')
+			expect(screen.getByRole('link', { name: /Brian/ })).toBeInTheDocument()
+		})
+
+		it('offers Clear all only with two active filters and clears both', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()], undefined, loops)
+			await user.click(within(strip()).getByRole('button', { name: 'Alpha flow (1)' }))
+			expect(screen.queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument()
+
+			const statuses = screen.getByRole('group', { name: 'Filter agents by status' })
+			await user.click(within(statuses).getByRole('button', { name: 'Working (1)' }))
+			await user.click(screen.getByRole('button', { name: 'Clear all' }))
+
+			expect(screen.queryByText('Team:')).not.toBeInTheDocument()
+			expect(screen.queryByText('Status:')).not.toBeInTheDocument()
+			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
+		})
+
+		it('has a Team row in the Display menu that drives the same filter', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian(), agentCy()], [], undefined, loops)
+			await user.click(screen.getByRole('button', { name: /^Display/ }))
+			const teamRow = screen.getByRole('button', { name: 'Team filter, All' })
+			await user.click(teamRow)
+			await user.click(
+				within(teamRow.parentElement as HTMLElement).getByRole('button', { name: /^Zeta flow/ }),
+			)
+			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: /Brian/ })).not.toBeInTheDocument()
 		})
 	})
 
@@ -243,44 +381,14 @@ describe('AgentsIndexView', () => {
 		it('reveals the activity and session columns at the same breakpoint', () => {
 			mount([agentBrian()], [brianRunningSession()])
 			const [mobileLatest, activity] = screen.getAllByText('Crunching numbers')
-			const sessions = screen.getByText('1 session')
+			const row = screen.getByRole('link', { name: /Brian/ }).closest('li') as HTMLElement
+			const sessions = within(row).getByText('1', { selector: 'span.tabular-nums' })
 			expect(activity.className).toContain('md:block')
 			expect(mobileLatest.className).toContain('md:hidden')
-			expect(sessions.parentElement?.className).toContain('md:flex')
-			expect(screen.getByText('$0.00').parentElement?.className).toContain('lg:flex')
+			expect(sessions.className).toContain('md:block')
 		})
 
-		it('shows active sessions and total / last-30-day cost per agent', () => {
-			const now = Date.now()
-			const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString()
-			mount(
-				[agentBrian()],
-				[
-					buildSessionResponse({ id: 'a', actorId: 'agent-brian', status: 'running' }),
-					buildSessionResponse({
-						id: 'b',
-						actorId: 'agent-brian',
-						status: 'completed',
-						totalCostUsd: '1.50',
-						completedAt: daysAgo(2),
-					}),
-					buildSessionResponse({
-						id: 'c',
-						actorId: 'agent-brian',
-						status: 'completed',
-						totalCostUsd: '10.25',
-						completedAt: daysAgo(45),
-					}),
-				],
-			)
-			const row = screen.getByRole('link').closest('li') as HTMLElement
-			expect(within(row).getByText('3 sessions')).toBeInTheDocument()
-			expect(within(row).getByText('1 active')).toBeInTheDocument()
-			expect(within(row).getByText('$11.75')).toBeInTheDocument()
-			expect(within(row).getByText('$1.50 · 30d')).toBeInTheDocument()
-		})
-
-		it('reads counts and cost from the stats, not from the recent sessions', () => {
+		it('reads the session count from the stats, not from the recent sessions', () => {
 			mount(
 				[agentBrian()],
 				[buildSessionResponse({ id: 'a', actorId: 'agent-brian', status: 'running' })],
@@ -297,10 +405,7 @@ describe('AgentsIndexView', () => {
 				],
 			)
 			const row = screen.getByRole('link').closest('li') as HTMLElement
-			expect(within(row).getByText('59500 sessions')).toBeInTheDocument()
-			expect(within(row).getByText('1 active')).toBeInTheDocument()
-			expect(within(row).getByText('$1,234.50')).toBeInTheDocument()
-			expect(within(row).getByText('$99.25 · 30d')).toBeInTheDocument()
+			expect(within(row).getByText('59500')).toBeInTheDocument()
 		})
 
 		it('puts an agent with no recent session under Failed when its latest run in the stats failed', () => {
@@ -356,7 +461,7 @@ describe('AgentsIndexView', () => {
 	})
 
 	describe('rows', () => {
-		it('renders the whole row as one link with a kind badge, outcome, activity, count and pill', () => {
+		it('renders the whole row as one link with outcome, activity, count and pill', () => {
 			const bob = buildActorListItem({
 				id: 'agent-bob',
 				name: 'Bob',
@@ -379,21 +484,15 @@ describe('AgentsIndexView', () => {
 				}),
 			]
 			mount([bob], sessions)
-			// One link covering the whole row, not just the name (mockup 2327).
+			// One link covering the whole row, not just the name (mockup 15).
 			const link = screen.getByRole('link')
 			const row = link.closest('li') as HTMLElement
 			expect(link).toHaveTextContent('Bob')
-			expect(within(row).getByText('member')).toBeInTheDocument()
+			expect(within(row).queryByText('member')).not.toBeInTheDocument()
 			expect(within(row).getByText('Architect')).toBeInTheDocument()
 			expect(within(row).getAllByText('Standing by')[0]).toBeInTheDocument()
-			expect(within(row).getByText('2 sessions')).toBeInTheDocument()
+			expect(within(row).getByText('2')).toBeInTheDocument()
 			expect(within(row).getByText('Idle')).toBeInTheDocument()
-		})
-
-		it('falls back to an Agent kind badge when the row carries no membership role', () => {
-			mount([agentBrian()], [])
-			const row = screen.getByRole('link').closest('li') as HTMLElement
-			expect(within(row).getByText('Agent')).toBeInTheDocument()
 		})
 
 		// Mockup 2327: rows are flat, separated by the quietest hairline in the
@@ -408,12 +507,17 @@ describe('AgentsIndexView', () => {
 			}
 		})
 
-		// Mockup 2337: a dot and a coloured word, not a filled plate.
-		it('renders the row status as a plate-less dot and label', () => {
+		// Mockup 15: a pill with a dot and the status word; a working agent's is tinted.
+		it('renders the row status as a pill', () => {
 			mount([agentBrian()], [brianRunningSession()])
-			const status = screen.getByText('Running')
-			expect(status.className).toContain('text-status-in_progress-text')
-			expect(status.className).not.toContain('bg-status-in_progress-bg')
+			const status = screen.getByText('Working', { selector: 'span.rounded-full' })
+			expect(status.className).toContain('bg-status-in_progress-bg')
+		})
+
+		it('gives a failed agent See why instead of Call', () => {
+			mount([agentCy()], [])
+			expect(screen.getByRole('link', { name: 'See why' })).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Call Cy' })).not.toBeInTheDocument()
 		})
 	})
 
@@ -438,7 +542,7 @@ describe('AgentsIndexView', () => {
 			expect(screen.queryByRole('link', { name: /Ada/ })).not.toBeInTheDocument()
 			expect(screen.queryByRole('heading', { name: /idle/i })).not.toBeInTheDocument()
 
-			await user.click(screen.getByRole('button', { name: 'Reset' }))
+			await user.click(screen.getByRole('button', { name: 'Reset filters' }))
 			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 		})
 
@@ -454,10 +558,11 @@ describe('AgentsIndexView', () => {
 			await pickFromDisplayPanel(user, 'Group by', 'Kind')
 			expect(screen.getByRole('heading', { name: 'Architect' })).toBeInTheDocument()
 
-			await user.click(screen.getByRole('button', { name: /Reset all/ }))
+			await user.click(screen.getByRole('button', { name: /Reset display/ }))
 
 			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
-			expect(screen.getByRole('heading', { name: /working/i })).toBeInTheDocument()
+			// Back to the default grouping, which is Team (no flows here: one catch-all).
+			expect(screen.getByRole('heading', { name: 'No team' })).toBeInTheDocument()
 			expect(screen.queryByRole('heading', { name: 'Architect' })).not.toBeInTheDocument()
 			expect(within(strip).getByRole('button', { name: 'All (3)' })).toHaveAttribute(
 				'aria-pressed',
@@ -497,7 +602,7 @@ describe('AgentsIndexView', () => {
 			expect(links[0]).toHaveTextContent('Ada')
 			expect(links[1]).toHaveTextContent('Brian')
 
-			await user.click(screen.getByRole('button', { name: 'Ascending' }))
+			await user.click(screen.getByRole('button', { name: /^Order, ascending/ }))
 			const linksDesc = screen.getAllByRole('link')
 			expect(linksDesc[0]).toHaveTextContent('Brian')
 			expect(linksDesc[1]).toHaveTextContent('Ada')
@@ -512,13 +617,13 @@ describe('AgentsIndexView', () => {
 			await pickFromDisplayPanel(user, 'Sort by', 'Status')
 
 			// STATUS_RANK: running < paused < idle < failed.
-			const linksAsc = screen.getAllByRole('link')
+			const linksAsc = screen.getAllByRole('link', { name: /Ada|Brian|Cy/ })
 			expect(linksAsc[0]).toHaveTextContent('Brian') // running
 			expect(linksAsc[1]).toHaveTextContent('Ada') // idle
 			expect(linksAsc[2]).toHaveTextContent('Cy') // failed
 
-			await user.click(screen.getByRole('button', { name: 'Ascending' }))
-			const linksDesc = screen.getAllByRole('link')
+			await user.click(screen.getByRole('button', { name: /^Order, ascending/ }))
+			const linksDesc = screen.getAllByRole('link', { name: /Ada|Brian|Cy/ })
 			expect(linksDesc[0]).toHaveTextContent('Cy')
 			expect(linksDesc[1]).toHaveTextContent('Ada')
 			expect(linksDesc[2]).toHaveTextContent('Brian')
@@ -533,7 +638,7 @@ describe('AgentsIndexView', () => {
 				groupBy: 'kind',
 				columnVisibility: { activity: false },
 			}
-			mount([agentAda(), agentBrian()], [brianRunningSession()])
+			mount([agentAda(), agentBrian()], [brianRunningSession()], undefined, undefined, 'api')
 			await flushHydrateAndWriteThrough()
 			expect(mockState.__dsUpsertCalls).toBeGreaterThan(0)
 			const afterHydrate = mockState.__dsUpsertCalls
@@ -550,7 +655,7 @@ describe('AgentsIndexView', () => {
 				groupBy: 'kind',
 				columnVisibility: { activity: false },
 			}
-			mount([agentAda(), agentBrian()], [brianRunningSession()])
+			mount([agentAda(), agentBrian()], [brianRunningSession()], undefined, undefined, 'api')
 			await flushHydrateAndWriteThrough()
 			expect(mockState.__dsLastUpsertBody).toEqual({
 				sort: 'name',
@@ -570,7 +675,7 @@ describe('AgentsIndexView', () => {
 				groupBy: 'status',
 				filters: { status: 'paused' },
 			}
-			mount([agentAda(), agentBrian()], [brianRunningSession()])
+			mount([agentAda(), agentBrian()], [brianRunningSession()], undefined, undefined, 'api')
 			await flushHydrateAndWriteThrough()
 			expect(screen.getByText('No agents in that state right now.')).toBeInTheDocument()
 			expect(screen.queryByRole('link', { name: /Ada/ })).not.toBeInTheDocument()
@@ -584,16 +689,21 @@ describe('AgentsIndexView', () => {
 				columnVisibility: { kind: false },
 				filters: { status: 'working' },
 			}
-			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
+			mount(
+				[agentAda(), agentBrian(), agentCy()],
+				[brianRunningSession()],
+				undefined,
+				undefined,
+				'api',
+			)
 			await flushHydrateAndWriteThrough()
 			expect(screen.getByRole('heading', { name: /working/i })).toBeInTheDocument()
 			expect(screen.queryByRole('heading', { name: /idle/i })).not.toBeInTheDocument()
 			expect(screen.queryByRole('heading', { name: /failed/i })).not.toBeInTheDocument()
-			// kind:false drops the badge; the activity and session columns remain.
-			const row = screen.getByRole('link').closest('li') as HTMLElement
-			expect(within(row).queryByText('Agent')).not.toBeInTheDocument()
+			// The activity and session columns remain.
+			const row = screen.getByRole('link', { name: /Brian/ }).closest('li') as HTMLElement
 			expect(within(row).getAllByText('Crunching numbers')[0]).toBeInTheDocument()
-			expect(within(row).getByText('1 session')).toBeInTheDocument()
+			expect(within(row).getByText('1', { selector: 'span.tabular-nums' })).toBeInTheDocument()
 		}, 10_000)
 	})
 })
@@ -606,9 +716,8 @@ describe('AgentsIndexView — row Call button', () => {
 		expect(screen.getByRole('button', { name: 'Call Brian' })).toBeInTheDocument()
 		// A button nested in the row's anchor is invalid markup and would navigate.
 		expect(screen.getByRole('link', { name: /Ada/ })).not.toContainElement(call)
-		// Hover-reveal is desktop-only; below md the button is plain inline.
-		expect(call.className).toContain('md:opacity-0')
-		expect(call.className).not.toMatch(/(^|\s)opacity-0/)
+		// Always visible (v11): no hover reveal on any width.
+		expect(call.className).not.toContain('opacity-0')
 	})
 
 	it('has no Voice filter chip', () => {

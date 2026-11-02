@@ -163,25 +163,20 @@ describe('ListRow pending ask', () => {
 	})
 	const actors = [buildActorListItem({ id: 'actor-1', name: 'Scout', type: 'agent' })]
 
-	it('renders the amber "Waiting on you" pill on the shipped ask tokens', () => {
+	it('renders the brand-tinted "Ask" pill on the shipped brand tokens', () => {
 		renderRow({ ask, actors })
-		const pill = screen.getByText('Waiting on you')
-		// `--ask-surface` / `--ask-border` / `--warning` invert across themes; a
-		// neutral `bg-accent` here would be near-invisible in light mode.
-		expect(pill.className).toContain('bg-ask-surface')
-		expect(pill.className).toContain('border-ask-border')
-		expect(pill.className).toContain('text-warning')
+		const pill = screen.getByText('Ask')
+		// `--brand-subtle` pairs with `--brand-subtle-foreground` and both invert
+		// across themes.
+		expect(pill.className).toContain('bg-brand-subtle')
+		expect(pill.className).toContain('text-brand-subtle-foreground')
 	})
 
-	it('renders the D3 ask-line copy verbatim (name bold, text in quotes)', () => {
+	it('renders the v11 ask line (pill, asker name, then the question)', () => {
 		renderRow({ ask, actors })
-		// Asker name is a bold span, the ` asks — ` glue is the parent line's
-		// text, and the text lives inside a quotes-wrapped span. Query by
-		// element so the assertion pins the exact structure the SPEC calls for.
-		const name = screen.getByText('Scout')
-		expect(name.className).toContain('font-bold')
-		expect(name.className).toContain('text-warning')
-		expect(name.parentElement?.textContent).toBe('Scout asks — “Ship on Friday or Monday?”')
+		const name = screen.getByText('Scout asks')
+		expect(name.className).toContain('font-semibold')
+		expect(name.parentElement?.textContent).toBe('AskScout asksShip on Friday or Monday?')
 	})
 
 	it('truncates ask text at ~90 chars with a trailing ellipsis', () => {
@@ -192,7 +187,7 @@ describe('ListRow pending ask', () => {
 			content: 'A'.repeat(120),
 		})
 		renderRow({ ask: longAsk, actors })
-		const line = screen.getByText('Scout').parentElement
+		const line = screen.getByText('Scout asks').parentElement
 		expect(line?.textContent).toContain(`${'A'.repeat(90)}…`)
 		expect(line?.textContent).not.toContain('A'.repeat(91))
 	})
@@ -206,8 +201,8 @@ describe('ListRow pending ask', () => {
 
 	it('hides the pill and ask line when the ask is resolved', () => {
 		renderRow({ ask: { ...ask, status: 'resolved' }, actors })
-		expect(screen.queryByText('Waiting on you')).toBeNull()
-		expect(screen.queryByText('Scout')).toBeNull()
+		expect(screen.queryByText('Ask')).toBeNull()
+		expect(screen.queryByText('Scout asks')).toBeNull()
 	})
 })
 

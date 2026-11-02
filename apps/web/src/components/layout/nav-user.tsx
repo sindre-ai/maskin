@@ -56,7 +56,7 @@ export function NavUser() {
 							// and a screen reader hears the person twice with no clue which
 							// row does what. The prefix says what the control is first.
 							aria-label={`Your account, ${displayName}`}
-							className="h-auto rounded-lg py-[7px] data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+							className="h-11 rounded-[9px] px-2.5 py-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 						>
 							<span className="relative flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-subtle text-[10px] font-bold text-brand-subtle-foreground">
 								{initial}

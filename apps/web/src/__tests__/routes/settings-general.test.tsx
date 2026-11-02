@@ -124,14 +124,9 @@ describe('GeneralPage', () => {
 		expect(screen.queryByText('Extensions')).not.toBeInTheDocument()
 	})
 
-	it('renders the general sections as uppercase eyebrow labels in order', () => {
+	it('renders the general sections as titled blocks in order', () => {
 		render(<GeneralPage />)
 		const headings = screen.getAllByRole('heading').map((h) => h.textContent)
-		expect(headings).toEqual([
-			'WORKSPACE NAME',
-			'DEFAULT WORKSPACE',
-			'APPEARANCE',
-			'PRIVACY & DATA',
-		])
+		expect(headings).toEqual(['Workspace', 'Default workspace', 'Appearance', 'Privacy and data'])
 	})
 })

@@ -66,7 +66,10 @@ ResponsiveDialogClose.displayName = 'ResponsiveDialogClose'
 
 const ResponsiveDialogContent = React.forwardRef<
 	React.ElementRef<typeof DialogPrimitive.Content>,
-	React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
+	React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+		/** Restyles the scrim behind the content. */
+		overlayClassName?: string
+	}
 >(({ className, children, ...props }, ref) => {
 	if (useMode() === 'sheet') {
 		return (

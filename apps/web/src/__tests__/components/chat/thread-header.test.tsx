@@ -252,7 +252,10 @@ describe('ThreadHeader — v4 actions', () => {
 			})
 			renderHeader()
 
-			await userEvent.click(screen.getByRole('button', { name: 'Copy whole conversation' }))
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+			await userEvent.click(
+				await screen.findByRole('menuitem', { name: 'Copy whole conversation' }),
+			)
 
 			await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
 			const copied = writeText.mock.calls[0][0] as string
@@ -273,7 +276,8 @@ describe('ThreadHeader — v4 actions', () => {
 			mockUseConversation.mockReturnValue({ data: buildConversation() })
 			renderHeader()
 
-			await userEvent.click(screen.getByRole('button', { name: 'Mark as unread' }))
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Mark as unread' }))
 
 			expect(mockUpdateMe).toHaveBeenCalledWith(
 				{ id: 'conv-1', data: { mark_unread: true } },

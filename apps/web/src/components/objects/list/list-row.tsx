@@ -143,14 +143,15 @@ export function ListRow({
 				toggleStar()
 			}}
 			className={cn(
-				'group relative flex w-full items-center gap-3 rounded-lg py-2.5 pr-3',
+				// v11 row: 52px tall with a hairline on top.
+				'group relative flex min-h-[52px] w-full items-center gap-3 rounded-lg border-t border-border py-2.5 pr-2',
 				// The extra left padding is the select lane: the checkbox is absolutely
 				// placed in it so revealing it on hover shifts nothing, and reserving
 				// the space keeps it inside the row's own hover highlight instead of
 				// hanging off the list's left edge.
 				// Touch puts the checkbox back in the star's slot, so the lane is dead
 				// space there — hand those pixels back to the title.
-				'pl-8 max-[1024.02px]:pl-3 pointer-coarse:pl-3',
+				'pl-9 max-[1024.02px]:pl-3 pointer-coarse:pl-3',
 				'cursor-pointer transition-colors hover:bg-muted/40',
 				'data-[state=selected]:bg-muted',
 				isArchived && 'opacity-[0.62] hover:opacity-90',
@@ -163,7 +164,7 @@ export function ListRow({
 			    the star's tap area ends inside its own box (an overflowing child is
 			    what the mobile-QA scrollWidth gate flags); the -mr-3 hands those 12px
 			    back out of the row's gap-3, so the title column keeps its width. */}
-			<span className="grid size-5 shrink-0 place-items-center self-center max-[1024.02px]:flex max-[1024.02px]:w-13 max-[1024.02px]:-mr-3 max-[1024.02px]:gap-2 pointer-coarse:flex pointer-coarse:w-13 pointer-coarse:-mr-3 pointer-coarse:gap-2">
+			<span className="grid size-[26px] shrink-0 place-items-center self-center max-[1024.02px]:flex max-[1024.02px]:w-13 max-[1024.02px]:-mr-3 max-[1024.02px]:gap-2 pointer-coarse:flex pointer-coarse:w-13 pointer-coarse:-mr-3 pointer-coarse:gap-2">
 				{showStar && (
 					<button
 						type="button"
@@ -175,7 +176,7 @@ export function ListRow({
 							toggleStar()
 						}}
 						className={cn(
-							'text-[13px] leading-none transition-colors',
+							'text-base leading-none transition-colors',
 							// Touch has no hover, so the checkbox sits in the slot at rest and
 							// the star stays beside it, to its right. The 1024.02px cutoff is
 							// Tailwind's `max-lg` nudged past 1024 (it is exclusive of 1024), so
@@ -187,7 +188,7 @@ export function ListRow({
 							// Amber-filled when on (SPEC §D5 — parity with detail meta row).
 							// `--ink-3` (border-strong) → `--ink-2` (muted-foreground) on hover
 							// when off, per SPEC.
-							isStarred ? 'text-[#f59e0b]' : 'text-border-strong hover:text-muted-foreground',
+							isStarred ? 'text-[#f59e0b]' : 'text-muted-foreground hover:text-foreground',
 							// SPEC: 60% opacity while the server round-trip is in flight.
 							isStarSaving && 'opacity-60',
 						)}
@@ -243,7 +244,7 @@ export function ListRow({
 					/>
 				</span>
 			</span>
-			{showType && <TypeBadge type={object.type} label={typeLabel} variant="pill" />}
+			{showType && <TypeBadge type={object.type} label={typeLabel} variant="glyph" />}
 			<div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
 				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
 					<Link
@@ -271,7 +272,7 @@ export function ListRow({
 							e.stopPropagation()
 							onOpen(object.id)
 						}}
-						className="min-w-0 truncate text-sm font-medium text-foreground hover:underline"
+						className="min-w-0 truncate text-[15px] font-medium text-foreground hover:underline"
 					>
 						{object.title || 'Untitled'}
 					</Link>
@@ -294,28 +295,23 @@ export function ListRow({
 							↺ Loop · {loop.name}
 						</Link>
 					)}
-					{hasPendingAsk && (
-						<span className="shrink-0 rounded-full border border-ask-border bg-ask-surface px-2 py-0.5 text-[10px] font-bold leading-none text-warning">
-							Waiting on you
-						</span>
-					)}
 					{betStatus && showBetStatusIndicator && (
 						<IndicatorBadgeRow result={betStatus} className="shrink-0" />
 					)}
 				</div>
 				{hasPendingAsk && (
-					// D3 · Ask-line under the title. Copy is verbatim from the SPEC:
-					// `{who} asks — "{text}"` (name bolded, text truncated at ~90
-					// chars). Multi-ask overflow renders `+ N more` as plain text —
-					// not a link, per the D3 spec's explicit "plain text, not a link".
-					// The type label is a sibling column here (not inline with the
-					// title as in the mockup), so the ask line already starts at the
-					// title column — no extra `askIndent` offset is needed.
-					<p className="truncate text-xs leading-snug text-muted-foreground">
-						<span className="font-bold text-warning">{askActorName}</span> asks —{' '}
-						<span>“{askText}”</span>
+					// D3 · Ask line under the title (v11): a brand-tinted `Ask` pill,
+					// then `{who} asks` in the ink colour and the question muted.
+					// Multi-ask overflow renders `+ N more` as plain text — not a
+					// link, per the D3 spec's explicit "plain text, not a link".
+					<p className="flex min-w-0 items-center gap-1.5 text-[12.5px] leading-snug text-muted-foreground">
+						<span className="shrink-0 rounded-full bg-brand-subtle px-[7px] py-px text-[11px] font-bold leading-4 text-brand-subtle-foreground">
+							Ask
+						</span>
+						<span className="shrink-0 font-semibold text-foreground">{askActorName} asks</span>
+						<span className="truncate">{askText}</span>
 						{extraAskCount > 0 && (
-							<span className="text-muted-foreground/80"> + {extraAskCount} more</span>
+							<span className="shrink-0 text-muted-foreground/80">+ {extraAskCount} more</span>
 						)}
 					</p>
 				)}
@@ -348,6 +344,7 @@ export function ListRow({
 					name={driver.name}
 					type={driver.type}
 					className="shrink-0"
+					tile
 					working={isWorking}
 				/>
 			)}
@@ -358,7 +355,7 @@ export function ListRow({
 					// Mockup 764: a 30px right-aligned age column. `min-w` rather than a
 					// hard width, and nowrap, so a day/month token ("Jan 15") widens
 					// the column instead of wrapping onto a second line.
-					className="min-w-8 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground"
+					className="min-w-8 shrink-0 whitespace-nowrap text-right font-mono text-[11px] tabular-nums text-muted-foreground"
 				/>
 			)}
 		</div>

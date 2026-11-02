@@ -2,19 +2,57 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useReplyThreads } from '@/hooks/use-conversation'
-import { useConversationsInfinite } from '@/hooks/use-conversations'
-import type { ConversationListItemResponse } from '@/lib/api'
+import { useConversationsInfinite, useUpdateConversationMe } from '@/hooks/use-conversations'
+import { type ConversationListItemResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
 import { Link } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
-import type { ChatsFilter } from './chats-filter-menu'
+import { ChevronDown, Search } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
 import { ReplyThreadList } from './replies/reply-thread-list'
+
+/**
+ * The list column's head (mockup v11): a search pill beside the filter pill.
+ * The title and New chat button stay in the shared nav row above.
+ */
+export function ConversationListHeader({
+	filter,
+	onFilterChange,
+	query,
+	onQueryChange,
+}: {
+	filter: ChatsFilter
+	onFilterChange: (next: ChatsFilter) => void
+	query: string
+	onQueryChange: (next: string) => void
+}) {
+	return (
+		<div className="flex flex-none flex-col gap-3 px-4 pt-3 pb-3 lg:pl-7">
+			<div className="flex items-center gap-2">
+				<label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-full bg-secondary px-3 text-muted-foreground">
+					<Search size={14} aria-hidden className="shrink-0" />
+					<input
+						type="search"
+						value={query}
+						onChange={(e) => onQueryChange(e.target.value)}
+						placeholder="Search chats"
+						aria-label="Search chats"
+						className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+					/>
+				</label>
+				<ChatsFilterMenu value={filter} onChange={onFilterChange} />
+			</div>
+		</div>
+	)
+}
 
 interface ConversationListProps {
 	workspaceId: string
 	filter?: ChatsFilter
+	/** Narrows the loaded chats by title, preview or participant name. */
+	query?: string
 	className?: string
 	/** True when the list owns the whole content width (no thread open) — the
 	 *  rows then centre on a 900px column instead of stretching edge to edge. */
@@ -60,6 +98,7 @@ export function ConversationList(props: ConversationListProps) {
 function ChatConversationList({
 	workspaceId,
 	filter = 'all',
+	query,
 	className,
 	expanded,
 }: ConversationListProps) {
@@ -129,9 +168,32 @@ function ChatConversationList({
 			(threadUnreadByChat.get(t.conversationId) ?? 0) + t.thread.unreadCount,
 		)
 	}
-	const groups = groupConversations(conversations, {
-		mode: filter === 'archived' ? 'archived' : 'default',
+	const needle = (query ?? '').trim().toLowerCase()
+	const shown = needle
+		? conversations.filter((c) =>
+				[c.title, c.snippet ?? '', ...c.participants.map((p) => p.actorName)]
+					.join(' ')
+					.toLowerCase()
+					.includes(needle),
+			)
+		: conversations
+	const groups = groupConversations(shown, {
+		mode: filter === 'archived' ? 'archived' : 'unread',
 	})
+	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+	const updateMe = useUpdateConversationMe(workspaceId)
+	const markAllRead = async () => {
+		// The list carries no newest-message id, so read each unread chat's newest one.
+		const unread = shown.filter((c) => c.unread_count > 0)
+		await Promise.all(
+			unread.map(async (c) => {
+				const res = await api.conversations.messages(c.id, workspaceId)
+				const newest = Math.max(0, ...res.messages.map((m) => m.id))
+				if (newest > 0)
+					await updateMe.mutateAsync({ id: c.id, data: { last_read_message_id: newest } })
+			}),
+		)
+	}
 
 	// Scroll-near-the-bottom auto-loads the next page (mockup 545–547) instead
 	// of the old manual "Load older" button.
@@ -158,7 +220,7 @@ function ChatConversationList({
 
 	return (
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>
-			<div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
+			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 lg:pr-4 lg:pl-10">
 				<div className={cn('w-full', expanded && 'mx-auto max-w-[900px]')}>
 					{isLoading ? (
 						<div className="flex justify-center py-8">
@@ -209,8 +271,43 @@ function ChatConversationList({
 						<>
 							{groups.map((group) => (
 								<div key={group.key} className="flex flex-col gap-px">
-									<div className="eyebrow px-2 pt-2.5 pb-1">{group.label}</div>
-									{group.items.map((c) => (
+									<div className="flex items-center gap-2 px-2 pt-3 pb-1.5 text-[13px]">
+										<button
+											type="button"
+											aria-expanded={!collapsed.has(group.key)}
+											onClick={() =>
+												setCollapsed((prev) => {
+													const next = new Set(prev)
+													if (!next.delete(group.key)) next.add(group.key)
+													return next
+												})
+											}
+											className="flex items-center gap-2 rounded-md font-semibold text-foreground"
+										>
+											<ChevronDown
+												size={14}
+												aria-hidden
+												className={cn(
+													'text-muted-foreground transition-transform',
+													collapsed.has(group.key) && '-rotate-90',
+												)}
+											/>
+											<span>{group.label}</span>
+											<span className="font-medium text-muted-foreground">
+												{group.items.length}
+											</span>
+										</button>
+										{group.key === 'unread' ? (
+											<button
+												type="button"
+												onClick={markAllRead}
+												className="ml-auto text-[12.5px] font-semibold text-muted-foreground hover:text-foreground"
+											>
+												Mark all read
+											</button>
+										) : null}
+									</div>
+									{(collapsed.has(group.key) ? [] : group.items).map((c) => (
 										<ConversationListRow
 											key={c.id}
 											workspaceId={workspaceId}

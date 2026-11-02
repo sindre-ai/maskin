@@ -731,11 +731,11 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	const noMatches = nothingFound && settled
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-start justify-center pt-[18vh] max-sm:items-end max-sm:pt-0">
+		<div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] max-sm:items-end max-sm:pt-0">
 			<button
 				type="button"
 				aria-label="Close palette"
-				className="fixed inset-0 bg-foreground/40"
+				className="fixed inset-0 bg-foreground/45"
 				onClick={onClose}
 			/>
 			<div
@@ -745,7 +745,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 				aria-modal="true"
 				aria-label="Command palette"
 				onKeyDown={onPanelKeyDown}
-				className="relative mx-auto flex w-full max-w-xl flex-col overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
+				className="relative mx-auto flex w-full max-w-150 flex-col overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
 			>
 				<div className="flex items-center border-b border-border">
 					<SearchField
@@ -772,9 +772,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 						onModEnter={handOver}
 						onEscape={onEscape}
 					/>
-					<kbd className="mr-3.5 hidden shrink-0 items-center rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
-						Esc
-					</kbd>
+					<span className="mr-4 hidden shrink-0 text-xs text-muted-foreground sm:inline">Esc</span>
 				</div>
 
 				{/* The @ menu takes the results' place while it is open; the results stay mounted underneath. */}

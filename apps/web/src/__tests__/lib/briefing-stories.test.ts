@@ -1,10 +1,13 @@
 import {
+	briefingChatAttachments,
 	briefingHeadline,
 	isBriefingSeen,
 	markBriefingSeen,
 	orderBriefingRow,
+	pickBriefingChatAgent,
 	pickBriefingPages,
 	seenBriefingStamps,
+	tellMeMoreMessage,
 } from '@/lib/briefing-stories'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -86,5 +89,54 @@ describe('seen briefings', () => {
 			'c',
 			'a',
 		])
+	})
+})
+
+describe('pickBriefingChatAgent', () => {
+	const fallback = { id: 'default', name: 'Chief of Staff' }
+
+	it('goes to the agent that wrote the page', () => {
+		expect(pickBriefingChatAgent({ id: 'a1', name: 'Writer', type: 'agent' }, fallback)).toEqual({
+			id: 'a1',
+			name: 'Writer',
+		})
+	})
+
+	it('falls back to the default agent when the author is not a known agent', () => {
+		expect(
+			pickBriefingChatAgent({ id: null, name: 'Chief of Staff', type: 'agent' }, fallback),
+		).toBe(fallback)
+		expect(pickBriefingChatAgent({ id: 'h1', name: 'Sam', type: 'human' }, fallback)).toBe(fallback)
+	})
+
+	it('is null when there is no agent at all', () => {
+		expect(pickBriefingChatAgent({ id: null, name: 'x', type: 'agent' }, undefined)).toBeNull()
+	})
+})
+
+describe('briefingChatAttachments', () => {
+	const card = { id: 'f1', name: 'Briefing.html' }
+
+	it('leads with the page itself', () => {
+		expect(briefingChatAttachments(card)).toEqual([
+			{ file_id: 'f1', name: 'Briefing.html', mime_type: 'text/html' },
+		])
+	})
+
+	it("adds the reader's own files after the page and never lists the page twice", () => {
+		const result = briefingChatAttachments(card, [
+			{ fileId: 'f2', name: 'notes.txt', sizeBytes: 10 },
+			{ fileId: 'f1', name: 'Briefing.html' },
+		])
+		expect(result.map((a) => a.file_id)).toEqual(['f1', 'f2'])
+		expect(result[1]).toMatchObject({ mime_type: 'application/octet-stream', size_bytes: 10 })
+	})
+})
+
+describe('tellMeMoreMessage', () => {
+	it('quotes the headline', () => {
+		expect(tellMeMoreMessage('Two bets stalled')).toBe(
+			'Tell me more about this briefing: "Two bets stalled"',
+		)
 	})
 })

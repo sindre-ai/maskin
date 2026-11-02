@@ -1,9 +1,11 @@
 import { BriefingRow } from '@/components/foryou/briefing-row'
 import type { DraftAction } from '@/components/foryou/draft-stack'
 import { type DecidedOption, FeedCard } from '@/components/foryou/feed-card'
+import { ForYouDisplay, ForYouLive } from '@/components/foryou/foryou-display'
 import {
 	type FeedMode,
 	type ForYouBulkAction,
+	ForYouBulkMenu,
 	ForYouHeader,
 } from '@/components/foryou/foryou-header'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
@@ -690,18 +692,34 @@ function ForYouFeed() {
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
-			<PageHeader title={greeting} scrollLocked />
+			<PageHeader
+				title={greeting}
+				scrollLocked
+				actions={
+					<>
+						<ForYouLive />
+						<ForYouDisplay
+							mode={mode}
+							onModeChange={handleModeChange}
+							typeFilter={typeFilter}
+							onTypeFilterChange={setTypeFilter}
+							unreadCount={unreadRegular.length}
+							typeCounts={typeCounts}
+							filterPills={filterPills}
+							onFilterPillsChange={setFilterPills}
+						/>
+					</>
+				}
+			/>
 
 			<ForYouHeader
 				unreadCount={unreadRegular.length}
 				typeFilter={typeFilter}
 				onTypeFilterChange={setTypeFilter}
 				typeCounts={typeCounts}
-				mode={mode}
-				onModeChange={handleModeChange}
 				filterPills={filterPills}
-				onFilterPillsChange={setFilterPills}
 				bulkActions={bulkActions}
+				hideMenu={sections.length > 0}
 			/>
 
 			{bulkConfirm && (
@@ -720,7 +738,10 @@ function ForYouFeed() {
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="flex w-full max-w-280 flex-col">
-					<p className="pb-4 text-sm text-muted-foreground" data-testid="foryou-greeting">
+					<p
+						className="pb-4 text-lg font-semibold leading-[1.45] tracking-[-0.01em] text-foreground"
+						data-testid="foryou-greeting"
+					>
 						{lead}
 					</p>
 
@@ -739,7 +760,7 @@ function ForYouFeed() {
 					)}
 
 					<div className="flex flex-col gap-6 pt-1.5">
-						{sections.map(({ bucket, items: sectionItems }) => (
+						{sections.map(({ bucket, items: sectionItems }, sectionIndex) => (
 							<section
 								key={bucket}
 								aria-labelledby={`foryou-section-${bucket}`}
@@ -749,13 +770,17 @@ function ForYouFeed() {
 								<div className="flex items-center justify-between gap-2">
 									<h2
 										id={`foryou-section-${bucket}`}
-										className="flex items-baseline gap-1.5 text-xs font-semibold text-muted-foreground"
+										className="flex items-baseline gap-1.5 text-xs font-semibold text-foreground"
 									>
 										{SECTION_LABEL[bucket]}
-										<span className="tabular-nums" data-testid="foryou-section-count">
+										<span
+											className="font-normal tabular-nums text-muted-foreground"
+											data-testid="foryou-section-count"
+										>
 											{sectionItems.length}
 										</span>
 									</h2>
+									{sectionIndex === 0 && <ForYouBulkMenu bulkActions={bulkActions} />}
 									{bucket === 'fyi' && (
 										<Button
 											variant="ghost"

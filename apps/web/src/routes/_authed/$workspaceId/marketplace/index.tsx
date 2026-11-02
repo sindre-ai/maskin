@@ -7,7 +7,6 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFindShortcut } from '@/hooks/use-find-shortcut'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
@@ -25,6 +24,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { Search } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace/')({
@@ -185,7 +185,7 @@ function MarketplaceRoute() {
 
 			<nav
 				aria-label="Marketplace filters"
-				className="mb-4 flex flex-col gap-2 md:flex-row md:items-center"
+				className="mb-5 flex flex-col gap-2 md:flex-row md:items-center"
 			>
 				<div className="min-w-0 flex-1" data-testid="marketplace-filter-chips">
 					<ChipStrip
@@ -196,15 +196,18 @@ function MarketplaceRoute() {
 						itemCounts={itemCountsByType}
 					/>
 				</div>
-				<Input
-					ref={filterInputRef}
-					type="search"
-					value={query}
-					onChange={(e) => setQuery(e.target.value)}
-					placeholder="Filter the catalog…"
-					aria-label="Filter marketplace"
-					className="w-full shrink-0 md:w-80"
-				/>
+				<label className="flex h-8 w-full shrink-0 items-center gap-2 rounded-full bg-secondary px-3 text-muted-foreground md:w-72">
+					<Search size={14} aria-hidden className="shrink-0" />
+					<input
+						ref={filterInputRef}
+						type="search"
+						value={query}
+						onChange={(e) => setQuery(e.target.value)}
+						placeholder="Filter the catalog…"
+						aria-label="Filter marketplace"
+						className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+					/>
+				</label>
 			</nav>
 
 			<div className="flex-1 min-w-0">

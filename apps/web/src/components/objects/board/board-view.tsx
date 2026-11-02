@@ -803,18 +803,18 @@ function BoardColumn({
 			data-testid={`board-column-${status}`}
 			data-over={isValidTarget ? '' : undefined}
 			className={cn(
-				'relative flex min-h-[28rem] shrink-0 flex-col gap-2 rounded-xl border border-dashed border-transparent p-1 transition-colors',
+				'relative flex min-h-[28rem] shrink-0 flex-col gap-2 rounded-xl border border-dashed border-transparent bg-muted p-2 transition-colors',
 				'w-full sm:w-72 md:w-72 lg:w-80',
 				isValidTarget && 'border-brand bg-brand/5',
 			)}
 		>
 			<div className="flex items-baseline gap-2 px-1.5 pt-1 min-w-0">
-				<span className="shrink-0 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+				<span className="inline-block shrink-0 text-[13px] font-semibold text-foreground first-letter:uppercase">
 					{humanizeStatus(label)}
 				</span>
 				{/* Plain count (mockup 976) — the loaded-of-total reading moved to the
 				    column note slot on the right (mockup 978). */}
-				<span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground/60">
+				<span className="shrink-0 text-[13px] font-medium tabular-nums text-muted-foreground">
 					{total}
 				</span>
 				{needsYouCount > 0 && (

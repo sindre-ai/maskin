@@ -57,7 +57,7 @@ describe('ConversationList', () => {
 		})
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(await screen.findByText('Today')).toBeInTheDocument()
+		expect(await screen.findByText('Earlier')).toBeInTheDocument()
 		expect(screen.getByText("That's the whole history — 2 in this workspace.")).toBeInTheDocument()
 		// The scroll affordance never renders alongside the closing line.
 		expect(screen.queryByText(/Older conversations load as you scroll/)).not.toBeInTheDocument()

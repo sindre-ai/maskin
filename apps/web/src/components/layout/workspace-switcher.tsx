@@ -87,15 +87,14 @@ export function WorkspaceSwitcher() {
 		navigate({ to: '/$workspaceId', params: { workspaceId: target.id } })
 	}
 
-	// The rail has no room for a name, so the initial tile is the collapsed
-	// identity. Expanded, v2 leads with the name itself (mockup line 45) — no
-	// tile, no double identity.
+	// The initial tile leads the row in v11 (24px) and is the whole identity
+	// on the rail (30px).
 	const label = (
 		<>
-			<div className="hidden aspect-square size-[30px] items-center justify-center rounded-lg bg-brand-subtle text-xs font-bold text-brand-subtle-foreground group-data-[collapsible=icon]:flex">
+			<div className="flex aspect-square size-6 shrink-0 items-center justify-center rounded-[7px] bg-brand-subtle text-xs font-bold text-brand-subtle-foreground group-data-[collapsible=icon]:size-[30px] group-data-[collapsible=icon]:rounded-lg">
 				{initial}
 			</div>
-			<span className="truncate text-sm font-bold tracking-[-0.01em] group-data-[collapsible=icon]:hidden">
+			<span className="truncate text-[13px] font-semibold group-data-[collapsible=icon]:hidden">
 				{isLoading ? (
 					<Skeleton
 						className="inline-block h-3 w-24 align-middle"
@@ -160,7 +159,7 @@ export function WorkspaceSwitcher() {
 						<SidebarMenuButton
 							tooltip={displayName}
 							aria-label={`Switch workspace, currently ${displayName}`}
-							className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+							className="h-10 gap-2.5 rounded-[9px] px-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 						>
 							{label}
 						</SidebarMenuButton>

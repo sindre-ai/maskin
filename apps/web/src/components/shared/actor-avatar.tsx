@@ -107,6 +107,9 @@ type ActorAvatarProps = {
 	 *  the container "Agent working on this object" so screen readers announce
 	 *  the state; the avatar itself keeps its existing name. */
 	working?: boolean
+	/** The v11 list-row driver: a 26px rounded-square plate in the neutral muted
+	 *  fill with ink initials, instead of the round coloured avatar. */
+	tile?: boolean
 }
 
 /**
@@ -152,6 +155,7 @@ function ActorAvatarView({
 	imageUrl,
 	tone = 'subtle',
 	working = false,
+	tile = false,
 }: ActorAvatarProps) {
 	// Track the specific url that failed so a caller swapping imageUrl resets the fallback
 	// automatically — without a useEffect that biome flags for missing dep semantics.
@@ -172,6 +176,7 @@ function ActorAvatarView({
 		'relative inline-flex items-center justify-center rounded-full font-medium select-none',
 		paletteClass,
 		sizeClasses,
+		tile && 'size-[26px] rounded-lg bg-muted text-[10.5px] font-bold text-foreground',
 		className,
 	)
 
@@ -184,7 +189,10 @@ function ActorAvatarView({
 				<img
 					src={imageUrl}
 					alt=""
-					className="absolute inset-0 h-full w-full rounded-full object-cover"
+					className={cn(
+						'absolute inset-0 h-full w-full object-cover',
+						tile ? 'rounded-lg' : 'rounded-full',
+					)}
 					onError={() => setFailedUrl(imageUrl)}
 					draggable={false}
 				/>

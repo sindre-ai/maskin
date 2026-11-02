@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useCanWrite } from '@/hooks/use-can-write'
 import type { ConversationThread } from '@/hooks/use-conversation-threads'
+import { useDuration } from '@/hooks/use-duration'
 import {
 	useActorSessions,
 	useCreateSession,
@@ -14,12 +15,14 @@ import {
 import { useTriggers } from '@/hooks/use-triggers'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatDurationBetween } from '@/lib/format-duration'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
 import { useWorkspace } from '@/lib/workspace-context'
 import { isViewerRefusal } from '@/lib/workspace-role'
 import {
 	AlertCircle,
 	CheckCircle2,
+	ChevronRight,
 	Clock,
 	Pause,
 	PauseCircle,
@@ -91,6 +94,14 @@ const STATE_META: Record<SessionState, StateMeta> = {
 	},
 }
 
+// The compact (Overview) rows draw a finished run grey and a failed one with a red word on
+// grey; only a live run is coloured as a plate (v11).
+const COMPACT_STYLE: Partial<Record<SessionState, { dot: string; pill: string }>> = {
+	running: { dot: 'bg-success', pill: 'bg-status-in_progress-bg text-success' },
+	completed: { dot: 'bg-muted-foreground', pill: 'bg-muted text-muted-foreground' },
+	failed: { dot: 'bg-status-failed-text', pill: 'bg-muted text-status-failed-text' },
+}
+
 const RUNNING_STATUSES = new Set(['running', 'starting', 'pending', 'queued', 'snapshotting'])
 const WAITING_STATUSES = new Set(['waiting_for_input'])
 const PAUSED_STATUSES = new Set(['paused'])
@@ -124,10 +135,32 @@ function sortSessions(
 	return bTime - aTime
 }
 
-export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
+export function AgentSessionsSection({
+	agent,
+	compact = false,
+	limit,
+	onSeeAll,
+	openId: controlledOpenId,
+	onOpenIdChange,
+}: {
+	agent: ActorResponse
+	/** The Overview's "Recent sessions": calm rows (state dot, title, how long and when, a
+	 *  status word, a chevron) with no per-row buttons. The row opens the run. */
+	compact?: boolean
+	/** Show only the newest N rows and no "Show all" toggle. */
+	limit?: number
+	/** "See all" in the heading, for a compact list that is a taste of the Sessions tab. */
+	onSeeAll?: () => void
+	/** The run open in the side panel, when the page owns that state (its banner opens runs
+	 *  too). Without it the section keeps its own. */
+	openId?: string | null
+	onOpenIdChange?: (id: string | null) => void
+}) {
 	const { workspaceId } = useWorkspace()
 	const { data: sessions, isLoading } = useActorSessions(agent.id, workspaceId)
-	const [openId, setOpenId] = useState<string | null>(null)
+	const [ownOpenId, setOwnOpenId] = useState<string | null>(null)
+	const openId = controlledOpenId !== undefined ? controlledOpenId : ownOpenId
+	const setOpenId = onOpenIdChange ?? setOwnOpenId
 	const [showAll, setShowAll] = useState(false)
 
 	const { data: triggers } = useTriggers(workspaceId)
@@ -160,9 +193,13 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 
 	// A long-lived agent accumulates hundreds of runs; the newest few answer
 	// "what is it doing" without burying every section below them (mockup 2427).
-	const isTruncated = agentSessions.length > COLLAPSED_SESSIONS
+	const isTruncated = limit === undefined && agentSessions.length > COLLAPSED_SESSIONS
 	const shownSessions =
-		showAll || !isTruncated ? agentSessions : agentSessions.slice(0, COLLAPSED_SESSIONS)
+		limit !== undefined
+			? agentSessions.slice(0, limit)
+			: showAll || !isTruncated
+				? agentSessions
+				: agentSessions.slice(0, COLLAPSED_SESSIONS)
 
 	// Mockup 2427: the note tells you what you can do here, and turns amber to
 	// explain why nothing is moving while the agent itself is paused.
@@ -175,15 +212,24 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 		<section aria-labelledby="agent-sessions-heading" className="flex flex-col gap-2.5">
 			<AgentSectionHeading
 				id="agent-sessions-heading"
-				title="Sessions"
-				note={note}
+				title={compact ? 'Recent sessions' : 'Sessions'}
+				note={compact ? undefined : note}
 				noteClassName={
 					isAgentPaused
 						? 'min-w-0 truncate text-[11px] text-warning'
 						: 'min-w-0 truncate text-[11px] text-muted-foreground'
 				}
 				action={
-					isTruncated ? (
+					onSeeAll && agentSessions.length > 0 ? (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 shrink-0 px-2 text-sm font-semibold text-brand"
+							onClick={onSeeAll}
+						>
+							See all
+						</Button>
+					) : isTruncated ? (
 						<Button
 							variant="ghost"
 							size="sm"
@@ -206,7 +252,7 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 					No sessions yet. Runs will show up here.
 				</p>
 			) : (
-				<ul className="flex flex-col gap-1.5">
+				<ul className={compact ? 'flex flex-col border-t border-border' : 'flex flex-col gap-1.5'}>
 					{shownSessions.map(({ thread, root }) => (
 						<li key={thread.id}>
 							<SessionCard
@@ -217,6 +263,7 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 									root.actionPrompt,
 								)}
 								agent={agent}
+								compact={compact}
 								selected={thread.id === openId}
 								onOpen={() => setOpenId(thread.id)}
 							/>
@@ -237,11 +284,26 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 	)
 }
 
+function RunningFor({ startedAt }: { startedAt: string | null }) {
+	const duration = useDuration(startedAt)
+	return <>{duration ? `Running for ${duration}` : 'Running'}</>
+}
+
+const COMPACT_LABEL: Record<SessionState, string> = {
+	running: 'Working',
+	waiting: 'Waiting',
+	paused: 'Paused',
+	completed: 'Done',
+	stopped: 'Stopped',
+	failed: 'Failed',
+}
+
 function SessionCard({
 	session,
 	thread,
 	title,
 	agent,
+	compact,
 	selected,
 	onOpen,
 }: {
@@ -252,6 +314,7 @@ function SessionCard({
 	/** What the row is called: the trigger's name. */
 	title: string
 	agent: ActorResponse
+	compact: boolean
 	/** The run is open in the side panel. */
 	selected: boolean
 	onOpen: () => void
@@ -355,6 +418,48 @@ function SessionCard({
 			</Button>
 		</ViewerTooltip>
 	)
+
+	if (compact) {
+		const duration = formatDurationBetween(session.startedAt, session.completedAt)
+		const compactStyle = COMPACT_STYLE[state] ?? {
+			dot: meta.dot,
+			pill: cn(meta.iconBg, meta.iconFg),
+		}
+		return (
+			<button
+				type="button"
+				onClick={onOpen}
+				aria-pressed={selected}
+				aria-label={`Open ${name}`}
+				className="flex w-full items-center gap-3.5 border-b border-border px-1 py-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			>
+				<span aria-hidden className={cn('size-2 shrink-0 rounded-full', compactStyle.dot)} />
+				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+					<span className="truncate text-[15px] font-semibold text-foreground">{name}</span>
+					<span className="truncate text-[13px] text-muted-foreground">
+						{state === 'running' ? (
+							<RunningFor startedAt={session.startedAt} />
+						) : (
+							<>
+								{duration}
+								{duration && ' · '}
+								<RelativeTime date={session.startedAt ?? session.createdAt} />
+							</>
+						)}
+					</span>
+				</span>
+				<span
+					className={cn(
+						'shrink-0 rounded-full px-2.5 py-0.5 text-[13px] font-semibold',
+						compactStyle.pill,
+					)}
+				>
+					{COMPACT_LABEL[state]}
+				</span>
+				<ChevronRight size={16} aria-hidden className="shrink-0 text-muted-foreground" />
+			</button>
+		)
+	}
 
 	return (
 		<div

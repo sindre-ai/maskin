@@ -2,11 +2,13 @@ import { PageHeader } from '@/components/layout/page-header'
 import { AssignedInChatRow } from '@/components/loops/assigned-in-chat-row'
 import { isLiveLoopPill } from '@/components/loops/loop-pill'
 import { LoopRow } from '@/components/loops/loop-row'
+import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { PageSearchInput } from '@/components/shared/page-search-input'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
@@ -18,6 +20,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoops } from '@/hooks/use-loops'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
 import { useUpdateTrigger } from '@/hooks/use-triggers'
@@ -52,6 +55,20 @@ const LOOP_ORDER_COLUMNS = [
 
 type LoopTab = 'all' | 'to-decide' | 'running'
 
+const NO_AREA = '__none'
+const NO_AREA_LABEL = 'No team'
+const TAB_LABEL: Record<Exclude<LoopTab, 'all'>, string> = {
+	'to-decide': 'Needs you',
+	running: 'Running',
+}
+
+/** Every typed word must appear in the flow's name, description or tags. */
+function matchesQuery(loop: LoopSummary, words: string[]): boolean {
+	if (words.length === 0) return true
+	const haystack = [loop.name ?? '', loop.content ?? '', ...loop.tags].join(' ').toLowerCase()
+	return words.every((word) => haystack.includes(word))
+}
+
 function matchesTab(loop: LoopSummary, tab: LoopTab): boolean {
 	if (tab === 'to-decide') return loop.pill === 'waiting_on_you'
 	if (tab === 'running') return isLiveLoopPill(loop.pill)
@@ -70,6 +87,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 })
 
 function LoopsRoute() {
+	const isMobile = useIsMobile()
 	useDocumentTitle('Loops')
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
@@ -88,6 +106,8 @@ function LoopsRoute() {
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
 	const [tab, setTab] = useState<LoopTab>('all')
+	const [areaFilter, setAreaFilter] = useState<string | undefined>(undefined)
+	const [query, setQuery] = useState('')
 
 	const { data: billingUsage } = useBillingUsage(workspaceId)
 	const showNoCreditsPill =
@@ -175,10 +195,65 @@ function LoopsRoute() {
 	}, [loops])
 
 	const hasLoops = sortedLoops.length > 0
+	const words = useMemo(() => query.trim().toLowerCase().split(/\s+/).filter(Boolean), [query])
 	const visibleLoops = useMemo(
-		() => sortedLoops.filter((loop) => matchesTab(loop, tab)),
-		[sortedLoops, tab],
+		() =>
+			sortedLoops.filter(
+				(loop) =>
+					matchesTab(loop, tab) &&
+					(areaFilter === undefined || (loop.tags[0] ?? NO_AREA) === areaFilter) &&
+					matchesQuery(loop, words),
+			),
+		[sortedLoops, tab, areaFilter, words],
 	)
+
+	// The Display menu's Show and Area rows. Counts come off the unfiltered list
+	// so a row's number stays put while it is the active filter.
+	const filterSections = useMemo<DisplayFilterSectionModel[]>(() => {
+		const areaCounts = new Map<string, number>()
+		for (const loop of sortedLoops) {
+			const key = loop.tags[0] ?? NO_AREA
+			areaCounts.set(key, (areaCounts.get(key) ?? 0) + 1)
+		}
+		const areas = [...areaCounts.keys()].sort((a, b) => {
+			if (a === NO_AREA || b === NO_AREA) return a === NO_AREA ? 1 : -1
+			return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
+		})
+		const areaLabel = (key: string) => (key === NO_AREA ? NO_AREA_LABEL : key)
+		const sections: DisplayFilterSectionModel[] = [
+			{
+				id: 'show',
+				label: 'Show',
+				summary: tab === 'all' ? 'All' : TAB_LABEL[tab],
+				pinnable: false,
+				options: (['to-decide', 'running'] as const).map((id) => ({
+					id,
+					label: TAB_LABEL[id],
+					count: sortedLoops.filter((l) => matchesTab(l, id)).length,
+					active: tab === id,
+					onToggle: () => setTab(tab === id ? 'all' : id),
+				})),
+			},
+		]
+		// Areas only exist once some flow carries a tag.
+		if (areas.some((key) => key !== NO_AREA)) {
+			sections.push({
+				id: 'area',
+				label: 'Area',
+				summary: areaFilter === undefined ? 'All' : areaLabel(areaFilter),
+				pinnable: false,
+				options: areas.map((key) => ({
+					id: key,
+					label: areaLabel(key),
+					count: areaCounts.get(key),
+					active: areaFilter === key,
+					onToggle: () => setAreaFilter(areaFilter === key ? undefined : key),
+				})),
+			})
+		}
+		return sections
+	}, [sortedLoops, tab, areaFilter])
+	const activeFilterCount = (tab !== 'all' ? 1 : 0) + (areaFilter !== undefined ? 1 : 0)
 	// The attention chip under the title: how many loops wait on the viewer.
 	// Clicking it narrows the list to those loops, clicking again clears it.
 	const needYouCount = useMemo(
@@ -210,15 +285,32 @@ function LoopsRoute() {
 				title="Loops"
 				subtitle={String(loops?.length ?? 0)}
 				actions={
-					<DisplayPanel
-						showView={false}
-						columns={LOOP_ORDER_COLUMNS}
-						sort={sort}
-						order={order}
-						onSortChange={(value) => writeSettings({ sort: value })}
-						onOrderChange={(value) => writeSettings({ order: value })}
-						onResetToDefault={() => writeSettings(null)}
-					/>
+					<>
+						<PageSearchInput value={query} onChange={setQuery} label="Search flows" />
+						<DisplayPanel
+							iconOnly={isMobile}
+							showView={false}
+							filterSections={filterSections}
+							activeFilterCount={activeFilterCount}
+							filtersLabel="Filters"
+							resetFiltersLabel="Reset filters"
+							resetLabel="Reset display"
+							onResetFilters={() => {
+								setTab('all')
+								setAreaFilter(undefined)
+							}}
+							columns={LOOP_ORDER_COLUMNS}
+							sort={sort}
+							order={order}
+							onSortChange={(value) => writeSettings({ sort: value })}
+							onOrderChange={(value) => writeSettings({ order: value })}
+							onResetToDefault={() => {
+								writeSettings(null)
+								setTab('all')
+								setAreaFilter(undefined)
+							}}
+						/>
+					</>
 				}
 			/>
 			{needYouCount > 0 && (
@@ -251,7 +343,11 @@ function LoopsRoute() {
 			) : (
 				<div className="space-y-10">
 					<section className="flex flex-col">
-						{hasLoops ? (
+						{hasLoops && visibleLoops.length === 0 ? (
+							<p className="py-9 text-center text-[12.5px] text-muted-foreground">
+								No flows match.
+							</p>
+						) : hasLoops ? (
 							loopGroups.map((group) => (
 								<div key={group.label || 'untagged'} className="flex flex-col">
 									{hasTaggedLoops && (

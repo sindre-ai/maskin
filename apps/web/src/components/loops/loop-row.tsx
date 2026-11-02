@@ -5,6 +5,7 @@ import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { LOOP_PILL_STYLES, NO_CREDITS_PILL, isLiveLoopPill } from './loop-pill'
+import { paceVerdict } from './target-card'
 
 // Plain-language "what happened last" line, derived purely from the loop's live
 // state (no fixtures). The read schema carries no per-activity feed, so this
@@ -26,6 +27,26 @@ export function loopActivityLine(loop: LoopSummary): string | null {
 			if (loop.closedCount > 0)
 				return `${loop.closedCount} item${loop.closedCount === 1 ? '' : 's'} completed`
 			return null
+	}
+}
+
+/**
+ * The flow's first target as a progress reading ("3 of 10 customers closed"),
+ * read only from the targets already on the loop summary. Null when the flow
+ * has no target, so the row simply has no progress line.
+ */
+export function loopProgress(loop: LoopSummary): {
+	text: string
+	percent: number
+	missed: boolean
+} | null {
+	const target = loop.targets?.[0]
+	if (!target || !(target.target > 0)) return null
+	const percent = Math.max(0, Math.min(100, (target.actual / target.target) * 100))
+	return {
+		text: `${target.actual} of ${target.target} ${target.label}`.trim(),
+		percent,
+		missed: paceVerdict(target).label === 'Missed',
 	}
 }
 
@@ -66,6 +87,7 @@ export function LoopRow({
 	// live and draft rows. Keeping it here (rather than in the parent) means the
 	// route hands one boolean per workspace, not one per row.
 	const noCreditsVisible = showNoCreditsPill && loop.pill === 'paused'
+	const progress = loopProgress(loop)
 
 	return (
 		<Link
@@ -82,11 +104,34 @@ export function LoopRow({
 				)}
 			/>
 			<div className="min-w-0 flex-1 leading-[1.35]">
-				<p className="truncate text-sm font-bold tracking-[-0.01em] text-foreground">
+				<p className="truncate text-[15px] font-bold tracking-[-0.01em] text-foreground">
 					{loop.name ?? 'Untitled loop'}
 				</p>
 				{loop.content && (
-					<p className="mt-0.5 truncate text-xs text-muted-foreground">{loop.content}</p>
+					<p className="mt-0.5 truncate text-[13px] text-muted-foreground">{loop.content}</p>
+				)}
+				{progress && (
+					<div className="mt-1.5 flex min-w-0 items-center gap-2 text-[11.5px] text-muted-foreground">
+						<div
+							role="progressbar"
+							tabIndex={-1}
+							aria-label={progress.text}
+							aria-valuenow={Math.round(progress.percent)}
+							aria-valuemin={0}
+							aria-valuemax={100}
+							className="h-1 w-20 shrink-0 overflow-hidden rounded-full bg-muted"
+						>
+							<div
+								className={cn(
+									'h-full rounded-full',
+									progress.missed ? 'bg-destructive' : 'bg-primary',
+								)}
+								// Data-driven width: the one value a Tailwind class cannot carry.
+								style={{ width: `${progress.percent}%` }}
+							/>
+						</div>
+						<span className="truncate">{progress.text}</span>
+					</div>
 				)}
 				{(activity || loop.updatedAt) && (
 					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
@@ -133,6 +178,11 @@ export function LoopRow({
 							<TooltipContent side="top">{NO_CREDITS_PILL.tooltip}</TooltipContent>
 						</Tooltip>
 					</TooltipProvider>
+				)}
+				{progress?.missed && (
+					<span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-semibold text-destructive">
+						Missed
+					</span>
 				)}
 				<div>
 					{/* Stage stands in for the mockup's per-loop stage label (1535).

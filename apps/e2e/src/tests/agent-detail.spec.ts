@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { openAgentTab } from '../helpers/agent-tab.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 test.describe('Agent detail — header and Usage block', () => {
@@ -12,7 +13,7 @@ test.describe('Agent detail — header and Usage block', () => {
 			const outcome = 'Keeps the marketing pipeline unclogged'
 			const agent = await account.api.createAgentActor('Ada Atom')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
-			// Set the one-line role that surfaces as "Owns one outcome". The
+			// Set the one-line role that surfaces as "Owns". The
 			// PATCH goes through the same schema the UI reads back from useActor.
 			await (
 				account.api as unknown as {
@@ -25,7 +26,7 @@ test.describe('Agent detail — header and Usage block', () => {
 			await expect(page.getByRole('heading', { name: 'Ada Atom', exact: true })).toBeVisible({
 				timeout: 10_000,
 			})
-			await expect(page.getByText('Owns one outcome:')).toBeVisible()
+			await expect(page.getByText('Owns', { exact: true })).toBeVisible()
 			await expect(page.getByText(outcome)).toBeVisible()
 
 			// The one agent-level action is the enable/disable switch, in the detail
@@ -34,7 +35,7 @@ test.describe('Agent detail — header and Usage block', () => {
 			await expect(stateToggle).toBeVisible()
 			// …and never duplicated into the page body beside the outcome line.
 			await expect(
-				page.locator('.max-w-3xl').getByRole('button', { name: /Disable agent|Enable agent/ }),
+				page.locator('.max-w-280').getByRole('button', { name: /Disable agent|Enable agent/ }),
 			).toHaveCount(0)
 
 			// Usage block: label, tabs, both columns, budget line.
@@ -74,6 +75,8 @@ test.describe('Agent detail — header and Usage block', () => {
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
+			await expect(page.getByRole('tab', { name: /^Overview/ })).toBeVisible({ timeout: 15_000 })
+			await openAgentTab(page, 'setup')
 			await expect(page.getByRole('region', { name: 'Instructions' })).toBeVisible({
 				timeout: 15_000,
 			})

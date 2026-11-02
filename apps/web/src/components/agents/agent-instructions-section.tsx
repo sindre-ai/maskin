@@ -60,13 +60,12 @@ export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
 			<AgentSectionHeading
 				id="agent-instructions-heading"
 				title="Instructions"
-				note="system prompt"
 				action={
 					<ViewerTooltip>
 						<Button
 							variant="ghost"
 							size="sm"
-							className="h-7 shrink-0 px-2 text-xs font-medium"
+							className="h-7 shrink-0 px-2 text-sm font-semibold text-brand hover:text-brand-hover"
 							disabled={!canWrite}
 							onClick={() => setOpen(true)}
 						>
@@ -75,7 +74,7 @@ export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
 					</ViewerTooltip>
 				}
 			/>
-			<div className="rounded-xl border border-border bg-muted/40 px-4 py-4 text-[12.5px] leading-[1.65] text-foreground">
+			<div className="rounded-xl border border-border bg-background px-4 py-3.5 text-[15px] leading-normal text-foreground">
 				{prompt ? (
 					<div className="flex flex-col gap-2.5">
 						{shown.map((paragraph, i) => (

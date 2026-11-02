@@ -43,7 +43,12 @@ export function LoopInstallControls({
 							Installed
 						</span>
 						{install.objectId ? (
-							<Button asChild size="sm" variant="outline" className="relative ml-auto">
+							<Button
+								asChild
+								size="sm"
+								variant="secondary"
+								className="relative ml-auto rounded-full font-semibold"
+							>
 								<Link
 									to="/$workspaceId/loops/$loopId"
 									params={{ workspaceId, loopId: install.objectId }}

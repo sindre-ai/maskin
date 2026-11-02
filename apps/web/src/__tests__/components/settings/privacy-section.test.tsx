@@ -46,7 +46,7 @@ describe('Settings > General > Privacy & data', () => {
 	it('renders the privacy heading, both switches, and the disclosure copy', () => {
 		renderPage()
 
-		expect(screen.getByRole('heading', { name: 'PRIVACY & DATA' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Privacy and data' })).toBeInTheDocument()
 		expect(screen.getByText(/Usage events feed the Synthesizer/)).toBeInTheDocument()
 		expect(
 			screen.getByRole('switch', { name: 'Share product usage with Maskin' }),

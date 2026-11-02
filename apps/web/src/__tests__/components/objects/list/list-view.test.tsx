@@ -251,8 +251,8 @@ describe('ListView', () => {
 		]
 		renderListView({ data })
 
-		// Type label (monospace uppercase chip).
-		expect(screen.getByText('bet')).toBeInTheDocument()
+		// Type glyph, named by the type.
+		expect(screen.getByRole('img', { name: 'bet' })).toBeInTheDocument()
 
 		// Name is the shared Link → mock button; clicking navigates.
 		const titleLink = screen.getByRole('button', { name: 'Alpha' })
@@ -374,11 +374,9 @@ describe('ListView', () => {
 		// you" accent-pairing rule) and the D3 ask line — SPEC copy is
 		// `{who} asks — "{text}"` with the asker's name in a bold span and
 		// the glue text on the parent paragraph.
-		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
-		const asker = screen.getByText('Alice')
-		expect(asker.parentElement?.textContent).toContain(
-			'Alice asks — “Please approve this shipment”',
-		)
+		expect(screen.getByText('Ask')).toBeInTheDocument()
+		const asker = screen.getByText('Alice asks')
+		expect(asker.parentElement?.textContent).toContain('Alice asksPlease approve this shipment')
 	})
 
 	it('hides the ask pill + line once the row ask is resolved, and never for a row with no ask', () => {
@@ -399,7 +397,7 @@ describe('ListView', () => {
 			asksByObjectId: new Map([['obj-1', resolvedAsk]]),
 		})
 
-		expect(screen.queryByText('Waiting on you')).toBeNull()
+		expect(screen.queryByText('Ask')).toBeNull()
 		expect(screen.queryByText(/Alice asks/i)).toBeNull()
 	})
 

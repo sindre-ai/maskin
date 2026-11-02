@@ -19,6 +19,7 @@ import type { FieldDefinition } from '@/components/objects/field-value-input'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
+import { PageSearchInput } from '@/components/shared/page-search-input'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,6 +27,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import {
@@ -169,9 +171,12 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 // `{ fresh: true, star: true, work: false }`). Both are workspace-agnostic —
 // unlike a status or driver pin, they mean the same thing on day one as they
 // do on day one hundred, so they are safe to pre-place in the chip row.
+const DEFAULT_GROUP_BY = 'status'
 const DEFAULT_PINNED_FILTERS = ['quick:fresh', 'quick:starred']
 
 function ObjectsRoute() {
+	// Below md the Display control is its icon, so the title keeps its room.
+	const isMobile = useIsMobile()
 	useDocumentTitle('Objects')
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
@@ -929,6 +934,10 @@ function ObjectsRoute() {
 			// No saved view for this key — fall back to the route default.
 			setView(pendingView ?? 'list')
 			setPinnedFilters(DEFAULT_PINNED_FILTERS)
+			// The v11 handoff opens Items grouped by Status. Only when nothing is
+			// saved and the URL carries no display intent of its own: a chosen
+			// "None" is persisted as the `none` sentinel, so it is never overridden.
+			if (urlIsInDefaultShape) updateSearch({ groupBy: DEFAULT_GROUP_BY })
 			return
 		}
 		const s = persisted.settings
@@ -1759,12 +1768,13 @@ function ObjectsRoute() {
 	// variant: counts on every chip, scrolls sideways inside the row on mobile.
 	const typeTabs = (
 		<FilterTabs
-			variant="pill"
+			variant="chip"
 			tabs={tabsWithCounts}
 			value={typeFilter}
 			onChange={handleTypeFilterChange}
 			aria-label="Type filter"
-			className="shrink-0 md:shrink"
+			foldable
+			className="shrink-0"
 		/>
 	)
 
@@ -1873,7 +1883,23 @@ function ObjectsRoute() {
 			{/* No subtitle: the mockup's Objects header carries the count on the
 			    active type tab (`All 1,063`), not beside the <h1> — printing it in
 			    both places states the same number twice, three characters apart. */}
-			<PageHeader title="Objects" actions={<DisplayPanel {...displayPanelProps} />} scrollLocked />
+			<PageHeader
+				title="Objects"
+				actions={
+					<>
+						{/* The page's own search (wires the URL `q`); the workspace search
+						    and New stay in the shared header beside it. */}
+						<PageSearchInput
+							value={q ?? ''}
+							onChange={(next) => updateSearch({ q: next.trim() ? next : undefined })}
+							label="Search items"
+							debounceMs={250}
+						/>
+						<DisplayPanel {...displayPanelProps} iconOnly={isMobile} />
+					</>
+				}
+				scrollLocked
+			/>
 			{idsFilter && (
 				<div className="mb-3 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />

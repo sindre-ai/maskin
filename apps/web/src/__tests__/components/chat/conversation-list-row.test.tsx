@@ -80,7 +80,7 @@ describe('ConversationListRow', () => {
 		expect(screen.queryByText('ME')).not.toBeInTheDocument()
 	})
 
-	it('stacks up to two counterparts and counts the rest', () => {
+	it('plates the first counterpart only', () => {
 		renderRow(
 			buildConversation({
 				participants: [
@@ -99,10 +99,6 @@ describe('ConversationListRow', () => {
 			}),
 		)
 		expect(screen.getByText('BA')).toBeInTheDocument()
-		expect(screen.getByText('RE')).toBeInTheDocument()
-		// Four counterparts plus the viewer, two plated: Quill, Compass and Me.
-		expect(screen.getByText('+3')).toBeInTheDocument()
-		expect(screen.queryByText('QU')).not.toBeInTheDocument()
 	})
 
 	it('plates the only participant in a thread the viewer is alone in', () => {
@@ -134,11 +130,11 @@ describe('ConversationListRow', () => {
 		expect(screen.getByText('Billing retries').className).toContain('font-medium')
 	})
 
-	it('clamps the snippet to two lines', () => {
+	it('keeps the snippet to one line', () => {
 		renderRow(buildConversation())
 		expect(
 			screen.getByText('The retry window is still open on three accounts.').className,
-		).toContain('line-clamp-2')
+		).toContain('truncate')
 	})
 
 	it('leaves pinned state to the group rail rather than marking the row twice', () => {

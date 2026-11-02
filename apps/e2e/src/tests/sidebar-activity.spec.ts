@@ -120,11 +120,11 @@ test.describe('Sidebar Activity card', () => {
 		)
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
-		await expect(card.getByText('Agents working')).toBeVisible()
-		await expect(card.getByText('2 sessions running')).toBeVisible()
+		await expect(card.getByText(/agents? working/i)).toBeVisible()
+		await expect(card.getByText('2 session', { exact: false })).toBeVisible()
 		// The tile counts distinct agents. v2 dropped the avatar stack, so the
 		// agents' names are no longer on this row at all.
-		await expect(card.getByText('2', { exact: true })).toBeVisible()
+		await expect(card.getByText('2 agents working')).toBeVisible()
 	})
 
 	test('counts agents in the tile and sessions in the sub-line (AC-U5)', async ({
@@ -147,8 +147,8 @@ test.describe('Sidebar Activity card', () => {
 		// The two halves must not agree: the tile dedupes by actor, the sub-line
 		// does not. Three sessions held by two agents is the case that catches a
 		// row counting the same thing twice.
-		await expect(card.getByText('2', { exact: true })).toBeVisible()
-		await expect(card.getByText('3 sessions running')).toBeVisible()
+		await expect(card.getByText('2 agents working')).toBeVisible()
+		await expect(card.getByText('3 session', { exact: false })).toBeVisible()
 	})
 
 	test('renders idle / "nothing running" when nothing is active (AC-U6)', async ({
@@ -267,8 +267,8 @@ test.describe('Sidebar Activity card', () => {
 
 		// The `session` entity SSE event broad-invalidates the sessions query;
 		// the running agent appears without a page.reload().
-		await expect(card.getByText('Agents working')).toBeVisible()
-		await expect(card.getByText('1 session running')).toBeVisible()
+		await expect(card.getByText(/agents? working/i)).toBeVisible()
+		await expect(card.getByText('1 session', { exact: false })).toBeVisible()
 		expect(sessionCalls).toBeGreaterThanOrEqual(2)
 	})
 
@@ -332,7 +332,7 @@ test.describe('Sidebar Activity card', () => {
 
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
-		await expect(card.getByText('Agents working')).toBeVisible()
+		await expect(card.getByText(/agents? working/i)).toBeVisible()
 		releaseSseEvent()
 
 		// The `session` entity SSE event broad-invalidates the sessions query;

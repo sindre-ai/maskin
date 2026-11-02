@@ -24,7 +24,8 @@ export function InstallButton({
 	return (
 		<Button
 			size="sm"
-			className="relative"
+			variant="secondary"
+			className="relative rounded-full font-semibold"
 			disabled={disabled || isInstalling}
 			onClick={() => install.mutate({ loopId, source })}
 		>

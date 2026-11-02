@@ -56,7 +56,8 @@ test.describe('Agent detail — Sessions section', () => {
 			const agent = await account.api.createAgentActor('Sam Sessions')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 
-			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+			// The Sessions tab, by deep link.
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}?tab=sessions`)
 
 			const section = page.getByRole('region', { name: 'Sessions', exact: true })
 			await expect(section).toBeVisible({ timeout: 10_000 })
@@ -101,7 +102,7 @@ test.describe('Agent detail — Sessions section', () => {
 				{ id: 'sess-7', status: 'completed', actionPrompt: 'Run seven' },
 			])
 
-			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}?tab=sessions`)
 			const section = page.getByRole('region', { name: 'Sessions', exact: true })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 
@@ -268,7 +269,23 @@ async function openFailedSession(
 		})
 	})
 
-	await page.goto(`/${account.workspaceId}/objects/${object.id}`)
+	// POST /api/relationships derives every endpoint kind as 'object' or 'file';
+	// only the server's own provenance writer stamps a session source. So the
+	// graph answer is patched to carry the kind that writer would have stored.
+	await page.route(new RegExp(`/api/objects/${object.id}/graph(\\?.*)?$`), async (route) => {
+		const response = await route.fetch()
+		const graph = await response.json()
+		for (const rel of graph.relationships ?? []) {
+			if (rel.type === 'produced_by' && rel.sourceId === session.id) {
+				rel.sourceType = 'session'
+				rel.sourceTitle = 'Draft the weekly note'
+			}
+		}
+		await route.fulfill({ response, json: graph })
+	})
+	await page.goto(`/${account.workspaceId}/objects/${object.id}`, {
+		waitUntil: 'domcontentloaded',
+	})
 	await page.getByRole('button', { name: 'Origin — click to expand' }).click({ timeout: 15_000 })
 	await page.getByRole('button', { name: 'Draft the weekly note' }).click()
 	const panel = page.getByRole('dialog')
@@ -277,7 +294,8 @@ async function openFailedSession(
 }
 
 test.describe('Session detail — failure recovery', () => {
-	test.describe.configure({ timeout: 60_000 })
+	// The all-codes test opens seven pages in a row.
+	test.describe.configure({ timeout: 120_000 })
 
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`a workspace without the Keys page reads "paused on our side" with no button for every code @ ${vp.label}`, async ({
@@ -317,12 +335,18 @@ test.describe('Session detail — failure recovery', () => {
 	}
 
 	// Needs MASKIN_TEST_GRANT_TOKEN on both the run and the API stack, like the
-	// other specs that drive the Keys page (see helpers/plan.helper.ts).
+	// other specs that drive the Keys page (see helpers/plan.helper.ts). CI sets
+	// it; a local stack usually does not, so these cases skip with a reason there
+	// instead of failing inside grantEnterprise.
 	for (const c of RECOVERY_CASES) {
 		test(`${c.code} with the Keys page shows "${c.button}" linking to #${c.hash}`, async ({
 			page,
 			account,
 		}) => {
+			test.skip(
+				!process.env.MASKIN_TEST_GRANT_TOKEN && !process.env.CI,
+				'needs MASKIN_TEST_GRANT_TOKEN on the run and the API stack (not set locally)',
+			)
 			await grantEnterprise(account.apiKey, account.workspaceId)
 
 			const panel = await openFailedSession(page, account, c.code, 'anthropic')

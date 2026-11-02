@@ -376,7 +376,10 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				showBetStatusIndicator={showBetStatusIndicator}
 				ask={asksByObjectId?.get(object.id)}
 				pendingAskCount={pendingAskCountByObjectId?.get(object.id)}
-				columnVisibility={columnVisibility}
+				// Under a Status group header the status word repeats the header.
+				columnVisibility={
+					groupBy === 'status' ? { ...columnVisibility, status: false } : columnVisibility
+				}
 				anySelected={selectedIdSet.size > 0}
 				typeLabel={objectTypeLabel?.(object.type)}
 				loop={loopsByObjectId.get(object.id)}
@@ -454,33 +457,29 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 								<li key={group.key}>
 									{/* Sticky so the group a row belongs to stays readable while
 									    its rows scroll past (mockup 995). */}
-									<div className="sticky top-0 z-[2] flex w-full items-center gap-2 bg-background px-1 pt-4 pb-1.5">
+									<div className="sticky top-0 z-[2] flex w-full items-center gap-2 bg-background px-2 pt-3.5 pb-1.5">
 										<button
 											type="button"
 											onClick={() => toggleGroup(group)}
 											aria-expanded={open}
-											className="flex flex-1 items-center gap-2 text-left transition-opacity hover:opacity-75"
+											className="flex items-center gap-2 text-left text-[13px] font-semibold transition-opacity hover:opacity-75"
 										>
 											<ChevronRight
-												size={12}
+												size={13}
 												aria-hidden="true"
 												className={cn(
-													'shrink-0 text-muted-foreground/50 transition-transform',
+													'shrink-0 text-muted-foreground transition-transform',
 													open && 'rotate-90',
 												)}
 											/>
-											{/* Mono, wide-tracked and colourless — the divider rule below
-											    carries the eye across the row, so the label doesn't also need
-											    a status swatch to mark where a group starts (mockup 748–752). */}
-											<span className="font-mono text-xs font-medium uppercase tracking-widest text-muted-foreground">
+											{/* The v11 group header: the label in the page's ink and the
+											    count in the muted colour, plain sentence case — no rule. */}
+											<span className="inline-block text-foreground first-letter:uppercase">
 												{getObjectGroupLabel(groupBy, group.value, actors)}
 											</span>
-											<span className="font-mono text-xs font-medium tabular-nums text-muted-foreground/50">
+											<span className="font-medium tabular-nums text-muted-foreground">
 												{group.total ?? group.rows.length}
 											</span>
-											{/* The hairline runs from the count to the right edge — a long
-											    scroll then always has a horizontal rule to break on. */}
-											<span aria-hidden="true" className="h-px flex-1 bg-muted" />
 										</button>
 									</div>
 									{open && (

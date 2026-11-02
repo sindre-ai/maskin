@@ -14,9 +14,9 @@ import type { ActorListItem, LoopSummary } from '@maskin/shared'
  * this component don't match the design bet's ship gate.
  */
 
-type LoopTarget = NonNullable<LoopSummary['targets']>[number]
+export type LoopTarget = NonNullable<LoopSummary['targets']>[number]
 
-interface PaceVerdict {
+export interface PaceVerdict {
 	label: 'Above target' | 'On target' | 'Behind pace' | 'Missed'
 	/** Tailwind classes for the pill background + text. Kept in sync with the
 	 *  amber / green / grey palette v4 uses on `loop-pill.ts`. */
@@ -34,7 +34,7 @@ interface PaceVerdict {
  * am I ahead or behind — did not come through at all. Green / amber / red is
  * the ordering the reader already expects, and both modes define all three.
  */
-function paceVerdict(target: LoopTarget): PaceVerdict {
+export function paceVerdict(target: LoopTarget): PaceVerdict {
 	const { actual, target: goal, pace_policy } = target
 	const isMissed = goal > 0 && actual <= 0
 	const ratio = goal !== 0 ? actual / goal : actual > 0 ? 1 : 0

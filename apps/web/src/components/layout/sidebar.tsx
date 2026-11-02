@@ -54,7 +54,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
-			<SidebarHeader className="h-11 justify-center">
+			<SidebarHeader className="p-2.5 pb-0 group-data-[collapsible=icon]:p-2">
 				{/* v2 pairs the workspace name with an explicit collapse control
 				    (mockup line 62). SidebarRail still handles the drag edge; this
 				    is the discoverable affordance. It has no place on the rail
@@ -70,13 +70,13 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 					<SidebarTrigger
 						aria-label="Collapse sidebar"
 						title="Collapse sidebar"
-						className="size-7 shrink-0 text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:hidden"
+						className="size-[30px] shrink-0 rounded-lg text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:hidden"
 					/>
 				</div>
 			</SidebarHeader>
 			<SidebarContent>
-				<SidebarGroup>
-					<SidebarMenu>
+				<SidebarGroup className="px-2.5 py-2">
+					<SidebarMenu className="gap-0">
 						{navItems.map((item) => (
 							<SidebarNavItem key={item.to} item={item} source="top-nav">
 								{item.to === FOR_YOU_ROUTE && (
@@ -102,8 +102,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 					</SidebarMenu>
 				</SidebarGroup>
 			</SidebarContent>
-			<SidebarFooter>
-				<SidebarMenu>
+			<SidebarFooter className="gap-1.5 p-2.5">
+				<SidebarMenu className="gap-0">
 					<SidebarNavItem item={marketplaceItem} source="footer" />
 				</SidebarMenu>
 				<SidebarActivity workspaceId={workspaceId} />

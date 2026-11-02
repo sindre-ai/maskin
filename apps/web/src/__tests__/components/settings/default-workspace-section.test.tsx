@@ -62,7 +62,7 @@ describe('Settings > General > Default workspace', () => {
 	it('shows the switch off when this is not the default workspace', () => {
 		renderPage()
 
-		expect(screen.getByRole('heading', { name: 'DEFAULT WORKSPACE' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Default workspace' })).toBeInTheDocument()
 		expect(screen.getByRole('switch', { name: switchName })).not.toBeChecked()
 	})
 

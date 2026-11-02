@@ -84,8 +84,8 @@ export function ItemInstallControls({
 			) : (
 				<Button
 					size="sm"
-					variant="default"
-					className="relative h-7 text-xs"
+					variant="secondary"
+					className="relative h-7 rounded-full text-xs font-semibold"
 					disabled={installMutation.isPending}
 					onClick={() => {
 						// Clear a stale uninstall success flag — otherwise re-installing

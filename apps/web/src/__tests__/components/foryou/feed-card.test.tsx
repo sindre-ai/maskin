@@ -415,8 +415,8 @@ describe('FeedCard — mention author vs object driver', () => {
 
 	it('attributes the expanded meta line to the mention author, not the object driver', () => {
 		renderCard({ item: magnusDriven })
-		expect(screen.getByText(/from Code Reviewer/)).toBeInTheDocument()
-		expect(screen.queryByText(/from Magnus/)).not.toBeInTheDocument()
+		expect(screen.getByText(/Code Reviewer ·/)).toBeInTheDocument()
+		expect(screen.queryByText(/Magnus ·/)).not.toBeInTheDocument()
 	})
 
 	it('threads the receipt back to the mention author, not the object driver', () => {

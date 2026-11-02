@@ -182,6 +182,11 @@ export function describeFocus(status: PortraitStatus, session?: SessionResponse)
 	return 'Standing by'
 }
 
+/** The initials tile of an agent in the list and the detail hero (v11): tinted while it works, plain otherwise. */
+export function agentTileClass(status: PortraitStatus): string {
+	return status === 'running' ? 'bg-status-in_progress-bg text-success' : 'bg-muted text-foreground'
+}
+
 /** Pill used by any surface that shows an agent's portrait status as a row/card badge. */
 export function AgentStatusPill({
 	status,
@@ -219,7 +224,7 @@ export function AgentStatusPill({
 	return (
 		<span
 			className={cn(
-				'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
+				'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-semibold',
 				meta.pillBg,
 				meta.pillText,
 			)}
@@ -252,11 +257,11 @@ interface StatusMeta {
 
 const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 	running: {
-		label: 'Running',
+		label: 'Working',
 		Icon: Play,
 		pillBg: 'bg-status-in_progress-bg',
-		pillText: 'text-status-in_progress-text',
-		dot: 'bg-status-in_progress-text',
+		pillText: 'text-success',
+		dot: 'bg-success',
 		inlineText: 'text-status-in_progress-text',
 	},
 	// `text-muted-foreground` on `bg-muted` is 4.39:1 in light mode — below the
@@ -281,8 +286,8 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 	failed: {
 		label: 'Failed',
 		Icon: AlertTriangle,
-		pillBg: 'bg-status-failed-bg',
-		pillText: 'text-status-failed-text',
+		pillBg: 'bg-muted',
+		pillText: 'text-foreground',
 		dot: 'bg-status-failed-text',
 		inlineText: 'text-status-failed-text',
 	},

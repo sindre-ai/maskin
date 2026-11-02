@@ -35,7 +35,6 @@ describe('AgentInstructionsSection', () => {
 		render(<AgentInstructionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.getByRole('heading', { name: 'Instructions', level: 2 })).toBeInTheDocument()
-		expect(screen.getByText('system prompt')).toBeInTheDocument()
 		expect(screen.getByText('You are Planner. Shape the next bet.')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument()
 	})

@@ -7,7 +7,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/cn'
-import { Ellipsis } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 
 export type ChatsFilter = 'all' | 'unread' | 'pinned' | 'archived' | 'threads'
 
@@ -43,16 +43,18 @@ export function ChatsFilterMenu({
 			<DropdownMenuTrigger asChild>
 				<Button
 					type="button"
-					variant="outline"
+					variant="ghost"
 					size="sm"
 					className={cn(
-						'h-[30px] gap-1.5 px-2.5 text-[11.5px] font-semibold',
-						isFiltered && 'border-border-strong text-foreground',
+						'h-8 shrink-0 gap-1 rounded-full bg-secondary px-3 text-[13px] font-semibold text-foreground hover:bg-secondary/70',
+						isFiltered && 'ring-1 ring-border-strong',
 					)}
 					aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
 				>
-					{isFiltered ? <span className="whitespace-nowrap">{chatsFilterLabel(value)}</span> : null}
-					<Ellipsis size={15} aria-hidden />
+					<span className="whitespace-nowrap">
+						{isFiltered ? chatsFilterLabel(value) : 'All chats'}
+					</span>
+					<ChevronDown size={12} aria-hidden />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-44">

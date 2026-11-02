@@ -36,6 +36,104 @@ test.describe('Loops list page', () => {
 			await expect(page.getByTestId('loop-pill')).toHaveText('Learning')
 		})
 
+		test(`page search narrows flows; both searches are reachable with no sideways scroll at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await clearSeededAutomations(account.api, account.workspaceId)
+			await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Alpha pipeline',
+				status: 'learning',
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Zulu pipeline',
+				status: 'learning',
+			})
+			await page.goto(`/${account.workspaceId}/loops`)
+			await expect(page.getByText('Alpha pipeline')).toBeVisible({ timeout: 10000 })
+
+			// The workspace search and the one New stay beside the page's own search.
+			await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible()
+			await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible()
+			const overflow = await page.evaluate(() => ({
+				scroll: document.documentElement.scrollWidth,
+				client: document.documentElement.clientWidth,
+			}))
+			expect(overflow.scroll).toBeLessThanOrEqual(overflow.client)
+
+			// A field from xl up, an icon below it that opens an inline field.
+			if (viewport.width < 1280) {
+				await expect(page.getByRole('searchbox', { name: 'Search flows' })).toBeHidden()
+				await page.getByRole('button', { name: 'Search flows' }).click()
+			}
+			const search = page.getByRole('searchbox', { name: 'Search flows' })
+			await expect(search).toBeVisible()
+			await search.fill('zulu')
+			await expect(page.getByText('Zulu pipeline')).toBeVisible()
+			await expect(page.getByText('Alpha pipeline')).toHaveCount(0)
+			await search.fill('zzzz-nothing')
+			await expect(page.getByText('No flows match.')).toBeVisible()
+			await search.fill('')
+			await expect(page.getByText('Alpha pipeline')).toBeVisible()
+		})
+
+		test(`Display menu filters by Area, and a flow with a target shows its progress at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await clearSeededAutomations(account.api, account.workspaceId)
+			await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Sales pipeline',
+				status: 'learning',
+				metadata: {
+					tags: ['Sales'],
+					targets: [{ label: 'customers closed', source: 'manual', actual: 0, target: 10 }],
+				},
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Product pipeline',
+				status: 'learning',
+				metadata: { tags: ['Product'] },
+			})
+			await page.goto(`/${account.workspaceId}/loops`)
+			await expect(page.getByText('Sales pipeline')).toBeVisible({ timeout: 10000 })
+
+			// Only the flow with a target carries a bar, and a target nobody has met is Missed.
+			await expect(page.getByRole('progressbar')).toHaveCount(1)
+			await expect(
+				page.getByRole('progressbar', { name: '0 of 10 customers closed' }),
+			).toBeVisible()
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+				await expect(page.getByText('Missed', { exact: true })).toBeVisible()
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+
+			// Display → Area narrows the list; Reset filters brings it back.
+			await page.getByRole('button', { name: /^Display/ }).click()
+			const area = page.getByRole('button', { name: /Area.*All/ })
+			await area.click()
+			await page
+				.locator('div', { has: area })
+				.last()
+				.getByRole('button', { name: /^Product/ })
+				.click()
+			await page.keyboard.press('Escape')
+			await expect(page.getByText('Product pipeline')).toBeVisible()
+			await expect(page.getByText('Sales pipeline')).toHaveCount(0)
+
+			await page.getByRole('button', { name: /^Display/ }).click()
+			await page.getByRole('button', { name: 'Reset filters' }).click()
+			await page.keyboard.press('Escape')
+			await expect(page.getByText('Sales pipeline')).toBeVisible()
+		})
+
 		test(`/triggers redirects to /loops and lists its triggers there at ${viewport.label}`, async ({
 			page,
 			account,
@@ -143,7 +241,7 @@ test.describe('Loops list page', () => {
 
 		await page.getByRole('button', { name: 'Display' }).click()
 		await page
-			.getByRole('button', { name: /^Created$|^Last activity$/ })
+			.getByRole('button', { name: /^Sort by/ })
 			.first()
 			.click()
 		await page.getByRole('menuitem', { name: 'Name' }).click()
@@ -159,7 +257,7 @@ test.describe('Loops list page', () => {
 		await expect(page.getByText('Alpha loop')).toBeVisible({ timeout: 10000 })
 		// The persisted ordering comes back from the user display-settings row.
 		await page.getByRole('button', { name: 'Display' }).click()
-		await expect(page.getByRole('button', { name: 'Name' })).toBeVisible()
+		await expect(page.getByRole('button', { name: /^Sort by Name/ })).toBeVisible()
 	})
 
 	test('toggling a standalone trigger flips enabled without navigating away', async ({

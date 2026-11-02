@@ -10,7 +10,7 @@ import {
 	OtherWorkspaceLink,
 	useOtherWorkspaceLabel,
 } from '@/components/chat/linked-object-reference'
-import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ActorAvatar, getActorInitials } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
@@ -333,7 +333,7 @@ export function MessageBubble({
 										// A message that is only a card has no plate: the card is the message.
 										cardOnly
 											? 'contents'
-											: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
+											: 'flex flex-col gap-1.5 rounded-2xl bg-secondary px-3.5 py-[9px] text-[15px] leading-[1.4] text-foreground'
 									}
 								>
 									{fileList}
@@ -457,14 +457,13 @@ export function MessageBubble({
 	const canRetryAgent = message.id > 0 && message.kind === 'message'
 	return (
 		<div className="group flex items-start gap-[11px]">
-			<ActorAvatar
-				id={message.actorId}
-				name={message.actorName}
-				type={message.actorType}
-				size="md"
-				className="shrink-0 rounded-lg"
-			/>
-			<div className={cn('relative min-w-0 flex-1 md:max-w-[660px]', spawnInfo && 'pr-2')}>
+			<span
+				aria-hidden
+				className="mt-0.5 grid size-[30px] shrink-0 place-items-center rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
+			>
+				{getActorInitials(message.actorName)}
+			</span>
+			<div className={cn('relative min-w-0 flex-1', spawnInfo && 'pr-2')}>
 				{spawnInfo ? (
 					// S2 · agent-side messages can also spawn sessions (an agent that
 					// hands off work to a spawned session); render the same marker
@@ -472,14 +471,24 @@ export function MessageBubble({
 					// the column reserves, so it stays inside the column's box.
 					<SpawnBar className="absolute right-0 top-0 h-full" />
 				) : null}
-				<div className="flex items-baseline gap-2">
-					<span className="truncate text-[12.5px] font-bold text-foreground">
-						{message.actorName}
-					</span>
+				<div className="flex items-baseline gap-1.5">
+					{message.actorType === 'agent' && message.actorId ? (
+						<Link
+							to="/$workspaceId/agents/$agentId"
+							params={{ workspaceId, agentId: message.actorId }}
+							className="truncate text-[13px] font-semibold text-foreground hover:underline"
+						>
+							{message.actorName}
+						</Link>
+					) : (
+						<span className="truncate text-[13px] font-semibold text-foreground">
+							{message.actorName}
+						</span>
+					)}
 					<RelativeTime
 						date={message.createdAt}
 						format="clock"
-						className="shrink-0 text-[10px] text-muted-foreground"
+						className="shrink-0 text-xs text-muted-foreground"
 					/>
 					{isVoice ? <VoiceMessageMetaTag /> : null}
 				</div>
@@ -488,7 +497,7 @@ export function MessageBubble({
 					<div className="mt-1.5">{liftedAttachments ?? fileList}</div>
 				) : null}
 				{message.content.length > 0 ? (
-					<div className="mt-1 text-[13.5px] leading-[1.6]">
+					<div className="mt-0.5 text-[15px] leading-[1.4] [&_p]:text-[15px] [&_p]:leading-[1.4]">
 						{/* `renderVisuals` turns a ```chart fenced block into the bounded
 						    data-viz card (mockup 660–679). Agents are told how to emit one
 						    in `createCommentSchema`'s content description, and the same
@@ -708,7 +717,7 @@ function chipTitle(title: string): string {
 }
 
 const OWN_CHIP_CLASS =
-	'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+	'inline-flex max-w-full items-center gap-1 rounded-md bg-foreground/10 px-1.5 py-0.5 align-baseline font-medium text-foreground transition-colors hover:bg-foreground/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 
 /**
  * What you wrote, in order: words, a chip for each link, and a card for an object linked on a
@@ -900,7 +909,7 @@ function OwnOtherWorkspaceChip({
 			id={id}
 			label={label}
 			newTab
-			className={cn(OWN_CHIP_CLASS, 'border border-dashed border-primary-foreground/40 italic')}
+			className={cn(OWN_CHIP_CLASS, 'border border-dashed border-foreground/40 italic')}
 		>
 			<Globe size={12} aria-hidden className="shrink-0" />
 			<span className="truncate">{label}</span>
