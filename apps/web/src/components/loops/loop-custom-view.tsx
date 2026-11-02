@@ -23,7 +23,7 @@ const REFRESH_RETRY_MS = 5_000
 interface LoopCustomViewProps {
 	workspaceId: string
 	fileId: string
-	/** Called when the view cannot be shown (file missing, bad sources, failed query, escaped frame). The loop page then shows its default content. */
+	/** Called when the view cannot be shown (file missing, bad sources, escaped frame). The loop page then shows its default content. A failed query is not one: the view stays and says so. */
 	onFailure: (reason: string) => void
 }
 
@@ -72,6 +72,12 @@ function ViewFrame({
 	// server's row/group cap is partial, and a view whose live refresh keeps failing is stale.
 	const [partial, setPartial] = useState(false)
 	const [stale, setStale] = useState(false)
+	// Stale for two independent reasons (a failed live-event check, a failed timer lookup); each
+	// clears only itself, so one path recovering cannot hide the other still failing.
+	const [timerStale, setTimerStale] = useState(false)
+	// A query the view asked for failed. The view stays up and gets the error itself; the host
+	// adds this note so the failure shows even if the view draws no error state.
+	const [queryFailed, setQueryFailed] = useState(false)
 	const [frameKey, setFrameKey] = useState(0)
 	const loadsRef = useRef(0)
 	const resetsRef = useRef(0)
@@ -130,7 +136,7 @@ function ViewFrame({
 					},
 					post: (message) => viewWindow()?.postMessage(message, '*'),
 					onDocHeight: (h) => setHeight(Math.max(MIN_HEIGHT, Math.ceil(h))),
-					onQueryError: (message) => onFailureRef.current(`A data query failed: ${message}`),
+					onQueryError: () => setQueryFailed(true),
 				},
 				event,
 			)
@@ -246,7 +252,11 @@ function ViewFrame({
 			if (failed && attempt < MAX_REFRESH_RETRIES && retryIn < wait) {
 				// A source we could not read may change sooner than the ones we could; look again.
 				timer = setTimeout(() => void arm(attempt + 1), retryIn)
-			} else if (wait !== Number.POSITIVE_INFINITY) {
+				return
+			}
+			// Out of retries with a source unread: its time-based changes will not be seen, say so.
+			setTimerStale(failed)
+			if (wait !== Number.POSITIVE_INFINITY) {
 				timer = setTimeout(() => setFrameKey((k) => k + 1), wait)
 			}
 		}
@@ -262,15 +272,17 @@ function ViewFrame({
 	useEffect(() => {
 		loadsRef.current = 0
 		blockedRef.current = false
+		setQueryFailed(false)
 	}, [srcDoc, frameKey])
 
 	return (
 		<>
-			{(partial || stale) && (
+			{(partial || stale || timerStale || queryFailed) && (
 				<p className="mb-2 text-xs text-muted-foreground">
 					{partial &&
 						'Some numbers in this view are partial: the data hit its size limit, so counts may be lower than the real totals. '}
-					{stale && 'Live updates are failing, so this view may be out of date.'}
+					{queryFailed && 'Some numbers in this view could not be loaded. '}
+					{(stale || timerStale) && 'Live updates are failing, so this view may be out of date.'}
 				</p>
 			)}
 			<iframe

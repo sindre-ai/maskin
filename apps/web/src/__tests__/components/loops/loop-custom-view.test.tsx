@@ -278,6 +278,105 @@ describe('LoopCustomView', () => {
 			expect(screen.getByText(/may be out of date/)).toBeTruthy()
 		})
 
+		it('keeps the view and says so, outside the frame, when a query fails', async () => {
+			vi.mocked(api.data.query).mockRejectedValue(new Error('boom'))
+			const { container, onFailure } = renderView()
+			await act(async () => {})
+			const first = container.querySelector('iframe')
+
+			await ask(container)
+
+			expect(onFailure).not.toHaveBeenCalled()
+			expect(container.querySelector('iframe')).toBe(first)
+			expect(screen.getByText(/could not be loaded/)).toBeTruthy()
+		})
+
+		it('says the view is stale when next-change lookups keep failing', async () => {
+			vi.useFakeTimers()
+			vi.spyOn(console, 'error').mockImplementation(() => {})
+			vi.mocked(api.data.nextChange).mockRejectedValue(new Error('boom'))
+			renderView()
+			await act(async () => {})
+			expect(screen.queryByText(/out of date/)).toBeNull()
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300_000)
+			})
+			expect(screen.getByText(/may be out of date/)).toBeTruthy()
+		})
+
+		describe('live refresh', () => {
+			/** Mounts the view after it has been asked for (and given) one answer. */
+			async function withAnswer(first: object) {
+				vi.useFakeTimers()
+				vi.mocked(api.data.query).mockResolvedValueOnce(answer(first))
+				const utils = renderView()
+				await act(async () => {})
+				await ask(utils.container)
+				return utils
+			}
+			const event = () => {
+				for (const listener of sseListeners) listener({ entity_type: 'task' })
+			}
+			const settle = () =>
+				act(async () => {
+					await vi.advanceTimersByTimeAsync(2_000)
+				})
+
+			it('replaces the frame when an event changed the answer', async () => {
+				const { container } = await withAnswer({})
+				const first = container.querySelector('iframe')
+				vi.mocked(api.data.query).mockResolvedValue(answer({ total: { count: 4, value: 4 } }))
+
+				event()
+				await settle()
+
+				expect(container.querySelector('iframe')).not.toBe(first)
+			})
+
+			it('leaves the frame alone when an event did not change the answer', async () => {
+				const { container } = await withAnswer({})
+				const first = container.querySelector('iframe')
+				vi.mocked(api.data.query).mockResolvedValue(answer())
+
+				event()
+				await settle()
+
+				expect(vi.mocked(api.data.query)).toHaveBeenCalledTimes(2)
+				expect(container.querySelector('iframe')).toBe(first)
+			})
+
+			it('turns a burst of events into one check', async () => {
+				await withAnswer({})
+				vi.mocked(api.data.query).mockResolvedValue(answer())
+
+				event()
+				event()
+				event()
+				await settle()
+
+				expect(vi.mocked(api.data.query)).toHaveBeenCalledTimes(2)
+			})
+
+			it('reloads the frame once when the server says the answer will change by itself', async () => {
+				vi.mocked(api.data.nextChange).mockResolvedValueOnce({ in_ms: 10_000 })
+				vi.useFakeTimers()
+				const { container } = renderView()
+				await act(async () => {})
+				const first = container.querySelector('iframe')
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(10_999)
+				})
+				expect(container.querySelector('iframe')).toBe(first)
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(2)
+				})
+				expect(container.querySelector('iframe')).not.toBe(first)
+			})
+		})
+
 		it('logs a failed next-change lookup and looks again instead of going without a timer', async () => {
 			vi.useFakeTimers()
 			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
