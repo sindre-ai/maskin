@@ -2,6 +2,7 @@ import { BoardCard } from '@/components/objects/board/board-card'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorListItem, buildObjectResponse } from '../../../factories'
+import { createWorkspaceWrapper } from '../../../setup'
 
 const navigateSpy = vi.fn()
 
@@ -189,6 +190,26 @@ describe('BoardCard', () => {
 			await user.keyboard(' ')
 			expect(onAdvance).toHaveBeenCalledTimes(2)
 			expect(navigateSpy).not.toHaveBeenCalled()
+		})
+
+		it('viewer: the advance affordance is off and does not advance', async () => {
+			const user = userEvent.setup()
+			const onAdvance = vi.fn()
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={onAdvance}
+					advanceLabel="Advance"
+				/>,
+				{ wrapper: createWorkspaceWrapper({ role: 'viewer' }) },
+			)
+			const advance = screen.getByRole('button', { name: 'Advance' })
+			expect(advance).toHaveAttribute('aria-disabled', 'true')
+			await user.click(advance)
+			advance.focus()
+			await user.keyboard('{Enter}')
+			expect(onAdvance).not.toHaveBeenCalled()
 		})
 
 		it('is reachable in the tab order', () => {
