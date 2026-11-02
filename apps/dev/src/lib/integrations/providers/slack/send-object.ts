@@ -6,12 +6,23 @@ import { buildObjectPreview } from '../../../object-preview'
 import { type SendClosure, recordSendOutcome } from '../../../send-closure'
 
 /**
- * Slack posts that go out without a person's approval: a short built-in list of internal
- * channels, by Slack id. Everything else (every DM, every customer or shared channel) is held
- * for approval. Today that is #development only, so the pages that tell a person the merge
- * seat or main is red still reach them. A per-channel allowlist is a separate task.
+ * Slack posts that go out without a person's approval: channels on the workspace's allowlist,
+ * by Slack id. Everything else (every DM, every customer or shared channel) is held for
+ * approval. The list is stored on the Slack connection (`config.slack_direct_post_channels`) and
+ * only a human admin or owner can change it. Until one has saved a list, this built-in default
+ * applies (#development only), so the pages that tell a person the merge seat or main is red
+ * still reach them. A saved list replaces the default, including an empty one.
  */
-export const DIRECT_POST_CHANNEL_IDS: ReadonlySet<string> = new Set(['C06LC37JJCS'])
+export const DEFAULT_DIRECT_POST_CHANNEL_IDS: readonly string[] = ['C06LC37JJCS']
+
+/** Key on the Slack integration's `config` jsonb that holds the allowlist. */
+export const DIRECT_POST_CHANNELS_CONFIG_KEY = 'slack_direct_post_channels'
+
+/**
+ * A public or private channel id. DM ids (D...) and names are rejected on purpose: a DM is
+ * always someone's inbox and a name can be re-pointed, so neither is a safe thing to allow.
+ */
+export const SLACK_CHANNEL_ID_PATTERN = /^[CG][A-Z0-9]{8,}$/
 
 export const SLACK_MESSAGE_KIND = 'slack_message'
 
@@ -31,9 +42,27 @@ export const DIRECT_POST_HELD_MESSAGE =
 export const DIRECT_EDIT_HELD_MESSAGE =
 	'Editing a Slack message is held for a person to approve, because it changes what people read under the bot name. Nothing was changed. Save the new text as a task whose content is only the exact text, with metadata.kind slack_message and metadata.channel (the channel the message is in). Ask a person to approve it with a decision card whose draft.object_id is that task. Once they approve, call slack_update_message again with object_id set to that task and ts set to the message to edit. Do not retry with channel and text.'
 
-/** True when a post to this channel id may go without approval. */
-export function isDirectPostChannel(channelId: string): boolean {
-	return DIRECT_POST_CHANNEL_IDS.has(channelId)
+/**
+ * The allowlist saved on a Slack integration's config, or undefined when none was ever saved.
+ * Anything stored that is not a channel id is dropped, so a hand-edited row cannot widen it.
+ */
+export function directPostChannelsFromConfig(config: unknown): string[] | undefined {
+	const stored = (config as Record<string, unknown> | null | undefined)?.[
+		DIRECT_POST_CHANNELS_CONFIG_KEY
+	]
+	if (!Array.isArray(stored)) return undefined
+	return stored.filter(
+		(id): id is string => typeof id === 'string' && SLACK_CHANNEL_ID_PATTERN.test(id),
+	)
+}
+
+/**
+ * True when a post to this channel id may go without approval: it is on the saved allowlist,
+ * or, when no list was saved, on the built-in default. A DM id never qualifies.
+ */
+export function isDirectPostChannel(channelId: string, configured?: readonly string[]): boolean {
+	if (!SLACK_CHANNEL_ID_PATTERN.test(channelId)) return false
+	return (configured ?? DEFAULT_DIRECT_POST_CHANNEL_IDS).includes(channelId)
 }
 
 /**

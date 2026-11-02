@@ -66,6 +66,7 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
+import integrationsSlackDirectChannelsRoutes from './routes/integrations-slack-direct-channels'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
@@ -483,6 +484,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/resend', integrationsResendRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	app.route('/api/integrations/slack/direct-post-channels', integrationsSlackDirectChannelsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
 	// Stripe is billing, not an integration provider.
