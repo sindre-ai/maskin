@@ -7,6 +7,7 @@ import { tools } from '../tools'
 import {
 	type AliasHarness,
 	ROW_SCENARIOS,
+	type ToolOutcome,
 	isValidationError,
 	startAliasHarness,
 } from './helpers/alias-harness'
@@ -225,6 +226,13 @@ describe('alias table', () => {
 	})
 })
 
+// create_comment puts the object it comments on in the body of POST /api/events,
+// not in the path, so the target is read from the body.
+const commentTargets = (outcome: ToolOutcome) =>
+	outcome.requests
+		.filter((r) => r.method === 'POST' && r.path === '/api/events')
+		.map((r) => (r.body as { entity_id?: string }).entity_id)
+
 // Everything below goes through a real McpServer and a real MCP client. If the
 // preprocess wrapper were removed from the registration wrapper in server.ts,
 // each scenario here fails: the old spelling is rejected before the handler.
@@ -291,14 +299,13 @@ describe('through the real SDK path', () => {
 		const onlyNew = await harness.call('create_comment', { entity_id: U2, content: 'Done' })
 		expect(isValidationError(both)).toBe(false)
 		expect(both).toEqual(onlyNew)
-		expect(both.requests.some((r) => r.path.includes(U1))).toBe(false)
-		expect(both.requests.some((r) => r.path.includes(U2))).toBe(true)
+		expect(commentTargets(both)).toEqual([U2])
 	})
 
 	it('an unchanged create_comment call with entity_id still posts on that object', async () => {
 		const outcome = await harness.call('create_comment', { entity_id: U1, content: 'Done' })
 		expect(isValidationError(outcome)).toBe(false)
-		expect(outcome.requests.some((r) => r.path.includes(U1))).toBe(true)
+		expect(commentTargets(outcome)).toEqual([U1])
 	})
 
 	it('unknown keys are still stripped, not rejected', async () => {
