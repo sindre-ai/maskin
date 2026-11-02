@@ -19499,9 +19499,11 @@
 							"type": "string",
 							"minLength": 1,
 							"maxLength": 64,
-							"pattern": "^[a-z0-9-]+$"
+							"pattern": "^[a-z0-9-]+$",
+							"description": "Skill id or name"
 						},
 						"required": true,
+						"description": "Skill id or name",
 						"name": "name",
 						"in": "path"
 					}
@@ -19645,7 +19647,64 @@
 						}
 					},
 					"404": {
-						"description": "Workspace skill not found",
+						"description": "No skill with this id or name",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "More than one skill matches; pass the id",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -19724,9 +19783,11 @@
 							"type": "string",
 							"minLength": 1,
 							"maxLength": 64,
-							"pattern": "^[a-z0-9-]+$"
+							"pattern": "^[a-z0-9-]+$",
+							"description": "Skill id or name"
 						},
 						"required": true,
+						"description": "Skill id or name",
 						"name": "name",
 						"in": "path"
 					}
@@ -19952,7 +20013,7 @@
 						}
 					},
 					"404": {
-						"description": "Workspace skill not found",
+						"description": "No skill with this id or name",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -20009,7 +20070,7 @@
 						}
 					},
 					"409": {
-						"description": "A skill with this name already exists",
+						"description": "A skill with this name already exists, or more than one skill matches",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -20088,9 +20149,11 @@
 							"type": "string",
 							"minLength": 1,
 							"maxLength": 64,
-							"pattern": "^[a-z0-9-]+$"
+							"pattern": "^[a-z0-9-]+$",
+							"description": "Skill id or name"
 						},
 						"required": true,
+						"description": "Skill id or name",
 						"name": "name",
 						"in": "path"
 					}
@@ -20172,7 +20235,64 @@
 						}
 					},
 					"404": {
-						"description": "Workspace skill not found",
+						"description": "No skill with this id or name",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "More than one skill matches; pass the id",
 						"content": {
 							"application/json": {
 								"schema": {

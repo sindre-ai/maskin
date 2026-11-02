@@ -1078,12 +1078,10 @@ export const tools = {
 	},
 	get_workspace_skill: {
 		description:
-			'Get a shared workspace skill by name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
+			'Get a shared workspace skill by id or name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe(
-				'Skill name. Lowercase letters, numbers, and hyphens only; max 64 chars.',
-			),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 		}),
 	},
 	create_workspace_skill: {
@@ -1104,10 +1102,10 @@ export const tools = {
 	},
 	update_workspace_skill: {
 		description:
-			'Replace the content of an existing shared workspace skill. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
+			'Replace the content of an existing shared workspace skill, found by id or name. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe('Name of the workspace skill to update.'),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 			content: z
 				.string()
 				.min(1)
@@ -1116,10 +1114,10 @@ export const tools = {
 	},
 	delete_workspace_skill: {
 		description:
-			'Delete a shared workspace skill. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
+			'Delete a shared workspace skill, found by id or name. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe('Name of the workspace skill to delete.'),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 		}),
 	},
 	// ─── Files ───────────────────────────────────────────────

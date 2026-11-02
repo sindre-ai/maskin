@@ -24758,13 +24758,15 @@ public enum Operations {
             public struct Path: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/path/workspaceId`.
                 public var workspaceId: Swift.String
+                /// Skill id or name
+                ///
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/path/name`.
                 public var name: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - workspaceId:
-                ///   - name:
+                ///   - name: Skill id or name
                 public init(
                     workspaceId: Swift.String,
                     name: Swift.String
@@ -25193,7 +25195,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace skill not found
+            /// No skill with this id or name
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/get/responses/404`.
             ///
@@ -25211,6 +25213,144 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/details`.
+                            public var details: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error`.
+                        public var error: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// More than one skill matches; pass the id
+            ///
+            /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/get/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
                             response: self
                         )
                     }
@@ -25258,13 +25398,15 @@ public enum Operations {
             public struct Path: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/PUT/path/workspaceId`.
                 public var workspaceId: Swift.String
+                /// Skill id or name
+                ///
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/PUT/path/name`.
                 public var name: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - workspaceId:
-                ///   - name:
+                ///   - name: Skill id or name
                 public init(
                     workspaceId: Swift.String,
                     name: Swift.String
@@ -25863,7 +26005,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace skill not found
+            /// No skill with this id or name
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/put/responses/404`.
             ///
@@ -26001,7 +26143,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// A skill with this name already exists
+            /// A skill with this name already exists, or more than one skill matches
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/put/responses/409`.
             ///
@@ -26066,13 +26208,15 @@ public enum Operations {
             public struct Path: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/path/workspaceId`.
                 public var workspaceId: Swift.String
+                /// Skill id or name
+                ///
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/path/name`.
                 public var name: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - workspaceId:
-                ///   - name:
+                ///   - name: Skill id or name
                 public init(
                     workspaceId: Swift.String,
                     name: Swift.String
@@ -26427,7 +26571,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace skill not found
+            /// No skill with this id or name
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/delete/responses/404`.
             ///
@@ -26445,6 +26589,144 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/details`.
+                            public var details: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error`.
+                        public var error: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// More than one skill matches; pass the id
+            ///
+            /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/delete/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
                             response: self
                         )
                     }
