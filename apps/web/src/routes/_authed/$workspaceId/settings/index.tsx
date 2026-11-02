@@ -213,7 +213,8 @@ function PrivacySection() {
 					<div className="min-w-0">
 						<span className="block text-[12.5px] font-semibold">Anonymize this workspace</span>
 						<span className="text-xs text-muted-foreground">
-							Rotate workspace and actor IDs into hashes before events leave the browser.
+							Swaps your workspace and member IDs for scrambled codes before usage data leaves your
+							browser.
 						</span>
 					</div>
 					<ViewerTooltip>
