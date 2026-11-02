@@ -58,6 +58,8 @@ public final class PushRegistrar {
 	@ObservationIgnored private var uploadsInFlight = 0
 	@ObservationIgnored private var isRetrying = false
 	@ObservationIgnored private var networkWatch: Task<Void, Never>?
+	/// Held so the monitor outlives `init`: its stream only emits while the monitor is alive.
+	@ObservationIgnored private let network: (any NetworkMonitoring)?
 
 	/// - Parameter network: when given, a pending unregister is retried each time connectivity returns.
 	public init(
@@ -76,6 +78,7 @@ public final class PushRegistrar {
 		self.environment = environment
 		self.platform = platform
 		self.appVersion = appVersion
+		self.network = network
 		if let network {
 			let updates = network.updates()
 			networkWatch = Task { [weak self] in
