@@ -52,6 +52,16 @@ export interface TagInputHandle {
 	 *  caret is not in the input. */
 	caretOffset: () => number | null
 	setCaretOffset: (offset: number) => void
+	/** Empties the input (after a send). */
+	clear: () => void
+	/** Adds text at the end, with a space first when the text so far does not end in one. */
+	appendText: (text: string) => void
+	/** Swaps the first plain-text occurrence of `search`. Does nothing when it is no longer there. */
+	replaceText: (search: string, replacement: string) => void
+	/** Types an `@` at the caret (or the end), which opens the picker. For a "Mention" menu entry. */
+	startTag: () => void
+	/** Puts a finished chip (plus a space) at the caret or the end. For a pick made outside the input. */
+	insertTag: (actor: { id: string; name: string }) => void
 }
 
 export interface TagInputProps {
@@ -66,6 +76,8 @@ export interface TagInputProps {
 	ariaActiveDescendant?: string
 	placeholder: string
 	disabled?: boolean
+	/** Marks the box as holding something that cannot be sent (over the limit). */
+	invalid?: boolean
 	autoFocus?: boolean
 	/** Sizes the box (min and max height). */
 	className?: string
@@ -94,6 +106,7 @@ export function TagInput({
 	ariaActiveDescendant,
 	placeholder,
 	disabled = false,
+	invalid = false,
 	autoFocus = false,
 	className,
 	contentClassName,
@@ -102,6 +115,8 @@ export function TagInput({
 	handleRef,
 }: TagInputProps) {
 	const rootRef = useRef<HTMLDivElement | null>(null)
+	// Where the caret last was inside the input, for a menu that takes focus away and gives it back.
+	const lastRange = useRef<Range | null>(null)
 	const [empty, setEmpty] = useState(() => initialIsEmpty(initialSegments))
 	const [trigger, setTrigger] = useState<Trigger | null>(null)
 	const [highlightIndex, setHighlightIndex] = useState(0)
@@ -155,6 +170,9 @@ export function TagInput({
 		}
 	}, [])
 
+	// The handle reads `emit` through a ref, so it stays one object while `emit` changes.
+	const emitRef = useRef<() => void>(() => {})
+
 	// The picker follows the caret: an `@query` ending at the caret, in the text node it sits in.
 	// A caret outside this input leaves the picker alone, so the phone sheet survives taking focus.
 	const syncTrigger = useCallback(() => {
@@ -163,6 +181,7 @@ export function TagInput({
 		if (!root || !sel || sel.rangeCount === 0 || !sel.isCollapsed) return
 		const node = sel.anchorNode
 		if (!node || !root.contains(node)) return
+		lastRange.current = sel.getRangeAt(0).cloneRange()
 		if (node.nodeType !== 3) return setTrigger(null)
 		const match = detectMentionTrigger((node as Text).data, sel.anchorOffset)
 		setTrigger(match ? { node: node as Text, atPos: match.atPos, query: match.query } : null)
@@ -184,6 +203,7 @@ export function TagInput({
 		onChange(value)
 		syncTrigger()
 	}, [onChange, syncTrigger])
+	emitRef.current = emit
 
 	useImperativeHandle(
 		handleRef,
@@ -218,8 +238,69 @@ export function TagInput({
 				sel?.removeAllRanges()
 				sel?.addRange(range)
 			},
+			clear: () => {
+				const root = rootRef.current
+				if (!root) return
+				root.replaceChildren()
+				lastRange.current = null
+				setTrigger(null)
+				emitRef.current()
+			},
+			appendText: (text) => {
+				const root = rootRef.current
+				if (!root) return
+				const existing = root.textContent ?? ''
+				root.focus()
+				placeCaretAtEnd(root)
+				insertPlainText(existing.length > 0 && !/\s$/.test(existing) ? ` ${text}` : text)
+				emitRef.current()
+			},
+			replaceText: (search, replacement) => {
+				const root = rootRef.current
+				if (!root || !search) return
+				const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+				for (
+					let node = walker.nextNode() as Text | null;
+					node;
+					node = walker.nextNode() as Text | null
+				) {
+					const at = node.data.indexOf(search)
+					if (at === -1) continue
+					node.data = node.data.slice(0, at) + replacement + node.data.slice(at + search.length)
+					emitRef.current()
+					return
+				}
+			},
+			startTag: () => {
+				const root = rootRef.current
+				if (!root) return
+				restoreCaret(root, lastRange.current)
+				// A tag opens at the start of a word, so a caret glued to a word gets a space first.
+				insertPlainText(gluedToWord() ? ' @' : '@')
+				emitRef.current()
+			},
+			insertTag: (actor) => {
+				const root = rootRef.current
+				const sel = document.getSelection()
+				if (!root || !sel) return
+				restoreCaret(root, lastRange.current)
+				const range = sel.getRangeAt(0)
+				range.deleteContents()
+				const chip = buildChip(actor.id, tagLabel(actor, pool), surface, actor.id === selfActorId)
+				const nodes: Node[] = [chip, document.createTextNode(' ')]
+				if (gluedToWord()) nodes.unshift(document.createTextNode(' '))
+				const fragment = document.createDocumentFragment()
+				for (const node of nodes) fragment.appendChild(node)
+				const last = nodes[nodes.length - 1] as Node
+				range.insertNode(fragment)
+				range.setStartAfter(last)
+				range.collapse(true)
+				sel.removeAllRanges()
+				sel.addRange(range)
+				emitRef.current()
+			},
 		}),
-		[emit, surface, selfActorId],
+		[emit, surface, selfActorId, pool],
 	)
 
 	const commit = useCallback(
@@ -248,7 +329,13 @@ export function TagInput({
 				sel?.addRange(range)
 			}
 			placeCaret()
-			requestAnimationFrame(placeCaret)
+			requestAnimationFrame(() => {
+				// A caret already back in the box means typing went on; moving it now would jump it.
+				const sel = document.getSelection()
+				if (sel?.anchorNode && root.contains(sel.anchorNode) && document.activeElement === root)
+					return
+				placeCaret()
+			})
 			setTrigger(null)
 			emit()
 		},
@@ -315,8 +402,8 @@ export function TagInput({
 					aria-describedby={ariaDescribedBy}
 					aria-activedescendant={ariaActiveDescendant}
 					aria-disabled={disabled || undefined}
+					aria-invalid={invalid || undefined}
 					aria-haspopup="listbox"
-					aria-expanded={open}
 					spellCheck
 					className={cn(
 						'min-h-[inherit] max-h-[inherit] overflow-y-auto whitespace-pre-wrap break-words outline-none',
@@ -347,11 +434,10 @@ export function TagInput({
 				onSelect={commit}
 				highlightIndex={highlightIndex}
 				onHighlightChange={setHighlightIndex}
-				// Pinned to the bottom of the nearest positioned ancestor, so the picker opens
-				// under the whole card rather than over its footer.
-				anchor={
-					<span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-0" />
-				}
+				// Covers the nearest positioned ancestor, so the picker opens under the whole card
+				// rather than over its footer, and flips to above the whole card where there is no
+				// room below (a bar docked to the bottom of the page).
+				anchor={<span aria-hidden className="pointer-events-none absolute inset-0" />}
 			/>
 		</>
 	)
@@ -395,6 +481,27 @@ function appendText(root: HTMLElement, text: string) {
 	})
 }
 
+/** Back to the caret the person last had in the input, or the end when there is none. */
+function restoreCaret(root: HTMLElement, saved: Range | null) {
+	root.focus()
+	if (saved && root.contains(saved.startContainer)) {
+		const sel = document.getSelection()
+		sel?.removeAllRanges()
+		sel?.addRange(saved)
+	} else {
+		placeCaretAtEnd(root)
+	}
+}
+
+/** The caret sits right after a word character, so a tag typed there would not open a picker. */
+function gluedToWord(): boolean {
+	const sel = document.getSelection()
+	const node = sel?.anchorNode
+	if (!sel || node?.nodeType !== 3) return false
+	const before = (node as Text).data.slice(0, sel.anchorOffset)
+	return before.length > 0 && !/\s$/.test(before)
+}
+
 function placeCaretAtEnd(root: HTMLElement) {
 	const range = document.createRange()
 	range.selectNodeContents(root)
@@ -424,7 +531,9 @@ function insertNode(make: () => Node, command: string, value?: string) {
 	range.deleteContents()
 	const node = make()
 	range.insertNode(node)
-	range.setStartAfter(node)
+	// Inside the text, not beside it, so the picker can see the caret sits in a word.
+	if (node.nodeType === 3) range.setStart(node, (node as Text).data.length)
+	else range.setStartAfter(node)
 	range.collapse(true)
 	sel.removeAllRanges()
 	sel.addRange(range)

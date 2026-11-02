@@ -200,7 +200,7 @@ test.describe('Object detail — properties drawer', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			const composer = page.getByPlaceholder(/^Comment/)
+			const composer = page.getByRole('textbox', { name: 'Comment' })
 			await expect(composer).toBeVisible({ timeout: 15000 })
 
 			await page.mouse.move(vp.width / 2, vp.height / 2)
