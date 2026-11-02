@@ -1,4 +1,5 @@
 import { PageSearchInput } from '@/components/shared/page-search-input'
+import { usePageSearchShortcutListener } from '@/lib/page-search-shortcut'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -82,5 +83,55 @@ describe('PageSearchInput', () => {
 		expect(inline).toHaveFocus()
 		await user.keyboard('{Escape}')
 		expect(screen.getAllByRole('searchbox')).toHaveLength(1)
+	})
+
+	describe('Cmd/Ctrl+F', () => {
+		function Shell() {
+			usePageSearchShortcutListener()
+			return null
+		}
+
+		afterEach(() => {
+			// Removes the stub a test added to the prototype.
+			Reflect.deleteProperty(HTMLElement.prototype, 'checkVisibility')
+		})
+
+		it('focuses and selects the field where it is on screen', async () => {
+			const user = userEvent.setup()
+			render(
+				<>
+					<Shell />
+					<Harness />
+				</>,
+			)
+			const box = screen.getByRole('searchbox', { name: 'Search items' })
+			await user.type(box, 'abc')
+			;(document.activeElement as HTMLElement).blur()
+			await user.keyboard('{Control>}f{/Control}')
+			expect(box).toHaveFocus()
+			expect((box as HTMLInputElement).selectionEnd).toBe(3)
+		})
+
+		it('opens the inline field and focuses it where the field is collapsed to the icon', async () => {
+			// The wide field is display:none below xl.
+			Object.defineProperty(HTMLElement.prototype, 'checkVisibility', {
+				configurable: true,
+				value() {
+					return !this.closest('.hidden')
+				},
+			})
+			const user = userEvent.setup()
+			render(
+				<>
+					<Shell />
+					<Harness />
+				</>,
+			)
+			expect(screen.getAllByRole('searchbox')).toHaveLength(1)
+			await user.keyboard('{Control>}f{/Control}')
+			const boxes = screen.getAllByRole('searchbox')
+			expect(boxes).toHaveLength(2)
+			expect(boxes[1]).toHaveFocus()
+		})
 	})
 })

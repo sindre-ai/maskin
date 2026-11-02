@@ -157,11 +157,11 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 /**
  * Opens the workspace on a page that is not Search and presses ⌘K. The key is waited
  * for: the launcher's listener exists only once the shell has mounted, which the
- * header's one search button shows.
+ * header's New chat button shows (the header has no search button).
  */
 async function openLauncher(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}/objects`)
-	await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible({
+	await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible({
 		timeout: 20_000,
 	})
 	await page.keyboard.press('ControlOrMeta+k')
@@ -274,7 +274,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page).toHaveURL(new RegExp(`/agents/${agent.id}`))
 		})
 
-		test('an empty launcher leads with Needs you; the nav has one search button; ⌘F is left to the browser outside Search', async ({
+		test('an empty launcher leads with Needs you; the header has no search button; ⌘F is left to the browser on pages without a search field', async ({
 			page,
 			account,
 		}) => {
@@ -289,15 +289,15 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 			await page.goto(`/${account.workspaceId}/objects`)
 
-			// One nav entry. The words show from 1024px; under it the button is the icon only.
-			const navButton = page.getByRole('button', { name: 'Search or run a command' })
-			await expect(navButton).toBeVisible({ timeout: 15_000 })
+			// The header has no search button at any width: the launcher is the keyboard.
+			await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible({
+				timeout: 15_000,
+			})
+			await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
 			await expect(page.getByRole('textbox', { name: 'Search the workspace' })).toHaveCount(0)
-			const navLabel = navButton.getByText('Search or run a command')
-			if (vp.width >= 1024) await expect(navLabel).toBeVisible()
-			else await expect(navLabel).toBeHidden()
 
-			// ⌘F is not taken here, so the browser's find works.
+			// ⌘F is not taken on a page without a search field of its own (For you), so the
+			// browser's find works there.
 			const prevented = () =>
 				page.evaluate(() => {
 					const event = new KeyboardEvent('keydown', {
@@ -309,9 +309,13 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 					document.dispatchEvent(event)
 					return event.defaultPrevented
 				})
+			await page.goto(`/${account.workspaceId}`)
+			await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible({
+				timeout: 15_000,
+			})
 			expect(await prevented()).toBe(false)
 
-			await navButton.click()
+			await page.keyboard.press('ControlOrMeta+k')
 			const panel = page.getByRole('dialog', { name: 'Command palette' })
 			await expect(panel.getByRole('group', { name: 'Needs you' })).toBeVisible({ timeout: 20_000 })
 			await expect(
@@ -335,8 +339,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page.getByRole('combobox', { name: 'Search' })).not.toBeFocused()
 			expect(await prevented()).toBe(true)
 			await expect(page.getByRole('combobox', { name: 'Search' })).toBeFocused()
-			// The nav shows no search button on Search: the page is the search.
-			await expect(navButton).toHaveCount(0)
+			await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
 		})
 
 		test('the launcher finds commands by initials and Settings pages, and its Ask row fills a new chat without sending', async ({

@@ -55,8 +55,8 @@ test.describe('Objects list — v2 control row', () => {
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 			await expect(page.getByText('Alpha plan')).toBeVisible({ timeout: 15000 })
 
-			// The workspace search and the one New stay beside the page's own search.
-			await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible()
+			// The header has no workspace search button; the one New stays beside the page's own search.
+			await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
 			await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible()
 			const overflow = await page.evaluate(() => ({
 				scroll: document.documentElement.scrollWidth,

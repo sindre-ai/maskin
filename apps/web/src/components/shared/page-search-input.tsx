@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/cn'
+import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -9,10 +10,11 @@ import { useEffect, useRef, useState } from 'react'
  * `PageHeader` `actions` so it sits in the title row beside Display.
  *
  * From `xl` up it is the field itself. Below that there is no room for a field
- * next to the workspace search and the New button (at 768 and 1024 the sidebar
- * leaves the title row about 490 and 710px), so it is a search icon; a tap opens
- * an inline field that takes over the title row (not a popover), with a close
- * control. The workspace search and New stay reachable once it closes.
+ * next to the New button (at 768 and 1024 the sidebar leaves the title row about
+ * 490 and 710px), so it is a search icon; a tap opens an inline field that takes
+ * over the title row (not a popover), with a close control. Cmd/Ctrl+F reaches
+ * the same field (it registers with `usePageSearchShortcut`), opening it first
+ * where it is collapsed to the icon.
  *
  * `debounceMs` holds typing back from `onChange` for pages whose search is a
  * server filter (Items), while the field itself stays responsive. A change of
@@ -38,6 +40,8 @@ export function PageSearchInput({
 	const sentRef = useRef(value)
 	const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 	const mobileInputRef = useRef<HTMLInputElement>(null)
+	const wideInputRef = useRef<HTMLInputElement>(null)
+	const iconRef = useRef<HTMLButtonElement>(null)
 
 	useEffect(() => {
 		if (value === sentRef.current) return
@@ -50,6 +54,23 @@ export function PageSearchInput({
 	useEffect(() => {
 		if (open) mobileInputRef.current?.focus()
 	}, [open])
+
+	// The row to take over: the shared header the icon button sits in.
+	function openCollapsed(header: Element | null | undefined) {
+		const box = header?.getBoundingClientRect()
+		if (box) setRow({ left: box.left, top: box.top, width: box.width, height: box.height })
+		setOpen(true)
+	}
+
+	usePageSearchShortcut(() => {
+		// Wide: the field itself is on screen. Narrow: open the inline field (or, if it
+		// is already open, put the caret back in it).
+		if (focusField(wideInputRef.current)) return true
+		if (open) return focusField(mobileInputRef.current)
+		if (!iconRef.current) return false
+		openCollapsed(iconRef.current.closest('header'))
+		return true
+	})
 
 	function handleChange(next: string) {
 		setText(next)
@@ -89,26 +110,15 @@ export function PageSearchInput({
 
 	return (
 		<>
-			<div className={cn('hidden w-56 shrink-0 xl:flex', className)}>{field()}</div>
+			<div className={cn('hidden w-56 shrink-0 xl:flex', className)}>{field(wideInputRef)}</div>
 			<Button
 				type="button"
 				variant="ghost"
 				size="icon"
 				aria-label={label}
 				title={label}
-				onClick={(e) => {
-					// The row to take over: the shared header this button sits in.
-					const header = e.currentTarget.closest('header')?.getBoundingClientRect()
-					if (header) {
-						setRow({
-							left: header.left,
-							top: header.top,
-							width: header.width,
-							height: header.height,
-						})
-					}
-					setOpen(true)
-				}}
+				ref={iconRef}
+				onClick={(e) => openCollapsed(e.currentTarget.closest('header'))}
 				className={cn(
 					'relative size-[30px] shrink-0 rounded-lg text-muted-foreground xl:hidden',
 					text && 'text-foreground',

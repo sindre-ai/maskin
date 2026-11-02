@@ -533,49 +533,20 @@ describe('launcher states', () => {
 })
 
 describe('⌘F', () => {
-	const press = () => {
-		const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true })
-		document.dispatchEvent(event)
-		return event
-	}
-
-	beforeEach(() => {
-		openRef.current = false
-	})
-
-	it('is left to the browser everywhere except Search and Marketplace', () => {
-		pathnameRef.current = '/ws-1/objects'
-		renderLauncher()
-		expect(press().defaultPrevented).toBe(false)
-	})
-
-	it('focuses the page field on Search', () => {
-		pathnameRef.current = '/ws-1/search'
-		renderLauncher()
-		const input = document.createElement('input')
-		input.setAttribute('data-search-field', 'page')
-		document.body.append(input)
-
-		expect(press().defaultPrevented).toBe(true)
-		expect(input).toHaveFocus()
-		input.remove()
-	})
-
-	it('focuses the catalog filter on Marketplace', () => {
-		pathnameRef.current = '/ws-1/marketplace'
-		renderLauncher()
-		const input = document.createElement('input')
-		input.setAttribute('aria-label', 'Filter marketplace')
-		document.body.append(input)
-
-		expect(press().defaultPrevented).toBe(true)
-		expect(input).toHaveFocus()
-		input.remove()
-	})
-
-	it('leaves the key alone on Search when the page field is not there', () => {
-		pathnameRef.current = '/ws-1/search'
-		renderLauncher()
-		expect(press().defaultPrevented).toBe(false)
+	// The palette does not handle ⌘F: the pages register their own search with
+	// lib/page-search-shortcut, and the shell owns the one listener.
+	it('is never taken by the launcher', () => {
+		for (const path of ['/ws-1/objects', '/ws-1/search', '/ws-1/marketplace']) {
+			pathnameRef.current = path
+			const { unmount } = renderLauncher()
+			const input = document.createElement('input')
+			input.setAttribute('data-search-field', 'page')
+			document.body.append(input)
+			const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true })
+			document.dispatchEvent(event)
+			expect(event.defaultPrevented).toBe(false)
+			input.remove()
+			unmount()
+		}
 	})
 })

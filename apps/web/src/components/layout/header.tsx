@@ -1,4 +1,3 @@
-import { NavSearch } from '@/components/layout/nav-search'
 import { NewMenu } from '@/components/shared/new-menu'
 import {
 	Breadcrumb,
@@ -320,7 +319,6 @@ export function Header() {
 			    heading or breadcrumb renders. */}
 			<div className="ml-auto flex shrink-0 items-center gap-2">
 				{leadingActions}
-				<NavSearch />
 				{actions}
 				<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
 				<NewMenu

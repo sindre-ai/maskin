@@ -235,7 +235,7 @@ describe('Header', () => {
 		expect(screen.queryByRole('heading', { name: 'Things' })).not.toBeInTheDocument()
 	})
 
-	it('puts titleTabs beside the heading, ahead of the search and New cluster', () => {
+	it('puts titleTabs beside the heading, ahead of the New cluster', () => {
 		vi.mocked(usePageHeader).mockReturnValue({
 			actions: null,
 			titleTabs: <button type="button">All</button>,
@@ -257,12 +257,12 @@ describe('Header', () => {
 
 		render(<Header />)
 		const tab = screen.getByRole('button', { name: 'All' })
-		const search = screen.getByRole('button', { name: /search or run a command/i })
+		const newButton = screen.getByRole('button', { name: /^New/ })
 
 		// The mockup's left cluster is `<h1>` → tabs → spacer, so the tabs come
-		// before the search field. Anything published as `actions` instead lands
+		// before the New control. Anything published as `actions` instead lands
 		// past it, in the right-hand cluster.
-		expect(tab.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(tab.compareDocumentPosition(newButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 
 	it('only shows the hamburger SidebarTrigger below md', () => {
@@ -402,14 +402,11 @@ describe('Header', () => {
 		expect(slots.length).toBeGreaterThan(0)
 	})
 
-	it('opens the command palette from the header search button', async () => {
-		setPaletteOpen.mockClear()
-		const user = userEvent.setup()
+	it('has no workspace search button — the palette opens from the keyboard', () => {
 		render(<Header />)
 
-		await user.click(screen.getByRole('button', { name: 'Search or run a command' }))
-
-		expect(setPaletteOpen).toHaveBeenCalledWith(true)
+		expect(screen.queryByRole('button', { name: 'Search or run a command' })).toBeNull()
+		expect(screen.queryByRole('button', { name: 'Search the workspace' })).toBeNull()
 	})
 
 	// For You used to render its own create affordance, so the nav suppressed the
@@ -481,9 +478,7 @@ describe('Header leadingActions', () => {
 		render(<Header />)
 
 		const lead = screen.getByRole('button', { name: 'Take over' })
-		const search = screen.getByRole('button', { name: 'Search or run a command' })
 		const after = screen.getByRole('button', { name: 'After search' })
-		expect(lead.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-		expect(search.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(lead.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 })

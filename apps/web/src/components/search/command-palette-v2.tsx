@@ -45,7 +45,7 @@ import { rowSub, rowTitle } from '@/lib/search/row-display'
 import { serializeSearchState, urlStateFromParts } from '@/lib/search/url-state'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SearchResultRow } from '@maskin/shared'
-import { useNavigate, useRouterState } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import {
 	Bot,
 	Check,
@@ -161,27 +161,10 @@ function matchesRow(
 	)
 }
 
-/**
- * ⌘F opens the browser's find everywhere except Search and Marketplace, where the
- * page has a field of its own and the key focuses it. Returns true if it took the key.
- */
-function focusFindTarget(workspaceId: string, pathname: string): boolean {
-	const selector =
-		pathname === `/${workspaceId}/search`
-			? '[data-search-field="page"]'
-			: pathname.startsWith(`/${workspaceId}/marketplace`)
-				? 'input[aria-label="Filter marketplace"]'
-				: null
-	const target = selector ? document.querySelector<HTMLInputElement>(selector) : null
-	target?.focus()
-	return Boolean(target)
-}
-
 export function CommandPaletteV2() {
 	const { open, setOpen } = useCommandPalette()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
-	const pathname = useRouterState({ select: (s) => s.location.pathname })
 	const objectTypes = useAvailableObjectTypes()
 	const typeLabel = useObjectTypeLabel()
 	const triggerRef = useRef<HTMLElement | null>(null)
@@ -306,9 +289,6 @@ export function CommandPaletteV2() {
 			if (e.key === 'k') {
 				e.preventDefault()
 				setOpen((o) => !o)
-			} else if (e.key === 'f') {
-				// Only Search and Marketplace take ⌘F. Anywhere else the browser's find works.
-				if (!open && focusFindTarget(workspaceId, pathname)) e.preventDefault()
 			} else if (e.key === 'j') {
 				e.preventDefault()
 				openChat()
@@ -316,7 +296,7 @@ export function CommandPaletteV2() {
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [open, openChat, pathname, setOpen, workspaceId])
+	}, [openChat, setOpen])
 
 	return (
 		<>

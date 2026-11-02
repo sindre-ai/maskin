@@ -134,8 +134,12 @@ test.describe('App shell', () => {
 		})
 		await page.goto(`/${account.workspaceId}`)
 
-		// NavSearch is one button that opens the launcher (layout/nav-search.tsx).
-		await page.getByRole('button', { name: 'Search or run a command' }).click()
+		// The header has no search button; the launcher opens from the keyboard.
+		await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible({
+			timeout: 20_000,
+		})
+		await page.keyboard.press('ControlOrMeta+k')
 		const palette = page.getByRole('dialog', { name: 'Command palette' })
 		await expect(palette).toBeVisible()
 

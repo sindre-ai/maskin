@@ -10,7 +10,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  */
 
 async function openPalette(page: Page) {
-	await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible({
+	await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible({
 		timeout: 20_000,
 	})
 	await page.keyboard.press('ControlOrMeta+k')

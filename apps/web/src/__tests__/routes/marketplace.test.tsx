@@ -1,3 +1,4 @@
+import { usePageSearchShortcutListener } from '@/lib/page-search-shortcut'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -268,7 +269,16 @@ describe('MarketplacePage', () => {
 			isLoading: false,
 			isError: false,
 		})
-		render(<MarketplacePage />)
+		function Shell() {
+			usePageSearchShortcutListener()
+			return null
+		}
+		render(
+			<>
+				<Shell />
+				<MarketplacePage />
+			</>,
+		)
 		const user = userEvent.setup()
 		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
 		expect(input).not.toHaveFocus()

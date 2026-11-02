@@ -22,6 +22,7 @@ import { type SearchEntry, trackCommandPaletteOpened } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
+import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { getRecentObjectIds, pushRecentObject } from '@/lib/search-recents'
 import {
 	searchEntityType,
@@ -98,6 +99,7 @@ export function SearchPageV2() {
 	const online = useOnlineStatus()
 	const objectTypes = useAvailableObjectTypes()
 	const inputRef = useRef<HTMLInputElement>(null)
+	usePageSearchShortcut(() => focusField(inputRef.current))
 	const listboxId = useId()
 
 	// The words and filters this page knows about, from real workspace types.

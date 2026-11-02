@@ -40,11 +40,11 @@ const chatGroupNote = 'Everyone sees everything'
 // Shown instead of the paragraph under the heading while nothing is running,
 // when there is no work yet for that paragraph to describe.
 const quietIntro =
-	'The Chief of Staff is your first point of contact. It sets up agents and loops and keeps the work moving.'
+	'The Chief of Staff is your first point of contact. It sets up agents and flows and keeps the work moving.'
 const starterMessages = [
 	'Help me set up my first agent',
 	'What should I do first in this workspace?',
-	'Explain how agents, loops and tasks fit together',
+	'Explain how agents, flows and tasks fit together',
 ]
 
 interface NewChatSearch {

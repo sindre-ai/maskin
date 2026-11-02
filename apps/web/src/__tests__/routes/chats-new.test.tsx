@@ -185,7 +185,7 @@ describe('New chat', () => {
 				screen.getByRole('button', { name: 'What should I do first in this workspace?' }),
 			).toBeInTheDocument()
 			expect(
-				screen.getByRole('button', { name: 'Explain how agents, loops and tasks fit together' }),
+				screen.getByRole('button', { name: 'Explain how agents, flows and tasks fit together' }),
 			).toBeInTheDocument()
 			expect(screen.queryByText(/Your agents are already inside the work/)).not.toBeInTheDocument()
 		})

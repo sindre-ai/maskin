@@ -152,13 +152,14 @@ test.describe('Chats v2 — layout', () => {
 		await page.goto(`/${account.workspaceId}/chats`)
 		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
 
-		// Search and New share the nav row: wrapping drops New to a second line,
-		// which is what this asserts against.
-		const search = await page.getByRole('button', { name: 'Search or run a command' }).boundingBox()
+		// The title and New share the nav row: wrapping drops New to a second line,
+		// which is what this asserts against. The header has no search button.
+		await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
+		const title = await page.getByRole('heading', { name: 'Chats', exact: true }).boundingBox()
 		const newButton = await page.getByRole('button', { name: 'New chat' }).first().boundingBox()
-		expect(search).not.toBeNull()
+		expect(title).not.toBeNull()
 		expect(newButton).not.toBeNull()
-		expect(Math.abs((newButton?.y ?? 0) - (search?.y ?? 0))).toBeLessThan(16)
+		expect(Math.abs((newButton?.y ?? 0) - (title?.y ?? 0))).toBeLessThan(24)
 
 		// The list's filter pill stays named for assistive tech and inside the viewport.
 		const filter = page.getByRole('button', { name: /^Filter conversations/ })

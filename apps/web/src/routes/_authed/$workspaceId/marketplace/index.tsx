@@ -8,7 +8,6 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useFindShortcut } from '@/hooks/use-find-shortcut'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
 import type {
@@ -20,6 +19,7 @@ import type {
 	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { api } from '@/lib/api'
+import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
@@ -63,7 +63,7 @@ function MarketplaceRoute() {
 	const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
 	const [query, setQuery] = useState('')
 	const filterInputRef = useRef<HTMLInputElement>(null)
-	useFindShortcut(filterInputRef)
+	usePageSearchShortcut(() => focusField(filterInputRef.current))
 	const trimmedQuery = query.trim()
 
 	const { data, isLoading, isError, error, refetch } = useMarketplaceLoops()

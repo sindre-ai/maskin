@@ -33,7 +33,7 @@ export function AgentRunPauseButton({
 }) {
 	// Starting and pausing an agent are writes; a viewer sees the button switched off.
 	const canWrite = useCanWrite()
-	// The nav row is built on a 30px scale (NavSearch's size-[30px], NewMenu's
+	// The nav row is built on a 30px scale (NewMenu's
 	// h-[30px]) rather than shadcn's sm (h-9/36px), so a nav-density button opts
 	// out of the sm height entirely. Everywhere else keeps the 44px touch floor.
 	const className = cn(

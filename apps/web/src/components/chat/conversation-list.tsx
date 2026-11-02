@@ -6,6 +6,7 @@ import { useConversationsInfinite, useUpdateConversationMe } from '@/hooks/use-c
 import { type ConversationListItemResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
+import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
 import { ChevronDown, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -28,12 +29,15 @@ export function ConversationListHeader({
 	query: string
 	onQueryChange: (next: string) => void
 }) {
+	const searchRef = useRef<HTMLInputElement>(null)
+	usePageSearchShortcut(() => focusField(searchRef.current))
 	return (
 		<div className="flex flex-none flex-col gap-3 px-4 pt-3 pb-3 lg:pl-7">
 			<div className="flex flex-col items-start gap-2">
 				<label className="flex h-[34px] w-full min-w-0 items-center gap-2 rounded-full bg-secondary max-md:min-h-11 pointer-coarse:min-h-11 px-3 text-muted-foreground">
 					<Search size={14} aria-hidden className="shrink-0" />
 					<input
+						ref={searchRef}
 						type="search"
 						value={query}
 						onChange={(e) => onQueryChange(e.target.value)}

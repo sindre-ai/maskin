@@ -24,6 +24,7 @@ import { setLastWorkspaceId } from '@/lib/last-workspace'
 import { migrateLegacySidebarState } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
+import { usePageSearchShortcutListener } from '@/lib/page-search-shortcut'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
 	identifyForWorkspace,
@@ -47,6 +48,8 @@ export const Route = createFileRoute('/_authed/$workspaceId')({
 function WorkspaceLayout() {
 	const { workspaceId } = Route.useParams()
 	const { data: workspaces } = useWorkspaces()
+	// One Cmd/Ctrl+F listener for every page that owns a search field.
+	usePageSearchShortcutListener()
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)

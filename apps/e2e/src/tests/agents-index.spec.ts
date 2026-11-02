@@ -283,8 +283,8 @@ test.describe('Agents index', () => {
 			await page.goto(`/${account.workspaceId}/agents`)
 			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({ timeout: 10_000 })
 
-			// The workspace search and the one New chat stay on the page.
-			await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible()
+			// The header has no workspace search button; the one New chat stays on the page.
+			await expect(page.getByRole('button', { name: 'Search or run a command' })).toHaveCount(0)
 			await expect(page.getByRole('button', { name: /^New/ }).first()).toBeVisible()
 			// The page's own search: a field from xl up, an icon below it.
 			if (vp.width < 1280) {
@@ -309,7 +309,7 @@ test.describe('Agents index', () => {
 				await field.fill('brian')
 				await expect(page.getByRole('link', { name: /Ada Atom/ })).toHaveCount(0)
 				await page.getByRole('button', { name: 'Close search' }).click()
-				await expect(page.getByRole('button', { name: 'Search or run a command' })).toBeVisible()
+				await expect(page.getByRole('button', { name: 'Search agents' })).toBeVisible()
 				// The filter outlives the field.
 				await expect(page.getByRole('link', { name: /Brian Bot/ })).toBeVisible()
 			}
