@@ -369,6 +369,8 @@ export const sessionResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	// Short failure line (200 characters at most), set only when status is failed.
+	failure_reason: z.string().nullable().optional(),
 })
 
 // PATCH /sessions/:id answer when notify_on_complete was requested: what happened

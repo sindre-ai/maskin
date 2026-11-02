@@ -10838,6 +10838,301 @@
 				}
 			}
 		},
+		"/api/actors/{id}/enable": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Actors"
+				],
+				"summary": "Enable a paused agent without starting a session",
+				"description": "Clears the pause so chat messages, @mentions and triggers reach the agent again. Unlike /run it never starts or resumes a session: a paused session stays paused. An agent that is not paused is returned unchanged.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Agent enabled",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"type": {
+											"type": "string"
+										},
+										"name": {
+											"type": "string"
+										},
+										"email": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"description": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"system_prompt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"tools": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"memory": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"llm_provider": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"llm_config": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"isSystem": {
+											"type": "boolean"
+										},
+										"agentState": {
+											"type": "string",
+											"enum": [
+												"idle",
+												"running",
+												"paused",
+												"failed"
+											]
+										},
+										"agentStateUpdatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"installedLoopId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"voice_enabled": {
+											"type": "boolean"
+										},
+										"skills": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"name": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"name"
+												]
+											}
+										},
+										"role": {
+											"type": [
+												"string",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"id",
+										"type",
+										"name",
+										"email",
+										"description",
+										"system_prompt",
+										"tools",
+										"memory",
+										"llm_provider",
+										"llm_config",
+										"isSystem",
+										"agentState",
+										"agentStateUpdatedAt",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Cannot enable agent",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Actor not found in workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/auth/login": {
 			"post": {
 				"tags": [
@@ -45557,6 +45852,12 @@
 												"string",
 												"null"
 											]
+										},
+										"failure_reason": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -45880,6 +46181,12 @@
 															"string",
 															"null"
 														]
+													},
+													"failure_reason": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
@@ -45938,13 +46245,20 @@
 															"null"
 														],
 														"format": "date-time"
+													},
+													"failure_reason": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
 													"id",
 													"title",
 													"status",
-													"updated_at"
+													"updated_at",
+													"failure_reason"
 												]
 											}
 										}
@@ -46379,6 +46693,12 @@
 												"null"
 											]
 										},
+										"failure_reason": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"logs": {
 											"type": "array",
 											"items": {
@@ -46706,6 +47026,12 @@
 												"null"
 											]
 										},
+										"failure_reason": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
 										"notify_on_complete": {
 											"type": "string",
 											"enum": [
@@ -46983,6 +47309,12 @@
 											]
 										},
 										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"failure_reason": {
 											"type": [
 												"string",
 												"null"
@@ -47315,6 +47647,12 @@
 												"string",
 												"null"
 											]
+										},
+										"failure_reason": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -47639,6 +47977,12 @@
 											]
 										},
 										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"failure_reason": {
 											"type": [
 												"string",
 												"null"
