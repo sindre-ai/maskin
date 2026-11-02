@@ -307,6 +307,15 @@ const startAgentInputSchema = z.object({
 		),
 })
 
+/** The `sort` values of list_objects. `relevance` needs `q`. */
+export const LIST_OBJECTS_SORTS = [
+	'created_at_desc',
+	'created_at_asc',
+	'updated_at_desc',
+	'updated_at_asc',
+	'relevance',
+] as const
+
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
 	get_started: {
@@ -495,14 +504,26 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List objects in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date, newest first, unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. This applies uniformly to the default creation-date order and to `sort`-overridden updated-at order.',
+			'List or search objects in the workspace, in one call. Filter by type, status (one value or a list), driver, last-updated window, or custom metadata fields. Without `q`, rows come ordered by creation date, newest first, unless `sort` says otherwise. With `q`, it is a text search on title and content, ranked by match quality: the ranking decides the order, and `sort` is accepted but does not reorder ranked results. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Default 25, max 100. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page; keep the same filters and `q`. The response page block carries `has_more` and `total` (`total` is null when `q` is set). `detail: "concise"` returns id, type, title, status, driver, updatedAt and url per row, with no content.',
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
+			q: z
+				.string()
+				.min(1)
+				.optional()
+				.describe(
+					'Search text, matched against title and content (case-insensitive). When set, results are ranked by match quality.',
+				),
 			type: z
 				.string()
 				.describe('Object type. Call get_workspace_schema to see the live list.')
 				.optional(),
-			status: z.string().optional(),
+			status: z
+				.union([z.string(), z.array(z.string())])
+				.optional()
+				.describe(
+					'One status, or a list of statuses meaning "any of these", e.g. ["todo", "in_progress"].',
+				),
 			driver: z
 				.string()
 				.uuid()
@@ -523,10 +544,16 @@ export const tools = {
 					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
 				),
 			sort: z
-				.enum(['updated_at_asc', 'updated_at_desc'])
+				.enum(LIST_OBJECTS_SORTS)
 				.optional()
 				.describe(
-					'Sort by `updated_at`. Use `updated_at_asc` to walk oldest-stalled-first; `updated_at_desc` for most-recently-touched first. Omit to keep the default `createdAt desc` order.',
+					'Order of the rows. `created_at_desc` (default without `q`), `created_at_asc`, `updated_at_desc`, `updated_at_asc`; `relevance` is the default with `q` and is an error without it.',
+				),
+			detail: z
+				.enum(['concise', 'full'])
+				.optional()
+				.describe(
+					'`full` (default) returns every field of each row. `concise` returns id, type, title, status, driver, updatedAt and url only, no content.',
 				),
 			limit: z
 				.number()
@@ -534,12 +561,12 @@ export const tools = {
 				.min(1)
 				.max(100)
 				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
+				.describe('Max rows to return. Default 25, max 100.'),
 			cursor: z
 				.string()
 				.optional()
 				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted (or, under `sort`-overridden order, updated) after that first call cannot leak into the stream.',
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted (or, under an updated-at order, updated) after that first call cannot leak into the stream. Works for `q` searches too.',
 				),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
@@ -551,8 +578,7 @@ export const tools = {
 		}),
 	},
 	search_objects: {
-		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via `offset` (default page: 25) — search results are ranked by match quality, which is incompatible with cursor pagination, so there is no `cursor` param here (unlike list_objects). Every page of a multi-page walk is still pinned to the same snapshot, so inserts between calls cannot shift results across pages.',
+		description: 'Deprecated, use list_objects with q.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -2784,6 +2810,119 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
 			relay_port: z.number().int().min(1).max(65535),
+		}),
+	},
+} as const
+
+// list_objects and search_objects as they were before the list contract (wave 2, T3):
+// the definitions MASKIN_MCP_LIST_CONTRACT=off registers instead of the ones above, so a
+// rollback restores tools/list as well as the handlers. Delete with the switch.
+export const legacyListTools = {
+	list_objects: {
+		description:
+			'List objects in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date, newest first, unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. This applies uniformly to the default creation-date order and to `sort`-overridden updated-at order.',
+		inputSchema: z.object({
+			workspace_id: requiredWorkspaceId,
+			type: z
+				.string()
+				.describe('Object type. Call get_workspace_schema to see the live list.')
+				.optional(),
+			status: z.string().optional(),
+			driver: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to objects with this driver actor UUID'),
+			updated_before: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at < updated_before` (the bound itself is excluded). Use to scan for stalled work, e.g. `updated_before = now - 6h`.',
+				),
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
+				),
+			sort: z
+				.enum(['updated_at_asc', 'updated_at_desc'])
+				.optional()
+				.describe(
+					'Sort by `updated_at`. Use `updated_at_asc` to walk oldest-stalled-first; `updated_at_desc` for most-recently-touched first. Omit to keep the default `createdAt desc` order.',
+				),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted (or, under `sort`-overridden order, updated) after that first call cannot leak into the stream.',
+				),
+			metadata_eq: metadataEqSchema,
+			include_archived: z
+				.boolean()
+				.default(false)
+				.describe(
+					'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used when a caller deliberately wants to see closed-out work.',
+				),
+		}),
+	},
+	search_objects: {
+		description:
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via `offset` (default page: 25) — search results are ranked by match quality, which is incompatible with cursor pagination, so there is no `cursor` param here (unlike list_objects). Every page of a multi-page walk is still pinned to the same snapshot, so inserts between calls cannot shift results across pages.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			q: z
+				.string()
+				.min(1)
+				.describe('Search query — matches against title and content (case-insensitive)'),
+			type: z
+				.string()
+				.describe(
+					'Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema to see the live list.',
+				)
+				.optional(),
+			status: z.string().optional(),
+			driver_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Filter to objects with this driver actor UUID'),
+			updated_after: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded).',
+				),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe('Rows to skip before the page starts. Defaults to 0.'),
+			metadata_eq: metadataEqSchema,
+			include_archived: z
+				.boolean()
+				.default(false)
+				.describe(
+					'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used when a caller deliberately wants to see closed-out work.',
+				),
 		}),
 	},
 } as const

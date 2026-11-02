@@ -245,10 +245,12 @@
 		"list_notifications": ["kind", "limit", "offset", "status", "type", "workspace_id"],
 		"list_objects": [
 			"cursor",
+			"detail",
 			"driver",
 			"include_archived",
 			"limit",
 			"metadata_eq",
+			"q",
 			"sort",
 			"status",
 			"type",

@@ -27,4 +27,11 @@ export const REMOVAL_LEDGER: readonly RemovalEntry[] = [
 		decision:
 			'Removed in PR 1986. Restored as a listed alias of create_session (CTO decision D5): live in tools/list, see tool-aliases.ts. Not removed on a zero count alone; earliest removal is late January 2027, after another cross-workspace prompt sweep.',
 	},
+	{
+		tool: 'search_objects',
+		removed: '2026-11-02',
+		sweepDate: '2027-02-01',
+		decision:
+			'Folded into list_objects by the list contract (wave 2, T3), which takes q and pages a ranked search behind its one cursor. Kept as a listed alias of list_objects: live in tools/list, see tool-aliases.ts. Maps query to q, driver_id to driver and offset to the cursor offset. Earliest removal 2027-02-01, and only after a clean stored-prompt sweep. Rollback: MASKIN_MCP_LIST_CONTRACT=off restores the old tool (needs a restart).',
+	},
 ]

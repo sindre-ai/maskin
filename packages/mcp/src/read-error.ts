@@ -139,6 +139,7 @@ export function classifyReadError(err: unknown): ReadErrorKind {
 	// hitting the API — treat them as invalid-param so the caller gets pointed
 	// at the same tool with a corrected example rather than a search fallback.
 	if (/^No workspace specified/i.test(message)) return 'invalid_param'
+	if (/^Invalid sort/i.test(message)) return 'invalid_param'
 	if (/^Not authenticated/i.test(message)) return 'permission'
 	if (/not found/i.test(message)) return 'not_found'
 	return 'unknown'

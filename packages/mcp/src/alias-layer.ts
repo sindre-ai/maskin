@@ -94,18 +94,21 @@ export function needsNormalise(tool: string): boolean {
 }
 
 /**
- * Wraps a tool's raw input shape as z.preprocess(normalise, z.object(shape)).
- * The MCP SDK validates arguments against this schema before our handler runs,
- * so the old spellings are gone by the time anything else sees the call.
+ * Wraps a tool's input as z.preprocess(normalise, schema). The input is either a raw shape (wrapped
+ * in z.object) or a schema object, such as list_triggers' strict one, which is wrapped as it is so
+ * its strictness survives. Either way the rename runs first: the MCP SDK validates arguments
+ * against this schema before our handler runs, so the old spellings are gone by the time anything
+ * else, the strict unknown-parameter check included, sees the call.
  *
- * The canonical shape is also set on the wrapper. The SDK builds tools/list
- * from a schema's .shape, and a bare preprocess wrapper has none, which would
- * list every wrapped tool with an empty parameter list.
+ * The canonical shape is also set on the wrapper. The SDK builds tools/list from a schema's .shape,
+ * and a bare preprocess wrapper has none, which would list every wrapped tool with an empty
+ * parameter list.
  */
 export function wrapInputSchema(
-	shape: z.ZodRawShape,
+	input: z.ZodRawShape | z.ZodObject<z.ZodRawShape>,
 	normalise: (raw: unknown) => unknown,
 ): z.ZodTypeAny {
-	const wrapped = z.preprocess(normalise, z.object(shape))
-	return Object.assign(wrapped, { shape })
+	const schema = input instanceof z.ZodType ? input : z.object(input)
+	const wrapped = z.preprocess(normalise, schema)
+	return Object.assign(wrapped, { shape: input instanceof z.ZodType ? input.shape : input })
 }
