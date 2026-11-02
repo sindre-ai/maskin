@@ -188,22 +188,6 @@ app.openapi(recordRoute, (async (c) => {
 			toolAlias: body.tool_alias ?? null,
 			agentActorId: actorId,
 		})
-	} else if (body.event_type === 'alias_use') {
-		// Old-name use. Awaited, unlike the misfire branch: Postgres is the source
-		// of truth for the removal check (PostHog has been dark since 4 Oct), so
-		// the row is written before the sink is answered. `recordMcpAliasUse`
-		// never throws. The actor is the authenticated caller's, never a payload
-		// field — the schema has no slot for one, so it cannot be spoofed.
-		await recordMcpAliasUse(db, workspaceId, {
-			toolName: body.tool_name,
-			sessionId: body.session_id ?? null,
-			transport: body.transport ?? null,
-			renames: body.renames,
-			bothSent: body.both_sent,
-			droppedKeys: body.dropped_keys ?? [],
-			toolAlias: body.tool_alias ?? null,
-			agentActorId: actorId,
-		})
 	} else {
 		// tool_call_response_size — PostHog-only fan-out for the MCP
 		// response-scoping bet's First test — 5-day instrumentation window
