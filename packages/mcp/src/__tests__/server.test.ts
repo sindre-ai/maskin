@@ -4186,8 +4186,8 @@ describe('tool handlers', () => {
 
 				const call = vi.mocked(fetch).mock.calls[0]
 				const calledUrl = call[0] as string
-				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-default-123/skills?')
-				expect(calledUrl).toContain('snapshot_at=')
+				// No limit on the wire: the route returns every skill and the page is cut here.
+				expect(calledUrl).toBe('http://localhost:3000/api/workspaces/ws-default-123/skills')
 				expect(call[1]).toEqual(
 					expect.objectContaining({
 						method: 'GET',
@@ -4199,8 +4199,38 @@ describe('tool handlers', () => {
 				)
 
 				const parsed = JSON.parse(result.content[0].text)
-				expect(parsed).toHaveLength(1)
-				expect(parsed[0].name).toBe('bug-fix')
+				expect(parsed.skills).toHaveLength(1)
+				expect(parsed.skills[0].name).toBe('bug-fix')
+				expect(parsed.page).toEqual({ limit: 25, returned: 1, total: 1, has_more: false })
+			})
+
+			it('filters by q on the name or the description and counts only the matches', async () => {
+				mockFetchSuccess([
+					{
+						id: 's1',
+						name: 'bug-fix',
+						description: 'Fix a bug',
+						createdAt: '2026-01-01T00:00:00.000Z',
+					},
+					{
+						id: 's2',
+						name: 'release',
+						description: 'Cut a BUG-free release',
+						createdAt: '2026-01-02T00:00:00.000Z',
+					},
+					{
+						id: 's3',
+						name: 'voice',
+						description: 'Write copy',
+						createdAt: '2026-01-03T00:00:00.000Z',
+					},
+				])
+				const handler = getHandler('list_workspace_skills')
+				const result = (await handler({ q: 'BUG' })) as { content: Array<{ text: string }> }
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.skills.map((r: { id: string }) => r.id)).toEqual(['s2', 's1'])
+				expect(parsed.page).toEqual({ limit: 25, returned: 2, total: 2, has_more: false })
 			})
 
 			it('uses workspace_id from args over default', async () => {
@@ -4210,7 +4240,7 @@ describe('tool handlers', () => {
 
 				const call = vi.mocked(fetch).mock.calls[0]
 				const calledUrl = call[0] as string
-				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-custom/skills?')
+				expect(calledUrl).toBe('http://localhost:3000/api/workspaces/ws-custom/skills')
 				expect(call[1]).toEqual(
 					expect.objectContaining({
 						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
@@ -8186,8 +8216,12 @@ describe('url field injection', () => {
 			const handler = getUrlHandler('list_triggers')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
-			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-2')
+			const parsed = JSON.parse(result.content[0].text) as {
+				triggers: Array<{ id: string; url: string }>
+			}
+			expect(parsed.triggers[0].url).toBe(
+				'https://maskin.example.com/ws-default-123/triggers/trig-2',
+			)
 		})
 	})
 
