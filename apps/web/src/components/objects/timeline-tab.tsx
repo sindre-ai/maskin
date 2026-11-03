@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import { useSession } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import { trackMarkReadClicked } from '@/lib/analytics'
@@ -294,9 +295,12 @@ export function TimelineTab({
 	object,
 	loopUnread,
 	additionalEvents,
+	focusCommentId,
 }: {
 	object: ObjectResponse
 	loopUnread?: LoopUnreadOptions
+	/** Event id from `?comment=`: scroll to that comment (or reply) and highlight it. */
+	focusCommentId?: number
 	/** Extra events to merge into the stream — used by the loop detail page to
 	 * fold in agent-work events (session lifecycle, trigger fires) that don't
 	 * carry `entityId = object.id` and so aren't returned by the object graph.
@@ -548,6 +552,14 @@ export function TimelineTab({
 		return null
 	}, [loopUnread, entries])
 
+	// Rows mount once the graph resolves, so `events` is the trigger that
+	// re-runs the jump when a cold load lands on `?comment=`.
+	const jumpAnnouncement = useOriginDeepLinkScroll({
+		messageId: focusCommentId ?? null,
+		dataTrigger: events,
+		kind: 'comment',
+	})
+
 	const containerRef = useRef<HTMLDivElement>(null)
 	const [jumpTick, setJumpTick] = useState(0)
 	useEffect(() => {
@@ -633,6 +645,7 @@ export function TimelineTab({
 									workspaceId={workspaceId}
 									objectId={object.id}
 									isUnread={unreadEventIds.has(entry.event.id)}
+									focusEventId={focusCommentId}
 								/>
 							) : (
 								<ActivityComment
@@ -643,6 +656,7 @@ export function TimelineTab({
 									isUnread={unreadEventIds.has(entry.event.id)}
 									variant="bubble"
 									collapsibleReplies
+									focusEventId={focusCommentId}
 								/>
 							)
 						})()
@@ -710,6 +724,7 @@ export function TimelineTab({
 
 	return (
 		<div className="w-full min-w-0">
+			<output className="sr-only">{jumpAnnouncement}</output>
 			{/*
 			 * D8 a11y — a stable, visually-hidden `role="status"` region above
 			 * the stream. Screen readers announce its text as soon as the

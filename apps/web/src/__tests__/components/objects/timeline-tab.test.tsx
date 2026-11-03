@@ -755,6 +755,14 @@ describe('TimelineTab', () => {
 	// consumer of TimelineTab) never sets the prop, so these behaviours are
 	// scoped to the loop-detail surface by construction.
 	describe('loop unread variant', () => {
+		// The timeline also renders a jump-to-comment status output, so pick the
+		// unread host by the attributes only it carries.
+		const unreadRegion = () => {
+			const region = screen.getAllByRole('status').find((el) => el.hasAttribute('aria-atomic'))
+			if (!region) throw new Error('unread aria-live region not found')
+			return region
+		}
+
 		beforeEach(() => {
 			vi.mocked(trackMarkReadClicked).mockReset()
 			markReadMutate.mockReset()
@@ -853,7 +861,7 @@ describe('TimelineTab', () => {
 				wrapper: createWorkspaceWrapper(),
 			})
 
-			const region = screen.getByRole('status')
+			const region = unreadRegion()
 			expect(region).toHaveTextContent('3 unread activity items')
 			// aria-live must live on the host, not the swapped-in content — so
 			// the SR announcement doesn't race the DOM swap when the boundary
@@ -883,7 +891,7 @@ describe('TimelineTab', () => {
 				wrapper: createWorkspaceWrapper(),
 			})
 
-			expect(screen.getByRole('status').textContent).toBe('')
+			expect(unreadRegion().textContent).toBe('')
 		})
 
 		it('fires mark_read_clicked with {loop_id, unread_count} and persists the server read marker on Mark read', async () => {
