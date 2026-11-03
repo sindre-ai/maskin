@@ -38,6 +38,25 @@ watchOS and tvOS have no push/URL entitlements here: the backend's single APNs t
 Failure behaviour: a bad payload, a failed or slow download, or the ~30 s budget expiring all still deliver the notification with whatever was ready (the decision category is set synchronously, the image is best effort).
 Time-sensitive delivery needs the `com.apple.developer.usernotifications.time-sensitive` entitlement on the app and the "Time Sensitive Notifications" capability on App ID `io.maskin.app` (enabled 2026-10). It is in the iOS `Maskin.entitlements`; with automatic signing Xcode refreshes the provisioning profile on the next build. If a signed build fails with "profile doesn't include the time-sensitive entitlement", open Xcode > Settings > Accounts > Download Manual Profiles (or toggle automatic signing) once. Without the entitlement iOS silently treats those pushes as `active`. It is not in `Maskin-macOS.entitlements`: that file is Release-only and restricted, and nothing here needs it on macOS.
 
+## Clear pushes (taking handled notifications off the lock screen)
+A push stays on the lock screen until tapped. When a notification that was pushed leaves `pending` (answered, resolved, dismissed, or updated to anything but pending), or the chat it belongs to is read past its message, the server sends the person's devices a silent push. `ApnsSender.sendClearToActor` and `buildApnsClearPayload` in `apps/dev/src/services/apns.ts` write it, and the app reads exactly these keys:
+
+| Key | Meaning |
+|---|---|
+| headers | `apns-push-type: background`, `apns-priority: 5`, `apns-topic` the bundle id. No alert, no sound, no collapse id |
+| `aps.content-available: 1` | wakes the app in the background |
+| `aps.badge` | the actor's pending count after the change (omitted when unknown) |
+| root `clear.notification_ids` | array of notification ids, at most 20 per push; a longer list is sent as several pushes |
+| root `clear.collapse_key` | optional. The push carried a collapse key (a For You rollup `foryou:<workspaceId>`, or `object:<id>`) instead of the notification id. Remove delivered notifications whose `aps.thread-id` equals it. Sent only when no card behind the key is still pending |
+| root `clear.thread_id` | optional, an `aps.thread-id` to remove; the server does not set it today |
+| root `workspace_id` | the workspace the notifications belong to |
+
+Delivered notifications from our pushes use the notification id as the request identifier unless the push had a collapse key, in which case it is the collapse key (hashed past 64 bytes). So match `notification_ids` on the identifier and `collapse_key` on the thread identifier.
+
+Only pushes the server actually sent are cleared, each once, and only APNs gets a clear (Web Push is a separate task).
+
+Honest limits: iOS may delay or drop a background push, and does not run one after the user force-quits the app. So the app must also sync on foreground (fetch pending notifications, remove delivered ones that are no longer pending, set the badge). The server side keeps what it sent in memory for a day (per server process), so a clear is skipped for a push sent before a restart. Reading a thread (as opposed to the chat) and deleting a notification do not trigger a clear.
+
 ## Notification preferences, timezone, permission timing (client)
 - Settings > Notifications (`NotificationPreferencesSection`) edits `GET/PUT /api/notification-preferences`: Needs you is shown as "Always on" (not a switch; a workspace mute is the only way to quiet it, and even then decisions still arrive without breaking through Focus), Chat replies / Digests / Tips toggles, quiet hours (off by default), the daily briefing and its time, and a mute list of workspace names. Changes are optimistic with rollback and carry an `Idempotency-Key`. The PUT is hand-encoded (`NotificationPreferencesPatch.jsonBody`) because the generated payload cannot send `null`, which is how quiet hours and the timezone are cleared.
 - Timezone: `AppRuntime.syncTimezone()` reads the server value once, and PUTs `TimeZone.current.identifier` only when it differs. It runs at sign-in, every foreground and on `NSSystemTimeZoneDidChange`, never blocks, never shows an error, and simply retries on the next trigger.
