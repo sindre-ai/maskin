@@ -54567,15 +54567,38 @@ public enum Operations {
                 public struct jsonPayload: Codable, Hashable, Sendable {
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/json/content`.
                     public var content: Swift.String
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/json/metadata`.
+                    public struct metadataPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/json/metadata/mentions`.
+                        public var mentions: [Swift.String]?
+                        /// Creates a new `metadataPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - mentions:
+                        public init(mentions: [Swift.String]? = nil) {
+                            self.mentions = mentions
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case mentions
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/json/metadata`.
+                    public var metadata: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Body.jsonPayload.metadataPayload?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
                     ///   - content:
-                    public init(content: Swift.String) {
+                    ///   - metadata:
+                    public init(
+                        content: Swift.String,
+                        metadata: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Body.jsonPayload.metadataPayload? = nil
+                    ) {
                         self.content = content
+                        self.metadata = metadata
                     }
                     public enum CodingKeys: String, CodingKey {
                         case content
+                        case metadata
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/content/application\/json`.
