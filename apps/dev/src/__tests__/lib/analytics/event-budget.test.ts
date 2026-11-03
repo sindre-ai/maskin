@@ -96,6 +96,10 @@ describe('admitPosthogEvent', () => {
 
 		it.each([
 			['agent_session_completed', 0.25],
+			['mcp_tool_call', 0.1],
+			['runtime_session_ended', 0.25],
+			['agent_session_started_with_prompt', 0.25],
+			['mcp_misfire_schema_validation_error', 0.25],
 			['mcp_alias_use', 0.1],
 			['comment_responder_resolved', 0.1],
 			['agent_comment_posted', 0.1],

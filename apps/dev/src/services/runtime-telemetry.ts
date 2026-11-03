@@ -158,6 +158,9 @@ export class RuntimeTelemetry {
 		contextObjectId,
 	}: SessionEndedEvent): void {
 		if (!this.claimSessionEnd(sessionId)) return
+		// Sampled before the ceiling, so a sampled-out end never uses it up.
+		const admission = admitPosthogEvent('runtime_session_ended')
+		if (!admission.send) return
 		if (!this.underDailyCap()) return
 		this.capture({
 			distinctId: sessionId,
@@ -172,6 +175,7 @@ export class RuntimeTelemetry {
 				// cardinality and read to downstream dashboards as "we had
 				// context but chose null" rather than "we never knew".
 				...(contextObjectId ? { context_object_id: contextObjectId } : {}),
+				...(admission.sampleRate ? { sample_rate: admission.sampleRate } : {}),
 			},
 		})
 	}
