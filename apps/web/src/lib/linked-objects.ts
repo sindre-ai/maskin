@@ -46,21 +46,26 @@ export function extractLinkedFileIds(content: string, max = 3): string[] {
 }
 
 /**
- * Whether an object deserves a card in chat and in the drawer: it is something a person acts
- * on, a draft an integration can deliver (it has a `preview`). A contact, a company or a plain
- * task is a reference, and stays a link. Files are decided by type, not here.
+ * Whether an object deserves a card in chat and in the drawer: a draft an integration can
+ * deliver (it has a `preview`), or a task. A task is where an agent puts text for a person to
+ * read and edit (a message to paste, a post, a template), whatever channel it is for and
+ * whether or not any integration can send it, so it is shown as the text itself, not a bare
+ * link. Other objects (a contact, a company, an insight) are references, and stay a link.
+ * Files are decided by type, not here.
  */
-export function hasPreviewCard(object: { preview?: unknown | null } | null | undefined): boolean {
-	return Boolean(object?.preview)
+export function hasPreviewCard(
+	object: { preview?: unknown | null; type?: string } | null | undefined,
+): boolean {
+	return Boolean(object?.preview) || object?.type === 'task'
 }
 
 /**
- * Whether a fetched object gets a card here: it is in this workspace, it is a draft worth acting
- * on (see {@link hasPreviewCard}) and it has text to show. Anything else stays a plain link.
+ * Whether a fetched object gets a card here: it is in this workspace, it is worth a card (see
+ * {@link hasPreviewCard}) and it has text to show. Anything else stays a plain link.
  */
 export function showsObjectCard(
 	object:
-		| { workspaceId: string; content?: string | null; preview?: unknown | null }
+		| { workspaceId: string; content?: string | null; preview?: unknown | null; type?: string }
 		| null
 		| undefined,
 	workspaceId: string,

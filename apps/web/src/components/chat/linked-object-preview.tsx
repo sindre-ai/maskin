@@ -74,18 +74,20 @@ export function LinkedObjectCard({
 	const approve = useApproveObject()
 	const linkedPanel = useLinkedPanel()
 	// A draft is always a full card (its text and Approve are what the person came for), so it
-	// starts open. Any other object starts contracted, showing the header and title; the text and
+	// starts open, and so does a task (its text is what the person came for). Any other object starts contracted, showing the header and title; the text and
 	// the next-phase button appear once the top of the card is clicked. `toggled` is the person's
 	// own choice and wins once made.
 	const [toggled, setToggled] = useState<boolean | null>(null)
-	const expanded = toggled ?? (defaultExpanded || Boolean(object?.preview))
+	const expanded =
+		toggled ?? (defaultExpanded || Boolean(object?.preview) || object?.type === 'task')
 	// A long draft shows about 12 lines until the person asks for all of it. `revealedHash` is the
 	// text they opened in full, so a draft that changes underneath them is clamped again.
 	const [revealedHash, setRevealedHash] = useState<string | null>(null)
 	const textRef = useRef<HTMLDivElement>(null)
 	const revealedAt = useRef(0)
 	const [overflowing, setOverflowing] = useState(false)
-	const draftHash = object?.preview?.content_hash
+	// What the person has seen in full: the draft's hash, or for a task with no preview its text.
+	const draftHash = object?.preview?.content_hash ?? object?.content ?? undefined
 	const clamped = Boolean(draftHash) && draftHash !== revealedHash
 
 	// Whether the text is taller than the clamp. Measured, not counted, because a wrapped
@@ -302,7 +304,7 @@ export function LinkedObjectCard({
 							}}
 						/>
 					</div>
-					{preview && (gated || (overflowing && !clamped)) ? (
+					{gated || (overflowing && !clamped) ? (
 						<div className="px-3 pt-1">
 							<Button
 								type="button"

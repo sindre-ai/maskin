@@ -210,7 +210,7 @@ describe('ObjectReferenceChip plate', () => {
 
 	it('gives each built-in type its icon and a custom type the neutral tag', () => {
 		const iconOf = (type: string) => {
-			useObject.mockReturnValue({ data: objectRow({ type }), isLoading: false })
+			useObject.mockReturnValue({ data: objectRow({ type, content: null }), isLoading: false })
 			const { unmount } = renderChip()
 			const classes = screen.getByRole('link').querySelector('svg')?.getAttribute('class') ?? ''
 			unmount()

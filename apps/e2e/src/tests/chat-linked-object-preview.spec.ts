@@ -61,6 +61,42 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 			}
 		})
 
+		test(`a task with no kind shows its text, and nothing to approve, at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			// No integration can send this (a Messenger note), so it has no `metadata.kind`.
+			// It is still text a person wants to read and edit where the agent mentioned it.
+			const task = await account.api.createObject(account.workspaceId, {
+				type: 'task',
+				title: 'Message to Mark about testing',
+				status: 'todo',
+				content: NOTE,
+			})
+			const conversation = await chatWithAgentMessage(
+				account,
+				(ws) => `Here is the [message](/${ws}/objects/${task.id}) for Mark.`,
+			)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread).toBeVisible({ timeout: 10_000 })
+			await expect(thread.getByText('Message to Mark about testing', { exact: true })).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByText(NOTE)).toBeVisible()
+			await expect(thread.getByRole('link', { name: 'Open' })).toBeVisible()
+			await expect(thread.getByRole('button', { name: /Approve/ })).toHaveCount(0)
+
+			for (const colorScheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme })
+				await expect(thread.getByText(NOTE)).toBeVisible()
+			}
+		})
+
 		test(`a contact the message links to stays a link, with no card at ${vp.label}`, async ({
 			page,
 			account,

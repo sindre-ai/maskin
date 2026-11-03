@@ -82,10 +82,15 @@ describe('showsObjectCard', () => {
 		expect(showsObjectCard(draft, 'ws')).toBe(true)
 	})
 
-	it('is false for a plain task, another workspace, no text, or no object', () => {
+	it('is true for a task with text even when no integration can send it', () => {
+		expect(showsObjectCard({ ...draft, preview: null, type: 'task' }, 'ws')).toBe(true)
+	})
+
+	it('is false for another kind of object with no preview, another workspace, no text, or no object', () => {
+		expect(showsObjectCard({ ...draft, preview: null, type: 'insight' }, 'ws')).toBe(false)
 		expect(showsObjectCard({ ...draft, preview: null }, 'ws')).toBe(false)
 		expect(showsObjectCard(draft, 'other')).toBe(false)
-		expect(showsObjectCard({ ...draft, content: '  ' }, 'ws')).toBe(false)
+		expect(showsObjectCard({ ...draft, type: 'task', content: '  ' }, 'ws')).toBe(false)
 		expect(showsObjectCard(undefined, 'ws')).toBe(false)
 	})
 })
