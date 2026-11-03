@@ -691,13 +691,55 @@ describe('LinkedCardOrLink', () => {
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 	})
 
-	it('draws a task with text as a card with its text, even with no preview', () => {
+	it('draws a task with text alone on its own line as a card with its text, with no Approve', () => {
 		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
 		renderObject()
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 		expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
 		expect(screen.getByText(/tillykke med fusionen/)).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: /Approve/ })).not.toBeInTheDocument()
+	})
+
+	it('keeps a task in a list as the link', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				inList
+			/>,
+		)
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+		expect(screen.queryByText(/tillykke med fusionen/)).not.toBeInTheDocument()
+	})
+
+	it('draws nothing for a task under a sentence', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		const { container } = render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				after
+			/>,
+		)
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('keeps the reference card for a task outside chat, in a comment', () => {
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		render(
+			<LinkedCardOrLink
+				workspaceId={WS}
+				target={{ kind: 'object', id: ID }}
+				fallback={link}
+				draftsAndFiles={false}
+			/>,
+		)
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.getByRole('link')).toHaveTextContent('LinkedIn note to Catja')
+		expect(screen.queryByRole('button', { name: 'Copy the text' })).not.toBeInTheDocument()
 	})
 
 	it('copies the text of a task from the card', async () => {

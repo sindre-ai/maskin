@@ -77,7 +77,8 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 			})
 			const conversation = await chatWithAgentMessage(
 				account,
-				(ws) => `Here is the [message](/${ws}/objects/${task.id}) for Mark.`,
+				(ws) =>
+					`Here is the draft for Mark:\n\n[Message to Mark](/${ws}/objects/${task.id})\n\nNot sent.`,
 			)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
@@ -96,6 +97,35 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 				await page.emulateMedia({ colorScheme })
 				await expect(thread.getByText(NOTE)).toBeVisible()
 			}
+		})
+
+		test(`a task in a list stays a link, so a long message does not grow into cards at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const task = await account.api.createObject(account.workspaceId, {
+				type: 'task',
+				title: 'Call the dock manager',
+				status: 'todo',
+				content: 'Ask about the spare keys before Friday.',
+			})
+			const conversation = await chatWithAgentMessage(
+				account,
+				(ws) =>
+					`Open items:\n\n- [Call the dock manager](/${ws}/objects/${task.id})\n- Something else`,
+			)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread.getByRole('link', { name: /Call the dock manager/ })).toBeVisible({
+				timeout: 10_000,
+			})
+			await page.waitForTimeout(500)
+			await expect(thread.getByText('Ask about the spare keys before Friday.')).toHaveCount(0)
+			await expect(thread.getByRole('button', { name: 'Copy the text' })).toHaveCount(0)
 		})
 
 		test(`a contact the message links to stays a link, with no card at ${vp.label}`, async ({

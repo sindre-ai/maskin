@@ -34,6 +34,7 @@ import {
 	type SettingsTarget,
 	isOtherWorkspace,
 	showsObjectCard,
+	showsTaskCard,
 } from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -649,6 +650,19 @@ function ObjectCardOrLink({
 	if (showsObjectCard(object, workspaceId)) {
 		return withLabel(
 			inList ? label : undefined,
+			<LinkedObjectCard
+				workspaceId={workspaceId}
+				objectId={objectId}
+				conversationId={conversationId}
+				agentId={agentId}
+				updated={updated}
+			/>,
+		)
+	}
+	// A task with text, alone on its own line in chat, is its text; see `showsTaskCard`.
+	if (draftsAndFiles && !after && !inList && showsTaskCard(object, workspaceId)) {
+		return withLabel(
+			label,
 			<LinkedObjectCard
 				workspaceId={workspaceId}
 				objectId={objectId}
