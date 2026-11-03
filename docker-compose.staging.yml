@@ -66,6 +66,7 @@ services:
       FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
       FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
       APP_URL: https://review.staging.maskin.sindre.ai
+      FRONTEND_URL: https://review.staging.maskin.sindre.ai
     depends_on:
       postgres:
         condition: service_healthy
