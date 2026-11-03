@@ -18,6 +18,7 @@ import {
 	settingsTargetOf,
 	shortName,
 	showsObjectCard,
+	showsTaskCard,
 	splitOwnLinks,
 	targetOfHref,
 	unavailableCopy,
@@ -87,6 +88,21 @@ describe('showsObjectCard', () => {
 		expect(showsObjectCard(draft, 'other')).toBe(false)
 		expect(showsObjectCard({ ...draft, content: '  ' }, 'ws')).toBe(false)
 		expect(showsObjectCard(undefined, 'ws')).toBe(false)
+	})
+})
+
+describe('showsTaskCard', () => {
+	const task = { workspaceId: 'ws', content: 'Hej', type: 'task' }
+
+	it('is true for a task with text in this workspace', () => {
+		expect(showsTaskCard(task, 'ws')).toBe(true)
+	})
+
+	it('is false for another type, another workspace, no text, or no object', () => {
+		expect(showsTaskCard({ ...task, type: 'insight' }, 'ws')).toBe(false)
+		expect(showsTaskCard(task, 'other')).toBe(false)
+		expect(showsTaskCard({ ...task, content: '  ' }, 'ws')).toBe(false)
+		expect(showsTaskCard(undefined, 'ws')).toBe(false)
 	})
 })
 
