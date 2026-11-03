@@ -128,7 +128,7 @@ test.describe('Settings v3 (part 1)', () => {
 
 			test('Keychain page renders without overflow', async ({ page, account }) => {
 				await page.goto(`/${account.workspaceId}/settings/keychain`)
-				await expect(page.getByText('Keychain').first()).toBeVisible()
+				await expect(page.getByRole('heading', { name: 'Keychain' })).toBeVisible()
 				await expectNoHorizontalOverflow(page)
 			})
 		})

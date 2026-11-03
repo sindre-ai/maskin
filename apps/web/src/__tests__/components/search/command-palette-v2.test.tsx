@@ -169,9 +169,15 @@ describe('launcher with an empty field', () => {
 		await screen.findByRole('option', { name: /Review the launcher/ })
 		expect(groupLabels()).toEqual(['Needs you', 'Recent', 'Commands', 'Go to', 'Search'])
 		expect(screen.getByRole('option', { name: /Recent bet/ })).toBeInTheDocument()
-		// Needs you comes from the For you decisions, tagged DECISION.
+		// Needs you leads with the For you decisions, tagged DECISION, then the shared status group
+		// (three rows at most).
 		expect(screen.getByRole('option', { name: /Review the launcher/ })).toHaveTextContent(
 			'DECISION',
+		)
+		expect(api.search.query).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({ statuses: 'needs_you', limit: '3' }),
+			expect.anything(),
 		)
 		expect(trackCommandPaletteOpened).toHaveBeenCalledWith({ surface: 'command_palette' })
 	})
@@ -179,7 +185,8 @@ describe('launcher with an empty field', () => {
 	it('does not ask the endpoint for Jump to rows until something is typed', async () => {
 		renderLauncher()
 		await screen.findByRole('option', { name: /Review the launcher/ })
-		expect(api.search.query).not.toHaveBeenCalled()
+		const calls = vi.mocked(api.search.query).mock.calls
+		expect(calls.every(([, params]) => params?.statuses === 'needs_you')).toBe(true)
 	})
 })
 

@@ -94,9 +94,9 @@ const KIND_BY_GROUP: Record<SearchResultRow['group'], string> = {
 	automations: 'AUTOMATION',
 }
 
-/** The kind column: ITEM / FLOW / CHAT as v3 draws it. */
-function resultKind(row: SearchResultRow): string {
-	return KIND_BY_GROUP[row.group]
+/** The kind column: ITEM / FLOW / CHAT as v3 draws it. Rows in Needs you are decisions. */
+function resultKind(group: string, row: SearchResultRow): string {
+	return group === 'Needs you' && row.group === 'objects' ? 'DECISION' : KIND_BY_GROUP[row.group]
 }
 const MAX_NEEDS_YOU = 3
 
@@ -384,8 +384,21 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	const typedSettled = queryText({ ...parts, text: debouncedText }) === query
 	const settled = Boolean(data) && !isPlaceholderData && !isFetching && !isError && typedSettled
 
-	// With nothing typed, the first group is what needs the person: the For you decisions.
+	// With nothing typed, the first group is what needs the person: the For you decisions, then
+	// anything else in the Needs you status group.
 	const { data: forYou } = useForYou(workspaceId)
+	const needsYou = useSearchQuery(
+		workspaceId,
+		{
+			text: '',
+			types: [],
+			statuses: ['needs_you'],
+			updated: '',
+			sort: 'recent',
+			limit: MAX_NEEDS_YOU,
+		},
+		isEmpty,
+	)
 	const { data: objects } = useObjects(workspaceId)
 	// Chats and loops fill the empty-field Recent list; agents give the Ask row its Chief of Staff.
 	const { data: chatPages } = useConversationsInfinite(workspaceId, undefined, {
@@ -452,7 +465,7 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 	): PaletteRow => ({
 		id: `${group}-${row.group}-${row.id}`,
 		group,
-		kind: resultKind(row),
+		kind: resultKind(group, row),
 		title: rowTitle(row),
 		sub: rowSub(row),
 		snippet: row.snippet ?? undefined,
@@ -470,22 +483,26 @@ function LauncherPanel({ workspaceId, commands, onClose, navigateTo }: PanelProp
 		const groups: { label: string; rows: PaletteRow[] }[] = []
 
 		if (isEmpty) {
-			const needs = (forYou?.items ?? []).slice(0, MAX_NEEDS_YOU)
+			const decisionRows: PaletteRow[] = (forYou?.items ?? []).map((item) => ({
+				id: `needs-you-${item.entity_id}`,
+				group: 'Needs you',
+				kind: 'DECISION',
+				title: item.object?.title?.trim() || cardHeadline(item),
+				run: () => {
+					onClose()
+					navigate({
+						to: '/$workspaceId/objects/$objectId',
+						params: { workspaceId, objectId: item.entity_id },
+					})
+				},
+			}))
+			const seen = new Set((forYou?.items ?? []).map((item) => item.entity_id))
+			const statusRows = (needsYou.data?.results ?? [])
+				.filter((row) => !seen.has(row.id))
+				.map((row) => resultRow(row, 'Needs you', 0, MAX_NEEDS_YOU, false))
 			groups.push({
 				label: 'Needs you',
-				rows: needs.map((item) => ({
-					id: `needs-you-${item.entity_id}`,
-					group: 'Needs you',
-					kind: 'DECISION',
-					title: item.object?.title?.trim() || cardHeadline(item),
-					run: () => {
-						onClose()
-						navigate({
-							to: '/$workspaceId/objects/$objectId',
-							params: { workspaceId, objectId: item.entity_id },
-						})
-					},
-				})),
+				rows: [...decisionRows, ...statusRows].slice(0, MAX_NEEDS_YOU),
 			})
 			const byId = new Map((objects ?? []).map((o) => [o.id, o]))
 			const items = buildRecents({
