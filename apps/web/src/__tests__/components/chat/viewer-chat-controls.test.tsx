@@ -42,8 +42,9 @@ describe('viewer fixture: chat composer and Stop', () => {
 	it('switches the composer off and says why', () => {
 		render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, { wrapper: viewer() })
 		const box = screen.getByLabelText('Message this conversation')
-		expect(box).toBeDisabled()
-		expect(box).toHaveAttribute('placeholder', 'Viewers can read but not change this')
+		expect(box).toHaveAttribute('aria-disabled', 'true')
+		expect(box).toHaveAttribute('contenteditable', 'false')
+		expect(screen.getByText('Viewers can read but not change this')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
 		expect(screen.getByRole('button', { name: 'Attach file' })).toBeDisabled()
 	})
@@ -57,7 +58,10 @@ describe('viewer fixture: chat composer and Stop', () => {
 describe('member fixture: chat composer and Stop stay as they were', () => {
 	it('keeps the composer usable', () => {
 		render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, { wrapper: member() })
-		expect(screen.getByLabelText('Message this conversation')).toBeEnabled()
+		expect(screen.getByLabelText('Message this conversation')).toHaveAttribute(
+			'contenteditable',
+			'true',
+		)
 		expect(screen.getByRole('button', { name: 'Attach file' })).toBeEnabled()
 	})
 

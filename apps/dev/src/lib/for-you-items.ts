@@ -1,7 +1,7 @@
 import { z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, objects } from '@maskin/db/schema'
-import { parseCommentDecision } from '@maskin/shared'
+import { isDecisionExpired, parseCommentDecision } from '@maskin/shared'
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { feedDecisionSchema, fillDraftBodies, toLatestMention } from '../routes/subscriptions'
 import { dueAtOf } from '../services/push-policy'
@@ -187,6 +187,8 @@ export async function buildForYouItems(
 		const decision = parsedDecisionById.get(Number(event.id))
 		const assumed = decision?.only_while_status
 		if (assumed && !assumed.includes(obj.status ?? '')) return false
+		// The writer named a deadline and it has passed: the ask retired itself.
+		if (isDecisionExpired(decision)) return false
 		// A status button stamps the status of the object it moves. Once that object is anywhere
 		// else, whether a person moved it or the button did, there is nothing left to ask.
 		const stamp = decision?.status_stamp

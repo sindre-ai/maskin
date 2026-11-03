@@ -33,29 +33,27 @@ struct ForYouHeaderTests {
 		#expect(ForYouHeader.spokenDate(date(18), calendar: utc) == "Sunday 18 October")
 	}
 
-	@Test func theSentenceNamesTheAgentAndTheMostUrgentAsk() {
-		let blocking = [FeedEntry(card: card("a"), bucket: .needs), FeedEntry(card: card("b", title: "Ship it"), bucket: .needs)]
-		let text = ForYouHeader.summary(blocking: blocking, loaded: true, sender: { _ in "Forge" })
-		#expect(text == "Forge needs a call: Is the onboarding bet worth running?")
-	}
-
-	@Test func aTitleWithoutPunctuationGetsAFullStop() {
-		let blocking = [FeedEntry(card: card("a", title: "Acme's note before Thursday"), bucket: .needs)]
-		let text = ForYouHeader.summary(blocking: blocking, loaded: true, sender: { _ in "Forge" })
-		#expect(text == "Forge needs a call: Acme's note before Thursday.")
+	@Test func theSentenceCountsTheDecisionsWaiting() {
+		let one = [FeedEntry(card: card("a"), bucket: .needs)]
+		#expect(ForYouHeader.summary(blocking: one, loaded: true) == "1 decision is waiting on you.")
+		let two = one + [FeedEntry(card: card("b", title: "Ship it"), bucket: .needs)]
+		#expect(ForYouHeader.summary(blocking: two, loaded: true) == "2 decisions are waiting on you.")
 	}
 
 	@Test func nothingOpenSaysNothingIsBlocked() {
-		let text = ForYouHeader.summary(blocking: [], loaded: true, sender: { _ in "Forge" })
-		#expect(text == "Nothing is blocked on you.")
+		#expect(ForYouHeader.summary(blocking: [], loaded: true) == "Nothing is blocked on you.")
 	}
 
 	@Test func nothingIsClaimedBeforeTheFeedHasLoaded() {
-		#expect(ForYouHeader.summary(blocking: [], loaded: false, sender: { _ in nil }) == nil)
+		#expect(ForYouHeader.summary(blocking: [], loaded: false) == nil)
 	}
 
-	@Test func anAskWithNoKnownAgentGivesNoSentence() {
-		let blocking = [FeedEntry(card: card("a"), bucket: .needs)]
-		#expect(ForYouHeader.summary(blocking: blocking, loaded: true, sender: { _ in nil }) == nil)
+	@Test func theGreetingFollowsTheHourAndUsesTheFirstName() {
+		func at(_ hour: Int) -> Date { utc.date(from: DateComponents(year: 2026, month: 10, day: 18, hour: hour))! }
+		#expect(ForYouHeader.greeting(name: "Sebastian Krumhausen", at: at(9), calendar: utc) == "Good morning, Sebastian")
+		#expect(ForYouHeader.greeting(name: "Sebastian", at: at(14), calendar: utc) == "Good afternoon, Sebastian")
+		#expect(ForYouHeader.greeting(name: "Sebastian", at: at(20), calendar: utc) == "Good evening, Sebastian")
+		#expect(ForYouHeader.greeting(name: nil, at: at(9), calendar: utc) == "Good morning")
+		#expect(ForYouHeader.greeting(name: "  ", at: at(9), calendar: utc) == "Good morning")
 	}
 }

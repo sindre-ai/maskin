@@ -682,7 +682,10 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'search_people'),
 			{
-				description: scopedDescription('Search LinkedIn for people by keywords', cfg),
+				description: scopedDescription(
+					'Search LinkedIn for people by keywords. Every result carries search_url, the LinkedIn search that was run, so you can open it and compare. An empty people list with empty_reason upstream_returned_no_rows means the call worked and LinkedIn returned nothing; dropped_rows with is_partial true means LinkedIn returned rows we could not read. Long keyword strings (many words, non-English) can return nothing where a short one finds people: if a long query comes back empty, retry with two or three key words',
+					cfg,
+				),
 				inputSchema: {
 					keywords: z.string().min(1).optional(),
 					search_url: z.string().optional(),

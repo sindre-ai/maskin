@@ -1,7 +1,13 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import {
+	EmailAttachmentError,
+	loadEmailAttachments,
+	readAttachmentIds,
+} from '../lib/email-attachments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
@@ -45,7 +51,12 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
  * one way an agent's email leaves.
  */
 const app = new OpenAPIHono<{
-	Variables: { db: Database; actorId: string; workspaceRole?: string }
+	Variables: {
+		db: Database
+		actorId: string
+		workspaceRole?: string
+		storageProvider?: StorageProvider
+	}
 }>({ defaultHook: validationFailureHook })
 
 const TOOL_NAME = 'resend_send_email'
@@ -126,7 +137,12 @@ const readResendCredential = (db: Database, workspaceId: string, actorId: string
  * this text. The approval is the newest `approved` event a human wrote on the object, bound to
  * the content hash, so any edit to the recipients, subject or text withdraws it.
  */
-async function loadObjectEmail(db: Database, workspaceId: string, objectId: string) {
+async function loadObjectEmail(
+	db: Database,
+	storage: StorageProvider | undefined,
+	workspaceId: string,
+	objectId: string,
+) {
 	const [object] = await db
 		.select()
 		.from(objects)
@@ -158,15 +174,26 @@ async function loadObjectEmail(db: Database, workspaceId: string, objectId: stri
 		const to = parseRecipients(raw('to'), 'to').map((r) => r.address)
 		const cc = raw('cc') ? parseRecipients(raw('cc'), 'cc').map((r) => r.address) : []
 		const approval = await findCurrentApproval(db, workspaceId, objectId, preview.content_hash)
+		// Files are read only once a person has approved: until then nothing is sent.
+		const attachments = approval
+			? await loadEmailAttachments(
+					{ db, storage },
+					{
+						workspaceId,
+						ids: readAttachmentIds(object.metadata),
+						approvedAt: approval.createdAt,
+					},
+				)
+			: []
 		return {
-			email: { to, cc, subject: preview.subject ?? '', body: preview.body },
+			email: { to, cc, subject: preview.subject ?? '', body: preview.body, attachments },
 			contentHash: preview.content_hash,
 			approvalEventId: approval?.id ?? null,
 			objectType: object.type,
 		}
 	} catch (err) {
 		// Gmail's parser is the one address reader both send routes share.
-		if (err instanceof GmailSendError) {
+		if (err instanceof GmailSendError || err instanceof EmailAttachmentError) {
 			return { failure: fail(400, 'BAD_REQUEST', err.message) }
 		}
 		throw err
@@ -230,7 +257,7 @@ app.openapi(sendRoute, async (c) => {
 	}
 
 	// 3. Exactly what a person approved.
-	const loaded = await loadObjectEmail(db, workspaceId, objectId)
+	const loaded = await loadObjectEmail(db, c.get('storageProvider'), workspaceId, objectId)
 	if (loaded.failure) return c.json(loaded.failure.body, loaded.failure.status)
 	if (!loaded.approvalEventId) {
 		const f = fail(
@@ -295,6 +322,9 @@ app.openapi(sendRoute, async (c) => {
 					content_hash: loaded.contentHash,
 					to: loaded.email.to.join(', ').slice(0, 300),
 					recipients: loaded.email.to.length + loaded.email.cc.length,
+					...(loaded.email.attachments.length
+						? { attachments: loaded.email.attachments.length }
+						: {}),
 					approval_event_id: approvalEventId,
 					object_id: objectId,
 				},

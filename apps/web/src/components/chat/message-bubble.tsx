@@ -16,11 +16,9 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
-import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useConversation, useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
@@ -43,6 +41,7 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
+import { type TagSegment, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import {
@@ -59,9 +58,10 @@ import {
 	RotateCcw,
 	Settings as SettingsIcon,
 } from 'lucide-react'
-import { Fragment, type Ref, useMemo, useState } from 'react'
+import { Fragment, type Ref, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
+import { EditMessageCard } from './edit-message-card'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationAccessRequestCard } from './integration-access-request-card'
@@ -73,6 +73,7 @@ import { type MessageAttachmentItem, MessageAttachments } from './message-attach
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
+import { TagChip } from './tag-chip'
 import { useThreadsPane } from './threads-context'
 import { VoiceMessageMetaTag } from './voice-call-boundary'
 
@@ -151,10 +152,21 @@ export function MessageBubble({
 	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
 	const canReply = !!onReplyInThread && message.id > 0 && message.kind === 'message'
 	const [editing, setEditing] = useState(false)
-	const [draft, setDraft] = useState('')
 	// Editing and asking agents again are writes; a viewer keeps the buttons, switched off.
 	const canWrite = useCanWrite()
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
+	const { data: conversation } = useConversation(message.conversationId, workspaceId)
+	const conversationParticipantIds = useMemo(
+		() => (conversation?.participants ?? []).map((p) => p.actorId),
+		[conversation],
+	)
+	// Focus goes back to the pencil once the edit card closes, whether it saved or not.
+	const pencilRef = useRef<HTMLButtonElement | null>(null)
+	const wasEditing = useRef(false)
+	useEffect(() => {
+		if (wasEditing.current && !editing) pencilRef.current?.focus()
+		wasEditing.current = editing
+	}, [editing])
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	// The one read of this flag: files and images lift out of the text bubble when it is on.
 	const attachmentsLifted = useFeatureFlag('chat-attachments-lifted')
@@ -186,7 +198,7 @@ export function MessageBubble({
 					.map((a) => (answers.length > 1 ? `${a.header}: ` : '') + a.selected.join(', '))
 					.join('\n')
 			: message.content
-	const ownParts = useMemo(
+	const placedParts = useMemo(
 		() =>
 			isOwn
 				? placeOwnLinks(splitOwnLinks(shownContent, workspaceId, enterprise), shownLinkedObjectIds)
@@ -194,9 +206,39 @@ export function MessageBubble({
 		[isOwn, shownContent, workspaceId, enterprise, shownLinkedObjectIds],
 	)
 	// One card and nothing else (no words, no attachments, not being edited): the card is the message.
-	const cardOnly = isOwn && !editing && attachments.length === 0 && isOnlyCard(ownParts)
+	const cardOnly = isOwn && !editing && attachments.length === 0 && isOnlyCard(placedParts)
 	// A bubble that holds a card is a fixed width so the card has room, instead of the width of its words.
-	const holdsCard = isOwn && !editing && !cardOnly && ownParts.some((p) => p.kind === 'card')
+	const holdsCard = isOwn && !editing && !cardOnly && placedParts.some((p) => p.kind === 'card')
+
+	// Tags in your own words are drawn as chips where they stand: each tagged id claims its
+	// "@Name" in the text. A message sent before tags lived in the text has none of its ids in the
+	// text, and keeps the "You mentioned" row. Once any tag sits in the text the row is gone, so an
+	// id left over (a thread reply's default recipient) is not shown as a mention above words that
+	// tag someone else.
+	const tagActors = useMemo(
+		() => (workspaceActors ?? []).filter((a) => !a.isSystem),
+		[workspaceActors],
+	)
+	const tagLabelOf = useMemo(() => {
+		const byId = new Map(tagActors.map((a) => [a.id, a]))
+		return (id: string) => {
+			const found = byId.get(id)
+			return found ? tagLabel(found, tagActors) : null
+		}
+	}, [tagActors])
+	const { ownParts, untaggedMentions } = useMemo(() => {
+		let remaining = mentions
+		const parts = placedParts.map((part): OwnBodyPart => {
+			if (part.kind !== 'text' || remaining.length === 0) return part
+			const split = splitTextByTags(part.text, remaining, tagLabelOf)
+			remaining = split.unmatchedIds
+			return { kind: 'tagged', parts: split.segments }
+		})
+		return {
+			ownParts: parts,
+			untaggedMentions: remaining.length === mentions.length ? remaining : [],
+		}
+	}, [placedParts, mentions, tagLabelOf])
 
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
 	// attachments take the same width. Editing, a message with no text and a message with a card
@@ -258,14 +300,14 @@ export function MessageBubble({
 		// A message that is only attachments has no bubble.
 		const hasPlate = !attachmentsLifted || editing || message.content.length > 0
 		const startEditing = () => {
-			setDraft(message.content)
+			editMessage.reset()
 			setEditing(true)
 		}
-		const saveEdit = () => {
-			const content = draft.trim()
-			setEditing(false)
-			if (content.length === 0 || content === message.content) return
-			editMessage.mutate({ messageId: message.id, content })
+		const saveEdit = ({ text, ids }: { text: string; ids: string[] }) => {
+			editMessage.mutate(
+				{ messageId: message.id, content: text.trim(), mentions: ids },
+				{ onSuccess: () => setEditing(false) },
+			)
 		}
 		return (
 			<div
@@ -282,11 +324,11 @@ export function MessageBubble({
 						<OwnContextChips objects={contextObjects} notifications={contextNotifications} />
 					</div>
 				) : null}
-				{hasMentions ? (
+				{untaggedMentions.length > 0 && !editing ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
 						<span className="eyebrow shrink-0">You mentioned</span>
 						<MentionPills
-							mentions={mentions}
+							mentions={untaggedMentions}
 							workspaceId={workspaceId}
 							actorLookup={actorLookup}
 							selfActorId={actor?.id ?? null}
@@ -313,15 +355,18 @@ export function MessageBubble({
 				    against the bubble and stays inside the box that measures overflow. */}
 							<div
 								className={cn(
-									// While fitting, the column above carries the width cap. A lone card fills the
-									// column up to 460px; a bubble with a card is min(520px, 88% of the column).
+									// While fitting, the column above carries the width cap. The edit card takes the row,
+									// up to the bubble's own cap, so its buttons always fit. A lone card fills the column up
+									// to 460px; a bubble with a card is min(520px, 88% of the column).
 									fitText
 										? 'relative w-full'
-										: cardOnly
-											? 'relative w-full max-w-[460px]'
-											: holdsCard
-												? 'relative w-[min(520px,88%)]'
-												: 'relative max-w-[min(560px,80%)]',
+										: editing
+											? 'relative max-w-[560px]'
+											: cardOnly
+												? 'relative w-full max-w-[460px]'
+												: holdsCard
+													? 'relative w-[min(520px,88%)]'
+													: 'relative max-w-[min(560px,80%)]',
 									spawnInfo && 'pr-2',
 									editing && 'w-full',
 								)}
@@ -330,41 +375,33 @@ export function MessageBubble({
 								<div
 									ref={plateRef}
 									className={
-										// A message that is only a card has no plate: the card is the message.
+										// A message that is only a card has no plate: the card is the message. The edit
+										// card is a plain card on the page, so it drops the plate too.
 										cardOnly
 											? 'contents'
-											: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
+											: editing
+												? 'flex flex-col gap-1.5'
+												: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
 									}
 								>
 									{fileList}
 									{editing ? (
-										<div className="flex flex-col gap-2">
-											<Textarea
-												value={draft}
-												onChange={(e) => setDraft(e.target.value)}
-												onKeyDown={(e) => {
-													if (e.key === 'Enter' && !e.shiftKey) {
-														e.preventDefault()
-														saveEdit()
-													}
-													if (e.key === 'Escape') {
-														e.preventDefault()
-														setEditing(false)
-													}
-												}}
-												aria-label="Edit message"
-												autoFocus
-												className="bg-background text-foreground"
-											/>
-											<div className="flex justify-end gap-2">
-												<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-													Cancel
-												</Button>
-												<Button size="sm" onClick={saveEdit}>
-													Save
-												</Button>
-											</div>
-										</div>
+										<EditMessageCard
+											workspaceId={workspaceId}
+											conversationParticipantIds={conversationParticipantIds}
+											selfActorId={actor?.id ?? null}
+											content={message.content}
+											mentions={mentions}
+											labelOf={tagLabelOf}
+											agentName={(id) => {
+												const found = actorLookup.get(id)
+												return found?.type === 'agent' ? found.name : null
+											}}
+											saving={editMessage.isPending}
+											failed={editMessage.isError}
+											onSave={saveEdit}
+											onCancel={() => setEditing(false)}
+										/>
 									) : message.content.length > 0 ? (
 										// `break-words` is load-bearing next to the column's `min-w-0`:
 										// `min-w-0` bounds the box, this bounds the ink. Without it an
@@ -375,6 +412,8 @@ export function MessageBubble({
 											workspaceId={workspaceId}
 											inBubble={!cardOnly}
 											textRef={fitText ? textRef : undefined}
+											selfActorId={actor?.id ?? null}
+											isAgent={(id) => actorLookup.get(id)?.type === 'agent'}
 										/>
 									) : null}
 								</div>
@@ -387,6 +426,7 @@ export function MessageBubble({
 				    revealing on hover — a touch viewport has no hover, and the
 				    ship gate asserts plain visibility at 375px. */}
 				<div className="flex items-center gap-1">
+					{editing ? <span className="text-[10px] text-muted-foreground">Editing ·</span> : null}
 					{message.editedAt ? (
 						<span className="text-[10px] text-muted-foreground">(edited)</span>
 					) : null}
@@ -420,6 +460,7 @@ export function MessageBubble({
 						<>
 							<ViewerTooltip>
 								<button
+									ref={pencilRef}
 									type="button"
 									onClick={startEditing}
 									disabled={!canWrite}
@@ -707,6 +748,9 @@ function chipTitle(title: string): string {
 		: trimmed
 }
 
+/** What the own-message body draws: the placed links and cards, with the words split around their tags. */
+type OwnBodyPart = OwnPlacement | { kind: 'tagged'; parts: TagSegment[] }
+
 const OWN_CHIP_CLASS =
 	'inline-flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 align-baseline font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 
@@ -720,14 +764,18 @@ function OwnMessageBody({
 	workspaceId,
 	inBubble,
 	textRef,
+	selfActorId,
+	isAgent,
 }: {
-	parts: OwnPlacement[]
+	parts: OwnBodyPart[]
 	workspaceId: string
 	inBubble: boolean
 	/** The words, measured to fit the bubble to them (only set when the message holds no card). */
 	textRef?: Ref<HTMLSpanElement>
+	selfActorId: string | null
+	isAgent: (id: string) => boolean
 }) {
-	const runs: Array<{ card: OwnCard } | { inline: OwnPlacement[] }> = []
+	const runs: Array<{ card: OwnCard } | { inline: Exclude<OwnBodyPart, OwnCard>[] }> = []
 	for (const part of parts) {
 		const last = runs[runs.length - 1]
 		if (part.kind === 'card') runs.push({ card: part })
@@ -763,7 +811,28 @@ function OwnMessageBody({
 						className="whitespace-pre-wrap text-balance break-words"
 					>
 						{run.inline.map((part, i) =>
-							part.kind === 'text' ? (
+							part.kind === 'tagged' ? (
+								// biome-ignore lint/suspicious/noArrayIndexKey: parts are positional by construction
+								<Fragment key={i}>
+									{part.parts.map((tagPart, tagIndex) =>
+										tagPart.kind === 'text' ? (
+											// biome-ignore lint/suspicious/noArrayIndexKey: positional by construction
+											<Fragment key={tagIndex}>{tagPart.text}</Fragment>
+										) : (
+											<TagChip
+												// biome-ignore lint/suspicious/noArrayIndexKey: the same person can be tagged twice
+												key={tagIndex}
+												workspaceId={workspaceId}
+												id={tagPart.id}
+												label={tagPart.label}
+												surface="plate"
+												isSelf={tagPart.id === selfActorId}
+												linkable={isAgent(tagPart.id)}
+											/>
+										),
+									)}
+								</Fragment>
+							) : part.kind === 'text' ? (
 								// biome-ignore lint/suspicious/noArrayIndexKey: parts are positional by construction
 								<Fragment key={i}>{part.text}</Fragment>
 							) : part.kind === 'other' ? (

@@ -53,24 +53,25 @@ test.describe('Enter in the chat composer respects the viewport', () => {
 			const composer = page.getByLabel('Message this conversation')
 			await expect(composer).toBeVisible()
 			await composer.fill(TEXT)
-			await expect(composer).toHaveValue(TEXT)
+			await expect(composer).toHaveText(TEXT)
 
 			await composer.press('Enter')
 
 			if (isTouch) {
 				// The newline is inserted and the message is NOT sent: a send
 				// would have cleared the composer, so retaining the text is the
-				// proof. Asserting the trailing newline too pins that the
-				// keypress reached the textarea rather than being swallowed.
-				await expect(composer).toHaveValue(`${TEXT}\n`)
+				// proof. Asserting the line break too pins that the keypress
+				// reached the input rather than being swallowed.
+				await expect(composer).toHaveText(TEXT)
+				await expect(composer.locator('div, br')).not.toHaveCount(0)
 
 				// The send affordance still works on mobile — the fix changes
 				// which gesture sends, not whether sending is possible.
 				await page.getByRole('button', { name: 'Send message' }).click()
-				await expect(composer).toHaveValue('')
+				await expect(composer).toHaveText('')
 			} else {
 				// Desktop keeps Enter-to-send: the composer clears.
-				await expect(composer).toHaveValue('')
+				await expect(composer).toHaveText('')
 			}
 		})
 	}

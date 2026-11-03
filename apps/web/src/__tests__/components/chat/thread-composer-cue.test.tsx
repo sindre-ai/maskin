@@ -72,7 +72,10 @@ function renderComposer() {
 	})
 }
 
+// The main chat box writes in the tag input: its placeholder is drawn text, not an attribute.
 const box = () => screen.getByLabelText('Message this conversation')
+const shownPlaceholder = (text: string) => expect(screen.getByText(text)).toBeInTheDocument()
+const tagChips = () => Array.from(box().querySelectorAll('[data-tag-id]'))
 
 beforeEach(() => {
 	sessionStorage.clear()
@@ -88,7 +91,7 @@ describe('ThreadComposer — group-chat cue', () => {
 		state.messages = [said(2, 'forge', 'agent'), said(1, 'me', 'human')]
 		renderComposer()
 
-		expect(box()).toHaveAttribute('placeholder', 'Reply to Forge…')
+		shownPlaceholder('Reply to Forge…')
 	})
 
 	it('says nobody will answer when a person spoke last, only once the box is used', async () => {
@@ -96,7 +99,7 @@ describe('ThreadComposer — group-chat cue', () => {
 		const user = userEvent.setup()
 		renderComposer()
 
-		expect(box()).toHaveAttribute('placeholder', 'Message this conversation')
+		shownPlaceholder('Message this conversation')
 		// Nothing is shown on arrival, even though nobody would answer.
 		expect(screen.queryByText('No agent will reply. Tag one with @.')).not.toBeInTheDocument()
 
@@ -164,15 +167,17 @@ describe('ThreadComposer — group-chat cue', () => {
 			state.messages = [said(2, 'sam', 'human')]
 		})
 
-		it('leaves the box empty so the cue placeholder shows, and keeps focus there', async () => {
+		it('leaves the tag in the sentence, draws no pill row, and keeps focus there', async () => {
 			const user = userEvent.setup()
 			renderComposer()
 
 			await user.type(box(), '@For')
 			await user.keyboard('{Enter}')
 
-			await waitFor(() => expect(box()).toHaveValue(''))
-			expect(box()).toHaveAttribute('placeholder')
+			// The tag stays in the sentence as a chip: the box holds it, not a pill row above.
+			await waitFor(() => expect(tagChips()).toHaveLength(1))
+			expect(tagChips()[0]).toHaveAttribute('data-tag-id', 'forge')
+			expect(screen.queryByLabelText('Selected context')).not.toBeInTheDocument()
 			await waitFor(() => expect(box()).toHaveFocus())
 		})
 
@@ -183,8 +188,8 @@ describe('ThreadComposer — group-chat cue', () => {
 			await user.type(box(), 'hello @For')
 			await user.keyboard('{Enter}')
 
-			// Same as before this change: the typed space stays and the insert adds one.
-			await waitFor(() => expect(box()).toHaveValue('hello  '))
+			// The typed space stays and the insert adds one after the chip.
+			await waitFor(() => expect(box().textContent).toBe('hello @Forge '))
 		})
 	})
 
@@ -192,7 +197,7 @@ describe('ThreadComposer — group-chat cue', () => {
 		state.conversation = { participants: [ME, FORGE] }
 		renderComposer()
 
-		expect(box()).toHaveAttribute('placeholder', 'Reply to Forge…')
+		shownPlaceholder('Reply to Forge…')
 		expect(box()).not.toHaveAttribute('aria-describedby')
 	})
 
@@ -204,10 +209,10 @@ describe('ThreadComposer — group-chat cue', () => {
 			const user = userEvent.setup()
 			renderComposer()
 
-			expect(box()).toHaveAttribute('placeholder', 'Message this conversation')
+			shownPlaceholder('Message this conversation')
 			expect(box()).toBeEnabled()
 			await user.type(box(), 'hello')
-			expect(box()).toHaveValue('hello')
+			expect(box()).toHaveTextContent('hello')
 			expect(screen.queryByText(/No agent will reply/)).not.toBeInTheDocument()
 			await user.click(screen.getByRole('button', { name: 'Send message' }))
 			await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledTimes(1))
@@ -217,7 +222,7 @@ describe('ThreadComposer — group-chat cue', () => {
 			state.messages = undefined
 			renderComposer()
 
-			expect(box()).toHaveAttribute('placeholder', 'Message this conversation')
+			shownPlaceholder('Message this conversation')
 			expect(box()).toBeEnabled()
 		})
 
@@ -228,7 +233,7 @@ describe('ThreadComposer — group-chat cue', () => {
 			renderComposer()
 
 			await user.click(box())
-			expect(box()).toHaveAttribute('placeholder', 'Message this conversation')
+			shownPlaceholder('Message this conversation')
 			expect(screen.queryByText(/No agent will reply/)).not.toBeInTheDocument()
 		})
 	})

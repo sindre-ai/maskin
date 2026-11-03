@@ -2,7 +2,7 @@
 title: Drafts and previews
 slug: drafts
 description: How an agent drafts an email, a LinkedIn message or post, or a Slack message as an ordinary object, how a person previews, edits and approves it in chat, For You and Claude, how files (HTML, markdown, images) preview, and how it is sent.
-last_updated: 2026-10-26
+last_updated: 2026-11-02
 ---
 
 # Drafts and previews
@@ -31,7 +31,7 @@ Agents learn this from the `draft-approval-tasks` skill, which every default age
 
 | `metadata.kind` | Provider | Fields in `metadata` | Text limit | Send tool |
 |---|---|---|---|---|
-| `email` | Gmail | `to` (required), `cc`, `subject` (required) | 100,000 | `gmail_send_email({ object_id })`, or `resend_send_email({ object_id })` from the agent's own mailbox (see agent-access) |
+| `email` | Gmail | `to` (required), `cc`, `subject` (required), `attachment_file_ids` (workspace file ids, a list or comma separated, up to 5 files and 20 MB in total) | 100,000 | `gmail_send_email({ object_id })`, or `resend_send_email({ object_id })` from the agent's own mailbox (see agent-access) |
 | `linkedin_message` | LinkedIn | `to` (recommended): a name or a profile link; `thread_id`, `reply_to`; `recipient_provider_id` (LinkedIn id, for a first message with no `thread_id`); `attachment_file_id` (one workspace PDF, PNG or JPEG up to 10 MB) | 8,000 | `reply({ object_id })` with a `thread_id`, `send_message({ object_id })` for a first message |
 | `linkedin_connection_request` | LinkedIn | `to` (required), `recipient_provider_id` (required, the LinkedIn id the invitation goes to) | 300 | `send_connection_request({ object_id })` |
 | `linkedin_inmail` | LinkedIn | `to` (required), `recipient_provider_id` (required, shown as "LinkedIn id"), `attachment_file_id`; no subject | 1,900 | `send_inmail` |
@@ -44,6 +44,8 @@ Agents learn this from the `draft-approval-tasks` skill, which every default age
 LinkedIn tools are served per identity, so each is prefixed `linkedin-{account}-{identity}__`.
 
 `send_message` and `reply` send through one path: the text, the recipient and the file are read from the approved object, never from the call, and the send is refused until a person has approved exactly this content and refused again once it has gone. `recipient_provider_id` and `attachment_file_id` are detail lines, so changing either withdraws the approval. `send_message` takes no `attachments`: a call that passes them gets `INVALID_INPUT`. A file is checked at send time: it must be in the caller's workspace, typed by its bytes (not its name), at most 10 MB, and not changed after the approval.
+
+An **email with files** (a receipt to forward to an accountant) names workspace files in `attachment_file_ids`: save each with `create_file`, then `metadata: { kind: "email", to, subject, attachment_file_ids: ["<file id>", ...] }`. The ids are a detail line of the preview ("Attachments", shown as file names), so adding, removing or swapping a file changes the content hash and withdraws the approval. Both `gmail_send_email` (a multipart message) and `resend_send_email` (the Resend `attachments` field) read the files from the approved object at send time, never from the call. A send is refused, and nothing goes out or is used up, when the list is over 5 files or 20 MB, an id is not a file of this workspace, or a file was changed after the approval (an approval covers the ids and not what a file holds, so an overwritten file needs a new approval). Only the object route carries files: an approval card (`approval_comment_id`) cannot.
 
 A LinkedIn reply is a task filed with `channel: "linkedin_dm"` (that matches the kind, so `kind` is not needed) and `to` (who it goes to; without it the card warns "To is not filed"), `thread_id` (the conversation) and `reply_to` (the message being answered, shown above the draft):
 
@@ -92,7 +94,11 @@ A draft with no `kind` still shows its text. It just has no recipient lines and 
 
 A card can also be about a **file** instead of text: `draft: { file_id, label }`. The feed returns the file's name, type and size as `draft.file`, and the card draws the file itself, open, above the buttons (see Files). A `file_id` from another workspace, or a deleted file, shows nothing (the stored `body`, if any, is used instead).
 
-A card disappears when its task reaches `done`, `archived`, `dismissed` or `discarded`, when the person replies, or when the notification's `only_while_status` no longer holds.
+A card disappears when its task reaches `done`, `archived`, `dismissed` or `discarded`, when the person replies, when the notification's `only_while_status` no longer holds, or when the decision's `expires_at` has passed.
+
+`expires_at` is an optional ISO 8601 date-time on the `decision` block. Agents set it whenever an option or the ask names a date ("this week", "before Thursday"). It must be in the future when the comment is posted, or the API rejects the card. After it passes the card is hidden from For You, the briefing and the lifecycle pushes. A card without it is unchanged.
+
+A decision card also drops once the object it sits on leaves the status it had when the card was posted: posting stamps that status (`status_stamp`), so an ask about work that has since moved on does not stay. Two ways to change that: `only_while_status` on the decision names the statuses the ask assumed (it replaces the stamp), and `keep_on_status_change: true` keeps the card up through a status change, for a card that must outlive the move (for example one about a task the agent moves on itself while the person still decides). A card posted before this behaviour has no stamp and stays until answered.
 
 ## In chat
 
@@ -118,6 +124,15 @@ A file (`create_file`) previews as a card wherever it is linked or attached, by 
 | anything else (PDF, video, archives) | A header with the name, size and a link to the viewer |
 
 Three places draw them: a chat message that links `/files/<id>`, a file attached to a comment or message, and a For You card with `draft.file_id`. Past 1.5 MB (8 MB for a picture) the card says the file is too large and links to the viewer. A file that is missing, or in another workspace, shows nothing.
+
+### A receipt in Gmail, sent on as a file
+
+Google's hosted Gmail tools return no attachment bytes, so an attachment in a mail takes two steps before it can go out on an email draft:
+
+1. **Save the attachment.** `gmail_save_attachment({ message_id, attachment_id, part_id })` reads that one attachment of the connected account (`POST /api/integrations/gmail/save-attachment`) and stores it as a workspace file. The name and type come from the message part, not from the call. It needs Read or Read & write access to Gmail, refuses an attachment over 20 MB, and returns `file_id`, `name`, `mime_type`, `size_bytes` and `url`. Attachment ids change on every read, so pass `part_id` (the `partId` the Gmail read tool lists next to the attachment): the attachment is matched by it first, then by attachment id, and a message with one attachment needs neither.
+2. **List it on the draft.** Put the returned `file_id` in `attachment_file_ids` on the email object (see the table above), then get a person to approve it and send as usual.
+
+The call uses the `gmail.readonly` and `gmail.modify` scopes, which are already in the connect scopes, so no install needs to reconnect.
 
 ## Approve, then send
 

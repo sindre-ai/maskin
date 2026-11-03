@@ -215,13 +215,13 @@ struct ApprovalGroupStoreTests {
 		#expect(backend.calls.isEmpty)
 	}
 
-	@Test func theSentenceIgnoresTheFilterAndNamesTheAgent() async {
+	@Test func theSentenceIgnoresTheFilterAndCountsTheDecisions() async {
 		let (store, source, _) = make()
 		source.feed = .success(["a", "b", "c"].enumerated().map { approval($1, rank: $0) })
 		await store.load()
-		#expect(store.blockedSummary == "Forge needs a call: Publish a?")
+		#expect(store.blockedSummary == "3 decisions are waiting on you.")
 		store.options.intent = .questions
-		#expect(store.blockedSummary == "Forge needs a call: Publish a?")
+		#expect(store.blockedSummary == "3 decisions are waiting on you.")
 	}
 
 	@Test func theDoneStripCountsOnlyWhatCanStillBeUndone() async {

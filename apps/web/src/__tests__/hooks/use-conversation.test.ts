@@ -10,13 +10,19 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		conversations: {
 			postMessage: vi.fn(),
+			editMessage: vi.fn(),
 			messages: vi.fn(),
 			markThreadRead: vi.fn(),
 		},
 	},
 }))
 
-import { useMarkThreadRead, useSendMessage, useThreadReplies } from '@/hooks/use-conversation'
+import {
+	useEditMessage,
+	useMarkThreadRead,
+	useSendMessage,
+	useThreadReplies,
+} from '@/hooks/use-conversation'
 import { api } from '@/lib/api'
 import type { MessageResponse, MessagesListResponse } from '@/lib/api'
 import { isTimelineMessage } from '@/lib/message-threads'
@@ -249,5 +255,75 @@ describe('useMarkThreadRead', () => {
 
 		expect(client.getQueryState(queryKeys.conversations.replyThreads(WS))?.isInvalidated).toBe(true)
 		expect(client.getQueryState(threadKey(1))?.isInvalidated).toBe(false)
+	})
+})
+
+describe('useEditMessage — tagged ids', () => {
+	beforeEach(() => vi.clearAllMocks())
+
+	it('sends the ids and shows them in the cached message before the server answers', async () => {
+		const client = newClient()
+		client.setQueryData(mainKey, pages(message(7, { content: 'old', metadata: { mentions: [] } })))
+		const pending = deferred<MessageResponse>()
+		vi.mocked(api.conversations.editMessage).mockReturnValue(pending.promise)
+
+		const { result } = renderHook(() => useEditMessage(CONV, WS), { wrapper: wrapper(client) })
+		act(() => {
+			result.current.mutate({ messageId: 7, content: 'new @Forge', mentions: ['agent-1'] })
+		})
+
+		await waitFor(() =>
+			expect(api.conversations.editMessage).toHaveBeenCalledWith(CONV, WS, 7, {
+				content: 'new @Forge',
+				metadata: { mentions: ['agent-1'] },
+			}),
+		)
+		await waitFor(() => {
+			const cached = client.getQueryData<InfiniteData<MessagesListResponse>>(mainKey)
+			const edited = cached?.pages[0]?.messages[0]
+			expect(edited?.content).toBe('new @Forge')
+			expect(edited?.metadata?.mentions).toEqual(['agent-1'])
+			expect(edited?.editedAt).toBeTruthy()
+		})
+		pending.resolve(
+			message(7, { content: 'new @Forge', metadata: { mentions: ['agent-1'] }, editedAt: 'now' }),
+		)
+	})
+
+	it('sends content only, and leaves the cached ids alone, when no ids are passed', async () => {
+		const client = newClient()
+		client.setQueryData(
+			mainKey,
+			pages(message(7, { content: 'old', metadata: { mentions: ['agent-1'] } })),
+		)
+		vi.mocked(api.conversations.editMessage).mockResolvedValue(message(7))
+
+		const { result } = renderHook(() => useEditMessage(CONV, WS), { wrapper: wrapper(client) })
+		act(() => {
+			result.current.mutate({ messageId: 7, content: 'reworded' })
+		})
+
+		await waitFor(() => expect(api.conversations.editMessage).toHaveBeenCalled())
+		expect(api.conversations.editMessage).toHaveBeenCalledWith(CONV, WS, 7, {
+			content: 'reworded',
+		})
+	})
+
+	it('rolls the cached message back when the save fails', async () => {
+		const client = newClient()
+		client.setQueryData(mainKey, pages(message(7, { content: 'old', metadata: { mentions: [] } })))
+		vi.mocked(api.conversations.editMessage).mockRejectedValue(new Error('nope'))
+
+		const { result } = renderHook(() => useEditMessage(CONV, WS), { wrapper: wrapper(client) })
+		act(() => {
+			result.current.mutate({ messageId: 7, content: 'new', mentions: ['agent-1'] })
+		})
+
+		await waitFor(() => {
+			const cached = client.getQueryData<InfiniteData<MessagesListResponse>>(mainKey)
+			const m = cached?.pages[0]?.messages[0]
+			expect(m?.content).toBe('old')
+			expect(m?.metadata?.mentions).toEqual([])
+		})
 	})
 })

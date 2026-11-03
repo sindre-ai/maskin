@@ -222,6 +222,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/last_session`.
+                        public var last_session: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/createdAt`.
@@ -431,6 +486,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -451,6 +507,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -471,6 +528,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -492,6 +550,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -883,6 +942,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/last_session`.
+                        public var last_session: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/createdAt`.
@@ -1092,6 +1206,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -1112,6 +1227,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -1132,6 +1248,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -1153,6 +1270,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -2557,6 +2675,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/last_session`.
+                        public var last_session: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/createdAt`.
@@ -2766,6 +2939,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -2786,6 +2960,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -2806,6 +2981,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -2827,6 +3003,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -3156,6 +3333,61 @@ public enum Operations {
                             public var activeSessionCurrentActivity: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/active_session_state`.
                             public var active_session_state: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session`.
+                            public struct last_sessionPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/status`.
+                                public var status: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/agent_id`.
+                                public var agent_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/started_at`.
+                                public var started_at: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/failure_reason`.
+                                public var failure_reason: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/chat_id`.
+                                public var chat_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session/created_by_actor_id`.
+                                public var created_by_actor_id: Swift.String
+                                /// Creates a new `last_sessionPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - status:
+                                ///   - agent_id:
+                                ///   - started_at:
+                                ///   - failure_reason:
+                                ///   - chat_id:
+                                ///   - created_by_actor_id:
+                                public init(
+                                    id: Swift.String,
+                                    status: Swift.String,
+                                    agent_id: Swift.String,
+                                    started_at: Swift.String? = nil,
+                                    failure_reason: Swift.String? = nil,
+                                    chat_id: Swift.String? = nil,
+                                    created_by_actor_id: Swift.String
+                                ) {
+                                    self.id = id
+                                    self.status = status
+                                    self.agent_id = agent_id
+                                    self.started_at = started_at
+                                    self.failure_reason = failure_reason
+                                    self.chat_id = chat_id
+                                    self.created_by_actor_id = created_by_actor_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case status
+                                    case agent_id
+                                    case started_at
+                                    case failure_reason
+                                    case chat_id
+                                    case created_by_actor_id
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/last_session`.
+                            public var last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.last_sessionPayload?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/createdBy`.
                             public var createdBy: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/createdAt`.
@@ -3365,6 +3597,7 @@ public enum Operations {
                             ///   - activeSessionId:
                             ///   - activeSessionCurrentActivity:
                             ///   - active_session_state:
+                            ///   - last_session:
                             ///   - createdBy:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -3385,6 +3618,7 @@ public enum Operations {
                                 activeSessionId: Swift.String? = nil,
                                 activeSessionCurrentActivity: Swift.String? = nil,
                                 active_session_state: Swift.String? = nil,
+                                last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.last_sessionPayload? = nil,
                                 createdBy: Swift.String,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -3405,6 +3639,7 @@ public enum Operations {
                                 self.activeSessionId = activeSessionId
                                 self.activeSessionCurrentActivity = activeSessionCurrentActivity
                                 self.active_session_state = active_session_state
+                                self.last_session = last_session
                                 self.createdBy = createdBy
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -3426,6 +3661,7 @@ public enum Operations {
                                 case activeSessionId
                                 case activeSessionCurrentActivity
                                 case active_session_state
+                                case last_session
                                 case createdBy
                                 case createdAt
                                 case updatedAt
@@ -3579,6 +3815,61 @@ public enum Operations {
                             public var activeSessionCurrentActivity: Swift.String?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/active_session_state`.
                             public var active_session_state: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session`.
+                            public struct last_sessionPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/status`.
+                                public var status: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/agent_id`.
+                                public var agent_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/started_at`.
+                                public var started_at: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/failure_reason`.
+                                public var failure_reason: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/chat_id`.
+                                public var chat_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session/created_by_actor_id`.
+                                public var created_by_actor_id: Swift.String
+                                /// Creates a new `last_sessionPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - status:
+                                ///   - agent_id:
+                                ///   - started_at:
+                                ///   - failure_reason:
+                                ///   - chat_id:
+                                ///   - created_by_actor_id:
+                                public init(
+                                    id: Swift.String,
+                                    status: Swift.String,
+                                    agent_id: Swift.String,
+                                    started_at: Swift.String? = nil,
+                                    failure_reason: Swift.String? = nil,
+                                    chat_id: Swift.String? = nil,
+                                    created_by_actor_id: Swift.String
+                                ) {
+                                    self.id = id
+                                    self.status = status
+                                    self.agent_id = agent_id
+                                    self.started_at = started_at
+                                    self.failure_reason = failure_reason
+                                    self.chat_id = chat_id
+                                    self.created_by_actor_id = created_by_actor_id
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case status
+                                    case agent_id
+                                    case started_at
+                                    case failure_reason
+                                    case chat_id
+                                    case created_by_actor_id
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/last_session`.
+                            public var last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.last_sessionPayload?
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/createdBy`.
                             public var createdBy: Swift.String
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/createdAt`.
@@ -3788,6 +4079,7 @@ public enum Operations {
                             ///   - activeSessionId:
                             ///   - activeSessionCurrentActivity:
                             ///   - active_session_state:
+                            ///   - last_session:
                             ///   - createdBy:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -3808,6 +4100,7 @@ public enum Operations {
                                 activeSessionId: Swift.String? = nil,
                                 activeSessionCurrentActivity: Swift.String? = nil,
                                 active_session_state: Swift.String? = nil,
+                                last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.last_sessionPayload? = nil,
                                 createdBy: Swift.String,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -3828,6 +4121,7 @@ public enum Operations {
                                 self.activeSessionId = activeSessionId
                                 self.activeSessionCurrentActivity = activeSessionCurrentActivity
                                 self.active_session_state = active_session_state
+                                self.last_session = last_session
                                 self.createdBy = createdBy
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -3849,6 +4143,7 @@ public enum Operations {
                                 case activeSessionId
                                 case activeSessionCurrentActivity
                                 case active_session_state
+                                case last_session
                                 case createdBy
                                 case createdAt
                                 case updatedAt
@@ -4906,6 +5201,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/last_session`.
+                        public var last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/createdAt`.
@@ -5115,6 +5465,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -5135,6 +5486,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -5155,6 +5507,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -5176,6 +5529,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -5591,6 +5945,61 @@ public enum Operations {
                         public var activeSessionCurrentActivity: Swift.String?
                         /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/active_session_state`.
                         public var active_session_state: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session`.
+                        public struct last_sessionPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/agent_id`.
+                            public var agent_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/started_at`.
+                            public var started_at: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/failure_reason`.
+                            public var failure_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/chat_id`.
+                            public var chat_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session/created_by_actor_id`.
+                            public var created_by_actor_id: Swift.String
+                            /// Creates a new `last_sessionPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - status:
+                            ///   - agent_id:
+                            ///   - started_at:
+                            ///   - failure_reason:
+                            ///   - chat_id:
+                            ///   - created_by_actor_id:
+                            public init(
+                                id: Swift.String,
+                                status: Swift.String,
+                                agent_id: Swift.String,
+                                started_at: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil,
+                                chat_id: Swift.String? = nil,
+                                created_by_actor_id: Swift.String
+                            ) {
+                                self.id = id
+                                self.status = status
+                                self.agent_id = agent_id
+                                self.started_at = started_at
+                                self.failure_reason = failure_reason
+                                self.chat_id = chat_id
+                                self.created_by_actor_id = created_by_actor_id
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case status
+                                case agent_id
+                                case started_at
+                                case failure_reason
+                                case chat_id
+                                case created_by_actor_id
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/last_session`.
+                        public var last_session: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.last_sessionPayload?
                         /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/createdBy`.
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/createdAt`.
@@ -5800,6 +6209,7 @@ public enum Operations {
                         ///   - activeSessionId:
                         ///   - activeSessionCurrentActivity:
                         ///   - active_session_state:
+                        ///   - last_session:
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -5820,6 +6230,7 @@ public enum Operations {
                             activeSessionId: Swift.String? = nil,
                             activeSessionCurrentActivity: Swift.String? = nil,
                             active_session_state: Swift.String? = nil,
+                            last_session: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.last_sessionPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -5840,6 +6251,7 @@ public enum Operations {
                             self.activeSessionId = activeSessionId
                             self.activeSessionCurrentActivity = activeSessionCurrentActivity
                             self.active_session_state = active_session_state
+                            self.last_session = last_session
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -5861,6 +6273,7 @@ public enum Operations {
                             case activeSessionId
                             case activeSessionCurrentActivity
                             case active_session_state
+                            case last_session
                             case createdBy
                             case createdAt
                             case updatedAt
@@ -24345,13 +24758,15 @@ public enum Operations {
             public struct Path: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/path/workspaceId`.
                 public var workspaceId: Swift.String
+                /// Skill id or name
+                ///
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/path/name`.
                 public var name: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - workspaceId:
-                ///   - name:
+                ///   - name: Skill id or name
                 public init(
                     workspaceId: Swift.String,
                     name: Swift.String
@@ -24780,7 +25195,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace skill not found
+            /// No skill with this id or name
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/get/responses/404`.
             ///
@@ -24798,6 +25213,144 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/details`.
+                            public var details: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/json/error`.
+                        public var error: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/GET/responses/409/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// More than one skill matches; pass the id
+            ///
+            /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/get/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.get_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
                             response: self
                         )
                     }
@@ -24845,13 +25398,15 @@ public enum Operations {
             public struct Path: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/PUT/path/workspaceId`.
                 public var workspaceId: Swift.String
+                /// Skill id or name
+                ///
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/PUT/path/name`.
                 public var name: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - workspaceId:
-                ///   - name:
+                ///   - name: Skill id or name
                 public init(
                     workspaceId: Swift.String,
                     name: Swift.String
@@ -25450,7 +26005,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace skill not found
+            /// No skill with this id or name
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/put/responses/404`.
             ///
@@ -25588,7 +26143,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// A skill with this name already exists
+            /// A skill with this name already exists, or more than one skill matches
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/put/responses/409`.
             ///
@@ -25653,13 +26208,15 @@ public enum Operations {
             public struct Path: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/path/workspaceId`.
                 public var workspaceId: Swift.String
+                /// Skill id or name
+                ///
                 /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/path/name`.
                 public var name: Swift.String
                 /// Creates a new `Path`.
                 ///
                 /// - Parameters:
                 ///   - workspaceId:
-                ///   - name:
+                ///   - name: Skill id or name
                 public init(
                     workspaceId: Swift.String,
                     name: Swift.String
@@ -26014,7 +26571,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace skill not found
+            /// No skill with this id or name
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/delete/responses/404`.
             ///
@@ -26032,6 +26589,144 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/details`.
+                            public var details: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/json/error`.
+                        public var error: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/workspaces/{workspaceId}/skills/{name}/DELETE/responses/409/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// More than one skill matches; pass the id
+            ///
+            /// - Remark: Generated from `#/paths//api/workspaces/{workspaceId}/skills/{name}/delete/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.delete_sol_api_sol_workspaces_sol__lcub_workspaceId_rcub__sol_skills_sol__lcub_name_rcub_.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
                             response: self
                         )
                     }
@@ -31564,6 +32259,8 @@ public enum Operations {
                             public var closeCondition: Swift.String?
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/tags`.
                             public var tags: [Swift.String]
+                            /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/driverId`.
+                            public var driverId: Swift.String?
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/inProgressCount`.
                             public var inProgressCount: Swift.Int
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/closedCount`.
@@ -31709,6 +32406,7 @@ public enum Operations {
                             ///   - entryCondition:
                             ///   - closeCondition:
                             ///   - tags:
+                            ///   - driverId:
                             ///   - inProgressCount:
                             ///   - closedCount:
                             ///   - medianTimeToCloseMs:
@@ -31729,6 +32427,7 @@ public enum Operations {
                                 entryCondition: Swift.String? = nil,
                                 closeCondition: Swift.String? = nil,
                                 tags: [Swift.String],
+                                driverId: Swift.String? = nil,
                                 inProgressCount: Swift.Int,
                                 closedCount: Swift.Int,
                                 medianTimeToCloseMs: Swift.Int? = nil,
@@ -31749,6 +32448,7 @@ public enum Operations {
                                 self.entryCondition = entryCondition
                                 self.closeCondition = closeCondition
                                 self.tags = tags
+                                self.driverId = driverId
                                 self.inProgressCount = inProgressCount
                                 self.closedCount = closedCount
                                 self.medianTimeToCloseMs = medianTimeToCloseMs
@@ -31770,6 +32470,7 @@ public enum Operations {
                                 case entryCondition
                                 case closeCondition
                                 case tags
+                                case driverId
                                 case inProgressCount
                                 case closedCount
                                 case medianTimeToCloseMs
@@ -45812,6 +46513,7 @@ public enum Operations {
                     /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                     /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                     /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                    /// Posting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.
                     /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                     ///
                     /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
@@ -46001,15 +46703,23 @@ public enum Operations {
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/drafts`.
                         public var drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload?
-                        /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                        /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/only_while_status`.
                         public var only_while_status: [Swift.String]?
+                        /// Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/keep_on_status_change`.
+                        public var keep_on_status_change: Swift.Bool?
+                        /// ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
+                        ///
+                        /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/expires_at`.
+                        public var expires_at: Foundation.Date?
                         /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/no_status_action`.
                         public var no_status_action: Swift.Bool?
-                        /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp`.
                         public struct status_stampPayload: Codable, Hashable, Sendable {
@@ -46034,7 +46744,7 @@ public enum Operations {
                                 case status
                             }
                         }
-                        /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                         ///
                         /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/status_stamp`.
                         public var status_stamp: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.status_stampPayload?
@@ -46111,9 +46821,11 @@ public enum Operations {
                         ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                         ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                         ///   - drafts: Use this instead of `draft` when one card asks about several messages (up to 10), for example five first DMs. Each message shows as its own preview with its own Send and Skip, and the human's tap on one replies to you as "Send: <label> to <to> (<id>)" or "Skip: ...". Give every message an `id`. The card's options still apply to the whole batch. Never put the text in the summary.
-                        ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                        ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
+                        ///   - keep_on_status_change: Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                        ///   - expires_at: ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                         ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
-                        ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                        ///   - status_stamp: Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                         ///   - draft: Attach this whenever the call is whether to send something in a person's name or to the outside world (an email, a message, a post). The card shows the draft above the buttons, so the human reads exactly what would go out. Without it they are approving a message they cannot see. Point at the object that holds the draft with object_id (preferred), or give the exact text as body. When the card is about a file instead (an HTML page, a markdown document, an image), give file_id and the card shows the file itself. Never put the text in the summary.
                         public init(
                             title: Swift.String,
@@ -46122,6 +46834,8 @@ public enum Operations {
                             options: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayload,
                             drafts: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftsPayload? = nil,
                             only_while_status: [Swift.String]? = nil,
+                            keep_on_status_change: Swift.Bool? = nil,
+                            expires_at: Foundation.Date? = nil,
                             no_status_action: Swift.Bool? = nil,
                             status_stamp: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.status_stampPayload? = nil,
                             draft: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.draftPayload? = nil
@@ -46132,6 +46846,8 @@ public enum Operations {
                             self.options = options
                             self.drafts = drafts
                             self.only_while_status = only_while_status
+                            self.keep_on_status_change = keep_on_status_change
+                            self.expires_at = expires_at
                             self.no_status_action = no_status_action
                             self.status_stamp = status_stamp
                             self.draft = draft
@@ -46143,6 +46859,8 @@ public enum Operations {
                             case options
                             case drafts
                             case only_while_status
+                            case keep_on_status_change
+                            case expires_at
                             case no_status_action
                             case status_stamp
                             case draft
@@ -46151,6 +46869,7 @@ public enum Operations {
                     /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                     /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                     /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                    /// Posting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.
                     /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                     ///
                     /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
@@ -53850,15 +54569,38 @@ public enum Operations {
                 public struct jsonPayload: Codable, Hashable, Sendable {
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/json/content`.
                     public var content: Swift.String
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/json/metadata`.
+                    public struct metadataPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/json/metadata/mentions`.
+                        public var mentions: [Swift.String]?
+                        /// Creates a new `metadataPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - mentions:
+                        public init(mentions: [Swift.String]? = nil) {
+                            self.mentions = mentions
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case mentions
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/json/metadata`.
+                    public var metadata: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Body.jsonPayload.metadataPayload?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
                     ///   - content:
-                    public init(content: Swift.String) {
+                    ///   - metadata:
+                    public init(
+                        content: Swift.String,
+                        metadata: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Body.jsonPayload.metadataPayload? = nil
+                    ) {
                         self.content = content
+                        self.metadata = metadata
                     }
                     public enum CodingKeys: String, CodingKey {
                         case content
+                        case metadata
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/{messageId}/PATCH/requestBody/content/application\/json`.
@@ -55908,6 +56650,8 @@ public enum Operations {
                             public var createdAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/updatedAt`.
                             public var updatedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/failure_reason`.
+                            public var failure_reason: Swift.String?
                             /// Creates a new `Value1PayloadPayload`.
                             ///
                             /// - Parameters:
@@ -55929,6 +56673,7 @@ public enum Operations {
                             ///   - createdBy:
                             ///   - createdAt:
                             ///   - updatedAt:
+                            ///   - failure_reason:
                             public init(
                                 id: Swift.String,
                                 workspaceId: Swift.String,
@@ -55947,7 +56692,8 @@ public enum Operations {
                                 timeoutAt: Swift.String? = nil,
                                 createdBy: Swift.String,
                                 createdAt: Swift.String? = nil,
-                                updatedAt: Swift.String? = nil
+                                updatedAt: Swift.String? = nil,
+                                failure_reason: Swift.String? = nil
                             ) {
                                 self.id = id
                                 self.workspaceId = workspaceId
@@ -55967,6 +56713,7 @@ public enum Operations {
                                 self.createdBy = createdBy
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
+                                self.failure_reason = failure_reason
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
@@ -55987,6 +56734,7 @@ public enum Operations {
                                 case createdBy
                                 case createdAt
                                 case updatedAt
+                                case failure_reason
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value1`.
@@ -56017,6 +56765,8 @@ public enum Operations {
                             public var status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload
                             /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/updated_at`.
                             public var updated_at: Foundation.Date?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/failure_reason`.
+                            public var failure_reason: Swift.String?
                             /// Creates a new `Value2PayloadPayload`.
                             ///
                             /// - Parameters:
@@ -56024,22 +56774,26 @@ public enum Operations {
                             ///   - title:
                             ///   - status:
                             ///   - updated_at:
+                            ///   - failure_reason:
                             public init(
                                 id: Swift.String,
                                 title: Swift.String,
                                 status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload,
-                                updated_at: Foundation.Date? = nil
+                                updated_at: Foundation.Date? = nil,
+                                failure_reason: Swift.String? = nil
                             ) {
                                 self.id = id
                                 self.title = title
                                 self.status = status
                                 self.updated_at = updated_at
+                                self.failure_reason = failure_reason
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
                                 case title
                                 case status
                                 case updated_at
+                                case failure_reason
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value2`.
@@ -56756,6 +57510,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -56777,6 +57533,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -56795,7 +57552,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -56815,6 +57573,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -56835,6 +57594,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/POST/responses/201/content/application\/json`.
@@ -57207,6 +57967,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload`.
                         public struct logsPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload/id`.
@@ -57273,6 +58035,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         ///   - logs:
                         public init(
                             id: Swift.String,
@@ -57293,6 +58056,7 @@ public enum Operations {
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil,
                             logs: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.logsPayload? = nil
                         ) {
                             self.id = id
@@ -57313,6 +58077,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                             self.logs = logs
                         }
                         public enum CodingKeys: String, CodingKey {
@@ -57334,6 +58099,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                             case logs
                         }
                     }
@@ -57854,6 +58620,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/PATCH/responses/200/content/json/notify_on_complete`.
                         @frozen public enum notify_on_completePayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case registered = "registered"
@@ -57885,6 +58653,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         ///   - notify_on_complete:
                         ///   - notify_skip_reason:
                         public init(
@@ -57906,6 +58675,7 @@ public enum Operations {
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil,
                             notify_on_complete: Operations.patch_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.notify_on_completePayload? = nil,
                             notify_skip_reason: Swift.String? = nil
                         ) {
@@ -57927,6 +58697,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                             self.notify_on_complete = notify_on_complete
                             self.notify_skip_reason = notify_skip_reason
                         }
@@ -57949,6 +58720,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                             case notify_on_complete
                             case notify_skip_reason
                         }
@@ -58438,6 +59210,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -58459,6 +59233,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -58477,7 +59252,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -58497,6 +59273,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -58517,6 +59294,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/stop/POST/responses/200/content/application\/json`.
@@ -59142,6 +59920,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -59163,6 +59943,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -59181,7 +59962,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -59201,6 +59983,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -59221,6 +60004,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/pause/POST/responses/200/content/application\/json`.
@@ -59846,6 +60630,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/json/failure_reason`.
+                        public var failure_reason: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -59867,6 +60653,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - failure_reason:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -59885,7 +60672,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            failure_reason: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -59905,6 +60693,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.failure_reason = failure_reason
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -59925,6 +60714,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case failure_reason
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/resume/POST/responses/200/content/application\/json`.
@@ -66680,6 +67470,61 @@ public enum Operations {
                                 public var activeSessionCurrentActivity: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/active_session_state`.
                                 public var active_session_state: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session`.
+                                public struct last_sessionPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/id`.
+                                    public var id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/status`.
+                                    public var status: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/agent_id`.
+                                    public var agent_id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/started_at`.
+                                    public var started_at: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/failure_reason`.
+                                    public var failure_reason: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/chat_id`.
+                                    public var chat_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session/created_by_actor_id`.
+                                    public var created_by_actor_id: Swift.String
+                                    /// Creates a new `last_sessionPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - id:
+                                    ///   - status:
+                                    ///   - agent_id:
+                                    ///   - started_at:
+                                    ///   - failure_reason:
+                                    ///   - chat_id:
+                                    ///   - created_by_actor_id:
+                                    public init(
+                                        id: Swift.String,
+                                        status: Swift.String,
+                                        agent_id: Swift.String,
+                                        started_at: Swift.String? = nil,
+                                        failure_reason: Swift.String? = nil,
+                                        chat_id: Swift.String? = nil,
+                                        created_by_actor_id: Swift.String
+                                    ) {
+                                        self.id = id
+                                        self.status = status
+                                        self.agent_id = agent_id
+                                        self.started_at = started_at
+                                        self.failure_reason = failure_reason
+                                        self.chat_id = chat_id
+                                        self.created_by_actor_id = created_by_actor_id
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case id
+                                        case status
+                                        case agent_id
+                                        case started_at
+                                        case failure_reason
+                                        case chat_id
+                                        case created_by_actor_id
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/last_session`.
+                                public var last_session: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.last_sessionPayload?
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/createdBy`.
                                 public var createdBy: Swift.String
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/createdAt`.
@@ -66889,6 +67734,7 @@ public enum Operations {
                                 ///   - activeSessionId:
                                 ///   - activeSessionCurrentActivity:
                                 ///   - active_session_state:
+                                ///   - last_session:
                                 ///   - createdBy:
                                 ///   - createdAt:
                                 ///   - updatedAt:
@@ -66909,6 +67755,7 @@ public enum Operations {
                                     activeSessionId: Swift.String? = nil,
                                     activeSessionCurrentActivity: Swift.String? = nil,
                                     active_session_state: Swift.String? = nil,
+                                    last_session: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.last_sessionPayload? = nil,
                                     createdBy: Swift.String,
                                     createdAt: Swift.String? = nil,
                                     updatedAt: Swift.String? = nil,
@@ -66929,6 +67776,7 @@ public enum Operations {
                                     self.activeSessionId = activeSessionId
                                     self.activeSessionCurrentActivity = activeSessionCurrentActivity
                                     self.active_session_state = active_session_state
+                                    self.last_session = last_session
                                     self.createdBy = createdBy
                                     self.createdAt = createdAt
                                     self.updatedAt = updatedAt
@@ -66950,6 +67798,7 @@ public enum Operations {
                                     case activeSessionId
                                     case activeSessionCurrentActivity
                                     case active_session_state
+                                    case last_session
                                     case createdBy
                                     case createdAt
                                     case updatedAt
@@ -66977,6 +67826,7 @@ public enum Operations {
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// Posting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.
                                 /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
@@ -67376,15 +68226,23 @@ public enum Operations {
                                     public typealias draftsPayload = [Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
                                     public var drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
-                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
                                     public var only_while_status: [Swift.String]?
+                                    /// Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/keep_on_status_change`.
+                                    public var keep_on_status_change: Swift.Bool?
+                                    /// ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/expires_at`.
+                                    public var expires_at: Foundation.Date?
                                     /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/no_status_action`.
                                     public var no_status_action: Swift.Bool?
-                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
                                     public struct status_stampPayload: Codable, Hashable, Sendable {
@@ -67409,7 +68267,7 @@ public enum Operations {
                                             case status
                                         }
                                     }
-                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
                                     public var status_stamp: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload?
@@ -67696,9 +68554,11 @@ public enum Operations {
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
-                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
+                                    ///   - keep_on_status_change: Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                                    ///   - expires_at: ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                                     ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
-                                    ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///   - status_stamp: Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -67707,6 +68567,8 @@ public enum Operations {
                                         options: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         only_while_status: [Swift.String]? = nil,
+                                        keep_on_status_change: Swift.Bool? = nil,
+                                        expires_at: Foundation.Date? = nil,
                                         no_status_action: Swift.Bool? = nil,
                                         status_stamp: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload? = nil,
                                         draft: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
@@ -67717,6 +68579,8 @@ public enum Operations {
                                         self.options = options
                                         self.drafts = drafts
                                         self.only_while_status = only_while_status
+                                        self.keep_on_status_change = keep_on_status_change
+                                        self.expires_at = expires_at
                                         self.no_status_action = no_status_action
                                         self.status_stamp = status_stamp
                                         self.draft = draft
@@ -67728,6 +68592,8 @@ public enum Operations {
                                         case options
                                         case drafts
                                         case only_while_status
+                                        case keep_on_status_change
+                                        case expires_at
                                         case no_status_action
                                         case status_stamp
                                         case draft
@@ -67736,6 +68602,7 @@ public enum Operations {
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// Posting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.
                                 /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
@@ -70265,6 +71132,61 @@ public enum Operations {
                                 public var activeSessionCurrentActivity: Swift.String?
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/active_session_state`.
                                 public var active_session_state: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session`.
+                                public struct last_sessionPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/id`.
+                                    public var id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/status`.
+                                    public var status: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/agent_id`.
+                                    public var agent_id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/started_at`.
+                                    public var started_at: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/failure_reason`.
+                                    public var failure_reason: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/chat_id`.
+                                    public var chat_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session/created_by_actor_id`.
+                                    public var created_by_actor_id: Swift.String
+                                    /// Creates a new `last_sessionPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - id:
+                                    ///   - status:
+                                    ///   - agent_id:
+                                    ///   - started_at:
+                                    ///   - failure_reason:
+                                    ///   - chat_id:
+                                    ///   - created_by_actor_id:
+                                    public init(
+                                        id: Swift.String,
+                                        status: Swift.String,
+                                        agent_id: Swift.String,
+                                        started_at: Swift.String? = nil,
+                                        failure_reason: Swift.String? = nil,
+                                        chat_id: Swift.String? = nil,
+                                        created_by_actor_id: Swift.String
+                                    ) {
+                                        self.id = id
+                                        self.status = status
+                                        self.agent_id = agent_id
+                                        self.started_at = started_at
+                                        self.failure_reason = failure_reason
+                                        self.chat_id = chat_id
+                                        self.created_by_actor_id = created_by_actor_id
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case id
+                                        case status
+                                        case agent_id
+                                        case started_at
+                                        case failure_reason
+                                        case chat_id
+                                        case created_by_actor_id
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/last_session`.
+                                public var last_session: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.last_sessionPayload?
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/createdBy`.
                                 public var createdBy: Swift.String
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/createdAt`.
@@ -70474,6 +71396,7 @@ public enum Operations {
                                 ///   - activeSessionId:
                                 ///   - activeSessionCurrentActivity:
                                 ///   - active_session_state:
+                                ///   - last_session:
                                 ///   - createdBy:
                                 ///   - createdAt:
                                 ///   - updatedAt:
@@ -70494,6 +71417,7 @@ public enum Operations {
                                     activeSessionId: Swift.String? = nil,
                                     activeSessionCurrentActivity: Swift.String? = nil,
                                     active_session_state: Swift.String? = nil,
+                                    last_session: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.last_sessionPayload? = nil,
                                     createdBy: Swift.String,
                                     createdAt: Swift.String? = nil,
                                     updatedAt: Swift.String? = nil,
@@ -70514,6 +71438,7 @@ public enum Operations {
                                     self.activeSessionId = activeSessionId
                                     self.activeSessionCurrentActivity = activeSessionCurrentActivity
                                     self.active_session_state = active_session_state
+                                    self.last_session = last_session
                                     self.createdBy = createdBy
                                     self.createdAt = createdAt
                                     self.updatedAt = updatedAt
@@ -70535,6 +71460,7 @@ public enum Operations {
                                     case activeSessionId
                                     case activeSessionCurrentActivity
                                     case active_session_state
+                                    case last_session
                                     case createdBy
                                     case createdAt
                                     case updatedAt
@@ -70562,6 +71488,7 @@ public enum Operations {
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// Posting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.
                                 /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:
@@ -70961,15 +71888,23 @@ public enum Operations {
                                     public typealias draftsPayload = [Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayloadPayload]
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/drafts`.
                                     public var drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload?
-                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    /// The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/only_while_status`.
                                     public var only_while_status: [Swift.String]?
+                                    /// Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/keep_on_status_change`.
+                                    public var keep_on_status_change: Swift.Bool?
+                                    /// ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
+                                    ///
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/expires_at`.
+                                    public var expires_at: Foundation.Date?
                                     /// Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/no_status_action`.
                                     public var no_status_action: Swift.Bool?
-                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
                                     public struct status_stampPayload: Codable, Hashable, Sendable {
@@ -70994,7 +71929,7 @@ public enum Operations {
                                             case status
                                         }
                                     }
-                                    /// Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    /// Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///
                                     /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/status_stamp`.
                                     public var status_stamp: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload?
@@ -71281,9 +72216,11 @@ public enum Operations {
                                     ///   - ask: First person, one sentence. Name the single call you cannot make alone and why it belongs to the human: "Notices go to real households, so I will not send this alone." No hedging, no apologising, no offering to help.
                                     ///   - options: 2 or 3 options, exactly one marked recommended. These render as the buttons the human taps, so they must be the real choices rather than yes/no/maybe.
                                     ///   - drafts:
-                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.
+                                    ///   - only_while_status: The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).
+                                    ///   - keep_on_status_change: Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.
+                                    ///   - expires_at: ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.
                                     ///   - no_status_action: Set true only when the API rejected the card for asking to change a status but the ask is about something else (for example "Park the launch email?" on a bet in a status called "launch"). Leave it off otherwise.
-                                    ///   - status_stamp: Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.
+                                    ///   - status_stamp: Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.
                                     ///   - draft:
                                     public init(
                                         title: Swift.String,
@@ -71292,6 +72229,8 @@ public enum Operations {
                                         options: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayload,
                                         drafts: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftsPayload? = nil,
                                         only_while_status: [Swift.String]? = nil,
+                                        keep_on_status_change: Swift.Bool? = nil,
+                                        expires_at: Foundation.Date? = nil,
                                         no_status_action: Swift.Bool? = nil,
                                         status_stamp: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.status_stampPayload? = nil,
                                         draft: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.draftPayload? = nil
@@ -71302,6 +72241,8 @@ public enum Operations {
                                         self.options = options
                                         self.drafts = drafts
                                         self.only_while_status = only_while_status
+                                        self.keep_on_status_change = keep_on_status_change
+                                        self.expires_at = expires_at
                                         self.no_status_action = no_status_action
                                         self.status_stamp = status_stamp
                                         self.draft = draft
@@ -71313,6 +72254,8 @@ public enum Operations {
                                         case options
                                         case drafts
                                         case only_while_status
+                                        case keep_on_status_change
+                                        case expires_at
                                         case no_status_action
                                         case status_stamp
                                         case draft
@@ -71321,6 +72264,7 @@ public enum Operations {
                                 /// Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
                                 /// It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.
                                 /// To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.
+                                /// Posting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.
                                 /// To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.
                                 ///
                                 /// The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:

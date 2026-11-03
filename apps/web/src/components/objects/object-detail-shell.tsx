@@ -1,4 +1,5 @@
 import { CommentInput } from '@/components/activity/comment-input'
+import type { TagInputHandle } from '@/components/chat/tag-input'
 import { PageHeader } from '@/components/layout/page-header'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActors } from '@/hooks/use-actors'
@@ -35,7 +36,14 @@ import { RelatedTab } from './related-tab'
 import { resolveRelatedRows } from './related-tab-utils'
 import { TimelineTab } from './timeline-tab'
 
-export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
+export function ObjectDetailShell({
+	object,
+	focusCommentId,
+}: {
+	object: ObjectResponse
+	/** Event id from the route's `?comment=`, handed to the timeline to scroll to. */
+	focusCommentId?: number
+}) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
@@ -113,7 +121,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		[workspaceId, object.title],
 	)
 
-	const answerRef = useRef<HTMLTextAreaElement>(null)
+	const answerRef = useRef<TagInputHandle>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
 
@@ -451,7 +459,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 								</TabsList>
 							</div>
 							<TabsContent value="timeline" className="mt-0">
-								<TimelineTab object={object} />
+								<TimelineTab object={object} focusCommentId={focusCommentId} />
 							</TabsContent>
 							<TabsContent value="related" className="mt-3">
 								<RelatedTab object={object} />
@@ -468,9 +476,6 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 								objectId={object.id}
 								focusRef={answerRef}
 								variant="bar"
-								// Docked to the bottom of the scroller, so a dropdown that opens
-								// below the bar is clipped and only shows at the end of the page.
-								mentionDropdownPlacement="above"
 								// The full prompt wraps to three lines in a 375px bar, so the
 								// phone gets the short form.
 								placeholder={isMobile ? 'Comment…' : 'Comment — / commands, @ mentions'}

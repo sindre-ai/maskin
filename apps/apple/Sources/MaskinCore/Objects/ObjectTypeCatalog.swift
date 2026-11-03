@@ -70,7 +70,7 @@ public enum ObjectsScope: Hashable, Sendable, Codable {
 	public func title(schema: ObjectsSchema, savedViewName: (String) -> String? = { _ in nil }) -> String {
 		switch self {
 		case .needsYou: "Needs you"
-		case .all: "Objects"
+		case .all: "Items"
 		case .favourites: "Favourites"
 		case .type(let type):
 			ObjectTypeCatalog.pluralLabel(for: type, displayName: schema.displayName(for: type))

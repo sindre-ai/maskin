@@ -40,6 +40,7 @@ import { configureVoiceArtifactStorage } from './lib/outreach/voice/recordings-h
 import { recordDbTime } from './lib/request-timing'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
+import { initMcpRateLimit, stopMcpRateLimit } from './routes/mcp'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
@@ -497,6 +498,10 @@ if (process.env.NODE_ENV === 'production') {
 sessionDispatchQueue.start()
 logger.info('Session dispatch queue started')
 
+// Logs mcp_rate_limit_config once and starts the 60 second summary. The first
+// POST /mcp would build it anyway; doing it here puts the boot line at boot.
+initMcpRateLimit()
+
 let shuttingDown = false
 const shutdown = async (signal: string) => {
 	// A second signal while the first is still settling is an operator asking
@@ -510,6 +515,7 @@ const shutdown = async (signal: string) => {
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
 	telnyxKnowledgeExporter.stop()
 	voiceDialerJob.stop()

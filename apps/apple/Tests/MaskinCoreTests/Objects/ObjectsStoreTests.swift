@@ -414,7 +414,7 @@ struct ObjectsStoreScopeTests {
 	func scopes() async {
 		let (store, remote) = makeStore()
 		await store.load()
-		#expect(store.title == "Objects")
+		#expect(store.title == "Items")
 		#expect(store.mixesTypes)
 		await store.setScope(.type("insight"))
 		#expect(store.title == "Insights")
@@ -583,7 +583,7 @@ struct ObjectTypeCatalogTests {
 
 	@Test("the scope titles read as the handoff says")
 	func titles() {
-		#expect(ObjectsScope.all.title(schema: .fallback) == "Objects")
+		#expect(ObjectsScope.all.title(schema: .fallback) == "Items")
 		#expect(ObjectsScope.needsYou.title(schema: .fallback) == "Needs you")
 		#expect(ObjectsScope.type("task").title(schema: .fallback) == "Tasks")
 		#expect(ObjectsScope.saved("x").title(schema: .fallback) { _ in "Doing now" } == "Doing now")

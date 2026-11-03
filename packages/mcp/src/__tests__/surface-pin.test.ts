@@ -74,6 +74,7 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_notifications',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'query_data',
 ]
 
 // get_started is in READ_TOOL_NAMES but its confirm path installs a loop.
@@ -325,13 +326,14 @@ describe('MCP surface pin', () => {
 			for (const name of expected) expect(registeredTools.has(name)).toBe(true)
 		})
 
-		it('idempotentHint is true for update_*, delete_*, pause_session, mark_read and withdraw_decision_card only', () => {
+		it('idempotentHint is true for update_*, delete_*, pause_session, mark_read, set_loop_view and withdraw_decision_card only', () => {
 			const expected = [
 				...Object.keys(TOOL_ANNOTATIONS).filter(
 					(n) => n.startsWith('update_') || n.startsWith('delete_'),
 				),
 				'pause_session',
 				'mark_read',
+				'set_loop_view',
 				'withdraw_decision_card',
 			].sort()
 			const actual = Object.entries(TOOL_ANNOTATIONS)
@@ -341,7 +343,7 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send mail only', () => {
+		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send or read mail only', () => {
 			const expected = [
 				'create_session',
 				'create_sub_chat',
@@ -353,6 +355,7 @@ describe('MCP surface pin', () => {
 				'disconnect_integration',
 				'approve_object_draft',
 				'gmail_send_email',
+				'gmail_save_attachment',
 				'resend_send_email',
 				'update_integration_access',
 			].sort()

@@ -55,7 +55,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 				.init(
 					query: .init(
 						_type: query.type, status: query.status, driver: query.driver, sort: query.sort.serverField,
-						order: query.sort.serverAscending ? .asc : .desc,
+						order: query.sort.serverAscending != query.reversed ? .asc : .desc,
 						limit: min(query.limit, ServerLimits.maxPageSize), offset: query.offset),
 					headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
 			guard case .ok(let ok) = output else { throw Self.failure(output) }
@@ -356,8 +356,28 @@ private struct ObjectDTO: Decodable {
 	var updatedAt: String?
 	var activeSessionId: String?
 	var activeSessionCurrentActivity: String?
+	var last_session: LastSessionDTO?
 	var is_starred_by_me: Bool?
 	var unread_count: Double?
+
+	struct LastSessionDTO: Decodable {
+		var id: String?
+		var status: String?
+		var agent_id: String?
+		var started_at: String?
+		var failure_reason: String?
+		var chat_id: String?
+		var created_by_actor_id: String?
+
+		var model: ObjectSession? {
+			guard let id, !id.isEmpty, let status, let agent_id, !agent_id.isEmpty else { return nil }
+			func clean(_ s: String?) -> String? { (s ?? "").isEmpty ? nil : s }
+			return ObjectSession(
+				id: id, status: status, agentID: agent_id, startedAt: started_at.flatMap(ISODate.parse),
+				failureReason: clean(failure_reason), chatID: clean(chat_id),
+				createdByActorID: clean(created_by_actor_id))
+		}
+	}
 
 	var model: WorkObject {
 		var scalars: [String: String] = [:]
@@ -369,12 +389,14 @@ private struct ObjectDTO: Decodable {
 			default: break
 			}
 		}
-		return WorkObject(
+		var object = WorkObject(
 			id: id, type: type, title: title, content: content, status: status, metadata: scalars,
 			driverId: driver, createdBy: createdBy, createdAt: createdAt.flatMap(ISODate.parse),
 			updatedAt: updatedAt.flatMap(ISODate.parse), isStarred: is_starred_by_me ?? false,
 			unreadCount: Int(unread_count ?? 0), activeActivity: activeSessionCurrentActivity,
 			hasActiveSession: !(activeSessionId ?? "").isEmpty)
+		object.lastSession = last_session?.model
+		return object
 	}
 }
 

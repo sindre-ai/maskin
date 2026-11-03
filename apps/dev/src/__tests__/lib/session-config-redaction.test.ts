@@ -53,6 +53,43 @@ describe('redactSessionConfig', () => {
 		})
 	})
 
+	it('masks the secret part of mcps args and a password in mcps url', () => {
+		const redacted = redactSessionConfig({
+			mcps: [
+				{
+					type: 'stdio',
+					command: 'npx',
+					args: [
+						'-y',
+						'fake-mcp-server',
+						'--token',
+						'not-a-real-flag-value',
+						'--api_key=not-a-real-keyed-value',
+						'postgres://fake-user:not-a-real-arg-password@db.example.test/app',
+					],
+				},
+				{ type: 'http', url: 'https://fake-user:not-a-real-url-password@mcp.example.test/mcp?v=1' },
+			],
+		}) as { mcps: { args?: unknown[]; url?: string }[] }
+
+		expect(redacted.mcps[0].args).toEqual([
+			'-y',
+			'fake-mcp-server',
+			'--token',
+			MASKED_VALUE,
+			`--api_key=${MASKED_VALUE}`,
+			`postgres://fake-user:${MASKED_VALUE}@db.example.test/app`,
+		])
+		expect(redacted.mcps[1].url).toBe(`https://fake-user:${MASKED_VALUE}@mcp.example.test/mcp?v=1`)
+		expect(JSON.stringify(redacted)).not.toContain('not-a-real')
+	})
+
+	it('leaves a url with no password unchanged', () => {
+		const config = { mcps: [{ type: 'http', url: 'https://mcp.example.test/mcp' }] }
+
+		expect(redactSessionConfig(config)).toEqual(config)
+	})
+
 	it('leaves the non-secret config fields intact', () => {
 		const redacted = redactSessionConfig(buildConfig()) as ReturnType<typeof buildConfig>
 

@@ -77,6 +77,7 @@ import {
 } from '../lib/session-access'
 import { loadSessionActivity } from '../lib/session-activity-query'
 import { redactSessionConfig } from '../lib/session-config-redaction'
+import { sessionFailureReason, shortFailureReason } from '../lib/session-failure-reason'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { wakeAgentFromCard } from '../services/chat-card-wake'
@@ -124,7 +125,15 @@ const SSE_HEARTBEAT_MS = 15_000
  * session-returning handler goes through. Internal readers use the raw row.
  */
 function serializeSession<T extends { config: unknown } & Record<string, unknown>>(session: T) {
-	return serialize({ ...session, config: redactSessionConfig(session.config) })
+	return serialize({
+		...session,
+		config: redactSessionConfig(session.config),
+		// A short line for the failed banner; the raw result stays as it was.
+		failure_reason: sessionFailureReason(
+			String(session.status),
+			session.result as typeof sessions.$inferSelect.result,
+		),
+	})
 }
 
 /** Load a session and verify it belongs to the caller's workspace. */
@@ -427,6 +436,14 @@ app.openapi(listSessionsRoute, (async (c) => {
 			updatedAt: sessions.updatedAt,
 			actionPrompt: sessions.actionPrompt,
 			triggerName: triggers.name,
+			// Just the two short fields, not the whole result, so the verbatim output
+			// is never loaded for a list page.
+			failureHumanMessage: sql<
+				string | null
+			>`CASE WHEN ${sessions.status} = 'failed' THEN ${sessions.result}->'failure_reason'->>'human_message' END`,
+			failureError: sql<
+				string | null
+			>`CASE WHEN ${sessions.status} = 'failed' THEN ${sessions.result}->>'error' END`,
 		})
 		.from(sessions)
 		.leftJoin(triggers, eq(sessions.triggerId, triggers.id))
@@ -446,6 +463,10 @@ app.openapi(listSessionsRoute, (async (c) => {
 		}),
 		status: row.status,
 		updated_at: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
+		failure_reason: shortFailureReason({
+			failure_reason: { human_message: row.failureHumanMessage },
+			error: row.failureError,
+		}),
 	}))
 
 	return c.json(shaped as z.infer<typeof sessionLeanRowSchema>[])

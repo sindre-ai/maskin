@@ -56,6 +56,12 @@ public final class LoopDetailStore {
 		self.debouncer = RefreshDebouncer(delay: debounce, sleep: sleep)
 	}
 
+	/// The flow's driver, when the loop has one and the directory knows its name.
+	public var driver: (id: String, name: String)? {
+		guard let id = overview.driverID, let name = directory.name(id) else { return nil }
+		return (id, name)
+	}
+
 	public var posts: [LoopPost] { overview.posts }
 	public var outputs: [LoopOutput] { overview.outputs }
 
@@ -167,10 +173,18 @@ public final class LoopDetailStore {
 		} while refreshQueued
 	}
 
-	public func togglePause() async {
+	public func togglePause() async { await set(status: loop.toggledStatus) }
+
+	/// Moves a running flow to another stage (Learning, Supervised, Autonomous); the Status pill
+	/// follows at once and rolls back if the server refuses.
+	public func setStage(_ stage: LoopStage) async {
+		guard loop.status.isLive, loop.status != stage.status else { return }
+		await set(status: stage.status)
+	}
+
+	private func set(status target: LoopPill) async {
 		guard !isTogglingPause else { return }
 		let before = loop
-		let target = before.toggledStatus
 		loop = before.with(status: target)
 		isTogglingPause = true
 		defer { isTogglingPause = false }
@@ -180,7 +194,8 @@ public final class LoopDetailStore {
 			intents.succeeded(intent)
 		} catch {
 			loop = loop.with(status: before.status)
-			notice = "Couldn't \(target == .paused ? "pause" : "resume") this flow. \(AutomationError.message(error))"
+			let what = target == .paused ? "pause" : before.isPaused ? "resume" : "change the stage of"
+			notice = "Couldn't \(what) this flow. \(AutomationError.message(error))"
 		}
 	}
 

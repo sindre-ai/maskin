@@ -12,11 +12,79 @@ import { capturePosthogEvent } from './posthog'
 
 export type AiGenerationOutcome = 'completed' | 'failed' | 'timeout' | 'user_stopped'
 
+/**
+ * Why a failed or timed-out session ended, from a fixed list. A code only, never
+ * the provider's error text, so it cannot hold a key or customer content.
+ */
+export type AiGenerationFailureCode =
+	| 'no_route'
+	| 'key_rejected'
+	| 'out_of_credit'
+	| 'rate_limited'
+	| 'container_start_failed'
+	| 'timeout'
+	| 'other'
+
+const FAILURE_CODE_BY_REASON_CODE: Record<string, AiGenerationFailureCode> = {
+	not_logged_in: 'no_route',
+	invalid_api_key: 'key_rejected',
+	oauth_revoked: 'key_rejected',
+	oauth_expired: 'key_rejected',
+	credit_balance_low: 'out_of_credit',
+	insufficient_credits: 'out_of_credit',
+	billing_error: 'out_of_credit',
+	plan_cap_exceeded: 'out_of_credit',
+	session_limit: 'rate_limited',
+	weekly_limit: 'rate_limited',
+	opus_limit: 'rate_limited',
+	server_rate_limit: 'rate_limited',
+	request_rejected_429: 'rate_limited',
+	max_plan_rate_limit: 'rate_limited',
+	rate_limit_error: 'rate_limited',
+	agent_server_lost: 'container_start_failed',
+	container_lost: 'container_start_failed',
+	dispatch_failed: 'container_start_failed',
+	startup_stalled: 'container_start_failed',
+}
+
+const FAILURE_CODE_BY_CLASSIFICATION: Record<string, AiGenerationFailureCode> = {
+	credit_exhaustion: 'out_of_credit',
+	plan_cap: 'out_of_credit',
+	dispatch_failure: 'container_start_failed',
+	startup_stalled: 'container_start_failed',
+	sandbox_crash: 'container_start_failed',
+	idle_timeout: 'timeout',
+	wall_timeout: 'timeout',
+}
+
+/**
+ * Maps a session's structured failure reason and terminal classification onto the
+ * fixed code list. The reason code wins because it is the more specific signal;
+ * the classification covers failures that carry no reason code. Null for sessions
+ * that did not fail or time out.
+ */
+export function resolveFailureCode(
+	outcome: AiGenerationOutcome,
+	reasonCode: string | null | undefined,
+	classification: string | null | undefined,
+): AiGenerationFailureCode | null {
+	if (outcome !== 'failed' && outcome !== 'timeout') return null
+	return (
+		(reasonCode ? FAILURE_CODE_BY_REASON_CODE[reasonCode] : undefined) ??
+		(classification ? FAILURE_CODE_BY_CLASSIFICATION[classification] : undefined) ??
+		(outcome === 'timeout' ? 'timeout' : 'other')
+	)
+}
+
 export interface SessionAiGenerationProps {
 	sessionId: string
 	workspaceId: string
 	actorId: string
 	outcome: AiGenerationOutcome
+	/** `result.failure_reason.reason_code` of the settled session, if it has one. */
+	failureReasonCode?: string | null
+	/** The settle's terminal classification, used when there is no reason code. */
+	classification?: string | null
 	/** `sessions.config` — only `llm_route` is read. */
 	config: Record<string, unknown> | null
 	/** `sessions.model_name` — null on every route except maskin_plan. */
@@ -120,6 +188,7 @@ export async function trackSessionAiGeneration(p: SessionAiGenerationProps): Pro
 			llm_route: route || null,
 			cost_basis: costBasisForRoute(route),
 			outcome: p.outcome,
+			failure_code: resolveFailureCode(p.outcome, p.failureReasonCode, p.classification),
 			running_seconds: runningSeconds,
 			active_seconds: p.activeMs == null ? null : p.activeMs / 1000,
 			started_at: p.startedAt.toISOString(),

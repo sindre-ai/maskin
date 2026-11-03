@@ -358,7 +358,7 @@ struct PushRegistrarTests {
 	@Test("sign-out during an in-flight upload still ends with the row removed")
 	func signOutDuringUpload() async {
 		let devices = FakeDevices()
-		await devices.setRegisterDelay(.milliseconds(300))
+		await devices.setRegisterDelay(.milliseconds(1500))
 		let pending = InMemoryDeviceRegistrationStore()
 		let r = makeRegistrar(FakeSystem(permission: .authorized), devices, pending: pending)
 		await r.actorChanged("a1")
