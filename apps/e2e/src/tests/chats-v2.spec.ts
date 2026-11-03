@@ -266,8 +266,10 @@ test.describe('Chats v2 — list title and column', () => {
 			if (vp.width >= 768) {
 				await expect(page.getByRole('heading', { name: 'Chats', exact: true })).toBeVisible()
 				const column = await list.boundingBox()
-				// The 400px column minus its 1px divider.
-				if (vp.width >= 1024) expect(Math.round(column?.width ?? 0)).toBe(399)
+				// The column is 280px from md and 400px from xl (1280), minus its 1px divider.
+				if (vp.width >= 1024) {
+					expect(Math.round(column?.width ?? 0)).toBe(vp.width >= 1280 ? 399 : 279)
+				}
 				// The composer stays reachable beside the wider column.
 				await expect(page.getByLabel('Message this conversation')).toBeVisible()
 			} else {
