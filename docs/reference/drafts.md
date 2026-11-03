@@ -98,6 +98,8 @@ A card disappears when its task reaches `done`, `archived`, `dismissed` or `disc
 
 `expires_at` is an optional ISO 8601 date-time on the `decision` block. Agents set it whenever an option or the ask names a date ("this week", "before Thursday"). It must be in the future when the comment is posted, or the API rejects the card. After it passes the card is hidden from For You, the briefing and the lifecycle pushes. A card without it is unchanged.
 
+A decision card also drops once the object it sits on leaves the status it had when the card was posted: posting stamps that status (`status_stamp`), so an ask about work that has since moved on does not stay. Two ways to change that: `only_while_status` on the decision names the statuses the ask assumed (it replaces the stamp), and `keep_on_status_change: true` keeps the card up through a status change, for a card that must outlive the move (for example one about a task the agent moves on itself while the person still decides). A card posted before this behaviour has no stamp and stays until answered.
+
 ## In chat
 
 A message that links an object (`/objects/<id>`) or a file (`/files/<id>`) shows a card **only for things a person acts on**: a draft with a preview, or a previewable file. A contact, a company or a plain task stays an ordinary link in the text.
@@ -127,7 +129,7 @@ Three places draw them: a chat message that links `/files/<id>`, a file attached
 
 Google's hosted Gmail tools return no attachment bytes, so an attachment in a mail takes two steps before it can go out on an email draft:
 
-1. **Save the attachment.** `gmail_save_attachment({ message_id, attachment_id })` reads that one attachment of the connected account (`POST /api/integrations/gmail/save-attachment`) and stores it as a workspace file. The name and type come from the message part, not from the call. It needs Read or Read & write access to Gmail, refuses an attachment over 20 MB, and returns `file_id`, `name`, `mime_type`, `size_bytes` and `url`. Attachment ids can change between reads, so use the ones from your latest read of the message.
+1. **Save the attachment.** `gmail_save_attachment({ message_id, attachment_id, part_id })` reads that one attachment of the connected account (`POST /api/integrations/gmail/save-attachment`) and stores it as a workspace file. The name and type come from the message part, not from the call. It needs Read or Read & write access to Gmail, refuses an attachment over 20 MB, and returns `file_id`, `name`, `mime_type`, `size_bytes` and `url`. Attachment ids change on every read, so pass `part_id` (the `partId` the Gmail read tool lists next to the attachment): the attachment is matched by it first, then by attachment id, and a message with one attachment needs neither.
 2. **List it on the draft.** Put the returned `file_id` in `attachment_file_ids` on the email object (see the table above), then get a person to approve it and send as usual.
 
 The call uses the `gmail.readonly` and `gmail.modify` scopes, which are already in the connect scopes, so no install needs to reconnect.

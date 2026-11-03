@@ -27,6 +27,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		entryCondition: null,
 		closeCondition: null,
 		tags: [],
+		driverId: null,
 		inProgressCount: 3,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,

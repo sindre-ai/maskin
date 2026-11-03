@@ -63,11 +63,33 @@ public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 	public var layout: Layout = .sections
 	public var grouping: Grouping = .byTime
 	public var showsFilterChips = false
+	/// The sheet's Filters row: only conversations with something unread.
+	public var unreadOnly = false
+	/// The sheet's PROPERTIES: the preview line and the live working / typing line under a title.
+	public var showsPreview = true
+	public var showsWorkingLine = true
 
-	public init(layout: Layout = .sections, grouping: Grouping = .byTime, showsFilterChips: Bool = false) {
+	public init(
+		layout: Layout = .sections, grouping: Grouping = .byTime, showsFilterChips: Bool = false,
+		unreadOnly: Bool = false, showsPreview: Bool = true, showsWorkingLine: Bool = true
+	) {
 		self.layout = layout
 		self.grouping = grouping
 		self.showsFilterChips = showsFilterChips
+		self.unreadOnly = unreadOnly
+		self.showsPreview = showsPreview
+		self.showsWorkingLine = showsWorkingLine
+	}
+
+	// Hand-written so choices saved before a field existed still decode.
+	public init(from decoder: any Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		layout = try c.decodeIfPresent(Layout.self, forKey: .layout) ?? .sections
+		grouping = try c.decodeIfPresent(Grouping.self, forKey: .grouping) ?? .byTime
+		showsFilterChips = try c.decodeIfPresent(Bool.self, forKey: .showsFilterChips) ?? false
+		unreadOnly = try c.decodeIfPresent(Bool.self, forKey: .unreadOnly) ?? false
+		showsPreview = try c.decodeIfPresent(Bool.self, forKey: .showsPreview) ?? true
+		showsWorkingLine = try c.decodeIfPresent(Bool.self, forKey: .showsWorkingLine) ?? true
 	}
 
 	public static let `default` = TeamDisplayOptions()

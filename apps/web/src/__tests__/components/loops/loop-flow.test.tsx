@@ -136,7 +136,40 @@ describe('LoopFlow', () => {
 		expect(screen.getByText('Sweeps stuck insights nightly')).toBeInTheDocument()
 	})
 
-	it('shows the stages above the Triggers section, even for an event trigger with a from_status', async () => {
+	it('puts a status-move trigger under the status it moves into, in status order', async () => {
+		const triggers = [
+			buildTriggerResponse({
+				id: 't1',
+				targetActorId: 'compass',
+				type: 'event',
+				name: 'Scores the cluster',
+				config: { entity_type: 'insight', action: 'updated', to_status: 'scored' },
+			}),
+		]
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={triggers}
+				actors={[compass]}
+				childObjects={childObjects}
+			/>,
+			{ wrapper: wrapper() },
+		)
+
+		const step = await screen.findByText('Scores the cluster')
+		const clustered = screen.getByText('clustered')
+		const scored = screen.getByText('scored')
+		// Statuses run in order, and the trigger lands after the status it targets.
+		expect(
+			clustered.compareDocumentPosition(scored) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy()
+		expect(scored.compareDocumentPosition(step) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		// It is mapped to a status, so it is not repeated in the plain list.
+		expect(screen.queryByText('Event-based')).not.toBeInTheDocument()
+		expect(screen.queryByText('Triggers')).not.toBeInTheDocument()
+	})
+
+	it('puts a trigger with only a from_status under the status it leaves', async () => {
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
@@ -156,12 +189,110 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		const stage = await screen.findByText('clustered')
-		const heading = screen.getByText('Triggers')
-		expect(stage.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-		expect(screen.getByText('Writes the generalisable version')).toBeInTheDocument()
-		expect(screen.queryByText('Comes in')).not.toBeInTheDocument()
-		expect(screen.queryByText('Runs alongside')).not.toBeInTheDocument()
+		const step = await screen.findByText('Writes the generalisable version')
+		const clustered = screen.getByText('clustered')
+		const scored = screen.getByText('scored')
+		expect(clustered.compareDocumentPosition(step) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(step.compareDocumentPosition(scored) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
+	it('puts a "created" trigger under the first status', async () => {
+		const triggers = [
+			buildTriggerResponse({
+				id: 't1',
+				targetActorId: 'relay',
+				type: 'event',
+				name: 'Folds new knowledge into the wiki',
+				config: { entity_type: 'insight', action: 'created' },
+			}),
+		]
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={triggers}
+				actors={[relay]}
+				childObjects={childObjects}
+			/>,
+			{ wrapper: wrapper() },
+		)
+
+		const step = await screen.findByText('Folds new knowledge into the wiki')
+		const first = screen.getByText('new')
+		const second = screen.getByText('processing')
+		expect(first.compareDocumentPosition(step) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(step.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(screen.queryByText('Event-based')).not.toBeInTheDocument()
+	})
+
+	it('shows the statuses of the type the triggers listen to, not the most linked type', async () => {
+		const triggers = [
+			buildTriggerResponse({
+				id: 't1',
+				targetActorId: 'relay',
+				type: 'event',
+				name: 'Folds new knowledge into the wiki',
+				config: { entity_type: 'knowledge', action: 'created' },
+			}),
+		]
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={triggers}
+				actors={[relay]}
+				childObjects={childObjects}
+			/>,
+			{
+				wrapper: createWorkspaceWrapper({
+					id: 'ws-1',
+					settings: {
+						statuses: {
+							insight: ['new', 'processing'],
+							knowledge: ['draft', 'validated', 'deprecated'],
+						},
+					},
+				}),
+			},
+		)
+
+		expect(await screen.findByText('draft')).toBeInTheDocument()
+		expect(screen.getByText('deprecated')).toBeInTheDocument()
+		expect(screen.queryByText('processing')).not.toBeInTheDocument()
+	})
+
+	it('keeps a trigger for another object type out of the status columns', async () => {
+		const triggers = [
+			buildTriggerResponse({
+				id: 't1',
+				targetActorId: 'relay',
+				type: 'event',
+				name: 'Starts the task',
+				config: { entity_type: 'task', to_status: 'scored' },
+			}),
+		]
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={triggers}
+				actors={[relay]}
+				childObjects={childObjects}
+			/>,
+			{ wrapper: wrapper() },
+		)
+
+		expect(await screen.findByText('Event-based')).toBeInTheDocument()
+		expect(screen.getByText('Starts the task')).toBeInTheDocument()
+	})
+
+	it('draws an arrow between each pair of statuses', async () => {
+		const { container } = render(
+			<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />,
+			{ wrapper: wrapper() },
+		)
+
+		await screen.findByText('clustered')
+		// 4 statuses -> 3 gaps, each with a down (mobile) and a right (md+) arrow.
+		expect(container.querySelectorAll('svg.lucide-arrow-right')).toHaveLength(3)
+		expect(container.querySelectorAll('svg.lucide-arrow-down')).toHaveLength(3)
 	})
 
 	it('shows each stage with its count and no object cards', async () => {

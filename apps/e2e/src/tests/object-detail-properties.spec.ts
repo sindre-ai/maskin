@@ -170,7 +170,7 @@ test.describe('Object detail — properties drawer', () => {
 			await expect(activity).toHaveAttribute('aria-selected', 'true')
 			// The stream's own filter chips carry per-kind counts.
 			await expect(page.getByRole('button', { name: /^All \(\d+\)$/ })).toBeVisible()
-			await expect(page.getByPlaceholder(/^Comment/)).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 
 			await page.getByRole('tab', { name: /^Related/ }).click()
 			await expect(page.getByRole('tab', { name: /^Related/ })).toHaveAttribute(
@@ -236,7 +236,7 @@ test.describe('Object detail — properties drawer', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}?tab=activity`)
-			const composer = page.getByPlaceholder(/^Comment/)
+			const composer = page.getByRole('textbox', { name: 'Comment' })
 			await expect(composer).toBeVisible({ timeout: 15000 })
 
 			await page.mouse.move(vp.width / 2, vp.height / 2)

@@ -7,6 +7,7 @@ import {
 	MESSAGE_MAX_LENGTH,
 	SAFE_METADATA_FIELD_NAME_RE,
 	createCommentSchema,
+	dataQuerySpecSchema,
 	firstStepSchema,
 	loopTargetSchema,
 	messageMetadataSchema,
@@ -1078,12 +1079,10 @@ export const tools = {
 	},
 	get_workspace_skill: {
 		description:
-			'Get a shared workspace skill by name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
+			'Get a shared workspace skill by id or name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe(
-				'Skill name. Lowercase letters, numbers, and hyphens only; max 64 chars.',
-			),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 		}),
 	},
 	create_workspace_skill: {
@@ -1104,10 +1103,10 @@ export const tools = {
 	},
 	update_workspace_skill: {
 		description:
-			'Replace the content of an existing shared workspace skill. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
+			'Replace the content of an existing shared workspace skill, found by id or name. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe('Name of the workspace skill to update.'),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 			content: z
 				.string()
 				.min(1)
@@ -1116,10 +1115,10 @@ export const tools = {
 	},
 	delete_workspace_skill: {
 		description:
-			'Delete a shared workspace skill. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
+			'Delete a shared workspace skill, found by id or name. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: skillNameSchema.describe('Name of the workspace skill to delete.'),
+			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
 		}),
 	},
 	// ─── Files ───────────────────────────────────────────────
@@ -1746,6 +1745,35 @@ export const tools = {
 		}),
 	},
 
+	set_loop_view: {
+		description: [
+			'Pin an HTML file to a loop as its custom view, or clear it with file_id null. The loop page shows it in place of the default stats and flow. Sets metadata.view_file_id. Fails if the id is not a loop or the file is not text/html.',
+			'A view answers one question: are we reaching the outcome? Open with the outcome in one plain sentence and the headline number vs its target, then the three to five metrics that matter most (name, value with unit, comparison, source), then what needs a person now.',
+			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. Test each query with query_data first. Results with rows_truncated or groups_truncated true are partial: narrow the query.',
+			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>") (a promise). The page reloads itself when its numbers change, so query once and never poll. Use moving date bounds ("now-7d", "today-30d"), never fixed dates.',
+			'Example:',
+			'<script id="maskin-sources" type="application/json">{"done":{"scope":"<loop id>","type":"task","filters":{"status":"done"}}}</script>',
+			'<script>maskin.query("done").then(r => { headline.textContent = r.total.count + " tasks done" }).catch(e => { headline.textContent = "Could not load: " + e.message })</script>',
+		].join('\n'),
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			loop_id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			file_id: z
+				.string()
+				.uuid()
+				.nullable()
+				.describe('Id of a text/html file to render as the loop view, or null to clear it.'),
+		}),
+	},
+	query_data: {
+		description:
+			'Read-only totals over objects, computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, rows_truncated, groups_truncated }`; with no `group_by`, read `total`. At most 10000 rows are scanned and 50 groups returned; a flag says when a cap was hit. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It never returns object rows; use list_objects for those.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			...dataQuerySpecSchema.shape,
+		}),
+	},
+
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
@@ -2283,7 +2311,7 @@ export const tools = {
 	},
 	gmail_save_attachment: {
 		description:
-			'Save one attachment of a Gmail message as a workspace file. Google\'s hosted Gmail tools return no attachment bytes, so this is the way a receipt or document in a mail becomes a file you can use. Pass the message id and the attachment id from the message you read (attachment ids can change between reads, so use the ones from your latest read). It reads that one attachment of the connected account and nothing else; the file name and type come from the message. Needs "Read" or "Read & write" access to Gmail. Max 20 MB. Returns file_id, name, mime_type, size_bytes and a url. To send it on, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), then have a person approve it and call gmail_send_email.',
+			'Save one attachment of a Gmail message as a workspace file. Google\'s hosted Gmail tools return no attachment bytes, so this is the way a receipt or document in a mail becomes a file you can use. Pass the message id, the attachment id and the partId from the message you read. Attachment ids change on every read, so the attachment is found by part_id (the partId listed next to the attachment, for example "1"); always pass it.  It reads that one attachment of the connected account and nothing else; the file name and type come from the message. Needs "Read" or "Read & write" access to Gmail. Max 20 MB. Returns file_id, name, mime_type, size_bytes and a url. To send it on, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), then have a person approve it and call gmail_send_email.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			message_id: z.string().min(1).describe('The Gmail message id the attachment belongs to.'),
@@ -2291,6 +2319,13 @@ export const tools = {
 				.string()
 				.min(1)
 				.describe('The Gmail attachment id, as the message lists it (body.attachmentId).'),
+			part_id: z
+				.string()
+				.min(1)
+				.optional()
+				.describe(
+					'The partId the Gmail read tool lists next to the attachment, for example "1". Stable between reads, unlike the attachment id, so pass it.',
+				),
 		}),
 	},
 	resend_send_email: {

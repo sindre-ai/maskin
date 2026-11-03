@@ -13,22 +13,31 @@ import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
+import { z } from 'zod'
+
+// `?comment=<event id>` deep-links to one comment (or reply) in the timeline.
+// Number-typed so a malformed value is dropped rather than reaching a selector.
+// `?tab=related` opens a tab directly; anything else is the Overview.
+const objectSearchSchema = z.object({
+	tab: z.unknown().transform(parseObjectDetailTab),
+	comment: z.coerce.number().int().positive().optional().catch(undefined),
+})
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')({
 	component: ObjectDetailPage,
-	// `?tab=related` opens a tab directly; anything else is the Overview.
-	validateSearch: (search: Record<string, unknown>): { tab?: ObjectDetailTab } => ({
-		tab: parseObjectDetailTab(search.tab),
-	}),
+	validateSearch: objectSearchSchema,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
-	const { tab } = Route.useSearch()
+	const { tab, comment: focusCommentId } = Route.useSearch()
 	const navigateTab = Route.useNavigate()
 	const onTabChange = (next: ObjectDetailTab) =>
-		navigateTab({ search: { tab: next === 'overview' ? undefined : next }, replace: true })
+		navigateTab({
+			search: (prev) => ({ ...prev, tab: next === 'overview' ? undefined : next }),
+			replace: true,
+		})
 	const { workspaceId, workspace } = useWorkspace()
 	// Derive default statuses from workspace settings (first status per type)
 	const settings = workspace.settings as Record<string, unknown>
@@ -106,7 +115,14 @@ function ObjectDetailPage() {
 
 	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
-		return <ObjectDetailShell object={object} tab={tab} onTabChange={onTabChange} />
+		return (
+			<ObjectDetailShell
+				object={object}
+				tab={tab}
+				onTabChange={onTabChange}
+				focusCommentId={focusCommentId}
+			/>
+		)
 	}
 
 	// Create mode — show form with document-like sections

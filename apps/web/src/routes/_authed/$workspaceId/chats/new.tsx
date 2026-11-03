@@ -643,6 +643,7 @@ function NewChatRoute() {
 					value={draft}
 					onValueChange={setDraft}
 					callAgent={callAgent}
+					inlineTags
 				/>
 			</div>
 		</div>

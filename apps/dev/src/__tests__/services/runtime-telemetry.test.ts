@@ -65,11 +65,22 @@ describe('RuntimeTelemetry', () => {
 				end_reason: 'irrecoverable',
 				duration_ms: 5000,
 				agent_server_url: 'local-docker',
+				sample_rate: 0.25,
 				$process_person_profile: false,
 				surface: 'backend',
 				actor_type: 'system',
 			},
 		})
+	})
+
+	it('drops runtime_session_ended when the sampling draw is over the rate', () => {
+		vi.spyOn(Math, 'random').mockReturnValue(0.9)
+		const { client, capture } = makeFakeClient()
+		const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+		telemetry.recordSessionEnded({ sessionId: 'sess-s', endReason: 'completed', durationMs: 1 })
+
+		expect(capture).not.toHaveBeenCalled()
 	})
 
 	it('captures runtime_cross_session_check with host_isolation_ok', () => {
@@ -242,6 +253,7 @@ describe('RuntimeTelemetry', () => {
 				session_id: 'sess-z',
 				end_reason: 'user_stopped',
 				duration_ms: 8,
+				sample_rate: 0.25,
 				$process_person_profile: false,
 				surface: 'backend',
 				actor_type: 'system',

@@ -146,6 +146,8 @@ struct SearchStoreTests {
 		#expect(store.sections.map(\.group) == [.objects])
 		store.scope = .agents
 		#expect(store.sections.isEmpty)
+		store.scope = .files
+		#expect(store.sections.map(\.group) == [.files])
 		#expect(await remote.objectQueries.count == 1)
 	}
 
@@ -205,7 +207,7 @@ struct SearchStoreTests {
 
 	@Test("the search tab offers All, Team, Objects, Flows and Agents")
 	func chipOrder() {
-		#expect(SearchScope.chips.map(\.title) == ["All", "Team", "Objects", "Flows", "Agents"])
+		#expect(SearchScope.chips.map(\.title) == ["All", "Team", "Objects", "Flows", "Agents", "Files"])
 	}
 
 	@Test("one failing source still yields results and flags the list as partial")

@@ -14,7 +14,7 @@ struct MaskinTVApp: App {
 
 	var body: some Scene {
 		WindowGroup {
-			GlanceRoot(environment: environment) { forYou in
+			GlanceRoot(environment: environment, signedOut: { AnyView(TVSignIn(auth: $0)) }) { forYou in
 				TVRoot(environment: environment, forYou: forYou)
 			}
 			// Dark only: the room display uses the Patina dark tokens.

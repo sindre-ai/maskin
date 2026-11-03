@@ -75,6 +75,7 @@ export function DecidedFold({
 	workspaceId,
 	objectId,
 	isUnread,
+	focusEventId,
 }: {
 	event: EventResponse
 	replies: EventResponse[]
@@ -82,10 +83,15 @@ export function DecidedFold({
 	workspaceId: string
 	objectId: string
 	isUnread: boolean
+	/** The comment a `?comment=` link points at; a fold holding it opens. */
+	focusEventId?: number
 }) {
 	const decision = decisionOfEvent(event)
 	const storageKey = `${FOLD_STORAGE_PREFIX}${event.id}`
-	const [folded, setFolded] = useState(() => readStoredFold(storageKey))
+	const holdsFocus =
+		focusEventId !== undefined &&
+		(event.id === focusEventId || replies.some((r) => r.id === focusEventId))
+	const [folded, setFolded] = useState(() => readStoredFold(storageKey) && !holdsFocus)
 
 	useEffect(() => {
 		writeStoredFold(storageKey, folded)
@@ -115,6 +121,7 @@ export function DecidedFold({
 					isUnread={isUnread}
 					variant="bubble"
 					collapsibleReplies
+					focusEventId={focusEventId}
 				/>
 			</div>
 		)

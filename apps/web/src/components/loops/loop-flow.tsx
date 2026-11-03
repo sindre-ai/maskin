@@ -1,10 +1,12 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { readEventStatusTransition } from '@/components/triggers/trigger-form'
 import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { ArrowDown, ArrowRight } from 'lucide-react'
+import { Fragment, useState } from 'react'
 
 interface StageColumn {
 	value: string
@@ -58,6 +60,54 @@ function buildStageColumns(
 	}))
 }
 
+/** The object type the loop is about. Its event triggers say it best — a
+ * knowledge loop can hold no knowledge objects yet link tasks and bets, so the
+ * linked objects alone would pick the wrong statuses. Only types the workspace
+ * has statuses for count; with no such trigger, fall back to the linked objects. */
+function loopObjectType(
+	triggers: TriggerResponse[],
+	children: ObjectResponse[],
+	statusesByType: Record<string, string[]>,
+): string | null {
+	const counts = new Map<string, number>()
+	for (const t of triggers) {
+		const entityType = (t.config as Record<string, unknown> | null)?.entity_type
+		if (t.type === 'cron' || typeof entityType !== 'string' || !(entityType in statusesByType))
+			continue
+		counts.set(entityType, (counts.get(entityType) ?? 0) + 1)
+	}
+	let best: string | null = null
+	let bestCount = 0
+	for (const [type, count] of counts) {
+		if (count > bestCount) {
+			best = type
+			bestCount = count
+		}
+	}
+	return best ?? primaryChildType(children)
+}
+
+/** The status columns an event trigger belongs under: the status an object
+ * moves *into* (`to_status`, or `filter.status`), else the one it leaves
+ * (`from_status`), else the first status for a "created" trigger. Empty when the trigger isn't about a status move, or is
+ * about a different object type than the one the columns show. */
+function statusesFiringTrigger(
+	trigger: TriggerResponse,
+	primaryType: string | null,
+	firstStatus: string | undefined,
+): string[] {
+	const config = trigger.config as Record<string, unknown> | null
+	const entityType = config?.entity_type
+	if (typeof entityType === 'string' && entityType !== 'object' && entityType !== primaryType)
+		return []
+	const { fromStatus, toStatus } = readEventStatusTransition(config)
+	if (toStatus !== '__any__') return toStatus.split(' or ')
+	if (fromStatus !== '__any__') return [fromStatus]
+	// A new object starts in the first status, so "created" belongs under it.
+	if (config?.action === 'created' && firstStatus) return [firstStatus]
+	return []
+}
+
 function formatDuration(ms: number | null | undefined): string | null {
 	if (!ms || ms <= 0 || !Number.isFinite(ms)) return null
 	const days = Math.round(ms / (24 * 60 * 60 * 1000))
@@ -103,8 +153,10 @@ function StepRow({
 				className="mt-0.5"
 			/>
 			<div className="flex-1 min-w-0 break-words text-[12.5px] leading-relaxed">
-				<span className="font-semibold text-foreground">{agent?.name ?? 'Unknown agent'}</span>{' '}
-				<span className="text-muted-foreground">{trigger.name}</span>
+				<span className="block font-semibold text-foreground">
+					{agent?.name ?? 'Unknown agent'}
+				</span>
+				<span className="block text-muted-foreground">{trigger.name}</span>
 			</div>
 			{asksYou && (
 				<span className="shrink-0 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground mt-0.5">
@@ -135,11 +187,11 @@ export function LoopFlow({
 	const { workspace } = useWorkspace()
 	const actorsById = new Map((actors ?? []).map((a) => [a.id, a]))
 
-	const primaryType = primaryChildType(childObjects)
+	const statusesByType =
+		(workspace.settings as { statuses?: Record<string, string[]> }).statuses ?? {}
+	const primaryType = loopObjectType(triggers, childObjects, statusesByType)
 	const primaryObjects = primaryType ? childObjects.filter((o) => o.type === primaryType) : []
-	const configuredStatuses =
-		(workspace.settings as { statuses?: Record<string, string[]> }).statuses?.[primaryType ?? ''] ??
-		[]
+	const configuredStatuses = statusesByType[primaryType ?? ''] ?? []
 	const columns = primaryType ? buildStageColumns(primaryObjects, configuredStatuses) : []
 
 	const routineTriggers = triggers.filter((t) => t.type === 'cron')
@@ -148,7 +200,26 @@ export function LoopFlow({
 	const distinctAgentIds = Array.from(new Set(triggers.map((t) => t.targetActorId)))
 	const matchesFilter = (t: TriggerResponse) => !agentFilter || t.targetActorId === agentFilter
 	const shownRoutines = routineTriggers.filter(matchesFilter)
-	const shownEvents = eventTriggers.filter(matchesFilter)
+	const shownEventsAll = eventTriggers.filter(matchesFilter)
+
+	// Event triggers that fire on a status move sit under the status that sets
+	// them off; the rest (comments, Slack messages, …) stay in a plain list.
+	const columnValues = new Set(columns.map((c) => c.value))
+	const triggersByStatus = new Map<string, TriggerResponse[]>()
+	const shownEvents: TriggerResponse[] = []
+	for (const t of shownEventsAll) {
+		const statuses = statusesFiringTrigger(t, primaryType, columns[0]?.value).filter((s) =>
+			columnValues.has(s),
+		)
+		if (statuses.length === 0) {
+			shownEvents.push(t)
+			continue
+		}
+		for (const status of statuses) {
+			triggersByStatus.set(status, [...(triggersByStatus.get(status) ?? []), t])
+		}
+	}
+	const hasMappedTriggers = triggersByStatus.size > 0
 
 	const hasTriggers = triggers.length > 0
 	const hasStages = columns.some((c) => c.total > 0)
@@ -156,7 +227,11 @@ export function LoopFlow({
 
 	// A pill filter that matches nothing renders the mockup's own line rather
 	// than an empty card (mockup 1943–1945).
-	const flowEmpty = agentFilter !== null && shownRoutines.length === 0 && shownEvents.length === 0
+	const flowEmpty =
+		agentFilter !== null &&
+		shownRoutines.length === 0 &&
+		shownEvents.length === 0 &&
+		!hasMappedTriggers
 
 	const asksYou = loop?.pill === 'waiting_on_you'
 
@@ -222,28 +297,66 @@ export function LoopFlow({
 			)}
 
 			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4 shadow-sm">
-				{columns.map((column) => {
-					const colors = getStatusColor(column.value)
-					return (
-						<div key={column.value}>
-							<div className="flex items-center gap-2">
-								<span
-									className={cn('h-2 w-2 rounded-full', column.total > 0 ? colors.bg : 'bg-muted')}
-								/>
-								<span className="eyebrow">{column.label.replace(/_/g, ' ')}</span>
-								<span
-									className={cn(
-										'inline-flex items-center rounded-full px-1.5 text-[10.5px] font-semibold',
-										colors.bg,
-										colors.text,
+				{columns.length > 0 && (
+					// Statuses read left to right as a flow, with the triggers they set
+					// off underneath. Stacks (arrows pointing down) below `md`; on
+					// narrower tablets the row scrolls inside its own box.
+					<div className="flex flex-col gap-2 md:flex-row md:items-start md:overflow-x-auto">
+						{columns.map((column, index) => {
+							const colors = getStatusColor(column.value)
+							const columnTriggers = triggersByStatus.get(column.value) ?? []
+							return (
+								<Fragment key={column.value}>
+									{index > 0 && (
+										<>
+											<ArrowDown
+												aria-hidden="true"
+												className="size-4 shrink-0 self-center text-muted-foreground md:hidden"
+											/>
+											<ArrowRight
+												aria-hidden="true"
+												className="hidden size-4 shrink-0 text-muted-foreground md:mt-0.5 md:block"
+											/>
+										</>
 									)}
-								>
-									{column.total}
-								</span>
-							</div>
-						</div>
-					)
-				})}
+									<div className="min-w-0 md:min-w-40 md:flex-1">
+										<div className="flex items-center gap-2">
+											<span
+												className={cn(
+													'h-2 w-2 shrink-0 rounded-full',
+													column.total > 0 ? colors.bg : 'bg-muted',
+												)}
+											/>
+											<span className="eyebrow">{column.label.replace(/_/g, ' ')}</span>
+											<span
+												className={cn(
+													'inline-flex items-center rounded-full px-1.5 text-[10.5px] font-semibold',
+													colors.bg,
+													colors.text,
+												)}
+											>
+												{column.total}
+											</span>
+										</div>
+										{columnTriggers.length > 0 && (
+											<div className="mt-2 flex flex-col gap-2.5">
+												{columnTriggers.map((t) => (
+													<StepRow
+														key={t.id}
+														workspaceId={workspaceId}
+														trigger={t}
+														agent={actorsById.get(t.targetActorId)}
+														asksYou={asksYou}
+													/>
+												))}
+											</div>
+										)}
+									</div>
+								</Fragment>
+							)
+						})}
+					</div>
+				)}
 
 				{flowEmpty && (
 					<p className="py-2 text-[12.5px] leading-relaxed text-muted-foreground">

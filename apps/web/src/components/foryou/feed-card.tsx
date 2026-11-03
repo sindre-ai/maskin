@@ -360,7 +360,6 @@ export function FeedCard({
 					parentEventId={item.latest_mention?.event_id}
 					variant="bar"
 					placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
-					mentionDropdownPlacement="above"
 					onSubmitted={onReplied}
 				/>
 			</div>

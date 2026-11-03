@@ -1,5 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
 import { AgentComposer } from '@/components/agents/agent-composer'
+import type { TagInputHandle } from '@/components/chat/tag-input'
 import { PageHeader } from '@/components/layout/page-header'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -69,7 +70,7 @@ function ItemComposer({
 }: {
 	object: ObjectResponse
 	workspaceId: string
-	focusRef: React.RefObject<HTMLTextAreaElement | null>
+	focusRef: React.RefObject<TagInputHandle | null>
 	/** Set by "Answer it" from another tab: the tab content mounts a render later, so the
 	 *  comment input is focused here, once it exists. */
 	focusOnMountRef: React.MutableRefObject<boolean>
@@ -110,9 +111,6 @@ function ItemComposer({
 					objectId={object.id}
 					focusRef={focusRef}
 					variant="bar"
-					// Docked to the bottom of the scroller, so a dropdown that opens
-					// below the bar is clipped and only shows at the end of the page.
-					mentionDropdownPlacement="above"
 					// The full prompt wraps to three lines in a 375px bar, so the
 					// phone gets the short form.
 					placeholder={isMobile ? 'Comment…' : 'Comment — / commands, @ mentions'}
@@ -126,11 +124,14 @@ export function ObjectDetailShell({
 	object,
 	tab: controlledTab,
 	onTabChange,
+	focusCommentId,
 }: {
 	object: ObjectResponse
 	/** The open tab, when the route owns it (the `tab` search param). Without it the shell keeps its own. */
 	tab?: ObjectDetailTab
 	onTabChange?: (tab: ObjectDetailTab) => void
+	/** Event id from the route's `?comment=`, handed to the timeline to scroll to. */
+	focusCommentId?: number
 }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const [ownTab, setOwnTab] = useState<ObjectDetailTab>('overview')
@@ -142,6 +143,11 @@ export function ObjectDetailShell({
 		},
 		[onTabChange],
 	)
+	// A linked comment lives in the timeline, so land on the Activity tab for it.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: only a new `?comment=` should switch tabs, not a manual tab change.
+	useEffect(() => {
+		if (focusCommentId != null) changeTab('activity')
+	}, [focusCommentId])
 	const [composerMode, setComposerMode] = useState<'comment' | 'message'>('comment')
 	const flow = useObjectFlow(workspaceId, object.id)
 	const navigate = useNavigate()
@@ -230,7 +236,7 @@ export function ObjectDetailShell({
 		[workspaceId, object.title, object.type, flow],
 	)
 
-	const answerRef = useRef<HTMLTextAreaElement>(null)
+	const answerRef = useRef<TagInputHandle>(null)
 	// The composer lives in the Activity tab, so answering from anywhere opens that
 	// tab (and the comment input) first and focuses once it is mounted.
 	const focusAfterTabRef = useRef(false)
@@ -613,7 +619,7 @@ export function ObjectDetailShell({
 								<RelatedTab object={object} />
 							</TabsContent>
 							<TabsContent value="activity" className="mt-0 flex min-h-0 flex-1 flex-col">
-								<TimelineTab object={object} />
+								<TimelineTab object={object} focusCommentId={focusCommentId} />
 
 								<div aria-hidden="true" className="min-h-6 flex-1" />
 

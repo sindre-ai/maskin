@@ -33,7 +33,8 @@ test.describe('Agent intro chat', () => {
 
 		await row.click()
 		await expect(page.getByRole('heading', { name })).toBeVisible()
-		await expect(page.getByPlaceholder(`Reply to ${name}…`)).toBeVisible()
+		// The tag input draws its placeholder as text behind the box, not as an attribute.
+		await expect(page.getByText(`Reply to ${name}…`)).toBeVisible()
 		// The chat list's snippet repeats the same text beside the thread, so take the first match.
 		await expect(page.getByText(`I'm ${name}.`).first()).toBeVisible()
 		// The e2e workspace has no LLM credentials, so the intro says it cannot run yet instead of
@@ -204,7 +205,7 @@ test.describe('Agent intro steps and tools', () => {
 		// Fill: the box takes the prompt, keeps focus, and nothing is sent.
 		await page.getByRole('button', { name: /Draft a reply/ }).click()
 		const box = page.getByLabel('Message this conversation')
-		await expect(box).toHaveValue('Draft a reply to: ')
+		await expect(box).toHaveText('Draft a reply to:')
 		await expect(box).toBeFocused()
 		expect(
 			await page.evaluate((id) => sessionStorage.getItem(`composer-draft:${id}`), conversation.id),
@@ -222,7 +223,7 @@ test.describe('Agent intro steps and tools', () => {
 			content: 'Summarise open bugs',
 			metadata: { from_suggested_step: { intro_message_id: 9201, index: 0 } },
 		})
-		await expect(box).toHaveValue('Draft a reply to: ')
+		await expect(box).toHaveText('Draft a reply to:')
 		// The tapped button is gone, so focus goes to the box for a follow-up.
 		await expect(box).toBeFocused()
 		// The steps leave once the person has written; the tool row stays.

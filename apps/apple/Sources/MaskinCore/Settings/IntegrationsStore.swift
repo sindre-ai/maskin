@@ -93,8 +93,25 @@ public final class IntegrationsStore {
 
 	public func provider(for slug: String) -> IntegrationProvider? { providers.first { $0.id == slug } }
 
+	/// The provider slug a person-added tool server (custom MCP) is stored under.
+	nonisolated public static let toolServerProvider = "custom-mcp"
+
+	/// Tool servers the workspace added, listed apart from the provider accounts.
+	public var toolServers: [ConnectedIntegration] {
+		connected.filter { $0.provider == Self.toolServerProvider }
+	}
+
+	/// Provider accounts: everything connected except tool servers.
+	public var accounts: [ConnectedIntegration] {
+		connected.filter { $0.provider != Self.toolServerProvider }
+	}
+
 	public func displayName(for integration: ConnectedIntegration) -> String {
-		provider(for: integration.provider)?.displayName ?? "Integration"
+		if integration.provider == Self.toolServerProvider {
+			let name = integration.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+			return (name?.isEmpty == false) ? name! : "Tool server"
+		}
+		return provider(for: integration.provider)?.displayName ?? "Integration"
 	}
 
 	public func accountLabel(for integration: ConnectedIntegration) -> String? {

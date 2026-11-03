@@ -67,6 +67,10 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActor: (id: string) => ({ data: actorsStore.data.find((a) => a.id === id) }),
 }))
 
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
+}))
+
 vi.mock('@/hooks/use-notifications', () => ({
 	useNotifications: () => ({ data: [] }),
 }))
@@ -105,7 +109,6 @@ vi.mock('@/components/shared/markdown-content', () => ({
 beforeEach(() => {
 	settingsStore.settings = { objectDetailSidebarCollapsed: true }
 	settingsStore.subscribers.clear()
-	actorsStore.data = []
 })
 
 describe('ObjectDetailShell', () => {
@@ -139,10 +142,10 @@ describe('ObjectDetailShell', () => {
 		})
 
 		// The composer lives in the Activity tab; the Overview does not mount it.
-		expect(screen.queryByPlaceholderText(/commands, @ mentions/i)).toBeNull()
+		expect(screen.queryByRole('textbox', { name: 'Comment' })).toBeNull()
 		fireEvent.click(screen.getByRole('button', { name: /answer it/i }))
-		const textarea = await screen.findByPlaceholderText(/commands, @ mentions/i)
-		await waitFor(() => expect(document.activeElement).toBe(textarea))
+		const answerBox = await screen.findByRole('textbox', { name: 'Comment' })
+		await waitFor(() => expect(document.activeElement).toBe(answerBox))
 	})
 
 	it('omits the ask banner when no _ask metadata', () => {
@@ -159,25 +162,8 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 		// The object page's composer is the single-row bar (mockup 1358–1366).
-		expect(screen.getByPlaceholderText(/commands, @ mentions/i)).toBeInTheDocument()
-	})
-
-	// The bar is docked to the bottom of the scroller, so a dropdown opening below
-	// it is clipped and only visible once the page is scrolled to the end.
-	it('opens the @mention dropdown above the docked comment bar', () => {
-		actorsStore.data = [{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }]
-		const object = buildObjectResponse({ type: 'bet' })
-		render(<ObjectDetailShell object={object} tab="activity" />, {
-			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
-		})
-
-		fireEvent.change(screen.getByPlaceholderText(/commands, @ mentions/i), {
-			target: { value: '@' },
-		})
-
-		const dropdown = screen.getByText('Bob').closest('div[class*="absolute"]')
-		expect(dropdown).toHaveClass('bottom-full', 'mb-1')
-		expect(dropdown).not.toHaveClass('mt-1')
+		expect(screen.getByRole('textbox', { name: 'Comment' })).toBeInTheDocument()
+		expect(screen.getByText(/commands, @ mentions/i)).toBeInTheDocument()
 	})
 
 	// v16: one column with three tabs; the old Timeline / Related segmented control is gone.
@@ -206,11 +192,11 @@ describe('ObjectDetailShell', () => {
 		render(<ObjectDetailShell object={object} tab="activity" />, {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
-		expect(screen.getByPlaceholderText(/commands, @ mentions/i)).toBeInTheDocument()
+		expect(screen.getByRole('textbox', { name: 'Comment' })).toBeInTheDocument()
 		const messageTab = screen.getByRole('tab', { name: 'Message Bob' })
 		fireEvent.mouseDown(messageTab)
 		fireEvent.click(messageTab)
-		expect(screen.queryByPlaceholderText(/commands, @ mentions/i)).toBeNull()
+		expect(screen.queryByRole('textbox', { name: 'Comment' })).toBeNull()
 		expect(screen.getByPlaceholderText('Message Bob…')).toBeInTheDocument()
 	})
 

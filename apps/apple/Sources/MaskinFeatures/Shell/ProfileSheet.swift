@@ -139,12 +139,13 @@ struct ProfileSheet: View {
 			FilesListScreen(environment: environment)
 		case .members:
 			MembersView(
-				store: services.membersStore(), agents: agents,
+				store: services.membersStore(), agents: agents, invitations: services.invitationsStore(),
 				onOpenAgent: { path.append(.agent($0)) },
 				onHire: { path.append(.item(.marketplace)) })
 		case .integrations:
 			IntegrationsView(
-				store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
+				store: services.integrationsStore(), webSetupURL: services.webURL("integrations"),
+				services: services)
 		case .keychain:
 			KeychainView(store: services.keychainStore())
 		case .triggers:

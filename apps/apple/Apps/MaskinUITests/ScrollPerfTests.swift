@@ -49,7 +49,7 @@ final class ScrollPerfTests: XCTestCase {
 	}
 
 	func testChatThreadScroll() throws {
-		app.tabBars.buttons["Team"].tap()
+		app.tabBars.buttons["Chats"].tap()
 		let row = app.staticTexts["Brand shoot"].firstMatch
 		XCTAssertTrue(row.waitForExistence(timeout: 20), "long thread in the Team list")
 		row.tap()

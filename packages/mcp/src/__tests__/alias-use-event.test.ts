@@ -168,6 +168,7 @@ describe('alias_use event through the real SDK path', () => {
 
 	describe.each([
 		['get_comments', { object_id: U1 }, 'object_id', 'entity_id'],
+		['create_comment', { object_id: U1, content: 'Done' }, 'object_id', 'entity_id'],
 		['search_objects', { query: 'roadmap' }, 'query', 'q'],
 		['get_session', { session_id: U1 }, 'session_id', 'id'],
 		['get_actor', { actor_id: U1 }, 'actor_id', 'id'],

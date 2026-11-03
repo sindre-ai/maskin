@@ -1,6 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
 import { itemsNeedingYou, loopCounters } from '@/components/loops/loop-counters'
+import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
@@ -27,6 +28,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -36,6 +38,7 @@ import {
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
@@ -57,6 +60,9 @@ import { toast } from 'sonner'
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
+
+/** Mirrors `FLAGS.LOOP_CUSTOM_VIEW` in `apps/dev/src/lib/feature-flags.ts`. */
+const LOOP_CUSTOM_VIEW_FLAG = 'loop-custom-view'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
@@ -121,6 +127,19 @@ function LoopDetailRoute() {
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const [tab, setTab] = useState('overview')
+
+	// Custom view: the one read of the flag for this page. An agent pins an HTML
+	// file with set_loop_view (metadata.view_file_id); with the flag on it replaces
+	// the stats and flow, and the toggle switches back. A view that cannot be shown
+	// sets customFailure and the default page renders with a note; choosing
+	// "Custom view" again clears it and retries.
+	const customViewFlag = useFeatureFlag(LOOP_CUSTOM_VIEW_FLAG)
+	const viewFileId =
+		typeof object?.metadata?.view_file_id === 'string' ? object.metadata.view_file_id : null
+	const hasCustomView = customViewFlag && viewFileId !== null
+	const [viewMode, setViewMode] = useState<'default' | 'custom'>('custom')
+	const [customFailure, setCustomFailure] = useState<string | null>(null)
+	const showCustomView = hasCustomView && viewMode === 'custom' && customFailure === null
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
 	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
@@ -561,62 +580,107 @@ function LoopDetailRoute() {
 
 						<TargetsAndOwners loop={loop} actors={actors} />
 
-						{counters.length > 0 && (
-							<section
-								aria-label="Progress"
-								data-testid="loop-counters"
-								className="grid grid-cols-3 gap-3 sm:flex"
-							>
-								{counters.map((c) => (
-									<div key={c.key} className="rounded-2xl bg-muted px-4 py-3.5 sm:w-44">
-										<p className="text-[26px] font-bold leading-none tracking-tight tabular-nums text-foreground">
-											{c.count}
-										</p>
-										<p className="mt-1.5 text-[13px] text-muted-foreground">{c.label}</p>
-									</div>
-								))}
-							</section>
-						)}
-
-						{needsYouRows.length > 0 && (
-							<section
-								aria-label="Needs you"
-								data-testid="loop-needs-you"
-								className="flex flex-col"
-							>
-								<span className="text-[13px] font-semibold text-muted-foreground">Needs you</span>
-								<p className="mt-2 text-[14px] font-semibold text-foreground">
-									{needsYouRows.length === 1
-										? '1 item is waiting for you'
-										: `${needsYouRows.length} items are waiting for you`}
+						{hasCustomView && (
+							<div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+								<p className="text-xs text-muted-foreground">
+									{viewMode === 'custom' && customFailure
+										? `Custom view unavailable: ${customFailure} Showing the default page.`
+										: ''}
 								</p>
-								{needsYouRows.map(({ item, ask }) => (
-									<Link
-										key={item.id}
-										to="/$workspaceId/objects/$objectId"
-										params={{ workspaceId, objectId: item.id }}
-										className="mt-2 flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2.5 transition-colors duration-150 hover:bg-muted"
+								<ButtonGroup aria-label="Loop view">
+									<Button
+										type="button"
+										variant={viewMode === 'default' ? 'secondary' : 'ghost'}
+										size="sm"
+										onClick={() => setViewMode('default')}
 									>
-										<span className="truncate text-[14px] font-semibold text-foreground">
-											{item.title ?? 'Untitled'}
-										</span>
-										<span className="truncate text-[12.5px] text-muted-foreground">
-											{ask.title}
-										</span>
-									</Link>
-								))}
-							</section>
+										Default
+									</Button>
+									<Button
+										type="button"
+										variant={viewMode === 'custom' ? 'secondary' : 'ghost'}
+										size="sm"
+										onClick={() => {
+											setCustomFailure(null)
+											setViewMode('custom')
+										}}
+									>
+										Custom view
+									</Button>
+								</ButtonGroup>
+							</div>
 						)}
 
-						<div>
-							<LoopFlow
+						{showCustomView && viewFileId && (
+							<LoopCustomView
 								workspaceId={workspaceId}
-								triggers={loopTriggers}
-								actors={actors}
-								childObjects={children ?? []}
-								loop={loop}
+								fileId={viewFileId}
+								onFailure={setCustomFailure}
 							/>
-						</div>
+						)}
+
+						{!showCustomView && (
+							<>
+								{counters.length > 0 && (
+									<section
+										aria-label="Progress"
+										data-testid="loop-counters"
+										className="grid grid-cols-3 gap-3 sm:flex"
+									>
+										{counters.map((c) => (
+											<div key={c.key} className="rounded-2xl bg-muted px-4 py-3.5 sm:w-44">
+												<p className="text-[26px] font-bold leading-none tracking-tight tabular-nums text-foreground">
+													{c.count}
+												</p>
+												<p className="mt-1.5 text-[13px] text-muted-foreground">{c.label}</p>
+											</div>
+										))}
+									</section>
+								)}
+
+								{needsYouRows.length > 0 && (
+									<section
+										aria-label="Needs you"
+										data-testid="loop-needs-you"
+										className="flex flex-col"
+									>
+										<span className="text-[13px] font-semibold text-muted-foreground">
+											Needs you
+										</span>
+										<p className="mt-2 text-[14px] font-semibold text-foreground">
+											{needsYouRows.length === 1
+												? '1 item is waiting for you'
+												: `${needsYouRows.length} items are waiting for you`}
+										</p>
+										{needsYouRows.map(({ item, ask }) => (
+											<Link
+												key={item.id}
+												to="/$workspaceId/objects/$objectId"
+												params={{ workspaceId, objectId: item.id }}
+												className="mt-2 flex flex-col gap-0.5 rounded-lg border border-border px-3 py-2.5 transition-colors duration-150 hover:bg-muted"
+											>
+												<span className="truncate text-[14px] font-semibold text-foreground">
+													{item.title ?? 'Untitled'}
+												</span>
+												<span className="truncate text-[12.5px] text-muted-foreground">
+													{ask.title}
+												</span>
+											</Link>
+										))}
+									</section>
+								)}
+
+								<div>
+									<LoopFlow
+										workspaceId={workspaceId}
+										triggers={loopTriggers}
+										actors={actors}
+										childObjects={children ?? []}
+										loop={loop}
+									/>
+								</div>
+							</>
+						)}
 					</div>
 				)}
 
