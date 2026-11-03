@@ -3,10 +3,14 @@ import type { Database } from '@maskin/db'
 import { IntegrationAuthRevokedError } from '../../errors'
 import { getIntegrationCredential } from '../../lookup'
 import { TokenManager } from '../../oauth/token-manager'
+import { readContextFor } from '../../read-context'
 import { getProvider } from '../../registry'
 
 const CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 const REQUEST_TIMEOUT_MS = 8_000
+
+/** Host recorded on the credential audit row for every calendar token read. */
+const CALENDAR_OUTBOUND_TARGET = 'www.googleapis.com'
 
 /**
  * Whether Google emails the attendee an invite. none: the prospect never agreed to receive email,
@@ -144,12 +148,18 @@ export function createCalendarClient(opts: CalendarClientOptions): CalendarClien
 /**
  * The workspace's Google Calendar access token (the provider is workspace-scoped). Null when no
  * active connection exists or the grant was revoked; the caller treats both as a calendar failure.
+ *
+ * The read is scope-checked and audited as requestingActorId. Booking runs server-side after a
+ * call with no authenticated caller, so the voice router passes the contact's actor.
  */
 export async function getCalendarAccessToken(
 	db: Database,
 	workspaceId: string,
+	requestingActorId: string,
 ): Promise<string | null> {
-	const integration = await getIntegrationCredential(db, workspaceId, 'google-calendar', null)
+	const integration = await getIntegrationCredential(db, workspaceId, 'google-calendar', null, {
+		ctx: readContextFor(requestingActorId, CALENDAR_OUTBOUND_TARGET),
+	})
 	if (!integration) return null
 	try {
 		return await new TokenManager().getValidToken(

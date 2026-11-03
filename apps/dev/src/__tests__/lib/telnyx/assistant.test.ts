@@ -95,9 +95,8 @@ describe('buildAssistantPayload', () => {
 	})
 
 	it('carries the request_followup_email consent condition in its description', () => {
-		const desc =
-			payload.tools.find((t) => t.webhook.name === 'request_followup_email')?.webhook.description ??
-			''
+		const tool = webhookTools(payload).find((t) => t.webhook.name === 'request_followup_email')
+		const desc = tool?.webhook.description ?? ''
 		expect(desc).toContain('raised email themselves')
 		expect(desc).toContain('opt out any time')
 		expect(desc).toContain('said yes')

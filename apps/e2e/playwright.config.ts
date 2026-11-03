@@ -86,6 +86,8 @@ export default defineConfig({
 				RESEND_BASE_URL: `http://localhost:${E2E_MOCK_RESEND_PORT}`,
 				EMAIL_FROM: 'notifications@e2e.invalid',
 				APP_URL: 'http://localhost:5173',
+				// The tool router hashes the assistant payload over absolute tool urls and throws without it.
+				MASKIN_PUBLIC_URL: 'http://localhost:3000',
 				TELNYX_PUBLIC_KEY: E2E_TELNYX_PUBLIC_KEY,
 				TELNYX_API_KEY: 'e2e-telnyx-key',
 				TELNYX_API_BASE_URL: E2E_TELNYX_STUB_URL,

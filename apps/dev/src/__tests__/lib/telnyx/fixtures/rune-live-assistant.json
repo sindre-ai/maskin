@@ -63,63 +63,32 @@
 		{
 			"name": "book_meeting_slot",
 			"description": "Get 3 free meeting times. Call when the prospect wants to meet. Read the options aloud, then call confirm_meeting_slot with the one they pick.",
-			"properties": [
-				"prospect_email",
-				"prospect_name",
-				"preferred_window"
-			],
-			"required": [
-				"prospect_email",
-				"prospect_name"
-			]
+			"properties": ["prospect_email", "prospect_name", "preferred_window"],
+			"required": ["prospect_email", "prospect_name"]
 		},
 		{
 			"name": "confirm_meeting_slot",
 			"description": "Book the time the prospect picked from book_meeting_slot. slot_index is the number of the option: 1, 2 or 3. Only after they said which time works.",
-			"properties": [
-				"slot_index",
-				"prospect_email",
-				"prospect_name"
-			],
-			"required": [
-				"slot_index",
-				"prospect_email",
-				"prospect_name"
-			]
+			"properties": ["slot_index", "prospect_email", "prospect_name"],
+			"required": ["slot_index", "prospect_email", "prospect_name"]
 		},
 		{
 			"name": "flag_interest",
 			"description": "Record that the prospect is interested. hot: wants to talk to a person now. warm: open to it later. Then book a slot.",
-			"properties": [
-				"strength",
-				"reason"
-			],
-			"required": [
-				"strength",
-				"reason"
-			]
+			"properties": ["strength", "reason"],
+			"required": ["strength", "reason"]
 		},
 		{
 			"name": "end_call_polite",
 			"description": "End the call politely. After a warm or hot signal, only after book_meeting_slot and confirm_meeting_slot have run.",
-			"properties": [
-				"reason"
-			],
-			"required": [
-				"reason"
-			]
+			"properties": ["reason"],
+			"required": ["reason"]
 		},
 		{
 			"name": "request_followup_email",
 			"description": "Record that the prospect asked for one follow-up email. Call only after the prospect raised email themselves, you confirmed the address and told them they can opt out any time, and they said yes. Pass their words. Never call it to offer or to be helpful.",
-			"properties": [
-				"prospect_quote",
-				"agent_line"
-			],
-			"required": [
-				"prospect_quote",
-				"agent_line"
-			]
+			"properties": ["prospect_quote", "agent_line"],
+			"required": ["prospect_quote", "agent_line"]
 		}
 	]
 }

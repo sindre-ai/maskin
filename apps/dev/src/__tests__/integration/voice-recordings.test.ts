@@ -1,7 +1,7 @@
 import { events, objects } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import AdmZip from 'adm-zip'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import { processVoiceRetentionSweep, sweepErased } from '../../jobs/voice-retention-sweep'
 import type { CallRecording } from '../../lib/integrations/providers/telnyx/client'
@@ -800,6 +800,110 @@ describe('Telnyx-hosted recordings on retention expiry', () => {
 		expect(s.telnyx.stillHosted()).toEqual([])
 		expect(s.storage.blobs.size).toBe(0)
 		expect((await rowOf(s.contactId)).metadata.last_call_recording_id).toBeUndefined()
+	})
+
+	describe('for a call whose mirror failed (no blob keys on the contact)', () => {
+		const OLD_TOUCH = '2024-01-01T00:00:00.000Z'
+		const AFTER_24_MONTHS = new Date('2026-10-03T12:00:00.000Z')
+
+		it('deletes the Telnyx recording of a contact with a call id, no mirror keys and a touch date over 24 months old', async () => {
+			await setup({
+				metadata: { last_call_id: 'call-1', voice_last_touch_at: OLD_TOUCH },
+			})
+			const { storage } = fx()
+			const telnyx = fakeTelnyx({ 'call-1': ['rec-1'] })
+
+			const result = await processVoiceRetentionSweep(
+				db,
+				storage.provider,
+				telnyx.factory,
+				AFTER_24_MONTHS,
+			)
+
+			expect(result.expired).toBe(1)
+			expect(telnyx.stillHosted()).toEqual([])
+		})
+
+		it('leaves a contact inside 24 months untouched', async () => {
+			const s = await setup({
+				metadata: { last_call_id: 'call-1', voice_last_touch_at: '2025-06-01T00:00:00.000Z' },
+			})
+			const { storage } = fx()
+			const telnyx = fakeTelnyx({ 'call-1': ['rec-1'] })
+
+			const result = await processVoiceRetentionSweep(
+				db,
+				storage.provider,
+				telnyx.factory,
+				AFTER_24_MONTHS,
+			)
+
+			expect(result.expired).toBe(0)
+			expect(telnyx.stillHosted()).toEqual(['rec-1'])
+			expect((await rowOf(s.contactId)).metadata.last_call_id).toBe('call-1')
+		})
+
+		it('starts the clock at the latest call event when no mirror ever stamped one', async () => {
+			const s = await setup({ metadata: { last_call_id: 'call-1' } })
+			await db.insert(events).values({
+				workspaceId: s.workspaceId,
+				actorId: getTestActorId(),
+				action: 'voice_mirror_failed',
+				entityType: 'object',
+				entityId: s.contactId,
+				data: { call_id: 'call-1', attempts: 6, reason: 'recording not ready' },
+			})
+			const { storage } = fx()
+			const telnyx = fakeTelnyx({ 'call-1': ['rec-1'] })
+			const monthsFromNow = (months: number) => {
+				const at = new Date()
+				at.setUTCMonth(at.getUTCMonth() + months)
+				return at
+			}
+
+			const early = await processVoiceRetentionSweep(
+				db,
+				storage.provider,
+				telnyx.factory,
+				monthsFromNow(23),
+			)
+			expect(early.expired).toBe(0)
+			expect(telnyx.stillHosted()).toEqual(['rec-1'])
+
+			const late = await processVoiceRetentionSweep(
+				db,
+				storage.provider,
+				telnyx.factory,
+				monthsFromNow(25),
+			)
+			expect(late.expired).toBe(1)
+			expect(telnyx.stillHosted()).toEqual([])
+		})
+
+		it('expires a contact once: a second sweep finds it done and writes no second audit row', async () => {
+			const s = await setup({
+				metadata: { last_call_id: 'call-1', voice_last_touch_at: OLD_TOUCH },
+			})
+			const { storage } = fx()
+			const telnyx = fakeTelnyx({ 'call-1': ['rec-1'] })
+			const sweep = () =>
+				processVoiceRetentionSweep(db, storage.provider, telnyx.factory, AFTER_24_MONTHS)
+			const auditRows = async () =>
+				(
+					await db
+						.select()
+						.from(events)
+						.where(and(eq(events.entityId, s.contactId), eq(events.action, 'updated')))
+				).filter((e) => (e.data as { source?: string })?.source === 'voice_retention_sweep')
+
+			expect((await sweep()).expired).toBe(1)
+			expect((await rowOf(s.contactId)).metadata.voice_recordings_expired_at).toBeDefined()
+			expect(await auditRows()).toHaveLength(1)
+
+			expect((await sweep()).expired).toBe(0)
+			expect(await auditRows()).toHaveLength(1)
+			expect(telnyx.deleteCalls).toEqual(['rec-1'])
+		})
 	})
 })
 

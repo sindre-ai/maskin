@@ -57,7 +57,7 @@ export type SendFollowupParams = Omit<
  */
 export async function sendFollowup(db: Database, params: SendFollowupParams): Promise<void> {
 	const { workspaceId, callId, actorId, ...email } = params
-	const resolved = await resolveWorkspaceResend(db, workspaceId)
+	const resolved = await resolveWorkspaceResend(db, workspaceId, actorId)
 	if (!resolved) {
 		logger.info('voice.email.send_skipped', {
 			workspaceId,

@@ -287,7 +287,8 @@ export const DISCLOSURE_LOCALE: DisclosureLocale = 'da'
  */
 export function currentScriptVersion(env: NodeJS.ProcessEnv = process.env): string {
 	const base = env.MASKIN_PUBLIC_URL?.trim().replace(/\/+$/, '') ?? ''
-	if (base === '') throw new Error('MASKIN_PUBLIC_URL is not set: cannot compute the script version')
+	if (base === '')
+		throw new Error('MASKIN_PUBLIC_URL is not set: cannot compute the script version')
 	return assistantContentHash(
 		buildAssistantPayload({
 			locale: DISCLOSURE_LOCALE,

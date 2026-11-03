@@ -71,6 +71,15 @@ export const FLAGS = {
 	 */
 	CHAT_ATTACHMENTS_LIFTED: 'chat-attachments-lifted',
 	/**
+	 * Voice-outreach autosend: whether the Sales Rep (Voice) dialer actually
+	 * places calls. Off (default) builds the queue and stops short of dialing.
+	 * Gates ONLY the outbound dial action: the Telnyx provider, the voice_*
+	 * contact statuses and the webhook register unconditionally. Per-actor, so
+	 * one tester enables it after the first staging dial-through. Parent bet:
+	 * bet/5b8e-voice-outreach.
+	 */
+	VOICE_OUTREACH_AUTOSEND: 'voice-outreach-autosend',
+	/**
 	 * Custom agent-built view on the loop page (task
 	 * [Prototype: agent-built custom view on the loop page (HTML + data bridge)](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c9d7469b-7922-4123-8681-925bd7f30044)).
 	 * Read once, in the loop detail route in apps/web. Off means the loop page is
@@ -96,15 +105,6 @@ export const FLAGS = {
 	 * bet's index-drop task. Retire (drop the old path and this entry) once it is on for everyone.
 	 */
 	CHAT_THREAD_SESSIONS: 'chat-thread-sessions',
-	/**
-	 * Voice-outreach autosend: whether the Sales Rep (Voice) dialer actually
-	 * places calls. Off (default) builds the queue and stops short of dialing.
-	 * Gates ONLY the outbound dial action: the Telnyx provider, the voice_*
-	 * contact statuses and the webhook register unconditionally. Per-actor, so
-	 * one tester enables it after the first staging dial-through. Parent bet:
-	 * bet/5b8e-voice-outreach.
-	 */
-	VOICE_OUTREACH_AUTOSEND: 'voice-outreach-autosend',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
