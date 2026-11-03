@@ -419,7 +419,9 @@ function LaterRow({
 // field (v16 prototype). Panel is inline, not a popover, so it stays reachable on touch.
 function LaterControl({ onLater }: { onLater: (option: LaterOption) => void }) {
 	const [open, setOpen] = useState(false)
-	const [now] = useState(() => new Date())
+	// Read each time the panel opens: a card left on screen past 18:00 or overnight must
+	// not offer times that have already gone by.
+	const [now, setNow] = useState(() => new Date())
 	const choose = (option: LaterOption) => {
 		setOpen(false)
 		onLater(option)
@@ -433,7 +435,10 @@ function LaterControl({ onLater }: { onLater: (option: LaterOption) => void }) {
 					size="sm"
 					className="rounded-full"
 					aria-expanded={open}
-					onClick={() => setOpen((value) => !value)}
+					onClick={() => {
+						if (!open) setNow(new Date())
+						setOpen((value) => !value)
+					}}
 				>
 					<Clock aria-hidden />
 					Later

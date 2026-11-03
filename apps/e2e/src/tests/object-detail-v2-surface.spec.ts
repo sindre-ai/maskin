@@ -131,12 +131,12 @@ test.describe('Object detail — v2 surface', () => {
 			}
 
 			// Exactly one composer at a time.
-			await expect(page.getByPlaceholder(/^Comment/)).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 			await page.getByRole('tab', { name: 'Message Relay' }).click()
 			await expect(page.getByPlaceholder('Message Relay…')).toBeVisible()
-			await expect(page.getByPlaceholder(/^Comment/)).toHaveCount(0)
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toHaveCount(0)
 			await page.getByRole('tab', { name: 'Comment', exact: true }).click()
-			await expect(page.getByPlaceholder(/^Comment/)).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 		})
 	}
 

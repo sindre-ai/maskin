@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Plus, X } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 // The longest label a tag may carry; the backend trims to the same bound.
 const TAG_MAX_LENGTH = 40
@@ -25,9 +25,22 @@ export function LoopTags({
 	const [adding, setAdding] = useState(false)
 	const [draft, setDraft] = useState('')
 
+	// The field unmounts on Enter/Escape and then blurs; this keeps the one
+	// decision (commit or cancel) from running a second time with a stale draft.
+	const settledRef = useRef(false)
+
 	if (tags.length === 0 && !canWrite) return null
 
+	function cancel() {
+		if (settledRef.current) return
+		settledRef.current = true
+		setDraft('')
+		setAdding(false)
+	}
+
 	function commit() {
+		if (settledRef.current) return
+		settledRef.current = true
 		const value = draft.trim().slice(0, TAG_MAX_LENGTH)
 		setDraft('')
 		setAdding(false)
@@ -66,10 +79,7 @@ export function LoopTags({
 								e.preventDefault()
 								commit()
 							}
-							if (e.key === 'Escape') {
-								setDraft('')
-								setAdding(false)
-							}
+							if (e.key === 'Escape') cancel()
 						}}
 						placeholder="Tag name"
 						aria-label="New tag"
@@ -80,7 +90,10 @@ export function LoopTags({
 						type="button"
 						variant="outline"
 						size="sm"
-						onClick={() => setAdding(true)}
+						onClick={() => {
+							settledRef.current = false
+							setAdding(true)
+						}}
 						className="h-8 rounded-full border-dashed text-[13px] text-muted-foreground"
 					>
 						<Plus size={13} aria-hidden="true" />

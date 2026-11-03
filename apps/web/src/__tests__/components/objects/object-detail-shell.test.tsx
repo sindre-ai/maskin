@@ -1,6 +1,7 @@
 import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import * as React from 'react'
+import { vi } from 'vitest'
 import { buildObjectResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -221,5 +222,19 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 		expect(screen.queryByText(/NO CREDITS/)).toBeNull()
+	})
+
+	it('falls back to Overview when the route owns the tab and ?tab= is missing', () => {
+		const itemA = buildObjectResponse({ type: 'bet' })
+		const itemB = buildObjectResponse({ type: 'bet' })
+		const onTabChange = vi.fn()
+		const { rerender } = render(
+			<ObjectDetailShell object={itemA} tab="related" onTabChange={onTabChange} />,
+			{ wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }) },
+		)
+		expect(screen.getByRole('tab', { name: /^Related/ })).toHaveAttribute('data-state', 'active')
+		// Navigating to another item drops the search param.
+		rerender(<ObjectDetailShell object={itemB} onTabChange={onTabChange} />)
+		expect(screen.getByRole('tab', { name: /^Overview$/ })).toHaveAttribute('data-state', 'active')
 	})
 })

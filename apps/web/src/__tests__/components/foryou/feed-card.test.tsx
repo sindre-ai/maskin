@@ -453,6 +453,26 @@ describe('FeedCard — Later', () => {
 		expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 	})
 
+	it('offers the times of the moment the panel opens, not of when the card mounted', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] })
+		try {
+			vi.setSystemTime(new Date(2026, 7, 19, 10, 0, 0))
+			const user = userEvent.setup()
+			renderCard({ onLater: vi.fn() })
+
+			// The card sits on screen past 18:00, then the person opens Later.
+			vi.setSystemTime(new Date(2026, 7, 19, 19, 30, 0))
+			await user.click(screen.getByRole('button', { name: 'Later' }))
+
+			expect(
+				screen.queryByRole('menuitem', { name: 'This evening, 18:00' }),
+			).not.toBeInTheDocument()
+			expect(screen.getByRole('menuitem', { name: 'Tomorrow, 08:00' })).toBeInTheDocument()
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
 	it('offers no Later on a card with nothing to decide', () => {
 		const item = buildItem({ latest_mention: buildMention({ decision: undefined }) })
 		renderCard({ item, onLater: vi.fn() })

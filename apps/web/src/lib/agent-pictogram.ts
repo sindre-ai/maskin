@@ -188,17 +188,19 @@ const TEAM_BY_NAME: Record<string, AgentTeam> = {
 
 // First match wins, so the order is the priority.
 const TEAM_PATTERNS: [RegExp, AgentTeam][] = [
-	[/legal|contract|compliance/i, 'Legal'],
-	[/financ|account|invoice|bookkeep/i, 'Finance'],
-	[/recruit|candidate|hiring/i, 'Recruiting'],
-	[/\bhr\b|people|onboard/i, 'People'],
-	[/support|help|triage/i, 'Support'],
-	[/video|film|edit/i, 'Video'],
-	[/market|seo|social|brand/i, 'Marketing'],
-	[/content|write|copy/i, 'Content'],
-	[/sales|lead|prospect/i, 'Sales'],
-	[/product|design|roadmap/i, 'Product'],
-	[/dev|code|engineer/i, 'Development'],
+	[/\b(legal|contracts?|compliance)\b/i, 'Legal'],
+	[/\b(finance|financial|accountant|accounting|accounts?|invoices?|bookkeep\w*)\b/i, 'Finance'],
+	[/\b(recruit\w*|candidates?|hiring)\b/i, 'Recruiting'],
+	[/\b(hr|people|onboard\w*)\b/i, 'People'],
+	[/\b(support|help|triage)\b/i, 'Support'],
+	// Engineering and product titles come before Sales/Video so "Lead Developer" and
+	// "Content Editor" are read by their craft, not the word "lead" or "edit".
+	[/\b(developers?|dev|code|coder|engineers?|engineering)\b/i, 'Development'],
+	[/\b(product|design\w*|roadmap)\b/i, 'Product'],
+	[/\b(videos?|film\w*|video\s+editors?)\b/i, 'Video'],
+	[/\b(marketing|marketer|seo|social|brand\w*)\b/i, 'Marketing'],
+	[/\b(content|writers?|writing|copy\w*|editors?)\b/i, 'Content'],
+	[/\b(sales|leads?|prospect\w*)\b/i, 'Sales'],
 ]
 
 /** The kind of work an agent does, read from its name; unknown names land in Operations. */

@@ -430,6 +430,33 @@ describe('AgentsIndexView', () => {
 	})
 
 	describe('status chips', () => {
+		it('presses no chip, not even All, while several statuses are chosen in Display', () => {
+			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()], undefined, undefined, {
+				groupBy: 'status',
+				filters: { status: 'working,failed' },
+			})
+			const strip = screen.getByRole('group', { name: 'Filter agents by status' })
+			for (const name of ['All (3)', 'Working (1)', 'Idle (1)', 'Failed (1)']) {
+				expect(within(strip).getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false')
+			}
+		})
+
+		it('presses the one chosen status and not All', () => {
+			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()], undefined, undefined, {
+				groupBy: 'status',
+				filters: { status: 'failed' },
+			})
+			const strip = screen.getByRole('group', { name: 'Filter agents by status' })
+			expect(within(strip).getByRole('button', { name: 'Failed (1)' })).toHaveAttribute(
+				'aria-pressed',
+				'true',
+			)
+			expect(within(strip).getByRole('button', { name: 'All (3)' })).toHaveAttribute(
+				'aria-pressed',
+				'false',
+			)
+		})
+
 		it('renders a chip per bucket with counts computed before filtering', async () => {
 			const user = userEvent.setup()
 			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])

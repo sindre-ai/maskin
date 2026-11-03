@@ -135,7 +135,9 @@ export function ObjectDetailShell({
 }) {
 	const { workspaceId, workspace } = useWorkspace()
 	const [ownTab, setOwnTab] = useState<ObjectDetailTab>('overview')
-	const tab = controlledTab ?? ownTab
+	// When the route owns the tab, a missing `?tab=` means Overview — never the
+	// last tab this shell instance showed for a different item.
+	const tab = controlledTab ?? (onTabChange ? 'overview' : ownTab)
 	const changeTab = useCallback(
 		(next: ObjectDetailTab) => {
 			setOwnTab(next)

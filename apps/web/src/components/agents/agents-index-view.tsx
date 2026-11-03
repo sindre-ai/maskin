@@ -48,6 +48,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 const AGENTS_DISPLAY_KEY = 'agents'
 const DEFAULT_GROUP_BY = 'team'
+const MULTIPLE_STATUSES = '__multiple__'
+
 export const AGENT_STATUSES = ['working', 'idle', 'failed'] as const
 type StatusBucket = (typeof AGENT_STATUSES)[number]
 
@@ -407,6 +409,16 @@ export function AgentsIndexView({
 		return sections
 	}, [activeStatuses, statusCounts, teamChips, teamFilter])
 
+	// The Display menu's Status filter is multi-select, so the chip strip reads the active *set*:
+	// All is pressed only with no status chosen, a chip only when it is the one status chosen,
+	// and with several chosen no chip is pressed (a click on one then narrows to just that one).
+	const statusChipValue =
+		activeStatuses.length === 0
+			? undefined
+			: activeStatuses.length === 1
+				? activeStatuses[0]
+				: MULTIPLE_STATUSES
+
 	const statusTabs = useMemo(() => {
 		const base: Array<{ label: string; value: string | undefined; count: number }> = [
 			{ label: 'All', value: undefined, count: rows.length },
@@ -491,7 +503,7 @@ export function AgentsIndexView({
 					aria-label="Filter agents by status"
 					className="shrink-0 overflow-visible"
 					tabs={statusTabs}
-					value={statusFilter}
+					value={statusChipValue}
 					onChange={setStatusFilter}
 				/>
 				{teamTabs.length > 0 && (

@@ -12,6 +12,18 @@ describe('getAgentTeam', () => {
 		expect(getAgentTeam('Contract Reviewer')).toBe('Legal')
 	})
 
+	it('matches whole words, so Content Editor and Credit Analyst are not Video', () => {
+		expect(getAgentTeam('Content Editor')).toBe('Content')
+		expect(getAgentTeam('Credit Analyst')).toBe('Operations')
+		expect(getAgentTeam('Video Editor')).toBe('Video')
+	})
+
+	it('reads the craft before the seniority word', () => {
+		expect(getAgentTeam('Lead Developer')).toBe('Development')
+		expect(getAgentTeam('Support Lead')).toBe('Support')
+		expect(getAgentTeam('Lead Qualifier')).toBe('Sales')
+	})
+
 	it('ignores a bracketed qualifier', () => {
 		expect(getAgentTeam('Planner (Sales)')).toBe('Operations')
 	})

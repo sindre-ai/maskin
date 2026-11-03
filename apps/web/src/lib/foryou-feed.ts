@@ -73,8 +73,12 @@ export function feedTailLabel({ filtered }: { filtered: boolean }): string {
 
 /**
  * What a bulk dismiss ("Dismiss all", Alt+U) may touch: never a card that is
- * waiting on a decision or an answer from the person.
+ * waiting on a decision or an answer from the person, and never one they set
+ * aside on purpose with Later (a dismissed card does not come back).
  */
 export function dismissableItems<T>(items: readonly T[], bucketOf: (item: T) => FeedBucket): T[] {
-	return items.filter((item) => bucketOf(item) !== 'needs')
+	return items.filter((item) => {
+		const bucket = bucketOf(item)
+		return bucket !== 'needs' && bucket !== 'later'
+	})
 }

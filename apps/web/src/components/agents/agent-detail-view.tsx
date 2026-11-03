@@ -57,7 +57,9 @@ export function AgentDetailView({
 	const navigate = useNavigate()
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const [ownTab, setOwnTab] = useState<AgentTab>(DEFAULT_AGENT_TAB)
-	const tab = controlledTab ?? ownTab
+	// A route that owns the tab (it passes onTabChange) has no ?tab= on the default Setup tab, so an
+	// absent value means Setup, never a stale local tab left over from the previous agent.
+	const tab = controlledTab ?? (onTabChange ? DEFAULT_AGENT_TAB : ownTab)
 	// The run open in the side panel. The banner and the Working-now card open runs too, so
 	// the page owns it and hands it to whichever sessions list is on screen.
 	const [openSessionId, setOpenSessionId] = useState<string | null>(null)

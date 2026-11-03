@@ -10,6 +10,7 @@ import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
 import { ChevronDown, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
 import { ReplyThreadList } from './replies/reply-thread-list'
@@ -191,9 +192,11 @@ function ChatConversationList({
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const markAllRead = async () => {
+		// Exactly the chats the Unread group lists (pinned chats sit in their own group).
+		const unread = groups.find((g) => g.key === 'unread')?.items ?? []
 		// The list carries no newest-message id, so read each unread chat's newest one.
-		const unread = shown.filter((c) => c.unread_count > 0)
-		await Promise.all(
+		// One failing chat must not undo or hide the others, so settle them all.
+		const results = await Promise.allSettled(
 			unread.map(async (c) => {
 				const res = await api.conversations.messages(c.id, workspaceId)
 				const newest = Math.max(0, ...res.messages.map((m) => m.id))
@@ -201,6 +204,14 @@ function ChatConversationList({
 					await updateMe.mutateAsync({ id: c.id, data: { last_read_message_id: newest } })
 			}),
 		)
+		const failed = results.filter((r) => r.status === 'rejected').length
+		if (failed > 0) {
+			toast.error(
+				failed === 1
+					? "Couldn't mark 1 chat as read. The rest are done."
+					: `Couldn't mark ${failed} chats as read. The rest are done.`,
+			)
+		}
 	}
 
 	// Scroll-near-the-bottom auto-loads the next page (mockup 545–547) instead

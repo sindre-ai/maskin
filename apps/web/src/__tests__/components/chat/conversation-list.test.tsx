@@ -1,6 +1,7 @@
 import type { ConversationListItemResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -12,8 +13,13 @@ vi.mock('@tanstack/react-router', async () => {
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 
 vi.mock('@/lib/api', () => ({
-	api: { conversations: { list: vi.fn(), replyThreads: vi.fn() } },
+	api: {
+		conversations: { list: vi.fn(), replyThreads: vi.fn(), messages: vi.fn(), updateMe: vi.fn() },
+	},
 }))
+
+const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }))
+vi.mock('sonner', () => ({ toast: { error: toastError, success: vi.fn() } }))
 
 import { ConversationList } from '@/components/chat/conversation-list'
 import { api } from '@/lib/api'
@@ -276,5 +282,34 @@ describe('ConversationList', () => {
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
 		expect(await screen.findByText('3 unread replies in threads')).toBeInTheDocument()
+	})
+
+	it('marks the Unread group read, keeps the successes when one chat fails, and says how many failed', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [
+				buildConversation({ id: 'ok', title: 'Fine one', unread_count: 2 }),
+				buildConversation({ id: 'bad', title: 'Broken one', unread_count: 1 }),
+				buildConversation({ id: 'pin', title: 'Pinned one', unread_count: 3, pinned: true }),
+			],
+			has_more: false,
+		})
+		vi.mocked(api.conversations.messages).mockImplementation(async (id: string) => {
+			if (id === 'bad') throw new Error('boom')
+			return { messages: [{ id: 7 }], has_more: false } as never
+		})
+		vi.mocked(api.conversations.updateMe).mockResolvedValue({} as never)
+		toastError.mockClear()
+		render(<ConversationList workspaceId="ws-1" filter="unread" />, { wrapper: TestWrapper })
+
+		await userEvent.click(await screen.findByRole('button', { name: 'Mark all read' }))
+
+		await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1))
+		expect(toastError.mock.calls[0]?.[0]).toContain('1 chat')
+		// The good chat was marked; the pinned one is not in the Unread group, so it was left alone.
+		expect(api.conversations.updateMe).toHaveBeenCalledTimes(1)
+		expect(api.conversations.updateMe).toHaveBeenCalledWith('ok', 'ws-1', {
+			last_read_message_id: 7,
+		})
+		expect(api.conversations.messages).not.toHaveBeenCalledWith('pin', expect.anything())
 	})
 })

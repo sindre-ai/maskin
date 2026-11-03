@@ -91,6 +91,11 @@ describe('dismissableItems', () => {
 		const items = Object.keys(buckets)
 		expect(dismissableItems(items, (id) => buckets[id] as FeedBucket)).toEqual(['b', 'c', 'd'])
 	})
+
+	it('leaves cards set aside with Later out of a bulk dismiss', () => {
+		const buckets: Record<string, FeedBucket> = { a: 'later', b: 'fyi', c: 'later' }
+		expect(dismissableItems(Object.keys(buckets), (id) => buckets[id] as FeedBucket)).toEqual(['b'])
+	})
 })
 
 describe('leadLine', () => {

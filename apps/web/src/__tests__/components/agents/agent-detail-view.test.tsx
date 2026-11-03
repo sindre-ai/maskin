@@ -221,6 +221,22 @@ describe('AgentDetailView tabs and status', () => {
 		expect(onTabChange).toHaveBeenCalledWith('triggers')
 	})
 
+	it('opens Setup when the route carries no tab, not the tab left open on the previous agent', async () => {
+		const user = userEvent.setup()
+		const onTabChange = vi.fn()
+		const wrapper = createWorkspaceWrapper({}, { renderPageHeader: true })
+		const { rerender } = render(
+			<AgentDetailView agent={agent} tab="sessions" onTabChange={onTabChange} />,
+			{ wrapper },
+		)
+		expect(screen.getByRole('tab', { name: /Sessions/ })).toHaveAttribute('aria-selected', 'true')
+		// Another agent, opened without ?tab=: the route's tab is undefined.
+		rerender(<AgentDetailView agent={agent} onTabChange={onTabChange} />)
+		expect(screen.getByRole('tab', { name: 'Setup' })).toHaveAttribute('aria-selected', 'true')
+		await user.click(screen.getByRole('tab', { name: 'Triggers' }))
+		expect(onTabChange).toHaveBeenCalledWith('triggers')
+	})
+
 	it('shows the Working-now card for a live run', () => {
 		sessionsMock.data = [
 			buildSessionResponse({
