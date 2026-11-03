@@ -105,7 +105,9 @@ function ChangeCard({
 			<div className="flex items-center gap-3 border-b border-border-subtle bg-surface-sunken px-3.5 py-2 text-xs">
 				<h3 className="shrink-0 font-bold text-foreground">Change {number}</h3>
 				{change.reason && (
-					<p className="min-w-0 flex-1 truncate text-muted-foreground">{change.reason}</p>
+					<p title={change.reason} className="min-w-0 flex-1 truncate text-muted-foreground">
+						{change.reason}
+					</p>
 				)}
 				{!stale && (
 					<Button
