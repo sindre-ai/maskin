@@ -1,6 +1,9 @@
 import {
 	getStoredSubscriptionId,
+	isChatTag,
 	isWebPushSupported,
+	pushTagsOf,
+	staleNotifications,
 	storeSubscriptionId,
 	toSubscribeBody,
 	urlBase64ToUint8Array,
@@ -75,5 +78,54 @@ describe('isWebPushSupported', () => {
 	it('is false when the browser has no PushManager (e.g. Safari not installed to home screen)', () => {
 		// jsdom ships none of serviceWorker / PushManager / Notification.
 		expect(isWebPushSupported()).toBe(false)
+	})
+})
+
+describe('pushTagsOf', () => {
+	it('returns the id when there is no collapse key', () => {
+		expect(pushTagsOf({ id: 'n1', metadata: null })).toEqual(['n1'])
+		expect(pushTagsOf({ id: 'n1', metadata: { push_collapse_key: '  ' } })).toEqual(['n1'])
+	})
+
+	it('adds the trimmed collapse key, which is what the server tags the push with', () => {
+		expect(pushTagsOf({ id: 'n1', metadata: { push_collapse_key: ' ask:42 ' } })).toEqual([
+			'n1',
+			'ask:42',
+		])
+	})
+})
+
+describe('isChatTag', () => {
+	it('matches the chat, its threads and its mentions', () => {
+		expect(isChatTag('chat:c1', 'c1')).toBe(true)
+		expect(isChatTag('chat:c1:thread:7', 'c1')).toBe(true)
+		expect(isChatTag('chat-mention:c1:99', 'c1')).toBe(true)
+	})
+
+	it('does not match another conversation that shares a prefix', () => {
+		expect(isChatTag('chat:c10', 'c1')).toBe(false)
+		expect(isChatTag('chat-mention:c10:1', 'c1')).toBe(false)
+		expect(isChatTag('n1', 'c1')).toBe(false)
+	})
+})
+
+describe('staleNotifications', () => {
+	const shown = (tag: string, url?: string) => ({
+		tag,
+		data: url ? { url } : undefined,
+		close() {},
+	})
+
+	it('keeps pending ones and returns the rest of this workspace', () => {
+		const pending = shown('n1', '/w1/notifications')
+		const handled = shown('n2', '/w1/chats/c1')
+		expect(staleNotifications([pending, handled], 'w1', new Set(['n1']))).toEqual([handled])
+	})
+
+	it('leaves other workspaces, unreadable links and untagged ones alone', () => {
+		const other = shown('n3', '/w2/notifications')
+		const noLink = shown('n4')
+		const untagged = shown('', '/w1/notifications')
+		expect(staleNotifications([other, noLink, untagged], 'w1', new Set())).toEqual([])
 	})
 })
