@@ -57,7 +57,14 @@ function seedContact(
 		type: 'contact',
 		title,
 		status,
-		metadata: { owner: 'sebk', phone: NUMBER, company_type: 'aps', ...metadata },
+		metadata: {
+			owner: 'sebk',
+			phone: NUMBER,
+			company_type: 'aps',
+			cvr_ad_protection: false,
+			headcount: 12,
+			...metadata,
+		},
 	})
 }
 
@@ -315,6 +322,8 @@ describe('the marker survives an import merge onto the erased row', () => {
 					phone: '+4520888888',
 					owner: 'sebk',
 					company_type: 'aps',
+					cvr_ad_protection: false,
+					headcount: 12,
 				},
 			],
 			mapping(),

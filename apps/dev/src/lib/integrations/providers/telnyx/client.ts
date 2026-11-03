@@ -42,6 +42,8 @@ export interface CreateCallInput {
 	to: string
 	from: string
 	assistantId: string
+	/** Per-call values for the assistant's {{variables}}. They win over the stored defaults. */
+	dynamicVariables?: Record<string, string>
 	connectionId: string
 	webhookUrl: string
 	clientState: CallClientState
@@ -211,6 +213,11 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 
 	return {
 		async createCall(input) {
+			// Telnyx reserves telnyx_* variable names for its own values.
+			const reserved = Object.keys(input.dynamicVariables ?? {}).find((n) =>
+				n.startsWith('telnyx_'),
+			)
+			if (reserved) throw new Error(`dynamic variable ${reserved} uses the reserved telnyx_ prefix`)
 			const res = await request(
 				'POST',
 				'/v2/calls',
@@ -219,8 +226,11 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 					from: input.from,
 					connection_id: input.connectionId,
 					// The Dial docs list an assistant object, not a top-level assistant_id. Telnyx starts it
-					// on answer. The opener and prompt read no variable, so none is sent.
-					assistant: { id: input.assistantId },
+					// on answer, and dynamic_variables win over the defaults stored on the assistant.
+					assistant: {
+						id: input.assistantId,
+						...(input.dynamicVariables ? { dynamic_variables: input.dynamicVariables } : {}),
+					},
 					webhook_url: input.webhookUrl,
 					answering_machine_detection: 'premium',
 					client_state: encodeClientState(input.clientState),

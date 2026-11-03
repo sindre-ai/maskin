@@ -6,6 +6,7 @@ import {
 	type DialerEvent,
 	type DialerStore,
 	type QueuedContact,
+	callFieldsOf,
 	copenhagenMidnight,
 	runDialerTick,
 } from '../../../lib/outreach/voice/dialer'
@@ -28,6 +29,8 @@ function contact(n: number, over: Partial<QueuedContact> = {}): QueuedContact {
 			owner: 'sebk',
 			phone: `+45201234${String(n).padStart(2, '0')}`,
 			company_type: 'aps',
+			cvr_ad_protection: false,
+			headcount: 12,
 		},
 		...over,
 	}
@@ -153,7 +156,14 @@ describe('runDialerTick', () => {
 		const c = contact(1, {
 			status: 'voice_no_answer',
 			nextDialAt: '2026-10-01T08:00:00.000Z',
-			metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'aps', dial_attempt_n: 2 },
+			metadata: {
+				owner: 'sebk',
+				phone: '+4520123401',
+				company_type: 'aps',
+				cvr_ad_protection: false,
+				headcount: 12,
+				dial_attempt_n: 2,
+			},
 		})
 		const { deps, createCall } = setup(fakeStore([c]))
 		await runDialerTick(WS, deps)
@@ -188,7 +198,14 @@ describe('runDialerTick', () => {
 		const retry = contact(1, {
 			status: 'voice_no_answer',
 			nextDialAt: '2026-10-01T08:00:00.000Z',
-			metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'aps', dial_attempt_n: 1 },
+			metadata: {
+				owner: 'sebk',
+				phone: '+4520123401',
+				company_type: 'aps',
+				cvr_ad_protection: false,
+				headcount: 12,
+				dial_attempt_n: 1,
+			},
 		})
 		const store = fakeStore([retry])
 		const { deps, createCall } = setup(store)
@@ -287,6 +304,8 @@ describe('runDialerTick', () => {
 					owner: 'sebk',
 					phone: '+4520123401',
 					company_type: 'aps',
+					cvr_ad_protection: false,
+					headcount: 12,
 					held_reason: 'legal',
 				},
 			})
@@ -344,6 +363,8 @@ describe('runDialerTick', () => {
 						owner: 'sebk',
 						phone: '+4520123401',
 						company_type: 'aps',
+						cvr_ad_protection: false,
+						headcount: 12,
 						approval_hold: true,
 					},
 				}),
@@ -357,7 +378,15 @@ describe('runDialerTick', () => {
 
 		it('does not let refused contacts eat the pacing budget', async () => {
 			const refused = [1, 2, 3, 4, 5].map((n) =>
-				contact(n, { metadata: { owner: 'rune', phone: '+4520123401', company_type: 'aps' } }),
+				contact(n, {
+					metadata: {
+						owner: 'rune',
+						phone: '+4520123401',
+						company_type: 'aps',
+						cvr_ad_protection: false,
+						headcount: 12,
+					},
+				}),
 			)
 			const store = fakeStore([...refused, contact(6), contact(7)])
 			const { deps, createCall } = setup(store)
@@ -528,12 +557,65 @@ describe('runDialerTick', () => {
 })
 
 describe('call input', () => {
-	it('carries no greeting: the opener is fixed text and reads no per-call variable', async () => {
+	it('sends the six SMB call fields from the contact, email falling back to metadata.email', async () => {
 		const c = contact(1, {
-			metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'aps', first_name: 'Anna' },
+			metadata: {
+				owner: 'sebk',
+				phone: '+4520123401',
+				company_type: 'aps',
+				cvr_ad_protection: false,
+				headcount: 12,
+				contact_name: 'Anna Jensen',
+				contact_role: 'Indehaver',
+				company_name: 'Jensen Byg ApS',
+				industry: 'Byggeri',
+				email: 'anna@jensenbyg.dk',
+			},
 		})
 		const { deps, createCall } = setup(fakeStore([c]))
 		await runDialerTick(WS, deps)
-		expect(createCall.mock.calls[0]?.[0]).not.toHaveProperty('prospectGreeting')
+		expect(createCall.mock.calls[0]?.[0]).toMatchObject({
+			dynamicVariables: {
+				contact_name: 'Anna Jensen',
+				contact_role: 'Indehaver',
+				company_name: 'Jensen Byg ApS',
+				industry: 'Byggeri',
+				headcount: '12',
+				contact_email: 'anna@jensenbyg.dk',
+			},
+		})
+	})
+
+	it('sends an empty string, not nothing, for a field the contact does not have', async () => {
+		const { deps, createCall } = setup(fakeStore([contact(1)]))
+		await runDialerTick(WS, deps)
+		expect(createCall.mock.calls[0]?.[0]).toMatchObject({
+			dynamicVariables: {
+				contact_name: '',
+				contact_role: '',
+				company_name: '',
+				industry: '',
+				headcount: '12',
+				contact_email: '',
+			},
+		})
+	})
+})
+
+describe('callFieldsOf', () => {
+	it('flattens whitespace and caps the length of text that came from the web', () => {
+		const fields = callFieldsOf({ company_name: `  Jensen\n\nByg   ApS ${'x'.repeat(300)}` })
+		expect(fields.company_name.startsWith('Jensen Byg ApS x')).toBe(true)
+		expect(fields.company_name).toHaveLength(120)
+	})
+
+	it('never sends a variable name starting with telnyx_', () => {
+		expect(Object.keys(callFieldsOf(null)).filter((n) => n.startsWith('telnyx_'))).toEqual([])
+	})
+
+	it('ignores values that are not text or a finite number', () => {
+		const fields = callFieldsOf({ contact_name: { first: 'Anna' }, headcount: Number.NaN })
+		expect(fields.contact_name).toBe('')
+		expect(fields.headcount).toBe('')
 	})
 })

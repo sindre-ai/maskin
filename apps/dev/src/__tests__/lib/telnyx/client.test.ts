@@ -138,6 +138,31 @@ describe('TelnyxClient.createCall', () => {
 		expect(body.assistant).toEqual({ id: 'assistant-1' })
 	})
 
+	it('sends dynamic variables inside the assistant object when given', async () => {
+		const { client, fetchImpl } = clientWith({
+			data: { call_control_id: 'call-1', call_session_id: 'sess-1' },
+		})
+		await client.createCall({
+			...input,
+			dynamicVariables: { contact_name: 'Anna Jensen', headcount: '12' },
+		})
+		const [, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+		const body = JSON.parse(String(init.body)) as Record<string, unknown>
+		expect(body.assistant).toEqual({
+			id: 'assistant-1',
+			dynamic_variables: { contact_name: 'Anna Jensen', headcount: '12' },
+		})
+		expect(body).not.toHaveProperty('assistant_id')
+	})
+
+	it('refuses a dynamic variable name that starts with telnyx_ before any request', async () => {
+		const { client, fetchImpl } = clientWith({ data: { call_control_id: 'call-1' } })
+		await expect(
+			client.createCall({ ...input, dynamicVariables: { telnyx_call_to: '+4500000000' } }),
+		).rejects.toThrow(/telnyx_/)
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
 	it('never sends a top-level assistant_id, which the Dial API does not list', async () => {
 		const { body } = await sentBody()
 		expect(body).not.toHaveProperty('assistant_id')
