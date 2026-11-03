@@ -617,6 +617,13 @@ run_agent() {
       if [[ "${MAX_BUDGET_USD:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
         budget_args=(--max-budget-usd "$MAX_BUDGET_USD")
       fi
+      # Turn limit for interactive runs: only when MAX_TURNS is set, so other
+      # interactive sessions keep running without a limit. The non-interactive
+      # branch always passes it (default 5000). Validated like the budget.
+      local turn_args=()
+      if [[ "${MAX_TURNS:-}" =~ ^[0-9]+$ ]]; then
+        turn_args=(--max-turns "$MAX_TURNS")
+      fi
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
           # Remote microsandbox path: stream user turns from the agent-server.
@@ -649,6 +656,7 @@ run_agent() {
             "${effort_args[@]}" \
             "${search_args[@]}" \
             "${budget_args[@]}" \
+            "${turn_args[@]}" \
             "${mcp_args[@]}" \
             < <(node /input-stream.js)
         else
@@ -661,6 +669,7 @@ run_agent() {
             "${effort_args[@]}" \
             "${search_args[@]}" \
             "${budget_args[@]}" \
+            "${turn_args[@]}" \
             "${mcp_args[@]}"
         fi
       else
