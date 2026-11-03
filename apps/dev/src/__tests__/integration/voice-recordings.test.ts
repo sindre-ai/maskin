@@ -1,7 +1,7 @@
 import { events, objects } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import AdmZip from 'adm-zip'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import { processVoiceRetentionSweep, sweepErased } from '../../jobs/voice-retention-sweep'
 import type { CallRecording } from '../../lib/integrations/providers/telnyx/client'
@@ -878,6 +878,31 @@ describe('Telnyx-hosted recordings on retention expiry', () => {
 			)
 			expect(late.expired).toBe(1)
 			expect(telnyx.stillHosted()).toEqual([])
+		})
+
+		it('expires a contact once: a second sweep finds it done and writes no second audit row', async () => {
+			const s = await setup({
+				metadata: { last_call_id: 'call-1', voice_last_touch_at: OLD_TOUCH },
+			})
+			const { storage } = fx()
+			const telnyx = fakeTelnyx({ 'call-1': ['rec-1'] })
+			const sweep = () =>
+				processVoiceRetentionSweep(db, storage.provider, telnyx.factory, AFTER_24_MONTHS)
+			const auditRows = async () =>
+				(
+					await db
+						.select()
+						.from(events)
+						.where(and(eq(events.entityId, s.contactId), eq(events.action, 'updated')))
+				).filter((e) => (e.data as { source?: string })?.source === 'voice_retention_sweep')
+
+			expect((await sweep()).expired).toBe(1)
+			expect((await rowOf(s.contactId)).metadata.voice_recordings_expired_at).toBeDefined()
+			expect(await auditRows()).toHaveLength(1)
+
+			expect((await sweep()).expired).toBe(0)
+			expect(await auditRows()).toHaveLength(1)
+			expect(telnyx.deleteCalls).toEqual(['rec-1'])
 		})
 	})
 })
