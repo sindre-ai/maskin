@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { objects } from '@maskin/db/schema'
+import { events, objects } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { Cron } from 'croner'
 import { and, eq, ne, sql } from 'drizzle-orm'
@@ -26,9 +26,11 @@ import {
  * Daily sweep for call recordings and transcripts (voice-outreach/<contact_id>/ in S3, and the
  * original recording Telnyx hosts).
  *
- *   1. Expiry: a contact whose retention_expires_at (default: voice_last_touch_at plus
- *      24 months) has passed loses its Telnyx-hosted recordings and its blobs, and
- *      last_call_recording_id and last_call_transcript_id are cleared.
+ *   1. Expiry: a contact with any call (a mirror key, last_call_id or a call event) whose
+ *      retention_expires_at (default: voice_last_touch_at plus 24 months, else its latest
+ *      call event plus 24 months, for a call whose mirror never succeeded) has passed loses
+ *      its Telnyx-hosted recordings and its blobs, and last_call_recording_id and
+ *      last_call_transcript_id are cleared.
  *   2. Erasure: a contact whose stored status is deleted_by_request loses its Telnyx-hosted
  *      recordings, its blobs, its content, and every metadata key except consent_*;
  *      erased_at marks it done.
@@ -178,11 +180,24 @@ export async function sweepExpired(
 			and(
 				eq(objects.type, 'contact'),
 				ne(objects.status, DELETED_BY_REQUEST),
+				// Any call, not only a mirrored one: a call whose mirror failed leaves its recording on
+				// Telnyx with no blob key on the contact (last_call_id and the call events still name it).
 				sql`(${objects.metadata}->>'last_call_recording_id' is not null
-					or ${objects.metadata}->>'last_call_transcript_id' is not null)`,
+					or ${objects.metadata}->>'last_call_transcript_id' is not null
+					or ${objects.metadata}->>'last_call_id' is not null
+					or exists (select 1 from ${events}
+						where ${events.workspaceId} = ${objects.workspaceId}
+						and ${events.entityId} = ${objects.id}
+						and ${events.data}->>'call_id' is not null))`,
+				// Only a successful mirror stamps the clock, so a contact whose mirror always failed falls
+				// back to its latest call event.
 				sql`coalesce(
 					nullif(${objects.metadata}->>'retention_expires_at', '')::timestamptz,
-					nullif(${objects.metadata}->>'voice_last_touch_at', '')::timestamptz + ${sql.raw(`interval '${RETENTION_MONTHS} months'`)}
+					nullif(${objects.metadata}->>'voice_last_touch_at', '')::timestamptz + ${sql.raw(`interval '${RETENTION_MONTHS} months'`)},
+					(select max(${events.createdAt}) from ${events}
+						where ${events.workspaceId} = ${objects.workspaceId}
+						and ${events.entityId} = ${objects.id}
+						and ${events.data}->>'call_id' is not null) + ${sql.raw(`interval '${RETENTION_MONTHS} months'`)}
 				) < ${now.toISOString()}::timestamptz`,
 			),
 		)
