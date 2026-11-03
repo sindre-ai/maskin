@@ -81,6 +81,10 @@ public struct OutboxAuthRequired: Error, Sendable, Equatable {
 }
 
 /// Performs one queued write. The outbox has already set `IdempotencyKey.current`.
+///
+/// Do not bind a key again in an executor: a source that takes the key as a parameter binds it
+/// with `IdempotencyKey.bind`, which is a no-op for the same key. Binding a different key here
+/// nests `withValue`, which aborts on iOS 17 (see `IdempotencyKey.bind`).
 public protocol OutboxExecuting: Sendable {
 	func execute(kind: String, payload: Data) async throws
 }
