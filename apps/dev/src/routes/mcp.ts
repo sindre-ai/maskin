@@ -1,10 +1,18 @@
 import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { createMcpServer } from '@maskin/mcp'
+import { READ_TOOL_NAMES, createMcpServer } from '@maskin/mcp'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Hono } from 'hono'
+import { classifyMcpClient } from '../lib/analytics/mcp-client'
+import {
+	LEGACY_HANDSHAKE_METHOD,
+	MODERN_HANDSHAKE_METHOD,
+	type McpEraClassification,
+	classifyMcpEra,
+	eraMethodOf,
+} from '../lib/analytics/mcp-era'
 import {
 	type JsonRpcErrorLike,
 	type McpMisfire,
@@ -12,10 +20,28 @@ import {
 	recordMcpMisfire,
 	requestedShape,
 } from '../lib/analytics/mcp-misfire'
-import { type McpSessionSource, argKeys, captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
+import {
+	type McpSessionSource,
+	argKeys,
+	captureMcpHandshake,
+	captureMcpToolCall,
+	normalizeActorType,
+} from '../lib/analytics/mcp-tool-calls'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
+import {
+	type CallerClass,
+	type McpRateLimiter,
+	type RateLimitConfig,
+	buildRejectionBody,
+	costOfBody,
+	createMcpRateLimiter,
+	describeConfig,
+	resolveRateLimitConfig,
+} from '../lib/mcp-rate-limit'
 import { type SeqCounter, createSeqCounter } from '../lib/mcp-trace-seq'
+import { extractClientIp } from '../lib/trusted-proxy'
 
 // Only `db` is set on the /mcp path — the auth middleware runs under /api/*.
 type Env = {
@@ -75,6 +101,80 @@ app.post('/', async (c) => {
 	// at all, so we see nothing here and the create_comment default reverts to
 	// "post as a new top-level comment", matching pre-existing behaviour.
 	const triggeringEventId = resolveTriggeringEventId(c.req.header.bind(c.req))
+
+	let body: unknown
+	try {
+		body = await c.req.json()
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
+	}
+	// Era is decided once per POST, here, so the MCP server config, the trace and
+	// the misfire path all report the same answer. A fault leaves it undefined
+	// (the property is then absent from the events) and never fails the request.
+	let era: McpEraClassification | undefined
+	try {
+		era = classifyMcpEra(c.req.raw.headers, eraMethodOf(body))
+	} catch (err) {
+		logger.warn('mcp era classification failed', { error: String(err) })
+	}
+	const nodeRes = (c.env as Record<string, unknown>).outgoing as import('node:http').ServerResponse
+	const nodeReq = (c.env as Record<string, unknown>).incoming as import('node:http').IncomingMessage
+
+	// The caller's actor is resolved BEFORE the limiter, which needs to know
+	// whether this is an agent, a human or nobody we know. Started here but not
+	// awaited yet: the sequence numbers below must still be allocated before any
+	// await (see the comment on them), and a cache miss costs a DB roundtrip.
+	const db = c.get('db')
+	const lookupPromise: Promise<ActorLookup> =
+		apiKey && db ? resolveAgentActor(db, apiKey) : Promise.resolve({ status: 'unresolved' })
+
+	const startedAt = Date.now()
+
+	// Allocate sequence numbers HERE — synchronously, before any await. `seq`
+	// exists because these events are fire-and-forget and can be ingested out
+	// of order, so it has to be stamped at the moment the call is observed. Do
+	// it downstream (inside the emitter, past the awaited actor lookup) and two
+	// calls on one session can invert: a cache-miss lookup takes a DB roundtrip
+	// while a call arriving a millisecond later hits a warm cache and numbers
+	// itself first. Agents issue tool calls in parallel routinely, so that is
+	// an ordinary case, not a rare race.
+	//
+	// A request the limiter then rejects has spent its numbers without emitting
+	// an event, so enforce mode leaves gaps in `seq`. Log-only, the default,
+	// never does. `seq` orders what arrives; it never proved nothing was lost.
+	//
+	// Wrapped because this runs OUTSIDE the try below, on the request path: a
+	// throw here fails the tool call itself rather than costing a metric.
+	// `listRequests` filters the one input shape known to do that, so this is
+	// defence in depth against the next one — an analytics step must never be
+	// able to 500 a request the transport would have answered.
+	let plannedCalls: PlannedTracedCall[] = []
+	try {
+		plannedCalls = planTracedCalls(body, session, startedAt, workspaceId)
+	} catch (err) {
+		logger.warn('mcp trace planning failed', { error: String(err) })
+	}
+
+	const lookup = await lookupPromise
+
+	// ── Rate limit ──
+	// After the JSON body is parsed (an invalid body is still a 400), before the
+	// MCP server is built: a rejected request must not cost a server build, a
+	// database query or a REST callback.
+	const limited = applyRateLimit({
+		body,
+		lookup,
+		hadKey: Boolean(apiKey),
+		socketIp: nodeReq?.socket?.remoteAddress,
+		forwardedFor: c.req.header('X-Forwarded-For'),
+	})
+	if (limited) {
+		return c.json(limited.body, 429, { 'Retry-After': String(limited.retryAfterSeconds) })
+	}
+	// The latency reported on the trace starts HERE, not at `startedAt`: the
+	// actor lookup above is our own cache behaviour, not the tool's time.
+	const serveStartedAt = Date.now()
+
 	const mcpConfig = {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey,
@@ -90,6 +190,8 @@ app.post('/', async (c) => {
 				? session.source
 				: ('process' as const),
 		triggeringEventId,
+		telemetryEra: era?.era,
+		telemetryProtocolVersion: era?.version,
 		// Forward the caller's session id so create_session can link
 		// the helper to its sender. Only a uuid-shaped header counts, and it is
 		// still just a claim: POST /api/sessions checks it belongs to the caller.
@@ -101,15 +203,6 @@ app.post('/', async (c) => {
 		enableJsonResponse: true,
 	})
 
-	const nodeRes = (c.env as Record<string, unknown>).outgoing as import('node:http').ServerResponse
-	const nodeReq = (c.env as Record<string, unknown>).incoming as import('node:http').IncomingMessage
-
-	let body: unknown
-	try {
-		body = await c.req.json()
-	} catch {
-		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
-	}
 	// Via `listRequests` so a junk element (`[null]` is valid JSON and reaches
 	// us straight off `c.req.json()`) cannot throw here. This is a debug LOG
 	// line on the request path: an unguarded `b.method` 500s a request the
@@ -127,29 +220,6 @@ app.post('/', async (c) => {
 	// the MCP request path.
 	const captured = wrapResponseCapture(nodeRes)
 
-	const startedAt = Date.now()
-
-	// Allocate sequence numbers HERE — synchronously, before any await. `seq`
-	// exists because these events are fire-and-forget and can be ingested out
-	// of order, so it has to be stamped at the moment the call is observed. Do
-	// it downstream (inside the emitter, past the awaited actor lookup) and two
-	// calls on one session can invert: a cache-miss lookup takes a DB roundtrip
-	// while a call arriving a millisecond later hits a warm cache and numbers
-	// itself first. Agents issue tool calls in parallel routinely, so that is
-	// an ordinary case, not a rare race.
-	//
-	// Wrapped because this runs OUTSIDE the try below, on the request path: a
-	// throw here fails the tool call itself rather than costing a metric.
-	// `listRequests` filters the one input shape known to do that, so this is
-	// defence in depth against the next one — an analytics step must never be
-	// able to 500 a request the transport would have answered.
-	let plannedCalls: PlannedTracedCall[] = []
-	try {
-		plannedCalls = planTracedCalls(body, session, startedAt, workspaceId)
-	} catch (err) {
-		logger.warn('mcp trace planning failed', { error: String(err) })
-	}
-
 	// `finally`, not a plain sequence: a throw out of `handleRequest` would
 	// otherwise skip emission entirely, having ALREADY spent the sequence
 	// numbers above. The gaps in `seq` would then correlate exactly with the
@@ -166,7 +236,7 @@ app.post('/', async (c) => {
 		// the call from inside the emitter would fold that lookup into
 		// `duration_ms`, giving every tool a bimodal latency distribution whose
 		// second mode is our own cache behaviour rather than the tool's.
-		const elapsedMs = Date.now() - startedAt
+		const elapsedMs = Date.now() - serveStartedAt
 
 		// Fire-and-forget: emit one `mcp_tool_call` trace event per tools/call,
 		// plus one PostHog event per real misfire. Both read the same captured
@@ -174,14 +244,16 @@ app.post('/', async (c) => {
 		// call, so an unhandled rejection here takes down the whole apps/dev
 		// process. Analytics must never be able to do that.
 		void emitMcpTrace({
-			db: c.get('db'),
-			apiKey,
+			db,
+			actor: lookup.status === 'resolved' ? lookup.actor : null,
 			workspaceId,
 			requestBody: body,
+			userAgent: c.req.header('User-Agent'),
 			responseBytes: captured.consume(),
 			session,
 			elapsedMs,
 			plannedCalls,
+			era,
 		}).catch((err) => logger.warn('mcp trace emission failed', { error: String(err) }))
 	}
 
@@ -191,6 +263,112 @@ app.post('/', async (c) => {
 		headers: { 'x-hono-already-sent': '1' },
 	})
 })
+
+// ── Rate limit wiring ───────────────────────────────────────────────────
+//
+// The numbers live in lib/mcp-rate-limit.ts. This is the route's half: who the
+// caller is, which client address to bucket an unknown caller by, and the
+// summary line. Built lazily so tests (and boot) control when env is read.
+
+const SUMMARY_DISTINCT_ID = 'mcp-rate-limit'
+
+let rateLimiter: McpRateLimiter | null = null
+
+/**
+ * Resolves the config from env, logs it once as mcp_rate_limit_config and starts
+ * the summary interval. Called at boot from index.ts; the first request calls it
+ * too if nothing did, so the limiter can never be silently absent.
+ */
+export function initMcpRateLimit(
+	options: { config?: RateLimitConfig; now?: () => number } = {},
+): McpRateLimiter {
+	rateLimiter?.stop()
+	const config = options.config ?? resolveRateLimitConfig()
+	const limiter = createMcpRateLimiter({
+		config,
+		readToolNames: READ_TOOL_NAMES,
+		now: options.now ?? (() => Date.now()),
+	})
+	logger.info('mcp_rate_limit_config', describeConfig(config))
+	limiter.startSummary((payload) => {
+		logger.info('mcp_rate_limit_summary', payload)
+		// Fire-and-forget, like the other event emitters: it never throws.
+		void capturePosthogEvent('mcp_rate_limit_summary', SUMMARY_DISTINCT_ID, payload)
+	})
+	rateLimiter = limiter
+	return limiter
+}
+
+/** Clears the summary interval. Called on shutdown. */
+export function stopMcpRateLimit(): void {
+	rateLimiter?.stop()
+}
+
+/** Drops the limiter so the next request rebuilds it from env. Only used in tests. */
+export function __resetMcpRateLimit(): void {
+	rateLimiter?.stop()
+	rateLimiter = null
+}
+
+/** Current limiter, or null before first use. Only used in tests. */
+export function __getMcpRateLimiter(): McpRateLimiter | null {
+	return rateLimiter
+}
+
+interface RateLimitRequest {
+	body: unknown
+	lookup: ActorLookup
+	hadKey: boolean
+	socketIp: string | undefined
+	forwardedFor: string | undefined
+}
+
+/** Null when the request may proceed; otherwise the 429 to send. */
+function applyRateLimit(req: RateLimitRequest): { body: object; retryAfterSeconds: number } | null {
+	const limiter = rateLimiter ?? initMcpRateLimit()
+	if (limiter.config.mode === 'off') return null
+
+	const { cost, toolCalls } = costOfBody(req.body, limiter.readToolNames, limiter.config.writeCost)
+
+	if (req.lookup.status === 'error') {
+		// Fail open: allow and count. The lookup warn is logged where it failed.
+		limiter.recordLookupError({ toolCalls })
+		return null
+	}
+
+	let callerClass: CallerClass = 'unknown'
+	let key: string
+	let actorId: string | undefined
+	if (req.lookup.status === 'resolved') {
+		callerClass = req.lookup.actor.actorType === 'human' ? 'human' : 'agent'
+		actorId = req.lookup.actor.actorId
+		key = actorId
+	} else {
+		// Unauthenticated, bad key or unresolved key: the client address, taken from
+		// the socket and only then from X-Forwarded-For if the socket is a trusted
+		// proxy. Not `c.req.raw.remoteAddress`, which is never set on this stack.
+		key = extractClientIp(req.socketIp, req.forwardedFor)
+	}
+
+	const result = limiter.check({
+		callerClass,
+		key,
+		actorId,
+		cost,
+		toolCalls,
+		hadKey: req.hadKey,
+	})
+	if (result.outcome !== 'rejected') return null
+	const retryAfterSeconds = result.retryAfterSeconds ?? 1
+	return {
+		retryAfterSeconds,
+		body: buildRejectionBody(req.body, {
+			retryAfterSeconds,
+			limitPerMinute: result.limitPerMinute,
+			callerClass,
+		}),
+	}
+}
 
 // Reject GET/DELETE on /mcp — server doesn't support server-initiated SSE streams
 app.get('/', (c) => {
@@ -274,7 +452,7 @@ const MAX_SESSION_ID_LEN = 128
 // every workspace, into one bucket with interleaved seq numbers, labelled
 // `maskin-session`: the tag that means "this is a real sessions.id". Wrong data
 // wearing the highest-confidence label is worse than no data, so these fall
-// through to `unknown`. agent-run.sh guards BROWSER_CDP_URL the same way.
+// through to `unknown`. agent-run.sh guards unexpanded placeholders the same way.
 const UNEXPANDED_PLACEHOLDER_RE = /^\$\{[^}]*\}$/
 
 // `sessions.id` is a uuid. `X-Maskin-Session-Id` is the only header that earns
@@ -391,7 +569,13 @@ const ACTOR_CACHE_MAX = 5_000
 // Keyed by a SHA-256 of the API key, never the key itself: this map outlives
 // the 60s TTL of any individual entry, and plaintext credentials sitting in a
 // long-lived process map end up in every heap dump.
-const actorCache = new Map<string, { actorId: string | null; at: number }>()
+const actorCache = new Map<string, { actor: ResolvedActor | null; at: number }>()
+
+/** What validateApiKey told us about the caller; null when the key did not resolve. */
+interface ResolvedActor {
+	actorId: string
+	actorType: 'human' | 'agent' | null
+}
 
 function actorCacheKey(apiKey: string): string {
 	return createHash('sha256').update(apiKey).digest('hex')
@@ -403,7 +587,7 @@ function actorCacheKey(apiKey: string): string {
  * request into a `validateApiKey` query — trading bounded memory for unbounded
  * DB load. The cap below is what keeps the memory side honest.
  */
-function rememberActor(key: string, actorId: string | null, at: number): void {
+function rememberActor(key: string, actor: ResolvedActor | null, at: number): void {
 	if (!actorCache.has(key) && actorCache.size >= ACTOR_CACHE_MAX) {
 		for (const [k, v] of actorCache) {
 			if (at - v.at >= ACTOR_CACHE_TTL_MS) actorCache.delete(k)
@@ -415,7 +599,7 @@ function rememberActor(key: string, actorId: string | null, at: number): void {
 			actorCache.delete(oldest.value)
 		}
 	}
-	actorCache.set(key, { actorId, at })
+	actorCache.set(key, { actor, at })
 }
 
 /**
@@ -468,9 +652,12 @@ export function planTracedCalls(
 
 interface EmitMcpTraceArgs {
 	db: Database | undefined
-	apiKey: string
+	/** Resolved once per request, before the rate limiter; null when it did not resolve. */
+	actor: ResolvedActor | null
 	workspaceId: string
 	requestBody: unknown
+	/** Reduced to a client family before it is emitted; never stored raw. */
+	userAgent: string | undefined
 	responseBytes: Buffer
 	session: McpSessionIdentity
 	/**
@@ -479,19 +666,29 @@ interface EmitMcpTraceArgs {
 	 */
 	elapsedMs: number
 	plannedCalls: PlannedTracedCall[]
+	/** Undefined when the classifier faulted; the events then omit the era fields. */
+	era: McpEraClassification | undefined
 }
 
 async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 	let responses: JsonRpcMessage[]
-	let agentActorId: string | null = null
+	const actor = args.actor
 	try {
 		responses = parseJsonRpcResponses(args.responseBytes)
-		if (args.plannedCalls.length === 0 && responses.length === 0) return
-		agentActorId = args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
+		if (
+			args.plannedCalls.length === 0 &&
+			responses.length === 0 &&
+			handshakeRequests(args.requestBody).length === 0
+		) {
+			return
+		}
 	} catch (err) {
 		logger.warn('mcp trace response parse failed', { error: String(err) })
 		return
 	}
+
+	const agentActorId = actor?.actorId ?? null
+	const client = classifyMcpClient(args.userAgent)
 
 	const responsesById = new Map<string, JsonRpcMessage>()
 	for (const r of responses) {
@@ -546,11 +743,38 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					responseBytes,
 					transport: 'http',
 					agentActorId,
+					// `api_key` only when the key resolved: an unknown caller or a bad
+					// token is null, never an authenticated-looking value.
+					authMethod: actor ? 'api_key' : null,
+					client,
+					actorType: actor?.actorType ?? null,
+					mcpEra: args.era?.era,
+					mcpProtocolVersion: args.era?.version,
 				})
 			}),
 		)
 	} catch (err) {
 		logger.warn('mcp trace capture failed', { error: String(err) })
+	}
+
+	// ── Handshake: one event per initialize / server/discover, own try block ──
+	// Kept apart from the misfire phase below, which returns early when no
+	// response carries an error — a successful handshake would never reach it.
+	try {
+		for (const request of handshakeRequests(args.requestBody)) {
+			await captureMcpHandshake(args.workspaceId, {
+				handshakeMethod: request.method === 'initialize' ? 'initialize' : 'server_discover',
+				outcome: handshakeOutcome(request, responses, responsesById),
+				mcpEra: args.era?.era,
+				mcpProtocolVersion: args.era?.version,
+				client,
+				transport: 'http',
+				authMethod: actor ? 'api_key' : null,
+				agentActorId,
+			})
+		}
+	} catch (err) {
+		logger.warn('mcp handshake capture failed', { error: String(err) })
 	}
 
 	// ── Misfires: unchanged behaviour, one row + event per classified error ──
@@ -573,8 +797,11 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 				kind,
 				toolName,
 				requestedShape: shape,
+				errorMessage: error.message ?? '',
 				sessionId: misfireSessionId,
 				agentActorId,
+				mcpEra: args.era?.era,
+				mcpProtocolVersion: args.era?.version,
 			}
 			await recordMcpMisfire(args.db, args.workspaceId, misfire)
 		}
@@ -598,6 +825,34 @@ function listRequests(body: unknown): JsonRpcMessage[] {
 	if (Array.isArray(body)) return body.filter(isJsonRpcMessage)
 	if (isJsonRpcMessage(body)) return [body]
 	return []
+}
+
+// The requests that open a connection: legacy `initialize` and modern
+// `server/discover`. One `mcp_handshake` event is emitted per element.
+function handshakeRequests(body: unknown): JsonRpcMessage[] {
+	return listRequests(body).filter(
+		(r) => r.method === LEGACY_HANDSHAKE_METHOD || r.method === MODERN_HANDSHAKE_METHOD,
+	)
+}
+
+// How the server answered a handshake. A version the transport refuses comes
+// back as an id-less 400 body ("Unsupported protocol version"), and a modern
+// `server/discover` reaching the legacy server is "method not found" (-32601);
+// both are a bounced client, not a fault, so they get their own outcome.
+function handshakeOutcome(
+	request: JsonRpcMessage,
+	responses: JsonRpcMessage[],
+	responsesById: Map<string, JsonRpcMessage>,
+): 'ok' | 'rejected_version' | 'error' {
+	const refusedVersion = responses.some((r) =>
+		/unsupported protocol version/i.test(extractError(r)?.message ?? ''),
+	)
+	if (refusedVersion) return 'rejected_version'
+	const response = request.id != null ? responsesById.get(String(request.id)) : undefined
+	if (!response) return 'error'
+	const error = extractError(response)
+	if (!error) return 'ok'
+	return error.code === -32601 ? 'rejected_version' : 'error'
 }
 
 // Normalize both shapes the MCP SDK uses for error responses into a
@@ -690,18 +945,30 @@ function extractToolName(
 	return match?.[1] ?? null
 }
 
-async function resolveAgentActorId(db: Database, apiKey: string): Promise<string | null> {
+/**
+ * What the key lookup found. `error` is NOT `unresolved`: a database blip says
+ * nothing about the key, so it is never cached and the rate limiter fails open
+ * on it instead of dropping real agents into the strict unknown bucket.
+ */
+type ActorLookup =
+	| { status: 'resolved'; actor: ResolvedActor }
+	| { status: 'unresolved' }
+	| { status: 'error' }
+
+async function resolveAgentActor(db: Database, apiKey: string): Promise<ActorLookup> {
 	const key = actorCacheKey(apiKey)
 	const cached = actorCache.get(key)
-	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actorId
+	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) {
+		return cached.actor ? { status: 'resolved', actor: cached.actor } : { status: 'unresolved' }
+	}
 	try {
-		const actor = await validateApiKey(db, apiKey)
-		const actorId = actor?.actorId ?? null
-		rememberActor(key, actorId, Date.now())
-		return actorId
+		const row = await validateApiKey(db, apiKey)
+		const actor = row ? { actorId: row.actorId, actorType: normalizeActorType(row.type) } : null
+		rememberActor(key, actor, Date.now())
+		return actor ? { status: 'resolved', actor } : { status: 'unresolved' }
 	} catch (err) {
 		logger.warn('mcp trace actor lookup failed', { error: String(err) })
-		return null
+		return { status: 'error' }
 	}
 }
 

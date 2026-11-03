@@ -9,7 +9,11 @@ import {
 	githubAuth,
 	mintInstallationTokenWithRecovery,
 } from '../../../../lib/integrations/providers/github/auth'
-import { config } from '../../../../lib/integrations/providers/github/config'
+import {
+	GITHUB_MCP_SERVER_SPEC,
+	GITHUB_MCP_SUPERVISED_SPEC,
+	config,
+} from '../../../../lib/integrations/providers/github/config'
 import { githubEventNormalizer } from '../../../../lib/integrations/providers/github/webhooks'
 
 // Generate an RSA key pair for testing JWT signing
@@ -55,6 +59,22 @@ describe('GitHub provider config', () => {
 		expect(config.mcp).toBeDefined()
 		expect(config.mcp?.command).toBe('github-mcp-server')
 		expect(config.mcp?.envKey).toBe('GITHUB_TOKEN')
+	})
+
+	it('guards the supervised spec so an image without the supervisor runs the plain binary', () => {
+		expect(GITHUB_MCP_SUPERVISED_SPEC.command).toBe('sh')
+		const [flag, script, argv0, ...serverArgs] = GITHUB_MCP_SUPERVISED_SPEC.args
+		expect(flag).toBe('-c')
+		expect(script).toBe(
+			'if [ -f /github-mcp-supervisor.cjs ]; then exec node /github-mcp-supervisor.cjs "$@"; fi; exec github-mcp-server "$@"',
+		)
+		expect(argv0).toBe('github-mcp-server')
+		// Both branches receive the unchanged server args through "$@".
+		expect(serverArgs).toEqual(GITHUB_MCP_SERVER_SPEC.args)
+		expect(GITHUB_MCP_SERVER_SPEC).toEqual({
+			command: 'github-mcp-server',
+			args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
+		})
 	})
 })
 
@@ -429,12 +449,12 @@ describe('githubAuth', () => {
 			globalThis.fetch = vi
 				.fn()
 				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
-				.mockResolvedValueOnce(makeResponse(200, { id: 8888 }))
+				.mockResolvedValueOnce(makeResponse(200, { id: 8888, account: { login: 'sindre-ai' } }))
 				.mockResolvedValueOnce(makeResponse(200, { token: 'ghs_recovered' }))
 
 			const result = await mintInstallationTokenWithRecovery(
 				{ installation_id: '42' },
-				{ repo: 'sindre-ai/maskin' },
+				{ repo: 'sindre-ai/maskin', expectedOwnerLogin: 'sindre-ai' },
 			)
 
 			expect(result).toEqual({
@@ -460,12 +480,65 @@ describe('githubAuth', () => {
 			globalThis.fetch = vi
 				.fn()
 				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
-				.mockResolvedValueOnce(makeResponse(200, { id: 42 }))
+				.mockResolvedValueOnce(makeResponse(200, { id: 42, account: { login: 'sindre-ai' } }))
 
 			await expect(
-				mintInstallationTokenWithRecovery({ installation_id: '42' }, { repo: 'sindre-ai/maskin' }),
+				mintInstallationTokenWithRecovery(
+					{ installation_id: '42' },
+					{ repo: 'sindre-ai/maskin', expectedOwnerLogin: 'sindre-ai' },
+				),
 			).rejects.toThrow('Failed to get installation access token: 404')
 			expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+		})
+
+		describe('installation owner check on the recovered install', () => {
+			async function recoverWith(
+				discoveryBody: unknown,
+				expectedOwnerLogin: string | undefined,
+			): Promise<unknown> {
+				globalThis.fetch = vi
+					.fn()
+					.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+					.mockResolvedValueOnce(makeResponse(200, discoveryBody))
+					.mockResolvedValueOnce(makeResponse(200, { token: 'ghs_recovered' }))
+				return mintInstallationTokenWithRecovery(
+					{ installation_id: '42' },
+					{ repo: 'other-org/widget', expectedOwnerLogin },
+				)
+			}
+
+			it('refuses an install whose account differs from the expected owner, without minting', async () => {
+				await expect(
+					recoverWith({ id: 8888, account: { login: 'other-org' } }, 'sindre-ai'),
+				).rejects.toMatchObject({ name: 'DiscoveryError', status: 404, repo: 'other-org/widget' })
+				// Cached-id mint + discovery only: no mint against the discovered install.
+				expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+				expect(globalThis.fetch).not.toHaveBeenCalledWith(
+					'https://api.github.com/app/installations/8888/access_tokens',
+					expect.anything(),
+				)
+			})
+
+			it('accepts the install when the account matches, ignoring case', async () => {
+				await expect(
+					recoverWith({ id: 8888, account: { login: 'Sindre-AI' } }, 'sindre-ai'),
+				).resolves.toEqual({ token: 'ghs_recovered', installationId: '8888', recovered: true })
+			})
+
+			it('fails closed when the row has no owner_login', async () => {
+				await expect(
+					recoverWith({ id: 8888, account: { login: 'sindre-ai' } }, undefined),
+				).rejects.toMatchObject({ name: 'DiscoveryError', status: 404 })
+				expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+			})
+
+			it('fails closed when GitHub reports no account on the install', async () => {
+				await expect(recoverWith({ id: 8888 }, 'sindre-ai')).rejects.toMatchObject({
+					name: 'DiscoveryError',
+					status: 404,
+				})
+				expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+			})
 		})
 
 		it('throws a typed DiscoveryError carrying { status } when discovery 404s', async () => {

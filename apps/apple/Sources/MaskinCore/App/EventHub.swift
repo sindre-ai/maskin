@@ -56,9 +56,17 @@ public final class EventHub {
 	@ObservationIgnored private var generation = 0
 	/// The key the current stream was opened with, so a changed key restarts it.
 	@ObservationIgnored private var streamKey: String?
+	/// First wait before a failed stream is retried; doubles per consecutive failure up to `maxRetry`.
+	@ObservationIgnored private let retryAfterFailure: Duration
+	@ObservationIgnored private static let maxRetry: Duration = .seconds(300)
+	@ObservationIgnored private var retryTask: Task<Void, Never>?
+	@ObservationIgnored private var consecutiveFailures = 0
 
 	/// `client == nil` makes an inert hub (previews, tests that don't need a stream).
-	public init(client: SSEClient?) { self.client = client }
+	public init(client: SSEClient?, retryAfterFailure: Duration = .seconds(30)) {
+		self.client = client
+		self.retryAfterFailure = retryAfterFailure
+	}
 
 	/// Production hub: `GET /api/events` with the live credentials, so a workspace switch is
 	/// picked up on the next connection.
@@ -101,6 +109,7 @@ public final class EventHub {
 				guard let self, self.generation == mine else { return }
 				switch update {
 				case .connected:
+					self.consecutiveFailures = 0
 					self.connection = .live
 					SyncLog.network.info(
 						"sse connected ws=\(SyncLog.shortHash(workspaceId), privacy: .public) gap=\(hasConnectedBefore)")
@@ -118,6 +127,7 @@ public final class EventHub {
 					self.connection = .failed
 					self.failure = error
 					if error == .badStatus(401) { self.onUnauthorized?(openedWith) }
+					self.scheduleRetry(after: error, generation: mine, workspaceId: workspaceId, key: openedWith)
 				}
 			}
 		}
@@ -148,9 +158,30 @@ public final class EventHub {
 		for continuation in subscribers.values { continuation.yield(signal) }
 	}
 
+	/// A stream that ended on a status the client won't retry (a 404 or 400 from a proxy mid-deploy,
+	/// say) would otherwise stay dead for the rest of the session: nothing reconnects it, and every
+	/// thread then waits for events that never come. Only a rejection of the credentials themselves
+	/// (401 / 403, what the web client also treats as final) is left alone.
+	private func scheduleRetry(after error: SSEError, generation mine: Int, workspaceId: String, key: String?) {
+		if error == .badStatus(401) || error == .badStatus(403) { return }
+		consecutiveFailures += 1
+		var wait = retryAfterFailure
+		for _ in 1..<max(consecutiveFailures, 1) where wait < Self.maxRetry { wait = wait * 2 }
+		wait = min(wait, Self.maxRetry)
+		retryTask?.cancel()
+		retryTask = Task { [weak self] in
+			try? await Task.sleep(for: wait)
+			guard !Task.isCancelled, let self, self.generation == mine, self.connection == .failed else { return }
+			SyncLog.network.info("sse retrying after failure")
+			self.connect(workspaceId: workspaceId, credentialKey: key)
+		}
+	}
+
 	private func stop() {
 		generation += 1
 		pump?.cancel()
 		pump = nil
+		retryTask?.cancel()
+		retryTask = nil
 	}
 }

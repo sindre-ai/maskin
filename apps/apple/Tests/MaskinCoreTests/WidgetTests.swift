@@ -376,20 +376,46 @@ struct DebouncedWidgetReloaderTests {
 	private final class Counter: WidgetReloader, @unchecked Sendable {
 		private let lock = NSLock()
 		private var n = 0
+		let reloads: AsyncStream<Int>
+		private let continuation: AsyncStream<Int>.Continuation
+		init() { (reloads, continuation) = AsyncStream<Int>.makeStream() }
 		var count: Int { lock.withLock { n } }
-		func reload() { lock.withLock { n += 1 } }
+		func reload() {
+			let value = lock.withLock { () -> Int in n += 1; return n }
+			continuation.yield(value)
+		}
+	}
+
+	/// The debounce wait, held open until the test lets it end.
+	private actor Delay {
+		private var open = false
+		private var waiters: [CheckedContinuation<Void, Never>] = []
+		func wait() async {
+			if open { return }
+			await withCheckedContinuation { waiters.append($0) }
+		}
+		func end() {
+			open = true
+			for waiter in waiters { waiter.resume() }
+			waiters = []
+		}
+		func renew() { open = false }
 	}
 
 	@Test("a burst of calls produces a single reload")
 	func coalesces() async throws {
 		let counter = Counter()
-		let reloader = DebouncedWidgetReloader(wrapping: counter, delay: 0.05)
+		let delay = Delay()
+		let reloader = DebouncedWidgetReloader(wrapping: counter, delay: 0.05, sleep: { _ in await delay.wait() })
 		for _ in 0..<5 { reloader.reload() }
 		#expect(counter.count == 0)
-		try await Task.sleep(nanoseconds: 300_000_000)
-		#expect(counter.count == 1)
+		await delay.end()
+		var seen = counter.reloads.makeAsyncIterator()
+		#expect(await seen.next() == 1)
+		// The four superseded waits also ended, and none of them reloaded.
+		await delay.renew()
 		reloader.reload()
-		try await Task.sleep(nanoseconds: 300_000_000)
-		#expect(counter.count == 2)
+		await delay.end()
+		#expect(await seen.next() == 2)
 	}
 }

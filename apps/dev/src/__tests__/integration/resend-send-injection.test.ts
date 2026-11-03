@@ -76,7 +76,8 @@ describe('SessionManager.buildLaunchSpec — Resend per-workspace credential inj
 		const manager = new SessionManager(db, stubStorage())
 		try {
 			const spec = await manager.buildLaunchSpec(session)
-			expect(spec.env.RESEND_API_KEY).toBe('re_workspace_A_key')
+			expect(spec.env.RESEND_API_KEY).toBeUndefined() // withheld: Resend goes through the gateway
+			expect(JSON.stringify(spec.env)).not.toContain('re_workspace_A_key')
 
 			expect(spec.env.MCP_SERVERS_JSON).toBeDefined()
 			const parsed = JSON.parse(spec.env.MCP_SERVERS_JSON) as {
@@ -84,8 +85,11 @@ describe('SessionManager.buildLaunchSpec — Resend per-workspace credential inj
 			}
 			expect(parsed.mcpServers['integration-resend']).toEqual({
 				type: 'http',
-				url: 'https://mcp.resend.com/mcp',
-				headers: { Authorization: 'Bearer ${RESEND_API_KEY}' },
+				url: '${MASKIN_API_URL}/api/integrations/resend/gateway',
+				headers: {
+					Authorization: 'Bearer ${MASKIN_API_KEY}',
+					'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+				},
 			})
 		} finally {
 			await manager.stop()
@@ -104,21 +108,25 @@ describe('SessionManager.buildLaunchSpec — Resend per-workspace credential inj
 		const manager = new SessionManager(db, stubStorage())
 		try {
 			const specB = await manager.buildLaunchSpec(b.session)
-			expect(specB.env.RESEND_API_KEY).toBe('re_workspace_B_key')
+			expect(specB.env.RESEND_API_KEY).toBeUndefined()
+			expect(JSON.stringify(specB.env)).not.toContain('re_workspace_B_key')
 
 			const parsedB = JSON.parse(specB.env.MCP_SERVERS_JSON) as {
 				mcpServers: Record<string, { type: string; url: string; headers: Record<string, string> }>
 			}
 			expect(parsedB.mcpServers['integration-resend']).toEqual({
 				type: 'http',
-				url: 'https://mcp.resend.com/mcp',
-				headers: { Authorization: 'Bearer ${RESEND_API_KEY}' },
+				url: '${MASKIN_API_URL}/api/integrations/resend/gateway',
+				headers: {
+					Authorization: 'Bearer ${MASKIN_API_KEY}',
+					'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+				},
 			})
 
 			// And re-verify A now, in the same suite/DB — A's key must still be A's.
 			// This is the direct anti-leak check the parent bet asked for.
 			const specA = await manager.buildLaunchSpec(a.session)
-			expect(specA.env.RESEND_API_KEY).toBe('re_workspace_A_key')
+			expect(specA.env.RESEND_API_KEY).toBeUndefined()
 		} finally {
 			await manager.stop()
 		}

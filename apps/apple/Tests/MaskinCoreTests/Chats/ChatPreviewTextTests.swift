@@ -41,3 +41,56 @@ import Testing
 		#expect(ChatPreviewText.plain("see https://maskin.io/ws/objects/abc") == "see https://maskin.io/ws/objects/abc")
 	}
 }
+
+@Suite("ChatPreviewText list line") struct ChatPreviewTextLinePiecesTests {
+	private typealias Piece = ChatPreviewText.Piece
+
+	@Test(
+		"a link cut short shows its words, not the bracket text",
+		arguments: [
+			("see [Chat preview cards for every li", "see Chat preview cards for every li"),
+			("see [Chat preview cards](https://maskin.io/e2877e32-2c11", "see Chat preview cards"),
+			("see [Chat preview cards](", "see Chat preview cards"),
+			("see [Chat preview cards]", "see [Chat preview cards]"),
+			("a [whole](https://x.io) and [cut](https://x.io/a", "a whole and cut"),
+			("![diagram](https://x.io/a.p", "diagram"),
+		])
+	func cutLinks(input: String, expected: String) {
+		#expect(ChatPreviewText.plain(input) == expected)
+		#expect(ChatPreviewText.linePieces(input) == [Piece(expected)])
+	}
+
+	@Test("a task checkbox is not a cut link")
+	func checkboxIsKept() {
+		#expect(ChatPreviewText.plain("- [ ] todo") == "todo")
+		#expect(ChatPreviewText.linePieces("- [x] done\n- [ ] todo") == [Piece("done todo")])
+	}
+
+	@Test("a bare address becomes the word link, marked so the row can mute it")
+	func bareAddress() {
+		#expect(
+			ChatPreviewText.linePieces("https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/abc")
+				== [Piece("link", isLink: true)])
+		#expect(
+			ChatPreviewText.linePieces("see https://maskin.io/ws/objects/abc.")
+				== [Piece("see "), Piece("link", isLink: true), Piece(".")])
+		#expect(
+			ChatPreviewText.linePieces("<https://x.io/a> and maskin://objects/1 now")
+				== [Piece("link", isLink: true), Piece(" and "), Piece("link", isLink: true), Piece(" now")])
+		#expect(ChatPreviewText.linePieces("cut https://maskin.io/e2877e32-2c") == [Piece("cut "), Piece("link", isLink: true)])
+	}
+
+	@Test("a link with words keeps its words, even next to a bare address")
+	func wordsBeatAddress() {
+		#expect(
+			ChatPreviewText.linePieces("[the post](https://maskin.io/ws/objects/abc) https://x.io")
+				== [Piece("the post "), Piece("link", isLink: true)])
+	}
+
+	@Test("plain text has no link runs, and an empty line has no pieces")
+	func plainText() {
+		#expect(ChatPreviewText.linePieces("Got it") == [Piece("Got it")])
+		#expect(ChatPreviewText.linePieces("") == [])
+		#expect(ChatPreviewText.linePieces("   ") == [])
+	}
+}

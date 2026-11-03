@@ -151,3 +151,33 @@ private extension Int { var asCGFloat: CGFloat { CGFloat(self) } }
 		#expect(MarkdownStandaloneLink.match("maskin://ws/objects/abc")?.url.scheme == "maskin")
 	}
 }
+
+@Suite("MarkdownStandaloneLink chips") struct MarkdownStandaloneLinkChipTests {
+	private let info: (URL) -> MarkdownLinkInfo? = { _ in MarkdownLinkInfo(symbol: "target", kindLabel: "Bet", title: "Launch plan") }
+
+	@Test func cardsOffTurnsAStandaloneLinkIntoAChip() {
+		for text in [
+			"[Launch plan](https://maskin.io/ws/objects/abc)", "  https://maskin.io/ws/objects/abc \n",
+			"<https://maskin.io/ws/objects/abc>",
+		] {
+			let markdown = MarkdownStandaloneLink.chipMarkdown(for: text)
+			#expect(markdown != nil, "\(text)")
+			let attr = MarkdownInline.attributed(markdown ?? text, base: .body, linkInfo: info)
+			let run = attr.runs.first!
+			#expect(String(attr.characters) == "Launch plan", "\(text)")
+			#expect(run.link != nil)
+			#expect(run.backgroundColor != nil)
+			#expect(run.underlineStyle == nil)
+		}
+	}
+
+	@Test func aParagraphThatIsNotOnlyALinkIsLeftAlone() {
+		#expect(MarkdownStandaloneLink.chipMarkdown(for: "see https://maskin.io/ws/objects/abc") == nil)
+		#expect(MarkdownStandaloneLink.chipMarkdown(for: "[a](https://x.io) and [b](https://y.io)") == nil)
+	}
+
+	@Test func anAddressWithBracketsStaysOneLink() {
+		let markdown = MarkdownStandaloneLink.chipMarkdown(for: "https://maskin.io/ws/objects/a(b)")
+		#expect(markdown == "[https://maskin.io/ws/objects/a(b)](https://maskin.io/ws/objects/a%28b%29)")
+	}
+}

@@ -1,4 +1,5 @@
 import { isInlineImage } from '@/components/files/file-body'
+import { FilePreview, isPreviewableFile } from '@/components/shared/file-preview'
 import { useFile } from '@/hooks/use-files'
 import type { FileListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -27,7 +28,8 @@ const IMAGE_PREVIEW_CLASS =
  * <img> whose src is a base64 data URI — `file.url` points to the SPA viewer
  * page, and `<img>` requests don't carry our Bearer header, so the data URI
  * is the only way to render real bytes inline. SVG and other unsafe types
- * fall through to the filename + icon layout.
+ * fall through to the filename + icon layout. An HTML page, a markdown document or a
+ * plain-text file draws as a {@link FilePreview} card that opens on a click.
  *
  * When `file.id` is set, the card is wrapped in a Link that opens the file
  * viewer in a new tab. When `file.id` is absent (an in-progress upload that
@@ -38,9 +40,23 @@ export function AttachedFileCard({ workspaceId, file, className }: AttachedFileC
 	const { data: imageDetail } = useFile(workspaceId, canRenderImage ? (file.id ?? null) : null)
 
 	const baseClass = cn(
-		'flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors',
+		// `text-card-foreground` pairs with `bg-card`: without it the name inherits whatever the card
+		// sits in, and inside a dark chat bubble that is near-white text on this light card.
+		'flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground transition-colors',
 		className,
 	)
+
+	// A saved file whose type a card can draw: show it as itself, folded until clicked.
+	if (file.id && file.mimeType && isPreviewableFile(file.mimeType) && !canRenderImage) {
+		return (
+			<FilePreview
+				workspaceId={workspaceId}
+				fileId={file.id}
+				meta={{ name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes }}
+				className={cn('mt-0', className)}
+			/>
+		)
+	}
 
 	if (canRenderImage && imageDetail) {
 		const b64 = imageDetail.encoding === 'base64' ? imageDetail.content : btoa(imageDetail.content)
@@ -78,7 +94,7 @@ export function AttachedFileCard({ workspaceId, file, className }: AttachedFileC
 				params={{ workspaceId, fileId: file.id }}
 				target="_blank"
 				rel="noopener noreferrer"
-				className={cn(baseClass, 'hover:bg-accent')}
+				className={cn(baseClass, 'hover:bg-accent hover:text-accent-foreground')}
 			>
 				{inner}
 			</Link>

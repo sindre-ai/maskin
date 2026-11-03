@@ -17,14 +17,18 @@ public final class AppRuntime {
 	public let environment: AppEnvironment
 	public let router: DeepLinkRouter
 	public let push: PushRegistrar?
+	/// The in-app pre-prompt before the system's notification prompt. Nil without a registrar.
+	public let notificationPrompt: NotificationPromptCoordinator?
+	/// The signed-in actor's push preferences; nil while signed out.
+	public private(set) var notificationPreferences: NotificationPreferencesStore?
+	@ObservationIgnored private let preferencesAPI: (any NotificationPreferencesAPI)?
 
-	/// The first time the person lands in Chats is the first moment the app asks about push
-	/// permission (see `requestPushPermission()`): by then they have seen what a conversation is.
-	var selectedTab: ShellTab = .forYou {
-		didSet {
-			if selectedTab == .chats, oldValue != .chats { Task { await requestPushPermission() } }
-		}
-	}
+	/// The tab on screen. (Notification permission is NOT asked on a tab change: it waits for a
+	/// moment of value, see `valueMomentSeen()`.)
+	var selectedTab: ShellTab = .forYou
+
+	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
+	let teamPill = TeamPillModel()
 
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
 	/// presentations requested in the same tick (a tap that opens an object) replace each
@@ -33,6 +37,7 @@ public final class AppRuntime {
 		case object(String)
 		case agent(String)
 		case file(String)
+		case triggers(String)
 		case profile
 		case files
 		case agents
@@ -43,6 +48,7 @@ public final class AppRuntime {
 			case .object(let id): "object:\(id)"
 			case .agent(let id): "agent:\(id)"
 			case .file(let id): "file:\(id)"
+			case .triggers(let id): "triggers:\(id)"
 			case .profile: "profile"
 			case .files: "files"
 			case .agents: "agents"
@@ -84,12 +90,12 @@ public final class AppRuntime {
 		set { presentation = newValue ? .profile : clearing(.profile) }
 	}
 
-	private enum Kind { case object, agent, file, files, agents, settings, profile }
+	private enum Kind { case object, agent, file, triggers, files, agents, settings, profile }
 
 	/// Closing one kind of sheet must not close a DIFFERENT one that replaced it meanwhile.
 	private func clearing(_ kind: Kind) -> Presentation? {
 		switch (kind, presentation) {
-		case (.object, .object), (.agent, .agent), (.file, .file), (.settings, .settings),
+		case (.object, .object), (.agent, .agent), (.file, .file), (.triggers, .triggers), (.settings, .settings),
 			(.profile, .profile), (.files, .files), (.agents, .agents):
 			return nil
 		default:
@@ -103,6 +109,16 @@ public final class AppRuntime {
 
 	/// Set by a chat link; `ChatsScreen` takes it and resets it to nil.
 	public var requestedConversationId: String?
+	/// Set by a loop link; the Flows tab takes it, opens that loop and resets it to nil.
+	public var requestedLoopId: String?
+	/// A thread push or link names the root message to open inside the requested chat. `ChatThreadView`
+	/// takes it once that chat is on screen and resets it to nil.
+	public var requestedThreadRoot: ThreadRequest?
+
+	public struct ThreadRequest: Equatable, Sendable {
+		public let conversationId: String
+		public let rootId: Int
+	}
 
 	/// Agents and loops are built by talking, never by filling in a form. Screens that used to offer
 	/// a builder form call `buildInChat(_:)`; `ChatsScreen` takes the draft and opens a new chat
@@ -122,6 +138,23 @@ public final class AppRuntime {
 		presentation = nil
 		selectedTab = .chats
 		newConversationRequested = true
+	}
+
+	/// A chat with one agent started from its page. `ChatsScreen` takes it and resets it to nil:
+	/// a new conversation with the agent (the composer sheet), or straight into a live call.
+	public struct AgentChatRequest: Equatable, Identifiable, Sendable {
+		public let id = UUID()
+		public let agent: ChatParticipant
+		public let live: Bool
+		/// Text for the new chat's message box (item detail's Message mode).
+		public let draft: String
+	}
+	public var agentChatRequest: AgentChatRequest?
+
+	public func startChat(with agent: ChatParticipant, live: Bool = false, draft: String = "") {
+		presentation = nil
+		selectedTab = .chats
+		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft)
 	}
 
 	public func buildInChat(_ text: String) {
@@ -149,9 +182,15 @@ public final class AppRuntime {
 	public init(
 		environment: AppEnvironment, push: PushRegistrar? = nil,
 		router: DeepLinkRouter? = nil,
-		signOutTimeout: Duration = .seconds(3), forYouDirectory: URL? = nil
+		signOutTimeout: Duration = .seconds(3), forYouDirectory: URL? = nil,
+		promptStorage: any NotificationPromptStorage = UserDefaultsNotificationPromptStorage(),
+		preferencesAPI: (any NotificationPreferencesAPI)? = nil
 	) {
 		self.forYouDirectory = forYouDirectory
+		self.preferencesAPI = preferencesAPI
+		self.notificationPrompt = push.map {
+			NotificationPromptCoordinator(policy: NotificationPromptPolicy(storage: promptStorage), push: $0)
+		}
 		self.environment = environment
 		self.push = push
 		self.router = router ?? DeepLinkRouter(environment: environment)
@@ -231,10 +270,12 @@ public final class AppRuntime {
 		// scoped but rebuild themselves, so only the id-addressed sheets are dropped.
 		if let previous = lastSyncedWorkspaceId, previous != environment.workspaceId {
 			switch presentation {
-			case .object, .agent, .file, .profile: presentation = nil
+			case .object, .agent, .file, .triggers, .profile: presentation = nil
 			default: break
 			}
 			requestedConversationId = nil
+			requestedLoopId = nil
+			requestedThreadRoot = nil
 			forYouSelection = nil
 			// Switching workspace starts over on For you; a link that caused the switch then
 			// selects its own tab (`handlePendingLink` below).
@@ -270,7 +311,10 @@ public final class AppRuntime {
 	/// outbox is driven by the coordinator itself).
 	public func scenePhaseChanged(_ phase: SyncScenePhase) {
 		syncCoordinator?.scenePhaseChanged(phase)
+		// Signed in or not: a pending push unregister is finished on every foreground.
+		if phase == .active { Task { await push?.foregrounded() } }
 		if phase == .active, let session = environment.auth.session {
+			Task { await syncTimezone() }
 			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
 			drainShareQueue(apiKey: session.apiKey)
 		}
@@ -294,6 +338,7 @@ public final class AppRuntime {
 	func sessionEnded() {
 		forYouRuntime?.stop()
 		forYouRuntime = nil
+		notificationPreferences = nil
 		rosterProvider = nil
 		storiesProvider = StoriesProvider()
 		stopSyncCoordinator()
@@ -302,6 +347,8 @@ public final class AppRuntime {
 		environment.events.disconnect()
 		presentation = nil
 		requestedConversationId = nil
+		requestedLoopId = nil
+		requestedThreadRoot = nil
 		forYouSelection = nil
 		selectedTab = .forYou
 		FileStore.clearExports()
@@ -312,12 +359,50 @@ public final class AppRuntime {
 	/// later, at `requestPushPermission()`.
 	func actorChanged(_ actorId: String?) async {
 		await push?.actorChanged(actorId)
+		if actorId == nil {
+			notificationPreferences = nil
+		} else {
+			if notificationPreferences == nil { notificationPreferences = makePreferencesStore() }
+			// Never blocks sign-in: a failure here just waits for the next foreground.
+			Task { await syncTimezone() }
+		}
+	}
+
+	private func makePreferencesStore() -> NotificationPreferencesStore {
+		let environment = environment
+		let api =
+			preferencesAPI
+			?? APINotificationPreferencesSource(
+				client: environment.client, baseURL: environment.baseURL,
+				clientSource: environment.clientSource, credentials: environment.auth.credentialsProvider)
+		return NotificationPreferencesStore(api: api)
+	}
+
+	/// Tell the server this device's timezone if it differs from what it has (the briefing is
+	/// scheduled in it). Silent on failure; runs again at the next foreground or timezone change.
+	func syncTimezone() async {
+		guard environment.auth.session != nil, let store = notificationPreferences else { return }
+		await store.syncTimezone(TimeZone.current.identifier)
+	}
+
+	/// `NSSystemTimeZoneDidChange`: the process caches `TimeZone.current`, so reset it first.
+	public func timeZoneDidChange() {
+		NSTimeZone.resetSystemTimeZone()
+		Task { await syncTimezone() }
+	}
+
+	/// An agent's decision or reply has just been shown for the first time: the one good moment to
+	/// explain what notifications are for. The pre-prompt appears only when no other sheet is open.
+	public func valueMomentSeen() {
+		guard environment.auth.session != nil, let prompt = notificationPrompt else { return }
+		let canPresent = presentation == nil
+		Task { await prompt.valueMoment(canPresent: canPresent) }
 	}
 
 	/// Ask for notification permission (the OS prompt shows only while undecided; a denied user is
-	/// never re-prompted). Called when Chats first opens, and available to a settings screen
-	/// or an explicit "turn on notifications" prompt. Not called at sign-in: asking before the
-	/// person has seen a single notification gets reflexively denied, and a denial is permanent.
+	/// never re-prompted). Reached from the pre-prompt sheet's "Turn on notifications" and from the
+	/// Notifications page's own button, never cold: asking before the person has seen what an agent
+	/// can ask of them gets reflexively denied, and a denial is permanent.
 	public func requestPushPermission() async {
 		guard environment.auth.session != nil else { return }
 		await push?.requestAuthorization()
@@ -348,9 +433,14 @@ public final class AppRuntime {
 		case .object(_, let id):
 			presentation = .object(id)
 		case .chat(_, let id):
+			openChat(id)
+		case .thread(_, let id, let rootId):
 			presentation = nil
 			selectedTab = .chats
 			requestedConversationId = id
+			requestedThreadRoot = ThreadRequest(conversationId: id, rootId: rootId)
+		case .file(_, let id):
+			openFile(id)
 		case .notifications:
 			// The old inbox link: its replacement is the For You tab.
 			presentation = nil
@@ -359,6 +449,10 @@ public final class AppRuntime {
 			presentation = .agents
 		case .agent(_, let id):
 			presentedAgentId = id
+		case .loop(_, let id):
+			openLoop(id)
+		case .trigger(_, let id):
+			openTrigger(id)
 		}
 	}
 
@@ -368,7 +462,25 @@ public final class AppRuntime {
 	}
 
 	public func openAgent(_ id: String) { presentedAgentId = id }
+
+	/// Selects the Chats tab and asks for the thread.
+	public func openChat(_ id: String) {
+		presentation = nil
+		selectedTab = .chats
+		requestedConversationId = id
+		requestedThreadRoot = nil
+	}
 	public func openFile(_ id: String) { presentedFileId = id }
+
+	/// A loop opens on the Flows tab, the way a chat link opens on Chats: the tab takes the request.
+	public func openLoop(_ id: String) {
+		presentation = nil
+		selectedTab = .loops
+		requestedLoopId = id
+	}
+
+	/// A trigger opens in the triggers sheet, on that trigger.
+	public func openTrigger(_ id: String) { presentation = .triggers(id) }
 
 	/// Where a search result lands: objects, agents and files open in a sheet over the current
 	/// tab; a chat selects the Chats tab and requests the thread.
@@ -409,6 +521,7 @@ public final class AppRuntime {
 		let actorId = environment.auth.session?.actorId
 		let running = forYouRuntime
 		forYouRuntime = nil
+		notificationPreferences = nil
 		rosterProvider = nil
 		storiesProvider = StoriesProvider()
 		if let push {
@@ -420,9 +533,13 @@ public final class AppRuntime {
 		ForYouRuntime.deletePersistedOutbox(actorId: actorId, directory: forYouDirectory)
 		// Queued chat messages belong to this account and must never replay as another.
 		ChatsRuntime.signOut(actorId: actorId)
+		// Shares parked by the share extension live in the App Group container; same rule.
+		ShareQueue.shared()?.removeAll()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
+		requestedLoopId = nil
+		requestedThreadRoot = nil
 		forYouSelection = nil
 		selectedTab = .forYou
 		// Local traces of this account: what they searched for and files they exported to share.

@@ -31,7 +31,7 @@ const mockModule: ModuleDefinition = {
 			icon: 'lightbulb',
 			defaultStatuses: ['new', 'processing'],
 		},
-		{ type: 'bet', label: 'Bet', icon: 'target', defaultStatuses: ['signal', 'active'] },
+		{ type: 'bet', label: 'Bet', icon: 'target', defaultStatuses: ['opportunity', 'active'] },
 		{ type: 'task', label: 'Task', icon: 'check-square', defaultStatuses: ['todo', 'done'] },
 	],
 }
@@ -169,7 +169,7 @@ describe('ModuleRegistry class', () => {
 		const registry = new ModuleRegistry()
 		registry.register(mockModule)
 		expect(registry.getDefaultStatusForType('insight')).toBe('new')
-		expect(registry.getDefaultStatusForType('bet')).toBe('signal')
+		expect(registry.getDefaultStatusForType('bet')).toBe('opportunity')
 		expect(registry.getDefaultStatusForType('task')).toBe('todo')
 	})
 
@@ -225,7 +225,7 @@ describe('global convenience functions', () => {
 
 	it('getDefaultStatusForType delegates to registry', () => {
 		registerModule(mockModule)
-		expect(getDefaultStatusForType('bet')).toBe('signal')
+		expect(getDefaultStatusForType('bet')).toBe('opportunity')
 		expect(getDefaultStatusForType('unknown')).toBeUndefined()
 	})
 

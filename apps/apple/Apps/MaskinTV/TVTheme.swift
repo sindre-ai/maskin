@@ -70,7 +70,7 @@ private struct TVTabLabel<Tab: Hashable>: View {
 
 	var body: some View {
 		HStack(spacing: 14) {
-			Text(item.title).font(.system(size: 34, weight: selected ? .bold : .regular))
+			Text(item.title).font(.system(size: 30, weight: selected ? .bold : .regular))
 			if item.count > 0 {
 				Text("\(item.count)").font(.system(size: 24, weight: .bold))
 					.foregroundStyle(MaskinColor.badgeFg)

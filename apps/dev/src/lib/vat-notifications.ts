@@ -20,7 +20,7 @@
 import type { Database } from '@maskin/db'
 import type { AwaitingViesRow } from '@maskin/db/schema'
 import type Stripe from 'stripe'
-import { getIntegrationCredential } from './integrations/lookup'
+import { findIntegrationRow } from './integrations/lookup'
 import { TokenManager } from './integrations/oauth/token-manager'
 import { slackApiCall } from './integrations/providers/slack/slack-api'
 import { getProvider } from './integrations/registry'
@@ -182,7 +182,7 @@ export async function notifySebkOnSlack(db: Database, text: string): Promise<voi
 			logger.error('vat.notify_sebk dropped — MASKIN_OPS_WORKSPACE_ID unset', { preview })
 			return
 		}
-		const integration = await getIntegrationCredential(db, opsWorkspaceId, 'slack', null)
+		const integration = await findIntegrationRow(db, opsWorkspaceId, 'slack', null, {})
 		if (!integration) {
 			logger.error('vat.notify_sebk dropped — no active slack integration in ops workspace', {
 				opsWorkspaceId,

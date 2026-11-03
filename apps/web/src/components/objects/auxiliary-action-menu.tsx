@@ -9,11 +9,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
 import { trackEvent } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import {
 	Archive,
 	Bell,
@@ -61,6 +63,13 @@ export function AuxiliaryActionMenu({
 	const isMobile = useIsMobile()
 	const subscribe = useSubscribe(workspaceId)
 	const unsubscribe = useUnsubscribe(workspaceId)
+	// Subscribing is the caller's own state and stays open to viewers; archive
+	// and delete change the object, so they do not.
+	const canWrite = useCanWrite()
+	const writeBlock = useMemo<Pick<MenuItemDef, 'visibility' | 'disabledReason'>>(
+		() => (canWrite ? {} : { visibility: 'disable', disabledReason: VIEWER_READ_ONLY_MESSAGE }),
+		[canWrite],
+	)
 
 	const handleClipboard = useCallback((text: string, label: string) => {
 		navigator.clipboard.writeText(text).then(
@@ -117,6 +126,7 @@ export function AuxiliaryActionMenu({
 				icon: Archive,
 				shortcut: 'A',
 				separatorBefore: true,
+				...writeBlock,
 				onSelect: onArchiveRequest,
 			})
 		}
@@ -129,6 +139,7 @@ export function AuxiliaryActionMenu({
 			// above it — otherwise the destructive-actions group gets a double rule.
 			separatorBefore: !canArchive,
 			variant: 'destructive',
+			...writeBlock,
 			onSelect: onDeleteRequest,
 		})
 		return base
@@ -139,6 +150,7 @@ export function AuxiliaryActionMenu({
 		onDeleteRequest,
 		onArchiveRequest,
 		canArchive,
+		writeBlock,
 	])
 
 	const visibleItems = items.filter((item) => item.visibility !== 'hide')
@@ -231,22 +243,25 @@ function DropdownMenuItemImpl({
 	item: MenuItemDef
 	isMobile: boolean
 }) {
+	const disabled = item.visibility === 'disable'
 	return (
-		<DropdownMenuItem
-			disabled={item.visibility === 'disable'}
-			title={item.visibility === 'disable' ? item.disabledReason : undefined}
-			onClick={(e) => {
-				e.preventDefault()
-				item.onSelect()
-			}}
-			className={cn(
-				item.variant === 'destructive' && 'text-error focus:bg-error/10 focus:text-error',
-			)}
-		>
-			<item.icon className={cn('h-4 w-4', item.variant === 'destructive' && 'text-error')} />
-			{item.label}
-			{item.shortcut && !isMobile && <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut>}
-		</DropdownMenuItem>
+		// A disabled menu item ignores the pointer, so its explanation hangs off a wrapper.
+		<div title={disabled ? item.disabledReason : undefined}>
+			<DropdownMenuItem
+				disabled={disabled}
+				onClick={(e) => {
+					e.preventDefault()
+					item.onSelect()
+				}}
+				className={cn(
+					item.variant === 'destructive' && 'text-error focus:bg-error/10 focus:text-error',
+				)}
+			>
+				<item.icon className={cn('h-4 w-4', item.variant === 'destructive' && 'text-error')} />
+				{item.label}
+				{item.shortcut && !isMobile && <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut>}
+			</DropdownMenuItem>
+		</div>
 	)
 }
 

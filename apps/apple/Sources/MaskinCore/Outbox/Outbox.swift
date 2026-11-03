@@ -29,6 +29,10 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
 	public var notBefore: Date
 	public var attempts: Int
 	public var nextAttemptAt: Date
+	/// When the server first answered this write with an error it will recover from (5xx, 429,
+	/// 408). From then on the write is bounded by age (`maxServerErrorAge`), not by `attempts`.
+	/// Optional so a file written by an older build still decodes.
+	public var serverErrorSince: Date?
 }
 
 /// A write the outbox gave up on, surfaced to the user.
@@ -88,7 +92,9 @@ public protocol OutboxExecuting: Sendable {
 /// - `enqueue` persists immediately (JSON in Application Support) and returns; `drain()` replays
 ///   what is due, in lane order, each under its stable `Idempotency-Key`.
 /// - Transient failures back off exponentially and keep their key; permanent rejections (4xx) are
-///   dropped and reported through `failures` / `events()`.
+///   dropped and reported through `failures` / `events()`. Being offline is never counted. Server
+///   errors (5xx, 429, 408) keep the write for `maxServerErrorAge`, so a slow deploy cannot eat a
+///   queued answer; any other failure gives up after `maxAttempts`.
 /// - Drains are triggered by: enqueue, the network coming back, `.reconnected` from the event hub,
 ///   `appDidBecomeActive()`, and a wake timer for the next undo hold / back-off.
 @MainActor
@@ -114,13 +120,22 @@ public final class Outbox {
 	@ObservationIgnored private let now: @Sendable () -> Date
 	@ObservationIgnored private let backoff: @Sendable (Int) -> TimeInterval
 	@ObservationIgnored private let maxAttempts: Int
+	@ObservationIgnored private let maxServerErrorAge: TimeInterval
 	@ObservationIgnored private var inFlight: Set<UUID> = []
 	@ObservationIgnored private var draining = false
 	@ObservationIgnored private var drainAgain = false
+	/// When the last pass last looked at what was due (see `scheduleWake`).
+	@ObservationIgnored private var lastEvaluatedAt = Date.distantPast
+	/// Lanes whose head failed during the current pass, so were not tried again in it.
+	@ObservationIgnored private var lanesFailedThisPass: Set<String> = []
 	@ObservationIgnored private var subscribers: [UUID: AsyncStream<OutboxEvent>.Continuation] = [:]
 	@ObservationIgnored nonisolated(unsafe) private var wake: Task<Void, Never>?
 	@ObservationIgnored nonisolated(unsafe) private var tasks: [Task<Void, Never>] = []
 	@ObservationIgnored private var isDiscarded = false
+	/// Every entry id this outbox has held. An id in the file that is not here was written by another
+	/// outbox over the same file (a notification answer parked while the app was alive), so it is
+	/// adopted rather than overwritten or mistaken for an entry this outbox already sent.
+	@ObservationIgnored private var knownIDs: Set<UUID> = []
 	/// While `isAuthBlocked`, the only entry allowed out: the one that was refused, retried after
 	/// its back-off as a probe. Everything else waits for it to get through.
 	@ObservationIgnored private var authProbe: UUID?
@@ -137,7 +152,8 @@ public final class Outbox {
 		fileManager: FileManager = .default,
 		now: @escaping @Sendable () -> Date = { Date() },
 		backoff: @escaping @Sendable (Int) -> TimeInterval = Outbox.defaultBackoff,
-		maxAttempts: Int = 8
+		maxAttempts: Int = 8,
+		maxServerErrorAge: TimeInterval = 24 * 60 * 60
 	) {
 		self.fileURL = fileURL
 		self.fileManager = fileManager
@@ -147,6 +163,7 @@ public final class Outbox {
 		self.now = now
 		self.backoff = backoff
 		self.maxAttempts = maxAttempts
+		self.maxServerErrorAge = maxServerErrorAge
 		self.isOnline = network.isOnline
 		load()
 	}
@@ -248,6 +265,7 @@ public final class Outbox {
 			summary: summary, createdAt: t, notBefore: t.addingTimeInterval(hold), attempts: 0,
 			nextAttemptAt: t)
 		entries.append(entry)
+		knownIDs.insert(entry.id)
 		save()
 		Task { await drain() }
 		return entry
@@ -330,9 +348,14 @@ public final class Outbox {
 	}
 
 	private func drainPass() async {
+		adoptEntriesFromFile()
 		var blocked: Set<String> = []
+		lanesFailedThisPass = []
 		while true {
 			isOnline = network.isOnline
+			// Stamped before the online check: an offline pass never reaches `nextDue`, and
+			// without this the stale stamp would make `scheduleWake` poll every 10 ms.
+			lastEvaluatedAt = now()
 			guard isOnline, let entry = nextDue(excludingLanes: blocked) else { return }
 			inFlight.insert(entry.id)
 			var outcome: Result<Void, any Error> = .success(())
@@ -364,6 +387,7 @@ public final class Outbox {
 					reject(entry, message: rejection.message)
 				} else {
 					blocked.insert(entry.lane)
+					lanesFailedThisPass.insert(entry.lane)
 					retryLater(entry, error: error)
 				}
 			}
@@ -410,7 +434,17 @@ public final class Outbox {
 		// Being offline is not the write's fault: don't spend attempts on it.
 		let connectivity = (error as? URLError).map(Self.isConnectivity) ?? false
 		if !connectivity { entries[index].attempts += 1 }
-		if entries[index].attempts >= maxAttempts {
+		// A server that is down or mid-deploy is not the write's fault either: once it has answered
+		// like that, the write is bounded by age, and `attempts` only drives the back-off.
+		if Self.isServerSide(error), entries[index].serverErrorSince == nil {
+			entries[index].serverErrorSince = now()
+		}
+		if let since = entries[index].serverErrorSince {
+			if now().timeIntervalSince(since) >= maxServerErrorAge {
+				reject(entries[index], message: "Gave up: the server kept failing for too long.")
+				return
+			}
+		} else if entries[index].attempts >= maxAttempts {
 			reject(entries[index], message: "Gave up after \(maxAttempts) attempts.")
 			return
 		}
@@ -437,6 +471,14 @@ public final class Outbox {
 		save()
 	}
 
+	/// 5xx, 429 and 408 from the server, or the `badServerResponse` the executors map them to.
+	private static func isServerSide(_ error: any Error) -> Bool {
+		if let http = error as? ChatsHTTPError {
+			return http.status >= 500 || http.status == 408 || http.status == 429
+		}
+		return (error as? URLError)?.code == .badServerResponse
+	}
+
 	private static func isConnectivity(_ error: URLError) -> Bool {
 		switch error.code {
 		case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost,
@@ -455,7 +497,16 @@ public final class Outbox {
 		wake?.cancel()
 		wake = nil
 		let t = now()
-		let next = entries.map { max($0.notBefore, $0.nextAttemptAt) }.filter { $0 > t }.min()
+		// "Not due yet" is judged at the moment the last pass looked, not now: if this task was
+		// descheduled for longer than a back-off (a busy device), an entry that fell due in the
+		// meantime would otherwise be neither sent by the pass nor waited for here, and sit in the
+		// queue until some unrelated trigger drained it.
+		// A lane whose head just failed was set aside for the rest of the pass, not looked at, so
+		// its retry time counts however early it is.
+		let next = entries
+			.map { (due: max($0.notBefore, $0.nextAttemptAt), lane: $0.lane) }
+			.filter { $0.due > lastEvaluatedAt || lanesFailedThisPass.contains($0.lane) }
+			.map(\.due).min()
 		guard let next else { return }
 		let delay = max(next.timeIntervalSince(t), 0.01)
 		wake = Task { [weak self] in
@@ -473,23 +524,53 @@ public final class Outbox {
 		var failures: [OutboxFailure]
 	}
 
+	/// The persisted snapshot, nil when there is no file. A file that exists but cannot be decoded
+	/// (corrupt, or written by another build) is moved aside and logged, because the next `save()`
+	/// would otherwise overwrite it and every write queued in it would vanish without a trace.
+	private func readSnapshot() -> Snapshot? {
+		guard let data = try? Data(contentsOf: fileURL) else { return nil }
+		if let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) { return snapshot }
+		let aside = fileURL.appendingPathExtension("unreadable-\(Int(now().timeIntervalSince1970))")
+		do {
+			try fileManager.moveItem(at: fileURL, to: aside)
+			SyncLog.sync.error("outbox file unreadable, kept aside bytes=\(data.count)")
+		} catch {
+			SyncLog.sync.error(
+				"outbox file unreadable and could not be moved aside: \(error.localizedDescription, privacy: .public)"
+			)
+		}
+		return nil
+	}
+
 	private func load() {
-		guard let data = try? Data(contentsOf: fileURL) else { return }
-		let decoder = JSONDecoder()
-		guard let snapshot = try? decoder.decode(Snapshot.self, from: data) else { return }
+		guard let snapshot = readSnapshot() else { return }
 		entries = snapshot.entries
 		failures = snapshot.failures
+		knownIDs = Set(snapshot.entries.map(\.id))
+	}
+
+	/// Picks up entries another outbox wrote to the file since this one last looked. The notification
+	/// action builds its own outbox over this file when an answer cannot be sent, and this one reads
+	/// the file only at start-up, so without this the next `save()` would overwrite that answer.
+	private func adoptEntriesFromFile() {
+		guard !isDiscarded, let snapshot = readSnapshot() else { return }
+		let foreign = snapshot.entries.filter { !knownIDs.contains($0.id) }
+		guard !foreign.isEmpty else { return }
+		knownIDs.formUnion(foreign.map(\.id))
+		entries.append(contentsOf: foreign)
 	}
 
 	private func save() {
 		guard !isDiscarded else { return }
+		adoptEntriesFromFile()
 		do {
 			try fileManager.createDirectory(
 				at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 			let data = try JSONEncoder().encode(Snapshot(entries: entries, failures: failures))
 			try data.write(to: fileURL, options: .atomic)
 		} catch {
-			// Persistence is best-effort: the in-memory queue still replays this session.
+			// Best-effort: the in-memory queue still replays this session, but say it was not saved.
+			SyncLog.sync.error("outbox save failed: \(error.localizedDescription, privacy: .public)")
 		}
 	}
 }

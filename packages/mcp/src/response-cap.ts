@@ -100,7 +100,7 @@ export const TOKEN_CAP_TARGETS: Record<string, TokenCapDescriptor> = {
 	list_relationships: { rowsField: 'relationships' },
 	list_loops: { fetchHandleTool: 'get_loop', rowsField: 'loops' },
 	list_sessions: { fetchHandleTool: 'get_session', rowsField: 'sessions' },
-	list_unread: { rowsField: 'unread' },
+	list_unread: { rowsField: 'items' },
 	list_integrations: { rowsField: 'integrations' },
 	list_integration_providers: { rowsField: 'providers' },
 	list_extensions: { rowsField: 'extensions' },
@@ -164,10 +164,9 @@ export interface ApplyResponseTokenCapResult {
  *
  * Trim path: iteratively pop the tail row into `omitted`, rebuild the
  * response with `_meta.truncated = true` + `_meta.fetch_handle`, and
- * re-measure. As soon as we drop under the cap, return. If even zero rows
- * doesn't fit (large `_meta`, huge `content`), we still return the empty-
- * rows response so the caller sees `_meta.truncated=true` and can fall back
- * to the fetch_handle.
+ * re-measure. As soon as we drop under the cap, return. The trim stops at
+ * one row: if that row alone is over the cap (one huge row, large `_meta`),
+ * it ships anyway, so a cursor walk always advances past it.
  *
  * `content` now carries the same full-JSON payload as `structuredContent`
  * (list/search tools no longer emit a separately-bounded lean-markdown
@@ -203,32 +202,27 @@ export function applyResponseTokenCap(
 	const rows = [...(rowsRaw as unknown[])]
 	const omitted: unknown[] = []
 
-	// Drop from the tail until we fit or run out of rows. The while-loop is
-	// bounded by `rows.length` — no risk of runaway iteration even if the
-	// estimator is flaky.
-	while (rows.length > 0) {
+	// Drop from the tail until we fit, but never below one row. A page that
+	// ships zero rows leaves a cursor walk nowhere to resume from (the first
+	// row of the next page is the one that did not fit), so the walk would
+	// stall on it. One row alone may sit over the cap; the cap leaves headroom
+	// under the client's hard ceiling for that. The while-loop is bounded by
+	// `rows.length` — no risk of runaway iteration even if the estimator is flaky.
+	let candidate: MutableMcpResponse | undefined
+	while (rows.length > 1) {
 		const dropped = rows.pop()
 		omitted.unshift(dropped)
-		const candidate = buildCappedResponse(rsp, structured, target.rowsField, rows, {
+		candidate = buildCappedResponse(rsp, structured, target.rowsField, rows, {
 			tool: target.fetchHandleTool,
 			ids: target.fetchHandleTool ? extractIds(omitted, idField) : [],
 			omittedRows: omitted,
 		})
-		if (estimateResponseTokens(candidate) <= maxTokens) {
-			return { response: candidate, truncated: true }
-		}
+		if (estimateResponseTokens(candidate) <= maxTokens) break
 	}
 
-	// Even zero rows doesn't fit under the cap. Return the empty-rows shape
-	// with a fetch_handle listing every original row's id (when a get-by-id
-	// counterpart exists) — the caller can still recover the payload via the
-	// get-by-id tool, or via the rewritten cursor otherwise.
-	const finalResponse = buildCappedResponse(rsp, structured, target.rowsField, [], {
-		tool: target.fetchHandleTool,
-		ids: target.fetchHandleTool ? extractIds(rowsRaw as unknown[], idField) : [],
-		omittedRows: rowsRaw as unknown[],
-	})
-	return { response: finalResponse, truncated: true }
+	// A single-row page has nothing to drop, so it ships as it came.
+	if (!candidate) return { response, truncated: false }
+	return { response: candidate, truncated: true }
 }
 
 interface TrimResult {
@@ -269,7 +263,10 @@ function buildCappedResponse(
 		),
 		keptRows.length,
 	)
-	const resumedStructured = resumeAfterKept(rsp, cappedStructured, keptRows)
+	const resumedStructured = markTruncated(
+		resumeAfterKept(rsp, cappedStructured, keptRows),
+		fetchHandle.omittedRows.length,
+	)
 	return {
 		...rsp,
 		content: capContentToStructured(rsp.content, resumedStructured),
@@ -343,16 +340,37 @@ function resumeAfterKept(
 	keptRows: unknown[],
 ): Record<string, unknown> {
 	const resume = rsp[RESUME_CURSOR] as ResumeCursorFn | undefined
+	if (typeof resume !== 'function') return structured
+	const synced = syncHeroCardRows(structured, keptRows)
 	const last = keptRows[keptRows.length - 1]
-	if (typeof resume !== 'function' || last === undefined) return structured
+	if (last === undefined) return synced
 	const cursor = resume(last)
-	if (!cursor) return structured
-	const out: Record<string, unknown> = { ...structured, next_cursor: cursor }
-	const page = structured.page
+	if (!cursor) return synced
+	const out: Record<string, unknown> = { ...synced, next_cursor: cursor }
+	const page = synced.page
 	if (page && typeof page === 'object') out.page = { ...page, next_cursor: cursor }
-	const heroCard = structured.heroCard as { page?: Record<string, unknown> } | undefined
+	const heroCard = synced.heroCard as { page?: Record<string, unknown> } | undefined
 	if (heroCard?.page) out.heroCard = { ...heroCard, page: { ...heroCard.page, hasMore: true } }
 	return out
+}
+
+/**
+ * The tool builds its heroCard before the cap runs, so it still names rows the
+ * trim dropped. Keep only the card objects whose id ships in the rows array and
+ * size the card page to match. The card's totalCount stays the real total.
+ */
+function syncHeroCardRows(
+	structured: Record<string, unknown>,
+	keptRows: unknown[],
+): Record<string, unknown> {
+	const heroCard = structured.heroCard as
+		| { objects?: Array<{ id?: unknown }>; page?: Record<string, unknown> }
+		| undefined
+	if (!heroCard || !Array.isArray(heroCard.objects)) return structured
+	const keptIds = new Set(extractIds(keptRows, 'id'))
+	const objects = heroCard.objects.filter((o) => typeof o?.id === 'string' && keptIds.has(o.id))
+	const page = heroCard.page && { ...heroCard.page, limit: objects.length }
+	return { ...structured, heroCard: { ...heroCard, objects, ...(page ? { page } : {}) } }
 }
 
 /**
@@ -369,6 +387,26 @@ function syncReturnedCount(
 	if (!page || typeof page !== 'object') return structured
 	if (typeof (page as Record<string, unknown>).returned !== 'number') return structured
 	return { ...structured, page: { ...(page as Record<string, unknown>), returned: keptCount } }
+}
+
+/**
+ * Say in the payload itself that rows were dropped. `_meta.truncated` is invisible to a client that
+ * reads only the text (a live call), which then sees a short page with nothing to tell it so. The
+ * rows that were cut are still reachable through the cursor or the fetch handle; `has_more` is set
+ * so a page that looked like the last one does not.
+ */
+function markTruncated(
+	structured: Record<string, unknown>,
+	omittedCount: number,
+): Record<string, unknown> {
+	const page = structured.page
+	const withPage =
+		page &&
+		typeof page === 'object' &&
+		typeof (page as Record<string, unknown>).has_more === 'boolean'
+			? { ...structured, page: { ...(page as Record<string, unknown>), has_more: true } }
+			: structured
+	return { ...withPage, truncated: true, omitted_count: omittedCount }
 }
 
 function readCursor(structured: Record<string, unknown>): string | undefined {

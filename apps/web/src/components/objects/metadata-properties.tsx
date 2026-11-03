@@ -1,7 +1,9 @@
 import { type FieldDefinition, FieldValueInput } from '@/components/objects/field-value-input'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateObject } from '@/hooks/use-objects'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
@@ -30,6 +32,7 @@ export function MetadataPropertiesView({
 }) {
 	const [showAddMenu, setShowAddMenu] = useState(false)
 	const [showCreateForm, setShowCreateForm] = useState(false)
+	const canWrite = useCanWrite()
 
 	const settings = workspace.settings as Record<string, unknown>
 	const fieldDefs =
@@ -88,14 +91,17 @@ export function MetadataPropertiesView({
 		return (
 			<div className="space-y-1">
 				<p className="text-xs text-muted-foreground">No custom fields on this object.</p>
-				<Button
-					variant="outline"
-					size="sm"
-					className="h-auto rounded-lg px-2.5 py-[5px] text-[11.5px] font-semibold text-muted-foreground"
-					onClick={() => setShowAddMenu(true)}
-				>
-					+ Add property
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="outline"
+						size="sm"
+						className="h-auto rounded-lg px-2.5 py-[5px] text-[11.5px] font-semibold text-muted-foreground"
+						disabled={!canWrite}
+						onClick={() => setShowAddMenu(true)}
+					>
+						+ Add property
+					</Button>
+				</ViewerTooltip>
 			</div>
 		)
 	}
@@ -135,14 +141,17 @@ export function MetadataPropertiesView({
 					onSaveField={onCreateField ? handleSaveField : undefined}
 				/>
 			) : (
-				<Button
-					variant="outline"
-					size="sm"
-					className="mt-1.5 h-auto self-start rounded-lg px-2.5 py-[5px] text-[11.5px] font-semibold text-muted-foreground"
-					onClick={() => setShowAddMenu(true)}
-				>
-					+ Add property
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="outline"
+						size="sm"
+						className="mt-1.5 h-auto self-start rounded-lg px-2.5 py-[5px] text-[11.5px] font-semibold text-muted-foreground"
+						disabled={!canWrite}
+						onClick={() => setShowAddMenu(true)}
+					>
+						+ Add property
+					</Button>
+				</ViewerTooltip>
 			)}
 		</div>
 	)
@@ -199,6 +208,7 @@ function PropertyRow({
 	onRemove: () => void
 }) {
 	const [editing, setEditing] = useState(false)
+	const canWrite = useCanWrite()
 	const type = fieldDef?.type ?? inferType(value)
 	const displayClass =
 		'block w-full text-left text-[12.5px] text-secondary-foreground whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
@@ -230,24 +240,32 @@ function PropertyRow({
 						{formatDisplay(value, type)}
 					</a>
 				) : (
-					<button type="button" className={displayClass} onClick={() => setEditing(true)}>
+					<button
+						type="button"
+						className={displayClass}
+						disabled={!canWrite}
+						onClick={() => setEditing(true)}
+					>
 						{formatDisplay(value, type)}
 					</button>
 				)}
 			</div>
-			<Button
-				variant="ghost"
-				size="icon"
-				/* Always tappable on touch; fades behind hover on sm+. */
-				/* Hover-only on pointer devices; always tappable on touch, where
+			<ViewerTooltip>
+				<Button
+					variant="ghost"
+					size="icon"
+					disabled={!canWrite}
+					/* Always tappable on touch; fades behind hover on sm+. */
+					/* Hover-only on pointer devices; always tappable on touch, where
 				   there is no hover to reveal it. */
-				className="size-5 shrink-0 text-border opacity-100 transition-opacity hover:text-destructive focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-				onClick={onRemove}
-				title="Remove property"
-				aria-label={`Remove ${name}`}
-			>
-				<X className="h-3 w-3" />
-			</Button>
+					className="size-5 shrink-0 text-border opacity-100 transition-opacity hover:text-destructive focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+					onClick={onRemove}
+					title="Remove property"
+					aria-label={`Remove ${name}`}
+				>
+					<X className="h-3 w-3" />
+				</Button>
+			</ViewerTooltip>
 		</div>
 	)
 }

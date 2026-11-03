@@ -73,9 +73,9 @@ public enum ObjectsGrouper {
 	/// Types follow the product order (Bets, Insights, Tasks…), then the rest by label.
 	public static func group(
 		_ objects: [WorkObject], by grouping: ObjectsGrouping, schema: ObjectsSchema, type: String?,
-		sort: ObjectsSort = .needsYou
+		sort: ObjectsSort = .needsYou, reversed: Bool = false
 	) -> [ObjectGroup] {
-		let sorted = ObjectsSorter.sorted(objects, by: sort)
+		let sorted = ObjectsSorter.sorted(objects, by: sort, reversed: reversed)
 		switch grouping {
 		case .attention:
 			let buckets: [(id: String, title: String)] = [
@@ -106,7 +106,7 @@ public enum ObjectsGrouper {
 			// "active" is not a task's "in progress") are grouped under it.
 			return typeOrder(of: sorted, schema: schema).flatMap { kind -> [ObjectGroup] in
 				let kindName = ObjectTypeCatalog.pluralLabel(for: kind, displayName: schema.displayName(for: kind))
-				return group(sorted.filter { $0.type == kind }, by: .status, schema: schema, type: kind, sort: sort).map {
+				return group(sorted.filter { $0.type == kind }, by: .status, schema: schema, type: kind, sort: sort, reversed: reversed).map {
 					ObjectGroup(
 						id: "\(kind)/\($0.id)", title: "\(kindName) · \($0.title ?? $0.id)", objects: $0.objects,
 						status: $0.status, type: kind)

@@ -212,7 +212,7 @@ struct ObjectDetailSnapshotTests {
 	func related() async throws {
 		let store = await makeStore()
 		try await waitUntil { store.linkTitles["i1"] != nil }
-		#expect(store.relatedGroups.map(\.label) == ["In flow", "Blocks", "Part of", "Informed by"])
+		#expect(store.relatedGroups.map(\.label) == ["In flow", "Blocking", "Belongs to", "Based on"])
 		for (width, dark) in sizes {
 			try snapshot("related", width: width, dark: dark) {
 				ObjectDetailContent(store: store, part: .related, onOpenObject: { _ in }) { EmptyView() }
@@ -263,13 +263,12 @@ struct ObjectDetailSnapshotTests {
 	}
 }
 
-/// Polls until `condition` holds or the timeout passes.
+/// Polls until `condition` holds or the budget (see `PollBudget`) is spent.
 private func waitUntil(timeout: Duration = .seconds(10), _ condition: @MainActor () -> Bool) async throws {
-	let clock = ContinuousClock()
-	let deadline = clock.now + timeout
-	while clock.now < deadline {
+	var budget = PollBudget(timeout)
+	repeat {
 		if await condition() { return }
 		try await Task.sleep(for: .milliseconds(20))
-	}
+	} while budget.spend()
 	Issue.record("timed out waiting")
 }

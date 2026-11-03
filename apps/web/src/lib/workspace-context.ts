@@ -15,3 +15,8 @@ export function useWorkspace(): WorkspaceContextValue {
 	if (!ctx) throw new Error('useWorkspace must be used within a WorkspaceContext provider')
 	return ctx
 }
+
+/** Whether the current workspace is enterprise; false outside a workspace, for views that render without one. */
+export function useIsEnterpriseWorkspace(): boolean {
+	return useContext(WorkspaceContext)?.workspace.enterprise ?? false
+}

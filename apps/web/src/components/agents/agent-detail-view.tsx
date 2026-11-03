@@ -1,16 +1,21 @@
+import { AgentAccessSection } from '@/components/agents/agent-access-section'
 import { AgentComposer } from '@/components/agents/agent-composer'
+import { AgentComputerSection } from '@/components/agents/agent-computer-section'
 import { AgentDetailHeader } from '@/components/agents/agent-detail-header'
+import { AgentExtensionsSection } from '@/components/agents/agent-extensions-section'
 import { AgentInstructionsSection } from '@/components/agents/agent-instructions-section'
 import { AgentLoopsSection } from '@/components/agents/agent-loops-section'
 import { getPortraitStatus } from '@/components/agents/agent-portrait-card'
 import { AgentRunPauseButton } from '@/components/agents/agent-run-pause-button'
 import { AgentSessionsSection } from '@/components/agents/agent-sessions-section'
 import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
-import { AgentToolsSection } from '@/components/agents/agent-tools-section'
+import { AgentTriggersSection } from '@/components/agents/agent-triggers-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
@@ -26,7 +31,10 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const run = useAgentRun(workspaceId)
 	const pause = useAgentPause(workspaceId)
 	const deleteActor = useDeleteActor(workspaceId)
+	const canWrite = useCanWrite()
 	const navigate = useNavigate()
+	// The one read of the desktop flag for the whole feature: the computer lives
+	// on this page only, so this is its boundary.
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
 	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions ?? []), [sessions])
@@ -95,15 +103,18 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 						</Button>
 					</div>
 				) : (
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7 text-muted-foreground hover:text-error"
-						onClick={() => setConfirmDelete(true)}
-						aria-label="Delete agent"
-					>
-						<Trash2 size={15} />
-					</Button>
+					<ViewerTooltip>
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-7 w-7 text-muted-foreground hover:text-error"
+							disabled={!canWrite}
+							onClick={() => setConfirmDelete(true)}
+							aria-label="Delete agent"
+						>
+							<Trash2 size={15} />
+						</Button>
+					</ViewerTooltip>
 				))}
 		</div>
 	)
@@ -123,15 +134,20 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 			/>
 			{/* Order is what the agent *is*, then what it did, then how it is
 			    configured: identity → usage → sessions → loops → instructions →
-			    skills → tools (mockup 2442–2490). */}
-			<div className="mx-auto flex max-w-3xl flex-col gap-6">
+			    skills → tools and access (mockup 2442–2490). */}
+			{/* w-full: mx-auto stops a flex item stretching, so without it this shrink-wraps to its
+			    widest no-wrap text (an agent's description) and overflows a phone screen. */}
+			<div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 				<AgentSessionsSection agent={agent} />
+				<AgentTriggersSection agent={agent} />
+				<AgentComputerSection agent={agent} />
 				<AgentLoopsSection agent={agent} />
 				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
-				<AgentToolsSection agent={agent} />
+				<AgentAccessSection agent={agent} />
+				<AgentExtensionsSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>
 		</>

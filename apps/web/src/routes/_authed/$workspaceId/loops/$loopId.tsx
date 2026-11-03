@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
+import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
@@ -19,7 +20,9 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -27,9 +30,10 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
-import { useLoop, useLoopActivity, useLoopSteps } from '@/hooks/use-loops'
+import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -38,7 +42,7 @@ import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { isWaitingOnViewer, useWaitingOnViewer } from '@maskin/shared'
+import { useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
@@ -48,6 +52,9 @@ import { toast } from 'sonner'
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
+
+/** Mirrors `FLAGS.LOOP_CUSTOM_VIEW` in `apps/dev/src/lib/feature-flags.ts`. */
+const LOOP_CUSTOM_VIEW_FLAG = 'loop-custom-view'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
@@ -67,15 +74,7 @@ interface ProposedEdit {
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
-	// Sub-flag for D5 (bet/d166-loops-v4-polish). Off → the Targets & owners
-	// section never renders even when the loop has targets, so a rollback is
-	// a flag flip rather than a code change.
-	const targetsFlag = useFeatureFlag('loops-v4-polish.targets')
-	// D8 sub-flag boundary — read once at this route, then threaded into
-	// TimelineTab as an options prop so the shared component stays flag-free
-	// for Objects and every other consumer. Off preserves the pre-bet unread
-	// divider so a rollback is a flag flip, not a code change.
-	const unreadPolishFlag = useFeatureFlag('loops-v4-polish.unread')
+	const canWrite = useCanWrite()
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -98,61 +97,49 @@ function LoopDetailRoute() {
 		{ enabled: childIds.length > 0 },
 	)
 	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
-	// Loops v4 (D6c). Sub-flag gates the vertical-story renderer on this
-	// route; flag off keeps the shipped `status-columns` LoopFlow variant
-	// unchanged, and the extra /steps fetch never fires. One boundary at the
-	// route level per the feature-flag rule (`.claude/rules/feature-flags.md`).
-	const stepFlowEnabled = useFeatureFlag('loops-v4-polish.step_flow')
-	const { data: loopSteps } = useLoopSteps(loopId, workspaceId, { enabled: stepFlowEnabled })
 	const updateObject = useUpdateObject(workspaceId)
 	const deleteObject = useDeleteObject(workspaceId)
 	const navigate = useNavigate()
-	// Feature-flag boundary for the loops v4 polish bet. Read once at the route
-	// level per the feature-flags rule (`.claude/rules/feature-flags.md`); kept
-	// above the early returns below so the hook order stays stable across renders.
-	const loopsV4Enabled = useFeatureFlag('loops-v4-polish')
 
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
-	const loopsV4Polish = useFeatureFlag('loops-v4-polish')
+
+	// Custom view: the one read of the flag for this page. An agent pins an HTML
+	// file with set_loop_view (metadata.view_file_id); with the flag on it replaces
+	// the stats and flow, and the toggle switches back. A view that cannot be shown
+	// sets customFailure and the default page renders with a note; choosing
+	// "Custom view" again clears it and retries.
+	const customViewFlag = useFeatureFlag(LOOP_CUSTOM_VIEW_FLAG)
+	const viewFileId =
+		typeof object?.metadata?.view_file_id === 'string' ? object.metadata.view_file_id : null
+	const hasCustomView = customViewFlag && viewFileId !== null
+	const [viewMode, setViewMode] = useState<'default' | 'custom'>('custom')
+	const [customFailure, setCustomFailure] = useState<string | null>(null)
+	const showCustomView = hasCustomView && viewMode === 'custom' && customFailure === null
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
-	// so `packages/shared` stays React-free. When the `step_flow` sub-flag is on
-	// the getter returns the real per-step array from `useLoopSteps` so the
-	// banner samples the actually-stalled step. When the sub-flag is off, fall
-	// back to the loop-level `waitingOnViewer` bit as a single synthetic step so
-	// the banner still renders under the umbrella flag alone. Every hook the
-	// banner needs is called unconditionally BEFORE the loading / error /
-	// not-found early-returns so hook order is stable across renders (React
-	// rules-of-hooks).
+	// so `packages/shared` stays React-free. The loop-level `waitingOnViewer` bit
+	// is passed as a single synthetic step. Every hook the banner needs is
+	// called unconditionally BEFORE the loading / error / not-found early-returns
+	// so hook order is stable across renders (React rules-of-hooks).
 	const loopWaiting = loop?.waitingOnViewer === true
-	const getLoopStepsForBanner = useCallback(() => {
-		if (stepFlowEnabled) return loopSteps ?? []
-		return loopWaiting ? [{ waitingOnViewer: true }] : []
-	}, [stepFlowEnabled, loopSteps, loopWaiting])
+	const getLoopStepsForBanner = useCallback(
+		() => (loopWaiting ? [{ waitingOnViewer: true }] : []),
+		[loopWaiting],
+	)
 	const anyStepPending = useWaitingOnViewer(loop?.id ?? '', getLoopStepsForBanner)
 	const firstAgentIdForBanner = loop?.agentIds[0] ?? null
 	const firstAgentActor = useMemo(
 		() => (firstAgentIdForBanner ? actors?.find((a) => a.id === firstAgentIdForBanner) : undefined),
 		[actors, firstAgentIdForBanner],
 	)
-	const firstPendingStep = useMemo(
-		() => (stepFlowEnabled ? (loopSteps?.find(isWaitingOnViewer) ?? null) : null),
-		[stepFlowEnabled, loopSteps],
-	)
-	const pendingStepCount = useMemo(() => {
-		if (!stepFlowEnabled) return null
-		return (loopSteps ?? []).reduce((n, s) => (isWaitingOnViewer(s) ? n + 1 : n), 0)
-	}, [stepFlowEnabled, loopSteps])
 	const loopIdForBanner = loop?.id ?? ''
-	const askBannerVisible = loopsV4Polish && !!loop && anyStepPending
+	const askBannerVisible = !!loop && anyStepPending
 	// Real count, not a 0/1 flag — this is the dimension the bet's Won
 	// condition is measured on, so a constant 1 would make every session look
-	// identical in PostHog. When the step_flow sub-flag is on, count pending
-	// steps from the shared predicate; otherwise fall back to the loop-level
-	// waitingCount so the umbrella-only banner still emits a real number.
-	const pendingCount = askBannerVisible ? (pendingStepCount ?? loop?.waitingCount ?? 0) : 0
+	// identical in PostHog. Uses the loop-level waitingCount.
+	const pendingCount = askBannerVisible ? (loop?.waitingCount ?? 0) : 0
 	const handleDecideClick = useCallback(() => {
 		const targetEl = document.getElementById('loop-flow')
 		if (targetEl) {
@@ -193,12 +180,13 @@ function LoopDetailRoute() {
 	// `/loops` since the current route's data has just been removed. Mirrors the
 	// agent-detail trash affordance restored in PR #1667.
 	const handleDelete = useCallback(() => {
+		if (!canWrite) return
 		deleteObject.mutate(loopId, {
 			onSuccess: () => {
 				navigate({ to: '/$workspaceId/loops', params: { workspaceId } })
 			},
 		})
-	}, [deleteObject, loopId, navigate, workspaceId])
+	}, [deleteObject, loopId, navigate, workspaceId, canWrite])
 
 	// An utterance is read back as a diff against the plan snapshot `/loops/new`
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
@@ -231,7 +219,7 @@ function LoopDetailRoute() {
 	)
 
 	const applyProposedEdit = useCallback(() => {
-		if (!proposedEdit) return
+		if (!proposedEdit || !canWrite) return
 		updateObject.mutate(
 			{
 				id: loopId,
@@ -252,7 +240,7 @@ function LoopDetailRoute() {
 				onError: () => toast.error('Could not apply that change'),
 			},
 		)
-	}, [proposedEdit, updateObject, loopId])
+	}, [proposedEdit, updateObject, loopId, canWrite])
 
 	if (loopLoading && !loop) {
 		return (
@@ -289,17 +277,12 @@ function LoopDetailRoute() {
 	}
 
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
-	// D3 AskBanner content sourcing. When the `step_flow` sub-flag is on, sample
-	// the first pending step from `useLoopSteps` for `agentName`, `askText`, and
-	// the avatar so the banner surfaces the actually-stalled ask. Under the
-	// umbrella flag alone (sub-flag off) the per-step feed is not fetched — fall
-	// back to the loop's first agent for the copy, matching the pre-D6a wiring
-	// so the banner still renders.
-	const askAgentActor = firstPendingStep?.agent ?? firstAgentActor ?? null
+	// D3 AskBanner content sourcing: the banner names the loop's first agent.
+	const askAgentActor = firstAgentActor ?? null
 	const askAgentName = askAgentActor?.name ?? 'This loop'
 	// Copy pattern per SPEC: `{agentName} asks — {askText}`.
-	const askText = firstPendingStep?.triggerActionPrompt ?? 'is waiting on your input.'
-	const askAvatarType = firstPendingStep ? 'agent' : firstAgentActor?.type
+	const askText = 'is waiting on your input.'
+	const askAvatarType = firstAgentActor?.type
 	const decideJumpHref = '#loop-flow'
 
 	const installedFromMarketplaceLoopId = object?.metadata?.installed_from_marketplace_loop_id
@@ -331,11 +314,13 @@ function LoopDetailRoute() {
 	// re-earns trust rather than snapping back to full autonomy. The trigger
 	// re-enable is handled server-side by the status hook in
 	// PATCH /api/objects/:id, so this only writes the status.
-	const togglePause = () =>
+	const togglePause = () => {
+		if (!canWrite) return
 		updateObject.mutate({
 			id: loop.id,
 			data: { status: isPaused ? 'learning' : 'paused' },
 		})
+	}
 
 	return (
 		<>
@@ -348,14 +333,16 @@ function LoopDetailRoute() {
 						// LoopUtteranceInput at the bottom of the page on mobile.
 						<div className="flex items-center gap-2">
 							<span className="text-xs text-error">Delete this loop?</span>
-							<Button
-								variant="destructive"
-								size="sm"
-								onClick={handleDelete}
-								disabled={deleteObject.isPending}
-							>
-								{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
-							</Button>
+							<ViewerTooltip>
+								<Button
+									variant="destructive"
+									size="sm"
+									onClick={handleDelete}
+									disabled={deleteObject.isPending || !canWrite}
+								>
+									{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
+								</Button>
+							</ViewerTooltip>
 							<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
 								Cancel
 							</Button>
@@ -380,18 +367,24 @@ function LoopDetailRoute() {
 								{pill.label}
 							</span>
 							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-7 w-7 text-muted-foreground"
-										aria-label="More"
-									>
-										<MoreHorizontal size={15} />
-									</Button>
-								</DropdownMenuTrigger>
+								<ViewerTooltip>
+									<DropdownMenuTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7 text-muted-foreground"
+											aria-label="More"
+											disabled={!canWrite}
+										>
+											<MoreHorizontal size={15} />
+										</Button>
+									</DropdownMenuTrigger>
+								</ViewerTooltip>
 								<DropdownMenuContent align="end">
-									<DropdownMenuItem onSelect={togglePause} disabled={updateObject.isPending}>
+									<DropdownMenuItem
+										onSelect={togglePause}
+										disabled={updateObject.isPending || !canWrite}
+									>
 										{isPaused ? (
 											<>
 												<Play size={14} /> Resume loop
@@ -404,6 +397,7 @@ function LoopDetailRoute() {
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										onSelect={() => setConfirmDelete(true)}
+										disabled={!canWrite}
 										className="text-error focus:text-error"
 									>
 										<Trash2 size={14} /> Delete loop
@@ -418,7 +412,7 @@ function LoopDetailRoute() {
 				<EditableTitle
 					value={loop.name}
 					entityId={loop.id}
-					onChange={object ? handleUpdateTitle : undefined}
+					onChange={object && canWrite ? handleUpdateTitle : undefined}
 					ariaLabel="Loop title"
 					placeholder="Untitled loop"
 				/>
@@ -443,42 +437,75 @@ function LoopDetailRoute() {
 					</Link>
 				)}
 
-				{/* Stable aria-live wrapper for the D3 AskBanner (loops-v4-polish
-				    umbrella flag). The wrapper element is permanent so screen
-				    readers announce the banner appearance without racing the DOM
-				    swap — banner content swaps in and out of the wrapper, the
-				    wrapper does not swap. Never put aria-live on the banner. */}
-				{loopsV4Polish && (
-					<div
-						aria-live="polite"
-						aria-atomic="true"
-						data-testid="ask-banner-live-region"
-						className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
-					>
-						{askBannerVisible && (
-							<AskBanner
-								agentName={askAgentName}
-								askText={askText}
-								jumpHref={decideJumpHref}
-								onDecideClick={handleDecideClick}
-								pendingCount={pendingCount}
-								avatarId={askAgentActor?.id}
-								avatarType={askAvatarType}
-							/>
-						)}
+				{/* Stable aria-live wrapper for the D3 AskBanner. The wrapper element
+				    is permanent so screen readers announce the banner appearance
+				    without racing the DOM swap — banner content swaps in and out of
+				    the wrapper, the wrapper does not swap. Never put aria-live on
+				    the banner. */}
+				<div
+					aria-live="polite"
+					aria-atomic="true"
+					data-testid="ask-banner-live-region"
+					className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
+				>
+					{askBannerVisible && (
+						<AskBanner
+							agentName={askAgentName}
+							askText={askText}
+							jumpHref={decideJumpHref}
+							onDecideClick={handleDecideClick}
+							pendingCount={pendingCount}
+							avatarId={askAgentActor?.id}
+							avatarType={askAvatarType}
+						/>
+					)}
+				</div>
+
+				{hasCustomView && (
+					<div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+						<p className="text-xs text-muted-foreground">
+							{viewMode === 'custom' && customFailure
+								? `Custom view unavailable: ${customFailure} Showing the default page.`
+								: ''}
+						</p>
+						<ButtonGroup aria-label="Loop view">
+							<Button
+								type="button"
+								variant={viewMode === 'default' ? 'secondary' : 'ghost'}
+								size="sm"
+								onClick={() => setViewMode('default')}
+							>
+								Default
+							</Button>
+							<Button
+								type="button"
+								variant={viewMode === 'custom' ? 'secondary' : 'ghost'}
+								size="sm"
+								onClick={() => {
+									setCustomFailure(null)
+									setViewMode('custom')
+								}}
+							>
+								Custom view
+							</Button>
+						</ButtonGroup>
 					</div>
 				)}
 
 				<div className="mt-5">
-					{loopsV4Enabled ? (
+					{showCustomView && viewFileId ? (
+						<LoopCustomView
+							workspaceId={workspaceId}
+							fileId={viewFileId}
+							onFailure={setCustomFailure}
+						/>
+					) : (
 						<LoopStats
 							loop={loop}
 							cyclesRunning={cyclesRunning}
 							asksWaiting={asksWaiting}
 							nextFire={nextFire}
 						/>
-					) : (
-						<LoopStats loop={loop} />
 					)}
 				</div>
 
@@ -488,19 +515,19 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{targetsFlag && <TargetsAndOwners loop={loop} actors={actors} />}
+				<TargetsAndOwners loop={loop} actors={actors} />
 
-				<div className="mt-7">
-					<LoopFlow
-						workspaceId={workspaceId}
-						triggers={loopTriggers}
-						actors={actors}
-						childObjects={children ?? []}
-						loop={loop}
-						variant={stepFlowEnabled ? 'vertical-story' : 'status-columns'}
-						steps={loopSteps}
-					/>
-				</div>
+				{!showCustomView && (
+					<div className="mt-7">
+						<LoopFlow
+							workspaceId={workspaceId}
+							triggers={loopTriggers}
+							actors={actors}
+							childObjects={children ?? []}
+							loop={loop}
+						/>
+					</div>
+				)}
 
 				{/* The same Activity block object detail carries (mockup 1138–1143):
 				    a mono micro-heading on a hairline rule, then the shared timeline.
@@ -515,7 +542,7 @@ function LoopDetailRoute() {
 						</div>
 						<TimelineTab
 							object={object}
-							loopsV4PolishUnread={unreadPolishFlag ? { loopId } : undefined}
+							loopUnread={{ loopId }}
 							additionalEvents={activityEvents}
 						/>
 					</div>

@@ -1,3 +1,5 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
+import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
 import {
 	MentionPicker,
 	type MentionPickerActor,
@@ -5,53 +7,45 @@ import {
 	detectMentionTrigger,
 	reduceMentionPickerKey,
 } from '@/components/chat/mention-picker'
+import { SecretCaptureFlow } from '@/components/chat/secret-capture-flow'
 import { SelectionChips } from '@/components/chat/selection-chips'
-import {
-	type SlashKindId,
-	SlashPicker,
-	type SlashPickerResult,
-} from '@/components/chat/slash-picker'
+import { TagInput, type TagInputHandle } from '@/components/chat/tag-input'
 import {
 	UnifiedChatSlashPicker,
 	type UnifiedChatSlashPickerHandle,
 } from '@/components/chat/unified-slash-picker'
+import { VaultPrefixFlow, vaultSeedFrom } from '@/components/chat/vault-prefix-flow'
 import { CreatePicker } from '@/components/shared/create-picker'
-import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
-import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUploadFile } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
-import {
-	deriveEntryAgentRole,
-	trackChatMentionInserted,
-	trackChatObjectReferenceCreated,
-	trackSpecialistSummonedManually,
-} from '@/lib/analytics'
+import { trackChatMentionInserted, trackChatObjectReferenceCreated } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
-import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
+import type { ChatSelection, ChatSelectionAction, ChatSelectionFile } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { readFileAsBase64 } from '@/lib/file-utils'
-import { ArrowUp, AtSign, Box, Hash, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
+import { toUploadInput } from '@/lib/large-file-upload'
+import { splitLongMessage } from '@/lib/long-message'
+import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
+import { type TagValue, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
+import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
+import { type SecretMatch, withoutSecrets } from '@maskin/shared'
+import { ArrowUp, Hash, Info, Mic, Paperclip, X } from 'lucide-react'
 import {
 	type ChangeEvent,
+	type ClipboardEvent,
 	type FormEvent,
 	type KeyboardEvent,
 	useCallback,
 	useEffect,
+	useId,
 	useMemo,
 	useRef,
 	useState,
@@ -75,6 +69,26 @@ function makeTempId() {
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
+// A screenshot reaches the clipboard with no real name (Chrome calls it "image.png").
+// Give it a readable one; a copied file that already has a name keeps it.
+const CLIPBOARD_IMAGE_EXTENSIONS: Record<string, string> = { jpeg: 'jpg', 'svg+xml': 'svg' }
+
+export function nameClipboardImage(file: File, now: Date): File {
+	if (!file.type.startsWith('image/')) return file
+	if (file.name !== '' && !/^image\.[a-z0-9]+$/i.test(file.name)) return file
+	const subtype = file.type.slice('image/'.length)
+	const base = subtype.replace(/[^a-z0-9].*$/i, '') || 'png'
+	const ext = CLIPBOARD_IMAGE_EXTENSIONS[subtype] ?? base
+	const pad = (n: number) => String(n).padStart(2, '0')
+	const stamp =
+		`${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+		`-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+	return new File([file], `pasted-image-${stamp}.${ext}`, {
+		type: file.type,
+		lastModified: file.lastModified,
+	})
+}
+
 // The three built-in NEWKIND labels that can promote to a type-filter chip when
 // typed as `/task ` / `/bet ` / `/insight `. Any custom workspace type falls
 // through as a normal search query — hardcoded per spec §Create-new rows.
@@ -86,7 +100,7 @@ const UNIFIED_SLASH_TRIGGER_RE = /(?:^|\s)\/([\w-]*)$/
 
 /**
  * Pure state machine for the `/` composer trigger. Called on every keystroke
- * inside the textarea when the `chat-slash-picker-v2` flag is on. Returns one
+ * inside the textarea. Returns one
  * of four verdicts:
  *
  *  - `open`: user just typed `/` at a word boundary. `slashStart` is the
@@ -166,8 +180,17 @@ export function detectUnifiedSlashTransition({
 
 export interface ComposerProps {
 	workspaceId: string
-	onSend: (content: string) => Promise<void>
+	/**
+	 * `extras.files` carries attachments the composer made itself (the full text of a message
+	 * over the cap, see `longTextAsFile`). A caller that sets `longTextAsFile` must send them.
+	 */
+	onSend: (content: string, extras?: { files: ChatSelectionFile[] }) => Promise<void>
 	disabled: boolean
+	/**
+	 * Text over the chat message cap is sent as a .txt attachment with a short body instead of
+	 * being rejected. Only for callers that put `extras.files` on the message.
+	 */
+	longTextAsFile?: boolean
 	pending: boolean
 	surface: ChatSurface
 	placeholder: string
@@ -179,6 +202,13 @@ export interface ComposerProps {
 	onRemoveFile: (fileId: string) => void
 	externalError?: string | null
 	onDismissExternalError?: () => void
+	/**
+	 * One quiet line under the box, for the group-chat cue ("No agent will reply. Tag one
+	 * with @."). Pass a string, or null when the cue applies but has nothing to say, to
+	 * render the polite live region; leave it undefined for no region at all. The line
+	 * shows once the box has focus, text or a tag, and never next to an error line.
+	 */
+	hint?: string | null
 	/**
 	 * The active conversation's participant actor ids — used to seed the
 	 * `In this conversation` section of the `@` mention picker. Callers wiring
@@ -201,6 +231,41 @@ export interface ComposerProps {
 	 * survives that, and dies with the tab so an unsent prompt never outlives it.
 	 */
 	draftKey?: string
+	/**
+	 * Where a pasted provider secret can be vaulted: the live session of this
+	 * conversation and the agent running it. Omit on a composer with no session; the
+	 * guard still blocks the send and the card offers Cancel only.
+	 */
+	secretCapture?: {
+		sessionId: string
+		/** Lets the vault card watch the relaunched session come up. */
+		conversationId?: string
+		agent: { id: string; name: string }
+	} | null
+	/** The agent is restarting after a vault, so vaulting another secret waits for it. */
+	secretRestarting?: boolean
+	/**
+	 * Vault mode (the ! prefix) opens but cannot vault: the conversation has no running
+	 * session, or one that is still coming up.
+	 */
+	vaultModeBlocked?: boolean
+	/** When set, a Call button for this agent sits beside the mic. Callers pass it
+	 *  only when exactly one agent is addressed (a multi-agent call is v2). */
+	callAgent?: VoiceCallAgent | null
+	/**
+	 * Asks the composer to replace its draft with `text` (when given), then focus
+	 * with the caret at the end. Without `text` it only focuses and leaves the draft
+	 * alone. One request per nonce: a request that was already there when the
+	 * composer mounted never fires, so a stale one cannot overwrite a draft.
+	 */
+	fillRequest?: { text?: string; nonce: number } | null
+	/**
+	 * Writes in the shared tag input instead of a textarea: an `@` tag stays in the sentence as
+	 * a chip and the tagged ids reach the selection (`add_agent` / `remove_agent`) from the chips
+	 * alone, so a typed `@name` that never went through the picker sends no id. The selection's
+	 * agent pills are not drawn in this mode. Off by default; callers opt in one by one.
+	 */
+	inlineTags?: boolean
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -210,6 +275,30 @@ function readDraft(key: string): string {
 		return sessionStorage.getItem(`${DRAFT_PREFIX}${key}`) ?? ''
 	} catch {
 		return ''
+	}
+}
+
+// Chips in a draft: the text keeps "@Name", this keeps which id each chip stood for.
+function readDraftTags(key: string): { id: string; label: string }[] {
+	try {
+		const raw = sessionStorage.getItem(`${DRAFT_PREFIX}${key}:tags`)
+		const parsed: unknown = raw ? JSON.parse(raw) : []
+		if (!Array.isArray(parsed)) return []
+		return parsed.filter(
+			(t): t is { id: string; label: string } =>
+				!!t && typeof t.id === 'string' && typeof t.label === 'string',
+		)
+	} catch {
+		return []
+	}
+}
+
+function writeDraftTags(key: string, tags: { id: string; label: string }[]): void {
+	try {
+		if (tags.length > 0) sessionStorage.setItem(`${DRAFT_PREFIX}${key}:tags`, JSON.stringify(tags))
+		else sessionStorage.removeItem(`${DRAFT_PREFIX}${key}:tags`)
+	} catch {
+		// Same as writeDraft: losing the draft beats breaking typing.
 	}
 }
 
@@ -231,17 +320,17 @@ function writeDraft(key: string, value: string): void {
  * `pending` back to false.
  *
  * Entry points into pickers:
- *  - `/` typed at a word boundary opens the "Turn this into" dropdown.
+ *  - `/` typed at a word boundary opens the unified Reference / Create picker.
  *  - `@` typed at a word boundary opens the mention picker (agents + humans)
  *    inline at the caret; ↑↓ navigate, ↵ inserts, Escape closes. Textarea
  *    keeps DOM focus while the picker is open.
- *  - The `+` menu opens the shared `<SlashPicker>` for object references and
- *    "Mention an agent" (an alternate path to the same mention flow).
+ *  - The paperclip attaches a file; `/` and `@` cover the rest.
  */
 export function Composer({
 	workspaceId,
 	onSend,
-	disabled,
+	longTextAsFile,
+	disabled: disabledByCaller,
 	pending,
 	placeholder,
 	selection,
@@ -252,12 +341,22 @@ export function Composer({
 	onRemoveFile,
 	externalError,
 	onDismissExternalError,
+	hint,
 	conversationParticipantIds,
 	textareaLabel,
 	value: controlledValue,
 	onValueChange,
 	draftKey,
+	secretCapture,
+	secretRestarting,
+	vaultModeBlocked,
+	callAgent,
+	fillRequest,
+	inlineTags = false,
 }: ComposerProps) {
+	// Every send from a composer is a write, so a viewer gets the box switched off.
+	const canWrite = useCanWrite()
+	const disabled = disabledByCaller || !canWrite
 	const [internalValue, setInternalValue] = useState(() =>
 		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
 	)
@@ -275,6 +374,122 @@ export function Composer({
 		},
 		[controlledValue, onValueChange],
 	)
+	// Pool for the mention picker — cached workspace actors. `useActors` uses
+	// the same query key as every other surface in the app so the picker opens
+	// against warm data (spec: `list_actors({ workspace_id, limit: 100 })` on
+	// chat mount, cached for the session).
+	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
+	const mentionActors = useMemo<MentionPickerActor[]>(
+		() =>
+			(workspaceActors ?? [])
+				// role !== "system" — filter out Google Calendar / Gmail / Slack / GitHub / Ubersuggest.
+				.filter((a) => !a.isSystem)
+				.map((a) => ({
+					id: a.id,
+					name: a.name,
+					type: a.type,
+					description: a.description,
+					email: a.email,
+				})),
+		[workspaceActors],
+	)
+	// Inline tags. `tagIds` are the ids the chips in the input stand for, in order (`tagIdsRef` is
+	// the same list for handlers). `tagLabelsRef` keeps the names a restored draft carried until
+	// the actor list has loaded. `domTextRef` is the text the input shows right now: when `value`
+	// moves away from it (a fill, dictation, a restored draft, a send that cleared the box) the
+	// input is rebuilt from `value`.
+	const [restoredTags] = useState(() =>
+		inlineTags && controlledValue === undefined && draftKey ? readDraftTags(draftKey) : [],
+	)
+	const tagLabelsRef = useRef(new Map(restoredTags.map((t) => [t.id, t.label])))
+	const [initialTagContent] = useState(() => {
+		const ids = restoredTags.map((t) => t.id)
+		const { segments, unmatchedIds } = splitTextByTags(
+			value,
+			ids,
+			(id) => tagLabelsRef.current.get(id) ?? null,
+		)
+		return { segments, ids: ids.filter((id) => !unmatchedIds.includes(id)) }
+	})
+	const [tagIds, setTagIds] = useState<string[]>(initialTagContent.ids)
+	const tagIdsRef = useRef(tagIds)
+	const domTextRef = useRef(value)
+	const tagRef = useRef<TagInputHandle | null>(null)
+	const tagWrapRef = useRef<HTMLDivElement | null>(null)
+	const tagsKeyRef = useRef(draftKey)
+
+	const tagLabelOf = useCallback(
+		(id: string): string | null => {
+			const actor = mentionActors.find((a) => a.id === id)
+			if (actor) return tagLabel(actor, mentionActors)
+			return tagLabelsRef.current.get(id) ?? selection.agentNames[id] ?? null
+		},
+		[mentionActors, selection.agentNames],
+	)
+
+	// Keeps the selection's agent list equal to the chips in the input: the callers build
+	// `metadata.mentions` from it, so only a picked tag ever sends an id.
+	const syncTagIds = useCallback(
+		(next: string[], fromTyping: boolean) => {
+			const prev = tagIdsRef.current
+			if (prev.length === next.length && prev.every((id, i) => id === next[i])) return
+			tagIdsRef.current = next
+			setTagIds(next)
+			for (const id of prev) {
+				if (!next.includes(id)) onDispatchSelection?.({ type: 'remove_agent', id })
+			}
+			for (const id of next) {
+				if (prev.includes(id)) continue
+				const actor = mentionActors.find((a) => a.id === id)
+				onDispatchSelection?.({ type: 'add_agent', agent: { id, name: actor?.name } })
+				if (fromTyping && actor) {
+					trackChatMentionInserted({
+						entity_id: actor.id,
+						entity_type: 'actor',
+						kind: actor.type === 'agent' ? 'agent' : 'human',
+					})
+				}
+			}
+		},
+		[mentionActors, onDispatchSelection],
+	)
+
+	const restoreTags = useCallback(
+		(tags: { id: string; label: string }[]) => {
+			for (const t of tags) tagLabelsRef.current.set(t.id, t.label)
+			syncTagIds(
+				tags.map((t) => t.id),
+				false,
+			)
+		},
+		[syncTagIds],
+	)
+
+	// A draft that came back with chips: the selection starts empty, so hand it the ids once.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs once, for the draft read at mount.
+	useEffect(() => {
+		for (const id of initialTagContent.ids) {
+			const actor = mentionActors.find((a) => a.id === id)
+			onDispatchSelection?.({ type: 'add_agent', agent: { id, name: actor?.name } })
+		}
+	}, [])
+
+	const [secretFlow, setSecretFlow] = useState<{
+		content: string
+		matches: SecretMatch[]
+		/** True until the user decides. False keeps only the receipts on screen. */
+		blocking: boolean
+	} | null>(null)
+	const mutedPatternIds = useRef(new Set<string>())
+	// Vault mode (the ! prefix) is part of the same feature, under the same flag. The
+	// secret never enters this component: a pasted one waits in the seed ref until the
+	// flow takes it, and what is typed afterwards lives in the flow's own field.
+	const [vaultFlow, setVaultFlow] = useState<{ blocking: boolean; key: number } | null>(null)
+	const vaultSeedRef = useRef('')
+	const enterVault = useCallback((seed: string) => {
+		vaultSeedRef.current = seed
+		setVaultFlow((prev) => ({ blocking: true, key: (prev?.key ?? 0) + 1 }))
+	}, [])
 	// Mirror the draft into sessionStorage. The chat route swaps `draftKey`
 	// without remounting the composer, so on a key change load the incoming
 	// key's stored draft instead of writing the outgoing text under it.
@@ -283,11 +498,46 @@ export function Composer({
 		if (draftKey === undefined || controlledValue !== undefined) return
 		if (draftKeyRef.current !== draftKey) {
 			draftKeyRef.current = draftKey
+			if (inlineTags) restoreTags(readDraftTags(draftKey))
 			setValue(readDraft(draftKey))
 			return
 		}
+		// Draft autosave is off while vault mode is open.
+		if (vaultFlow?.blocking) return
+		// A pasted secret must never reach sessionStorage: not while the card is open,
+		// and not in the keystrokes before Send either.
+		if (secretFlow?.blocking || hasHighConfidenceSecret(value, workspaceId)) {
+			writeDraft(draftKey, '')
+			if (inlineTags) writeDraftTags(draftKey, [])
+			return
+		}
 		writeDraft(draftKey, value)
-	}, [draftKey, value, controlledValue, setValue])
+		// The chips ride along under the same key. The render that switched keys only restores.
+		if (inlineTags) {
+			if (tagsKeyRef.current !== draftKey) tagsKeyRef.current = draftKey
+			else {
+				writeDraftTags(
+					draftKey,
+					tagIds.flatMap((id) => {
+						const label = tagLabelOf(id)
+						return label ? [{ id, label }] : []
+					}),
+				)
+			}
+		}
+	}, [
+		draftKey,
+		value,
+		controlledValue,
+		setValue,
+		inlineTags,
+		restoreTags,
+		tagIds,
+		tagLabelOf,
+		secretFlow?.blocking,
+		vaultFlow?.blocking,
+		workspaceId,
+	])
 	// Mobile soft keyboards have no Shift key, so the desktop `Shift+Enter`
 	// newline shortcut is unreachable on a phone — plain Enter sends instead.
 	// On touch viewports we let the browser insert a newline and rely on the
@@ -295,14 +545,19 @@ export function Composer({
 	const isMobile = useIsMobile()
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
-	const [pickerOpen, setPickerOpen] = useState(false)
-	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
-	// v2 unified `/` picker state (gated by `chat-slash-picker-v2`). `slashStart`
+	const hintId = useId()
+	const [textareaFocused, setTextareaFocused] = useState(false)
+	const hintText =
+		hint &&
+		!(sendError || externalError) &&
+		(textareaFocused || value.trim().length > 0 || selection.agents.length > 0)
+			? hint
+			: null
+	// Unified `/` picker state. `slashStart`
 	// points at the `/` in the textarea; when set, everything after it up to the
 	// caret is the picker's live query. `typeFilterChip` is the NEWKIND label
 	// (e.g. 'task') the user promoted by typing `/task ` — it lives outside the
 	// text as a first-class composer chip and narrows both picker sections.
-	const unifiedPickerEnabled = useFeatureFlag('chat-slash-picker-v2')
 	const [unifiedOpen, setUnifiedOpen] = useState(false)
 	const [slashStart, setSlashStart] = useState<number | null>(null)
 	const [typeFilterChip, setTypeFilterChip] = useState<string | null>(null)
@@ -324,7 +579,6 @@ export function Composer({
 	// these are the chips shown while bytes are still transferring or after the
 	// upload failed, removable in either state.
 	const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
-	const slashPosRef = useRef<number | null>(null)
 	// Position of the `@` that opened the mention picker and the query text
 	// after it. Both null when the picker isn't in `@`-typing mode.
 	const [mentionTrigger, setMentionTrigger] = useState<{ atPos: number; query: string } | null>(
@@ -333,6 +587,28 @@ export function Composer({
 	const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+	const focusInput = useCallback(() => {
+		if (inlineTags) tagRef.current?.focus()
+		else textareaRef.current?.focus()
+	}, [inlineTags])
+
+	// A fill request replaces the draft through the same setter typing uses, so the
+	// sessionStorage mirror keeps working, then puts the caret at the end. Seeded
+	// with the nonce already present on mount so a stale request never fires.
+	const handledFillNonceRef = useRef(fillRequest?.nonce)
+	useEffect(() => {
+		if (!fillRequest || fillRequest.nonce === handledFillNonceRef.current) return
+		handledFillNonceRef.current = fillRequest.nonce
+		if (fillRequest.text !== undefined) setValue(fillRequest.text)
+		requestAnimationFrame(() => {
+			if (inlineTags) return tagRef.current?.focus()
+			const el = textareaRef.current
+			if (!el) return
+			el.focus()
+			const end = el.value.length
+			el.setSelectionRange(end, end)
+		})
+	}, [fillRequest, setValue, inlineTags])
 	// `/` opens the create list (mockup 761–771). The chosen type seeds the
 	// shipped create surface; the mockup's FROM-THIS-CHAT panel additionally
 	// pre-fills the name/fields from the conversation, which needs a `seed`
@@ -340,37 +616,11 @@ export function Composer({
 	// where it is rendered.
 	const [createOpen, setCreateOpen] = useState(false)
 	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
-	const [turnIntoOpen, setTurnIntoOpen] = useState(false)
-	const objectTypes = useAvailableObjectTypes()
-	// Gates the `+` DropdownMenu collapse (task 6321aecf). OFF preserves the
-	// three-item Reference / Mention / Create menu; ON renders the single
-	// Attach a file row that triggers the same fileInputRef the standalone
-	// Paperclip button uses.
-	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
 	const selfActor = getStoredActor()
 	const selfActorId = selfActor?.id ?? null
 
-	// Pool for the mention picker — cached workspace actors. `useActors` uses
-	// the same query key as every other surface in the app so the picker opens
-	// against warm data (spec: `list_actors({ workspace_id, limit: 100 })` on
-	// chat mount, cached for the session).
-	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
-	const mentionActors = useMemo<MentionPickerActor[]>(
-		() =>
-			(workspaceActors ?? [])
-				// role !== "system" — filter out Google Calendar / Gmail / Slack / GitHub / Ubersuggest.
-				.filter((a) => !a.isSystem)
-				.map((a) => ({
-					id: a.id,
-					name: a.name,
-					type: a.type,
-					description: a.description,
-					email: a.email,
-				})),
-		[workspaceActors],
-	)
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)
 	const conversationList = useMemo(
 		() => conversationPages?.pages.flatMap((p) => p.conversations) ?? [],
@@ -408,7 +658,28 @@ export function Composer({
 			},
 			[setValue],
 		),
+		workspaceId,
+		// The clean pass only replaces the streamed text while it is untouched.
+		useCallback(
+			(streamed: string, refined: string) => {
+				setValue((prev) => (prev.includes(streamed) ? prev.replace(streamed, () => refined) : prev))
+			},
+			[setValue],
+		),
 	)
+
+	// The input follows `value` whenever something other than typing changed it.
+	const tagSegmentsFor = useCallback(
+		(text: string) => splitTextByTags(text, tagIdsRef.current, tagLabelOf).segments,
+		[tagLabelOf],
+	)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `value` is the trigger; the check reads the refs so a render that lags behind typing cannot overwrite it.
+	useEffect(() => {
+		if (!inlineTags || valueRef.current === domTextRef.current) return
+		const hadFocus = tagWrapRef.current?.contains(document.activeElement) ?? false
+		tagRef.current?.setContent(tagSegmentsFor(valueRef.current))
+		if (hadFocus) tagRef.current?.focus()
+	}, [inlineTags, value, tagSegmentsFor])
 
 	// Abort every in-flight upload when the composer unmounts so a closed
 	// chat surface doesn't leave XHRs hanging (and doesn't race-dispatch
@@ -427,17 +698,58 @@ export function Composer({
 		value.trim().length > 0 && !disabled && !sending && !pending && pendingUploads.length === 0
 	const showSpinner = sending || pending
 
+	// Text over the cap is uploaded whole as a .txt file and the message carries a short body.
+	// An upload that fails rejects, so the caller's catch keeps the draft in the box.
+	const sendContent = useCallback(
+		async (content: string) => {
+			const split = longTextAsFile ? splitLongMessage(content) : null
+			if (!split) {
+				await onSend(content)
+				return
+			}
+			const created = await uploadFile({
+				name: split.file.name,
+				mime_type: 'text/plain',
+				content: split.file.content,
+				encoding: 'utf8',
+			})
+			await onSend(split.body, {
+				files: [
+					{
+						fileId: created.id,
+						name: split.file.name,
+						sizeBytes: new TextEncoder().encode(split.file.content).length,
+						mimeType: 'text/plain',
+					},
+				],
+			})
+		},
+		[longTextAsFile, onSend, uploadFile],
+	)
+
 	const handleSubmit = useCallback(
 		async (e?: FormEvent<HTMLFormElement>) => {
 			e?.preventDefault()
 			if (!canSend) return
 			const content = value.trim()
+			const matches = scanComposerText(content, {
+				workspaceId,
+				mutedPatternIds: mutedPatternIds.current,
+			})
+			if (matches.length > 0) {
+				// Before any network call. The text leaves the draft and the input and
+				// lives only in the card's state until the user decides.
+				if (draftKey !== undefined) writeDraft(draftKey, '')
+				setSecretFlow({ content, matches, blocking: true })
+				setValue('')
+				return
+			}
 			setSending(true)
 			setSendError(null)
 			onDismissExternalError?.()
 			let sent = false
 			try {
-				await onSend(content)
+				await sendContent(content)
 				sent = true
 			} catch (err) {
 				setSendError(err instanceof Error ? err.message : 'Failed to send')
@@ -449,7 +761,7 @@ export function Composer({
 			// without losing a carefully crafted prompt.
 			if (sent) setValue('')
 		},
-		[canSend, onDismissExternalError, onSend, setValue, value],
+		[canSend, draftKey, onDismissExternalError, sendContent, setValue, value, workspaceId],
 	)
 
 	// Commits the picker's highlighted row into a mention pill: strips the
@@ -466,9 +778,13 @@ export function Composer({
 				const before = prev.slice(0, trigger.atPos)
 				const after = prev.slice(trigger.atPos + 1 + trigger.query.length)
 				const trimmedAfter = after.startsWith(' ') ? after : ` ${after}`
-				const next = `${before}${trimmedAfter}`
+				const joined = `${before}${trimmedAfter}`
+				// Only whitespace left: keep the box empty so the placeholder (the composer
+				// cue's "Reply to …") stays visible behind the chips.
+				const next = joined.trim() === '' ? '' : joined
 				requestAnimationFrame(() => {
-					const caret = before.length + 1 // land the caret past the leading space we inserted
+					// Land the caret past the leading space we inserted
+					const caret = next === '' ? 0 : before.length + 1
 					textarea?.focus()
 					textarea?.setSelectionRange(caret, caret)
 				})
@@ -486,7 +802,7 @@ export function Composer({
 	)
 
 	const handleKeyDown = useCallback(
-		(e: KeyboardEvent<HTMLTextAreaElement>) => {
+		(e: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
 			// While the mention picker is open, route arrow keys / Enter / Escape
 			// through the picker so keyboard nav works without the composer losing
 			// focus. Non-picker keys fall through to the standard textarea handling.
@@ -514,12 +830,7 @@ export function Composer({
 			}
 			// v2 chip lives outside the text — Backspace on an empty composer
 			// with a chip set clears the chip (spec §Interaction details).
-			if (
-				unifiedPickerEnabled &&
-				e.key === 'Backspace' &&
-				typeFilterChip !== null &&
-				value.length === 0
-			) {
+			if (e.key === 'Backspace' && typeFilterChip !== null && value.length === 0) {
 				e.preventDefault()
 				setTypeFilterChip(null)
 				return
@@ -527,7 +838,7 @@ export function Composer({
 			// While the unified picker is open, ↑↓ move its active row and ↵
 			// selects it — routed through the imperative handle because focus
 			// stays on the textarea and the picker Portal isn't a DOM ancestor.
-			if (unifiedPickerEnabled && unifiedOpen) {
+			if (unifiedOpen) {
 				if (e.key === 'ArrowDown') {
 					e.preventDefault()
 					unifiedPickerRef.current?.moveActive(1)
@@ -541,7 +852,7 @@ export function Composer({
 			}
 			// Escape closes the unified picker without touching the composer text
 			// or the chip; the trigger char stays so the user can continue.
-			if (unifiedPickerEnabled && e.key === 'Escape' && unifiedOpen) {
+			if (e.key === 'Escape' && unifiedOpen) {
 				e.preventDefault()
 				setUnifiedOpen(false)
 				setSlashStart(null)
@@ -553,7 +864,7 @@ export function Composer({
 			// Enter fires the picker's active row while the picker is open. If
 			// there's no active row (empty list), swallow Enter rather than
 			// submitting — the visual state promises a selection is pending.
-			if (unifiedPickerEnabled && unifiedOpen) {
+			if (unifiedOpen) {
 				e.preventDefault()
 				unifiedPickerRef.current?.selectActive()
 				return
@@ -568,7 +879,7 @@ export function Composer({
 		[
 			handleSubmit,
 			isMobile,
-			unifiedPickerEnabled,
+
 			unifiedOpen,
 			typeFilterChip,
 			value.length,
@@ -579,9 +890,62 @@ export function Composer({
 		],
 	)
 
+	// The `/` trigger, shared by both inputs: `next` is the plain text, `pos` the caret in it.
+	const applySlash = useCallback(
+		(next: string, pos: number) => {
+			// The top-level `/` path routes to `<UnifiedChatSlashPicker>`
+			// (Reference on top, Create-new below).
+			const outcome = detectUnifiedSlashTransition({
+				next,
+				pos,
+				slashStart,
+				typeFilterChip,
+			})
+			if (outcome.type === 'promote_to_chip') {
+				// `/task ` transformed → the raw label is stripped from the
+				// input and the chip is set. Picker stays open with the
+				// query cleared and the type filter narrowing both sections.
+				setValue(outcome.nextValue)
+				setSlashStart(outcome.nextSlashStart)
+				setTypeFilterChip(outcome.objectType)
+				setUnifiedOpen(true)
+				// Restore caret to right after the removed `/label ` so a
+				// follow-up keystroke lands where the user expects.
+				requestAnimationFrame(() => {
+					if (inlineTags) return tagRef.current?.setCaretOffset(outcome.nextCaret)
+					const el = textareaRef.current
+					if (el) el.setSelectionRange(outcome.nextCaret, outcome.nextCaret)
+				})
+				return
+			}
+			if (outcome.type === 'open') {
+				setSlashStart(outcome.slashStart)
+				setUnifiedOpen(true)
+				return
+			}
+			if (outcome.type === 'close') {
+				setSlashStart(null)
+				setUnifiedOpen(false)
+				return
+			}
+			// `outcome.type === 'noop'` — either not triggering, or already tracking the
+			// same `/` and the user is just typing more chars.
+		},
+		[slashStart, typeFilterChip, setValue, inlineTags],
+	)
+
 	const handleChange = useCallback(
 		(e: ChangeEvent<HTMLTextAreaElement>) => {
 			const next = e.target.value
+			// The prefix as the first character of an empty composer opens vault mode and
+			// is consumed: setValue never sees it, so neither does the draft mirror.
+			if (!vaultFlow?.blocking && valueRef.current === '') {
+				const seed = vaultSeedFrom(next)
+				if (seed !== null) {
+					enterVault(seed)
+					return
+				}
+			}
 			setValue(next)
 			const pos = e.target.selectionStart
 			if (typeof pos !== 'number' || pos < 0) {
@@ -598,143 +962,36 @@ export function Composer({
 			const mention = detectMentionTrigger(next, pos)
 			if (mention) {
 				setMentionTrigger(mention)
-				setTurnIntoOpen(false)
-				slashPosRef.current = null
-				if (unifiedPickerEnabled) {
-					setUnifiedOpen(false)
-					setSlashStart(null)
-				}
+				setUnifiedOpen(false)
+				setSlashStart(null)
 				return
 			}
 			setMentionTrigger(null)
 
-			// v2: the top-level `/` path routes to `<UnifiedChatSlashPicker>`
-			// (Reference on top, Create-new below). The legacy `turnIntoOpen`
-			// create dropdown stays only under the `+` menu's "Create an object"
-			// entry, so a rollback of the flag flips this composer straight back
-			// to today's shape. Root-cause per Architect tech spec / task body:
-			// the current path opens `turnIntoOpen` at line 215–232 and never
-			// invokes the picker; that's what this branch replaces.
-			if (unifiedPickerEnabled) {
-				const outcome = detectUnifiedSlashTransition({
-					next,
-					pos,
-					slashStart,
-					typeFilterChip,
-				})
-				if (outcome.type === 'promote_to_chip') {
-					// `/task ` transformed → the raw label is stripped from the
-					// textarea and the chip is set. Picker stays open with the
-					// query cleared and the type filter narrowing both sections.
-					setValue(outcome.nextValue)
-					setSlashStart(outcome.nextSlashStart)
-					setTypeFilterChip(outcome.objectType)
-					setUnifiedOpen(true)
-					// Restore caret to right after the removed `/label ` so a
-					// follow-up keystroke lands where the user expects.
-					requestAnimationFrame(() => {
-						const el = textareaRef.current
-						if (el) el.setSelectionRange(outcome.nextCaret, outcome.nextCaret)
-					})
-					return
-				}
-				if (outcome.type === 'open') {
-					setSlashStart(outcome.slashStart)
-					setUnifiedOpen(true)
-					return
-				}
-				if (outcome.type === 'close') {
-					setSlashStart(null)
-					setUnifiedOpen(false)
-					return
-				}
-				// `outcome.type === 'noop'` — either not triggering, or already
-				// tracking the same `/` and the user is just typing more chars.
-				return
-			}
-
-			// Legacy path — pre-v2 behaviour, unchanged: `/` at a word boundary
-			// opens the create-only dropdown.
-			if (pos <= 0) return
-			if (next[pos - 1] !== '/') return
-			const prev = pos >= 2 ? next[pos - 2] : ''
-			if (prev !== '' && !/\s/.test(prev)) return
-			slashPosRef.current = pos - 1
-			setTurnIntoOpen(true)
+			applySlash(next, pos)
 		},
-		[setValue, unifiedPickerEnabled, slashStart, typeFilterChip],
+		[setValue, vaultFlow?.blocking, enterVault, applySlash],
 	)
 
-	const openPickerForKind = useCallback((kind: SlashKindId) => {
-		slashPosRef.current = null
-		setPickerKind(kind)
-		setPickerOpen(true)
-	}, [])
-
-	const consumeSlashTrigger = useCallback(() => {
-		const pos = slashPosRef.current
-		if (pos === null) return
-		slashPosRef.current = null
-		setValue((prev) => {
-			if (prev[pos] !== '/') return prev
-			return prev.slice(0, pos) + prev.slice(pos + 1)
-		})
-	}, [setValue])
-
-	const openCreateFor = useCallback(
-		(subtype: string | undefined) => {
-			setCreateSubtype(subtype)
-			setCreateSeedTitle('')
-			setTurnIntoOpen(false)
-			consumeSlashTrigger()
-			setCreateOpen(true)
-		},
-		[consumeSlashTrigger],
-	)
-
-	const handlePickerSelect = useCallback(
-		(result: SlashPickerResult) => {
-			if (result.kind === 'agent') {
-				onDispatchSelection?.({ type: 'add_agent', agent: result.ref })
-				// Thinness event #2: the owner bypassed the default (Chief of
-				// Staff, once T3 wires it) and pulled a specialist in directly.
-				// The parent bet counts any hit as evidence the boundary agent
-				// isn't holding.
-				trackSpecialistSummonedManually({
-					entity_id: result.ref.id,
-					entity_type: 'agent',
-					agent_role: deriveEntryAgentRole(result.ref.name),
-				})
-				// The `+` menu → "Mention an agent" path also counts as a mention insertion.
-				trackChatMentionInserted({
-					entity_id: result.ref.id,
-					entity_type: 'actor',
-					kind: 'agent',
-				})
-			} else if (result.kind === 'object') {
-				onDispatchSelection?.({ type: 'add_object', object: result.ref })
-				trackChatObjectReferenceCreated({
-					entity_id: result.ref.id,
-					object_type: result.ref.type ?? 'object',
-				})
-			} else if (result.kind === 'notification') {
-				onDispatchSelection?.({ type: 'add_notification', notification: result.ref })
-				trackChatObjectReferenceCreated({
-					entity_id: result.ref.id,
-					object_type: 'notification',
-				})
-			} else if (result.kind === 'create') {
-				// The `create` kind is surfaced by the unified `/` picker via a
-				// dedicated handler below — the legacy picker never emits it, so
-				// the legacy path here is a no-op. Keeping the switch exhaustive
-				// keeps the discriminated union honest for future callers.
+	// The tag input reports text and chip ids on every change. The `!` vault prefix, the `/`
+	// picker and the id list work off that, the same as handleChange does for the textarea.
+	const handleTagChange = useCallback(
+		(next: TagValue) => {
+			domTextRef.current = next.text
+			if (!vaultFlow?.blocking && valueRef.current === '') {
+				const seed = vaultSeedFrom(next.text)
+				if (seed !== null) {
+					enterVault(seed)
+					tagRef.current?.setContent([])
+					return
+				}
 			}
-			// The `/` that triggered the picker (if any) is dropped as soon as
-			// the user commits a pick — keeping the rest of the in-progress
-			// message intact.
-			consumeSlashTrigger()
+			setValue(next.text)
+			syncTagIds(next.ids, true)
+			const pos = tagRef.current?.caretOffset()
+			if (typeof pos === 'number') applySlash(next.text, pos)
 		},
-		[onDispatchSelection, consumeSlashTrigger],
+		[vaultFlow?.blocking, enterVault, setValue, syncTagIds, applySlash],
 	)
 
 	// Compute the picker's live query — text from the char AFTER the `/` up to
@@ -814,36 +1071,19 @@ export function Composer({
 		}
 	}, [])
 
-	const handlePickerOpenChange = useCallback((next: boolean) => {
-		setPickerOpen(next)
-		if (!next) {
-			setPickerKind(null)
-			slashPosRef.current = null
-		}
-	}, [])
-
 	const uploadPickedFile = useCallback(
 		async (tempId: string, file: File) => {
 			const controller = new AbortController()
 			abortControllersRef.current.set(tempId, controller)
 			try {
-				const content = await readFileAsBase64(file)
-				const created = await uploadFile(
-					{
-						name: file.name,
-						mime_type: file.type || 'application/octet-stream',
-						content,
-						encoding: 'base64',
+				const created = await uploadFile(await toUploadInput(file), {
+					signal: controller.signal,
+					onProgress: (progress) => {
+						setPendingUploads((prev) =>
+							prev.map((p) => (p.tempId === tempId ? { ...p, progress } : p)),
+						)
 					},
-					{
-						signal: controller.signal,
-						onProgress: (progress) => {
-							setPendingUploads((prev) =>
-								prev.map((p) => (p.tempId === tempId ? { ...p, progress } : p)),
-							)
-						},
-					},
-				)
+				})
 				// Cancel-vs-resolve race: if the user removed the chip between the
 				// XHR completing on the wire and this microtask firing, the chip is
 				// already gone and the abort fired — don't dispatch add_file so the
@@ -874,7 +1114,11 @@ export function Composer({
 				// surface and no error state to set.
 				if (controller.signal.aborted) return
 				console.error(`[chat] failed to upload ${file.name}`, err)
-				const message = err instanceof Error ? err.message : 'Upload failed'
+				const message = isViewerRefusal(err)
+					? VIEWER_READ_ONLY_MESSAGE
+					: err instanceof Error
+						? err.message
+						: 'Upload failed'
 				// Mirror the comment input: the failed chip stays put so the user
 				// can see which attachment broke and remove it. Send stays blocked
 				// (via canSend) until every pending row is resolved or removed.
@@ -888,11 +1132,11 @@ export function Composer({
 		[uploadFile, onDispatchSelection],
 	)
 
-	const handleFileSelection = useCallback(
-		(event: ChangeEvent<HTMLInputElement>) => {
-			const input = event.target
-			const files = Array.from(input.files ?? [])
-			input.value = '' // allow re-picking the same file after removing it
+	// The one entry point for files into the composer: the picker and a clipboard
+	// paste both end here, so a chip behaves the same whichever way it arrived.
+	const attachFiles = useCallback(
+		(files: File[]) => {
+			if (!canWrite) return
 			const additions: PendingUpload[] = files.map((file) => ({
 				tempId: makeTempId(),
 				name: file.name,
@@ -907,7 +1151,48 @@ export function Composer({
 				void uploadPickedFile(p.tempId, files[idx])
 			})
 		},
-		[uploadPickedFile],
+		[uploadPickedFile, canWrite],
+	)
+
+	const handleFileSelection = useCallback(
+		(event: ChangeEvent<HTMLInputElement>) => {
+			const input = event.target
+			const files = Array.from(input.files ?? [])
+			input.value = '' // allow re-picking the same file after removing it
+			attachFiles(files)
+		},
+		[attachFiles],
+	)
+
+	// A paste that starts with the prefix and has no whitespace, into an empty composer,
+	// goes straight to the vault field. Intercepted before the textarea takes it, so the
+	// secret is never in the composer's value, not even for a frame.
+	// A paste that carries files and no text attaches them. Text always wins: copying
+	// from a web page or spreadsheet puts a rendered image next to the text, and the
+	// text is what the user meant to paste.
+	const handlePaste = useCallback(
+		(e: ClipboardEvent<HTMLElement>) => {
+			if (vaultFlow?.blocking) return
+			const text = e.clipboardData.getData('text')
+			if (valueRef.current === '') {
+				const seed = vaultSeedFrom(text)
+				if (seed !== null) {
+					e.preventDefault()
+					// The tag input listens for paste too; the secret must not reach it.
+					e.stopPropagation()
+					enterVault(seed)
+					return
+				}
+			}
+			if (text !== '') return
+			const files = Array.from(e.clipboardData.files)
+			if (files.length === 0) return
+			e.preventDefault()
+			e.stopPropagation()
+			const now = new Date()
+			attachFiles(files.map((file) => nameClipboardImage(file, now)))
+		},
+		[vaultFlow?.blocking, enterVault, attachFiles],
 	)
 
 	const handleRemovePending = useCallback((tempId: string) => {
@@ -920,43 +1205,37 @@ export function Composer({
 		setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
 	}, [])
 
+	// The chips in the sentence are the tags, so the pill row shows only the agents that have no chip
+	// (a thread reply's seeded recipient), which stay visible and removable.
+	const chipSelection = useMemo(
+		() =>
+			inlineTags
+				? { ...selection, agents: selection.agents.filter((id) => !tagIds.includes(id)) }
+				: selection,
+		[inlineTags, selection, tagIds],
+	)
+
 	return (
 		<div
 			className={cn(
 				'relative mx-auto flex w-full max-w-[860px] flex-col gap-1 rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
+				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
 		>
-			<SlashPicker
+			<UnifiedChatSlashPicker
+				ref={unifiedPickerRef}
 				workspaceId={workspaceId}
-				open={pickerOpen}
-				onOpenChange={handlePickerOpenChange}
-				onSelect={handlePickerSelect}
-				selected={{
-					agents: selection.agents,
-					objects: selection.objects,
-					notifications: selection.notifications,
-				}}
-				initialKindId={pickerKind}
+				open={unifiedOpen}
+				onOpenChange={handleUnifiedOpenChange}
+				query={unifiedQuery}
+				typeFilter={typeFilterChip}
+				onSelect={handleUnifiedSelect}
+				onActiveDescendantChange={setUnifiedActiveDescendant}
 				anchor={
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
-			{unifiedPickerEnabled ? (
-				<UnifiedChatSlashPicker
-					ref={unifiedPickerRef}
-					workspaceId={workspaceId}
-					open={unifiedOpen}
-					onOpenChange={handleUnifiedOpenChange}
-					query={unifiedQuery}
-					typeFilter={typeFilterChip}
-					onSelect={handleUnifiedSelect}
-					onActiveDescendantChange={setUnifiedActiveDescendant}
-					anchor={
-						<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
-					}
-				/>
-			) : null}
-			{unifiedPickerEnabled && typeFilterChip !== null ? (
+			{typeFilterChip !== null ? (
 				<ul className="flex list-none flex-wrap items-center gap-1 p-0" aria-label="Type filter">
 					<li className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand/10 px-2 py-0.5 text-xs font-semibold text-brand">
 						<Hash size={12} aria-hidden />
@@ -975,68 +1254,26 @@ export function Composer({
 			{/* Inline `@` mention picker — the composer's textarea remains the
 			    focused element, and the picker consumes arrow keys / Enter /
 			    Escape via `handleKeyDown`'s `reduceMentionPickerKey` branch. */}
-			<MentionPicker
-				open={mentionTrigger !== null}
-				onOpenChange={(next) => {
-					if (!next) setMentionTrigger(null)
-				}}
-				actors={mentionActors}
-				conversationParticipantIds={conversationParticipantIds ?? []}
-				query={mentionTrigger?.query ?? ''}
-				workspaceId={workspaceId}
-				selfActorId={selfActorId}
-				onSelect={(actor) => commitMention(actor)}
-				anchor={
-					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
-				}
-			/>
-			{/* A DropdownMenu rather than a Popover: `/` opens this without a click,
-			    so the list has to be reachable from the keyboard. Radix gives the
-			    menu roving focus, arrow keys and typeahead for free — the Popover
-			    this replaced left focus in the textarea with no way in. */}
-			<DropdownMenu
-				open={turnIntoOpen}
-				onOpenChange={(next) => {
-					setTurnIntoOpen(next)
-					if (!next) slashPosRef.current = null
-				}}
-			>
-				<DropdownMenuTrigger asChild>
-					<span aria-hidden className="pointer-events-none absolute bottom-2 left-2 h-0 w-0" />
-				</DropdownMenuTrigger>
-				<DropdownMenuContent
-					align="start"
-					side="top"
-					sideOffset={8}
-					className="w-[320px]"
-					// The visible DropdownMenuLabel below is not an accessible name
-					// for the menu itself — name it explicitly so the list is
-					// announced (and addressable) as "Turn this into an object".
-					aria-label="Turn this into an object"
-					// Radix returns focus to the trigger, which here is an invisible
-					// anchor — send the caret back to the composer instead.
-					onCloseAutoFocus={(e) => {
-						e.preventDefault()
-						textareaRef.current?.focus()
+			{/* In inline-tag mode the tag input owns the `@` picker. */}
+			{inlineTags ? null : (
+				<MentionPicker
+					open={mentionTrigger !== null}
+					onOpenChange={(next) => {
+						if (!next) setMentionTrigger(null)
 					}}
-				>
-					<DropdownMenuLabel className="eyebrow">Turn this into an object</DropdownMenuLabel>
-					{objectTypes.map((type) => (
-						<DropdownMenuItem
-							key={type.value}
-							onSelect={() => openCreateFor(type.value)}
-							className="gap-2.5"
-						>
-							<TypeBadge type={type.value} variant="tile" />
-							<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
-								{type.label}
-							</span>
-						</DropdownMenuItem>
-					))}
-				</DropdownMenuContent>
-			</DropdownMenu>
+					actors={mentionActors}
+					conversationParticipantIds={conversationParticipantIds ?? []}
+					query={mentionTrigger?.query ?? ''}
+					workspaceId={workspaceId}
+					selfActorId={selfActorId}
+					onSelect={(actor) => commitMention(actor)}
+					anchor={
+						<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
+					}
+				/>
+			)}
 			<SelectionChips
-				selection={selection}
+				selection={chipSelection}
 				onRemoveAgent={onRemoveAgent}
 				onRemoveObject={onRemoveObject}
 				onRemoveNotification={onRemoveNotification}
@@ -1089,145 +1326,198 @@ export function Composer({
 				aria-hidden
 				tabIndex={-1}
 			/>
-			<form onSubmit={handleSubmit}>
-				<Textarea
-					autoResize
-					ref={textareaRef}
-					value={value}
-					onChange={handleChange}
-					onKeyDown={handleKeyDown}
-					placeholder={placeholder}
-					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
-					disabled={disabled}
-					rows={1}
-					aria-label={textareaLabel}
-					// Screen readers announce the picker's active row while focus
-					// stays on the textarea (spec §Accessibility). The picker
-					// keeps this in sync via `onActiveDescendantChange`.
-					aria-activedescendant={
-						unifiedPickerEnabled && unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
+			{secretFlow ? (
+				<SecretCaptureFlow
+					workspaceId={workspaceId}
+					content={secretFlow.content}
+					matches={secretFlow.matches}
+					capture={secretCapture ?? null}
+					agentName={secretCapture?.agent.name ?? 'the agent'}
+					restarting={secretRestarting}
+					onSend={sendContent}
+					onCancel={() => {
+						// The message is dropped, not the person's words: the text comes back
+						// without the secret, so cancelling never costs them what they wrote.
+						const restored = withoutSecrets(secretFlow.content, secretFlow.matches)
+						setSecretFlow(null)
+						setValue(restored)
+						focusInput()
+					}}
+					onEdit={() => {
+						const restored = secretFlow.content
+						setSecretFlow(null)
+						setValue(restored)
+						focusInput()
+					}}
+					onDone={(keepReceipts) =>
+						setSecretFlow(keepReceipts ? (prev) => prev && { ...prev, blocking: false } : null)
 					}
-					aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
-					aria-expanded={mentionTrigger !== null || undefined}
+					onMute={(ids) => {
+						for (const id of ids) mutedPatternIds.current.add(id)
+					}}
 				/>
-				{sendError || externalError ? (
-					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
-						{sendError ?? externalError} — your message is preserved; try again.
-					</p>
-				) : null}
-				<div className="flex items-center gap-2">
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							{/* No 44 px `::before` here: Attach next to it already carries one,
-							    and two overlapping invisible hit surfaces 8 px apart steal
-							    taps from each other. The v2 control row is 28 px by design.
-							    Attach's hit area is anchored to its right edge, so it reaches 8 px
-							    over this button; `z-[1]` keeps this one's full box on top. */}
-							<Button
-								type="button"
-								size="icon"
-								variant="outline"
-								className="relative z-[1] h-7 w-7 shrink-0 rounded-full text-muted-foreground"
-								disabled={disabled}
-								aria-label="Add an object, file, or mention"
-							>
-								<Plus size={15} aria-hidden />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="start" className="w-[252px]">
-							{plusMenuAttachOnly ? (
-								// Flag-on shape (task 6321aecf, bet f21a): the Reference /
-								// Mention aliases founders reported broken are removed, and
-								// Create-new moves to the `/` picker (sibling task). The
-								// row triggers the same hidden fileInputRef as the visible
-								// Paperclip sibling, so the file-attach handler that is
-								// already wired for this composer is what runs.
-								<DropdownMenuItem
-									onSelect={() => fileInputRef.current?.click()}
-									className="flex-col items-start gap-0.5"
-								>
-									<span className="flex items-center gap-2">
-										<Paperclip size={15} aria-hidden />
-										Attach a file
-									</span>
-									<span className="pl-[23px] text-xs text-muted-foreground">
-										PDF, image, or doc
-									</span>
-								</DropdownMenuItem>
-							) : (
-								<>
-									<DropdownMenuItem onSelect={() => openPickerForKind('item')}>
-										<Box size={15} aria-hidden />
-										Reference an object
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => openPickerForKind('agent')}>
-										<AtSign size={15} aria-hidden />
-										Mention an agent
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => openCreateFor(undefined)}>
-										<Sparkles size={15} aria-hidden />
-										Create an object
-									</DropdownMenuItem>
-								</>
+			) : null}
+			{vaultFlow ? (
+				<VaultPrefixFlow
+					key={vaultFlow.key}
+					workspaceId={workspaceId}
+					seedRef={vaultSeedRef}
+					capture={secretCapture ?? null}
+					unavailable={!secretCapture || vaultModeBlocked === true}
+					agentName={secretCapture?.agent.name ?? 'the agent'}
+					onSend={onSend}
+					onLeave={() => {
+						setVaultFlow(null)
+						requestAnimationFrame(focusInput)
+					}}
+					onDone={(keepReceipts) => {
+						setVaultFlow(keepReceipts ? (prev) => prev && { ...prev, blocking: false } : null)
+						requestAnimationFrame(focusInput)
+					}}
+				/>
+			) : null}
+			{/* Hidden rather than unmounted while vault mode is open, so the composer's own
+			    state is untouched when the user comes back to it. */}
+			<ViewerTooltip className="block">
+				<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
+					{inlineTags ? (
+						// Focus and paste are caught on the wrapper: the tag input has no hooks for them.
+						<div
+							ref={tagWrapRef}
+							className="p-1"
+							onFocus={() => setTextareaFocused(true)}
+							onBlur={() => setTextareaFocused(false)}
+							onPasteCapture={handlePaste}
+						>
+							<TagInput
+								handleRef={tagRef}
+								workspaceId={workspaceId}
+								conversationParticipantIds={conversationParticipantIds}
+								selfActorId={selfActorId}
+								initialSegments={initialTagContent.segments}
+								surface="card"
+								ariaLabel={textareaLabel ?? placeholder}
+								ariaDescribedBy={hint === undefined ? undefined : hintId}
+								// The `/` picker's active row, announced while focus stays in the input.
+								ariaActiveDescendant={
+									unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
+								}
+								placeholder={canWrite ? placeholder : VIEWER_READ_ONLY_MESSAGE}
+								disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
+								className="max-h-40 min-h-[28px] text-sm"
+								onChange={handleTagChange}
+								onKeyDown={handleKeyDown}
+							/>
+						</div>
+					) : (
+						<Textarea
+							autoResize
+							ref={textareaRef}
+							value={value}
+							onChange={handleChange}
+							onPaste={handlePaste}
+							onKeyDown={handleKeyDown}
+							placeholder={canWrite ? placeholder : VIEWER_READ_ONLY_MESSAGE}
+							className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+							disabled={disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true}
+							rows={1}
+							aria-label={textareaLabel}
+							aria-describedby={hint === undefined ? undefined : hintId}
+							onFocus={() => setTextareaFocused(true)}
+							onBlur={() => setTextareaFocused(false)}
+							// Screen readers announce the picker's active row while focus
+							// stays on the textarea (spec §Accessibility). The picker
+							// keeps this in sync via `onActiveDescendantChange`.
+							aria-activedescendant={
+								unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
+							}
+							aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
+							aria-expanded={mentionTrigger !== null || undefined}
+						/>
+					)}
+					{sendError || externalError ? (
+						<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
+							{sendError ?? externalError} — your message is preserved; try again.
+						</p>
+					) : null}
+					{hint === undefined ? null : (
+						<output
+							id={hintId}
+							aria-live="polite"
+							className={cn(
+								'px-1 text-muted-foreground text-xs',
+								// The icon and the 8 px gap above the control row exist only while there is text,
+								// so the empty live region adds no height.
+								hintText ? 'mb-2 flex items-start gap-1.5' : 'block',
 							)}
-						</DropdownMenuContent>
-					</DropdownMenu>
-					{/* Attach stays a visible sibling rather than a menu row: it is the
-					    one composer affordance with a pinned 44 px touch target
-					    (`ios-chat-attach-tap-area.spec.ts`), which a closed menu can't
-					    satisfy. */}
-					<Button
-						type="button"
-						size="icon"
-						variant="ghost"
-						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={disabled}
-						aria-label="Attach file"
-					>
-						<Paperclip size={14} aria-hidden />
-					</Button>
-					{dictation.supported ? (
+						>
+							{hintText ? <Info aria-hidden className="mt-px size-3.5 shrink-0" /> : null}
+							{hintText}
+						</output>
+					)}
+					<div className="flex items-center gap-2">
+						{/* Attach carries a pinned 44 px touch target (`ios-chat-attach-tap-area.spec.ts`). */}
 						<Button
 							type="button"
 							size="icon"
-							variant={dictation.recording ? 'destructive' : 'outline'}
-							className={cn(
-								'ml-auto h-7 w-7 shrink-0 rounded-full',
-								dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
-							)}
-							onClick={dictation.toggle}
+							variant="ghost"
+							className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:right-0 before:top-1/2 before:h-11 before:w-11 before:-translate-y-1/2 before:content-['']"
+							onClick={() => fileInputRef.current?.click()}
 							disabled={disabled}
-							aria-pressed={dictation.recording}
-							aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a message'}
+							aria-label="Attach file"
 						>
-							<Mic size={14} aria-hidden />
+							<Paperclip size={14} aria-hidden />
 						</Button>
-					) : null}
-					<Button
-						type="submit"
-						size="icon"
-						className={cn(
-							'h-7 w-7 shrink-0 rounded-full',
-							dictation.supported ? '' : 'ml-auto',
-							canSend
-								? 'bg-primary text-primary-foreground'
-								: 'bg-muted text-muted-foreground hover:bg-muted',
-						)}
-						disabled={!canSend}
-						aria-label="Send message"
-					>
-						{/* An up-arrow, not a paper plane — v2's send glyph across every
+						{dictation.supported ? (
+							<Button
+								type="button"
+								size="icon"
+								variant={dictation.recording ? 'destructive' : 'outline'}
+								className={cn(
+									'ml-auto h-7 w-7 shrink-0 rounded-full',
+									dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
+								)}
+								onClick={dictation.toggle}
+								disabled={disabled || dictation.transcribing}
+								aria-pressed={dictation.recording}
+								aria-busy={dictation.transcribing}
+								aria-label={
+									dictation.transcribing
+										? 'Transcribing'
+										: dictation.recording
+											? 'Stop dictating'
+											: 'Dictate a message'
+								}
+							>
+								{dictation.transcribing ? <Spinner /> : <Mic size={14} aria-hidden />}
+							</Button>
+						) : null}
+						{callAgent ? (
+							// `ml-auto` here only when the mic didn't already claim the gap.
+							<span className={cn('inline-flex', dictation.supported ? '' : 'ml-auto')}>
+								<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />
+							</span>
+						) : null}
+						<Button
+							type="submit"
+							size="icon"
+							className={cn(
+								'h-7 w-7 shrink-0 rounded-full',
+								dictation.supported || callAgent ? '' : 'ml-auto',
+								canSend
+									? 'bg-primary text-primary-foreground'
+									: 'bg-muted text-muted-foreground hover:bg-muted',
+							)}
+							disabled={!canSend}
+							aria-label="Send message"
+						>
+							{/* An up-arrow, not a paper plane — v2's send glyph across every
 						    composer (mockup 543). */}
-						{showSpinner ? <Spinner /> : <ArrowUp size={15} />}
-					</Button>
-				</div>
-			</form>
-			{/* "Turn this into an object" — reuses the shipped creation flow rather
-			    than the mockup's bespoke FROM-THIS-CHAT modal (800–848). The picked
-			    type is seeded; the conversation itself is not, because pre-filling
-			    the name / field table / "CONTEXT IT INHERITS" block needs a `seed`
-			    prop on CreatePicker, which is owned elsewhere. */}
+							{showSpinner ? <Spinner /> : <ArrowUp size={15} />}
+						</Button>
+					</div>
+				</form>
+			</ViewerTooltip>
 			<CreatePicker
 				open={createOpen}
 				onOpenChange={setCreateOpen}

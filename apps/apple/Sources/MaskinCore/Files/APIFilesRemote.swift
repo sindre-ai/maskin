@@ -32,6 +32,22 @@ public struct APIFilesRemote: FilesRemote {
 		}
 	}
 
+	public func briefings(limit: Int) async throws -> [FileSummary] {
+		let workspace = await credentials?()?.workspaceId ?? ""
+		do {
+			let output = try await client.get_sol_api_sol_files(
+				.init(
+					query: .init(kind: .briefing, limit: min(limit, ServerLimits.maxPageSize)),
+					headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
+			guard case .ok(let ok) = output else { throw FileError("The server couldn't list briefings.") }
+			return try Self.convert(ok.body.json, as: [SummaryDTO].self).map(\.model)
+		} catch {
+			if let error = error as? FileError { throw error }
+			let d = RemoteFailure.describe(error)
+			throw FileError(d.message, isOffline: d.isOffline)
+		}
+	}
+
 	/// The server caps a page at `ServerLimits.maxPageSize`, so ids go in chunks that fit both that
 	/// and a sensible URL length.
 	public func summaries(ids: [String]) async throws -> [FileSummary] {

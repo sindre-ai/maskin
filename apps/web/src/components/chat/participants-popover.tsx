@@ -1,10 +1,12 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import {
 	ResponsivePopover,
 	ResponsivePopoverContent,
 	ResponsivePopoverTrigger,
 } from '@/components/ui/responsive-popover'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useAddConversationParticipants,
 	useRemoveConversationParticipant,
@@ -40,6 +42,8 @@ export function ParticipantsPopover({
 	const addParticipants = useAddConversationParticipants(conversationId, workspaceId)
 	const removeParticipant = useRemoveConversationParticipant(conversationId, workspaceId)
 	const navigate = useNavigate()
+	// Adding and removing people are writes, a viewer's own exit included.
+	const canWrite = useCanWrite()
 	const currentActor = getStoredActor()
 
 	const participantIds = useMemo(() => new Set(participants.map((p) => p.actorId)), [participants])
@@ -127,14 +131,17 @@ export function ParticipantsPopover({
 										</span>
 									</span>
 									{canRemove ? (
-										<button
-											type="button"
-											onClick={() => handleRemove(p.actorId)}
-											aria-label={`Remove ${p.actorName}`}
-											className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-										>
-											<UserMinus size={13} aria-hidden />
-										</button>
+										<ViewerTooltip>
+											<button
+												type="button"
+												onClick={() => handleRemove(p.actorId)}
+												disabled={!canWrite}
+												aria-label={`Remove ${p.actorName}`}
+												className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:hover:bg-transparent"
+											>
+												<UserMinus size={13} aria-hidden />
+											</button>
+										</ViewerTooltip>
 									) : null}
 								</li>
 							)
@@ -144,13 +151,16 @@ export function ParticipantsPopover({
 						Add someone — person or agent
 					</div>
 					<Command shouldFilter={false} className="flex min-h-0 flex-col">
-						<Command.Input
-							value={query}
-							onValueChange={setQuery}
-							placeholder="Search people and agents…"
-							autoFocus
-							className="mx-2 mb-1 rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
-						/>
+						<ViewerTooltip className="flex flex-col">
+							<Command.Input
+								value={query}
+								onValueChange={setQuery}
+								placeholder="Search people and agents…"
+								autoFocus
+								disabled={!canWrite}
+								className="mx-2 mb-1 rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
+							/>
+						</ViewerTooltip>
 						<Command.List className="max-h-48 overflow-auto px-1 pb-2">
 							{candidates.length === 0 ? (
 								<div className="px-2 py-3 text-sm text-muted-foreground">No matches.</div>
@@ -160,7 +170,8 @@ export function ParticipantsPopover({
 										key={c.id}
 										value={c.id}
 										onSelect={() => handleAdd(c.id)}
-										className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+										disabled={!canWrite}
+										className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 data-[disabled=true]:opacity-50 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
 									>
 										<ActorAvatar id={c.id} name={c.name} type={c.type} size="md" />
 										<span className="min-w-0 flex-1">

@@ -1,3 +1,5 @@
+import { addPerfRoom, perfOverrides } from './perf-fixtures.mjs'
+
 // Demo data for the design review: the Northwind workspace from the Watch, iPad and TV prototypes.
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 export const WORKSPACE_ID = uuid(1)
@@ -262,12 +264,10 @@ const rooms = [
 		at: DAY,
 	},
 ]
-const participant = (id) => {
-	const a = actors.find((x) => x.id === id)
-	return { id, name: a.name, type: a.type, kind: a.type }
-}
 
-// The create and detail responses list participants as full rows rather than the list's summaries.
+const PERF = process.env.DEMO_PERF === '1'
+if (PERF) addPerfRoom(rooms, { PRIYA, CHIEF })
+// Participants as the API sends them on the list, create and detail responses alike.
 const participantRow = (id) => {
 	const a = actors.find((x) => x.id === id)
 	return {
@@ -279,8 +279,71 @@ const participantRow = (id) => {
 	}
 }
 
-export function overrides({ method, path, params, query, base, item }) {
+// Comments posted to an object, kept for the life of the server so a refetch still shows them.
+const postedComments = new Map()
+let nextEventId = 9000
+
+export function overrides({ method, path, params, query, body, base, item }) {
+	if (PERF) {
+		const hit = perfOverrides({
+			method,
+			path,
+			query,
+			item,
+			base,
+			ctx: { uuid, ago, ME, actors, WORKSPACE_ID, CHIEF, PRIYA },
+		})
+		if (hit) return hit
+	}
 	if (method !== 'get' && method !== 'post') return null
+	if (method === 'post' && path === '/api/events' && typeof body?.entity_id === 'string') {
+		const event = {
+			...base,
+			id: nextEventId++,
+			actorId: ME.id,
+			entityType: 'object',
+			entityId: body.entity_id,
+			action: 'commented',
+			description: 'commented',
+			data: {
+				content: body.content,
+				mentions: body.mentions ?? [],
+				parentEventId: body.parent_event_id,
+				attachmentFileIds: body.attachment_file_ids ?? [],
+				metadata: body.metadata,
+			},
+			createdAt: new Date().toISOString(),
+		}
+		postedComments.set(body.entity_id, [...(postedComments.get(body.entity_id) ?? []), event])
+		return { status: 201, body: event }
+	}
+	// Any email and password signs in as the first human, with a key and the demo workspace, so the
+	// app has a workspace to load instead of the schema-sample's empty one.
+	if (method === 'post' && path === '/api/auth/login') {
+		const me = actors.find((a) => a.type === 'human') ?? actors[0]
+		return {
+			// Every field the login schema marks required, so the app's decoder accepts it.
+			body: {
+				id: me.id,
+				type: 'human',
+				name: me.name,
+				email: me.email ?? 'sindre@northwind.example',
+				description: '',
+				system_prompt: null,
+				tools: {},
+				memory: {},
+				llm_provider: null,
+				llm_config: {},
+				isSystem: false,
+				agentState: 'idle',
+				agentStateUpdatedAt: null,
+				createdAt: ago(90 * DAY),
+				updatedAt: ago(90 * DAY),
+				api_key: 'ank_demo',
+				workspace_id: WORKSPACE_ID,
+			},
+		}
+	}
 	if (method === 'get' && path === '/api/workspaces') {
 		return {
 			body: [
@@ -297,6 +360,70 @@ export function overrides({ method, path, params, query, base, item }) {
 	}
 	if (method === 'get' && path === '/api/actors')
 		return { body: actors.map((a) => ({ ...item, ...a })) }
+	// Session log reader: one finished session with a spread of envelope kinds, newest rows paged
+	// by `before` / `since` the way the real route does.
+	if (method === 'get' && path === '/api/sessions' && query.get('verbose') === 'true') {
+		return {
+			body: [
+				{
+					...item,
+					id: uuid(900),
+					actorId: query.get('actor_id') ?? OUTREACH_AGENT,
+					status: 'completed',
+					actionPrompt: 'Draft the follow-up for Priya',
+					interactive: false,
+					startedAt: ago(40),
+					completedAt: ago(35),
+					createdAt: ago(41),
+				},
+			],
+		}
+	}
+	const logsMatch = path.match(/^\/api\/sessions\/[^/]+\/logs$/)
+	if (method === 'get' && logsMatch) {
+		const env = (o) => JSON.stringify(o)
+		const all = [
+			{ stream: 'system', content: 'Container started' },
+			{ stream: 'stdout', content: env({ type: 'system', subtype: 'init' }) },
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: {
+						content: [
+							{ type: 'text', text: 'Reading the last thread with Priya before drafting.' },
+						],
+					},
+				}),
+			},
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', name: 'mcp__maskin__get_conversation' }] },
+				}),
+			},
+			{ stream: 'stderr', content: 'warn: slow response from the mail provider (retrying)' },
+			{
+				stream: 'stdout',
+				content: env({
+					type: 'assistant',
+					message: {
+						content: [{ type: 'text', text: 'Draft is ready and waiting on your approval.' }],
+					},
+				}),
+			},
+			{
+				stream: 'stdout',
+				content: env({ type: 'result', is_error: false, result: 'Draft saved for review.' }),
+			},
+		].map((r, i) => ({ ...item, id: i + 1, sessionId: uuid(900), createdAt: ago(40 - i), ...r }))
+		const since = Number(query.get('since') ?? 0)
+		const before = Number(query.get('before') ?? Number.POSITIVE_INFINITY)
+		let rows = all.filter((r) => r.id > since && r.id < before)
+		if (query.get('order') === 'desc') rows = rows.reverse()
+		return { body: rows.slice(0, Number(query.get('limit') ?? 100)) }
+	}
 	if (method === 'get' && path === '/api/subscriptions/unread') return { body: unreadFeed(item) }
 	if (method === 'get' && path === '/api/briefing') {
 		return {
@@ -318,11 +445,13 @@ export function overrides({ method, path, params, query, base, item }) {
 	// A flow's graph (its attached page) and an object's graph.
 	if (method === 'get' && /^\/api\/objects\/[^/]+\/graph$/.test(path)) {
 		const id = params[0]
+		const events = postedComments.get(id) ?? []
 		const flow = flows.find((f) => uuid(f.n) === id)
 		if (flow) {
 			return {
 				body: {
 					...base,
+					events,
 					object: {
 						...base.object,
 						id,
@@ -359,8 +488,8 @@ export function overrides({ method, path, params, query, base, item }) {
 			}
 		}
 		const d = decisions.find((x) => x.obj.id === id)
-		if (d) return { body: { ...base, object: d.obj } }
-		return null
+		if (d) return { body: { ...base, object: d.obj, events } }
+		return events.length ? { body: { ...base, events } } : null
 	}
 	if (method === 'get' && path === '/api/files') {
 		const ids = (query.get('ids') ?? '').split(',').filter(Boolean)
@@ -423,7 +552,7 @@ export function overrides({ method, path, params, query, base, item }) {
 					snippet: r.snippet,
 					snippet_actor_id: r.with[0],
 					snippet_actor_name: r.by,
-					participants: [...r.with.map(participant), participant(ME.id)],
+					participants: [...r.with.map(participantRow), participantRow(ME.id)],
 				})),
 				has_more: false,
 			},

@@ -14,10 +14,12 @@ import {
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { onTestFinished } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { openSecret } from '../../lib/workspace-secrets'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { db, getTestActorId } from './global-setup'
+import { db, getTestActorId, sql } from './global-setup'
 
 // POST /api/workspaces kicks off the Chief of Staff welcome session
 // fire-and-forget (.catch(), not awaited) right after the create transaction
@@ -45,20 +47,6 @@ const { capturePosthogEventMock } = vi.hoisted(() => ({
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
-
-// Failure injection for the partial-seed rollback test. provisionWorkspace()
-// calls seedDefaultAgentActors() module-internally, so mocking that export
-// wouldn't intercept it — instead we mock the `@maskin/auth` boundary it really
-// crosses and make one generateApiKey() call throw. That runs the *real* seed
-// code, so the test covers production rollback behaviour rather than a
-// hand-rolled stand-in. Defaults to the genuine implementation; only the
-// rollback test arms a failure via mockImplementationOnce.
-const { generateApiKeyMock } = vi.hoisted(() => ({ generateApiKeyMock: vi.fn() }))
-vi.mock('@maskin/auth', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('@maskin/auth')>()
-	generateApiKeyMock.mockImplementation(actual.generateApiKey)
-	return { ...actual, generateApiKey: generateApiKeyMock }
-})
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 const { bootstrapDefaultAgents } = await import('../../services/workspace-bootstrap')
@@ -180,6 +168,14 @@ async function memberActorIdsFor(workspaceId: string): Promise<string[]> {
 	return rows.map((r) => r.actorId).sort()
 }
 
+async function storedSettings(id: string): Promise<Record<string, unknown>> {
+	const [row] = await db
+		.select({ settings: workspacesTable.settings })
+		.from(workspacesTable)
+		.where(eq(workspacesTable.id, id))
+	return row.settings as Record<string, unknown>
+}
+
 describe('Workspaces Integration', () => {
 	beforeEach(() => {
 		capturePosthogEventMock.mockClear()
@@ -299,13 +295,10 @@ describe('Workspaces Integration', () => {
 			// otherwise a rejected member reads here as a wrong count.
 			await setWorkspacePlan(db, workspace.id, 'pro')
 			const teammate = await insertActor(db)
-			const added = await app.request(
-				jsonRequest('POST', `/api/workspaces/${workspace.id}/members`, {
-					actor_id: teammate.id,
-					role: 'member',
-				}),
-			)
-			expect(added.status).toBe(201)
+			// People can't be added by id any more; seed the membership directly.
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: workspace.id, actorId: teammate.id, role: 'member' })
 
 			const paired = await app.request(jsonGet('/api/workspaces'))
 			const pairedRow = (await paired.json()).find(
@@ -376,10 +369,12 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterSet = await second.json()
-			expect(afterSet.settings.llm_keys).toEqual({
-				anthropic: 'sk-ant-AAA',
-				openai: 'sk-oai-BBB',
-			})
+			// No caller gets a key back; the row holds both, sealed.
+			expect(afterSet.settings.llm_keys).toBeUndefined()
+			expect(afterSet.llm_configured).toMatchObject({ anthropic: true, openai: true })
+			const setKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(openSecret(setKeys.llm_keys.anthropic)).toBe('sk-ant-AAA')
+			expect(openSecret(setKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 
 			// `null` inside llm_keys signals deletion; other providers stay.
 			const third = await app.request(
@@ -388,7 +383,10 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterDelete = await third.json()
-			expect(afterDelete.settings.llm_keys).toEqual({ openai: 'sk-oai-BBB' })
+			expect(afterDelete.llm_configured).toMatchObject({ anthropic: false, openai: true })
+			const deletedKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(deletedKeys.llm_keys.anthropic).toBeUndefined()
+			expect(openSecret(deletedKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 		})
 	})
 
@@ -540,7 +538,9 @@ describe('Workspaces Integration', () => {
 			expect(res.status).toBe(200)
 			const row = await workspaceRow(ws.id)
 			expect(row.name).toBe(`Renamed by ${role}!`)
-			expect(row.settings).toMatchObject({ llm_keys: { openai: 'sk-oai-BBB' } })
+			const stored = (row.settings as { llm_keys: { openai: string } }).llm_keys.openai
+			expect(stored).not.toContain('sk-oai-BBB')
+			expect(openSecret(stored)).toBe('sk-oai-BBB')
 		})
 
 		it('returns 403 to an agent member holding the owner role, row unchanged', async () => {
@@ -720,7 +720,8 @@ describe('Workspaces Integration', () => {
 				)
 				expect(res.status).toBe(200)
 				const body = await res.json()
-				expect(body.settings.llm_keys.anthropic).toBe('sk-ant-enterprise')
+				expect(body.settings.llm_keys).toBeUndefined()
+				expect(body.llm_configured.anthropic).toBe(true)
 			} finally {
 				// '' parses to an empty allowlist, same as unset.
 				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
@@ -826,7 +827,8 @@ describe('Workspaces Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.settings.llm_keys.anthropic).toBe('sk-ant-allowed')
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(true)
 		})
 
 		it('does not block deleting an existing (pre-entitlement) BYO key', async () => {
@@ -856,7 +858,10 @@ describe('Workspaces Integration', () => {
 			)
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.settings.llm_keys).toEqual({})
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(false)
+			const stored = (await storedSettings(ws.id)) as { llm_keys?: Record<string, string> }
+			expect(stored.llm_keys?.anthropic).toBeUndefined()
 		})
 	})
 
@@ -874,7 +879,11 @@ describe('Workspaces Integration', () => {
 			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Create another actor to add as member
-			const newActor = await insertActor(db, { name: 'New Member', email: 'member@test.com' })
+			const newActor = await insertActor(db, {
+				type: 'agent',
+				name: 'New Member',
+				createdBy: getTestActorId(),
+			})
 
 			// Add member
 			const addRes = await app.request(
@@ -905,37 +914,6 @@ describe('Workspaces Integration', () => {
 				'owner',
 			])
 		})
-
-		it('rejects an over-cap invite with 403 SEAT_CAP_EXCEEDED, not a 500', async () => {
-			// This app mounts the router with app.route() and defines no
-			// onError — exactly like every other route-level harness, and unlike
-			// createApp(). A cap rejection that is *thrown* rather than returned
-			// degrades to a bare framework 500 here, which is what this asserts
-			// against: the status is part of the route's contract, so it must not
-			// depend on how the router happens to be mounted.
-			const app = createApp()
-			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Seat Cap 403' }),
-			)
-			const ws = await createRes.json()
-
-			// Left on trial: the owner alone fills the single seat.
-			const overflow = await insertActor(db)
-			const res = await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: overflow.id }),
-			)
-
-			expect(res.status).toBe(403)
-			const body = await res.json()
-			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
-			expect(body.error.workspace_id).toBe(ws.id)
-			expect(body.error.plan).toBe('trial')
-			expect(body.error.cap).toBe(1)
-
-			// The rejection is a no-op, not a partial write.
-			const members = await memberActorIdsFor(ws.id)
-			expect(members).not.toContain(overflow.id)
-		})
 	})
 
 	// Every guard on this route depends on DB semantics a mocked db cannot
@@ -952,12 +930,9 @@ describe('Workspaces Integration', () => {
 			const ws = await createRes.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 			const member = await insertActor(db, { name: 'Member', email: `${randomUUID()}@test.com` })
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
-					actor_id: member.id,
-					role: 'member',
-				}),
-			)
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: member.id, role: 'member' })
 			return { app, ws, member }
 		}
 
@@ -1311,8 +1286,10 @@ describe('Workspaces Integration', () => {
 				.where(eq(triggers.workspaceId, ws.id))
 			// Bumped from 13 to 14 with the addition of the Beat 6 chained
 			// "Deep-research brief validated → Signal Analyst clustering" trigger
-			// in DEFAULT_WORKSPACE_TRIGGERS.
-			expect(triggerRows).toHaveLength(14)
+			// in DEFAULT_WORKSPACE_TRIGGERS, to 15 with the Chief of Staff's
+			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
+			// the list" cron.
+			expect(triggerRows).toHaveLength(16)
 		})
 
 		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
@@ -1448,18 +1425,28 @@ describe('Workspaces Integration', () => {
 
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
 			// Agents seed in DEFAULT_AGENT_IDS order — Workspace Coach, Chief of
-			// Staff, Driver, then Strategist. Each mints an API key first, so
-			// throwing on the 4th generateApiKey() call fails strategist after
-			// agents 1-3 are already written into the transaction. Everything —
+			// Staff, Driver, then Strategist. A trigger that rejects the Strategist
+			// actor insert fails the 4th agent after agents 1-3 are already written
+			// into the transaction, running the real seed code. Everything —
 			// including those three partial actor inserts — must roll back.
-			const realGenerateApiKey = generateApiKeyMock.getMockImplementation()
-			generateApiKeyMock
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(() => {
-					throw new Error('mock failure on 4th agent')
-				})
+			onTestFinished(async () => {
+				await sql`drop trigger if exists test_reject_strategist on actors`
+				await sql`drop function if exists test_reject_strategist()`
+			})
+			await sql`
+				create function test_reject_strategist() returns trigger as $$
+				begin
+					if new.name = 'Strategist' then
+						raise exception 'mock failure on 4th agent';
+					end if;
+					return new;
+				end;
+				$$ language plpgsql
+			`
+			await sql`
+				create trigger test_reject_strategist before insert on actors
+				for each row execute function test_reject_strategist()
+			`
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
 			const membersBefore = await db
@@ -1534,7 +1521,7 @@ describe('Workspaces Integration', () => {
 			// re-add being a no-op, not about the cap.
 			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const newMember = await insertActor(db)
+			const newMember = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
@@ -1570,7 +1557,7 @@ describe('Workspaces Integration', () => {
 			const ws = await created.json()
 			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const admin = await insertActor(db)
+			const admin = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {

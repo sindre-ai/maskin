@@ -34,9 +34,19 @@ import {
 	type ViewerVariantOverride,
 	resolveViewerVariant,
 } from '@/lib/viewer-detect'
-import { AlertTriangle, Code, Download, Maximize2, Minus, Plus } from 'lucide-react'
+import {
+	AlertTriangle,
+	ChevronLeft,
+	ChevronRight,
+	Code,
+	Download,
+	Maximize2,
+	Minus,
+	Plus,
+} from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
+import { EditableMarkdownStage, useEditableMarkdown } from './editable-markdown-stage'
+import { PdfPreview, isHtml, isInlineImage, isMarkdown, isPdf, isPlainText } from './file-body'
 import { ThumbnailRail } from './thumbnail-rail'
 
 // 8 seconds is the spec's `iframe-blocked` timeout: the sandboxed frame that
@@ -90,6 +100,12 @@ export function ViewerStage({
 	pins,
 	onPinPlace,
 }: ViewerStageProps) {
+	const editableMarkdown = useEditableMarkdown(file)
+	// Large files arrive without bytes: only media with a storage URL can be shown.
+	if (file.mimeType.startsWith('video/') || file.mimeType.startsWith('audio/'))
+		return <MediaViewerStage file={file} />
+	if (file.contentOmitted && !(isInlineImage(file.mimeType) && file.downloadUrl))
+		return <PreviewUnavailableStage file={file} />
 	if (isHtml(file.mimeType))
 		return (
 			<HtmlViewerStage
@@ -101,9 +117,27 @@ export function ViewerStage({
 				onPinPlace={onPinPlace}
 			/>
 		)
+	if (editableMarkdown)
+		return (
+			<StageFrame>
+				<EditableMarkdownStage file={file} />
+			</StageFrame>
+		)
 	if (isMarkdown(file.mimeType)) return <MarkdownViewerStage file={file} />
 	if (isInlineImage(file.mimeType)) return <ImageViewerStage file={file} />
 	if (isPlainText(file.mimeType)) return <TextViewerStage file={file} />
+	if (isPdf(file.mimeType))
+		return (
+			<StageFrame>
+				<div className="flex h-full w-full p-4">
+					<PdfPreview file={file} className="min-h-0 flex-1 rounded-md border border-border" />
+				</div>
+			</StageFrame>
+		)
+	return <PreviewUnavailableStage file={file} />
+}
+
+function PreviewUnavailableStage({ file }: { file: FileDetail }) {
 	return (
 		<StageFrame>
 			<div className="flex h-full w-full items-center justify-center p-8">
@@ -111,6 +145,27 @@ export function ViewerStage({
 					title="Preview not available"
 					description={`Files of type ${file.mimeType} can't be previewed here. Use the download action to open them locally.`}
 				/>
+			</div>
+		</StageFrame>
+	)
+}
+
+function MediaViewerStage({ file }: { file: FileDetail }) {
+	// A large file streams from its storage URL (seekable, nothing buffered);
+	// a small one is rebuilt from its inline bytes.
+	const src = useMemo(() => {
+		if (file.downloadUrl) return file.downloadUrl
+		return URL.createObjectURL(
+			new Blob([base64ToBytes(file.content).buffer as ArrayBuffer], { type: file.mimeType }),
+		)
+	}, [file.downloadUrl, file.content, file.mimeType])
+	const Tag = file.mimeType.startsWith('audio/') ? 'audio' : 'video'
+	return (
+		<StageFrame>
+			<div className="flex h-full w-full items-center justify-center overflow-auto p-6">
+				<Tag src={src} controls preload="metadata" className="max-h-full max-w-full">
+					<track kind="captions" />
+				</Tag>
 			</div>
 		</StageFrame>
 	)
@@ -154,16 +209,16 @@ function TextViewerStage({ file }: { file: FileDetail }) {
 }
 
 function ImageViewerStage({ file }: { file: FileDetail }) {
-	// Base64 for binary bytes; utf8 files that happen to be image-typed still
-	// b64-encode inline. Same fallback pattern as file-body.tsx.
 	const src = useMemo(() => {
+		// A large image streams from storage instead of being decoded from inline bytes.
+		if (file.downloadUrl) return file.downloadUrl
 		if (file.encoding === 'base64') return `data:${file.mimeType};base64,${file.content}`
 		return URL.createObjectURL(
 			new Blob([base64ToBytes(btoa(file.content)).buffer as ArrayBuffer], {
 				type: file.mimeType,
 			}),
 		)
-	}, [file.content, file.encoding, file.mimeType])
+	}, [file.content, file.encoding, file.mimeType, file.downloadUrl])
 	return (
 		<StageFrame>
 			<div className="flex h-full w-full items-center justify-center overflow-auto p-6">
@@ -692,6 +747,14 @@ function HtmlViewerStage({
 						</div>
 					</div>
 				)}
+				{isPaged && page && page.total > 1 && !blocked && (
+					<PageControls
+						index={page.index}
+						total={page.total}
+						onPrev={() => gotoPage(page.index - 1)}
+						onNext={() => gotoPage(page.index + 1)}
+					/>
+				)}
 				{fitSize && !blocked && (
 					<ZoomControls
 						zoom={zoom}
@@ -702,6 +765,58 @@ function HtmlViewerStage({
 				)}
 			</div>
 		</StageFrame>
+	)
+}
+
+// On-stage prev/next pager for paged docs. The thumbnail rail only shows at xl
+// and up, so below that this is the pointer/touch way to change pages. It
+// calls gotoPage, so the page-navigated analytics event fires like any other
+// page change.
+function PageControls({
+	index,
+	total,
+	onPrev,
+	onNext,
+}: {
+	index: number
+	total: number
+	onPrev: () => void
+	onNext: () => void
+}) {
+	return (
+		<div
+			className="pointer-events-none absolute bottom-20 left-4 z-10 flex items-center gap-1 rounded-md border border-border bg-card p-1 shadow-md sm:bottom-4 xl:hidden"
+			data-testid="viewer-page-controls"
+		>
+			<div className="pointer-events-auto flex items-center gap-1">
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={onPrev}
+					disabled={index <= 0}
+					aria-label="Previous page"
+				>
+					<ChevronLeft size={14} />
+				</Button>
+				<span
+					className="min-w-12 text-center text-xs font-mono tabular-nums text-muted-foreground"
+					aria-live="polite"
+				>
+					{index + 1} / {total}
+				</span>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={onNext}
+					disabled={index >= total - 1}
+					aria-label="Next page"
+				>
+					<ChevronRight size={14} />
+				</Button>
+			</div>
+		</div>
 	)
 }
 

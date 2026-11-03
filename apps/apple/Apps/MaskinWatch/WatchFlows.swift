@@ -3,32 +3,55 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// Flows, read only: a ring and a one-line state per flow, a summary on tap.
+/// Flows, read only: the ones that need the wearer first, each with a ring; the rest fold into one
+/// quiet row. A summary on tap.
 struct WatchFlows: View {
 	let flows: [WatchSnapshot.Flow]
 	/// False while the first load is still on its way, so "No flows yet" is not shown prematurely.
 	let loaded: Bool
+	/// The live feed, so a flow that needs the wearer can open its decision; nil offline.
+	let store: ForYouStore?
+	/// The flow a complication asked to open, by id; cleared once it is showing.
+	@Binding var openFlow: String?
+
+	@State private var showOnTrack = false
 
 	var body: some View {
 		NavigationStack {
 			ScrollView {
 				VStack(alignment: .leading, spacing: MaskinSpace.gapDefault) {
-					WatchPageTitle(title: "Flows", count: flows.filter(\.needsYou).count)
+					WatchPageTitle(title: "Flows", count: WatchFlowsLayout.needsYou(flows).count)
 					if flows.isEmpty, loaded {
 						EmptyState(symbol: "arrow.triangle.2.circlepath", title: "No flows yet")
 					}
-					ForEach(flows) { flow in
-						NavigationLink {
-							WatchFlowSummary(flow: flow)
-						} label: { row(flow) }
-							.buttonStyle(.plain)
+					ForEach(WatchFlowsLayout.needsYou(flows)) { flow in link(flow) }
+					let onTrack = WatchFlowsLayout.onTrack(flows)
+					if !onTrack.isEmpty {
+						Button { showOnTrack.toggle() } label: {
+							Text(WatchFlowsLayout.onTrackLabel(count: onTrack.count, othersNeedYou: flows.contains(where: \.needsYou)))
+								.font(WatchType.caption()).foregroundStyle(MaskinColor.ink4)
+								.frame(maxWidth: .infinity, minHeight: WatchMetrics.target)
+								.contentShape(Rectangle())
+						}
+						.buttonStyle(.plain)
+						if showOnTrack { ForEach(onTrack) { flow in link(flow) } }
 					}
 				}
 				.padding(.horizontal, MaskinSpace.s1)
 			}
 			.toolbar(.hidden, for: .navigationBar)
 			.containerBackground(for: .navigation) { WatchBackdrop() }
+			.navigationDestination(item: $openFlow) { id in
+				if let flow = flows.first(where: { $0.id == id }) { WatchFlowSummary(flow: flow, store: store) }
+			}
 		}
+	}
+
+	private func link(_ flow: WatchSnapshot.Flow) -> some View {
+		NavigationLink {
+			WatchFlowSummary(flow: flow, store: store)
+		} label: { row(flow) }
+			.buttonStyle(.plain)
 	}
 
 	private func row(_ flow: WatchSnapshot.Flow) -> some View {
@@ -49,24 +72,42 @@ struct WatchFlows: View {
 	}
 }
 
-/// Ring %, cycle · stage, the first target and the latest update. Read only.
+/// Ring %, cycle · stage and the first target. "Review decision" opens what the flow is waiting on.
 private struct WatchFlowSummary: View {
 	let flow: WatchSnapshot.Flow
+	let store: ForYouStore?
+
+	/// The open decision about this flow, from the live feed.
+	private var waiting: FeedEntry? {
+		guard let store else { return nil }
+		let open = store.entries.filter { $0.section == .needs && $0.record == nil }
+		guard let id = WatchFlowsLayout.waitingCard(for: flow, objectTitles: open.map { (id: $0.id, title: $0.card.objectTitle) })
+		else { return nil }
+		return open.first { $0.id == id }
+	}
 
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 				HStack(spacing: MaskinSpace.gapLoose) {
 					WatchRing(progress: flow.progress, paused: flow.paused, size: 56)
-					Text("\(Int((flow.progress * 100).rounded()))%").font(WatchType.title()).foregroundStyle(MaskinColor.ink)
+					Text(WatchFlowsLayout.percent(flow.progress)).font(WatchType.title()).foregroundStyle(MaskinColor.ink)
 				}
 				Text(flow.name).font(WatchType.question()).foregroundStyle(MaskinColor.ink)
-				Text(flow.cycleStage).font(WatchType.microMono()).foregroundStyle(MaskinColor.ink4)
+				Text(flow.cycleStage).font(WatchType.microMono()).tracking(0.6).textCase(.uppercase)
+					.foregroundStyle(MaskinColor.ink4)
+				Text(flow.needsYou ? "NEEDS YOU" : "ON TRACK")
+					.font(WatchType.microMono()).tracking(0.6)
+					.foregroundStyle(flow.needsYou ? MaskinColor.sigHi : MaskinColor.ink4)
 				if let target = flow.target {
 					Text(target).font(WatchType.row()).foregroundStyle(MaskinColor.ink2)
 				}
-				if let latest = flow.latest {
-					Text(latest).font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).lineLimit(5)
+				if let store, let waiting {
+					NavigationLink {
+						WatchDecisionPage(
+							store: store, entry: waiting, workspaceId: nil, position: "1 of 1", next: nil)
+					} label: { WatchCapsule(title: "Review decision", prominent: true) }
+						.buttonStyle(.plain)
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)

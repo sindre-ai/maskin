@@ -55,6 +55,12 @@ actor FakeChatAPI: ChatAPI {
 	/// Runs inside `messages` before it answers: lets a test look at the store mid-request.
 	var messagesGate: (@Sendable () async -> Void)?
 	var persistedByKey: [String: ChatMessage] = [:]
+	/// Make the send response name another conversation (the stored row keeps the real one).
+	var responseConversationID: String?
+	var sentThreads: [ChatSendThread?] = []
+	var threadMarks: [(root: Int, last: Int)] = []
+	var reactCalls: [(id: Int, emoji: String, add: Bool)] = []
+	var failReact = false
 
 	init(server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1")) {
 		self.server = server
@@ -73,6 +79,7 @@ actor FakeChatAPI: ChatAPI {
 	func setSessions(_ s: [ChatAgentSession]) { sessionList = s }
 	func setActors(_ a: [ChatActor]) { actorList = a }
 	func setMessagesGate(_ f: (@Sendable () async -> Void)?) { messagesGate = f }
+	func setResponseConversationID(_ id: String?) { responseConversationID = id }
 	func setAfterSend(_ f: (@Sendable () async -> Void)?) { afterSend = f }
 
 	func detail(conversationID: String) async throws -> ConversationSummary {
@@ -111,11 +118,57 @@ actor FakeChatAPI: ChatAPI {
 			throw URLError(.networkConnectionLost)
 		}
 		if let afterSend { await afterSend() }
+		guard let responseConversationID else { return saved }
+		var response = saved
+		response.conversationID = responseConversationID
+		return response
+	}
+
+	func send(
+		conversationID: String, content: String, metadata: ChatSendMetadata?, thread: ChatSendThread?,
+		idempotencyKey: String
+	) async throws -> ChatMessage {
+		guard let thread else {
+			return try await send(
+				conversationID: conversationID, content: content, metadata: metadata,
+				idempotencyKey: idempotencyKey)
+		}
+		sentKeys.append(idempotencyKey)
+		sentContents.append(content)
+		sentMetadata.append(metadata)
+		sentThreads.append(thread)
+		if !sendErrors.isEmpty { throw sendErrors.removeFirst() }
+		if let existing = persistedByKey[idempotencyKey] { return existing }
+		let next = (server.compactMap(\.serverID).max() ?? 0) + 1
+		var saved = chatMsg(next, by: "me", content, at: 1000 + TimeInterval(next), metadata: metadata?.jsonValue)
+		saved.threadRootID = thread.rootID
+		saved.alsoInChannel = thread.alsoInChannel
+		server.append(saved)
+		persistedByKey[idempotencyKey] = saved
 		return saved
 	}
 
+	func threadReplies(conversationID: String, rootID: Int) async throws -> [ChatMessage] {
+		server.filter { $0.threadRootID == rootID }.sorted { ($0.serverID ?? 0) < ($1.serverID ?? 0) }
+	}
+
+	func react(conversationID: String, messageID: Int, emoji: String, add: Bool) async throws {
+		if failReact { throw ChatsError("Couldn't add the reaction.") }
+		reactCalls.append((messageID, emoji, add))
+	}
+	func setFailReact(_ v: Bool) { failReact = v }
+
+	func markThreadRead(conversationID: String, rootID: Int, lastMessageID: Int) async throws {
+		threadMarks.append((rootID, lastMessageID))
+	}
+
 	func sessions(conversationID: String) async throws -> [ChatAgentSession] { sessionList }
-	func stopSession(sessionID: String) async throws { stopped.append(sessionID) }
+	private var stopFails = false
+	func failStop(_ fails: Bool) { stopFails = fails }
+	func stopSession(sessionID: String) async throws {
+		if stopFails { throw URLError(.notConnectedToInternet) }
+		stopped.append(sessionID)
+	}
 	func resumeSession(sessionID: String) async throws { resumed.append(sessionID) }
 	func removeParticipant(conversationID: String, actorID: String) async throws {
 		if failMutations { throw ChatsError("nope") }
@@ -184,6 +237,32 @@ actor FakeListAPI: ConversationsAPI {
 		return chatConvo("new", title: title, participants: [chatMe])
 	}
 
+	/// The direct message the fake server already has per participant; the first call makes one.
+	var directChats: [String: ConversationSummary] = [:]
+	var directCalls: [String] = []
+
+	func directChat(with participantID: String, title: String, idempotencyKey: String) async throws
+		-> ConversationSummary
+	{
+		directCalls.append(participantID)
+		if let existing = directChats[participantID] { return existing }
+		let made = chatConvo("dm-\(participantID)", title: title, participants: [chatMe, chatRelay])
+		directChats[participantID] = made
+		return made
+	}
+
+	var createdMetadata: [ChatSendMetadata?] = []
+
+	func create(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		createdMetadata.append(initialMetadata)
+		return try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			idempotencyKey: idempotencyKey)
+	}
+
 	func updateState(
 		conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?, markUnread: Bool
 	) async throws {
@@ -202,8 +281,14 @@ actor FakeListAPI: ConversationsAPI {
 /// A hub fed by scripted SSE bodies; each open() takes the next body, then holds open.
 actor SSEScript {
 	var bodies: [String]
+	/// How many times the stream has been opened. One more than the number of bodies means every
+	/// body was opened, read to its end, and the hub came back for another.
+	private(set) var opens = 0
 	init(_ bodies: [String]) { self.bodies = bodies }
-	func next() -> String? { bodies.isEmpty ? nil : bodies.removeFirst() }
+	func next() -> String? {
+		opens += 1
+		return bodies.isEmpty ? nil : bodies.removeFirst()
+	}
 }
 
 func conversationFrame(_ id: Int, conversation: String, action: String = "message_posted", entity: String = "conversation") -> String {
@@ -214,7 +299,11 @@ func conversationFrame(_ id: Int, conversation: String, action: String = "messag
 
 @MainActor
 func scriptedHub(_ bodies: [String]) -> EventHub {
-	let script = SSEScript(bodies)
+	scriptedHub(SSEScript(bodies))
+}
+
+@MainActor
+func scriptedHub(_ script: SSEScript) -> EventHub {
 	let client = SSEClient(
 		open: { _ in
 			let body = await script.next()
@@ -228,14 +317,18 @@ func scriptedHub(_ bodies: [String]) -> EventHub {
 	return EventHub(client: client)
 }
 
-/// Poll until `condition` holds (or fail after ~2s).
+/// Poll until `condition` holds (see `PollBudget` for what the bound counts): a passing test
+/// returns the moment the condition holds.
 @MainActor
-func eventually(_ condition: @MainActor () async -> Bool) async -> Bool {
-	for _ in 0..<200 {
+func eventually(
+	timeout: Duration = .seconds(15), _ condition: @MainActor () async -> Bool
+) async -> Bool {
+	var budget = PollBudget(timeout)
+	repeat {
 		if await condition() { return true }
 		try? await Task.sleep(for: .milliseconds(10))
-	}
-	return false
+	} while budget.spend()
+	return await condition()
 }
 
 
@@ -253,7 +346,7 @@ final class ChatHarness {
 	init(
 		server: [ChatMessage] = [], detail: ConversationSummary = chatConvo("c1"), online: Bool = true,
 		events: EventHub? = nil, file: URL? = nil, pageSize: Int = 50, failedFile: URL? = nil,
-		api existing: FakeChatAPI? = nil, retryDelays: [Duration] = [],
+		api existing: FakeChatAPI? = nil, retryDelays: [Duration] = [], pollInterval: Duration? = nil,
 		pinStore: any ChatPinStoring = MemoryChatPinStore()
 	) {
 		let api = existing ?? FakeChatAPI(server: server, detail: detail)
@@ -275,7 +368,7 @@ final class ChatHarness {
 		outbox.start()
 		store = ChatStore(
 			conversationID: "c1", currentActorID: "me", currentActorName: "Me", api: api, queue: queue,
-			events: events, pageSize: pageSize, pollInterval: nil, retryDelays: retryDelays, pinStore: pinStore,
+			events: events, pageSize: pageSize, pollInterval: pollInterval, retryDelays: retryDelays, pinStore: pinStore,
 			now: { chatT0 })
 	}
 

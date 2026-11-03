@@ -69,9 +69,8 @@ export async function getConnectedLinkedInIdentityCount(
  * the add-on should be hidden. The route treats `null` as "render nothing",
  * so keeping the branching here means the response-assembly seam stays flat.
  *
- * Hidden when the flag is off (regardless of count), when the workspace has
- * zero connected identities (regardless of flag), or when the workspace is
- * enterprise: all three mean the buyer is not paying for LinkedIn
+ * Hidden when the workspace has zero connected identities or when the
+ * workspace is enterprise: both mean the buyer is not paying for LinkedIn
  * connectivity this period.
  *
  * `exempt` is the enterprise entitlement (`lib/enterprise.ts`'s
@@ -82,10 +81,8 @@ export async function getConnectedLinkedInIdentityCount(
  */
 export function resolveLinkedInIdentityAddon(input: {
 	connectedCount: number
-	flagOn: boolean
 	exempt: boolean
 }): LinkedInIdentityAddonLine | null {
-	if (!input.flagOn) return null
 	if (input.exempt) return null
 	if (input.connectedCount <= 0) return null
 	return {

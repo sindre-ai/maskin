@@ -38,7 +38,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type MarketplaceItemType,
@@ -227,6 +227,7 @@ app.openapi(listInstalledLoopsRoute, async (c) => {
 const installLoopRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['installed-loops'],
 	summary: 'Install a marketplace loop into a workspace',
 	request: {
@@ -271,7 +272,7 @@ app.openapi(installLoopRoute, async (c) => {
 	// 1. Caller must belong to the target workspace. We check resource-scoped
 	//    membership here rather than via the workspace-id header because the
 	//    workspace is part of the install body, not the request envelope.
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the target workspace'), 403)
 	}
 
@@ -662,6 +663,7 @@ const forkResponseSchema = z.object({
 const forkLoopRoute = createRoute({
 	method: 'post',
 	path: '/{id}/fork',
+	'x-viewer-policy': 'writer',
 	tags: ['installed-loops'],
 	summary: 'Fork an installed loop so the workspace owns its elements',
 	request: {
@@ -708,7 +710,7 @@ app.openapi(forkLoopRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, install.workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
 	}
 
@@ -865,6 +867,7 @@ const uninstallResponseSchema = z.object({
 const uninstallLoopRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['installed-loops'],
 	summary: 'Remove an installed loop from a workspace',
 	request: {
@@ -910,7 +913,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, install.workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
 	}
 

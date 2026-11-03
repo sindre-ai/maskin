@@ -112,7 +112,26 @@ function findRows(structuredContent: unknown): unknown[] | null {
 	for (const value of Object.values(structuredContent as Record<string, unknown>)) {
 		if (Array.isArray(value) && (best === null || value.length > best.length)) best = value
 	}
-	return best
+	return best ?? findHeroCardRows(structuredContent as Record<string, unknown>)
+}
+
+/**
+ * Fallback for list tools that keep their rows only under `heroCard` (list_actors,
+ * list_workspaces, list_triggers), so the top-level scan above finds nothing and
+ * the row count would read null. Only `list_*` / `search_*` cards count: a
+ * `get_*` card describes one record, and reporting it as 1 row would skew every
+ * average. An empty card is 0 rows, not null: the tool answered and found none.
+ */
+function findHeroCardRows(structuredContent: Record<string, unknown>): unknown[] | null {
+	const card = structuredContent.heroCard as
+		| { tool?: unknown; kind?: unknown; objects?: unknown; object?: unknown }
+		| undefined
+	if (!card || typeof card !== 'object') return null
+	if (typeof card.tool !== 'string' || !/^(list_|search_)/.test(card.tool)) return null
+	if (card.kind === 'list') return Array.isArray(card.objects) ? card.objects : null
+	if (card.kind === 'single') return card.object ? [card.object] : null
+	if (card.kind === 'empty') return []
+	return null
 }
 
 /**

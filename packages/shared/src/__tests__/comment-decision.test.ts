@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
 	type CommentDecision,
+	type CommentDecisionOption,
 	commentDecisionSchema,
+	findStatusActionViolations,
+	isDecisionExpired,
 	validateDecisionProse,
 } from '../schemas/comment-decision'
 import { createCommentSchema } from '../schemas/events'
@@ -33,6 +36,23 @@ function violate(decision: CommentDecision) {
 }
 
 describe('commentDecisionSchema', () => {
+	it('accepts an optional destructive flag on an option and rejects a non-boolean', () => {
+		const [first, second] = buildDecision().options
+		const withFlag = buildDecision({
+			options: [
+				{ ...(first as CommentDecisionOption), destructive: true },
+				second as CommentDecisionOption,
+			],
+		})
+		const parsed = commentDecisionSchema.safeParse(withFlag)
+		expect(parsed.success && parsed.data.options[0]?.destructive).toBe(true)
+		const bad = {
+			...withFlag,
+			options: [{ ...withFlag.options[0], destructive: 'yes' }, second],
+		}
+		expect(commentDecisionSchema.safeParse(bad).success).toBe(false)
+	})
+
 	it('accepts a well-formed decision', () => {
 		expect(commentDecisionSchema.safeParse(buildDecision()).success).toBe(true)
 		expect(validateDecisionProse(buildDecision())).toEqual([])
@@ -215,5 +235,171 @@ describe('create_comment agent-facing docs', () => {
 		expect(shape.summary.description).toContain('Never restate the title')
 		expect(shape.ask.description).toContain('First person')
 		expect(shape.options.description).toContain('exactly one marked recommended')
+	})
+})
+
+describe('decision draft', () => {
+	const DRAFT = {
+		label: 'Email to Hans',
+		to: 'Hans Jensen, Netwerk',
+		body: 'Hej Hans,\n\nJeg så at du opsagde fakturering den 12. Må jeg ringe i morgen?\n\nMvh Seb',
+	}
+
+	it('accepts a draft with a label, a recipient and a body', () => {
+		const parsed = commentDecisionSchema.safeParse(buildDecision({ draft: DRAFT }))
+
+		expect(parsed.success && parsed.data.draft).toEqual(DRAFT)
+	})
+
+	it('accepts a draft that only points at the object holding it', () => {
+		const object_id = '33333333-3333-4333-8333-333333333333'
+
+		const parsed = commentDecisionSchema.safeParse(buildDecision({ draft: { object_id } }))
+
+		expect(parsed.success && parsed.data.draft).toEqual({ object_id })
+	})
+
+	it('rejects a draft with neither an object nor a body', () => {
+		const parsed = commentDecisionSchema.safeParse(
+			buildDecision({ draft: { label: 'Email to Hans' } }),
+		)
+
+		expect(parsed.success).toBe(false)
+	})
+
+	it('accepts a draft with no recipient, for a public post', () => {
+		const parsed = commentDecisionSchema.safeParse(
+			buildDecision({ draft: { label: 'LinkedIn post', body: 'We shipped it.' } }),
+		)
+
+		expect(parsed.success).toBe(true)
+	})
+
+	it('rejects an empty body, an empty label and a label over 30 characters', () => {
+		for (const draft of [
+			{ ...DRAFT, body: '' },
+			{ ...DRAFT, label: '' },
+			{ ...DRAFT, label: 'x'.repeat(31) },
+		]) {
+			expect(commentDecisionSchema.safeParse(buildDecision({ draft })).success).toBe(false)
+		}
+	})
+
+	it('does not run the prose rules over the draft, so a human can keep a dash, a hedge word and an emoji', () => {
+		const draft = {
+			label: 'Slack message',
+			body: 'Many thanks, this is great \u2014 really \u{1F680}. Several of us agree.',
+		}
+
+		expect(validateDecisionProse(buildDecision({ draft }))).toEqual([])
+	})
+
+	it('still checks the rest of the card when a draft is attached', () => {
+		const decision = buildDecision({ draft: DRAFT, ask: 'Should we send it now?' })
+
+		expect(violate(decision)).toContain('ask')
+	})
+
+	it('survives create_comment parsing end to end', () => {
+		const parsed = createCommentSchema.safeParse({
+			entity_id: '11111111-1111-4111-8111-111111111111',
+			content: 'Approve the Danish note to Hans.',
+			mentions: ['22222222-2222-4222-8222-222222222222'],
+			decision: buildDecision({ draft: DRAFT }),
+		})
+
+		expect(parsed.success && parsed.data.decision?.draft).toEqual(DRAFT)
+	})
+
+	it('leaves a decision without a draft exactly as it was', () => {
+		const parsed = commentDecisionSchema.safeParse(buildDecision())
+
+		expect(parsed.success && 'draft' in parsed.data).toBe(false)
+	})
+})
+
+describe('findStatusActionViolations', () => {
+	const statuses = ['opportunity', 'define', 'active', 'live', 'in_progress']
+	const flip = (title: string, extra: Partial<CommentDecision> = {}) =>
+		buildDecision({ title, ...extra })
+
+	it('flags a card that asks to flip a bet to a status and names the fix', () => {
+		const found = findStatusActionViolations(flip('Flip the onboarding bet to active?'), statuses)
+		expect(found).toHaveLength(1)
+		expect(found[0]?.message).toContain('"set_status": { "status": "active" }')
+	})
+
+	it('reads a verb up to five words before the status, and underscore statuses as words', () => {
+		expect(
+			findStatusActionViolations(flip('Promote concurrent-edit bet to define?'), statuses),
+		).toHaveLength(1)
+		expect(
+			findStatusActionViolations(flip('Move this task to in progress?'), statuses),
+		).toHaveLength(1)
+	})
+
+	it('leaves a card alone when no verb sits near a status name', () => {
+		expect(findStatusActionViolations(flip('Park the launch email?'), statuses)).toEqual([])
+		expect(findStatusActionViolations(flip('Is the live demo ready?'), statuses)).toEqual([])
+	})
+
+	it('leaves a card alone when an option already has set_status, a draft, or the opt-out', () => {
+		const title = 'Flip the onboarding bet to active?'
+		const [first, second] = buildDecision().options as [
+			CommentDecisionOption,
+			CommentDecisionOption,
+		]
+		const withButton = flip(title, {
+			options: [{ ...first, set_status: { status: 'active' } }, second],
+		})
+		expect(findStatusActionViolations(withButton, statuses)).toEqual([])
+		expect(
+			findStatusActionViolations(
+				flip(title, { draft: { object_id: crypto.randomUUID() } }),
+				statuses,
+			),
+		).toEqual([])
+		expect(findStatusActionViolations(flip(title, { no_status_action: true }), statuses)).toEqual(
+			[],
+		)
+	})
+})
+
+describe('expires_at', () => {
+	const now = new Date('2026-11-02T12:00:00Z')
+
+	it('accepts an ISO date-time with an offset and rejects other text', () => {
+		const base = buildDecision()
+		expect(
+			commentDecisionSchema.safeParse({ ...base, expires_at: '2026-11-05T17:00:00Z' }).success,
+		).toBe(true)
+		expect(
+			commentDecisionSchema.safeParse({ ...base, expires_at: '2026-11-05T17:00:00+01:00' }).success,
+		).toBe(true)
+		expect(commentDecisionSchema.safeParse({ ...base, expires_at: 'Thursday' }).success).toBe(false)
+	})
+
+	it('rejects a date that is already past when the card is posted', () => {
+		const violations = validateDecisionProse(
+			buildDecision({ expires_at: '2026-10-29T17:00:00Z' }),
+			now,
+		)
+		expect(violations.map((v) => v.path)).toEqual(['expires_at'])
+	})
+
+	it('allows a future date and a card without one', () => {
+		expect(
+			validateDecisionProse(buildDecision({ expires_at: '2026-11-05T17:00:00Z' }), now),
+		).toEqual([])
+		expect(validateDecisionProse(buildDecision(), now)).toEqual([])
+	})
+
+	it('treats a card as expired only once the date has passed', () => {
+		expect(isDecisionExpired(buildDecision({ expires_at: '2026-11-02T11:59:59Z' }), now)).toBe(true)
+		expect(isDecisionExpired(buildDecision({ expires_at: '2026-11-02T12:00:01Z' }), now)).toBe(
+			false,
+		)
+		expect(isDecisionExpired(buildDecision(), now)).toBe(false)
+		expect(isDecisionExpired(null, now)).toBe(false)
 	})
 })

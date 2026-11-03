@@ -12,7 +12,7 @@ test.describe('Objects Filtering', () => {
 		await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Filter Test Bet',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		await account.api.createObject(account.workspaceId, {
 			type: 'task',
@@ -62,12 +62,12 @@ test.describe('Objects Filtering', () => {
 		await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Unique Alpha Object',
-			status: 'signal',
+			status: 'opportunity',
 		})
 		await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Unique Beta Object',
-			status: 'signal',
+			status: 'opportunity',
 		})
 
 		await page.goto(`/${account.workspaceId}/objects?q=Alpha`)
@@ -105,13 +105,13 @@ test.describe('Objects Metadata Filtering', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Region EMEA Bet',
-				status: 'signal',
+				status: 'opportunity',
 				metadata: { region: 'emea' },
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Region APAC Bet',
-				status: 'signal',
+				status: 'opportunity',
 				metadata: { region: 'apac' },
 			})
 

@@ -176,6 +176,42 @@ public final class DecisionService {
 		submit(content: text, kind: .reply(text), target: target)
 	}
 
+	/// What the reader chose to do with one message of a card that carries several.
+	public enum DraftAction: String, Sendable, Equatable {
+		case send = "Send"
+		case skip = "Skip"
+	}
+
+	/// The reply text for one message of a stacked card: `Send: LinkedIn DM to Kenneth (kenneth)`.
+	/// The agent reads it back, so the format is shared with the web card and must not drift.
+	public static func draftActionContent(
+		_ action: DraftAction, label: String?, to: String?, id: String?
+	) -> String {
+		let trimmedLabel = label?.trimmed ?? ""
+		let name = trimmedLabel.isEmpty ? "Message" : trimmedLabel
+		var text = "\(action.rawValue): \(name)"
+		if let to = to?.trimmed, !to.isEmpty { text += " to \(to)" }
+		if let id = id?.trimmed, !id.isEmpty { text += " (\(id))" }
+		return text
+	}
+
+	/// Send or skip ONE message of a card that carries several. Posts one comment under the card
+	/// and nothing else: no record (the card stays open for its other messages), no mark-read
+	/// (the card settles when the last message is dealt with), and no undo window, since a send
+	/// reaches a person. Returns false when the reply could not be queued, so the message stays open.
+	@discardableResult
+	public func actOnDraft(
+		_ action: DraftAction, label: String?, to: String?, id: String?, on target: DecisionTarget
+	) -> Bool {
+		let content = Self.draftActionContent(action, label: label, to: to, id: id)
+		return enqueue(
+			kind: Self.commentKind, target: target, group: UUID().uuidString,
+			summary: "Your reply on \u{201C}\(Self.excerpt(content))\u{201D}",
+			payload: CommentPayload(
+				entityId: target.entityId, content: content, parentEventId: target.parentEventId),
+			hold: false)
+	}
+
 	/// Mark the thread read without answering.
 	public func markRead(_ target: DecisionTarget) {
 		let group = UUID().uuidString

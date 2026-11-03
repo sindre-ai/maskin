@@ -9,13 +9,14 @@ import {
 import { cn } from '@/lib/cn'
 import { Ellipsis } from 'lucide-react'
 
-export type ChatsFilter = 'all' | 'unread' | 'pinned' | 'archived'
+export type ChatsFilter = 'all' | 'unread' | 'pinned' | 'archived' | 'threads'
 
 export const CHATS_FILTERS: Array<{ value: ChatsFilter; label: string }> = [
 	{ value: 'all', label: 'All' },
 	{ value: 'unread', label: 'Unread' },
 	{ value: 'pinned', label: 'Pinned' },
 	{ value: 'archived', label: 'Archived' },
+	{ value: 'threads', label: 'Threads' },
 ]
 
 export function chatsFilterLabel(filter: ChatsFilter): string {

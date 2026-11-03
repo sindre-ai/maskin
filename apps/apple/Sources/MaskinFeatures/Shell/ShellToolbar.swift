@@ -7,14 +7,14 @@ import SwiftUI
 /// avatar (which every root screen gets).
 ///
 ///     .shellToolbar(
-///         environment: environment, title: "Objects",
+///         environment: environment, title: "Items",
 ///         actions: ShellActions(
 ///             display: ShellDisplayMenu {
 ///                 Picker("Sort", selection: $sort) { ... }
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Display, Live, New, then the avatar, all inside ONE glass capsule (a single
+/// Order in the pill is Display, Live, the avatar, then New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
 /// `ToolbarItemGroup`). The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
 /// avatar stay). Search is never a bar item: it is the trailing search tab.
 public struct ShellActions {
@@ -30,16 +30,27 @@ public struct ShellActions {
 	public var live: Bool
 	/// The filter-icon menu. Nil hides it.
 	public var display: ShellDisplayMenu?
+	/// Makes the filter button a plain toggle instead of a menu (For you: it shows or hides the
+	/// filter pills). Ignored when `display` is set.
+	public var displayToggle: (() -> Void)?
 	/// The Display menu's glyph: three lines (filter / sort) or sliders (display options).
 	public var displaySymbol: String
 	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
 	public var displayActive: Bool
+	/// Hides the profile avatar on this screen (Team).
+	public var hidesAvatar: Bool
+	/// Keeps the "+" button in the bar while the content scrolls (Team).
+	public var newAlwaysVisible: Bool
 
 	public init(
 		new: (() -> Void)? = nil, newLabel: String = "New", live: Bool = false,
 		display: ShellDisplayMenu? = nil, displaySymbol: String = ShellActions.filterSymbol,
-		displayActive: Bool = false
+		displayActive: Bool = false, displayToggle: (() -> Void)? = nil,
+		hidesAvatar: Bool = false, newAlwaysVisible: Bool = false
 	) {
+		self.hidesAvatar = hidesAvatar
+		self.newAlwaysVisible = newAlwaysVisible
+		self.displayToggle = displayToggle
 		self.displaySymbol = displaySymbol
 		self.new = new
 		self.newLabel = newLabel
@@ -93,9 +104,13 @@ private struct ShellToolbarModifier: ViewModifier {
 			.backChevronOnly()
 			.trackScrolled($scrolled)
 			.toolbar {
-				// One group, one glass capsule: the tools and the avatar share it (separate items or a
-				// ToolbarSpacer would split them into separate capsules).
+				// One item, one glass capsule: the tools and the avatar share it (separate items or a
+				// ToolbarSpacer would split them into separate capsules). The buttons sit in a
+				// zero-spacing stack because a ToolbarItemGroup puts system spacing between its
+				// items, which left a wide gap between Live and the avatar; v6 packs 44 pt slots
+				// edge to edge.
 				ToolbarItemGroup(placement: .primaryAction) {
+					Group {
 					if let display = actions.display {
 						Menu {
 							display.content
@@ -108,6 +123,17 @@ private struct ShellToolbarModifier: ViewModifier {
 								.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
 						}
 					}
+					if actions.display == nil, let toggle = actions.displayToggle {
+						Button(action: toggle) {
+							Label("Display", systemImage: actions.displaySymbol)
+								.foregroundStyle(actions.displayActive ? MaskinColor.sigInk : MaskinColor.ink)
+								.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+								.background(
+									Circle().fill(actions.displayActive ? MaskinColor.sigTint : Color.clear))
+						}
+						.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
+					}
+					// Live sits before the avatar, which stays last (as in the v6 bar).
 					if actions.live {
 						Button {
 							liveMeeting.present(.dailyBriefing)
@@ -117,30 +143,34 @@ private struct ShellToolbarModifier: ViewModifier {
 						}
 						.buttonStyle(.plain)
 					}
-					if let new = actions.new, !scrolled {
-						Button(action: new) {
-							ShellInkCircle(symbol: "plus", label: actions.newLabel)
-						}
-						.buttonStyle(.plain)
-					}
-					if showsAvatar {
+					if showsAvatar, !actions.hidesAvatar {
 						Button {
 							runtime?.showProfile = true
 						} label: {
-							ShellNavAvatar(name: environment.auth.session?.name ?? "")
+							ShellNavAvatar(
+								name: environment.auth.session?.name ?? "", actorID: environment.auth.session?.actorId)
 							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
 							.contentShape(Circle())
 						}
 						.buttonStyle(.plain)
 						.accessibilityLabel("Account")
 					}
+					if let new = actions.new, !scrolled || actions.newAlwaysVisible {
+						Button(action: new) {
+							ShellInkCircle(symbol: "plus", label: actions.newLabel)
+						}
+						.buttonStyle(.plain)
+					}
+
+					}
 				}
 			}
 	}
 }
 
-/// A solid ink circle with a white glyph: the primary action of a bar (Live, New). It sits inside
-/// the bar's glass capsule rather than being a glass button of its own.
+/// A plain ink glyph: the actions of a bar (Live, New). v15 draws them without a disc; the filled
+/// accent disc is the profile avatar. It sits inside the bar's glass capsule rather than being a
+/// glass button of its own.
 struct ShellInkCircle: View {
 	let symbol: String
 	let label: String
@@ -148,18 +178,20 @@ struct ShellInkCircle: View {
 	var body: some View {
 		Image(systemName: symbol)
 			.maskinSymbol(16, weight: .semibold)
-			.foregroundStyle(MaskinSurface.onNavInk)
+			.foregroundStyle(MaskinColor.ink)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-			.background(Circle().fill(MaskinSurface.navInk))
 			.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
 			.contentShape(Circle())
 			.accessibilityLabel(label)
 	}
 }
 
-/// The profile button in the bar: a Patina tint disc with a thin ring and the person's one initial.
+/// The profile button in the bar: a filled accent disc (v15) with the person's one initial.
 struct ShellNavAvatar: View {
 	let name: String
+	/// The person's actor id, to show their picture over the initial once it has loaded.
+	var actorID: String? = nil
+	@Environment(\.actorPictures) private var pictures
 
 	private var initial: String {
 		name.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "?"
@@ -168,10 +200,17 @@ struct ShellNavAvatar: View {
 	var body: some View {
 		Text(initial)
 			.maskinSymbol(17, weight: .bold)
-			.foregroundStyle(MaskinColor.sigInk)
+			.foregroundStyle(MaskinSurface.onNavInk)
 			.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
-			.background(Circle().fill(MaskinColor.sigTint))
-			.overlay(Circle().strokeBorder(MaskinColor.sig.opacity(0.3), lineWidth: 1))
+			.background(Circle().fill(MaskinSurface.navInk))
+			.overlay {
+				if let actorID, let url = pictures.url(actorID) {
+					AsyncImage(url: url) { phase in
+						if let image = phase.image { image.resizable().scaledToFill() }
+					}
+					.clipShape(Circle())
+				}
+			}
 			.accessibilityHidden(true)
 	}
 }
@@ -207,7 +246,10 @@ extension View {
 	func searchMinimized() -> some View {
 		#if os(iOS)
 			if #available(iOS 26, *) {
-				return AnyView(searchToolbarBehavior(.minimize))
+				// The collapsed magnifier sits at the very left of the top bar.
+				return AnyView(
+					searchToolbarBehavior(.minimize)
+						.toolbar { DefaultToolbarItem(kind: .search, placement: .topBarLeading) })
 			}
 		#endif
 		return AnyView(self)

@@ -19,11 +19,11 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * The transcript does NOT render raw log lines. It renders summarised steps
  * derived by `segmentActivityByMessage` / `describeEvent`
  * (apps/web/src/components/agents/session-log-transcript.tsx), so the
- * assertions target the derived step text — `Using <tool>` for a `tool_use`
+ * assertions target the derived step text — the plain tool name for a `tool_use`
  * content block, `Thinking…` for a `thinking` block — not the posted payload.
  */
 
-/** A `tool_use` assistant envelope whose step summary is `Using <name>`. */
+/** A `tool_use` assistant envelope whose step summary is the plain tool name. */
 function toolUseLine(name: string, id = `toolu_${name}`): string {
 	return JSON.stringify({
 		type: 'assistant',
@@ -143,7 +143,7 @@ test.describe('Chats — live transcript over the SSE log stream', () => {
 				],
 				E2E_AGENT_SERVER_SECRET,
 			)
-			await expect(activitySteps.getByText('Using mcp__maskin__warmup_tool')).toBeVisible({
+			await expect(activitySteps.getByText('warmup tool')).toBeVisible({
 				timeout: 10_000,
 			})
 
@@ -158,7 +158,7 @@ test.describe('Chats — live transcript over the SSE log stream', () => {
 				],
 				E2E_AGENT_SERVER_SECRET,
 			)
-			await expect(activitySteps.getByText('Using mcp__maskin__live_tool')).toBeVisible({
+			await expect(activitySteps.getByText('live tool')).toBeVisible({
 				timeout: 5_000,
 			})
 			await expect(activitySteps.getByText('Thinking…')).toBeVisible({ timeout: 5_000 })

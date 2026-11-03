@@ -37,8 +37,6 @@ struct ObjectsListView: View {
 
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var undoOffer: UndoOffer?
-	@State private var search = ""
-	@State private var searchPresented = false
 	@State private var showGoTo = false
 	@State private var holdTarget: ObjectAsk?
 	@State private var viewName = ""
@@ -59,14 +57,6 @@ struct ObjectsListView: View {
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "object") { bulkActions }
 		.undoToast($undoOffer)
-		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
-		.searchMinimized()
-		// Closing the field collapses it back to the icon, so it can't keep a stale query.
-		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
-		.task(id: search) {
-			if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
-			if !Task.isCancelled { await store.setSearch(search) }
-		}
 		.sheet(isPresented: $showGoTo) {
 			GoToSheet(
 				store: store, onSelect: { scope in Task { await store.setScope(scope) } },
@@ -123,7 +113,7 @@ struct ObjectsListView: View {
 				Task { await store.setScope(scope) }
 			}
 			.padding(.top, MaskinSpace.s5)
-			if store.statusFilter != nil {
+			if store.statusFilter != nil || store.display.needsYouOnly {
 				filterChips.padding(.top, MaskinSpace.s5)
 			}
 			if store.isOffline && !store.objects.isEmpty {
@@ -134,33 +124,55 @@ struct ObjectsListView: View {
 		.padding(.bottom, MaskinSpace.s4)
 	}
 
+	/// The filters that are on, each removable, and Clear all once there is anything to clear.
 	private var filterChips: some View {
 		ScrollView(.horizontal, showsIndicators: false) {
 			HStack(spacing: MaskinSpace.s3) {
 				if let status = store.statusFilter {
-					Button {
-						Task { await store.setStatus(nil) }
-					} label: {
-						HStack(spacing: MaskinSpace.s3) {
-							Text(MaskinStatus.sentenceLabel(for: status))
-							Image(systemName: "xmark").maskinSymbol(MaskinFontSize.t9, weight: .heavy)
-						}
-						.maskinText(.caption)
-						.fontWeight(.semibold)
-						.foregroundStyle(MaskinColor.sigInk)
-						.padding(.leading, MaskinSpace.s7)
-						.padding(.trailing, MaskinSpace.s4 + 1)
-						.frame(height: MaskinSpace.s13 + MaskinSpace.s1)
-						.background(MaskinColor.sigTint, in: Capsule())
+					removableChip(
+						MaskinStatus.sentenceLabel(for: status),
+						label: "Status \(MaskinStatus.sentenceLabel(for: status)). Remove filter"
+					) { Task { await store.setStatus(nil) } }
+				}
+				if store.display.needsYouOnly {
+					removableChip("Needs you", label: "Needs you. Remove filter") { store.setNeedsYouOnly(false) }
+				}
+				Button {
+					MaskinHaptics.play(.selection)
+					store.setNeedsYouOnly(false)
+					Task { await store.setStatus(nil) }
+				} label: {
+					Text("Clear all")
+						.maskinText(.caption).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink4)
+						.padding(.horizontal, MaskinSpace.s7)
 						.frame(minHeight: MaskinSpace.touchMin)
 						.contentShape(Rectangle())
-					}
-					.buttonStyle(.maskinPressed(.shrink))
-					.accessibilityLabel("Status \(MaskinStatus.sentenceLabel(for: status)). Remove filter")
 				}
+				.buttonStyle(.maskinPressed(.shrink))
 			}
 			.padding(.horizontal, MaskinSpace.s9)
 		}
+	}
+
+	private func removableChip(_ title: String, label: String, action: @escaping () -> Void) -> some View {
+		Button(action: action) {
+			HStack(spacing: MaskinSpace.s3) {
+				Text(title)
+				Image(systemName: "xmark").maskinSymbol(MaskinFontSize.t9, weight: .heavy)
+			}
+			.maskinText(.caption)
+			.fontWeight(.semibold)
+			.foregroundStyle(MaskinColor.sigInk)
+			.padding(.leading, MaskinSpace.s7)
+			.padding(.trailing, MaskinSpace.s4 + 1)
+			.frame(height: MaskinSpace.s13 + MaskinSpace.s1)
+			.background(MaskinColor.sigTint, in: Capsule())
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel(label)
 	}
 
 	// MARK: Selection
@@ -300,35 +312,35 @@ struct ObjectsListView: View {
 		case .needsYou where store.statusFilter == nil && store.searchText.isEmpty:
 			EmptyState(
 				symbol: "checkmark.circle", title: "Nothing needs you",
-				message: "Agents are working. Asks for you land here."
+				message: "You\u{2019}re all caught up. When an agent needs a decision, it shows up here."
 			) {
 				Button("See all objects") { Task { await store.setScope(.all) } }
-					.buttonStyle(.secondaryAction)
+					.buttonStyle(.primaryAction)
 			}
 		case .favourites where store.statusFilter == nil && store.searchText.isEmpty:
 			EmptyState(
 				symbol: "star", title: "No favourites yet",
-				message: "Star an object and it lands here, on every device.")
+				message: "Tap the star on any object to keep it here, on every device.")
 		default:
 			if store.isFiltered || store.display.needsYouOnly {
 				EmptyState(
-					symbol: "magnifyingglass", title: "No matches",
-					message: "Nothing fits these filters. Try a different type, status or word."
+					symbol: "magnifyingglass",
+					title: store.searchText.isEmpty ? "Nothing in this status" : "Nothing matches \u{201C}\(store.searchText.trimmingCharacters(in: .whitespaces))\u{201D}",
+					message: "Nothing fits these filters. Try a different type or status, or clear the filter."
 				) {
-					Button("Clear filters") {
-						search = ""
+					Button("Clear filter") {
 						store.setNeedsYouOnly(false)
 						Task {
 							await store.setStatus(nil)
 							await store.setScope(.all)
 						}
 					}
-					.buttonStyle(.secondaryAction)
+					.buttonStyle(.primaryAction)
 				}
 			} else {
 				EmptyState(
 					symbol: "square.stack.3d.up", title: "Nothing here yet",
-					message: "Objects from you and your agents land here."
+					message: "Create an object, or ask an agent to. What you and your agents make shows up here."
 				) {
 					Button("New object") { intents.create() }
 						.buttonStyle(.primaryAction)
@@ -557,104 +569,5 @@ extension View {
 		#else
 			return self
 		#endif
-	}
-}
-
-/// The Objects Display menu in the shell's pill: list or board, group by, sort, status filter,
-/// shown properties, saved views, Select and New.
-struct ObjectsDisplayMenu: View {
-	@Bindable var store: ObjectsStore
-	let picking: SelectionModel
-	let intents: ObjectsListIntents
-
-	var body: some View {
-		Section("View") {
-			Picker(
-				"View",
-				selection: Binding(
-					get: { store.display.layout },
-					set: { value in Task { await store.setLayout(value) } })
-			) {
-				ForEach(ObjectsLayout.allCases) { Text($0.title).tag($0) }
-			}
-			.pickerStyle(.inline)
-			.labelsHidden()
-		}
-		Menu {
-			Picker("Group by", selection: Binding(get: { store.display.groupBy }, set: { store.setGrouping($0) })) {
-				ForEach(ObjectsGrouping.allCases) { Text($0.title).tag($0) }
-			}
-		} label: {
-			Label("Group by: \(store.display.groupBy.title)", systemImage: "rectangle.3.group")
-		}
-		Menu {
-			Picker(
-				"Sort by",
-				selection: Binding(
-					get: { store.display.sort },
-					set: { value in Task { await store.setSort(value) } })
-			) {
-				ForEach(ObjectsSort.allCases) { Text($0.title).tag($0) }
-			}
-		} label: {
-			Label("Sort: \(store.display.sort.title)", systemImage: "arrow.up.arrow.down")
-		}
-		Menu {
-			Picker(
-				"Status",
-				selection: Binding(
-					get: { store.statusFilter ?? "" },
-					set: { value in Task { await store.setStatus(value.isEmpty ? nil : value) } })
-			) {
-				Text("Any status").tag("")
-				ForEach(store.statusOptions, id: \.self) { Text(MaskinStatus.sentenceLabel(for: $0)).tag($0) }
-			}
-		} label: {
-			Label(
-				store.statusFilter.map { "Status: \(MaskinStatus.sentenceLabel(for: $0))" } ?? "Status",
-				systemImage: store.statusFilter == nil ? "circle.dashed" : "circle.dashed.inset.filled")
-		}
-		Toggle(
-			"Needs you only", systemImage: "circle.fill",
-			isOn: Binding(
-				get: { store.display.needsYouOnly },
-				set: { store.setNeedsYouOnly($0) }))
-		Menu {
-			ForEach(ObjectsProperty.allCases) { property in
-				Toggle(
-					property.title,
-					isOn: Binding(
-						get: { store.display.shows(property) },
-						set: { _ in store.toggleProperty(property) }))
-			}
-		} label: {
-			Label("Shown properties", systemImage: "eye")
-		}
-		Section("Saved views") {
-			Button("Save as view", systemImage: "bookmark") { intents.namingView = true }
-			if case .saved(let id) = store.scope {
-				Button(role: .destructive) {
-					_ = store.removeSavedView(id)
-				} label: {
-					Label("Remove this view", systemImage: "bookmark.slash")
-				}
-			}
-		}
-		Section {
-			Button("Select", systemImage: "checkmark.circle") { picking.enter() }
-			Button("New object", systemImage: "plus") { intents.create() }
-		}
-		if store.statusFilter != nil || store.display.needsYouOnly || store.display.isCustomised {
-			Divider()
-			Button("Reset display", systemImage: "xmark.circle") {
-				store.setNeedsYouOnly(false)
-				store.setGrouping(.status)
-				Task {
-					await store.setStatus(nil)
-					await store.setSort(.needsYou)
-					await store.setLayout(.list)
-				}
-			}
-		}
 	}
 }

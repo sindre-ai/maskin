@@ -23,7 +23,7 @@ public enum StatusCategory: String, Sendable, CaseIterable, Equatable {
 
 	private static let table: [String: StatusCategory] = {
 		var table: [String: StatusCategory] = [:]
-		for key in ["backlog", "todo", "new", "signal", "define", "proposed", "paused", "parked", "holding"] {
+		for key in ["backlog", "todo", "new", "opportunity", "define", "proposed", "paused", "parked", "holding"] {
 			table[key] = .backlog
 		}
 		for key in ["in_review", "waiting_for_input"] { table[key] = .needsYou }

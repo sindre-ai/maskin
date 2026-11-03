@@ -148,7 +148,7 @@ private struct OptionRowLabel: View {
 					.multilineTextAlignment(.leading)
 				Spacer(minLength: MaskinSpace.s3)
 				if option.recommended {
-					Text("RECOMMENDED").maskinText(.microLabel)
+					Text("Suggested").maskinText(.caption).fontWeight(.semibold)
 						.foregroundStyle(chosen ? MaskinSurface.onInverse : MaskinColor.sigInk)
 						.opacity(chosen ? 0.7 : 1)
 				}

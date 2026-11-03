@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type CreateFileInput, type FileDetail, type UpdateFileInput, api } from '../lib/api'
+import { type LargeFileUpload, uploadLargeFile } from '../lib/large-file-upload'
 import { queryKeys } from '../lib/query-keys'
 
 export function useFile(workspaceId: string, fileId: string | null) {
@@ -48,14 +49,21 @@ export function useUpdateFile(workspaceId: string) {
  * Imperative upload helper for callers that need byte-level progress and
  * cancellation — e.g. the comment composer's attachment chips. Use the
  * `useCreateFile` mutation when you don't need progress.
+ *
+ * Takes either a base64 `CreateFileInput` (small files, one JSON request) or a
+ * `{ file }` (large files, sent in parts straight to storage). `toUploadInput`
+ * in lib/large-file-upload picks the right one for a picked File.
  */
 export function useUploadFile(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return (
-		data: CreateFileInput,
+		data: CreateFileInput | LargeFileUpload,
 		opts?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 	) =>
-		api.files.createWithProgress(workspaceId, data, opts).then((file) => {
+		('file' in data
+			? uploadLargeFile(workspaceId, data.file, opts)
+			: api.files.createWithProgress(workspaceId, data, opts)
+		).then((file) => {
 			primeFileCaches(queryClient, file)
 			return file
 		})

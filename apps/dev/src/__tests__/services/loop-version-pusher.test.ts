@@ -205,7 +205,7 @@ describe('LoopVersionPusher', () => {
 		})
 	})
 
-	it('adds a new marketplace item to a locked install: actor gets a fresh apiKey + workspace_members binding, trigger gets a resolved createdBy and rewritten target', async () => {
+	it('adds a new marketplace item to a locked install: actor row carries no apiKey and gets a workspace_members binding, trigger gets a resolved createdBy and rewritten target', async () => {
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.selectQueue = [
 			// tick(): pending installs join — one locked install at v1 vs marketplace v2
@@ -270,11 +270,10 @@ describe('LoopVersionPusher', () => {
 		const pusher = new LoopVersionPusher(db, createMockAgentStorage(), 60_000)
 		await pusher.tick()
 
-		// #1 — actor minted a fresh, cryptographically-secure apiKey; the
-		// publisher's snapshot apiKey was NOT honored (no auth leak / index collision).
+		// #1 — the actor row carries no apiKey; the publisher's snapshot apiKey was NOT
+		// honored (no auth leak).
 		const actorInsert = calls.inserts[0] as Record<string, unknown>
-		expect(actorInsert.apiKey).toMatch(/^ank_/)
-		expect(actorInsert.apiKey).not.toBe('ank_publisherleak')
+		expect(actorInsert).not.toHaveProperty('apiKey')
 		expect((actorInsert.metadata as Record<string, unknown>).installed_loop_id).toBe('install-1')
 
 		// #2 — the freshly-minted actor is bound to the workspace as a member,

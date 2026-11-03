@@ -301,7 +301,16 @@ export class DiscoveryError extends Error {
 	}
 }
 
-async function discoverInstallationForRepo(repo: string, jwt: string): Promise<string> {
+interface DiscoveredInstallation {
+	id: string
+	/** account.login of the installation GitHub reports for the repo; null when absent. */
+	accountLogin: string | null
+}
+
+async function discoverInstallationForRepo(
+	repo: string,
+	jwt: string,
+): Promise<DiscoveredInstallation> {
 	if (!REPO_SLUG_RE.test(repo)) {
 		throw new Error(`Invalid repo slug for installation recovery: ${repo}`)
 	}
@@ -316,11 +325,12 @@ async function discoverInstallationForRepo(repo: string, jwt: string): Promise<s
 		const text = await response.text()
 		throw new DiscoveryError(repo, response.status, text)
 	}
-	const data = (await response.json()) as { id?: number }
+	const data = (await response.json()) as { id?: number; account?: { login?: string } | null }
 	if (typeof data.id !== 'number') {
 		throw new Error(`GitHub /repos/${repo}/installation response missing id`)
 	}
-	return String(data.id)
+	const login = data.account?.login
+	return { id: String(data.id), accountLogin: typeof login === 'string' && login ? login : null }
 }
 
 export interface MintTokenResult {
@@ -334,6 +344,11 @@ export interface MintTokenOptions {
 	/** owner/name hint used to re-discover the current install on a stale-cache 404.
 	 *  Without it, 404 propagates unchanged (recovery is opt-in). */
 	repo?: string
+	/** owner_login stored on the integration row. When `repo` is set, the install
+	 *  discovery returns must belong to this account before any token is minted;
+	 *  a missing value fails closed (treated as a mismatch). GitHub logins are
+	 *  case-insensitive, so the comparison is too. */
+	expectedOwnerLogin?: string
 }
 
 /**
@@ -365,7 +380,23 @@ export async function mintInstallationTokenWithRecovery(
 		throw new Error(`Failed to get installation access token: ${first.status} ${first.body ?? ''}`)
 	}
 
-	const recoveredId = await discoverInstallationForRepo(opts.repo, jwt)
+	const discovered = await discoverInstallationForRepo(opts.repo, jwt)
+	// The repo slug is caller-supplied, so discovery can land on an install that
+	// belongs to someone else. Only an install owned by this row's account may be
+	// minted against. Reported as a discovery 404 (the same outcome as a repo the
+	// App is not installed on) so nothing is minted or persisted and the caller
+	// learns nothing about the other account.
+	if (
+		!opts.expectedOwnerLogin ||
+		discovered.accountLogin?.toLowerCase() !== opts.expectedOwnerLogin.toLowerCase()
+	) {
+		throw new DiscoveryError(
+			opts.repo,
+			404,
+			'Installation account does not match integration owner',
+		)
+	}
+	const recoveredId = discovered.id
 	if (recoveredId === cachedId) {
 		// Discovery returned the same id — 404 is not from install churn.
 		// Re-throw the original error so the tagger stays honest instead of

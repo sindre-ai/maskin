@@ -4,6 +4,7 @@ import {
 	GITHUB_PREFLIGHT_KNOWN_IDENTITIES,
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
 	collectGitHubMcpIdentities,
+	formatGitHubInstallSkip,
 	postGitHubPreflightSlackAlert,
 	resolveMcpGitHubToken,
 	runGitHubPreflight,
@@ -477,6 +478,62 @@ describe('postGitHubPreflightSlackAlert', () => {
 		expect(body.text).toContain('installation 141870781')
 	})
 
+	it('names each skipped install, with its reason and installation id, under the failing identities', async () => {
+		const fetchImpl = vi.fn(async () => jsonResponse({ ok: true }))
+		await postGitHubPreflightSlackAlert({
+			botToken: 'xoxb-1',
+			channelId: GITHUB_PREFLIGHT_SLACK_CHANNEL,
+			verdicts: [
+				{
+					name: 'github-sindre-ai',
+					healthy: false,
+					failureClass: 'missing-token',
+					statusSnippet: 'no token attached at launch',
+				},
+			],
+			context: {
+				sessionId: 'sess-1',
+				workspaceId: 'ws-1',
+				skippedInstalls: [
+					{
+						integrationId: 'int-1',
+						reason: 'token-load-failed',
+						installationId: '141870781',
+						ownerLogin: 'sindre-ai',
+						detail: 'credentials could not be decrypted',
+					},
+					{ integrationId: 'int-2', reason: 'no-install-id' },
+				],
+			},
+			options: { fetchImpl: fetchImpl as unknown as typeof fetch },
+		})
+		const call = fetchImpl.mock.calls[0] as unknown as [string, RequestInit] | undefined
+		if (!call) throw new Error('expected one Slack call')
+		const body = JSON.parse(call[1].body as string) as { text: string }
+		expect(body.text).toContain('Installs skipped at launch:')
+		expect(body.text).toContain(
+			'token-load-failed: credentials could not be decrypted (installation 141870781, integration int-1, owner sindre-ai)',
+		)
+		expect(body.text).toContain('no-install-id (installation none, integration int-2)')
+	})
+
+	it('leaves the skipped-installs section out when none were skipped', async () => {
+		const fetchImpl = vi.fn(async () => jsonResponse({ ok: true }))
+		await postGitHubPreflightSlackAlert({
+			botToken: 'xoxb-1',
+			channelId: GITHUB_PREFLIGHT_SLACK_CHANNEL,
+			verdicts: [
+				{ name: 'github', healthy: false, failureClass: '401-unauth', statusSnippet: 'x' },
+			],
+			context: { sessionId: 'sess-1', workspaceId: 'ws-1' },
+			options: { fetchImpl: fetchImpl as unknown as typeof fetch },
+		})
+		const call = fetchImpl.mock.calls[0] as unknown as [string, RequestInit] | undefined
+		if (!call) throw new Error('expected one Slack call')
+		const body = JSON.parse(call[1].body as string) as { text: string }
+		expect(body.text).not.toContain('Installs skipped')
+	})
+
 	it('skips posting when every identity is healthy', async () => {
 		const fetchImpl = vi.fn()
 		await postGitHubPreflightSlackAlert({
@@ -504,6 +561,19 @@ describe('postGitHubPreflightSlackAlert', () => {
 				options: { fetchImpl: fetchImpl as unknown as typeof fetch },
 			}),
 		).resolves.toBeUndefined()
+	})
+})
+
+describe('formatGitHubInstallSkip', () => {
+	it('cuts a long error detail to 120 characters', () => {
+		const line = formatGitHubInstallSkip({
+			integrationId: 'int-1',
+			reason: 'owner-lookup-failed',
+			detail: 'x'.repeat(500),
+		})
+		expect(line).toBe(
+			`owner-lookup-failed: ${'x'.repeat(120)} (installation none, integration int-1)`,
+		)
 	})
 })
 

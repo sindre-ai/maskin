@@ -44,6 +44,7 @@ public final class AppEnvironment {
 		let client = MaskinClient.make(
 			serverURL: baseURL, clientSource: clientSource, credentials: credentials,
 			onUnauthorized: { [weak auth] key in await auth?.sessionRejected(apiKey: key) })
+		DictationBackend.service = APIBackendDictation(client: client)
 		let events = EventHub(baseURL: baseURL, clientSource: clientSource, credentials: credentials)
 		events.onUnauthorized = { [weak auth] key in
 			// The key the refused stream was opened with — not the current one (see EventHub).

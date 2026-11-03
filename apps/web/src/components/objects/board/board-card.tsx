@@ -4,6 +4,8 @@ import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getTypeColor } from '@/lib/constants'
@@ -38,6 +40,7 @@ export function BoardCard({
 	onAdvance,
 	advanceLabel,
 }: BoardCardProps) {
+	const canWrite = useCanWrite()
 	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const availableProperties =
 		columns.length > 0
@@ -80,21 +83,40 @@ export function BoardCard({
 				</span>
 				{showStatus && <StatusBadge status={object.status} className="shrink-0" />}
 				{onAdvance && (
-					// Always rendered at full opacity — a hover-only reveal would be
-					// unreachable on touch (see .claude/rules/verification.md).
-					<button
-						type="button"
-						title={advanceLabel}
-						aria-label={advanceLabel ?? 'Move to next column'}
-						onClick={(event) => {
-							event.preventDefault()
-							event.stopPropagation()
-							onAdvance()
-						}}
-						className="grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
-					>
-						<ArrowRight size={12} aria-hidden="true" />
-					</button>
+					// `<span role="button">` rather than a native `<button>`: the whole
+					// card is a `<Link>` (`<a>`), and `<button>` inside `<a>` is invalid
+					// HTML (React 19 logs `<button> cannot be a descendant of <a>` on
+					// every render). Always rendered at full opacity — a hover-only
+					// reveal would be unreachable on touch (see .claude/rules/verification.md).
+					<ViewerTooltip>
+						{/* biome-ignore lint/a11y/useSemanticElements: `<button>` would be a descendant of the card's `<a>`, which is invalid HTML — see comment above. */}
+						<span
+							role="button"
+							tabIndex={canWrite ? 0 : -1}
+							title={advanceLabel}
+							aria-label={advanceLabel ?? 'Move to next column'}
+							aria-disabled={!canWrite || undefined}
+							onClick={(event) => {
+								event.preventDefault()
+								event.stopPropagation()
+								if (canWrite) onAdvance()
+							}}
+							onKeyDown={(event) => {
+								if (event.key !== 'Enter' && event.key !== ' ') return
+								event.preventDefault()
+								event.stopPropagation()
+								if (canWrite) onAdvance()
+							}}
+							className={cn(
+								'grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+								canWrite
+									? 'cursor-pointer hover:bg-muted hover:text-foreground'
+									: 'cursor-not-allowed opacity-50',
+							)}
+						>
+							<ArrowRight size={12} aria-hidden="true" />
+						</span>
+					</ViewerTooltip>
 				)}
 			</div>
 

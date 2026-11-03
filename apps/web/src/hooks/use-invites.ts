@@ -19,15 +19,8 @@ export function useCreateInvite(workspaceId: string) {
 		meta: OWNS_ERRORS,
 		mutationFn: (data: Omit<CreateInviteInput, 'workspaceId'>) =>
 			api.invites.create({ ...data, workspaceId }),
-		onSuccess: (result) => {
-			// A linked actor is a member immediately; a pending invite shows up in
-			// the pending list. Refresh whichever list the outcome changed.
-			queryClient.invalidateQueries({
-				queryKey:
-					result.status === 'linked'
-						? queryKeys.workspaces.members(workspaceId)
-						: queryKeys.invites.list(workspaceId),
-			})
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.invites.list(workspaceId) })
 		},
 	})
 }

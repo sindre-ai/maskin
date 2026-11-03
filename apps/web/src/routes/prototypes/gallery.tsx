@@ -63,7 +63,7 @@ const STATUSES: string[] = [
 	'succeeded',
 	'active',
 	'live',
-	'signal',
+	'opportunity',
 	'proposed',
 	'clustered',
 	'validated',

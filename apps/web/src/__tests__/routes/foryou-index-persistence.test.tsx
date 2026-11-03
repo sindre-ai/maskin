@@ -8,7 +8,7 @@ import type { UnreadItem } from '@/lib/api'
 // Routes are tested by extracting the component from the file route and
 // rendering it directly, mirroring objects-index-persistence.test.tsx. The
 // For You page keeps a local `sort` (session-only, out of scope) but persists
-// `mode` through the `__chrome__` display-settings row. These tests guard the
+// `mode` through the `__chrome__` display settings row. These tests guard the
 // hydrate (persisted list -> list rows) and write-through (toggle -> upsert
 // with foryouViewMode + unrelated settings preserved) directions.
 vi.mock('@tanstack/react-router', async () => {
@@ -31,11 +31,16 @@ type FeedState = {
 const feedState = globalThis as unknown as FeedState
 feedState.__foryouItems = []
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useUnread: () => ({
+vi.mock('@/hooks/use-for-you', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-for-you')>()),
+	useForYou: () => ({
 		data: { items: (globalThis as unknown as FeedState).__foryouItems },
 		isLoading: false,
 	}),
+	useDismissForYou: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) }),
+}))
+
+vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => ({ mutate: vi.fn() }),
 	useMarkUnread: () => ({ mutate: vi.fn() }),
 }))
@@ -124,11 +129,8 @@ vi.mock('@/components/layout/page-header', () => ({
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
 	OnboardingPromptCard: () => null,
 }))
-vi.mock('@/components/foryou/brief-card', () => ({
-	BriefCard: () => null,
-}))
-vi.mock('@/components/foryou/release-card', () => ({
-	ReleaseCard: () => null,
+vi.mock('@/components/foryou/briefing-row', () => ({
+	BriefingRow: () => null,
 }))
 vi.mock('@/components/shared/create-picker', () => ({
 	CreatePicker: () => null,
@@ -298,29 +300,24 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 	})
 })
 
-describe('ForYou attention sort', () => {
+describe('ForYou curated order', () => {
 	beforeEach(() => {
 		settingsState.__dsPersisted = { foryouViewMode: 'list' }
 		settingsState.__dsUpsertCalls = 0
 		settingsState.__dsLastUpsertBody = null
 	})
 
-	it('orders cards by max_unread_attention desc, unscored last, by default', async () => {
+	it("shows the list in the Chief of Staff's order, not by attention or recency", async () => {
 		feedState.__foryouItems = [
 			{
-				...buildItem('low', 'Low attention item', 'insight'),
-				max_unread_attention: 2,
-				latest_activity_at: '2026-08-10T00:00:00.000Z',
-			},
-			{
-				...buildItem('unscored', 'Unscored item', 'insight'),
+				...buildItem('first', 'Ranked first', 'insight'),
 				max_unread_attention: null,
-				latest_activity_at: '2026-08-15T00:00:00.000Z',
+				latest_activity_at: '2026-08-01T00:00:00.000Z',
 			},
 			{
-				...buildItem('critical', 'Critical attention item', 'insight'),
+				...buildItem('second', 'Ranked second', 'insight'),
 				max_unread_attention: 5,
-				latest_activity_at: '2026-08-01T00:00:00.000Z',
+				latest_activity_at: '2026-08-15T00:00:00.000Z',
 			},
 		]
 
@@ -328,21 +325,20 @@ describe('ForYou attention sort', () => {
 		await flush()
 
 		expect(screen.getAllByTestId('foryou-feed-card').map((el) => el.textContent)).toEqual([
-			'Critical attention item',
-			'Low attention item',
-			'Unscored item',
+			'Ranked first',
+			'Ranked second',
 		])
 	})
 })
 
-describe('ForYou nav identity + sort options', () => {
+describe('ForYou nav identity', () => {
 	beforeEach(resetState)
 
 	it('publishes title/subtitle into the shared nav instead of its own identity node', async () => {
 		mount()
 		await flush()
 		expect(pageHeaderProps.current.title).toBe('For you')
-		expect(pageHeaderProps.current.subtitle).toBe('2 unread')
+		expect(pageHeaderProps.current.subtitle).toBe('2 need you')
 		expect(pageHeaderProps.current.stickyIdentity).toBeUndefined()
 	})
 
@@ -351,37 +347,5 @@ describe('ForYou nav identity + sort options', () => {
 		mount()
 		await flush()
 		expect(pageHeaderProps.current.subtitle).toBe('All caught up')
-	})
-
-	it('orders cards newest-first when Chronological is picked', async () => {
-		feedState.__foryouItems = [
-			{
-				...buildItem('older', 'Older thread', 'insight'),
-				max_unread_attention: 5,
-				latest_activity_at: '2026-08-01T00:00:00.000Z',
-			},
-			{
-				...buildItem('newer', 'Newer thread', 'insight'),
-				max_unread_attention: 1,
-				latest_activity_at: '2026-08-15T00:00:00.000Z',
-			},
-		]
-		const user = userEvent.setup()
-		mount()
-		await flush()
-		// Attention order first: the older, higher-scored thread leads.
-		expect(screen.getAllByTestId('foryou-feed-card').map((el) => el.textContent)).toEqual([
-			'Older thread',
-			'Newer thread',
-		])
-
-		await user.click(screen.getByRole('button', { name: /view options/i }))
-		await user.click(await screen.findByRole('menuitem', { name: /Chronological/ }))
-		await flush()
-
-		expect(screen.getAllByTestId('foryou-feed-card').map((el) => el.textContent)).toEqual([
-			'Newer thread',
-			'Older thread',
-		])
 	})
 })

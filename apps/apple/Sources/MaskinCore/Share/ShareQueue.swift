@@ -149,6 +149,10 @@ public struct ShareQueue: Sendable {
 
 	public func remove(_ id: UUID) { try? fm.removeItem(at: folder(for: id)) }
 
+	/// Drops every parked share. Sign-out: a share belongs to the account that made it and must
+	/// never be sent as, or read by, the next person who signs in on this device.
+	public func removeAll() { try? fm.removeItem(at: root) }
+
 	/// Drops shares older than `maxAge`, and folders with no readable manifest.
 	public func purgeExpired(now: Date = Date()) {
 		let folders = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []

@@ -1,8 +1,9 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { KNOWLEDGE_NUDGES } from '@maskin/shared'
 import { createDb } from './connection'
 import {
 	actors,
+	apiKeys,
 	notifications,
 	objects,
 	relationships,
@@ -12,8 +13,9 @@ import {
 } from './schema'
 
 // Inlined to avoid a circular dep with @maskin/auth (which depends on @maskin/db).
-// Mirrors generateApiKey() in packages/auth/src/api-keys.ts.
+// Mirrors generateApiKey() and hashApiKey() in packages/auth/src.
 const newApiKey = () => `ank_${randomUUID().replace(/-/g, '')}`
+const hashApiKey = (key: string) => createHash('sha256').update(key).digest('hex')
 
 // biome-ignore lint/style/noNonNullAssertion: required env var for CLI
 const db = createDb(process.env.POSTGRES_URL || process.env.DATABASE_URL!)
@@ -31,11 +33,21 @@ const [rawDemoUser] = await db
 		type: 'human',
 		name: 'Demo User',
 		email: 'demo@example.com',
-		apiKey: newApiKey(),
 	})
 	.returning()
 
 const demoUser = unwrap(rawDemoUser, 'demoUser')
+
+// Only the hash is stored, so this is the one time the demo key is visible. Agents get no key
+// row: each session launch mints its own.
+const demoApiKey = newApiKey()
+await db.insert(apiKeys).values({
+	actorId: demoUser.id,
+	keyHash: hashApiKey(demoApiKey),
+	last4: demoApiKey.slice(-4),
+	kind: 'primary',
+})
+console.log(`Demo user API key (shown once): ${demoApiKey}`)
 
 // ── Workspace ───────────────────────────────────────────────────────────────
 
@@ -74,7 +86,7 @@ When triggered, review all new/unprocessed insights in the workspace. Look for p
 For each bet you create:
 1. Give it a clear, actionable title
 2. Write a summary in the content field explaining the pattern you identified
-3. Set status to "signal"
+3. Set status to "opportunity"
 4. Create "informs" relationships from each source insight to the bet
 5. Update processed insights to status "clustered"
 
@@ -91,7 +103,6 @@ Use the update_memory tool to track which insights you've already processed.`,
 				'done',
 			],
 		},
-		apiKey: newApiKey(),
 	})
 	.returning()
 
@@ -120,7 +131,6 @@ Consider the bet's content, any related insights, and what a product team would 
 		tools: {
 			allowed: ['create_object', 'list_objects', 'create_relationship', 'update_memory', 'done'],
 		},
-		apiKey: newApiKey(),
 	})
 	.returning()
 

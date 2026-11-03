@@ -41,7 +41,7 @@ describe('Files as first-class relationship endpoints (Slice 1)', () => {
 		workspaceId = ws.id
 		const anchor = await insertObject(db, workspaceId, getTestActorId(), {
 			type: 'bet',
-			status: 'signal',
+			status: 'opportunity',
 			title: 'Anchor bet',
 		})
 		anchorObjectId = anchor.id

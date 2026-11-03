@@ -1,8 +1,10 @@
 import type { ActivityStep } from '@/components/agents/session-log-transcript'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useActor } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { MessageTurnActivity } from '@/hooks/use-conversation-activity'
 import { useDuration } from '@/hooks/use-duration'
 import { useSession, useStopSession } from '@/hooks/use-sessions'
@@ -36,6 +38,7 @@ interface MessageActivityProps {
 export function MessageActivity({ workspaceId, turn, layout = 'block' }: MessageActivityProps) {
 	const { data: actor } = useActor(turn.actorId)
 	const stopSession = useStopSession(workspaceId)
+	const canWrite = useCanWrite()
 	// Only a live turn needs its session row: `startedAt` is what turns the
 	// indicator's elapsed readout into a real number rather than "since this
 	// tab happened to open" (mockup 7816).
@@ -85,16 +88,18 @@ export function MessageActivity({ workspaceId, turn, layout = 'block' }: Message
 					    mutation would silently fail (see session-manager.ts's
 					    stopSession). Hide the control until the process is live. */}
 					{turn.starting ? null : (
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							className="mt-2 h-6 px-0 text-[10.5px] font-bold text-muted-foreground hover:bg-transparent hover:text-foreground"
-							onClick={() => stopSession.mutate(turn.sessionId)}
-							disabled={stopSession.isPending}
-						>
-							Stop
-						</Button>
+						<ViewerTooltip className="mt-2 inline-flex">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								className="h-6 px-0 text-[10.5px] font-bold text-muted-foreground hover:bg-transparent hover:text-foreground"
+								onClick={() => stopSession.mutate(turn.sessionId)}
+								disabled={stopSession.isPending || !canWrite}
+							>
+								Stop
+							</Button>
+						</ViewerTooltip>
 					)}
 				</div>
 			</div>

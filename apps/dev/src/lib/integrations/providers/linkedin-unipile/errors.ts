@@ -52,6 +52,15 @@
  *                                   the wire-level idempotency guarantee for
  *                                   connect-requests; the caller should treat
  *                                   it as a successful no-op.
+ *
+ * One InMail-specific code joins the taxonomy from the LinkedIn outreach loop bet:
+ *
+ *   LINKEDIN_INMAIL_UNAVAILABLE     The account has no classic InMail seat, its
+ *                                   classic credits are at or below the floor
+ *                                   we keep back (2), or LinkedIn said it is out
+ *                                   of credits. NEVER retry, and do not wait:
+ *                                   the agent stops drafting InMails for this
+ *                                   account and uses another channel.
  */
 export type LinkedInErrorCode =
 	| 'CREDENTIAL_NOT_CONNECTED'
@@ -66,6 +75,7 @@ export type LinkedInErrorCode =
 	| 'LINKEDIN_ALREADY_CONNECTED'
 	| 'PAGE_ADMIN_REVOKED'
 	| 'POST_NOT_FOUND'
+	| 'LINKEDIN_INMAIL_UNAVAILABLE'
 
 export const LINKEDIN_ERROR_CODES = [
 	'CREDENTIAL_NOT_CONNECTED',
@@ -80,6 +90,7 @@ export const LINKEDIN_ERROR_CODES = [
 	'LINKEDIN_ALREADY_CONNECTED',
 	'PAGE_ADMIN_REVOKED',
 	'POST_NOT_FOUND',
+	'LINKEDIN_INMAIL_UNAVAILABLE',
 ] as const satisfies readonly LinkedInErrorCode[]
 
 /**
@@ -258,6 +269,8 @@ export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null>
 	// says does not exist just gets the same POST_NOT_FOUND back. Delete
 	// operations treat this as a successful no-op at the operations layer.
 	POST_NOT_FOUND: null,
+	// Terminal: no credits now means no credits on a retry. The agent changes channel.
+	LINKEDIN_INMAIL_UNAVAILABLE: null,
 }
 
 const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
@@ -273,6 +286,7 @@ const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 	LINKEDIN_ALREADY_CONNECTED: false,
 	PAGE_ADMIN_REVOKED: false,
 	POST_NOT_FOUND: false,
+	LINKEDIN_INMAIL_UNAVAILABLE: false,
 }
 
 const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
@@ -302,6 +316,8 @@ const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
 	// for other input-shaped nos. Distinct code so a `__delete_post` op can
 	// swallow it as a no-op without swallowing every other INVALID_INPUT.
 	POST_NOT_FOUND: 400,
+	// 402 Payment Required: the thing that is missing is a paid-for credit.
+	LINKEDIN_INMAIL_UNAVAILABLE: 402,
 }
 
 /**

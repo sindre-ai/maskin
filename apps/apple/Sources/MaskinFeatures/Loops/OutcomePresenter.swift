@@ -65,8 +65,21 @@ struct OutcomePresenter: View {
 		case .loaded:
 			if let file = store.file {
 				if file.kind == .html {
-					PresentedHTMLView(html: store.text ?? file.text ?? "", revision: store.contentRevision)
+					let html = store.text ?? file.text ?? ""
+					PresentedHTMLView(html: html, revision: store.contentRevision)
 						.ignoresSafeArea(edges: .bottom)
+						.safeAreaInset(edge: .top, spacing: 0) {
+							if MiniAppHTML.needsNetwork(html) {
+								Label(
+									"This page loads styles or scripts from the internet, which Maskin blocks, so it may look unstyled.",
+									systemImage: "exclamationmark.triangle"
+								)
+								.maskinText(.subhead).foregroundStyle(.secondary)
+								.padding(MaskinSpace.s6)
+								.frame(maxWidth: .infinity, alignment: .leading)
+								.background(.bar)
+							}
+						}
 				} else {
 					ScrollView {
 						FileContentView(

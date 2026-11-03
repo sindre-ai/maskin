@@ -63,6 +63,14 @@ function makeStream(
 	return stream
 }
 
+// Writes of real input lines. Every attach also writes one lone newline to end
+// any request body the daemon leaked into stdin, which these assertions skip.
+function lineWrites(stream: { write: unknown }): unknown[][] {
+	return (stream.write as ReturnType<typeof vi.fn>).mock.calls.filter(
+		(call: unknown[]) => call[0] !== '\n',
+	)
+}
+
 describe('ContainerManager', () => {
 	let manager: ContainerManager
 
@@ -330,6 +338,15 @@ describe('ContainerManager', () => {
 			expect(manager.getStdinStream('session-1')).toBe(stream)
 		})
 
+		it('writes a newline right after attaching, to end any leaked request body as its own line', async () => {
+			const stream = makeStream()
+			mockContainer.attach.mockResolvedValue(stream)
+
+			await manager.attachStdin('session-nl', 'container-xyz')
+
+			expect(stream.write).toHaveBeenCalledWith('\n', expect.any(Function))
+		})
+
 		it('getStdinStream returns undefined when no stream is attached', () => {
 			expect(manager.getStdinStream('unknown')).toBeUndefined()
 		})
@@ -377,8 +394,8 @@ describe('ContainerManager', () => {
 			await manager.attachStdin('s', 'c-1')
 			await manager.write('s', payload)
 
-			expect(stream.write).toHaveBeenCalledTimes(1)
-			const writtenLine = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0]
+			expect(lineWrites(stream)).toHaveLength(1)
+			const writtenLine = lineWrites(stream)[0][0]
 			expect(writtenLine).toBe(`${JSON.stringify(payload)}\n`)
 		})
 
@@ -404,7 +421,7 @@ describe('ContainerManager', () => {
 
 			// First attach for attachStdin, second attach for reconnect.
 			expect(mockContainer.attach).toHaveBeenCalledTimes(2)
-			expect(recoveredStream.write).toHaveBeenCalledTimes(1)
+			expect(lineWrites(recoveredStream)).toHaveLength(1)
 			// After reconnect, getStdinStream returns the new stream.
 			expect(manager.getStdinStream('s')).toBe(recoveredStream)
 		})
@@ -421,8 +438,8 @@ describe('ContainerManager', () => {
 			await manager.write('s', payload)
 
 			expect(mockContainer.attach).toHaveBeenCalledTimes(2)
-			expect(endedStream.write).not.toHaveBeenCalled()
-			expect(recoveredStream.write).toHaveBeenCalledTimes(1)
+			expect(lineWrites(endedStream)).toHaveLength(0)
+			expect(lineWrites(recoveredStream)).toHaveLength(1)
 		})
 
 		it('reconnects when the attached stream errored before write', async () => {
@@ -438,7 +455,7 @@ describe('ContainerManager', () => {
 			await manager.write('s', payload)
 
 			expect(mockContainer.attach).toHaveBeenCalledTimes(2)
-			expect(recoveredStream.write).toHaveBeenCalledTimes(1)
+			expect(lineWrites(recoveredStream)).toHaveLength(1)
 		})
 
 		it('propagates the error if the retried write also fails', async () => {
@@ -458,8 +475,8 @@ describe('ContainerManager', () => {
 			await expect(manager.write('s', payload)).rejects.toThrow('retry write failed')
 
 			// Retry happened exactly once (two total writes: original + retry).
-			expect(firstStream.write).toHaveBeenCalledTimes(1)
-			expect(secondStream.write).toHaveBeenCalledTimes(1)
+			expect(lineWrites(firstStream)).toHaveLength(1)
+			expect(lineWrites(secondStream)).toHaveLength(1)
 			expect(mockContainer.attach).toHaveBeenCalledTimes(2)
 		})
 
@@ -516,8 +533,8 @@ describe('ContainerManager', () => {
 			await manager.attachStdin('fixture-session', 'c-fixture')
 			await manager.write('fixture-session', fixture)
 
-			expect(stream.write).toHaveBeenCalledTimes(1)
-			const writtenLine = (stream.write as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+			expect(lineWrites(stream)).toHaveLength(1)
+			const writtenLine = lineWrites(stream)[0][0] as string
 
 			// Exactly one trailing newline, no embedded newlines in the JSON body.
 			expect(writtenLine.endsWith('\n')).toBe(true)

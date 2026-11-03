@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
 import { createAuthCaches, resolveAuthCacheTtlMs } from './auth-cache'
+import { hashApiKey } from './key-hash'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -31,7 +32,7 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 		// API key auth
 		if (token.startsWith('ank_')) {
 			const result = await caches.apiKeys.get(
-				token,
+				hashApiKey(token),
 				() => validateApiKey(db, token),
 				(value) => value !== null,
 			)

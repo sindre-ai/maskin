@@ -2,10 +2,10 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	ActorWithKey,
+	DriveWatch,
 	EventResponse,
 	ImportResponse,
 	IntegrationResponse,
-	LoopStep,
 	LoopSummary,
 	NotificationResponse,
 	ObjectResponse,
@@ -215,26 +215,6 @@ export function buildTriggerResponse(overrides: Partial<TriggerResponse> = {}): 
 	}
 }
 
-export function buildLoopStep(overrides: Partial<LoopStep> = {}): LoopStep {
-	const triggerId = overrides.triggerId ?? nextId('step')
-	return {
-		triggerId,
-		triggerName: 'Step name',
-		triggerActionPrompt: 'Do the thing',
-		triggerType: 'event',
-		triggerConfig: {},
-		agent: { id: 'actor-1', name: 'Relay', description: null },
-		handsOffToActorId: null,
-		escalatesToActorId: null,
-		escalateAfterMs: null,
-		handsOffToActor: null,
-		escalatesToActor: null,
-		waitingOnViewer: false,
-		pendingCount: 0,
-		...overrides,
-	}
-}
-
 export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSummary {
 	const id = overrides.id ?? nextId('loop')
 	return {
@@ -246,6 +226,8 @@ export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSumm
 		pill: 'learning',
 		entryCondition: null,
 		closeCondition: null,
+		tags: [],
+		driverId: null,
 		inProgressCount: 0,
 		closedCount: 0,
 		medianTimeToCloseMs: null,
@@ -275,6 +257,21 @@ export function buildIntegrationResponse(
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
+		...overrides,
+	}
+}
+
+export function buildDriveWatch(overrides: Partial<DriveWatch> = {}): DriveWatch {
+	const id = overrides.folderId ?? nextId('folder')
+	return {
+		folderId: id,
+		name: 'Meet Recordings',
+		path: null,
+		addedAt: '2026-10-01T09:00:00.000Z',
+		lastFiredAt: null,
+		integrationId: 'integration-1',
+		account: 'priya@acme.test',
+		triggers: [],
 		...overrides,
 	}
 }

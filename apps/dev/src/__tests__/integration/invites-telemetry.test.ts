@@ -31,6 +31,9 @@ describe('PostHog events on the pre-existing member paths', () => {
 			await setWorkspacePlan(db, workspaceId, 'pro')
 		})
 
+		// The only kind of actor an admin can add by id: an agent the caller made.
+		const ownedAgent = () => insertActor(db, { type: 'agent', createdBy: callerId() })
+
 		function add(actorId: string) {
 			return createIntegrationApp({ path: '/api/workspaces', module: workspacesRoutes }).request(
 				jsonRequest('POST', `/api/workspaces/${workspaceId}/members`, { actor_id: actorId }),
@@ -38,7 +41,7 @@ describe('PostHog events on the pre-existing member paths', () => {
 		}
 
 		it('emits workspace_member_invited with invite_method actor_id when a member is added', async () => {
-			const target = await insertActor(db)
+			const target = await ownedAgent()
 
 			const res = await add(target.id)
 
@@ -53,7 +56,7 @@ describe('PostHog events on the pre-existing member paths', () => {
 		})
 
 		it('does not emit for the idempotent already-a-member no-op', async () => {
-			const target = await insertActor(db)
+			const target = await ownedAgent()
 			await add(target.id)
 			capturePosthogEventMock.mockClear()
 
@@ -64,8 +67,7 @@ describe('PostHog events on the pre-existing member paths', () => {
 			expect(capturePosthogEventMock).not.toHaveBeenCalled()
 		})
 
-		it('does not emit when the seat cap blocks the add', async () => {
-			await setWorkspacePlan(db, workspaceId, 'trial')
+		it('does not emit when the add is refused because the target is a person', async () => {
 			const target = await insertActor(db)
 
 			const res = await add(target.id)

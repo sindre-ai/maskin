@@ -51,6 +51,7 @@ const graphResponseSchema = z.object({
 const createGraphRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Graph'],
 	summary: 'Create objects and relationships in a single atomic operation',
 	description:
@@ -131,7 +132,7 @@ app.openapi(createGraphRoute, async (c) => {
 	}
 
 	// Resolve each node's effective status:
-	//   - Bets always land at `signal` (the founders' go/no-go gate) — the caller
+	//   - Bets always land at `opportunity` (the founders' go/no-go gate) — the caller
 	//     value is ignored. Prevents agents from programmatically skipping intake
 	//     by creating bets already in `define`/`active`/etc.
 	//   - Every other type requires a caller-supplied status.
@@ -139,7 +140,7 @@ app.openapi(createGraphRoute, async (c) => {
 	const statuses = settings?.statuses
 	const resolvedStatuses = new Map<string, string>()
 	for (const node of body.nodes) {
-		const resolved = node.type === 'bet' ? 'signal' : node.status
+		const resolved = node.type === 'bet' ? 'opportunity' : node.status
 		if (resolved === undefined) {
 			return c.json(
 				createApiError(

@@ -24,7 +24,7 @@ struct MeetingLiveActivity: Widget {
 				}
 				DynamicIslandExpandedRegion(.center) {
 					VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-						Text("LIVE MEETING").maskinText(.microLabel).foregroundStyle(MaskinColor.sigInk)
+						Text("LIVE MEETING").maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
 						Text(state.name).maskinText(.headline).lineLimit(1)
 					}
 				}
@@ -66,14 +66,38 @@ private struct MeetingLockScreenView: View {
 			HStack(spacing: MaskinSpace.s7) {
 				LiveActivityAgentTile(name: state.name, size: 44)
 				VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-					Text(state.kind.eyebrow).maskinText(.microLabel).foregroundStyle(MaskinColor.sigInk).lineLimit(1)
+					Text(state.kind.eyebrow).maskinText(.microLabel).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 					Text(state.name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(1)
 				}
 				Spacer(minLength: MaskinSpace.s4)
-				MeetingTimer(state: state).maskinText(.headline)
+				MeetingTimer(state: state)
+					.font(MaskinTypeface.mono(MaskinFontSize.t20, weight: .semibold, relativeTo: .title3))
+					.foregroundStyle(MaskinColor.ink)
 			}
 			.accessibilityElement(children: .combine)
-			MeetingActions(state: state, openURL: openURL)
+			// The mockup's lock screen is one row: level bars, an icon-only mic circle, a red End.
+			HStack(spacing: MaskinSpace.s4) {
+				LiveActivityLevelBars(muted: state.muted)
+				Spacer(minLength: MaskinSpace.s4)
+				Button(intent: ToggleMeetingMuteIntent()) {
+					Image(systemName: state.muted ? "mic.slash.fill" : "mic.fill")
+						.maskinSymbol(MaskinFontSize.t17, weight: .semibold)
+						.foregroundStyle(MaskinColor.ink3)
+						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+						.background(MaskinSurface.fill, in: Circle())
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel(state.muted ? "Unmute" : "Mute")
+				Button(intent: EndMeetingIntent()) {
+					Text("End")
+						.maskinText(.caption)
+						.foregroundStyle(MaskinSurface.onInverse)
+						.padding(.horizontal, MaskinSpace.s9)
+						.frame(minHeight: MaskinSpace.touchMin)
+						.background(MaskinColor.danger, in: Capsule())
+				}
+				.buttonStyle(.plain)
+			}
 		}
 	}
 }
