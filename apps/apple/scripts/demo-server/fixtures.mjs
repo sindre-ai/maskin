@@ -621,6 +621,11 @@ export function overrides({ method, path, params, query, body, base, item }) {
 			sessionId: null,
 			createdAt: ago(at),
 			editedAt: null,
+			// null, as the real API sends it: a number (even 0) marks the message as a thread reply
+			// and the app then hides it from the main chat.
+			threadRootId: null,
+			threadAlsoInChannel: false,
+			thread: null,
 			spawned_sessions: [],
 		})
 		const first = actors.find((a) => a.id === r.with[0])
