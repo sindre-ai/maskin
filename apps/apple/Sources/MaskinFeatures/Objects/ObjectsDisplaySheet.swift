@@ -61,7 +61,13 @@ struct ObjectsDisplaySheet: View {
 							id: property.id, title: property.title,
 							isOn: Binding(
 								get: { store.display.shows(property) }, set: { _ in store.toggleProperty(property) }))
-					})
+					}
+					+ [
+						DisplayToggles.Item(
+							id: "type-tabs", title: "Type tabs",
+							isOn: Binding(
+								get: { store.display.showsTypeTabs }, set: { store.setShowsTypeTabs($0) }))
+					])
 			}
 			DisplaySection(title: nil) {
 				HStack(spacing: MaskinSpace.s4) {
@@ -72,6 +78,10 @@ struct ObjectsDisplaySheet: View {
 					DisplayChip(title: "New item", isOn: false) {
 						dismiss()
 						intents.create()
+					}
+					DisplayChip(title: "Views", isOn: false) {
+						dismiss()
+						intents.showGoTo = true
 					}
 					DisplayChip(title: "Save as view", isOn: false) {
 						dismiss()

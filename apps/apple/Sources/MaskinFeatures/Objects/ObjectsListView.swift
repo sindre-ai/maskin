@@ -11,6 +11,8 @@ final class ObjectsListIntents {
 	var namingView = false
 	var createStatus: String?
 	var showCreate = false
+	/// The Go to sheet (saved views and places), opened from Display now the title is plain.
+	var showGoTo = false
 
 	func create(status: String? = nil) {
 		createStatus = status
@@ -18,8 +20,8 @@ final class ObjectsListIntents {
 	}
 }
 
-/// The list half of the Objects tab: large title with ▾ (Go to), type tabs, status groups as
-/// inset cards (or the board), Select mode and the Undo toast. Rows link by value in a stack, or
+/// The list half of the Objects tab: large title, quick-filter chips (type tabs when Display turns
+/// them on), groups of flat hairline rows (or the board), Select mode and the Undo toast. Rows link by value in a stack, or
 /// drive `selection` in a split view (when `selection` is non-nil).
 struct ObjectsListView: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -37,7 +39,6 @@ struct ObjectsListView: View {
 
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var undoOffer: UndoOffer?
-	@State private var showGoTo = false
 	@State private var holdTarget: ObjectAsk?
 	@State private var viewName = ""
 
@@ -57,7 +58,7 @@ struct ObjectsListView: View {
 		.onChange(of: allIDs) { picking.prune(toVisible: allIDs) }
 		.selectionToolbar(picking, allIDs: allIDs, noun: "object") { bulkActions }
 		.undoToast($undoOffer)
-		.sheet(isPresented: $showGoTo) {
+		.sheet(isPresented: $intents.showGoTo) {
 			GoToSheet(
 				store: store, onSelect: { scope in Task { await store.setScope(scope) } },
 				onRemoveSavedView: { removeSavedView($0) })
@@ -87,32 +88,20 @@ struct ObjectsListView: View {
 	/// The large title (tap for Go to), type tabs and the active filter chip.
 	private var header: some View {
 		VStack(alignment: .leading, spacing: 0) {
-			Button {
-				MaskinHaptics.play(.light)
-				showGoTo = true
-			} label: {
-				HStack(alignment: .center, spacing: MaskinSpace.s3) {
-					Text(store.title)
-						.maskinText(.largeTitle)
-						.foregroundStyle(MaskinColor.ink)
-						.lineLimit(1)
-						.minimumScaleFactor(0.7)
-					Image(systemName: "chevron.down")
-						.maskinSymbol(MaskinFontSize.t16, weight: .bold)
-						.foregroundStyle(MaskinColor.ink4)
-						.padding(.top, MaskinSpace.s3)
-				}
+			Text(store.title)
+				.maskinText(.largeTitle)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+				.minimumScaleFactor(0.7)
 				.frame(minHeight: MaskinSpace.touchMin)
-				.contentShape(Rectangle())
+				.padding(.horizontal, MaskinSpace.s11)
+				.accessibilityAddTraits(.isHeader)
+			if store.display.showsTypeTabs {
+				ObjectTypeTabs(tabs: ObjectTypeTab.tabs(for: store), selected: store.scope) { scope in
+					Task { await store.setScope(scope) }
+				}
+				.padding(.top, MaskinSpace.s5)
 			}
-			.buttonStyle(.maskinPressed)
-			.padding(.horizontal, MaskinSpace.s11)
-			.accessibilityLabel("\(store.title). Go to")
-			.accessibilityHint("Opens the list of places to go")
-			ObjectTypeTabs(tabs: ObjectTypeTab.tabs(for: store), selected: store.scope) { scope in
-				Task { await store.setScope(scope) }
-			}
-			.padding(.top, MaskinSpace.s5)
 			ObjectQuickFilterChips(store: store).padding(.top, MaskinSpace.s3)
 			if store.statusFilter != nil || store.display.needsYouOnly {
 				filterChips.padding(.top, MaskinSpace.s5)
@@ -414,16 +403,14 @@ struct ObjectsListView: View {
 				let count = group.objects.count
 				ForEach(Array(group.objects.enumerated()), id: \.element.id) { index, object in
 					row(object)
-						.listRowInsets(EdgeInsets(top: MaskinSpace.s7, leading: MaskinSpace.s9 + MaskinSpace.s8, bottom: MaskinSpace.s7, trailing: MaskinSpace.s9 + MaskinSpace.s8))
+						.listRowInsets(EdgeInsets(top: MaskinSpace.s5, leading: MaskinSpace.s9, bottom: MaskinSpace.s5, trailing: MaskinSpace.s9))
 						.listRowBackground(
-							CardSlice(
-								isFirst: index == 0, isLast: index == count - 1,
-								selected: selection?.wrappedValue == object.id && !picking.isActive)
-								.padding(.horizontal, MaskinSpace.s9))
+							(selection?.wrappedValue == object.id && !picking.isActive)
+								? MaskinSurface.fillStrong : Color.clear)
 						.listRowSeparatorTint(MaskinSurface.separator)
-						.listRowSeparator(index == 0 ? .hidden : .visible, edges: .top)
+						.listRowSeparator(.visible, edges: .top)
 						.listRowSeparator(index == count - 1 ? .hidden : .visible, edges: .bottom)
-						.alignmentGuide(.listRowSeparatorLeading) { d in d[.leading] + MaskinSpace.s14 + MaskinSpace.s1 }
+						.alignmentGuide(.listRowSeparatorLeading) { d in d[.leading] }
 						.alignmentGuide(.listRowSeparatorTrailing) { d in d[.trailing] }
 				}
 			}
@@ -432,12 +419,12 @@ struct ObjectsListView: View {
 
 	@ViewBuilder private func row(_ object: WorkObject) -> some View {
 		let ask = store.ask(for: object.id)
-		let content = ObjectRow(
-			object: object, typeName: store.directory.typeName(object.type), showsGlyph: store.mixesTypes,
+		let content = ObjectFlatRow(
+			object: object, typeName: store.directory.typeName(object.type), showsType: store.mixesTypes,
 			ask: ask, ownerName: store.directory.name(for: object.driverId),
-			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
 			showsStatus: store.display.shows(.status), showsDriver: store.display.shows(.driver),
-			showsUpdated: store.display.shows(.updated))
+			showsUpdated: store.display.shows(.updated),
+			onToggleStar: picking.isActive ? nil : { Task { _ = await store.toggleStar(object.id) } })
 		Group {
 			if picking.isActive {
 				HStack(spacing: MaskinSpace.s5) {
@@ -544,23 +531,6 @@ struct ObjectsListView: View {
 				},
 				onNew: { status in intents.create(status: status) })
 		}
-	}
-}
-
-/// A row's slice of its group card: top corners on the first row, bottom corners on the last.
-struct CardSlice: View {
-	let isFirst: Bool
-	let isLast: Bool
-	var selected = false
-
-	var body: some View {
-		let r = MaskinRadius.tile
-		UnevenRoundedRectangle(
-			cornerRadii: RectangleCornerRadii(
-				topLeading: isFirst ? r : 0, bottomLeading: isLast ? r : 0, bottomTrailing: isLast ? r : 0,
-				topTrailing: isFirst ? r : 0),
-			style: .continuous)
-		.fill(selected ? MaskinSurface.fillStrong : MaskinSurface.card)
 	}
 }
 

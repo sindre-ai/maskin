@@ -44,7 +44,7 @@ struct ProfileMenuTests {
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .owner).map(\.title)
 				== [
-					"Marketplace", "Artefacts", "Members", "Integrations", "Keychain", "Triggers",
+					"Agents", "Marketplace", "Artefacts", "Members", "Integrations", "Keychain", "Triggers",
 					"Billing", "Keys & MCP",
 				])
 		#expect(
@@ -66,8 +66,8 @@ struct ProfileMenuTests {
 		}
 	}
 
-	@Test func agentsLiveInsideMembersNotAsARow() {
-		#expect(!ProfileMenuItem.allCases.map(\.title).contains("Agents"))
+	@Test func agentsIsTheFirstWorkspaceRowAndMembersStillListsThem() {
+		#expect(ProfileMenu.items(in: .workspace, hasWorkspace: true).first == .agents)
 		#expect(ProfileMenuItem.members.subtitle == "People and agents in this workspace")
 	}
 

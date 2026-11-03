@@ -221,8 +221,8 @@ struct ObjectRow: View {
 	}
 }
 
-/// Foldable header for a group: the status category's mark (or the type glyph) + name + count,
-/// a chevron at the end. Tap to fold.
+/// Foldable header for a group, plain as in the handoff ("Proposed 22"): name, count, a chevron
+/// at the end. Tap to fold.
 struct ObjectGroupHeader: View {
 	let group: ObjectGroup
 	var collapsed = false
@@ -233,11 +233,10 @@ struct ObjectGroupHeader: View {
 			onToggle?()
 		} label: {
 			HStack(spacing: MaskinSpace.s4) {
-				icon
 				Text(group.title ?? "")
 					.maskinText(.subhead)
 					.fontWeight(.semibold)
-					.foregroundStyle(MaskinColor.ink2)
+					.foregroundStyle(MaskinColor.ink3)
 					.lineLimit(1)
 				Text("\(group.objects.count)")
 					.maskinText(.caption)
@@ -261,22 +260,5 @@ struct ObjectGroupHeader: View {
 		.accessibilityAddTraits(.isHeader)
 		.accessibilityLabel("\(group.title ?? ""), \(group.objects.count)")
 		.accessibilityHint(onToggle == nil ? "" : (collapsed ? "Expands the group" : "Folds the group"))
-	}
-
-	@ViewBuilder private var icon: some View {
-		if group.isType {
-			Image(systemName: MaskinObjectType.glyph(for: group.id))
-				.maskinSymbol(MaskinFontSize.t14, weight: .medium)
-				.foregroundStyle(MaskinColor.ink4)
-				.frame(width: MaskinSpace.s8, height: MaskinSpace.s8)
-		} else if group.isAttention {
-			Circle().fill(MaskinColor.sigInk)
-				.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
-				.accessibilityHidden(true)
-		} else if let status = group.status, !status.isEmpty {
-			StatusCategoryGlyph(category: StatusCategory.of(status), size: MaskinSpace.s8)
-		} else if !group.id.isEmpty {
-			StatusCategoryGlyph(category: StatusCategory.of(group.id), size: MaskinSpace.s8)
-		}
 	}
 }

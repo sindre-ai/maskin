@@ -34,9 +34,15 @@ struct DecisionCardView: View {
 		var openAgent: (() -> Void)?
 	}
 
+	/// How the decision is drawn. `.card` is the floating white card (iPad, the object sheet);
+	/// `.row` is the flat iPhone row of the v3 design: a hairline, the question, a status line and a
+	/// chevron, opening in place to the options.
+	enum Style { case card, row }
+
 	let entry: FeedEntry
 	let sender: String?
 	let expanded: Bool
+	var style: Style = .card
 	var now: Date = Date()
 	var actions = Actions()
 	/// Where replies and quick questions go: the Chief of Staff. Without it (a card shown outside
@@ -91,8 +97,7 @@ struct DecisionCardView: View {
 	}
 
 	var body: some View {
-		fullCard
-			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
+		content
 			.sheet(item: $pendingHold) { option in
 				HoldReasonSheet(agent: sender) { reason in actions.hold?(option, reason) }
 			}
@@ -100,6 +105,15 @@ struct DecisionCardView: View {
 			.modifier(ReturnKeyAccept(enabled: acceptsReturnKey && record == nil, focus: $cardFocused) {
 				returnKey()
 			})
+	}
+
+	@ViewBuilder private var content: some View {
+		if style == .row {
+			rowCard
+		} else {
+			fullCard
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.brief, style: .continuous))
+		}
 	}
 
 	/// What Return does on a focused card (4-iPad.md: "accepts the recommended option, confirm sheet
@@ -396,7 +410,10 @@ struct DecisionCardView: View {
 	}
 
 	private func alternateOptions(of decision: DecisionPrompt) -> [DecisionOption] {
-		decision.options.filter { !$0.recommended }
+		// In the row, Hold is the text button under the options, so an agent-written Hold option
+		// is not drawn a second time as a pill.
+		let holdIsText = style == .row && actions.hold != nil
+		return decision.options.filter { !$0.recommended && !(holdIsText && HoldReason.isHold($0.label)) }
 	}
 
 	private func optionButton(_ option: DecisionOption) -> some View {
@@ -567,8 +584,7 @@ struct DecisionCardView: View {
 						placeholder: "Message Chief of Staff",
 						suggestions: { chief.suggestions(for: $0, excluding: Set(model.mentions.map(\.id))) },
 						inConversation: [], roster: runtime?.mentionRoster()?.roster,
-						onFocusChange: { composerFocused = $0 },
-						onPlus: { stubNote = "Coming soon" }, onMic: { stubNote = "Coming soon" }),
+						onFocusChange: { composerFocused = $0 }),
 					onSend: { Task { await chief.submit(card: card) } })
 				.comingSoonToast($stubNote)
 			}
@@ -584,8 +600,8 @@ struct DecisionCardView: View {
 		MaskinComposer(
 			model: fallbackComposer,
 			config: MaskinComposerConfig(
-				variant: .inline, placeholder: replyPrompt, onFocusChange: { composerFocused = $0 },
-				onPlus: { stubNote = "Coming soon" }, onMic: { stubNote = "Coming soon" }),
+				variant: .inline, placeholder: replyPrompt, showsAttach: false,
+				onFocusChange: { composerFocused = $0 }),
 			onSend: sendReply)
 	}
 
@@ -763,6 +779,159 @@ struct DecisionCardView: View {
 				.strokeBorder(ForYouPalette.failureBorder, lineWidth: 1)
 		)
 		.accessibilityElement(children: .combine)
+	}
+}
+
+// MARK: - Flat row (v3)
+
+extension DecisionCardView {
+	/// The row: receipt in place once decided, else header over (when open) the details.
+	fileprivate var rowCard: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+			if let record, !isFailed(record) {
+				receipt(record).transition(.opacity)
+			} else {
+				if let failure = failureMessage { failureBanner(failure) }
+				rowHeader
+				if isExpanded { rowDetails.transition(.opacity) }
+			}
+		}
+		.animation(MaskinMotion.standard, value: record.map { "\($0.phase)" })
+		.animation(MaskinMotion.standard, value: isExpanded)
+		.padding(.vertical, MaskinSpace.s8)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.overlay(alignment: .top) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
+	}
+
+	/// What the row is about: the decision's own title, else the mention's headline.
+	fileprivate var rowTitle: String {
+		let title = card.decision?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return title.isEmpty ? card.headline : title
+	}
+
+	/// The status dot and word: "Needs you" (or why it is urgent), "Update", "Waiting for X", "Back again".
+	fileprivate var rowStatus: (text: String, hot: Bool)? {
+		if entry.backFromLater { return ("Back again", true) }
+		switch entry.bucket {
+		case .needs: return (entry.urgency?.text ?? "Needs you", true)
+		case .fyi: return ("Update", false)
+		case .waiting: return ("Waiting for \(agent?.name ?? sender ?? "an agent")", false)
+		case .done: return nil
+		}
+	}
+
+	fileprivate var rowMetaText: String {
+		var parts = [whoName]
+		if let date = card.latestActivityAt ?? card.mention?.createdAt {
+			parts.append(RelativeTimeFormatter.string(for: date, now: now, style: .relative))
+		}
+		if !isExpanded, hasReplyDraft { parts.append("Draft kept") }
+		return parts.joined(separator: " \u{00B7} ")
+	}
+
+	fileprivate var rowMeta: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			if let status = rowStatus {
+				Circle().fill(status.hot ? MaskinColor.sig : MaskinColor.ink5).frame(width: 7, height: 7)
+					.accessibilityHidden(true)
+				Text(status.text)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
+					.foregroundStyle(status.hot ? MaskinColor.sigInk : MaskinColor.ink4)
+			}
+			Text(rowMetaText)
+				.font(MaskinTypeface.sans(MaskinFontSize.t13))
+				.foregroundStyle(MaskinColor.ink4)
+				.lineLimit(1)
+		}
+	}
+
+	fileprivate var rowHeader: some View {
+		let canToggle = actions.expand != nil || actions.collapse != nil
+		let label = HStack(alignment: .top, spacing: MaskinSpace.s5) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+				Text(rowTitle)
+					.font(MaskinTypeface.sans(MaskinFontSize.t19, weight: .semibold))
+					.tracking(-0.02 * MaskinFontSize.t19)
+					.foregroundStyle(MaskinColor.ink)
+					.multilineTextAlignment(.leading)
+					.fixedSize(horizontal: false, vertical: true)
+				rowMeta
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			if canToggle {
+				Image(systemName: "chevron.down")
+					.maskinSymbol(MaskinFontSize.t13, weight: .semibold)
+					.foregroundStyle(MaskinColor.ink5)
+					.rotationEffect(.degrees(isExpanded ? 180 : 0))
+					.padding(.top, MaskinSpace.s3)
+					.accessibilityHidden(true)
+			}
+		}
+		.contentShape(Rectangle())
+		return Group {
+			if canToggle {
+				Button {
+					if isExpanded {
+						if !engagement.isEngaged { actions.collapse?() }
+					} else {
+						actions.expand?()
+					}
+				} label: { label }
+				.buttonStyle(.maskinPressed)
+				.accessibilityHint(isExpanded ? "Shows less" : "Shows the options")
+			} else {
+				label
+			}
+		}
+	}
+
+	/// What opens under the header: the message, the object, drafts, the options, Hold and Later,
+	/// and the reply.
+	fileprivate var rowDetails: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+			say
+			objectLine
+			if let draft = card.decision?.draft, !draftIsElsewhere(draft) { DraftPreview(draft: draft) }
+			if let drafts = card.decision?.drafts.filter({ !draftIsElsewhere($0) }), !drafts.isEmpty {
+				DraftStackView(drafts: drafts, act: actions.actOnDraft, allDone: actions.dismiss)
+			}
+			if hasDraftElsewhere {
+				Text("Read and edit the message under Drafts to review.")
+					.font(MaskinTypeface.sans(MaskinFontSize.t13))
+					.foregroundStyle(MaskinColor.ink5)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
+			if let decision = card.decision { ask(decision) } else { noDecisionRow }
+			if card.decision != nil, actions.hold != nil || actions.toggleLater != nil { holdAndLater }
+			if laterOpen { laterPresets }
+			replyArea
+		}
+	}
+
+	/// "Hold  Later  Stops reminders until you decide": the two ways to not answer yet.
+	private var holdAndLater: some View {
+		HStack(spacing: MaskinSpace.s9) {
+			if actions.hold != nil { rowTextAction("Hold", selected: false) { pendingHold = holdOption } }
+			if actions.toggleLater != nil {
+				rowTextAction("Later", selected: laterOpen) { actions.toggleLater?() }
+			}
+			Spacer(minLength: MaskinSpace.s3)
+			Text("Stops reminders until you decide")
+				.font(MaskinTypeface.sans(MaskinFontSize.t12))
+				.foregroundStyle(MaskinColor.ink5)
+				.multilineTextAlignment(.trailing)
+		}
+	}
+
+	private func rowTextAction(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+		Button(action: action) {
+			Text(title)
+				.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold))
+				.foregroundStyle(selected ? MaskinColor.sigInk : MaskinColor.ink)
+				.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin, alignment: .leading)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
 	}
 }
 

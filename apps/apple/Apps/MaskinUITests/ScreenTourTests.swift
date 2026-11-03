@@ -173,4 +173,23 @@ final class ScreenTourTests: XCTestCase {
 		}
 		try "skipped: \(skipped.joined(separator: ", "))\n".write(toFile: "\(dir)/skipped.txt", atomically: true, encoding: .utf8)
 	}
+
+	/// Live from For you, and Reply in thread from a message: does each action do anything?
+	func testLiveAndThread() throws {
+		if app.buttons["Not now"].waitForExistence(timeout: 6) { app.buttons["Not now"].tap(); sleep(2) }
+		if tap(app.tabBars.buttons["Chats"], "chats") {
+			sleep(8); shot("30-chats-list")
+			if tap(app.staticTexts["Chief of Staff"].firstMatch, "thread", wait: 15) {
+				sleep(6)
+				shot("31-thread-open")
+				let msg = app.staticTexts["Why not all 47 contacts?"].firstMatch
+				if msg.waitForExistence(timeout: 8) {
+					msg.press(forDuration: 1.2); sleep(2); shot("32-message-menu")
+					let reply = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'thread'")).firstMatch
+					if tap(reply, "reply-in-thread", wait: 3) { sleep(4); shot("33-thread-reply") }
+				} else { skipped.append("no-message") }
+			}
+		}
+		try "skipped: \(skipped.joined(separator: ", "))\n".write(toFile: "\(dir)/skipped-live.txt", atomically: true, encoding: .utf8)
+	}
 }

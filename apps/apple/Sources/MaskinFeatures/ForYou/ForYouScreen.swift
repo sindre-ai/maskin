@@ -545,7 +545,7 @@ struct ForYouFeedView: View {
 
 	private func feedRow(_ entry: FeedEntry) -> some View {
 		card(entry)
-			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset, vertical: 0))
 			.swipeActions(edge: .leading, allowsFullSwipe: true) {
 				// Swipe right takes the agent's recommendation (the mockup says Done; the owner
 				// kept "accept recommended"). Options that can't be undone are never one swipe
@@ -604,7 +604,7 @@ struct ForYouFeedView: View {
 		.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 	}
 
-	private func card(_ entry: FeedEntry) -> some View {
+	private func card(_ entry: FeedEntry) -> AnyView {
 		var actions = liveActions(entry)
 		let id = entry.card.id
 		let agent = store.agent(of: entry.card)
@@ -624,14 +624,16 @@ struct ForYouFeedView: View {
 			deferTo?(preset)
 		}
 		if let agent, let openAgent { actions.openAgent = { openAgent(agent.id) } }
-		return DecisionCardView(
+		let view = DecisionCardView(
 			entry: entry, sender: store.senderName(of: entry.card),
-			expanded: !wide && expansion.isManuallyExpanded(id), now: fixedNow ?? Date(),
+			expanded: !wide && expansion.isManuallyExpanded(id), style: wide ? .card : .row,
+			now: fixedNow ?? Date(),
 			actions: actions, chief: chief, threadInDetail: wide, agent: agent,
 			laterOpen: laterOpenId == id, acceptsReturnKey: wide,
 			typeLabel: store.typeLabel(for:), draftIsElsewhere: { entry.bucket == .needs && entry.record == nil && store.isInStrip($0) },
 			unsentEditNote: entry.bucket == .needs && entry.record == nil ? store.unsentEditNote(for: entry.card) : nil)
-			.maskinHover(.lift, cornerRadius: MaskinRadius.brief)
+		// Cards lift under a pointer; flat rows have nothing to lift.
+		return wide ? AnyView(view.maskinHover(.lift, cornerRadius: MaskinRadius.brief)) : AnyView(view)
 	}
 
 	/// The compact card shown inside the iPad Discuss sheet, live from the same store entry.
@@ -703,6 +705,8 @@ private struct SectionHeader: View {
 private struct ReadableRow: ViewModifier {
 	let width: CGFloat
 	var inset: CGFloat = MaskinSpace.s9
+	/// Space above and below the row; flat decision rows pass 0 and draw their own hairline.
+	var vertical: CGFloat = MaskinSpace.s3
 
 	func body(content: Content) -> some View {
 		content
@@ -710,7 +714,7 @@ private struct ReadableRow: ViewModifier {
 			.frame(maxWidth: .infinity)
 			.listRowSeparator(.hidden)
 			.listRowBackground(Color.clear)
-			.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: inset, bottom: MaskinSpace.s3, trailing: inset))
+			.listRowInsets(EdgeInsets(top: vertical, leading: inset, bottom: vertical, trailing: inset))
 	}
 }
 

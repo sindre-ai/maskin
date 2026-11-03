@@ -242,7 +242,7 @@ struct ConversationListView: View {
 					Label("New conversation", systemImage: "plus")
 						.maskinText(.subhead).fontWeight(.semibold)
 						.foregroundStyle(MaskinColor.sigInk)
-						.padding(.leading, ConversationRow.clusterWidth + MaskinSpace.s7)
+						.padding(.leading, ConversationRow.clusterWidth + MaskinSpace.s8)
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.contentShape(Rectangle())
 				}
@@ -557,7 +557,7 @@ struct TeamConversationRow: View {
 				if conversation.isUnread { UnreadBadge(count: conversation.unreadCount) }
 			}
 		}
-		.padding(.leading, ConversationRow.clusterWidth + MaskinSpace.s7)
+		.padding(.leading, ConversationRow.clusterWidth + MaskinSpace.s8)
 		.contentShape(Rectangle())
 		.maskinHover()
 		.accessibilityElement(children: .combine)

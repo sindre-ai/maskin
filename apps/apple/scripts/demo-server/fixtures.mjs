@@ -367,7 +367,12 @@ export function overrides({ method, path, params, query, body, base, item }) {
 					workspaceId: WORKSPACE_ID,
 					name: 'Review new tasks',
 					type: 'event',
-					config: { entity_type: 'task', action: 'status_changed', from_status: 'todo', to_status: 'in_review' },
+					config: {
+						entity_type: 'task',
+						action: 'status_changed',
+						from_status: 'todo',
+						to_status: 'in_review',
+					},
 					actionPrompt: 'Review the task and say what is missing.',
 					targetActorId: uuid(3),
 					enabled: true,
@@ -676,6 +681,8 @@ export function overrides({ method, path, params, query, body, base, item }) {
 			createdAt: ago(at),
 			editedAt: null,
 			spawned_sessions: [],
+			reactions: [],
+			thread: null,
 		})
 		const first = actors.find((a) => a.id === r.with[0])
 		if (r.n === 300) {

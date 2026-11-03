@@ -113,6 +113,23 @@ struct ForYouSnapshotTests {
 		}
 	}
 
+	@Test("flat rows (v3) render folded, open, waiting and as an update", arguments: [false, true])
+	func flatRows(dark: Bool) throws {
+		for width in [402.0] as [CGFloat] {
+			try render(
+				VStack(spacing: 0) {
+					DecisionCardView(entry: entry(decisionCard), sender: "Forge", expanded: false, style: .row, now: now)
+					DecisionCardView(entry: entry(decisionCard), sender: "Forge", expanded: true, style: .row, now: now)
+					DecisionCardView(
+						entry: entry(decisionCard, bucket: .waiting), sender: "Forge", expanded: false, style: .row, now: now)
+					DecisionCardView(
+						entry: entry(threadCard, bucket: .fyi), sender: "Forge", expanded: false, style: .row, now: now)
+				}
+				.padding(.horizontal, MaskinSpace.s9),
+				width: width, dark: dark, name: "flat-rows")
+		}
+	}
+
 	@Test("irreversible option renders marked", arguments: [false, true])
 	func irreversible(dark: Bool) throws {
 		for width in Self.widths {

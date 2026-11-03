@@ -79,7 +79,7 @@ struct BriefViewer: View {
 						model: followUp.composer,
 						config: MaskinComposerConfig(
 							placeholder: BriefFollowUp.placeholder, onFocusChange: { composerFocused = $0 },
-							onPlus: { stubNote = "Coming soon" }, onMic: { stubNote = "Coming soon" }),
+							onPlus: { stubNote = "Coming soon" }),
 						busy: false,
 						onSend: { ask(followUp.text, card) })
 				}

@@ -417,6 +417,12 @@ public final class ObjectsStore {
 
 	public func setGrouping(_ grouping: ObjectsGrouping) { display.groupBy = grouping }
 
+	public func setShowsTypeTabs(_ on: Bool) {
+		display.showsTypeTabs = on
+		// Without the tabs the scope has nothing to show it, so a scope-only filter folds back to All.
+		if !on, scope == .needsYou || scope == .favourites { Task { await setScope(.all) } }
+	}
+
 	public func toggleGroup(_ id: String) { display.toggleCollapsed(id) }
 
 	/// Switching to the board needs one type (the board is per type), so it opens on the first
