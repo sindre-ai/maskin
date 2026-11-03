@@ -119,6 +119,17 @@ describe('ActivityComment', () => {
 		expect(chip).toHaveClass('bg-brand/10', 'text-brand', 'font-semibold')
 	})
 
+	it('draws a tag of yourself amber, like a tag of yourself in chat', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'cc @Alice on the storage call', mentions: ['actor-1'] },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const chip = screen.getAllByText('@Alice')[0]
+		expect(chip).toHaveClass('bg-warning/10', 'text-warning', 'font-semibold')
+		expect(chip).not.toHaveClass('bg-brand/10')
+	})
+
 	it('leaves a name with no stored id in the existing highlight', () => {
 		const event = buildEventResponse({
 			action: 'commented',

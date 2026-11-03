@@ -211,8 +211,10 @@ export function MessageBubble({
 	const holdsCard = isOwn && !editing && !cardOnly && placedParts.some((p) => p.kind === 'card')
 
 	// Tags in your own words are drawn as chips where they stand: each tagged id claims its
-	// "@Name" in the text. Ids with no place in the text (messages sent before tags lived in the
-	// text) stay in the "You mentioned" row.
+	// "@Name" in the text. A message sent before tags lived in the text has none of its ids in the
+	// text, and keeps the "You mentioned" row. Once any tag sits in the text the row is gone, so an
+	// id left over (a thread reply's default recipient) is not shown as a mention above words that
+	// tag someone else.
 	const tagActors = useMemo(
 		() => (workspaceActors ?? []).filter((a) => !a.isSystem),
 		[workspaceActors],
@@ -232,7 +234,10 @@ export function MessageBubble({
 			remaining = split.unmatchedIds
 			return { kind: 'tagged', parts: split.segments }
 		})
-		return { ownParts: parts, untaggedMentions: remaining }
+		return {
+			ownParts: parts,
+			untaggedMentions: remaining.length === mentions.length ? remaining : [],
+		}
 	}, [placedParts, mentions, tagLabelOf])
 
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
@@ -370,10 +375,13 @@ export function MessageBubble({
 								<div
 									ref={plateRef}
 									className={
-										// A message that is only a card has no plate: the card is the message.
+										// A message that is only a card has no plate: the card is the message. The edit
+										// card is a plain card on the page, so it drops the plate too.
 										cardOnly
 											? 'contents'
-											: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
+											: editing
+												? 'flex flex-col gap-1.5'
+												: 'flex flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground'
 									}
 								>
 									{fileList}
