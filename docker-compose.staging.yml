@@ -28,7 +28,9 @@ services:
 
   # Staging copy of the agent change review bet branch. Differences from docker-compose.prod.yml:
   # no /var/run/docker.sock mount (so no agent sessions run here), no agent-base build,
-  # no GitHub App, no Resend, no prod PostHog. Do not add them back: this shares a host with prod.
+  # no GitHub App, no Resend. PostHog is passed through only for the ship check test saves
+  # (task 513ae49e); remove POSTHOG_API_KEY from the env once the two saves are read.
+  # Do not add the other prod pieces back: this shares a host with prod.
   app:
     build:
       context: .
@@ -65,6 +67,8 @@ services:
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
       FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
       FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-}
       APP_URL: https://review.staging.maskin.sindre.ai
       FRONTEND_URL: https://review.staging.maskin.sindre.ai
     depends_on:
