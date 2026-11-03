@@ -32259,6 +32259,8 @@ public enum Operations {
                             public var closeCondition: Swift.String?
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/tags`.
                             public var tags: [Swift.String]
+                            /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/driverId`.
+                            public var driverId: Swift.String?
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/inProgressCount`.
                             public var inProgressCount: Swift.Int
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/closedCount`.
@@ -32404,6 +32406,7 @@ public enum Operations {
                             ///   - entryCondition:
                             ///   - closeCondition:
                             ///   - tags:
+                            ///   - driverId:
                             ///   - inProgressCount:
                             ///   - closedCount:
                             ///   - medianTimeToCloseMs:
@@ -32424,6 +32427,7 @@ public enum Operations {
                                 entryCondition: Swift.String? = nil,
                                 closeCondition: Swift.String? = nil,
                                 tags: [Swift.String],
+                                driverId: Swift.String? = nil,
                                 inProgressCount: Swift.Int,
                                 closedCount: Swift.Int,
                                 medianTimeToCloseMs: Swift.Int? = nil,
@@ -32444,6 +32448,7 @@ public enum Operations {
                                 self.entryCondition = entryCondition
                                 self.closeCondition = closeCondition
                                 self.tags = tags
+                                self.driverId = driverId
                                 self.inProgressCount = inProgressCount
                                 self.closedCount = closedCount
                                 self.medianTimeToCloseMs = medianTimeToCloseMs
@@ -32465,6 +32470,7 @@ public enum Operations {
                                 case entryCondition
                                 case closeCondition
                                 case tags
+                                case driverId
                                 case inProgressCount
                                 case closedCount
                                 case medianTimeToCloseMs
