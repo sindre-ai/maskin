@@ -302,9 +302,9 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			await editButton.click()
 
 			// After entering edit mode the icon button unmounts, so the label
-			// uniquely addresses the inline textarea.
-			const editor = page.getByLabel('Edit message')
-			await expect(editor).toHaveValue('Original wording with a typo')
+			// uniquely addresses the edit card's text box.
+			const editor = page.getByRole('textbox', { name: 'Edit message' })
+			await expect(editor).toHaveText('Original wording with a typo')
 			await editor.fill('Corrected wording, no typo')
 			await page.getByRole('button', { name: 'Save' }).click()
 

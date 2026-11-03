@@ -1199,7 +1199,12 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type, tools: actors.tools, llmConfig: actors.llmConfig })
+		.select({
+			type: actors.type,
+			tools: actors.tools,
+			llmProvider: actors.llmProvider,
+			llmConfig: actors.llmConfig,
+		})
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
@@ -1350,15 +1355,21 @@ app.openapi(updateActorRoute, (async (c) => {
 		tools = restored.tools as typeof tools
 	}
 
-	// Same for llm_config: its api key is read back masked.
+	// Same for llm_config: its api key is read back masked. The stored key belongs
+	// to the stored provider, so it is only restored while the provider is unchanged;
+	// otherwise it would be sent to the wrong vendor.
 	let llmConfig = body.llm_config
 	if (llmConfig !== undefined) {
-		const restored = restoreMaskedLlmConfig(llmConfig, existing.llmConfig)
+		const providerChanged =
+			body.llm_provider !== undefined && body.llm_provider !== existing.llmProvider
+		const restored = restoreMaskedLlmConfig(llmConfig, providerChanged ? null : existing.llmConfig)
 		if (restored.unresolved.length > 0) {
 			return c.json(
 				createApiError(
 					'BAD_REQUEST',
-					'Masked llm_config values have no stored value to keep; send the real value or leave the entry unchanged',
+					providerChanged
+						? 'The llm_provider is changing, so the stored api key cannot be kept; send a new api key for the new provider'
+						: 'Masked llm_config values have no stored value to keep; send the real value or leave the entry unchanged',
 					restored.unresolved.map((field) => ({
 						field,
 						message: 'Masked value cannot be saved',

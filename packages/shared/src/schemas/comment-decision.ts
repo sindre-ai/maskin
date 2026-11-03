@@ -230,7 +230,20 @@ export const commentDecisionSchema = z
 			.min(1)
 			.optional()
 			.describe(
-				'The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status.',
+				'The statuses the object this comment is on must still be in for the ask to make sense, e.g. ["define"] for "flip this bet to active". The card drops from For You the moment the object is in any other status, so a card cannot outlive the state it was written about. Leave out when the ask does not depend on status; the card then drops once the object leaves the status it had when you posted it (see keep_on_status_change).',
+			),
+		keep_on_status_change: z
+			.boolean()
+			.optional()
+			.describe(
+				'Set true only when the card must stay on For You after the object changes status, for example a question about a task that you move on yourself while the person is still deciding. Without it, a card with no only_while_status drops once the object is in any other status than the one it had when you posted. Leave it off otherwise.',
+			),
+		expires_at: z
+			.string()
+			.datetime({ offset: true })
+			.optional()
+			.describe(
+				'ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a date or a deadline ("this week", "before Thursday"): once it has passed the card leaves For You and is never counted in the briefing or pushes. Must be in the future when you post. Leave out when the ask has no deadline.',
 			),
 		no_status_action: z
 			.boolean()
@@ -242,7 +255,7 @@ export const commentDecisionSchema = z
 			.object({ object_id: z.string().uuid(), status: z.string().min(1) })
 			.optional()
 			.describe(
-				'Set by the API when a card has a set_status option: the object it moves and the status that object was in when the card was posted. Do not set it yourself; any value you send is replaced.',
+				'Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.',
 			),
 		draft: decisionDraftSchema
 			.optional()
@@ -255,6 +268,7 @@ export const commentDecisionSchema = z
 			'Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.',
 			'It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.',
 			'To ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.',
+			"Posting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.",
 			'To ask whether an object should move to a new status ("flip this bet to active"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.',
 			'',
 			'The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:',
@@ -312,7 +326,10 @@ function contentTokens(value: string): string[] {
  * rather than throwing on the first: an agent handed one nit at a time burns a
  * turn per rule.
  */
-export function validateDecisionProse(decision: CommentDecision): DecisionProseViolation[] {
+export function validateDecisionProse(
+	decision: CommentDecision,
+	now: Date = new Date(),
+): DecisionProseViolation[] {
 	const violations: DecisionProseViolation[] = []
 	const add = (path: string, message: string) => violations.push({ path, message })
 
@@ -346,6 +363,13 @@ export function validateDecisionProse(decision: CommentDecision): DecisionProseV
 				`Replace "${hedge}" with the actual number, or drop the claim. Numbers are concrete or absent. Got: "${value}"`,
 			)
 		}
+	}
+
+	if (decision.expires_at && new Date(decision.expires_at).getTime() <= now.getTime()) {
+		add(
+			'expires_at',
+			`expires_at must be in the future, or the card would never show. Got: "${decision.expires_at}"`,
+		)
 	}
 
 	const titleWords = words(decision.title)
@@ -478,6 +502,14 @@ export function findStatusActionViolations(
 		}
 	}
 	return []
+}
+
+/** Whether the card's `expires_at` has passed. A card without one never expires. */
+export function isDecisionExpired(
+	decision: Pick<CommentDecision, 'expires_at'> | null | undefined,
+	now: Date = new Date(),
+): boolean {
+	return !!decision?.expires_at && new Date(decision.expires_at).getTime() <= now.getTime()
 }
 
 /**

@@ -262,7 +262,7 @@ test.describe('Chats v2 — new chat zero state', () => {
 			await expectNoHorizontalOverflow(page)
 
 			const composer = page.getByLabel('Message this conversation')
-			await expect(composer).toHaveValue('')
+			await expect(composer).toHaveText('')
 
 			// Draft route stays put — nothing has been sent yet.
 			await expect(page).toHaveURL(/\/chats\/new/)

@@ -193,6 +193,17 @@ public final class ShareSheetModel {
 		}
 	}
 
+	/// "New item" in the sheet's Send to row: leaves a chat for the workspace's default object type.
+	/// A destination that already is an object (or just files) is kept.
+	public func useNewItem() {
+		guard isChat else { return }
+		destination = Self.defaultDestination(in: schema, content: content)
+	}
+
+	/// The conversations offered as one-tap chips: the first few the server listed.
+	public static let chipCount = 3
+	public var suggestedConversations: [ShareConversation] { Array(conversations.prefix(Self.chipCount)) }
+
 	static func defaultDestination(in schema: ObjectsSchema, content: ShareContent) -> ShareDestination {
 		if schema.types.contains("insight") { return .object(type: "insight") }
 		if let first = schema.types.first { return .object(type: first) }

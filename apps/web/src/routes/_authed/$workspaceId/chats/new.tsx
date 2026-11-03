@@ -1,5 +1,6 @@
 import { Composer } from '@/components/chat/chat'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { useActiveAgents } from '@/hooks/use-active-agents'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -35,6 +36,16 @@ import { toast } from 'sonner'
 // makes them grepable when the layout below references them by name.
 const chatToPh = 'Add person or agent…'
 const chatGroupNote = 'Everyone sees everything'
+
+// Shown instead of the paragraph under the heading while nothing is running,
+// when there is no work yet for that paragraph to describe.
+const quietIntro =
+	'The Chief of Staff is your first point of contact. It sets up agents and loops and keeps the work moving.'
+const starterMessages = [
+	'Help me set up my first agent',
+	'What should I do first in this workspace?',
+	'Explain how agents, loops and tasks fit together',
+]
 
 interface NewChatSearch {
 	agentId?: string
@@ -84,6 +95,13 @@ function NewChatRoute() {
 	const defaultAgent = useDefaultChatAgent()
 	const currentActor = getStoredActor()
 	const conversationsInfinite = useConversationsInfinite(workspaceId)
+	// Same signal the sidebar's "nothing running" line reads. While it loads we
+	// show neither paragraph, so a new user never flashes the one about work
+	// that does not exist.
+	const activity = useActiveAgents(workspaceId)
+	const nothingRunning =
+		!activity.isLoading && !activity.isError && activity.activeSessionCount === 0
+	const showRunningIntro = !activity.isLoading && !nothingRunning
 
 	const [recipients, setRecipients] = useState<Recipient[]>([])
 	const [query, setQuery] = useState('')
@@ -573,10 +591,31 @@ function NewChatRoute() {
 					<h2 className="text-[clamp(20px,2.4vw,26px)] font-bold leading-tight tracking-[-0.025em]">
 						What are we working on?
 					</h2>
-					<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
-						Your agents are already inside the work — the loops they run, the objects they keep
-						current, the sessions live right now. You don't have to paste any of it in.
-					</p>
+					{nothingRunning ? (
+						<>
+							<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
+								{quietIntro}
+							</p>
+							<ul className="mt-4 flex list-none flex-wrap gap-2 p-0">
+								{starterMessages.map((text) => (
+									<li key={text}>
+										<button
+											type="button"
+											onClick={() => setDraft(text)}
+											className="rounded-full border border-border bg-card px-3 py-1.5 text-left text-[12.5px] text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										>
+											{text}
+										</button>
+									</li>
+								))}
+							</ul>
+						</>
+					) : showRunningIntro ? (
+						<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
+							Your agents are already inside the work — the loops they run, the objects they keep
+							current, the sessions live right now. You don't have to paste any of it in.
+						</p>
+					) : null}
 				</div>
 			</div>
 
@@ -604,6 +643,7 @@ function NewChatRoute() {
 					value={draft}
 					onValueChange={setDraft}
 					callAgent={callAgent}
+					inlineTags
 				/>
 			</div>
 		</div>

@@ -28,10 +28,14 @@ const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_']
 // are high-volume diagnostics (1 Nov 2026: each sent 300 to 1,500 a day).
 // mcp_tool_call is sampled because the ceiling alone did not hold it: production
 // runs one replica but redeploys about 25 times a day, and every restart resets
-// the in-memory count (1 Nov 2026: 9.3k sent against a ceiling of 2.5k).
+// the in-memory count (1 Nov 2026: 9.3k sent against a ceiling of 2.5k). It was
+// still 4.3k a day at 0.25 on 2 Nov, so it is now 0.1.
+// 3 Nov 2026: the day was still 20.5k without stale browser tabs, so
+// runtime_session_ended, agent_session_started_with_prompt and
+// mcp_misfire_schema_validation_error (each 1k to 2k a day) are sampled at 0.25.
 const SAMPLE_RATES: Record<string, number> = {
 	provenance_edge_written: 0,
-	mcp_tool_call: 0.25,
+	mcp_tool_call: 0.1,
 	mcp_tool_call_response_size: 0.1,
 	mcp_handshake: 0.1,
 	trigger_match_failed: 0.2,
@@ -46,6 +50,9 @@ const SAMPLE_RATES: Record<string, number> = {
 	mention_guard_decision: 0.1,
 	helper_return_skipped: 0.1,
 	orphan_thread_detected: 0.1,
+	runtime_session_ended: 0.25,
+	agent_session_started_with_prompt: 0.25,
+	mcp_misfire_schema_validation_error: 0.25,
 }
 
 interface Counts {

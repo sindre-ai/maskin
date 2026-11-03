@@ -52,7 +52,7 @@ test.describe('Object detail shell — document sections', () => {
 
 			// "Answer it ↓" moves focus to the answer control.
 			await page.getByRole('button', { name: /answer it/i }).click()
-			await expect(page.getByPlaceholder(/^Comment/)).toBeFocused()
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeFocused()
 
 			// Body: the document content. Custom fields are the drawer's, not the
 			// body's — the mockup lists them under CUSTOM FIELDS (1447–1455).

@@ -81,6 +81,8 @@ public final class ChatComposerModel {
 		public var text: String
 		/// The server id of the message being edited.
 		public var messageID: String?
+		/// Server id of the message a reply quotes, sent as `quoted_message_id`.
+		public var quotedServerID: Int?
 
 		public var label: String {
 			switch kind {
@@ -145,7 +147,8 @@ public final class ChatComposerModel {
 		let metadata = ChatSendMetadata(
 			attachments: attachments.compactMap(\.ref),
 			mentions: Array(
-				mentions.map(\.id).filter { $0 != selfActorID }.prefix(ChatSendMetadata.maxMentions)))
+				mentions.map(\.id).filter { $0 != selfActorID }.prefix(ChatSendMetadata.maxMentions)),
+			quotedMessageId: quote?.kind == .reply ? quote?.quotedServerID : nil)
 		// A reply carries its quote in the message text, the form the web renders as a block quote.
 		let quoted = quote.flatMap { $0.kind == .reply ? ChatQuote.make(author: $0.name, content: $0.text) : nil } ?? ""
 		let result = (quoted + EmojiShortcodes.expand(trimmedText), metadata.isEmpty ? nil : metadata)
@@ -226,19 +229,23 @@ public final class ChatComposerModel {
 		focusRequest += 1
 	}
 
-	public func beginReply(author: String, content: String) {
+	public func beginReply(author: String, content: String, serverID: Int? = nil) {
 		let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else { return }
 		if quote?.kind == .edit { cancelQuote() }
-		quote = Quote(kind: .reply, name: author, text: trimmed, messageID: nil)
+		quote = Quote(kind: .reply, name: author, text: trimmed, messageID: nil, quotedServerID: serverID)
 		focusRequest += 1
 	}
 
 	/// The same as `beginReply`, under the name the object and flow threads call.
-	public func reply(to name: String, text: String) { beginReply(author: name, content: text) }
+	public func reply(to name: String, text: String, serverID: Int? = nil) {
+		beginReply(author: name, content: text, serverID: serverID)
+	}
 
 	/// The same as `beginReply`, under the name the chat thread used before.
-	public func quote(author: String, content: String) { beginReply(author: author, content: content) }
+	public func quote(author: String, content: String, serverID: Int? = nil) {
+		beginReply(author: author, content: content, serverID: serverID)
+	}
 
 	/// The reply in progress, if any.
 	public var replyTo: (name: String, text: String)? {

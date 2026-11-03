@@ -545,6 +545,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_loop: 'loop_create',
 	update_loop: 'loop_update',
 	delete_loop: 'loop_delete',
+	set_loop_view: 'loop_view_set',
 	// Comments
 	create_comment: 'comment_create',
 	// Notifications
@@ -566,6 +567,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
 	gmail_send_email: 'gmail_email_send',
+	gmail_save_attachment: 'gmail_attachment_save',
 	resend_send_email: 'resend_email_send',
 	update_integration_access: 'integration_access_update',
 	// Sessions

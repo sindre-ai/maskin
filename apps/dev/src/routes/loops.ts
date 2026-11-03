@@ -649,6 +649,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				entryCondition,
 				closeCondition,
 				tags,
+				driverId: row.driver,
 				inProgressCount: stats.inProgressCount,
 				closedCount: stats.closedCount,
 				medianTimeToCloseMs: stats.medianCloseMs,

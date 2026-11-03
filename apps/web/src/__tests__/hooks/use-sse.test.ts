@@ -15,6 +15,7 @@ vi.mock('@/lib/sse', () => ({
 
 vi.mock('@/lib/sse-invalidation', () => ({
 	invalidateFromSSE: vi.fn(),
+	notifySSEGap: vi.fn(),
 }))
 
 import { useSSE } from '@/hooks/use-sse'

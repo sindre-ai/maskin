@@ -48,6 +48,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_triggers',
 	'list_loops',
 	'get_loop',
+	'query_data',
 	'list_unread',
 	'list_sessions',
 	'get_session',
@@ -150,6 +151,8 @@ const ROWS: Record<string, Row> = {
 	update_loop: row('Update loop', { idempotent: true }),
 	list_loops: row('List loops'),
 	get_loop: row('Get loop'),
+	set_loop_view: row('Set loop view', { idempotent: true }),
+	query_data: row('Query data'),
 	delete_loop: row('Delete loop', { destructive: true, idempotent: true }),
 	// Subscriptions
 	mark_read: row('Mark read', { idempotent: true }),
@@ -186,6 +189,7 @@ const ROWS: Record<string, Row> = {
 	get_session_activity: row('Get session activity'),
 	approve_object_draft: row('Approve object draft', { openWorld: true }),
 	gmail_send_email: row('Send Gmail email', { openWorld: true }),
+	gmail_save_attachment: row('Save Gmail attachment', { openWorld: true }),
 	resend_send_email: row('Send Resend email', { openWorld: true }),
 	update_integration_access: row('Update integration access', {
 		idempotent: true,

@@ -280,6 +280,39 @@ export function ceilCents(cents: number): number {
 }
 
 /**
+ * The rows the plan usage total is built from: the workspace's maskin_plan
+ * sessions since `periodStartMs` (all-time when undefined). Shared by the
+ * total and by the per-model/agent/flow breakdown so the parts are cut from
+ * exactly the rows the total sums.
+ */
+export function planUsageConds(workspaceId: string, periodStartMs?: number) {
+	const conds = [
+		eq(sessions.workspaceId, workspaceId),
+		// Inlined as a literal rather than a bind parameter: sessions_ws_plan_usage_idx
+		// is a partial index on this exact predicate. A per-execution plan can match a
+		// bound value, but a generic (cached) plan can only prove a match against a
+		// literal. LLM_ROUTE_MASKIN_PLAN is a code constant, never user input.
+		sql`${sessions.config}->>'llm_route' = ${sql.raw(`'${LLM_ROUTE_MASKIN_PLAN}'`)}`,
+	]
+	if (periodStartMs !== undefined) {
+		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))
+	}
+	return and(...conds)
+}
+
+/** One session's cost in (fractional) USD cents: its reported cost, else the token-rate estimate. */
+export function sessionUsageCents(row: {
+	totalCostUsd: string | null
+	inputTokens: number | null
+	outputTokens: number | null
+}): number {
+	const reportedUsd = row.totalCostUsd !== null ? Number(row.totalCostUsd) : Number.NaN
+	if (Number.isFinite(reportedUsd) && reportedUsd > 0) return reportedUsd * 100
+	const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
+	return tokens / LEGACY_TOKENS_PER_USD_CENT
+}
+
+/**
  * Sums actual dollar cost (in USD cents, rounded up) across the workspace's
  * maskin_plan sessions since `periodStart` (or all-time when undefined — used
  * for trial buckets that don't have a billing period yet). Prefers each
@@ -302,17 +335,6 @@ export async function getWorkspacePlanUsdCentsUsage(
 	workspaceId: string,
 	periodStartMs?: number,
 ): Promise<number> {
-	const conds = [
-		eq(sessions.workspaceId, workspaceId),
-		// Inlined as a literal rather than a bind parameter: sessions_ws_plan_usage_idx
-		// is a partial index on this exact predicate. A per-execution plan can match a
-		// bound value, but a generic (cached) plan can only prove a match against a
-		// literal. LLM_ROUTE_MASKIN_PLAN is a code constant, never user input.
-		sql`${sessions.config}->>'llm_route' = ${sql.raw(`'${LLM_ROUTE_MASKIN_PLAN}'`)}`,
-	]
-	if (periodStartMs !== undefined) {
-		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))
-	}
 	const sessionRows = db
 		.select({
 			totalCostUsd: sessions.totalCostUsd,
@@ -320,7 +342,7 @@ export async function getWorkspacePlanUsdCentsUsage(
 			outputTokens: sessions.outputTokens,
 		})
 		.from(sessions)
-		.where(and(...conds))
+		.where(planUsageConds(workspaceId, periodStartMs))
 
 	// Research runs (deep_research) are metered in cents already, so they are
 	// summed in SQL. Only the maskin_plan route counts, like sessions: a run on
@@ -340,15 +362,7 @@ export async function getWorkspacePlanUsdCentsUsage(
 	const [rows, researchSum] = await Promise.all([sessionRows, researchRows])
 
 	let totalCents = Number(researchSum[0]?.costCents ?? 0)
-	for (const row of rows) {
-		const reportedUsd = row.totalCostUsd !== null ? Number(row.totalCostUsd) : Number.NaN
-		if (Number.isFinite(reportedUsd) && reportedUsd > 0) {
-			totalCents += reportedUsd * 100
-			continue
-		}
-		const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
-		totalCents += tokens / LEGACY_TOKENS_PER_USD_CENT
-	}
+	for (const row of rows) totalCents += sessionUsageCents(row)
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
 	return ceilCents(totalCents)

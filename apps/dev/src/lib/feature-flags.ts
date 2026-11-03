@@ -80,6 +80,22 @@ export const FLAGS = {
 	 */
 	DEEP_RESEARCH: 'deep-research',
 	/**
+	 * Custom agent-built view on the loop page (task
+	 * [Prototype: agent-built custom view on the loop page (HTML + data bridge)](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c9d7469b-7922-4123-8681-925bd7f30044)).
+	 * Read once, in the loop detail route in apps/web. Off means the loop page is
+	 * exactly the default page (stats and flow). On, a loop with
+	 * metadata.view_file_id gets a Default / Custom view toggle and renders that
+	 * HTML file in place of the stats and flow, with live data from the read-only
+	 * bridge. Per-actor visual gate only: set_loop_view, query_data and
+	 * GET /api/data/query are read-only or metadata-only and stay reachable for
+	 * everyone. Not for customers until a view cannot send what it has read to
+	 * another site. Self-navigation is blocked in Chrome by the isolation frame
+	 * (frame-src 'none', untested elsewhere), but a view can still make Chrome
+	 * fetch an address of its choosing with <link rel=prerender>. Retire once that
+	 * is closed and the view ships to everyone.
+	 */
+	LOOP_CUSTOM_VIEW: 'loop-custom-view',
+	/**
 	 * Agents answer in the main chat and in every thread at the same time (bet
 	 * [Agents answer in the main chat and in every thread at the same time](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/44b1b91c-3902-4fab-99ca-d7db7af4155d)).
 	 * Backend only, per actor, keyed to the person who wrote the message (never the agent). Read once, in

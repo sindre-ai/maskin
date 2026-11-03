@@ -12,14 +12,27 @@ struct IntegrationsView: View {
 	@State private var store: IntegrationsStore
 	@State private var actionTarget: ConnectedIntegration?
 	@State private var pendingDisconnect: ConnectedIntegration?
+	@State private var showAddToolServer = false
+	@State private var showClaude = false
+	@State private var accessTarget: ConnectedIntegration?
+	/// Agents for the Agent access page, read from the member list when the page opens.
+	@State private var accessAgents: [IntegrationAccessStore.AgentRef] = []
 	let webSetupURL: URL?
+	/// Builds the pages Integrations pushes (v3): Add tool server and Import from Claude. Nil in
+	/// previews, which drops those rows.
+	let services: SettingsServices?
 
-	init(store: IntegrationsStore, webSetupURL: URL?) {
+	init(store: IntegrationsStore, webSetupURL: URL?, services: SettingsServices? = nil) {
 		_store = State(initialValue: store)
 		self.webSetupURL = webSetupURL
+		self.services = services
 	}
 
 	var body: some View {
+		dialogs(destinations(page))
+	}
+
+	private var page: some View {
 		WorkspacePage(title: "Integrations") {
 			if rows.isEmpty {
 				switch store.phase {
@@ -29,6 +42,19 @@ struct IntegrationsView: View {
 				}
 			} else {
 				PageCard(rows: rows)
+			}
+			if !toolServerRows.isEmpty {
+				PageGroupLabel(text: "Tool servers")
+				PageCard(rows: toolServerRows)
+			}
+			if services != nil {
+				PageGroupLabel(text: "Claude")
+				PageCard(rows: [
+					PageRowModel(
+						id: "claude", title: "Import from Claude",
+						subtitle: "Use a Claude subscription as the model source", showsChevron: true,
+						action: { showClaude = true })
+				])
 			}
 			if let error = store.actionError { FormError(error) }
 			if let notice = store.connectNotice {
@@ -44,8 +70,29 @@ struct IntegrationsView: View {
 					? "Connecting signs you in with the provider. When you come back, this list refreshes."
 					: "Only owners and admins can connect or disconnect an integration.")
 		}
+	}
+
+	private func destinations(_ view: some View) -> some View {
+		view
 		.task { await store.load() }
 		.refreshable { await store.load() }
+		.navigationDestination(isPresented: $showAddToolServer) {
+			if let services { AddToolServerView(store: services.addToolServerStore()) { Task { await store.load() } } }
+		}
+		.navigationDestination(item: $accessTarget) { integration in
+			if let services {
+				IntegrationAccessView(
+					store: services.integrationAccessStore(integrationId: integration.id, agents: accessAgents),
+					title: store.displayName(for: integration))
+			}
+		}
+		.navigationDestination(isPresented: $showClaude) {
+			if let services { ClaudeAccountView(store: services.claudeAccountStore(), importURL: services.webURL("keys")) }
+		}
+	}
+
+	private func dialogs(_ view: some View) -> some View {
+		view
 		// Returning from the browser: pick up whatever the web flow just connected.
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { Task { await store.load() } }
@@ -55,14 +102,22 @@ struct IntegrationsView: View {
 			isPresented: Binding(get: { actionTarget != nil }, set: { if !$0 { actionTarget = nil } }),
 			titleVisibility: .visible, presenting: actionTarget
 		) { integration in
-			if store.canManage, store.supportsNativeConnect(integration.provider),
+			if integration.provider == IntegrationsStore.toolServerProvider {
+				EmptyView()
+			} else if store.canManage, store.supportsNativeConnect(integration.provider),
 				integration.state != .connected
 			{
 				Button("Reconnect") { startConnect(integration.provider) }
 			} else if needsWeb(integration) {
 				Button("Reconnect in browser") { openSetup() }
 			}
-			Button("Disconnect", role: .destructive) { pendingDisconnect = integration }
+			if services != nil, integration.state == .connected {
+				Button("Agent access") { openAccess(integration) }
+			}
+			Button(
+				integration.provider == IntegrationsStore.toolServerProvider ? "Remove" : "Disconnect",
+				role: .destructive
+			) { pendingDisconnect = integration }
 		}
 		.confirmationDialog(
 			"Choose a GitHub account",
@@ -90,7 +145,7 @@ struct IntegrationsView: View {
 	}
 
 	private var rows: [PageRowModel] {
-		let connected = store.connected.map { integration in
+		let connected = store.accounts.map { integration in
 			PageRowModel(
 				id: integration.id, title: store.displayName(for: integration),
 				subtitle: WorkspacePageState.integrationSubtitle(
@@ -113,6 +168,25 @@ struct IntegrationsView: View {
 		return connected + available
 	}
 
+	/// Tool servers a person added, plus the way to add one (owners and admins; the server only
+	/// accepts people, which the add page reports if an agent key is signed in).
+	private var toolServerRows: [PageRowModel] {
+		var rows = store.toolServers.map { server in
+			PageRowModel(
+				id: server.id, title: store.displayName(for: server),
+				subtitle: server.state == .connected ? nil : WorkspacePageState.integrationSubtitle(server.state, account: nil),
+				accessory: .state(WorkspacePageState.integration(server.state)),
+				action: store.canManage && !store.isConnectInFlight ? { actionTarget = server } : nil)
+		}
+		if store.canManage, services != nil {
+			rows.append(
+				PageRowModel(
+					id: "add-tool-server", title: "Add tool server", showsChevron: true,
+					action: { showAddToolServer = true }))
+		}
+		return rows
+	}
+
 	private func isConnecting(_ providerID: String) -> Bool { store.connectPhase.provider == providerID }
 
 	private func startConnect(_ providerID: String) {
@@ -127,6 +201,18 @@ struct IntegrationsView: View {
 			return store.isConnectInFlight ? nil : { startConnect(provider.id) }
 		}
 		return webSetupURL != nil ? { openSetup() } : nil
+	}
+
+	/// Reads the workspace's agents, then pushes the page. A failed read still opens it with no
+	/// rows, which the page words as "No agents".
+	private func openAccess(_ integration: ConnectedIntegration) {
+		guard let services else { return }
+		Task {
+			let members: [WorkspaceMember] =
+				(try? await services.source?.list(workspaceId: services.workspaceId ?? "")) ?? []
+			accessAgents = members.filter(\.isAgent).map { .init(id: $0.actorId, name: $0.name) }
+			accessTarget = integration
+		}
 	}
 
 	private func openSetup() { if let webSetupURL { openURL(webSetupURL) } }

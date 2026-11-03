@@ -493,10 +493,20 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 	let workspaceId: string
 	let actorId: string
 
+	let endedRandomSpy: ReturnType<typeof vi.spyOn>
+
 	beforeEach(async () => {
+		// runtime_session_ended is sampled; a draw of 0 is always under the rate.
+		endedRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+		__resetPosthogEventBudgetForTesting()
 		actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId)
 		workspaceId = ws.id
+	})
+
+	afterEach(() => {
+		endedRandomSpy.mockRestore()
+		__resetPosthogEventBudgetForTesting()
 	})
 
 	// Telemetry that records every runtime_session_ended it is asked to send.

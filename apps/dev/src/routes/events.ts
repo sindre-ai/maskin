@@ -282,6 +282,7 @@ app.openapi(createCommentRoute, (async (c) => {
 			workspaceId: objects.workspaceId,
 			title: objects.title,
 			type: objects.type,
+			status: objects.status,
 		})
 		.from(objects)
 		.where(eq(objects.id, body.entity_id))
