@@ -63,9 +63,18 @@ struct ChiefOfStaffSheet: View {
 
 	private func make() -> (chat: ChatStore, composer: ChatComposerModel) {
 		let session = environment.auth.session
+		let chat = Self.makeChat(environment: environment, desk: desk, conversationID: presented.conversationID)
+		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		return (chat, ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? ""))
+	}
+
+	/// The chat store every For You surface uses for one conversation (this sheet and the briefing
+	/// viewer's follow-up panel): same queue, same cache, same live events as the Chats tab.
+	static func makeChat(environment: AppEnvironment, desk: ChiefOfStaffDesk, conversationID: String) -> ChatStore {
+		let session = environment.auth.session
 		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
 		let chat = ChatStore(
-			conversationID: presented.conversationID, currentActorID: session?.actorId ?? "",
+			conversationID: conversationID, currentActorID: session?.actorId ?? "",
 			currentActorName: session?.name ?? "You", api: source,
 			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
 			cache: environment.snapshotCache)
@@ -74,7 +83,7 @@ struct ChiefOfStaffSheet: View {
 		chat.onMarkedRead = { [conversations = desk.conversations] id, _ in
 			Task { await conversations.markRead(id, serverAlreadyKnows: true) }
 		}
-		return (chat, ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? ""))
+		return chat
 	}
 
 	var body: some View {

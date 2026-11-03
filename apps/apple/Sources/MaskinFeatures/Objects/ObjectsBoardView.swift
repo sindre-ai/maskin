@@ -223,7 +223,7 @@ struct ObjectsBoardColumnView: View {
 			ownerName: store.directory.name(for: object.driverId),
 			ownerIsAgent: store.directory.actor(for: object.driverId)?.isAgent == true,
 			showsStatus: store.display.shows(.status), showsDriver: store.display.shows(.driver),
-			showsUpdated: store.display.shows(.updated))
+			showsUpdated: store.display.shows(.updated), reservesMenu: !picking.isActive)
 		Group {
 			if picking.isActive {
 				HStack(spacing: MaskinSpace.s5) {
@@ -246,12 +246,31 @@ struct ObjectsBoardColumnView: View {
 		.draggable(object.id)
 		// The same move without dragging, for VoiceOver and a steady hand.
 		.contextMenu {
-			Menu("Move to", systemImage: "arrow.right") {
-				ForEach(store.directory.schema.statuses(for: object.type).filter { $0 != object.status }, id: \.self) {
-					status in
-					Button(MaskinStatus.sentenceLabel(for: status)) { onMove(object.id, status) }
+			Menu("Move to", systemImage: "arrow.right") { moveItems(object) }
+		}
+		// The visible "···": Move to, one tap away without a long press.
+		.overlay(alignment: .bottomTrailing) {
+			if !picking.isActive {
+				Menu {
+					Section("Move to") { moveItems(object) }
+				} label: {
+					Image(systemName: "ellipsis")
+						.maskinSymbol(MaskinFontSize.t16, weight: .semibold)
+						.foregroundStyle(MaskinColor.ink4)
+						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
 				}
+				.accessibilityLabel("Move \(object.displayTitle)")
 			}
+		}
+	}
+}
+
+extension ObjectsBoardColumnView {
+	/// The statuses an object can move to (its own is left out).
+	@ViewBuilder fileprivate func moveItems(_ object: WorkObject) -> some View {
+		ForEach(store.directory.schema.statuses(for: object.type).filter { $0 != object.status }, id: \.self) { status in
+			Button(MaskinStatus.sentenceLabel(for: status)) { onMove(object.id, status) }
 		}
 	}
 }
@@ -266,6 +285,9 @@ struct ObjectBoardCard: View {
 	var showsStatus = true
 	var showsDriver = true
 	var showsUpdated = true
+	/// Keeps a strip under the content for the card's "···" menu, so it never covers the text or
+	/// steals taps meant to open the card.
+	var reservesMenu = false
 
 	var body: some View {
 		ObjectRow(
@@ -274,6 +296,7 @@ struct ObjectBoardCard: View {
 			showsUpdated: showsUpdated)
 		.padding(.horizontal, MaskinSpace.s7)
 		.padding(.vertical, MaskinSpace.s6)
+		.padding(.bottom, reservesMenu ? MaskinSpace.touchMin - MaskinSpace.s6 : 0)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl, style: .continuous))
 		.contentShape(Rectangle())
 	}

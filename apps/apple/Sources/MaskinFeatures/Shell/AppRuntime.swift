@@ -146,13 +146,15 @@ public final class AppRuntime {
 		public let id = UUID()
 		public let agent: ChatParticipant
 		public let live: Bool
+		/// Text for the new chat's message box (item detail's Message mode).
+		public let draft: String
 	}
 	public var agentChatRequest: AgentChatRequest?
 
-	public func startChat(with agent: ChatParticipant, live: Bool = false) {
+	public func startChat(with agent: ChatParticipant, live: Bool = false, draft: String = "") {
 		presentation = nil
 		selectedTab = .chats
-		agentChatRequest = AgentChatRequest(agent: agent, live: live)
+		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft)
 	}
 
 	public func buildInChat(_ text: String) {

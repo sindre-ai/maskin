@@ -7,6 +7,9 @@
  * retries: an ambiguous failure is reported, never repeated.
  */
 
+import { randomBytes } from 'node:crypto'
+import type { EmailAttachment } from '../../../email-attachments'
+
 const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
 export const MAX_RECIPIENTS = 20
@@ -123,6 +126,33 @@ export interface OutgoingEmail {
 	cc?: Recipient[]
 	subject: string
 	body: string
+	/** Files to send along. With none, the message is a single text part, as it always was. */
+	attachments?: EmailAttachment[]
+}
+
+const base64Lines = (bytes: Buffer) => bytes.toString('base64').replace(/(.{76})/g, '$1\r\n')
+
+/** RFC 2231: the name in UTF-8 with percent escapes, plus a plain ASCII fallback for old readers. */
+function filenameParams(name: string): string {
+	const fallback = name.replace(/[^\x20-\x7e]|["\\]/g, '_')
+	const encoded = encodeURIComponent(name).replace(
+		/['()*]/g,
+		(c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+	)
+	return `filename="${fallback}"; filename*=UTF-8''${encoded}`
+}
+
+function attachmentPart(file: EmailAttachment): string {
+	if (hasControlChars(file.filename)) {
+		throw new GmailSendError('INVALID_EMAIL', 'An attachment name contains a line break.')
+	}
+	return [
+		`Content-Type: ${file.contentType}`,
+		'Content-Transfer-Encoding: base64',
+		`Content-Disposition: attachment; ${filenameParams(file.filename)}`,
+		'',
+		base64Lines(file.content),
+	].join('\r\n')
 }
 
 /** The RFC 5322 message, ready to be base64url encoded for `messages.send`. */
@@ -140,18 +170,32 @@ export function buildMimeMessage(email: OutgoingEmail): string {
 	if (all.length > MAX_RECIPIENTS) {
 		throw new GmailSendError('INVALID_EMAIL', `At most ${MAX_RECIPIENTS} recipients are allowed.`)
 	}
-	const body = Buffer.from(email.body.replace(/\r?\n/g, '\r\n'), 'utf8')
-		.toString('base64')
-		.replace(/(.{76})/g, '$1\r\n')
-	return [
+	const body = base64Lines(Buffer.from(email.body.replace(/\r?\n/g, '\r\n'), 'utf8'))
+	const headers = [
 		`To: ${email.to.map(formatRecipient).join(', ')}`,
 		...(email.cc?.length ? [`Cc: ${email.cc.map(formatRecipient).join(', ')}`] : []),
 		`Subject: ${encodeHeaderText(email.subject)}`,
 		'MIME-Version: 1.0',
+	]
+	const textPart = [
 		'Content-Type: text/plain; charset=UTF-8',
 		'Content-Transfer-Encoding: base64',
 		'',
 		body,
+	]
+	if (!email.attachments?.length) return [...headers, ...textPart].join('\r\n')
+
+	// Every part is base64 (letters, digits, + / =), so a boundary starting "=_" cannot occur in one.
+	const boundary = `=_maskin_${randomBytes(12).toString('hex')}`
+	return [
+		...headers,
+		`Content-Type: multipart/mixed; boundary="${boundary}"`,
+		'',
+		`--${boundary}`,
+		...textPart,
+		...email.attachments.flatMap((file) => [`--${boundary}`, attachmentPart(file)]),
+		`--${boundary}--`,
+		'',
 	].join('\r\n')
 }
 

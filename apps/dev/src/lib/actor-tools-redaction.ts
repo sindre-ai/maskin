@@ -31,11 +31,15 @@ const URL_PASSWORD = /(:\/\/[^\s/:@]+:)([^\s/@]+)(?=@)/g
 // A bare flag whose next arg is the value, e.g. ["--api-key", "<value>"].
 const SECRET_FLAG = new RegExp(`^--?${SECRET_KEYWORD}$`, 'i')
 
+/** Copy of a string with the password in a user:password@host url replaced by MASKED_VALUE. */
+export function maskUrlPassword(value: string): string {
+	return value.replace(URL_PASSWORD, `$1${MASKED_VALUE}`)
+}
+
 function maskArg(arg: string): string {
-	return arg
-		.replace(KEYED_VALUE, `$1${MASKED_VALUE}`)
-		.replace(BEARER_VALUE, `$1${MASKED_VALUE}`)
-		.replace(URL_PASSWORD, `$1${MASKED_VALUE}`)
+	return maskUrlPassword(
+		arg.replace(KEYED_VALUE, `$1${MASKED_VALUE}`).replace(BEARER_VALUE, `$1${MASKED_VALUE}`),
+	)
 }
 
 /**

@@ -55,7 +55,7 @@ export interface MentionSuggestionItem {
  * without losing something has reason loss_check and the construct found.
  */
 export interface MarkdownParseErrorInfo {
-	errorMessage: string
+	errorClass: string
 	variant: EditorVariant
 	surface: string | undefined
 	objectId: string | undefined
@@ -211,11 +211,10 @@ export interface MarkdownEditorRef {
 	scrollToTextComment(id: string, options?: { focus?: boolean }): void
 }
 
-const MAX_ERROR_MESSAGE_LENGTH = 500
-
-function truncateErrorMessage(err: unknown): string {
-	const raw = err instanceof Error ? err.message : String(err)
-	return raw.length > MAX_ERROR_MESSAGE_LENGTH ? `${raw.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…` : raw
+// The thrown error's name only. Its message can quote document text, which
+// usage events must never carry.
+function errorClassOf(err: unknown): string {
+	return err instanceof Error ? err.name : 'UnknownError'
 }
 
 /**
@@ -454,11 +453,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		)
 
 		const reportParseError = useCallback(
-			(errorMessage: string) => {
+			(errorClass: string) => {
 				if (parseErrorReportedRef.current) return
 				parseErrorReportedRef.current = true
 				setParseFailed(true)
-				onParseError?.({ errorMessage, variant, surface, objectId, reason: 'parse_error' })
+				onParseError?.({ errorClass, variant, surface, objectId, reason: 'parse_error' })
 			},
 			[onParseError, variant, surface, objectId],
 		)
@@ -479,7 +478,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					if (refusalsReportedRef.current.has(key)) continue
 					refusalsReportedRef.current.add(key)
 					onParseError?.({
-						errorMessage: `rewrite refused: ${refusal.construct}`,
+						errorClass: 'rewrite_refused',
 						variant,
 						surface,
 						objectId,
@@ -581,7 +580,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					setSourceStatus('readonly')
 					if (!alreadyReported) {
 						onParseError?.({
-							errorMessage: `opened read-only: ${cause}`,
+							errorClass: 'opened_read_only',
 							variant,
 							surface,
 							objectId,
@@ -598,7 +597,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 				editor.setEditable(false)
 				setSourceStatus('readonly')
 				onParseError?.({
-					errorMessage: truncateErrorMessage(err),
+					errorClass: errorClassOf(err),
 					variant,
 					surface,
 					objectId,
@@ -616,10 +615,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			try {
 				const roundTrip = editor.storage.markdown.getMarkdown() as string
 				if (value.trim().length > 0 && roundTrip.trim().length === 0) {
-					reportParseError('tiptap-markdown produced empty document from non-empty input')
+					reportParseError('empty_document')
 				}
 			} catch (err) {
-				reportParseError(truncateErrorMessage(err))
+				reportParseError(errorClassOf(err))
 			}
 		}, [editor, value, parseFailed, reportParseError])
 

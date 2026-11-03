@@ -243,6 +243,13 @@ export const ROW_SCENARIOS: RowScenario[] = [
 		control: { workspace_id: WS },
 	},
 	{
+		covers: ['create_comment object_id'],
+		tool: 'create_comment',
+		old: { workspace_id: WS, object_id: U1, content: 'Done' },
+		canonical: { workspace_id: WS, entity_id: U1, content: 'Done' },
+		control: { workspace_id: WS, content: 'Done' },
+	},
+	{
 		covers: ['search_objects query'],
 		tool: 'search_objects',
 		old: { workspace_id: WS, query: 'roadmap' },

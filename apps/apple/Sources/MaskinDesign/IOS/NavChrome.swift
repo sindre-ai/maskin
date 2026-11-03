@@ -1,10 +1,9 @@
 import SwiftUI
 
 extension MaskinSurface {
-	/// The solid circle of a top-bar primary action (Live, New). It stays a dark disc in dark mode too
-	/// (a touch lighter than the black base so it reads inside the glass capsule); pair with
-	/// `onNavInk`.
-	public static let navInk = Color(light: RGBA(0x18181B), dark: RGBA(0x232328))
-	/// The glyph on `navInk`: white in both modes.
-	public static let onNavInk = Color(light: RGBA(0xFFFFFF), dark: RGBA(0xFAFAFA))
+	/// The solid accent disc of a top-bar primary action (v15: cobalt #1F4FE0, #5B86FF in dark); always
+	/// pair with `onNavInk` (white, or #05102B on the dark-mode accent).
+	public static let navInk = Color(light: RGBA(0x1F4FE0), dark: RGBA(0x5B86FF))
+	/// The glyph on `navInk`.
+	public static let onNavInk = Color(light: RGBA(0xFFFFFF), dark: RGBA(0x05102B))
 }

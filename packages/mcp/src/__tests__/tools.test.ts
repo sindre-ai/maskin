@@ -88,6 +88,7 @@ const ALL_TOOL_NAMES = [
 	'send_session_message',
 	'ask_user_question',
 	'gmail_send_email',
+	'gmail_save_attachment',
 	'resend_send_email',
 	'approve_object_draft',
 	'create_notification',
@@ -1761,5 +1762,31 @@ describe('workspace skill tools — end-to-end round-trip', () => {
 		expect(fetched.id).toBe(created.id)
 		expect(fetched.name).toBe('deploy-prod')
 		expect(fetched.content).toBe('---\nname: deploy-prod\ndescription: Ship to prod\n---\n\nBody')
+	})
+})
+
+describe('list_triggers schema', () => {
+	const schema = tools.list_triggers.inputSchema
+
+	it('accepts each filter and the compact flag', () => {
+		const result = schema.safeParse({
+			agent_id: '11111111-1111-4111-8111-111111111111',
+			status: 'enabled',
+			q: 'sweep',
+			compact: true,
+			limit: 10,
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects an unknown parameter instead of ignoring it', () => {
+		const result = schema.safeParse({ driver_id: '11111111-1111-4111-8111-111111111111' })
+		expect(result.success).toBe(false)
+		if (!result.success) expect(result.error.issues[0].message).toContain('driver_id')
+	})
+
+	it('rejects a status other than enabled or disabled and an agent id that is not a uuid', () => {
+		expect(schema.safeParse({ status: 'paused' }).success).toBe(false)
+		expect(schema.safeParse({ agent_id: 'not-a-uuid' }).success).toBe(false)
 	})
 })

@@ -43,8 +43,6 @@ struct MarketplaceContent: View {
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.isPushedInHostStack) private var pushed
 	@State private var search = ""
-	@State private var useCase: String?
-	@State private var kind: MarketplaceKind = .all
 	@State private var path: [String] = []
 
 	var body: some View {
@@ -85,36 +83,66 @@ struct MarketplaceContent: View {
 			})
 	}
 
+	/// v19: Update available, Installed, then the catalog under its use-case headings.
 	private var catalogList: some View {
-		let rows = kind.showsFlows ? store.loops(useCase: useCase, query: search) : []
+		let updates = store.updatesAvailable.filter { matches($0) }
+		let installed = store.installedEntries(query: search)
+		let groups = store.catalogGroups(query: search)
 		return ScrollView {
 			LazyVStack(alignment: .leading, spacing: MaskinSpace.s9) {
 				if let notice = store.notice {
 					FormError(notice).onTapGesture { store.notice = nil }
 				}
-				if !store.updatesAvailable.isEmpty, search.isEmpty, useCase == nil { updates }
-				kindChips
-				if kind.showsFlows, !store.useCases.isEmpty { chips }
-				LazyVGrid(
-					columns: [GridItem(.adaptive(minimum: 300), spacing: MaskinSpace.s7)],
-					spacing: MaskinSpace.s7
-				) {
-					ForEach(rows) { loop in
-						MarketplaceCard(
-							loop: loop, state: store.state(of: loop.id),
-							onInstall: { Task { await store.installLoop(loop.id) } }
-						)
-						.onTapGesture { path.append(loop.id) }
-						.accessibilityAddTraits(.isButton)
-					}
+				if !updates.isEmpty {
+					PageGroupLabel(text: "Update available")
+					PageCard(rows: updates.map(updateRow))
 				}
-				stateOverlay(isEmpty: rows.isEmpty)
+				if !installed.isEmpty {
+					PageGroupLabel(text: "Installed")
+					PageCard(rows: installed.map(installedRow))
+				}
+				ForEach(groups) { group in
+					PageGroupLabel(text: group.title)
+					PageCard(rows: group.loops.map(catalogRow))
+				}
+				stateOverlay(isEmpty: installed.isEmpty && groups.isEmpty)
 			}
 			.padding(MaskinSpace.s9)
 			.frame(maxWidth: 1000)
 			.frame(maxWidth: .infinity)
 		}
 		.refreshable { await store.load() }
+	}
+
+	private func matches(_ row: InstalledLoop) -> Bool {
+		search.isEmpty || store.installedEntries(query: search).contains { $0.id == row.id }
+	}
+
+	private func updateRow(_ row: InstalledLoop) -> PageRowModel {
+		PageRowModel(
+			id: "update-\(row.id)", title: "\(row.loopName) v\(row.availableVersion)", subtitle: row.updateNote,
+			showsChevron: true, action: { path.append(row.sourceLoopID) })
+	}
+
+	private func installedRow(_ entry: MarketplaceStore.InstalledEntry) -> PageRowModel {
+		PageRowModel(
+			id: "installed-\(entry.id)", title: entry.loop?.name ?? entry.install.loopName,
+			subtitle: Self.line(entry.loop),
+			accessory: .state(PageState("v\(entry.install.installedVersion)", .muted)),
+			showsChevron: true, action: { path.append(entry.install.sourceLoopID) })
+	}
+
+	private func catalogRow(_ loop: MarketplaceLoop) -> PageRowModel {
+		PageRowModel(
+			id: loop.id, title: loop.name, subtitle: Self.line(loop), showsChevron: true,
+			action: { path.append(loop.id) })
+	}
+
+	/// "Engineering · 6 agents · 2 triggers": only what the catalog actually lists.
+	static func line(_ loop: MarketplaceLoop?) -> String? {
+		guard let loop else { return nil }
+		let parts = [loop.useCase, loop.contentsLine].compactMap { $0 }.filter { !$0.isEmpty }
+		return parts.isEmpty ? nil : parts.joined(separator: " · ")
 	}
 
 	@ViewBuilder
@@ -128,82 +156,13 @@ struct MarketplaceContent: View {
 			}
 		case .loaded:
 			if isEmpty {
-				if let message = kind.emptyMessage {
-					EmptyState(symbol: "square.grid.2x2", title: "Nothing here yet", message: message)
-				} else if search.isEmpty && useCase == nil {
+				if search.isEmpty {
 					EmptyState(
 						symbol: "square.grid.2x2", title: "Nothing here yet",
 						message: "The marketplace has no flows right now.")
 				} else {
 					ContentUnavailableView.search(text: search)
 				}
-			}
-		}
-	}
-
-	private var kindChips: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: MaskinSpace.s4) {
-				ForEach(MarketplaceKind.allCases, id: \.self) { item in
-					chip(item.title, selected: kind == item) {
-						kind = item
-						useCase = nil
-					}
-				}
-			}
-		}
-		.scrollClipDisabled()
-	}
-
-	private var chips: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: MaskinSpace.s4) {
-				chip("All", selected: useCase == nil) { useCase = nil }
-				ForEach(store.useCases, id: \.self) { name in
-					chip(name, selected: useCase == name) { useCase = (useCase == name) ? nil : name }
-				}
-			}
-		}
-		.scrollClipDisabled()
-	}
-
-	private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-		Button(action: action) {
-			Text(title)
-				.maskinText(.subhead)
-				.foregroundStyle(selected ? MaskinSurface.onInverse : MaskinColor.ink2)
-				.padding(.horizontal, MaskinSpace.s7)
-				.padding(.vertical, MaskinSpace.s4)
-				.background(selected ? MaskinSurface.inverse : MaskinSurface.card, in: Capsule())
-				.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: selected ? 0 : 1))
-		}
-		.buttonStyle(.maskinPressed(.shrink))
-		.accessibilityAddTraits(selected ? .isSelected : [])
-	}
-
-	private var updates: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-			SectionHeader("Updates available") {
-				Text("\(store.updatesAvailable.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
-			}
-			ForEach(store.updatesAvailable) { row in
-				Button { path.append(row.sourceLoopID) } label: {
-					HStack(spacing: MaskinSpace.s5) {
-						Image(systemName: "arrow.triangle.2.circlepath")
-							.foregroundStyle(MaskinColor.sigInk)
-							.accessibilityHidden(true)
-						VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-							Text(row.loopName).maskinText(.headline).foregroundStyle(MaskinColor.ink)
-							Text(row.updateNote ?? "").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-						}
-						Spacer(minLength: 0)
-						Image(systemName: "chevron.right").foregroundStyle(MaskinColor.ink5)
-							.accessibilityHidden(true)
-					}
-					.padding(MaskinSpace.s8)
-					.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
-				}
-				.buttonStyle(.maskinPressed(.shrink))
 			}
 		}
 	}

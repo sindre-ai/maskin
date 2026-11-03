@@ -62,6 +62,7 @@ struct DecisionCardView: View {
 
 	@State private var fallbackComposer = ChatComposerModel(uploader: nil, selfActorID: "")
 	@State private var composerFocused = false
+	@State private var stubNote: String?
 	/// Present in the app; absent in previews and snapshots, where `@` falls back to `chief.suggestions`.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	/// A destructive option waiting for its "Are you sure?" answer.
@@ -334,7 +335,10 @@ struct DecisionCardView: View {
 	/// A plain mention has no options: say so, and make "I've seen it" one tap.
 	private var noDecisionRow: some View {
 		HStack(spacing: MaskinSpace.s4) {
-			Text(asksQuestion ? "Needs you" : "Just a heads-up").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			// The section header already says "Needs you"; only a heads-up is labelled.
+			if !asksQuestion {
+				Text("Just a heads-up").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			}
 			Spacer(minLength: MaskinSpace.s3)
 			Button("Mark read", action: actions.dismiss)
 				.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
@@ -557,17 +561,21 @@ struct DecisionCardView: View {
 					}
 					.transition(.opacity)
 				}
-				ChatComposer(
-					model: model, placeholder: "Message Chief of Staff",
-					suggestions: { chief.suggestions(for: $0, excluding: Set(model.mentions.map(\.id))) },
-					inConversation: [], onSend: { Task { await chief.submit(card: card) } },
-					agentName: "Chief of Staff", roster: runtime?.mentionRoster()?.roster,
-					allowsLive: false, onFocusChange: { composerFocused = $0 })
+				MaskinComposer(
+					model: model,
+					config: MaskinComposerConfig(
+						placeholder: "Message Chief of Staff",
+						suggestions: { chief.suggestions(for: $0, excluding: Set(model.mentions.map(\.id))) },
+						inConversation: [], roster: runtime?.mentionRoster()?.roster,
+						onFocusChange: { composerFocused = $0 },
+						onPlus: { stubNote = "Coming soon" }, onMic: { stubNote = "Coming soon" }),
+					onSend: { Task { await chief.submit(card: card) } })
+				.comingSoonToast($stubNote)
 			}
 			.animation(MaskinMotion.quick, value: composerFocused)
 			.task { await runtime?.mentionRoster()?.load() }
 		} else {
-			replyBar
+			replyBar.comingSoonToast($stubNote)
 		}
 	}
 
@@ -576,8 +584,8 @@ struct DecisionCardView: View {
 		MaskinComposer(
 			model: fallbackComposer,
 			config: MaskinComposerConfig(
-				variant: .inline, placeholder: replyPrompt, showsAttach: false, showsMic: false,
-				onFocusChange: { composerFocused = $0 }),
+				variant: .inline, placeholder: replyPrompt, onFocusChange: { composerFocused = $0 },
+				onPlus: { stubNote = "Coming soon" }, onMic: { stubNote = "Coming soon" }),
 			onSend: sendReply)
 	}
 
