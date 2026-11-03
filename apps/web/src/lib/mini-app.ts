@@ -307,7 +307,7 @@ const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:fun
 // Reports the document's content height (not scrollHeight, which can never
 // shrink below the frame's own height) on load, resize and every layout change,
 // so an inline view can size its iframe to fit as data arrives.
-const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:Math.ceil(d.getBoundingClientRect().height)},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
+const VIEW_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,cw:d.clientWidth,h:Math.ceil(d.getBoundingClientRect().height)},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement)})();</script>`
 
 // Inline-view variant of `prepareMiniAppHtml`: same CSP + data-slot bootstrap,
 // plus the size reporter and the bridge. One `injectIntoHtml` call, as above.
