@@ -11,12 +11,14 @@ import {
 	startResearchRun,
 	toResearchRunView,
 } from '../services/research-service'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		workspaceRole?: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -52,10 +54,11 @@ const runResponseSchema = z.object({
 		cost_cents: z.number(),
 		tokens_in: z.number(),
 		tokens_out: z.number(),
-		searches: z.number(),
-		extracts: z.number(),
 	}),
 	cap: z.object({ cap_cents: z.number() }),
+	route: z.string().nullable(),
+	model: z.string().nullable(),
+	session_id: z.string().uuid().nullable(),
 	warnings: z.array(z.any()),
 	error: z.string().nullable(),
 	created_at: z.string(),
@@ -94,7 +97,7 @@ const startRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		503: {
-			description: 'Search is not set up on this server',
+			description: 'The workspace has no research agent',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -126,6 +129,7 @@ app.openapi(startRoute, async (c) => {
 	if (!start) {
 		start = startResearchRun({
 			db,
+			sessionManager: c.get('sessionManager'),
 			actorId,
 			workspaceId,
 			question: body.question,
@@ -155,7 +159,7 @@ const getRoute = createRoute({
 	tags: ['Research'],
 	summary: 'Get a deep research run',
 	description:
-		'Status, report, sources, usage, cap and warnings of one run. The workspace comes from the run itself, so membership is checked here. Behind the deep-research tester flag.',
+		'Status, report, sources, usage, cap, route, model, session and warnings of one run. The workspace comes from the run itself, so membership is checked here. Behind the deep-research tester flag.',
 	request: { params: idParamSchema },
 	responses: {
 		200: { description: 'The run', content: { 'application/json': { schema: runResponseSchema } } },

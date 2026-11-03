@@ -12,13 +12,10 @@ export interface ResearchRunFinishedProps {
 	status: ResearchRunEndStatus
 	costCents: number
 	capCents: number
-	searches: number
-	extracts: number
 	/** Seconds from start to finish. */
 	duration: number
-	researchers: number
-	/** Share of cited sources in tier 1 or 2, 0 to 1. */
-	tier12Share: number
+	route: string
+	model: string | null
 }
 
 /**
@@ -33,10 +30,8 @@ export function captureResearchRunFinished(p: ResearchRunFinishedProps): Promise
 		status: p.status,
 		cost_cents: p.costCents,
 		cap_cents: p.capCents,
-		searches: p.searches,
-		extracts: p.extracts,
 		duration: p.duration,
-		researchers: p.researchers,
-		tier12_share: p.tier12Share,
+		route: p.route,
+		model: p.model,
 	})
 }

@@ -23640,7 +23640,7 @@
 						}
 					},
 					"503": {
-						"description": "Search is not set up on this server",
+						"description": "The workspace has no research agent",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -23705,7 +23705,7 @@
 					"Research"
 				],
 				"summary": "Get a deep research run",
-				"description": "Status, report, sources, usage, cap and warnings of one run. The workspace comes from the run itself, so membership is checked here. Behind the deep-research tester flag.",
+				"description": "Status, report, sources, usage, cap, route, model, session and warnings of one run. The workspace comes from the run itself, so membership is checked here. Behind the deep-research tester flag.",
 				"parameters": [
 					{
 						"schema": {
@@ -23764,20 +23764,12 @@
 												},
 												"tokens_out": {
 													"type": "number"
-												},
-												"searches": {
-													"type": "number"
-												},
-												"extracts": {
-													"type": "number"
 												}
 											},
 											"required": [
 												"cost_cents",
 												"tokens_in",
-												"tokens_out",
-												"searches",
-												"extracts"
+												"tokens_out"
 											]
 										},
 										"cap": {
@@ -23790,6 +23782,25 @@
 											"required": [
 												"cap_cents"
 											]
+										},
+										"route": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"model": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"session_id": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
 										},
 										"warnings": {
 											"type": "array",
@@ -23819,6 +23830,9 @@
 										"sources",
 										"usage",
 										"cap",
+										"route",
+										"model",
+										"session_id",
 										"warnings",
 										"error",
 										"created_at",

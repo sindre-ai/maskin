@@ -36,6 +36,7 @@ import {
 	checkPlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	readFallbackConfig,
+	readPinnedRoute,
 	resolveChatCredentials,
 	resolveLlmRoute,
 	withCredentialResolutionTimeout,
@@ -121,6 +122,91 @@ function claudeOAuthWorkspaceRow(claudeOAuth: Record<string, unknown>): {
 } {
 	return { id: 'ws-1', settings: { claude_oauth: claudeOAuth } }
 }
+
+describe('resolveLlmRoute pinned to the custom endpoint', () => {
+	const customLlm = {
+		enabled: true,
+		base_url: 'https://openrouter.ai/api',
+		api_key: 'sk-or-test',
+		model: 'anthropic/claude-haiku-4.5',
+	}
+	const params = (settings: WorkspaceSettings, over: Record<string, unknown> = {}) => ({
+		db: dbWithFallbackUsage(
+			[],
+			claudeOAuthWorkspaceRow({
+				encryptedAccessToken: 'oauth-access',
+				encryptedRefreshToken: 'oauth-refresh',
+				expiresAt: Date.now() + 60 * 60 * 1000,
+			}),
+		),
+		workspaceId: 'ws-1',
+		actorId: 'actor-1',
+		enterprise: true,
+		agent: {},
+		pinRoute: LLM_ROUTE_CUSTOM,
+		wsSettings: settings,
+		...over,
+	})
+
+	it('takes the custom endpoint even when a Claude subscription is connected', async () => {
+		const settings = emptySettings()
+		settings.custom_llm = customLlm
+		settings.llm_keys = { anthropic: 'sk-ant-stored' }
+		const result = await resolveLlmRoute(params(settings))
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		expect(result?.envVars).toMatchObject({
+			ANTHROPIC_BASE_URL: customLlm.base_url,
+			ANTHROPIC_AUTH_TOKEN: customLlm.api_key,
+			ANTHROPIC_API_KEY: '',
+			ANTHROPIC_MODEL: customLlm.model,
+		})
+		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBeUndefined()
+	})
+
+	it('ignores an agent-level Anthropic key', async () => {
+		const settings = emptySettings()
+		settings.custom_llm = customLlm
+		const result = await resolveLlmRoute(
+			params(settings, { agent: { provider: 'anthropic', apiKey: 'sk-agent' } }),
+		)
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		expect(result?.envVars.ANTHROPIC_API_KEY).toBe('')
+	})
+
+	it('fails instead of falling through when the workspace has no complete custom endpoint', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-funded'
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-stored' }
+		settings.custom_llm = { ...customLlm, enabled: false }
+		await expect(resolveLlmRoute(params(settings))).rejects.toBeInstanceOf(
+			LlmCredentialsUnavailableError,
+		)
+	})
+
+	it('fails for a workspace that is not entitled to a custom endpoint', async () => {
+		const settings = emptySettings()
+		settings.custom_llm = customLlm
+		await expect(resolveLlmRoute(params(settings, { enterprise: false }))).rejects.toBeInstanceOf(
+			LlmCredentialsUnavailableError,
+		)
+	})
+
+	it('leaves an unpinned session on the ordinary order', async () => {
+		const settings = emptySettings()
+		settings.custom_llm = customLlm
+		const result = await resolveLlmRoute(params(settings, { pinRoute: undefined }))
+		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
+	})
+})
+
+describe('readPinnedRoute', () => {
+	it('only honours the custom endpoint pin', () => {
+		expect(readPinnedRoute({ pin_llm_route: 'workspace_custom' })).toBe(LLM_ROUTE_CUSTOM)
+		expect(readPinnedRoute({ pin_llm_route: 'maskin_plan' })).toBeUndefined()
+		expect(readPinnedRoute({})).toBeUndefined()
+		expect(readPinnedRoute(null)).toBeUndefined()
+	})
+})
 
 describe('readFallbackConfig', () => {
 	it('returns undefined apiKey when env not set', () => {
