@@ -268,7 +268,9 @@ describe('Accept all and Reject all', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Leave review without deciding' }))
 
 		expect(screen.getByText('editor')).toBeInTheDocument()
-		expect(screen.getByText(bannerLine('Copywriter proposed 2 changes to this text.'))).toBeInTheDocument()
+		expect(
+			screen.getByText(bannerLine('Copywriter proposed 2 changes to this text.')),
+		).toBeInTheDocument()
 		expect(api.fileProposals.acceptAll).not.toHaveBeenCalled()
 		expect(api.fileProposals.rejectAll).not.toHaveBeenCalled()
 	})
