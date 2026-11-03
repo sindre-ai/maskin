@@ -468,7 +468,8 @@ describe('NotificationPushFanout clear on handled', () => {
 		const { db, mockResults } = createTestContext()
 		mockResults.selectQueue = queue
 		const ledger = new PushLedger()
-		for (const e of entries) ledger.record(e)
+		// copy: the ledger mutates entries (cleared flag), so scenarios must not share them
+		for (const e of entries) ledger.record({ ...e })
 		const sender = { isEnabled: () => true, sendToActor: vi.fn(), sendClearToActor: vi.fn() }
 		const fanout = new NotificationPushFanout(
 			db,
