@@ -610,6 +610,13 @@ run_agent() {
       if [ "${MASKIN_DISABLE_WEB_SEARCH:-}" = "1" ]; then
         search_args=(--disallowedTools=WebSearch)
       fi
+      # Spend cap for one run (deep research): the CLI stops with an
+      # error_max_budget_usd result once its own cost estimate passes the amount.
+      # Validated because the value is interpolated into the CLI's arguments.
+      local budget_args=()
+      if [[ "${MAX_BUDGET_USD:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        budget_args=(--max-budget-usd "$MAX_BUDGET_USD")
+      fi
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
           # Remote microsandbox path: stream user turns from the agent-server.
@@ -641,6 +648,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
             "${search_args[@]}" \
+            "${budget_args[@]}" \
             "${mcp_args[@]}" \
             < <(node /input-stream.js)
         else
@@ -652,6 +660,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
             "${search_args[@]}" \
+            "${budget_args[@]}" \
             "${mcp_args[@]}"
         fi
       else
@@ -663,6 +672,7 @@ run_agent() {
           --dangerously-skip-permissions \
           "${effort_args[@]}" \
           "${search_args[@]}" \
+          "${budget_args[@]}" \
           "${mcp_args[@]}"
       fi
       ;;
