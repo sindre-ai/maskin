@@ -12,7 +12,7 @@ import {
 	useResumeSession,
 } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
-import type { ActorResponse, SessionResponse } from '@/lib/api'
+import { type ActorResponse, ApiError, type SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -142,6 +142,7 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 		const rows = buildBackgroundThreads(sessions ?? [], agent.name).map((thread) => ({
 			thread,
 			root: (sessions ?? []).find((s) => s.id === thread.id) as SessionResponse,
+			latest: (sessions ?? []).find((s) => s.id === thread.latestId),
 		}))
 		return rows.sort((a, b) =>
 			sortSessions(
@@ -207,10 +208,11 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 				</p>
 			) : (
 				<ul className="flex flex-col gap-1.5">
-					{shownSessions.map(({ thread, root }) => (
+					{shownSessions.map(({ thread, root, latest }) => (
 						<li key={thread.id}>
 							<SessionCard
 								session={root}
+								latest={latest ?? root}
 								thread={thread}
 								title={backgroundTitle(
 									root.triggerId ? triggerNames.get(root.triggerId) : undefined,
@@ -239,6 +241,7 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 
 function SessionCard({
 	session,
+	latest,
 	thread,
 	title,
 	agent,
@@ -247,6 +250,8 @@ function SessionCard({
 }: {
 	/** The run the thread started with: its trigger, prompt and snapshot. */
 	session: SessionResponse
+	/** The thread's newest run: the one Pause and Resume act on. */
+	latest: SessionResponse
 	/** The run and every follow-up after it; its status is the newest session's. */
 	thread: ConversationThread
 	/** What the row is called: the trigger's name. */
@@ -301,8 +306,9 @@ function SessionCard({
 	// Mockup 2443's `s.b1`. The backend refuses anything but an exactly-running
 	// session for pause, and a paused session needs a snapshot to restore from —
 	// so the button only appears where the write path can actually succeed
-	// (apps/dev/src/services/session-manager.ts:896 / :1049).
-	const canPause = thread.status === 'running'
+	// (apps/dev/src/services/session-manager.ts:896 / :1049). A session on an agent
+	// server is refused too: snapshot and resume are local-only.
+	const canPause = thread.status === 'running' && !latest.agentServerId
 	const canResume = state === 'paused' && thread.latestId === session.id && !!session.snapshotPath
 	const isPauseResumePending = pauseSession.isPending || resumeSession.isPending
 
@@ -311,7 +317,8 @@ function SessionCard({
 			pauseSession.mutate(thread.latestId, {
 				onSuccess: () => toast.success('Session paused'),
 				onError: (err) => {
-					if (!isViewerRefusal(err)) toast.error("Couldn't pause this session")
+					if (!isViewerRefusal(err))
+						toast.error(err instanceof ApiError ? err.message : "Couldn't pause this session")
 				},
 			})
 			return

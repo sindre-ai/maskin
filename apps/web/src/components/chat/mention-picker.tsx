@@ -21,8 +21,10 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
  *      cache, deduplicated by id, drop self, sort by `lastMessageAt` desc
  *   3. "Matches — \"{query}\"" — remaining alphabetical
  *
- * Empty-query state omits the query section. No-match state renders "No agent
- * by that name" (verbatim, chats v4 parity).
+ * Empty-query state omits the query section. Once the person has typed, the
+ * three sections collapse into one "Matches" list ranked by match quality, so
+ * the best match is the top row. No-match state renders "No agent by that
+ * name" (verbatim, chats v4 parity).
  *
  * Anchoring: composer passes an invisible `anchor` node pinned to the caret so
  * the popover always lands next to the `@`. Composer keeps DOM focus while the
@@ -112,10 +114,12 @@ export function MentionPicker({
 
 	// Reset the highlight to the first row every time the flat list changes so
 	// the arrow-key state never lands on a stale row (or, worse, past the end).
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the length is what drives the reset, not the identity of the rows array.
+	// A new query can reorder the rows without changing how many there are, so
+	// the query resets it too: Enter then always picks the best match.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the length and the query drive the reset, not the identity of the rows array.
 	useEffect(() => {
-		setOwnIndex(0)
-	}, [flatRows.length])
+		setHighlightIndex(0)
+	}, [flatRows.length, query])
 
 	const listboxRef = useRef<HTMLUListElement | null>(null)
 
@@ -371,6 +375,16 @@ export function buildMentionSections(input: BuildMentionSectionsInput): Section[
 	}
 	remaining.sort((a, b) => a.name.localeCompare(b.name))
 
+	// A typed query is one list ranked by match quality, so "@de" puts Developer
+	// on top. The sort is stable: rows with the same rank keep the order above
+	// (in this conversation, then most recent, then alphabetical).
+	if (needle.length > 0) {
+		const ranked = [...inConversation, ...recent, ...remaining].sort(
+			(a, b) => matchRank(a.name, needle) - matchRank(b.name, needle),
+		)
+		return ranked.length > 0 ? [{ heading: `Matches — "${query.trim()}"`, rows: ranked }] : []
+	}
+
 	const sections: Section[] = []
 	if (inConversation.length > 0) {
 		sections.push({ heading: 'In this conversation', rows: inConversation })
@@ -379,12 +393,18 @@ export function buildMentionSections(input: BuildMentionSectionsInput): Section[
 		sections.push({ heading: 'Recent collaborators', rows: recent })
 	}
 	if (remaining.length > 0) {
-		sections.push({
-			heading: needle.length > 0 ? `Matches — "${query.trim()}"` : 'Everyone',
-			rows: remaining,
-		})
+		sections.push({ heading: 'Everyone', rows: remaining })
 	}
 	return sections
+}
+
+/** 0 exact name, 1 name starts with the query, 2 a word in the name does, 3 any substring. */
+function matchRank(name: string, needle: string): number {
+	const lower = name.toLowerCase()
+	if (lower === needle) return 0
+	if (lower.startsWith(needle)) return 1
+	if (lower.split(/[\s_-]+/).some((word) => word.startsWith(needle))) return 2
+	return 3
 }
 
 function toEpoch(iso: string | null | undefined): number | null {

@@ -21,6 +21,8 @@ export interface BridgeHost {
 	run: (spec: DataQuerySpec) => Promise<unknown>
 	post: (message: Record<string, unknown>) => void
 	onDocHeight: (height: number) => void
+	/** The view's content is wider than its frame: the width it needs. Optional; hosts that never scroll sideways skip it. */
+	onDocOverflow?: (width: number) => void
 	onQueryError: (message: string) => void
 }
 
@@ -51,11 +53,21 @@ export async function handleBridgeMessage(
 ): Promise<void> {
 	const frame = host.frameWindow()
 	if (!frame || event.source !== frame || host.isBlocked()) return
-	const data = event.data as { type?: unknown; id?: unknown; name?: unknown; h?: unknown } | null
+	const data = event.data as {
+		type?: unknown
+		id?: unknown
+		name?: unknown
+		h?: unknown
+		w?: unknown
+		cw?: unknown
+	} | null
 	if (!data || typeof data !== 'object') return
 
 	if (data.type === VIEWER_DOC_SIZE_MESSAGE) {
 		if (typeof data.h === 'number' && data.h > 0) host.onDocHeight(data.h)
+		if (typeof data.w === 'number' && typeof data.cw === 'number' && data.w > data.cw) {
+			host.onDocOverflow?.(data.w)
+		}
 		return
 	}
 	if (data.type !== BRIDGE_QUERY_MESSAGE) return
