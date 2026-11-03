@@ -4,14 +4,14 @@ import Testing
 
 @Suite("TriggerDescriber.filters")
 struct TriggerFilterRowsTests {
-	@Test("a status change reads as from and to")
+	@Test("a status change stays in the When sentence, not the filters")
 	func statusChange() {
 		let config: JSONValue = .object([
 			"entity_type": .string("task"), "action": .string("status_changed"),
 			"from_status": .string("todo"), "to_status": .string("in_progress"),
 		])
 		let rows = TriggerDescriber.filters(config: config)
-		#expect(rows == [TriggerFilterRow(label: "Status", value: "from todo to in progress")])
+		#expect(rows.isEmpty)
 	}
 
 	@Test("people resolve to names and unknown ids never show")

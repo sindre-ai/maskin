@@ -19,6 +19,8 @@ public struct CommentChartSpec: Equatable, Sendable {
 	public let kind: Kind
 	public let points: [Point]
 	public let seriesNames: [String]
+	/// The small label above the plot ("Organic clicks · 4 weeks"), when the agent gave one.
+	public let title: String?
 	public let caption: String?
 
 	public enum ParseResult: Equatable, Sendable {
@@ -59,7 +61,8 @@ public struct CommentChartSpec: Equatable, Sendable {
 		}
 		return .chart(
 			CommentChartSpec(
-				kind: kind, points: points, seriesNames: series, caption: object["caption"] as? String))
+				kind: kind, points: points, seriesNames: series, title: object["title"] as? String,
+				caption: object["caption"] as? String))
 	}
 }
 
@@ -71,27 +74,8 @@ public struct CommentChartView: View {
 
 	public var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			Chart(spec.points) { point in
-				switch spec.kind {
-				case .bar:
-					BarMark(x: .value("x", point.label), y: .value(point.series, point.value))
-						.foregroundStyle(by: .value("Series", point.series))
-						.position(by: .value("Series", point.series))
-				case .line:
-					LineMark(x: .value("x", point.label), y: .value(point.series, point.value))
-						.foregroundStyle(by: .value("Series", point.series))
-						.interpolationMethod(.monotone)
-				case .area:
-					AreaMark(x: .value("x", point.label), y: .value(point.series, point.value))
-						.foregroundStyle(by: .value("Series", point.series))
-						.interpolationMethod(.monotone)
-				}
-			}
-			.chartForegroundStyleScale(range: Self.palette)
-			.chartLegend(spec.seriesNames.count > 1 ? .visible : .hidden)
-			.chartYAxis { AxisMarks { AxisValueLabel().foregroundStyle(MaskinColor.ink5) } }
-			.chartXAxis { AxisMarks { AxisValueLabel().foregroundStyle(MaskinColor.ink5) } }
-			.frame(height: MaskinSpace.s14 * 4)
+			if let title = spec.title, !title.isEmpty { MonoLabel(title, color: MaskinColor.ink4) }
+			if isSimpleBars { simpleBars } else { plot }
 			if let caption = spec.caption, !caption.isEmpty {
 				Text(caption)
 					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
@@ -104,6 +88,45 @@ public struct CommentChartView: View {
 		.accessibilityLabel(
 			"Chart. " + (spec.caption ?? "") + " "
 				+ spec.points.map { "\($0.label) \($0.series) \($0.value.formatted())" }.joined(separator: ", "))
+	}
+
+	/// One series of bars: the newest bar solid, the earlier ones a light tint, no axes (handoff 1j).
+	private var isSimpleBars: Bool { spec.kind == .bar && spec.seriesNames.count == 1 }
+
+	private var simpleBars: some View {
+		let last = spec.points.last?.id
+		return Chart(spec.points) { point in
+			BarMark(x: .value("x", point.label), y: .value(point.series, point.value))
+				.foregroundStyle(point.id == last ? MaskinColor.accent : MaskinColor.accentTint2)
+				.cornerRadius(MaskinRadius.tag)
+		}
+		.chartYAxis(.hidden)
+		.chartXAxis { AxisMarks { AxisValueLabel().foregroundStyle(MaskinColor.ink5) } }
+		.frame(height: MaskinSpace.s14 * 2)
+	}
+
+	private var plot: some View {
+		Chart(spec.points) { point in
+			switch spec.kind {
+			case .bar:
+				BarMark(x: .value("x", point.label), y: .value(point.series, point.value))
+					.foregroundStyle(by: .value("Series", point.series))
+					.position(by: .value("Series", point.series))
+			case .line:
+				LineMark(x: .value("x", point.label), y: .value(point.series, point.value))
+					.foregroundStyle(by: .value("Series", point.series))
+					.interpolationMethod(.monotone)
+			case .area:
+				AreaMark(x: .value("x", point.label), y: .value(point.series, point.value))
+					.foregroundStyle(by: .value("Series", point.series))
+					.interpolationMethod(.monotone)
+			}
+		}
+		.chartForegroundStyleScale(range: Self.palette)
+		.chartLegend(spec.seriesNames.count > 1 ? .visible : .hidden)
+		.chartYAxis { AxisMarks { AxisValueLabel().foregroundStyle(MaskinColor.ink5) } }
+		.chartXAxis { AxisMarks { AxisValueLabel().foregroundStyle(MaskinColor.ink5) } }
+		.frame(height: MaskinSpace.s14 * 4)
 	}
 
 	/// First series in the brand ink, the rest stepping down in tone, as on the web.

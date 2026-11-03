@@ -309,14 +309,7 @@ extension TriggerDescriber {
 	/// its size, so no raw id ever reaches the screen.
 	public static func filters(config: JSONValue, name: (String) -> String? = { _ in nil }) -> [TriggerFilterRow] {
 		var rows: [TriggerFilterRow] = []
-		if config["action"]?.stringValue == "status_changed" {
-			let (from, to) = statusTransition(config)
-			if from != anyStatus || to != anyStatus {
-				let f = from == anyStatus ? "any" : from.replacingOccurrences(of: "_", with: " ")
-				let t = to == anyStatus ? "any" : to.replacingOccurrences(of: "_", with: " ")
-				rows.append(TriggerFilterRow(label: "Status", value: "from \(f) to \(t)"))
-			}
-		}
+		// The status change is already the When sentence; it is not repeated as a filter.
 		if case .object(let filter)? = config["filter"] {
 			for key in filter.keys.sorted() where key != "status" {
 				guard let value = filter[key] else { continue }

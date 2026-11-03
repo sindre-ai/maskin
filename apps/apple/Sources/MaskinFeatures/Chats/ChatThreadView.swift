@@ -168,7 +168,7 @@ struct ChatThreadView: View {
 			return "Type your answer…"
 		}
 		// A new chat invites either: type, or press Live (live meeting handoff, step 1).
-		if store.messages.isEmpty, call == nil, liveLead != nil { return "Ask \(leadName), or start talking." }
+		if store.messages.isEmpty, call == nil, liveLead != nil { return "Ask \(leadName), or talk" }
 		return "Message \(leadName)"
 	}
 
@@ -389,6 +389,15 @@ struct ChatThreadView: View {
 			} label: {
 				Label("Chat options", systemImage: "ellipsis")
 					.foregroundStyle(MaskinColor.ink)
+			}
+			// The iOS prototype keeps Live in the header; the composer keeps the mic for dictation.
+			if let lead = liveLead, !isRoom, call == nil {
+				Button {
+					liveMeeting.present(.thread(chat: store, lead: lead))
+				} label: {
+					ShellInkCircle(symbol: "waveform", label: "Live")
+				}
+				.buttonStyle(.maskinPressed)
 			}
 		}
 	}
@@ -797,8 +806,7 @@ struct ChatThreadView: View {
 			model: composer,
 			config: MaskinComposerConfig(
 				variant: .floating, placeholder: placeholder, showsMic: !isRoom,
-				goLive: call == nil
-					? liveLead.map { lead in { liveMeeting.present(.thread(chat: store, lead: lead)) } } : nil,
+				goLive: isRoom ? liveLead.map { lead in { liveMeeting.present(.thread(chat: store, lead: lead)) } } : nil,
 				suggestions: { query in
 					MentionTrigger.candidates(
 						query: query, participants: store.participants, workspace: store.workspaceActors,

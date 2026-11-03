@@ -176,6 +176,9 @@ struct ForYouFeedView: View {
 					feedRows(entries: entries)
 				}
 				.listStyle(.plain)
+				// The zero-height scroll anchor above is still a list row: without this it is padded to
+				// the 44 pt default and pushes the sentence down, away from the title.
+				.environment(\.defaultMinListRowHeight, 0)
 				.scrollDismissesKeyboard(.interactively)
 				.scrollContentBackground(.hidden)
 				.ambientBackground()

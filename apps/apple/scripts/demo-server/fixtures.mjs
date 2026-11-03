@@ -358,6 +358,50 @@ export function overrides({ method, path, params, query, body, base, item }) {
 			],
 		}
 	}
+	// Triggers and members, so the Triggers and Members screens show populated rows.
+	if (method === 'get' && path === '/api/triggers')
+		return {
+			body: [
+				{
+					id: uuid(900),
+					workspaceId: WORKSPACE_ID,
+					name: 'Review new tasks',
+					type: 'event',
+					config: { entity_type: 'task', action: 'status_changed', from_status: 'todo', to_status: 'in_review' },
+					actionPrompt: 'Review the task and say what is missing.',
+					targetActorId: uuid(3),
+					enabled: true,
+					metadata: null,
+					createdBy: uuid(2),
+					createdAt: ago(20 * DAY),
+					updatedAt: ago(2 * DAY),
+				},
+				{
+					id: uuid(901),
+					workspaceId: WORKSPACE_ID,
+					name: 'Monday pipeline review',
+					type: 'cron',
+					config: { expression: '0 9 * * 1' },
+					actionPrompt: 'Summarise the pipeline for the week.',
+					targetActorId: uuid(5),
+					enabled: true,
+					metadata: null,
+					createdBy: uuid(2),
+					createdAt: ago(40 * DAY),
+					updatedAt: ago(1 * DAY),
+				},
+			],
+		}
+	if (method === 'get' && /^\/api\/workspaces\/[^/]+\/members$/.test(path))
+		return {
+			body: actors.map((a) => ({
+				actorId: a.id,
+				role: a.id === uuid(2) ? 'owner' : 'member',
+				joinedAt: ago(60 * DAY),
+				name: a.name,
+				type: a.type,
+			})),
+		}
 	if (method === 'get' && path === '/api/actors')
 		return { body: actors.map((a) => ({ ...item, ...a })) }
 	// Session log reader: one finished session with a spread of envelope kinds, newest rows paged
@@ -368,7 +412,17 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				{
 					...item,
 					id: uuid(900),
+					workspaceId: WORKSPACE_ID,
 					actorId: query.get('actor_id') ?? OUTREACH_AGENT,
+					triggerId: null,
+					containerId: null,
+					config: null,
+					result: null,
+					snapshotPath: null,
+					currentActivity: null,
+					timeoutAt: null,
+					createdBy: uuid(2),
+					updatedAt: ago(35),
 					status: 'completed',
 					actionPrompt: 'Draft the follow-up for Priya',
 					interactive: false,

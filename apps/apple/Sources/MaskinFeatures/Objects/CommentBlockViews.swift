@@ -18,9 +18,9 @@ struct CommentTaskList: View {
 			ForEach(Array(tasks.enumerated()), id: \.element.id) { _, task in
 				Button { open?(task.id) } label: {
 					HStack(spacing: MaskinSpace.s5) {
-						Image(systemName: task.state?.isDone == true ? "checkmark.circle.fill" : "circle")
-							.maskinSymbol(MaskinFontSize.t17, weight: .regular)
-							.foregroundStyle(task.state?.isDone == true ? MaskinColor.sigInk : MaskinColor.ink5)
+						Image(systemName: task.state?.isDone == true ? "checkmark.square.fill" : "square")
+							.maskinSymbol(MaskinFontSize.t20, weight: .regular)
+							.foregroundStyle(task.state?.isDone == true ? MaskinColor.ok : MaskinColor.ink5)
 						Text(task.state?.title ?? "Task unavailable")
 							.maskinText(.subhead)
 							.foregroundStyle(task.state?.isDone == true ? MaskinColor.ink4 : MaskinColor.ink)
@@ -62,18 +62,9 @@ struct CommentDecisionCard: View {
 					.maskinText(.subhead).fontWeight(.semibold)
 					.foregroundStyle(MaskinColor.sigInk)
 			} else {
-				VStack(spacing: MaskinSpace.s3) {
-					ForEach(decision.options) { option in
-						Button { onAnswer(option.label) } label: {
-							Text(option.label)
-								.maskinText(.subhead).fontWeight(.semibold)
-								.foregroundStyle(option.recommended ? MaskinSurface.onInverse : MaskinColor.ink)
-								.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
-								.background(
-									option.recommended ? MaskinSurface.inverse : MaskinSurface.fill, in: Capsule())
-						}
-						.buttonStyle(.maskinPressed)
-					}
+				ViewThatFits(in: .horizontal) {
+					HStack(spacing: MaskinSpace.s3) { optionButtons }
+					VStack(spacing: MaskinSpace.s3) { optionButtons }
 				}
 			}
 		}
@@ -81,5 +72,19 @@ struct CommentDecisionCard: View {
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 		.accessibilityElement(children: .contain)
+	}
+
+	@ViewBuilder private var optionButtons: some View {
+		ForEach(decision.options) { option in
+			Button { onAnswer(option.label) } label: {
+				Text(option.label)
+					.maskinText(.subhead).fontWeight(.semibold)
+					.foregroundStyle(option.recommended ? MaskinSurface.onInverse : MaskinColor.ink)
+					.padding(.horizontal, MaskinSpace.s8)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
+					.background(option.recommended ? MaskinSurface.inverse : MaskinSurface.fill, in: Capsule())
+			}
+			.buttonStyle(.maskinPressed)
+		}
 	}
 }

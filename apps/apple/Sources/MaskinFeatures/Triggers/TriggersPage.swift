@@ -57,7 +57,8 @@ struct TriggersPage: View {
 	private func row(_ trigger: Trigger) -> PageRowModel {
 		PageRowModel(
 			id: trigger.id, title: trigger.name,
-			subtitle: WorkspacePageState.triggerSubtitle(trigger),
+			subtitle: [WorkspacePageState.triggerSubtitle(trigger), store.agentName(for: trigger)]
+				.filter { !$0.isEmpty }.joined(separator: " · "),
 			accessory: .toggle(
 				isOn: trigger.enabled, set: { on in Task { await store.setEnabled(trigger.id, on) } }),
 			action: { selected = trigger.id })

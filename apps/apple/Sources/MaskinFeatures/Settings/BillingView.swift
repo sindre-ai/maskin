@@ -83,7 +83,9 @@ extension BillingView {
 	static func trialBanner(_ usage: BillingUsage) -> (title: String, detail: String)? {
 		guard usage.plan == "trial", usage.status == .active else { return nil }
 		let detail = "Choose a plan to keep agents running."
-		guard let ms = usage.resetsInMs, ms > 0 else { return ("Your trial has ended", detail) }
+		// No end date from the server is not the same as an ended trial: say only what is known.
+		guard let ms = usage.resetsInMs else { return ("You are on a trial", detail) }
+		guard ms > 0 else { return ("Your trial has ended", detail) }
 		let days = Int((Double(ms) / 86_400_000).rounded(.up))
 		return ("Trial ends in \(days) \(days == 1 ? "day" : "days")", detail)
 	}

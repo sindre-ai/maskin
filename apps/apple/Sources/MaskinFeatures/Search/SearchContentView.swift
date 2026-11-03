@@ -12,6 +12,16 @@ struct SearchNeedsYou: Identifiable, Equatable {
 	let type: String?
 }
 
+/// A results group heading in the v3 style: sentence case, semibold, like the Chats list.
+struct SearchHeader: View {
+	let text: String
+	init(_ text: String) { self.text = text }
+
+	var body: some View {
+		Text(text).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink3)
+	}
+}
+
 /// What the Create rows under the results can start.
 enum SearchCreate: CaseIterable {
 	case item, flow, chat
@@ -145,7 +155,7 @@ struct SearchContentBody: View {
 	/// New item, New flow and New chat, carrying what was typed, under the results.
 	private var createSection: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-			MonoLabel("Create").accessibilityAddTraits(.isHeader)
+			SearchHeader("Create").accessibilityAddTraits(.isHeader)
 			card {
 				ForEach(Array(createKinds.enumerated()), id: \.element) { index, create in
 					if index > 0 { Divider() }
@@ -165,7 +175,7 @@ struct SearchContentBody: View {
 	/// a pill. When nobody matches, this is not shown and the text is searched as it is.
 	private func mentionMenu(_ suggestions: [SearchPerson]) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-			MonoLabel("People and agents").accessibilityAddTraits(.isHeader)
+			SearchHeader("People and agents").accessibilityAddTraits(.isHeader)
 			card {
 				ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, person in
 					if index > 0 { Divider() }
@@ -193,7 +203,7 @@ struct SearchContentBody: View {
 	@ViewBuilder private var needsYouSection: some View {
 		if !needsYou.isEmpty {
 			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-				MonoLabel("Needs you").accessibilityAddTraits(.isHeader)
+				SearchHeader("Needs you").accessibilityAddTraits(.isHeader)
 				card {
 					ForEach(Array(needsYou.enumerated()), id: \.element.id) { index, item in
 						if index > 0 { Divider() }
@@ -235,7 +245,7 @@ struct SearchContentBody: View {
 		} else {
 			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 				HStack {
-					MonoLabel("Recent")
+					SearchHeader("Recent")
 					Spacer()
 					Button("Clear") { store.clearRecents() }
 						.maskinText(.caption)
@@ -277,7 +287,7 @@ struct SearchContentBody: View {
 			ForEach(sections) { section in
 				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 					HStack(spacing: MaskinSpace.s4) {
-						MonoLabel(section.group.title)
+						SearchHeader(section.group.title)
 						Text("\(section.results.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink5)
 					}
 					.accessibilityAddTraits(.isHeader)

@@ -48,10 +48,11 @@ struct AddPropertySheet: View {
 						.frame(minHeight: MaskinSpace.touchMin)
 				}
 				Section("Type") {
-					Picker("Type", selection: $kind) {
-						ForEach(PropertyDefinition.Kind.allCases, id: \.self) { Text($0.label).tag($0) }
+					LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: MaskinSpace.s4), count: 3), spacing: MaskinSpace.s4) {
+						ForEach(PropertyDefinition.Kind.allCases, id: \.self) { option in typeTile(option) }
 					}
-					.pickerStyle(.menu)
+					.listRowInsets(EdgeInsets())
+					.listRowBackground(Color.clear)
 					if kind == .enum {
 						TextField("Choices, separated by commas", text: $choicesText)
 							.autocorrectionDisabled()
@@ -74,6 +75,50 @@ struct AddPropertySheet: View {
 			.task { await schema.load() }
 		}
 		.presentationDetents([.medium, .large])
+	}
+
+	/// The tile labels follow the handoff ("Select", "Checkbox") rather than the settings wording.
+	private static func tileLabel(_ kind: PropertyDefinition.Kind) -> String {
+		switch kind {
+		case .text: "Text"
+		case .number: "Number"
+		case .date: "Date"
+		case .enum: "Select"
+		case .boolean: "Checkbox"
+		}
+	}
+
+	private static func tileSymbol(_ kind: PropertyDefinition.Kind) -> String {
+		switch kind {
+		case .text: "text.alignleft"
+		case .number: "number"
+		case .date: "calendar"
+		case .enum: "square.stack.3d.up"
+		case .boolean: "checkmark"
+		}
+	}
+
+	private func typeTile(_ option: PropertyDefinition.Kind) -> some View {
+		let on = option == kind
+		return Button {
+			MaskinHaptics.play(.selection)
+			kind = option
+		} label: {
+			VStack(spacing: MaskinSpace.s3) {
+				Image(systemName: Self.tileSymbol(option)).maskinSymbol(MaskinFontSize.t17, weight: .regular)
+				Text(Self.tileLabel(option)).maskinText(.caption).fontWeight(.semibold)
+			}
+			.foregroundStyle(on ? MaskinColor.accentFgStrong : MaskinColor.ink2)
+			.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin + MaskinSpace.s11)
+			.background(on ? MaskinColor.accentTint : MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
+			.overlay(
+				RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous)
+					.strokeBorder(on ? MaskinColor.accent : MaskinSurface.line, lineWidth: on ? 2 : 1))
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel(Self.tileLabel(option))
+		.accessibilityAddTraits(on ? .isSelected : [])
 	}
 
 	@ViewBuilder private var valueField: some View {

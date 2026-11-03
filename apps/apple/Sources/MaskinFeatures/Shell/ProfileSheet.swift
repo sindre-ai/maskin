@@ -202,10 +202,10 @@ struct ProfileSheet: View {
 		}
 	}
 
-	/// "Owner · Workspace name", else the email when no workspace is selected.
+	/// "Workspace name · Owner" (v3), else the email when no workspace is selected.
 	private func profileSubtitle(email: String?) -> String {
 		guard let name = environment.workspaces.selected?.name else { return email ?? "" }
-		return "\(role.label) \u{00B7} \(name)"
+		return "\(name) \u{00B7} \(role.label)"
 	}
 
 	/// "4 agents · 3 flows · switch workspace".

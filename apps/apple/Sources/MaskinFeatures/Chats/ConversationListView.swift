@@ -519,8 +519,7 @@ struct TeamSectionHeader<Trailing: View>: View {
 			trailing
 		}
 		.textCase(nil)
-		.padding(.horizontal, MaskinSpace.s9)
-		.padding(.top, MaskinSpace.s6)
+		.padding(.top, MaskinSpace.s3)
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 	}

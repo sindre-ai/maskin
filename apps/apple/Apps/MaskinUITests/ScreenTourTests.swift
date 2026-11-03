@@ -58,6 +58,13 @@ final class ScreenTourTests: XCTestCase {
 		shot(name)
 	}
 
+	private func relaunch() {
+		app.terminate()
+		app.launch()
+		_ = app.tabBars.buttons["For you"].waitForExistence(timeout: 30)
+		sleep(3)
+	}
+
 	private func close() {
 		for label in ["Done", "Close", "Cancel"] where app.buttons[label].exists && app.buttons[label].isHittable {
 			app.buttons[label].tap()
@@ -127,11 +134,43 @@ final class ScreenTourTests: XCTestCase {
 				}
 			}
 		}
-		link("/agents", "12-agents")
-		link("/agents/00000000-0000-4000-8000-000000000003", "13-agent-detail")
-		link("/objects/00000000-0000-4000-8000-000000000101", "14-item-bet")
-		link("/objects/00000000-0000-4000-8000-000000000102", "15-item-task")
-		link("/objects/00000000-0000-4000-8000-000000000100", "16-item-insight")
+		// Item detail, Display sheet, thread (long wait), agents via Members
+		relaunch()
+		if tap(app.tabBars.buttons["Items"], "items-tab2") {
+			if tap(app.staticTexts["Q4 webinar"].firstMatch, "item-bet") { sleep(3); shot("14-item-bet"); back() }
+			if tap(app.staticTexts["Contoso renewal terms"].firstMatch, "item-task") { sleep(3); shot("15-item-task"); back() }
+			if tap(app.staticTexts["Northwind renewal risk"].firstMatch, "item-insight") { sleep(3); shot("16-item-insight"); back() }
+			let display = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Display'")).firstMatch
+			if tap(display, "display-items") { shot("09-display-sheet"); close() }
+		}
+		relaunch()
+		if tap(app.tabBars.buttons["Chats"], "chats-tab2") {
+			if tap(app.staticTexts["Brand shoot"].firstMatch, "chat-thread2") { sleep(10); shot("03-chat-thread"); }
+		}
+		relaunch()
+		let profile2 = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'profile' OR label CONTAINS[c] 'account' OR label == 'S'")).firstMatch
+		if tap(profile2, "profile2") {
+			if tap(app.staticTexts["Members"].firstMatch, "members2") {
+				sleep(3)
+				shot("12-members-agents")
+				if tap(app.staticTexts["Outreach"].firstMatch, "agent-detail") {
+					sleep(4); shot("13-agent-detail")
+					let more = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'more' OR label CONTAINS[c] 'actions'")).firstMatch
+					if tap(more, "agent-menu", wait: 3) { shot("13b-agent-menu"); app.swipeDown(); sleep(1) }
+				}
+			}
+		}
+		relaunch()
+		let profile3 = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'profile' OR label CONTAINS[c] 'account' OR label == 'S'")).firstMatch
+		if tap(profile3, "profile3") {
+			if tap(app.staticTexts["Triggers"].firstMatch, "triggers3") {
+				sleep(3); shot("17-triggers-list")
+				if tap(app.staticTexts["Review new tasks"].firstMatch, "trigger-event") { sleep(3); shot("18-trigger-event"); back() }
+				if tap(app.staticTexts["Monday pipeline review"].firstMatch, "trigger-cron") { sleep(3); shot("19-trigger-cron"); back() }
+				let add = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'new trigger' OR label CONTAINS[c] 'add'")).firstMatch
+				if tap(add, "trigger-new", wait: 3) { shot("20-trigger-new") }
+			}
+		}
 		try "skipped: \(skipped.joined(separator: ", "))\n".write(toFile: "\(dir)/skipped.txt", atomically: true, encoding: .utf8)
 	}
 }
