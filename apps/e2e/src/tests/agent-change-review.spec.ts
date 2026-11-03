@@ -135,6 +135,106 @@ test.describe('Agent change review in the file viewer', () => {
 		expect(after.contentHash).toBe(before.contentHash)
 	})
 
+	test('whole flow: agent submits, one change is edited then accepted, one is rejected, the editor reloads with the file', async ({
+		page,
+		account,
+	}) => {
+		const file = await account.api.createFile(account.workspaceId, {
+			name: 'plan.md',
+			mime_type: 'text/markdown',
+			content: TEXT,
+			encoding: 'utf8',
+		})
+		const agent = await account.api.createAgentActor('Ada Atom', account.workspaceId)
+		await new TestAPI(agent.api_key).createFileProposal(account.workspaceId, file.id, CHANGES)
+
+		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await expect(page.getByText(/Ada Atom proposed 2 changes to this text\./)).toBeVisible({
+			timeout: 10000,
+		})
+		await page.getByRole('button', { name: 'Review changes' }).click()
+
+		const first = page.getByRole('region', { name: 'Change 1' })
+		await first.getByRole('button', { name: 'Edit' }).click()
+		await page.getByRole('textbox', { name: 'Edit change 1' }).fill('We ship on Tuesday.')
+		await page.getByRole('textbox', { name: 'Edit change 1' }).press('Escape')
+		const accepted = page.waitForResponse(
+			(res) => res.url().includes('/accept') && res.request().method() === 'POST',
+		)
+		await first.getByRole('button', { name: 'Accept' }).click()
+		expect((await accepted).status()).toBe(200)
+
+		const rejected = page.waitForResponse(
+			(res) => res.url().includes('/reject') && res.request().method() === 'POST',
+		)
+		await page
+			.getByRole('region', { name: 'Change 2' })
+			.getByRole('button', { name: 'Reject' })
+			.click()
+		expect((await rejected).status()).toBe(200)
+
+		// Nothing is pending, so the review closes and the editor shows the accepted text.
+		const expected = TEXT.replace(CHANGES[0].old_text, 'We ship on Tuesday.')
+		await expect(page.locator('.ProseMirror')).toContainText('We ship on Tuesday.', {
+			timeout: 10000,
+		})
+		await expect(page.getByText('Change applied')).toBeVisible()
+		expect((await account.api.getFile(account.workspaceId, file.id)).content).toBe(expected)
+
+		await page.reload()
+		await expect(page.locator('.ProseMirror')).toContainText('We ship on Tuesday.', {
+			timeout: 10000,
+		})
+		await expect(page.locator('.ProseMirror')).toContainText('ten thousand euros')
+		await expect(page.getByRole('button', { name: 'Review changes' })).toHaveCount(0)
+	})
+
+	test('an accept through the API while the editor is open refuses the autosave and loads the accepted text', async ({
+		page,
+		account,
+	}) => {
+		const file = await account.api.createFile(account.workspaceId, {
+			name: 'plan.md',
+			mime_type: 'text/markdown',
+			content: TEXT,
+			encoding: 'utf8',
+		})
+		const agent = await account.api.createAgentActor('Ada Atom', account.workspaceId)
+		const { proposalId } = await new TestAPI(agent.api_key).createFileProposal(
+			account.workspaceId,
+			file.id,
+			CHANGES,
+		)
+
+		await page.goto(`/${account.workspaceId}/files/${file.id}`)
+		await expect(page.locator('.ProseMirror')).toBeVisible({ timeout: 10000 })
+		const saves: number[] = []
+		page.on('response', (res) => {
+			if (res.request().method() === 'PATCH' && /\/api\/files\//.test(res.url())) {
+				saves.push(res.status())
+			}
+		})
+
+		await account.api.acceptFileProposal(account.workspaceId, file.id, proposalId)
+		const expected = TEXT.replace(CHANGES[0].old_text, CHANGES[0].new_text).replace(
+			CHANGES[1].old_text,
+			CHANGES[1].new_text,
+		)
+
+		await page.locator('.ProseMirror').getByText('Notes are kept').click()
+		await page.keyboard.type(' Always.')
+		const banner = page.getByRole('alert')
+		await expect(banner).toContainText('This file changed while you were editing', {
+			timeout: 5000,
+		})
+		expect(saves).toEqual([409])
+		expect((await account.api.getFile(account.workspaceId, file.id)).content).toBe(expected)
+
+		await banner.getByRole('button', { name: 'Load the new version' }).click()
+		await expect(page.locator('.ProseMirror')).toContainText(CHANGES[0].new_text)
+		await expect(page.locator('.ProseMirror')).not.toContainText('Always.')
+	})
+
 	test('with the flag off the file viewer shows no banner', async ({ page, account }) => {
 		await page.addInitScript(() => localStorage.setItem('ff:agent-change-review', 'off'))
 		const file = await account.api.createFile(account.workspaceId, {
