@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NotificationPushFanout } from '../../services/notification-push'
+import { PushLedger, type RecentPush } from '../../services/push-policy'
 import type { PushChannel } from '../../services/push-types'
 import { createTestContext } from '../setup'
 
@@ -445,5 +446,128 @@ describe('NotificationPushFanout', () => {
 				expect(sender.sendToActor).not.toHaveBeenCalled()
 			})
 		})
+	})
+})
+
+describe('NotificationPushFanout clear on handled', () => {
+	const leftEvent = { ...event, action: 'resolved' }
+	const sentEntry = (over: Partial<RecentPush> = {}): RecentPush => ({
+		notificationId: 'n-1',
+		actorId: 'human',
+		workspaceId: 'ws',
+		category: 'needs_you',
+		collapseKey: null,
+		at: Date.now(),
+		sent: true,
+		forYou: false,
+		critical: false,
+		rollup: false,
+		...over,
+	})
+	function setupClear(queue: unknown[][], entries: RecentPush[]) {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = queue
+		const ledger = new PushLedger()
+		for (const e of entries) ledger.record(e)
+		const sender = { isEnabled: () => true, sendToActor: vi.fn(), sendClearToActor: vi.fn() }
+		const fanout = new NotificationPushFanout(
+			db,
+			new EventEmitter() as never,
+			[sender as unknown as PushChannel],
+			ledger,
+		)
+		return { fanout, sender, ledger }
+	}
+
+	it('sends one clear when a pushed card is answered, and none the second time', async () => {
+		const { fanout, sender } = setupClear(
+			[[notif({ status: 'resolved' })], [{ value: 3 }], [notif({ status: 'resolved' })]],
+			[sentEntry()],
+		)
+		await fanout.handleLeftPending(leftEvent)
+		await fanout.handleLeftPending(leftEvent)
+		expect(sender.sendClearToActor).toHaveBeenCalledTimes(1)
+		expect(sender.sendClearToActor).toHaveBeenCalledWith('human', {
+			workspaceId: 'ws',
+			notificationIds: ['n-1'],
+			collapseKey: null,
+			badge: 3,
+		})
+	})
+
+	it('sends nothing for a row that never pushed', async () => {
+		const { fanout, sender } = setupClear([[notif({ status: 'resolved' })]], [])
+		await fanout.handleLeftPending(leftEvent)
+		expect(sender.sendClearToActor).not.toHaveBeenCalled()
+	})
+
+	it('sends nothing while the row is still pending', async () => {
+		const { fanout, sender } = setupClear([[notif({ status: 'pending' })]], [sentEntry()])
+		await fanout.handleLeftPending({ ...event, action: 'updated' })
+		expect(sender.sendClearToActor).not.toHaveBeenCalled()
+	})
+
+	it('clears the collapse key only when no other card behind it is pending', async () => {
+		const entries = [
+			sentEntry({ collapseKey: 'object:obj' }),
+			sentEntry({ notificationId: 'n-2', collapseKey: 'object:obj' }),
+		]
+		const stillPending = setupClear(
+			[[notif({ status: 'resolved' })], [{ value: 1 }], [{ value: 1 }]],
+			entries,
+		)
+		await stillPending.fanout.handleLeftPending(leftEvent)
+		expect(stillPending.sender.sendClearToActor).toHaveBeenCalledWith(
+			'human',
+			expect.objectContaining({ notificationIds: ['n-1'], collapseKey: null }),
+		)
+
+		const allDone = setupClear(
+			[[notif({ status: 'resolved' })], [{ value: 0 }], [{ value: 0 }]],
+			entries,
+		)
+		await allDone.fanout.handleLeftPending(leftEvent)
+		expect(allDone.sender.sendClearToActor).toHaveBeenCalledWith(
+			'human',
+			expect.objectContaining({ notificationIds: ['n-1'], collapseKey: 'object:obj' }),
+		)
+	})
+
+	it('clears a push-only chat reply once the chat is read past it', async () => {
+		const chatRow = notif({
+			status: 'seen',
+			metadata: { conversation_id: '11111111-1111-4111-8111-111111111111', message_id: 5 },
+		})
+		const { fanout, sender } = setupClear(
+			[[chatRow], [{ lastRead: 7 }], [{ value: 0 }]],
+			[sentEntry({ category: 'conversation' })],
+		)
+		await fanout.handleChatRead({
+			...event,
+			actor_id: 'human',
+			action: 'conversation_participant_state_updated',
+			entity_type: 'conversation',
+			entity_id: '11111111-1111-4111-8111-111111111111',
+		})
+		expect(sender.sendClearToActor).toHaveBeenCalledWith(
+			'human',
+			expect.objectContaining({ notificationIds: ['n-1'] }),
+		)
+	})
+
+	it('leaves a chat reply alone when the read cursor is behind it', async () => {
+		const chatRow = notif({
+			status: 'seen',
+			metadata: { conversation_id: '11111111-1111-4111-8111-111111111111', message_id: 9 },
+		})
+		const { fanout, sender } = setupClear([[chatRow], [{ lastRead: 7 }]], [sentEntry()])
+		await fanout.handleChatRead({
+			...event,
+			actor_id: 'human',
+			action: 'conversation_participant_state_updated',
+			entity_type: 'conversation',
+			entity_id: '11111111-1111-4111-8111-111111111111',
+		})
+		expect(sender.sendClearToActor).not.toHaveBeenCalled()
 	})
 })
