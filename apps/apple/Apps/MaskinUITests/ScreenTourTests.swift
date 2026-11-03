@@ -37,7 +37,7 @@ final class ScreenTourTests: XCTestCase {
 			return false
 		}
 		if element.isHittable { element.tap() } else { element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-		sleep(2)
+		sleep(3)
 		return true
 	}
 
