@@ -36,7 +36,14 @@ import { RelatedTab } from './related-tab'
 import { resolveRelatedRows } from './related-tab-utils'
 import { TimelineTab } from './timeline-tab'
 
-export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
+export function ObjectDetailShell({
+	object,
+	focusCommentId,
+}: {
+	object: ObjectResponse
+	/** Event id from the route's `?comment=`, handed to the timeline to scroll to. */
+	focusCommentId?: number
+}) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
@@ -452,7 +459,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 								</TabsList>
 							</div>
 							<TabsContent value="timeline" className="mt-0">
-								<TimelineTab object={object} />
+								<TimelineTab object={object} focusCommentId={focusCommentId} />
 							</TabsContent>
 							<TabsContent value="related" className="mt-3">
 								<RelatedTab object={object} />
