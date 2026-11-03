@@ -258,7 +258,7 @@ describe('deep_research routes (Integration)', () => {
 				url: 'https://www.retsinformation.dk/eli/lta/2022/700',
 			},
 		])
-		expect(run.cap).toEqual({ cap_cents: 100 })
+		expect(run.cap).toEqual({ cap_cents: 50 })
 		expect(run.route).toBe('workspace_custom')
 		expect(run.model).toBe(MODEL)
 		expect(run.session_id).toBeTruthy()
@@ -286,9 +286,9 @@ describe('deep_research routes (Integration)', () => {
 		const { id } = (await (await post(question)).json()) as { id: string }
 		await waitForEnd(id)
 
-		// The simple effort default cap is 100 cents, so the flag is $0.85.
+		// The simple effort default cap is 50 cents, so the flag is $0.425.
 		const input = mocks.startSession.mock.calls[0]?.[0]
-		expect(input.config.runtime_config).toEqual({ max_turns: 60, max_budget_usd: 0.85 })
+		expect(input.config.runtime_config).toEqual({ max_turns: 60, max_budget_usd: 0.425 })
 	})
 
 	it('fires deep_research_run_finished once, with the agreed properties', async () => {
@@ -304,7 +304,7 @@ describe('deep_research routes (Integration)', () => {
 			effort: 'simple',
 			status: 'done',
 			cost_cents: run.usage.cost_cents,
-			cap_cents: 100,
+			cap_cents: 50,
 			duration: expect.any(Number),
 			route: 'workspace_custom',
 			model: MODEL,

@@ -12,9 +12,9 @@ export type ResearchEffort = 'simple' | 'comparison' | 'broad'
 
 /** Default cap per effort level, in USD cents. ASSUMED values: recalibrate after the dry run. */
 export const RESEARCH_EFFORT_DEFAULT_CAP_CENTS: Record<ResearchEffort, number> = {
-	simple: 100,
-	comparison: 400,
-	broad: 1_200,
+	simple: 50,
+	comparison: 200,
+	broad: 600,
 }
 
 const DEFAULT_RESEARCH_MAX_CAP_USD = 15
