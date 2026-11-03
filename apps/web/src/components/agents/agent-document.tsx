@@ -735,12 +735,11 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const [confirmReset, setConfirmReset] = useState(false)
 
 	const handleDelete = useCallback(() => {
-		deleteActor.mutate(agent.id, {
-			onSuccess: () => {
-				navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
-			},
-		})
-	}, [agent.id, deleteActor, navigate, workspaceId])
+		// The delete runs on in the background (toast in useDeleteActor), so leave now.
+		setConfirmDelete(false)
+		deleteActor.mutate({ id: agent.id, name: agent.name })
+		navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
+	}, [agent.id, agent.name, deleteActor, navigate, workspaceId])
 
 	const handleReset = useCallback(() => {
 		resetActor.mutate(agent.id, {
