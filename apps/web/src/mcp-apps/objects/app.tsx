@@ -230,9 +230,7 @@ function PropertiesSheet({
 				<SheetTitle className="px-6 pt-6 text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Properties
 				</SheetTitle>
-				<SheetDescription className="sr-only">
-					Object properties and attached files
-				</SheetDescription>
+				<SheetDescription className="sr-only">Item properties and attached files</SheetDescription>
 				<div className="px-6 pt-4 pb-6">
 					<PropertiesPanel
 						object={object}
@@ -247,7 +245,7 @@ function PropertiesSheet({
 
 function ObjectListView({ objects }: { objects: ObjectResponse[] }) {
 	if (!objects.length) {
-		return <EmptyState title="No objects" description="No objects found matching the criteria" />
+		return <EmptyState title="No items" description="No items found matching the criteria" />
 	}
 
 	return (
@@ -321,7 +319,7 @@ function UpdateSummaryView({
 			)}
 			{objectsUpdated > 0 && (
 				<p className="text-sm text-muted-foreground">
-					{objectsUpdated} object{objectsUpdated === 1 ? '' : 's'} updated
+					{objectsUpdated} item{objectsUpdated === 1 ? '' : 's'} updated
 				</p>
 			)}
 			{hasFailures && (

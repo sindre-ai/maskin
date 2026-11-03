@@ -584,8 +584,8 @@ function AgentsColumnHeader({
 				<span className="w-8 shrink-0" />
 				<span className="min-w-0 flex-1">Agent</span>
 				{showTeam && <span className="hidden w-36 shrink-0 xl:block">Team</span>}
-				{showActivity && <span className="w-28 shrink-0 lg:w-32 xl:w-[150px]">Latest</span>}
-				{showSessions && <span className="w-16 shrink-0 text-right">Sessions</span>}
+				{showActivity && <span className="hidden w-32 shrink-0 lg:block xl:w-[150px]">Latest</span>}
+				{showSessions && <span className="hidden w-16 shrink-0 text-right lg:block">Sessions</span>}
 				<span className="w-[100px] shrink-0">Status</span>
 			</div>
 			{/* The row's "···" and Call/See why footprint. */}
@@ -699,11 +699,11 @@ function AgentRowItem({
 						</span>
 					)}
 					{showActivity && (
-						// Below md the Latest column is hidden, so its text wraps under the
+						// Below lg the Latest column is hidden, so its text wraps under the
 						// outcome instead — readable on touch with no hover.
 						<span
 							data-testid="agent-latest-mobile"
-							className="line-clamp-3 text-[13px] text-muted-foreground md:hidden"
+							className="line-clamp-3 text-[13px] text-muted-foreground lg:hidden"
 						>
 							{latest}
 						</span>
@@ -717,7 +717,7 @@ function AgentRowItem({
 				{showActivity && (
 					<Tooltip>
 						<TooltipTrigger asChild>
-							<span className="hidden w-28 shrink-0 truncate text-[13px] text-muted-foreground md:block lg:w-32 xl:w-[150px]">
+							<span className="hidden w-32 shrink-0 truncate text-[13px] text-muted-foreground lg:block xl:w-[150px]">
 								{latest}
 							</span>
 						</TooltipTrigger>
@@ -725,7 +725,7 @@ function AgentRowItem({
 					</Tooltip>
 				)}
 				{showSessions && (
-					<span className="hidden w-16 shrink-0 text-right text-[13px] tabular-nums text-muted-foreground md:block">
+					<span className="hidden w-16 shrink-0 text-right text-[13px] tabular-nums text-muted-foreground lg:block">
 						{row.sessionCount}
 					</span>
 				)}
@@ -739,7 +739,7 @@ function AgentRowItem({
 						type="button"
 						variant="ghost"
 						size="icon"
-						className="mx-1 size-7 shrink-0 text-muted-foreground/60 hover:text-foreground"
+						className="mx-1 hidden size-7 shrink-0 text-muted-foreground/60 hover:text-foreground sm:inline-flex"
 						aria-label={`More for ${agent.name}`}
 					>
 						<Ellipsis size={16} aria-hidden />

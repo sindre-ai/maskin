@@ -378,14 +378,14 @@ describe('AgentsIndexView', () => {
 	// Mockup 2333 — "what it's doing now" is a desktop column, but it shared no
 	// breakpoint with the sessions count, so 768px showed a name and a status.
 	describe('row columns', () => {
-		it('reveals the activity and session columns at the same breakpoint', () => {
+		it('reveals the activity and session columns from lg', () => {
 			mount([agentBrian()], [brianRunningSession()])
 			const [mobileLatest, activity] = screen.getAllByText('Crunching numbers')
 			const row = screen.getByRole('link', { name: /Brian/ }).closest('li') as HTMLElement
 			const sessions = within(row).getByText('1', { selector: 'span.tabular-nums' })
-			expect(activity.className).toContain('md:block')
-			expect(mobileLatest.className).toContain('md:hidden')
-			expect(sessions.className).toContain('md:block')
+			expect(activity.className).toContain('lg:block')
+			expect(mobileLatest.className).toContain('lg:hidden')
+			expect(sessions.className).toContain('lg:block')
 		})
 
 		it('reads the session count from the stats, not from the recent sessions', () => {

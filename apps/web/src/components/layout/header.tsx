@@ -194,7 +194,7 @@ export function Header() {
 		return (
 			<header // v16: no rule under the bar; from md the content sits 22px under the buttons (the shell
 				// pads it 32px, so the bar pulls 10px back).
-				className="flex flex-none flex-wrap items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:-mb-2.5 md:px-8 md:pt-5 md:pb-0 lg:px-7"
+				className="flex flex-none flex-wrap items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:-mb-2.5 md:flex-nowrap md:px-8 md:pt-5 md:pb-0 lg:px-7"
 			>
 				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
 				<Link

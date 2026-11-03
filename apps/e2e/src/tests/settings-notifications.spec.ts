@@ -47,3 +47,24 @@ test('Notifications reads in light and dark', async ({ page, account }) => {
 		await expect(page.getByText('Daily briefing at')).toBeVisible()
 	}
 })
+
+test('A saved-off "Needs you" stays editable so it can be turned back on', async ({
+	page,
+	account,
+}) => {
+	const res = await fetch('http://localhost:5173/api/notification-preferences', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${account.apiKey}` },
+		body: JSON.stringify({ categories: { needs_you: false } }),
+	})
+	expect(res.ok).toBe(true)
+
+	await page.goto(`/${account.workspaceId}/settings/notifications`)
+	const needsYou = page.getByRole('switch', { name: 'Needs you', exact: true })
+	await expect(needsYou).toBeEnabled({ timeout: 15_000 })
+	await expect(needsYou).not.toBeChecked()
+	await needsYou.click()
+	await expect(needsYou).toBeChecked()
+	// Once on it is locked again.
+	await expect(needsYou).toBeDisabled()
+})

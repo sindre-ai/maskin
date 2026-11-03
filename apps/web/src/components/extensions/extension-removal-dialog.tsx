@@ -84,10 +84,10 @@ export function ExtensionRemovalDialog({
 
 	const formatCount = (data: { count: number; hasMore: boolean } | undefined) => {
 		// No data means the count never came back — say so rather than showing a
-		// "0 objects" that reads as "safe to remove".
+		// "0 items" that reads as "safe to remove".
 		if (!data) return 'Unknown number of items'
 		const suffix = data.hasMore ? '+' : ''
-		return `${data.count}${suffix} object${data.count === 1 && !data.hasMore ? '' : 's'}`
+		return `${data.count}${suffix} item${data.count === 1 && !data.hasMore ? '' : 's'}`
 	}
 
 	const [choices, setChoices] = useState<Record<string, Choice>>({})

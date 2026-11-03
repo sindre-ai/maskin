@@ -17,6 +17,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { dismissBodyFor, useDismissForYou, useForYou } from '@/hooks/use-for-you'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
@@ -341,6 +342,8 @@ function ForYouFeed() {
 
 	const countOf = (bucket: FeedBucket) =>
 		sections.find((section) => section.bucket === bucket)?.items.length ?? 0
+	// Below 1024px the nav row is too short for the greeting beside Live, Display and New.
+	const isMobile = useMediaQuery('(max-width: 1023px)')
 	const greeting = greetingFor(getStoredActor()?.name, new Date())
 	const lead = leadLine(countOf('needs'), countOf('fyi'))
 
@@ -792,6 +795,8 @@ function ForYouFeed() {
 			<PageHeader
 				gutter="wide"
 				title={greeting}
+				// On a phone or tablet the Live and Display buttons take the nav row, so the greeting moves into the page.
+				hideTitle={isMobile}
 				scrollLocked
 				actions={
 					<>
@@ -836,6 +841,7 @@ function ForYouFeed() {
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="flex w-full max-w-280 flex-col">
+					{isMobile ? <h1 className="page-title pb-2">{greeting}</h1> : null}
 					<p
 						className="pb-4 text-base font-semibold leading-relaxed text-foreground"
 						data-testid="foryou-greeting"

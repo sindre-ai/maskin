@@ -256,7 +256,7 @@ function ObjectsPage() {
 
 			{/* Relationship types section */}
 			{!activeType && (
-				<div className="mt-8 border-t border-border pt-6">
+				<div className="mt-8 border-t border-border px-2 pt-6">
 					<RelationshipTypesEditor workspace={workspace} workspaceId={workspaceId} />
 				</div>
 			)}

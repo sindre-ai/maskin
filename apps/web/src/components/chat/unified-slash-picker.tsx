@@ -232,6 +232,9 @@ export const UnifiedChatSlashPicker = forwardRef<
 					side="bottom"
 					className="max-h-[75vh] rounded-t-2xl border-t p-0"
 					aria-describedby={undefined}
+					// The composer keeps focus so typing carries on; the sheet is not modal in spirit.
+					onOpenAutoFocus={(e) => e.preventDefault()}
+					onCloseAutoFocus={(e) => e.preventDefault()}
 				>
 					<SheetHeader className="sr-only">
 						<SheetTitle>Reference or create</SheetTitle>

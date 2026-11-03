@@ -318,7 +318,7 @@ function Orb({ speaking, thinking }: { speaking: boolean; thinking: boolean }) {
 			)}
 			<span
 				className={cn(
-					'size-40 rounded-full bg-[radial-gradient(circle_at_30%_28%,var(--ask-border),var(--brand)_62%)] shadow-[0_0_80px_color-mix(in_oklab,var(--brand)_45%,transparent)]',
+					'size-40 rounded-full bg-[radial-gradient(circle_at_30%_28%,color-mix(in_oklab,var(--brand)_35%,white),var(--brand)_62%)] shadow-[0_0_80px_color-mix(in_oklab,var(--brand)_45%,transparent)]',
 					thinking && 'motion-safe:animate-pulse',
 				)}
 			/>

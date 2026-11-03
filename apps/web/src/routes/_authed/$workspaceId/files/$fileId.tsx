@@ -722,7 +722,7 @@ function TopBarActions({
 }) {
 	const canWrite = useCanWrite()
 	return (
-		<div className="flex flex-wrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
+		<div className="flex flex-wrap md:flex-nowrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
 			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
 			<Button
 				variant="outline"
@@ -732,7 +732,7 @@ function TopBarActions({
 				aria-label="Download file"
 			>
 				<Download size={14} />
-				<span className="hidden md:inline">Download</span>
+				<span className="hidden lg:inline">Download</span>
 			</Button>
 			<Button
 				variant="ghost"
@@ -742,7 +742,7 @@ function TopBarActions({
 				aria-label="Linked items and files"
 			>
 				<Link2 size={14} />
-				<span className="hidden md:inline">Linked</span>
+				<span className="hidden lg:inline">Linked</span>
 			</Button>
 			<ViewerTooltip>
 				<Button
@@ -755,7 +755,7 @@ function TopBarActions({
 					aria-pressed={annotateMode}
 				>
 					<MapPin size={14} className="md:hidden" />
-					<span className="hidden md:inline">Annotate</span>
+					<span className="hidden lg:inline">Annotate</span>
 				</Button>
 			</ViewerTooltip>
 			<Button
@@ -773,7 +773,7 @@ function TopBarActions({
 			>
 				<MessageSquare size={14} />
 				{commentCount === null ? (
-					<span className="hidden md:inline">Review</span>
+					<span className="hidden lg:inline">Review</span>
 				) : (
 					<span>Comments {commentCount}</span>
 				)}

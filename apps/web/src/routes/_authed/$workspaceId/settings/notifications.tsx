@@ -111,7 +111,8 @@ function NotificationsPage() {
 				<PreferenceRow
 					title="Needs you"
 					description="Decisions and questions. Ignores quiet hours."
-					locked
+					// Greyed while on; a saved-off value stays editable so it can never get stuck off.
+					locked={prefs.categories.needs_you}
 					checked={prefs.categories.needs_you}
 					onChange={(next) => save({ categories: { needs_you: next } })}
 				/>

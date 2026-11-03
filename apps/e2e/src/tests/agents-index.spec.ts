@@ -227,14 +227,14 @@ test.describe('Agents index', () => {
 			await page.emulateMedia({ colorScheme: 'light' })
 
 			// The activity and session columns share one breakpoint — both appear
-			// from 768px up, and neither crowds the phone layout.
+			// from 1024px up, and neither crowds the phone layout.
 			const row = page.getByRole('link', { name: /Ada Atom/ })
 			const activity = row.getByText('Standing by', { exact: true }).locator('visible=true')
 			const sessions = row.locator('span.tabular-nums').filter({ hasText: /^0$/ })
-			// Below 768px the Latest text is not a column but a wrapped line under
+			// Below 1024px the Latest text is not a column but a wrapped line under
 			// the outcome, so the same words are readable on touch without hover.
 			await expect(activity).toBeVisible()
-			if (vp.width >= 768) {
+			if (vp.width >= 1024) {
 				await expect(sessions).toBeVisible()
 			} else {
 				await expect(sessions).toBeHidden()
@@ -418,7 +418,7 @@ test.describe('Agents index', () => {
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 
-			if (vp.width >= 768) {
+			if (vp.width >= 1024) {
 				await latest.hover()
 				await expect(page.getByRole('tooltip')).toContainText('Standing by')
 			}

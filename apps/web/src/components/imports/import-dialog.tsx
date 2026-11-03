@@ -701,7 +701,7 @@ function MappingStep({
 
 				{relSectionOpen && localRelationships.length === 0 && (
 					<div className="border-t px-3 py-4 text-center text-xs text-muted-foreground">
-						No relationships configured. Click "Add" to link objects together.
+						No relationships configured. Click "Add" to link items together.
 					</div>
 				)}
 			</div>

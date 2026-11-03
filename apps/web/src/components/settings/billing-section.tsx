@@ -312,7 +312,7 @@ export function BillingSection({
 		return (
 			<div>
 				<h2 className="px-2 pb-1 text-xs font-semibold text-foreground">Maskin Subscription</h2>
-				<p className="text-xs text-muted-foreground">Loading…</p>
+				<p className="px-2 text-xs text-muted-foreground">Loading…</p>
 			</div>
 		)
 	}
@@ -345,7 +345,7 @@ export function BillingSection({
 	return (
 		<div>
 			<h2 className="px-2 pb-1 text-xs font-semibold text-foreground">Maskin Subscription</h2>
-			<p className="text-xs text-muted-foreground mb-3">
+			<p className="mb-3 px-2 text-xs text-muted-foreground">
 				Hosted LLM — pay Maskin, no API key needed. Included usage per period, billed at actual
 				dollar cost, then buy prepaid usage credits any time to keep going — you choose the amount,
 				nothing is auto-charged.
@@ -438,7 +438,7 @@ function TrialBanner({
 			className="mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 p-4"
 		>
 			<Clock size={16} aria-hidden className="shrink-0 text-warning" />
-			<div className="min-w-0 flex-1">
+			<div className="min-w-0 flex-1 basis-48">
 				<p className="text-[13px] font-bold text-warning">{state.title}</p>
 				<p className="text-xs text-warning">Choose a plan to keep agents running.</p>
 			</div>

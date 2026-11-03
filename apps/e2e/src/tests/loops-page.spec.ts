@@ -418,14 +418,14 @@ test.describe('Loops list page', () => {
 			await expect(cards.first().getByText('4 of 10')).toBeVisible()
 			await expect(page.getByTestId('flows-brief')).toContainText('No flows need you.')
 
-			// One column below md, two from md up.
+			// One column below lg (the 768 sidebar leaves too little for two), two from lg up.
 			const boxes = await cards.evaluateAll((nodes) =>
 				nodes.map((n) => {
 					const r = n.getBoundingClientRect()
 					return { x: r.x, y: r.y }
 				}),
 			)
-			if (viewport.width < 768) expect(boxes[1].x).toBe(boxes[0].x)
+			if (viewport.width < 1024) expect(boxes[1].x).toBe(boxes[0].x)
 			else expect(boxes[1].y).toBe(boxes[0].y)
 
 			// Choosing List sticks across a reload.
