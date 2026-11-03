@@ -552,6 +552,36 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 	}
 }
 
+/** The one value a session's pin_llm_route may hold; anything else means no pin. */
+export function readPinnedRoute(config: unknown): typeof LLM_ROUTE_CUSTOM | undefined {
+	return (config as { pin_llm_route?: unknown } | null)?.pin_llm_route === LLM_ROUTE_CUSTOM
+		? LLM_ROUTE_CUSTOM
+		: undefined
+}
+
+/** Route 3 on its own, for a session pinned to the workspace's custom endpoint. */
+function resolvePinnedCustomRoute(
+	wsSettings: WorkspaceSettings,
+	enterprise: boolean,
+): LlmRoutingResult {
+	// Custom endpoints are a BYO entitlement, the same gate routes 2-4 sit behind.
+	let customEnv: Record<string, string> | null = null
+	try {
+		customEnv = enterprise ? buildCustomLlmEnv(wsSettings.custom_llm) : null
+	} catch (err) {
+		if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
+		throw err
+	}
+	if (!customEnv) {
+		throw new LlmCredentialsUnavailableError(
+			'This session is pinned to the workspace custom model endpoint, and the workspace has none that is enabled and complete.',
+			false,
+			{ noCredentialsConfigured: true },
+		)
+	}
+	return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
+}
+
 /**
  * Builds the env vars for the Maskin-funded OpenRouter route. Returns null
  * when the workspace is not on a maskin-plan-routed plan or the operator
@@ -676,8 +706,18 @@ export async function resolveLlmRoute(params: {
 	 * production callers omit it.
 	 */
 	env?: NodeJS.ProcessEnv
+	/**
+	 * Restricts the session to the workspace's own custom endpoint. Only narrows:
+	 * no subscription, API key or Maskin-funded route is tried, and a workspace
+	 * without a usable custom endpoint gets no credentials instead of another route.
+	 */
+	pinRoute?: typeof LLM_ROUTE_CUSTOM
 }): Promise<LlmRoutingResult | null> {
 	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe } = params
+
+	if (params.pinRoute === LLM_ROUTE_CUSTOM) {
+		return resolvePinnedCustomRoute(wsSettings, enterprise)
+	}
 
 	/** Set when route #2 failed; folded into the error when nothing else resolves. */
 	let oauthFailure: string | null = null

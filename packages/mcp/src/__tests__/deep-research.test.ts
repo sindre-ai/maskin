@@ -15,7 +15,6 @@ vi.mock('node:fs', () => ({
 	readFileSync: vi.fn().mockReturnValue('<html>mock</html>'),
 }))
 
-import { SEARCH_DATA_USE_RULE } from '@maskin/shared'
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { createMcpServer } from '../server'
@@ -85,9 +84,10 @@ describe('deep_research', () => {
 			body: (init as RequestInit).body ? JSON.parse(String((init as RequestInit).body)) : undefined,
 		}))
 
-	it('carries the search data-use rule word for word in the tool description', () => {
-		expect(tools.deep_research.description).toContain(SEARCH_DATA_USE_RULE)
-		expect(SEARCH_DATA_USE_RULE).toContain('For a client-specific question, do not use this tool.')
+	it('carries the public-topic rule in the tool description', () => {
+		expect(tools.deep_research.description).toContain(
+			'Write queries about the public topic only. Never include a client name, contact name, deal, customer data or anything copied from a private workspace object. For a client-specific question, do not use this tool.',
+		)
 	})
 
 	it('starts a run with an Idempotency-Key and returns the report when it is ready', async () => {

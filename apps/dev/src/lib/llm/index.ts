@@ -20,11 +20,4 @@ export function createLLMAdapter(provider: string, config: Record<string, unknow
 }
 
 export { RawSecretRefusedError } from './secret-guard'
-export type {
-	LLMAdapter,
-	LLMMessage,
-	LLMResponse,
-	LLMTool,
-	LLMToolCall,
-	LLMUsage,
-} from './adapter'
+export type { LLMAdapter, LLMMessage, LLMResponse, LLMTool, LLMToolCall } from './adapter'

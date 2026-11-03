@@ -1,5 +1,6 @@
--- One row per deep_research run: question, cap and metered cost, report.
--- cost_cents feeds getWorkspacePlanUsdCentsUsage so a run counts against the plan cap.
+-- One row per deep_research run: question, cap, the agent session that did the research,
+-- its cost and the report. cost_cents feeds getWorkspacePlanUsdCentsUsage so a run on the
+-- Maskin-funded route counts against the plan cap.
 --
 -- New table, plain DDL: nothing reads or locks existing rows (see MIGRATIONS.md,
 -- not a hot table, no backfill). The index is created with the table, which is empty.
@@ -15,16 +16,12 @@ CREATE TABLE IF NOT EXISTS "research_runs" (
 	"cost_cents" integer DEFAULT 0 NOT NULL,
 	"tokens_in" integer DEFAULT 0 NOT NULL,
 	"tokens_out" integer DEFAULT 0 NOT NULL,
-	"searches" integer DEFAULT 0 NOT NULL,
-	"extracts" integer DEFAULT 0 NOT NULL,
+	"session_id" uuid REFERENCES "sessions"("id") ON DELETE SET NULL,
 	"llm_route" text,
 	"model" text,
-	"brief" jsonb,
-	"findings" jsonb,
 	"report_md" text,
 	"sources" jsonb,
 	"warnings" jsonb,
-	"stages" jsonb,
 	"error" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"started_at" timestamp with time zone,

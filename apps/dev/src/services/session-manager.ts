@@ -180,6 +180,7 @@ import {
 	getWorkspacePlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
+	readPinnedRoute,
 	resolveLlmRoute,
 	unreadableKeyError,
 	withCredentialResolutionTimeout,
@@ -2600,6 +2601,7 @@ ${cont.continues_prompt}
 						apiKey: (llmConfig.api_key as string | undefined) ?? null,
 						model: (llmConfig.model as string | undefined)?.trim() || null,
 					},
+					pinRoute: readPinnedRoute(session.config),
 				}),
 			)
 			if (resolved) {

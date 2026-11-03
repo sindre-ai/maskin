@@ -1386,19 +1386,16 @@ export const researchRuns = pgTable(
 		costCents: integer('cost_cents').notNull().default(0),
 		tokensIn: integer('tokens_in').notNull().default(0),
 		tokensOut: integer('tokens_out').notNull().default(0),
-		searches: integer('searches').notNull().default(0),
-		extracts: integer('extracts').notNull().default(0),
+		// The research agent session this run started. Cost, tokens and the report are
+		// read from it. Null only before the session exists or if the session is deleted.
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
 		// Same values as sessions.config.llm_route. Only maskin_plan runs count
 		// toward the plan cap, like sessions.
 		llmRoute: text('llm_route'),
 		model: text('model'),
-		brief: jsonb('brief').$type<unknown>(),
-		findings: jsonb('findings').$type<unknown>(),
 		reportMd: text('report_md'),
 		sources: jsonb('sources').$type<unknown>(),
 		warnings: jsonb('warnings').$type<unknown>(),
-		// Per-stage cost and time.
-		stages: jsonb('stages').$type<unknown>(),
 		error: text('error'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		startedAt: timestamp('started_at', { withTimezone: true }),
