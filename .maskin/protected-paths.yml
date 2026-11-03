@@ -62,5 +62,10 @@ protected_paths:
   - "**/.claude/**"
   - "**/CLAUDE.md"
 
+  # --- protected design rules (web app) ---
+  # The rules and the check each one names. Loosening a rule or its check is a
+  # product decision, so it is always a human-review PR.
+  - "design-system/invariants.md"
+
   # --- the risk-classifier's own floor configuration (self-protecting) ---
   - ".maskin/**"

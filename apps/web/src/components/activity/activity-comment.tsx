@@ -57,6 +57,9 @@ interface ActivityCommentProps {
 	collapsibleReplies?: boolean
 	// Reading of the row itself — see CommentVariant.
 	variant?: CommentVariant
+	// The comment a `?comment=` link points at. A collapsed thread opens when
+	// the target is one of its replies, so the jump has a node to land on.
+	focusEventId?: number
 }
 
 /**
@@ -174,8 +177,9 @@ function CommentRow({
 	return (
 		<>
 			<div
+				data-comment-id={event.id}
 				className={cn(
-					'relative flex items-start rounded-md transition-colors',
+					'relative flex items-start scroll-mt-16 rounded-md transition-colors',
 					// Mockup 1281–1284: 24px avatar, 10px gutter, 2px of vertical air —
 					// the timeline is read as a stream, so rows sit close together.
 					isBubble ? 'z-[1] gap-2.5 py-0.5' : '-mx-1 gap-2 px-1 py-1 hover:bg-secondary/50',
@@ -339,6 +343,7 @@ export function ActivityComment({
 	onReplyTo,
 	collapsibleReplies,
 	variant = 'plain',
+	focusEventId,
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
@@ -349,7 +354,8 @@ export function ActivityComment({
 	// count and a note naming who spoke last, both read off the replies
 	// themselves (mockup 369).
 	const [repliesOpen, setRepliesOpen] = useState(false)
-	const collapsed = !!collapsibleReplies && hasReplies && !repliesOpen
+	const focusInReplies = focusEventId !== undefined && replies.some((r) => r.id === focusEventId)
+	const collapsed = !!collapsibleReplies && hasReplies && !repliesOpen && !focusInReplies
 	const lastReply = replies[replies.length - 1]
 	const lastReplyAuthor = actorList.find((a) => a.id === lastReply?.actorId)?.name
 	const threadNote = lastReplyAuthor ? `last from ${lastReplyAuthor}` : null
@@ -440,7 +446,7 @@ export function ActivityComment({
 			{hasReplies && !collapsed && (
 				<div className={cn('space-y-1.5', variant === 'bubble' ? 'ml-[41px]' : 'ml-7')}>
 					{replies.map((reply, idx) => (
-						<div key={reply.id}>
+						<div key={reply.id} id={`comment-${reply.id}`}>
 							{divider && dividerBeforeReplyId === reply.id && divider}
 							<CommentRow
 								event={reply}

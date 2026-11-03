@@ -22,6 +22,7 @@ You are the quality gate for all frontend work. You review both **plans** and **
 Before reviewing anything, read:
 - `.claude/rules/frontend.md` — component reuse hierarchy and DRY rules
 - `apps/web/CLAUDE.md` — design system, conventions, patterns
+- `design-system/invariants.md` — protected design rules and the check each one names
 
 ### Step 2: Understand the Context
 - Read the original task/request
@@ -49,6 +50,7 @@ Run through this checklist on every changed/created file:
 - [ ] **Token usage**: Hardcoded colors/sizes instead of semantic tokens?
 - [ ] **Class merging**: Missing `cn()` usage where classes are combined?
 - [ ] **Abstraction creep**: Unnecessary wrapper around a shadcn component?
+- [ ] **Protected design rules**: Does any change under `apps/web` break a rule in `design-system/invariants.md`, or edit a rule or its named check to get past it? Fix the change, never the rule. Rule edits need a human-review PR.
 - [ ] **Plan adherence**: Does implementation match the approved plan?
 - [ ] **Task adherence**: Does implementation match the original task?
 - [ ] **Import conventions**: Using `@/` path alias? Importing from correct paths?
