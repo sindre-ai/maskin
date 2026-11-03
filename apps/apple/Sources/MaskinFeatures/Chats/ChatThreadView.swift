@@ -200,6 +200,7 @@ struct ChatThreadView: View {
 				// Arrow-only back button (user decision). The thread pushes the flow and the agent page.
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
+				.task { runtime?.chatOpened(store.conversationID) }
 				.onAppear { liveCalls?.visibleConversationID = store.conversationID }
 				.task {
 					// Drafts are per conversation: restored here, saved on every keystroke.
