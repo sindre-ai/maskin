@@ -41,7 +41,7 @@ public struct APIMarketplaceSource: MarketplaceAPI {
 	}
 
 	public func install(loopID: String, idempotencyKey: String) async throws -> InstalledLoop {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_installed_hyphen_loops(
 				.init(
 					body: .json(.init(loopId: loopID, workspaceId: workspaceID, source: .detail))))
@@ -61,7 +61,7 @@ public struct APIMarketplaceSource: MarketplaceAPI {
 	}
 
 	public func fork(installID: String, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_installed_hyphen_loops_sol__lcub_id_rcub__sol_fork(
 				.init(path: .init(id: installID)))
 		}
@@ -76,7 +76,7 @@ public struct APIMarketplaceSource: MarketplaceAPI {
 	public func uninstall(installID: String, keepProvisionedItems: Bool, idempotencyKey: String)
 		async throws
 	{
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.delete_sol_api_sol_installed_hyphen_loops_sol__lcub_id_rcub_(
 				.init(
 					path: .init(id: installID),

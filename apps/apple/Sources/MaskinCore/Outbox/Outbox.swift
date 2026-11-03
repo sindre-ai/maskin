@@ -360,7 +360,7 @@ public final class Outbox {
 			inFlight.insert(entry.id)
 			var outcome: Result<Void, any Error> = .success(())
 			do {
-				try await IdempotencyKey.$current.withValue(entry.idempotencyKey) {
+				try await IdempotencyKey.bind(entry.idempotencyKey) {
 					try await executor.execute(kind: entry.kind, payload: entry.payload)
 				}
 			} catch {
