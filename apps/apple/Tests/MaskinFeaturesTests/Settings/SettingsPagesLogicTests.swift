@@ -4,6 +4,7 @@ import Testing
 
 @testable import MaskinFeatures
 
+@MainActor
 @Suite("Settings pages logic")
 struct SettingsPagesLogicTests {
 	@Test("a billing trial shows days left, a paid plan shows no banner")

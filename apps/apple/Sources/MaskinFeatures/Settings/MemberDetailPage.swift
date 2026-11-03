@@ -77,35 +77,3 @@ struct MemberDetailPage: View {
 		return rows
 	}
 }
-
-/// A pending invitation: when it was sent, resend or cancel.
-struct InvitationDetailPage: View {
-	let store: PendingInvitesStore
-	let inviteID: String
-	@Environment(\.dismiss) private var dismiss
-	@State private var resent = false
-
-	var body: some View {
-		if let invite = store.invites.first(where: { $0.id == inviteID }) {
-			WorkspacePage(title: invite.email) {
-				PageGroupLabel(text: "Invitation")
-				PageCard(rows: [
-					PageRowModel(
-						id: "sent", title: "Sent", subtitle: invite.invitedBy.isEmpty ? nil : "By \(invite.invitedBy)",
-						accessory: .state(PageState(invite.sentText().replacingOccurrences(of: "Invited ", with: "").capitalized, .plain))),
-					PageRowModel(id: "role", title: "Role", accessory: .state(PageState(invite.role.label, .plain))),
-				])
-				if resent { PageFootnote(text: "Invitation sent again.") }
-				if let error = store.error { FormError(error) }
-				Button("Resend invitation") { Task { resent = await store.resend(invite) } }
-					.buttonStyle(.primaryAction)
-				Button("Cancel invitation", role: .destructive) {
-					Task { if await store.cancel(invite) { dismiss() } }
-				}
-				.buttonStyle(.secondaryAction)
-			}
-		} else {
-			PageStatus(text: "This invitation is gone.")
-		}
-	}
-}

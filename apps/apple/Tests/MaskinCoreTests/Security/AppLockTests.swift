@@ -152,11 +152,4 @@ struct AppLockDelayTests {
 private struct StubLockAuth: AppLockAuthenticating {
 	var availability: AppLockAvailability { .passcodeOnly }
 	func authenticate(reason: String) async -> AppLockResult { .success }
-
-	@Test func biometryNameFollowsTheDevice() {
-		let (lock, auth, _, _) = make()
-		#expect(lock.biometryName == "Face ID")
-		auth.availability = .passcodeOnly
-		#expect(lock.biometryName == nil)
-	}
 }

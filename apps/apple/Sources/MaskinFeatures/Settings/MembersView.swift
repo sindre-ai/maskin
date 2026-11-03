@@ -95,6 +95,30 @@ struct MembersView: View {
 		view.navigationDestination(item: $memberDetail) { MemberDetailPage(store: store, memberID: $0) }
 	}
 
+	private func invitationDialog(_ view: some View) -> some View {
+		view
+		.confirmationDialog(
+			invitationTarget?.email ?? "Invitation",
+			isPresented: Binding(get: { invitationTarget != nil }, set: { if !$0 { invitationTarget = nil } }),
+			titleVisibility: .visible, presenting: invitationTarget
+		) { invitation in
+			Button("Send again") { Task { await invitations?.resend(invitation) } }
+			Button("Cancel invitation", role: .destructive) { Task { await invitations?.cancel(invitation) } }
+		}
+	}
+
+	private var actionError: String? {
+		if let message = store.actionError { return message }
+		return invitations?.actionError
+	}
+
+	private var footnote: String {
+		if store.canAdd {
+			return "Tap an agent to see what it is doing or pause it. To add someone, ask them for the ID on their profile."
+		}
+		return "Tap an agent to see what it is doing. Only owners and admins can add people."
+	}
+
 	private func agentRows(_ groups: MembersRoster.Groups) -> [PageRowModel] {
 		var rows: [PageRowModel] = groups.agents.map(agentRow)
 		rows.append(hireRow)

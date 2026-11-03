@@ -130,12 +130,6 @@ public final class AppLockController {
 		return nil
 	}
 
-	/// "Face ID", "Touch ID" or "Optic ID" for the lock screen's copy; nil with only a passcode.
-	public var biometryName: String? {
-		if case .biometric(let name) = availability { return name }
-		return nil
-	}
-
 	/// Content must be covered: locked, or about to be snapshotted by the system.
 	public var shouldCoverContent: Bool { isEnabled && hasSession && (isLocked || isInactive) }
 
