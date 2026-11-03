@@ -83,7 +83,7 @@ describe('resolveResearchRunCapCents', () => {
 	})
 
 	it('never returns more than 30 cents of headroom: it refuses', async () => {
-		// Cap $10.00, 970 cents used: 30 cents left, below the $1 simple default.
+		// Cap $10.00, 970 cents used: 30 cents left, below the 50 cent simple default.
 		const run = resolveResearchRunCapCents({
 			...base,
 			db: dbWithUsage({ sessionCostUsd: ['9.70'] }),
@@ -147,9 +147,9 @@ describe('resolveResearchRunCapCents', () => {
 			await resolveResearchRunCapCents({
 				...common,
 				effort: 'comparison',
-				callerMaxCostUsd: 2.5,
+				callerMaxCostUsd: 1.5,
 			}),
-		).toBe(250)
+		).toBe(150)
 		expect(
 			await resolveResearchRunCapCents({
 				...common,

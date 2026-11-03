@@ -36,6 +36,7 @@ const { createIdempotencyMiddleware } = await import('../../middleware/idempoten
 const { default: researchRoutes } = await import('../../routes/research')
 const {
 	__resetResearchSlotsForTesting,
+	budgetFlagUsd,
 	markInterruptedResearchRuns,
 	parseSources,
 	startResearchRun,
@@ -63,6 +64,7 @@ type RunBody = {
 	model: string | null
 	session_id: string | null
 	error: string | null
+	warnings: Array<{ code: string; message: string }>
 	usage: { cost_cents: number; tokens_in: number; tokens_out: number }
 }
 
@@ -256,7 +258,7 @@ describe('deep_research routes (Integration)', () => {
 				url: 'https://www.retsinformation.dk/eli/lta/2022/700',
 			},
 		])
-		expect(run.cap).toEqual({ cap_cents: 100 })
+		expect(run.cap).toEqual({ cap_cents: 50 })
 		expect(run.route).toBe('workspace_custom')
 		expect(run.model).toBe(MODEL)
 		expect(run.session_id).toBeTruthy()
@@ -280,6 +282,15 @@ describe('deep_research routes (Integration)', () => {
 		expect(input.actionPrompt).toContain(question.question)
 	})
 
+	it('gives the session a turn limit and a budget flag at 85 percent of the run cap', async () => {
+		const { id } = (await (await post(question)).json()) as { id: string }
+		await waitForEnd(id)
+
+		// The simple effort default cap is 50 cents, so the flag is $0.425.
+		const input = mocks.startSession.mock.calls[0]?.[0]
+		expect(input.config.runtime_config).toEqual({ max_turns: 60, max_budget_usd: 0.425 })
+	})
+
 	it('fires deep_research_run_finished once, with the agreed properties', async () => {
 		const { id } = (await (await post(question)).json()) as { id: string }
 		const run = await waitForEnd(id)
@@ -293,7 +304,7 @@ describe('deep_research routes (Integration)', () => {
 			effort: 'simple',
 			status: 'done',
 			cost_cents: run.usage.cost_cents,
-			cap_cents: 100,
+			cap_cents: 50,
 			duration: expect.any(Number),
 			route: 'workspace_custom',
 			model: MODEL,
@@ -329,6 +340,121 @@ describe('deep_research routes (Integration)', () => {
 			const run = await waitForEnd(id)
 			expect(run.status).toBe('failed')
 			expect(run.error).toBe('API Error: model not found')
+		})
+
+		/** A session the CLI stopped on a limit: non-zero exit (failed), an error result, a partial answer. */
+		async function limitedSession(subtype: string) {
+			const row = await sessionRow('failed', {
+				totalCostUsd: '0.043000',
+				inputTokens: 900,
+				outputTokens: 120,
+			})
+			const lines = [
+				{
+					type: 'assistant',
+					message: { content: [{ type: 'text', text: 'First findings: five years [1].' }] },
+				},
+				{
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_sub',
+					message: { content: [{ type: 'text', text: 'A subagent note, not the report.' }] },
+				},
+				{
+					type: 'result',
+					subtype,
+					is_error: true,
+					total_cost_usd: 0.043,
+					usage: { input_tokens: 900, output_tokens: 120 },
+				},
+			]
+			await insertSessionLog(db, row.id, {
+				stream: 'stdout',
+				content: `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`,
+			})
+			return row
+		}
+
+		it('ends the run as capped, with the partial report, a warning and the cost, when the budget flag trips', async () => {
+			mocks.startSession.mockImplementation(async () => ({
+				sessionId: (await limitedSession('error_max_budget_usd')).id,
+			}))
+			const { id } = (await (await post({ ...question, max_cost_usd: 0.05 })).json()) as {
+				id: string
+			}
+			const run = await waitForEnd(id)
+
+			expect(run.status).toBe('capped')
+			expect(run.cap).toEqual({ cap_cents: 5 })
+			expect(run.usage.cost_cents).toBe(5)
+			expect(run.error).toBeNull()
+			expect(run.warnings).toEqual([
+				{
+					code: 'cost_cap_reached',
+					message: expect.stringContaining('cost cap of $0.05'),
+				},
+			])
+			expect(run.report_md).toContain('**Warning:** This run stopped at its cost cap of $0.05')
+			expect(run.report_md).toContain('First findings: five years [1].')
+			expect(run.report_md).not.toContain('subagent note')
+			expect(mocks.startSession.mock.calls[0]?.[0].config.runtime_config.max_budget_usd).toBe(
+				0.0425,
+			)
+			const [, , props] = finishedEvents()[0] as [string, string, Record<string, unknown>]
+			expect(props).toMatchObject({ status: 'capped', cap_cents: 5 })
+		})
+
+		it('ends the run as capped with a turn-limit warning when the turn limit trips', async () => {
+			mocks.startSession.mockImplementation(async () => ({
+				sessionId: (await limitedSession('error_max_turns')).id,
+			}))
+			const { id } = (await (await post(question)).json()) as { id: string }
+			const run = await waitForEnd(id)
+
+			expect(run.status).toBe('capped')
+			expect(run.warnings[0]?.code).toBe('turn_limit_reached')
+		})
+
+		describe('what the run costs', () => {
+			const perModel = (model: string) => ({
+				[model]: {
+					inputTokens: 10_000,
+					outputTokens: 2_000,
+					cacheReadInputTokens: 50_000,
+					cacheCreationInputTokens: 0,
+					webSearchRequests: 1,
+				},
+			})
+
+			it('is priced from the whole-run model usage plus the search fee, not the thinner top-level usage', async () => {
+				mocks.startSession.mockImplementation(async () => ({
+					sessionId: (
+						await finishedSession({
+							result: {
+								modelUsage: perModel(MODEL),
+								usage: { input_tokens: 100, output_tokens: 50 },
+							},
+						})
+					).id,
+				}))
+				const { id } = (await (await post(question)).json()) as { id: string }
+				const run = await waitForEnd(id)
+				// 10000 x $1/M + 2000 x $5/M + one search at $0.007 = $0.027, rounded up to 3 cents.
+				expect(run.usage).toEqual({ cost_cents: 3, tokens_in: 10_000, tokens_out: 2_000 })
+			})
+
+			it('falls back to the session cost when a model in the usage has no price', async () => {
+				mocks.getModelPricing.mockImplementation(async (m: string) =>
+					m === MODEL ? { prompt: 1e-6, completion: 5e-6, cacheRead: 0, cacheWrite: 0 } : null,
+				)
+				mocks.startSession.mockImplementation(async () => ({
+					sessionId: (
+						await finishedSession({ result: { modelUsage: perModel('other/unpriced-model') } })
+					).id,
+				}))
+				const { id } = (await (await post(question)).json()) as { id: string }
+				const run = await waitForEnd(id)
+				expect(run.usage.cost_cents).toBe(13)
+			})
 		})
 
 		it('fails the run when the session ended without any result message', async () => {
@@ -579,6 +705,14 @@ describe('deep_research routes (Integration)', () => {
 			expect(view.status).toBe('interrupted')
 			expect(view.usage.cost_cents).toBe(37)
 		})
+	})
+})
+
+describe('budgetFlagUsd', () => {
+	it('is 85 percent of the cap in dollars', () => {
+		expect(budgetFlagUsd(5)).toBe(0.0425)
+		expect(budgetFlagUsd(100)).toBe(0.85)
+		expect(budgetFlagUsd(1_200)).toBe(10.2)
 	})
 })
 

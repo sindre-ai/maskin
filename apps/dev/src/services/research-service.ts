@@ -29,6 +29,21 @@ const RUN_DEADLINE_MS = 20 * 60 * 1000
 /** How long a stopped session gets to settle before the run is closed without its result. */
 const STOP_GRACE_MS = 60 * 1000
 
+/**
+ * The CLI budget flag is set to this share of the run cap (CTO decision, spec r5.1 section 4):
+ * requests in flight when the flag trips still bill, so the stop has to come before the cap.
+ */
+const BUDGET_FLAG_SHARE = 0.85
+/** Turn limit for the research session. ASSUMED: recalibrate after the skill's dry run. */
+const RESEARCH_MAX_TURNS = 60
+
+/**
+ * OpenRouter bills each Web Search request on top of the tokens. Measured on 3 Nov 2026 from the
+ * key's usage counter: $0.00700 and $0.00702 for one search each, after pricing the tokens at the
+ * catalogue rate. The CLI's own total_cost_usd leaves the fee out and prices the model at ~3x.
+ */
+const WEB_SEARCH_USD = 0.007
+
 const MAX_RUNS_PER_WORKSPACE = 2
 const DEFAULT_MAX_CONCURRENT_RUNS = 4
 
@@ -225,7 +240,14 @@ export async function startResearchRun(
 			createdBy: actorId,
 			actionPrompt: buildResearchPrompt(params),
 			// The pin keeps this session off every other route; the run id ties it back to its row.
-			config: { pin_llm_route: LLM_ROUTE_CUSTOM, research_run_id: runId },
+			config: {
+				pin_llm_route: LLM_ROUTE_CUSTOM,
+				research_run_id: runId,
+				runtime_config: {
+					max_turns: RESEARCH_MAX_TURNS,
+					max_budget_usd: budgetFlagUsd(capCents),
+				},
+			},
 			initiatedFromObjectId: null,
 		})
 		sessionId = started.sessionId
@@ -256,6 +278,11 @@ export async function startResearchRun(
 	})
 
 	return { id: runId, status: 'queued' }
+}
+
+/** The amount the CLI budget flag gets for a run cap, in USD. */
+export function budgetFlagUsd(capCents: number): number {
+	return Math.max(0.0001, Number(((capCents / 100) * BUDGET_FLAG_SHARE).toFixed(4)))
 }
 
 /** What the research agent is asked. The skill carries the method; this carries the question. */
@@ -366,7 +393,7 @@ async function watchRun(a: WatchArgs): Promise<void> {
 		actorId: a.actorId,
 		workspaceId: a.workspaceId,
 		effort: a.effort,
-		status: update.status === 'done' ? 'done' : 'failed',
+		status: update.status === 'done' || update.status === 'capped' ? update.status : 'failed',
 		costCents: update.costCents ?? 0,
 		capCents: a.capCents,
 		duration: Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000),
@@ -383,12 +410,28 @@ async function outcomeOf(
 ): Promise<Partial<typeof researchRuns.$inferInsert>> {
 	if (!session) return { status: 'failed', error: 'The research session could not be found.' }
 
-	const result = lastResult(await readSessionStdoutChunks(a.db, a.sessionId))
-	const usage = await sessionUsage(session, result?.usage)
+	const chunks = await readSessionStdoutChunks(a.db, a.sessionId)
+	const result = lastResult(chunks)
+	const usage = await sessionUsage(session, result, a.deps.lookupPricing ?? getModelPricing)
 
 	const base = { ...usage, ...(session.modelName ? { model: session.modelName } : {}) }
 	if (timedOut) {
 		return { ...base, status: 'failed', error: 'The run was stopped at its 20 minute limit.' }
+	}
+	// The CLI exits non-zero when a limit trips, so this is checked before the session status.
+	const limit = result ? limitHit(result.subtype) : null
+	if (limit) {
+		const warning = limitWarning(limit, a.capCents)
+		const partial = lastAssistantText(chunks)
+		const reportMd = `> **Warning:** ${warning}\n\n${partial || 'No findings were written before the run stopped.'}`
+		return {
+			...base,
+			status: 'capped',
+			reportMd,
+			sources: parseSources(partial),
+			warnings: [{ code: limit, message: warning }],
+			error: null,
+		}
 	}
 	if (session.status !== 'completed') {
 		const failure = (session.result as { failure_reason?: { human_message?: string } } | null)
@@ -415,6 +458,45 @@ async function outcomeOf(
 	}
 }
 
+type LimitHit = 'cost_cap_reached' | 'turn_limit_reached'
+
+/** Which limit ended the run, from the CLI result subtype. */
+function limitHit(subtype: string | null): LimitHit | null {
+	if (subtype === 'error_max_budget_usd') return 'cost_cap_reached'
+	if (subtype === 'error_max_turns') return 'turn_limit_reached'
+	return null
+}
+
+function limitWarning(limit: LimitHit, capCents: number): string {
+	return limit === 'cost_cap_reached'
+		? `This run stopped at its cost cap of $${(capCents / 100).toFixed(2)} before it finished, so the report is partial.`
+		: 'This run stopped at its turn limit before it finished, so the report is partial.'
+}
+
+/** The text of the last top-level assistant message that has any, or '' when there is none. */
+function lastAssistantText(chunks: string[]): string {
+	const lines = chunks.join('').split('\n')
+	for (let i = lines.length - 1; i >= 0; i--) {
+		const line = (lines[i] ?? '').trim()
+		if (!line.startsWith('{')) continue
+		let msg: { type?: string; parent_tool_use_id?: unknown; message?: { content?: unknown } }
+		try {
+			msg = JSON.parse(line)
+		} catch {
+			continue
+		}
+		if (msg.type !== 'assistant' || msg.parent_tool_use_id != null) continue
+		const content = msg.message?.content
+		if (!Array.isArray(content)) continue
+		const text = content
+			.map((b: { type?: string; text?: string }) => (b.type === 'text' ? (b.text ?? '') : ''))
+			.join('')
+			.trim()
+		if (text) return text
+	}
+	return ''
+}
+
 /** The last top-level result message in the stdout chunks, or null when there is none. */
 function lastResult(chunks: string[]): ReturnType<typeof parseResultLine> {
 	const lines = chunks.join('').split('\n')
@@ -426,14 +508,26 @@ function lastResult(chunks: string[]): ReturnType<typeof parseResultLine> {
 }
 
 /**
- * Cost and tokens of the run, from the session. The session settle stamps the cost with the
- * route's price (custom endpoints are priced from the OpenRouter table); when it did not, the
- * result message is priced the same way.
+ * Cost and tokens of the run. The result message's per-model usage covers the whole run, the
+ * searches' own model calls included, and is priced at the catalogue rate plus the search fee: that
+ * is what OpenRouter bills. Its top-level usage and the session's stamped cost count only part of
+ * the calls, so they are the fallback for a result without per-model usage or with an unpriced model.
  */
 async function sessionUsage(
 	session: typeof sessions.$inferSelect,
-	usage: NonNullable<ReturnType<typeof parseResultLine>>['usage'] | undefined,
+	result: ReturnType<typeof parseResultLine>,
+	lookupPricing: (model: string) => Promise<ModelPricing | null>,
 ): Promise<Pick<typeof researchRuns.$inferInsert, 'costCents' | 'tokensIn' | 'tokensOut'>> {
+	const whole = await wholeRunUsage(result?.raw, lookupPricing)
+	if (whole) {
+		return {
+			costCents: ceilCents(whole.costUsd * 100),
+			tokensIn: whole.tokensIn,
+			tokensOut: whole.tokensOut,
+		}
+	}
+
+	const usage = result?.usage
 	let costUsd = session.totalCostUsd === null ? null : Number(session.totalCostUsd)
 	if (costUsd === null && usage) {
 		costUsd = await resolveSessionCostUsd({
@@ -447,6 +541,47 @@ async function sessionUsage(
 		tokensIn: session.inputTokens ?? usage?.inputTokens ?? 0,
 		tokensOut: session.outputTokens ?? usage?.outputTokens ?? 0,
 	}
+}
+
+interface ModelUsageEntry {
+	inputTokens?: number
+	outputTokens?: number
+	cacheReadInputTokens?: number
+	cacheCreationInputTokens?: number
+	webSearchRequests?: number
+}
+
+/** Cost and tokens from the result's modelUsage, or null when it is missing or has an unpriced model. */
+async function wholeRunUsage(
+	raw: string | undefined,
+	lookupPricing: (model: string) => Promise<ModelPricing | null>,
+): Promise<{ costUsd: number; tokensIn: number; tokensOut: number } | null> {
+	if (!raw) return null
+	let modelUsage: Record<string, ModelUsageEntry> | undefined
+	try {
+		modelUsage = (JSON.parse(raw) as { modelUsage?: Record<string, ModelUsageEntry> }).modelUsage
+	} catch {
+		return null
+	}
+	const entries = modelUsage ? Object.entries(modelUsage) : []
+	if (entries.length === 0) return null
+
+	let costUsd = 0
+	let tokensIn = 0
+	let tokensOut = 0
+	for (const [model, u] of entries) {
+		const pricing = await lookupPricing(model)
+		if (!pricing) return null
+		costUsd +=
+			(u.inputTokens ?? 0) * pricing.prompt +
+			(u.outputTokens ?? 0) * pricing.completion +
+			(u.cacheReadInputTokens ?? 0) * pricing.cacheRead +
+			(u.cacheCreationInputTokens ?? 0) * pricing.cacheWrite +
+			(u.webSearchRequests ?? 0) * WEB_SEARCH_USD
+		tokensIn += u.inputTokens ?? 0
+		tokensOut += u.outputTokens ?? 0
+	}
+	return { costUsd, tokensIn, tokensOut }
 }
 
 export interface ResearchSource {
