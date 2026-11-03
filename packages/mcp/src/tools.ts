@@ -7,6 +7,7 @@ import {
 	MESSAGE_MAX_LENGTH,
 	SAFE_METADATA_FIELD_NAME_RE,
 	createCommentSchema,
+	dataQuerySpecSchema,
 	firstStepSchema,
 	loopTargetSchema,
 	messageMetadataSchema,
@@ -1741,6 +1742,35 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+		}),
+	},
+
+	set_loop_view: {
+		description: [
+			'Pin an HTML file to a loop as its custom view, or clear it with file_id null. The loop page shows it in place of the default stats and flow. Sets metadata.view_file_id. Fails if the id is not a loop or the file is not text/html.',
+			'A view answers one question: are we reaching the outcome? Open with the outcome in one plain sentence and the headline number vs its target, then the three to five metrics that matter most (name, value with unit, comparison, source), then what needs a person now.',
+			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. Test each query with query_data first. Results with rows_truncated or groups_truncated true are partial: narrow the query.',
+			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>") (a promise). The page reloads itself when its numbers change, so query once and never poll. Use moving date bounds ("now-7d", "today-30d"), never fixed dates.',
+			'Example:',
+			'<script id="maskin-sources" type="application/json">{"done":{"scope":"<loop id>","type":"task","filters":{"status":"done"}}}</script>',
+			'<script>maskin.query("done").then(r => { headline.textContent = r.total.count + " tasks done" }).catch(e => { headline.textContent = "Could not load: " + e.message })</script>',
+		].join('\n'),
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			loop_id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			file_id: z
+				.string()
+				.uuid()
+				.nullable()
+				.describe('Id of a text/html file to render as the loop view, or null to clear it.'),
+		}),
+	},
+	query_data: {
+		description:
+			'Read-only totals over objects, computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, rows_truncated, groups_truncated }`; with no `group_by`, read `total`. At most 10000 rows are scanned and 50 groups returned; a flag says when a cap was hit. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It never returns object rows; use list_objects for those.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			...dataQuerySpecSchema.shape,
 		}),
 	},
 
