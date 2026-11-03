@@ -4,6 +4,7 @@ import {
 	type CommentDecisionOption,
 	commentDecisionSchema,
 	findStatusActionViolations,
+	isDecisionExpired,
 	validateDecisionProse,
 } from '../schemas/comment-decision'
 import { createCommentSchema } from '../schemas/events'
@@ -361,5 +362,44 @@ describe('findStatusActionViolations', () => {
 		expect(findStatusActionViolations(flip(title, { no_status_action: true }), statuses)).toEqual(
 			[],
 		)
+	})
+})
+
+describe('expires_at', () => {
+	const now = new Date('2026-11-02T12:00:00Z')
+
+	it('accepts an ISO date-time with an offset and rejects other text', () => {
+		const base = buildDecision()
+		expect(
+			commentDecisionSchema.safeParse({ ...base, expires_at: '2026-11-05T17:00:00Z' }).success,
+		).toBe(true)
+		expect(
+			commentDecisionSchema.safeParse({ ...base, expires_at: '2026-11-05T17:00:00+01:00' }).success,
+		).toBe(true)
+		expect(commentDecisionSchema.safeParse({ ...base, expires_at: 'Thursday' }).success).toBe(false)
+	})
+
+	it('rejects a date that is already past when the card is posted', () => {
+		const violations = validateDecisionProse(
+			buildDecision({ expires_at: '2026-10-29T17:00:00Z' }),
+			now,
+		)
+		expect(violations.map((v) => v.path)).toEqual(['expires_at'])
+	})
+
+	it('allows a future date and a card without one', () => {
+		expect(
+			validateDecisionProse(buildDecision({ expires_at: '2026-11-05T17:00:00Z' }), now),
+		).toEqual([])
+		expect(validateDecisionProse(buildDecision(), now)).toEqual([])
+	})
+
+	it('treats a card as expired only once the date has passed', () => {
+		expect(isDecisionExpired(buildDecision({ expires_at: '2026-11-02T11:59:59Z' }), now)).toBe(true)
+		expect(isDecisionExpired(buildDecision({ expires_at: '2026-11-02T12:00:01Z' }), now)).toBe(
+			false,
+		)
+		expect(isDecisionExpired(buildDecision(), now)).toBe(false)
+		expect(isDecisionExpired(null, now)).toBe(false)
 	})
 })

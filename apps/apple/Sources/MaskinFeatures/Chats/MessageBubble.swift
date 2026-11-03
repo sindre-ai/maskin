@@ -78,8 +78,20 @@ struct QuoteBlock: View {
 	let author: String
 	let text: String
 	var onInverse = false
+	/// Tap jumps to the quoted message; nil when it cannot be found (the quote is then plain).
+	var onTap: (() -> Void)?
 
 	var body: some View {
+		if let onTap {
+			Button(action: onTap) { content }
+				.buttonStyle(.plain)
+				.accessibilityHint("Jumps to the original message")
+		} else {
+			content
+		}
+	}
+
+	private var content: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s4) {
 			RoundedRectangle(cornerRadius: MaskinRadius.tag, style: .continuous)
 				.fill(MaskinColor.sigHi).frame(width: MaskinSpace.s1 + 1)

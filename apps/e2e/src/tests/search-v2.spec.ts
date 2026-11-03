@@ -366,7 +366,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			})
 			await panel.getByRole('option', { name: /Ask Chief of Staff/ }).click()
 			await expect(page).toHaveURL(/\/chats\/new/)
-			await expect(page.getByRole('textbox', { name: 'Message this conversation' })).toHaveValue(
+			await expect(page.getByRole('textbox', { name: 'Message this conversation' })).toHaveText(
 				nothing,
 			)
 			// Nothing was sent: the page is still the new-chat page, not a conversation.

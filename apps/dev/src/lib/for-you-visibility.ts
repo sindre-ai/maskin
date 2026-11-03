@@ -7,7 +7,12 @@ import {
 	objects,
 	sessions,
 } from '@maskin/db/schema'
-import { FOR_YOU_KIND, parseCommentDecision, parseForYouMetadata } from '@maskin/shared'
+import {
+	FOR_YOU_KIND,
+	isDecisionExpired,
+	parseCommentDecision,
+	parseForYouMetadata,
+} from '@maskin/shared'
 import { and, eq, gte, inArray, max, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 
@@ -318,6 +323,13 @@ export async function loadVisibleForYou(
 			// card with a source comment but no object is dropped too.
 			if (meta.source_comment_id !== undefined && withdrawnIds.has(meta.source_comment_id)) {
 				return false
+			}
+			// The comment behind the card named a deadline and it has passed. Curated cards feed the
+			// briefing and pushes, so they drop out of those too.
+			if (meta.source_comment_id !== undefined) {
+				const source = sourceById.get(meta.source_comment_id)
+				const data = (source?.data ?? {}) as Record<string, unknown>
+				if (isDecisionExpired(parseCommentDecision(data.decision))) return false
 			}
 			// Every message the card offered has been sent or skipped: nothing left to approve.
 			if (meta.source_comment_id !== undefined && finishedDraftCards.has(meta.source_comment_id)) {

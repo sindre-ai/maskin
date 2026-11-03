@@ -183,9 +183,16 @@ public final class ConversationsStore {
 			TeamLayout.Input(
 				conversations: ConversationGrouping.filter(conversations, agentID: agentFilterID), flowRooms: rooms,
 				archived: archivedConversations, options: displayOptions,
-				chip: displayOptions.showsFilterChips ? chip : .all, query: query, currentActorID: currentActorID,
+				chip: Self.effectiveChip(displayOptions, chip), query: query, currentActorID: currentActorID,
 				pinOrder: pinOrder, pinnedFlowIDs: pinnedFlowIDs, expandedSectionIDs: expandedSectionIDs,
 				workingAgentIDs: working, mentionedConversationIDs: mentionConversationIDs, now: now))
+	}
+
+	/// The Unread filter in Display wins over the chip row; otherwise the chip counts only while the
+	/// chips are shown.
+	nonisolated static func effectiveChip(_ options: TeamDisplayOptions, _ chip: TeamFilterChip) -> TeamFilterChip {
+		if options.unreadOnly { return .unread }
+		return options.showsFilterChips ? chip : .all
 	}
 
 	/// Agents running right now, from the workspace actor list.

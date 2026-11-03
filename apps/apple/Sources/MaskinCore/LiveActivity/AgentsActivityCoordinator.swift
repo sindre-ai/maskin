@@ -74,6 +74,11 @@ public final class AgentsActivityCoordinator {
 	private let now: () -> Date
 	private let sleep: Sleep
 	private let minUpdateInterval: TimeInterval
+	public let startsAutomatically: Bool
+
+	/// Called with every working agent (merged feed and open thread, no cap) whenever that set may
+	/// have changed. The opt-in follow activity listens here.
+	public var onWorkingChanged: (@MainActor ([WorkingAgent]) async -> Void)?
 
 	private var identity: AgentsActivityIdentity?
 	private var feedAgents: [WorkingAgent] = []
@@ -101,13 +106,14 @@ public final class AgentsActivityCoordinator {
 
 	public init(
 		host: any AgentsActivityHosting, tokens: any LiveActivityTokenRegistering,
-		minUpdateInterval: TimeInterval = 1,
+		minUpdateInterval: TimeInterval = 1, startsAutomatically: Bool = true,
 		now: @escaping () -> Date = Date.init,
 		sleep: @escaping Sleep = { try? await Task.sleep(for: .seconds($0)) }
 	) {
 		self.host = host
 		self.tokens = tokens
 		self.minUpdateInterval = minUpdateInterval
+		self.startsAutomatically = startsAutomatically
 		self.now = now
 		self.sleep = sleep
 	}
@@ -144,6 +150,11 @@ public final class AgentsActivityCoordinator {
 	/// Ends cards that cannot be showing live work: another workspace's, orphans nobody ended
 	/// (a push-to-start whose end push never came), and duplicates. Safe to call often.
 	public func sweep() async {
+		// No automatic card any more: whatever an earlier build left on the Lock Screen goes.
+		guard startsAutomatically else {
+			for card in host.cards() { await host.endNow(cardID: card.id) }
+			return
+		}
 		let plan = AgentsActivitySweep.plan(
 			cards: host.cards(), workspaceId: identity?.workspaceId, feedLoaded: feedLoaded,
 			hasWorkingAgents: !state().isEmpty)
@@ -182,6 +193,11 @@ public final class AgentsActivityCoordinator {
 	// MARK: Folding
 
 	private func state() -> AgentsActivityState {
+		AgentsActivityState(agents: workingAgents(), now: now())
+	}
+
+	/// Every working agent, uncapped: the card only carries the top rows.
+	private func workingAgents() -> [WorkingAgent] {
 		let now = now()
 		overlays = overlays.filter { now.timeIntervalSince($0.value.at) < Self.overlayTTL }
 		let finished = overlays.values.reduce(into: Set<String>()) { $0.formUnion($1.finishedSessions) }
@@ -190,11 +206,14 @@ public final class AgentsActivityCoordinator {
 		for overlay in overlays.values {
 			for agent in overlay.running { byAgent[agent.id] = agent }
 		}
-		return AgentsActivityState(agents: Array(byAgent.values), now: now)
+		return byAgent.values.sorted { $0.id < $1.id }
 	}
 
 	private func apply() async {
 		guard let identity else { return }
+		if feedLoaded { await onWorkingChanged?(workingAgents()) }
+		// v3: the automatic card is replaced by the opt-in follow activity.
+		guard startsAutomatically else { return }
 		let next = state()
 		let onDevice = shown != nil || host.activeIdentity() == identity
 
@@ -295,7 +314,13 @@ public final class AgentsActivityCoordinator {
 
 	private func flush() async {
 		guard let device = deviceId else { return }
-		if let token = pushToStartToken, needsRegistration("start", token: token, device: device) {
+		// Without the automatic card nothing can start from a push: drop a token registered by an
+		// earlier build and register none.
+		if !startsAutomatically, let entry = registered["start"] {
+			registered["start"] = nil
+			try? await tokens.unregister(tokenId: entry.id, credentials: nil)
+		}
+		if startsAutomatically, let token = pushToStartToken, needsRegistration("start", token: token, device: device) {
 			if let id = try? await tokens.register(
 				kind: .pushToStart, deviceId: device, sessionId: nil, token: token)
 			{

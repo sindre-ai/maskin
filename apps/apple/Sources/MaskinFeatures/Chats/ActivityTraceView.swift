@@ -146,6 +146,9 @@ struct LiveActivityView: View {
 	var sentAt: Date?
 	/// The session's own start: the last resort for the elapsed timer (a chat session outlives its turns).
 	var startedAt: Date?
+	/// Follow on the lock screen: nil hides the button (no session, or Live Activities unavailable).
+	var isFollowing = false
+	var onToggleFollow: (() -> Void)?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	/// The newest turn seen. A poll that momentarily has no running turn must not blank the card back
@@ -244,6 +247,18 @@ struct LiveActivityView: View {
 			Text(verb).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			Spacer(minLength: 0)
 			if let start = since { ElapsedLabel(since: start) }
+			if let onToggleFollow {
+				Button(action: onToggleFollow) {
+					Text(isFollowing ? "Following" : "Follow")
+						.maskinText(.caption).fontWeight(.semibold)
+						.foregroundStyle(isFollowing ? MaskinColor.ink3 : MaskinColor.ink)
+						.padding(.horizontal, MaskinSpace.s5)
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Capsule())
+				}
+				.buttonStyle(.maskinPressed)
+				.accessibilityHint(isFollowing ? "Stops following on the lock screen" : "Follows this agent on the lock screen")
+			}
 		}
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel("\(agent.name) \(verb)")

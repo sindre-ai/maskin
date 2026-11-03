@@ -7,11 +7,13 @@ import SwiftUI
 enum WatchRoute: Hashable {
 	case decisions
 	case conversation
+	/// The watch listening by itself, then tap to talk when the line is weak.
+	case listening
 }
 
 /// A tap target that opens the system's dictation and keyboard, and hands back what was said. The
 /// label is what the wearer sees; a transparent text field lies over it, so one tap anywhere on the
-/// label starts dictating. (Live voice, where the watch listens by itself, is a later step.)
+/// label starts dictating. Used where the watch can't listen by itself: tap to talk, replies, notes.
 struct WatchDictate<Label: View>: View {
 	let accessibility: String
 	let send: @MainActor (String) -> Void
@@ -37,7 +39,8 @@ struct WatchDictate<Label: View>: View {
 struct WatchAskHome: View {
 	let store: ForYouStore?
 	let watch: MaskinWatchStore
-	let ask: @MainActor (String) -> Void
+	/// The mic was tapped: the watch starts listening by itself.
+	let listen: @MainActor () -> Void
 
 	private var count: Int {
 		if let store, !store.entries.isEmpty { return store.needsCount }
@@ -47,9 +50,9 @@ struct WatchAskHome: View {
 	var body: some View {
 		VStack(spacing: MaskinSpace.s3) {
 			Text("Chief of Staff").font(WatchType.caption()).foregroundStyle(MaskinColor.ink4)
-			WatchDictate(accessibility: "Ask Chief of Staff", send: ask) {
-				WatchMicGlyph(size: WatchMetrics.mic)
-			}
+			Button(action: listen) { WatchMicGlyph(size: WatchMetrics.mic) }
+				.buttonStyle(.plain)
+				.accessibilityLabel("Ask Chief of Staff")
 			Text("Ask anything").font(WatchType.action()).foregroundStyle(MaskinColor.ink)
 			NavigationLink(value: WatchRoute.decisions) {
 				Text(WatchConversation.pill(count: count))
@@ -79,6 +82,65 @@ struct WatchMicGlyph: View {
 					.frame(width: WatchMetrics.micGlyph.width, height: WatchMetrics.micGlyph.height)
 			}
 			.contentShape(Circle())
+	}
+}
+
+/// Live listening: the watch hears the question by itself and sends it on a pause or Done. When the
+/// server can't be reached it becomes tap to talk, where the system's dictation does the listening.
+struct WatchListeningScreen: View {
+	let listening: WatchListeningStore
+	let ask: @MainActor (String) -> Void
+	@Environment(\.dismiss) private var dismiss
+
+	var body: some View {
+		Group {
+			switch listening.phase {
+			case .idle:
+				Color.clear
+			case .listening:
+				listeningBody
+			case .sending:
+				WatchSpinner().frame(maxWidth: .infinity, maxHeight: .infinity)
+			case .tapToTalk:
+				tapToTalkBody
+			}
+		}
+		.containerBackground(for: .navigation) { WatchBackdrop() }
+		.navigationBarBackButtonHidden(true)
+		.onChange(of: listening.phase) { _, phase in
+			if phase == .idle { dismiss() }
+		}
+	}
+
+	private var listeningBody: some View {
+		VStack(spacing: MaskinSpace.gapLoose) {
+			Text("LISTENING").font(WatchType.microMono()).tracking(0.8).foregroundStyle(MaskinColor.sigHi)
+			ScrollView {
+				Text(listening.text)
+					.font(WatchType.question()).foregroundStyle(MaskinColor.ink)
+					.multilineTextAlignment(.center).frame(maxWidth: .infinity)
+			}
+			Button { listening.done() } label: {
+				WatchCapsule(title: "Done", prominent: true, font: WatchType.action())
+			}
+			.buttonStyle(.plain)
+			WatchQuietButton(title: "Cancel") { listening.cancel() }
+		}
+		.padding(.horizontal, MaskinSpace.s1)
+	}
+
+	private var tapToTalkBody: some View {
+		VStack(spacing: MaskinSpace.gapLoose) {
+			Text("TAP TO TALK").font(WatchType.microMono()).tracking(0.8).foregroundStyle(MaskinColor.ink4)
+			WatchDictate(accessibility: "Ask Chief of Staff", send: ask) {
+				WatchMicGlyph(size: WatchMetrics.mic)
+			}
+			Text("Tap to start. Tap again, or pause, to send.")
+				.font(WatchType.caption()).foregroundStyle(MaskinColor.ink3).multilineTextAlignment(.center)
+			WatchQuietButton(title: "Cancel") { listening.cancel() }
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.padding(.horizontal, MaskinSpace.s1)
 	}
 }
 

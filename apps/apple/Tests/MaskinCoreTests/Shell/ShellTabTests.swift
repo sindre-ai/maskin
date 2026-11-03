@@ -10,7 +10,7 @@ struct ShellTabTests {
 	}
 
 	@Test func titlesUseTeamAndFlows() {
-		#expect(ShellTab.allCases.map(\.title) == ["For you", "Team", "Flows", "Objects", "Search"])
+		#expect(ShellTab.allCases.map(\.title) == ["For you", "Chats", "Flows", "Items", "Search"])
 	}
 
 	@Test func barItemsPerTab() {

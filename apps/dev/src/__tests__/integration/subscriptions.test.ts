@@ -1513,7 +1513,11 @@ describe('Subscriptions Integration', () => {
 			expect(item?.latest_mention).toBeDefined()
 			expect(item?.latest_mention?.content).toBe('second ask')
 			expect(item?.latest_mention?.attention).toBe(4)
-			expect(item?.latest_mention?.decision).toEqual(decision)
+			// Posting stamps the status the object had, so a card with no status button drops later.
+			expect(item?.latest_mention?.decision).toEqual({
+				...decision,
+				status_stamp: { object_id: obj.id, status: 'todo' },
+			})
 		})
 
 		it('carries the draft on the decision to the feed untouched, dash and all', async () => {

@@ -30,12 +30,18 @@ public struct MaskinComposerConfig {
 	public var roster: MentionRoster? = nil
 	/// Told when the field gains or loses focus (For you hides its quick-question chips while typing).
 	public var onFocusChange: ((Bool) -> Void)? = nil
+	/// Outside chat the "+" has no attach menu: when set, tapping it calls this instead (a toast stub
+	/// today). Nil keeps the chat attach menu.
+	public var onPlus: (() -> Void)? = nil
+	/// Outside chat the mic does not dictate: when set, tapping it calls this instead (a toast stub).
+	public var onMic: (() -> Void)? = nil
 
 	public init(
 		variant: MaskinComposerVariant = .floating, placeholder: String, showsAttach: Bool = true,
 		showsMic: Bool = true, showsSend: Bool = true, goLive: (() -> Void)? = nil,
 		suggestions: @escaping (String) -> [ChatParticipant] = { _ in [] }, inConversation: Set<String> = [],
-		roster: MentionRoster? = nil, onFocusChange: ((Bool) -> Void)? = nil
+		roster: MentionRoster? = nil, onFocusChange: ((Bool) -> Void)? = nil,
+		onPlus: (() -> Void)? = nil, onMic: (() -> Void)? = nil
 	) {
 		self.variant = variant
 		self.placeholder = placeholder
@@ -47,6 +53,8 @@ public struct MaskinComposerConfig {
 		self.inConversation = inConversation
 		self.roster = roster
 		self.onFocusChange = onFocusChange
+		self.onPlus = onPlus
+		self.onMic = onMic
 	}
 }
 
@@ -195,18 +203,12 @@ struct MaskinComposer: View {
 		.animation(MaskinMotion.quick, value: isDropTargeted)
 	}
 
-	@ViewBuilder
+	/// The standard bar for every host: white, hairline border, soft shadow (`variant` no longer
+	/// changes how it looks).
 	private var surface: some View {
-		switch config.variant {
-		case .floating:
-			shape.fill(.clear)
-				.maskinGlass(in: shape)
-				.overlay(shape.strokeBorder(MaskinSurface.glassBorder, lineWidth: 0.5))
-				.shadow(color: MaskinColor.overlayDim.opacity(0.35), radius: MaskinSpace.s10, y: MaskinSpace.s7)
-		case .inline:
-			shape.fill(MaskinSurface.cardInset)
-				.overlay(shape.strokeBorder(MaskinSurface.line, lineWidth: 1))
-		}
+		shape.fill(MaskinSurface.card)
+			.overlay(shape.strokeBorder(MaskinSurface.line, lineWidth: 0.5))
+			.shadow(color: MaskinColor.overlayDim.opacity(0.12), radius: MaskinSpace.s7, y: MaskinSpace.s2)
 	}
 
 	private var row: some View {
@@ -302,11 +304,11 @@ struct MaskinComposer: View {
 
 	private var micButton: some View {
 		ComposerCircleButton(
-			symbol: "mic", fill: MaskinSurface.fill, foreground: MaskinColor.ink3, label: "Dictate",
+			symbol: "mic", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Dictate",
 			weight: .regular
 		) {
 			MaskinHaptics.play(.selection)
-			startDictation()
+			if let onMic = config.onMic { onMic() } else { startDictation() }
 		}
 		.transition(.opacity)
 	}
@@ -320,6 +322,10 @@ struct MaskinComposer: View {
 			rotation: isTrayOpen ? 45 : 0
 		) {
 			MaskinHaptics.play(.selection)
+			if let onPlus = config.onPlus {
+				onPlus()
+				return
+			}
 			// Opening the menu puts the keyboard away first: the menu is up to 7 rows tall and floats above
 			// the bar, so with the keyboard up it ran down behind it and lost its lower rows.
 			if !trayOpen { focused = false }

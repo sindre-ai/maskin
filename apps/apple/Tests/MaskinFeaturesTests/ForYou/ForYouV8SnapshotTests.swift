@@ -111,10 +111,9 @@ struct ForYouV8SnapshotTests {
 		try render(
 			VStack(alignment: .leading, spacing: MaskinSpace.s9) {
 				ForYouHeaderView(
-					dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October",
 					summary: "Forge needs a call: Is the onboarding bet worth running?")
-				ForYouHeaderView(dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October", summary: "Nothing is blocked on you.")
-				ForYouHeaderView(dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October", summary: nil)
+				ForYouHeaderView(summary: "Nothing is blocked on you.")
+				ForYouHeaderView(summary: nil)
 			}, dark: dark, name: "header")
 	}
 
@@ -196,9 +195,8 @@ struct ForYouV8SnapshotTests {
 		try render(
 			VStack(alignment: .leading, spacing: MaskinSpace.s9) {
 				ForYouHeaderView(
-					dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October",
 					summary: "Forge needs a call: Is the onboarding bet worth running?")
-				ForYouHeaderView(dateLine: "SUN 18 OCT", spokenDate: "Sunday 18 October", summary: nil)
+				ForYouHeaderView(summary: nil)
 			}, type: .accessibility3, name: "header-ax")
 		try render(
 			ApprovalGroupCard(group: group(approved: 5), typeLabel: "Wiki page", undoableCount: 3),
