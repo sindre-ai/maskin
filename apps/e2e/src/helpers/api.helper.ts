@@ -420,6 +420,27 @@ export class TestAPI {
 		return res.json()
 	}
 
+	/** Accept every open change of one proposal in a single call, as a person would from the API. */
+	async acceptFileProposal(workspaceId: string, fileId: string, proposalId: string): Promise<void> {
+		const listed = await fetch(`${this.baseURL}/api/files/${fileId}/proposals?status=open`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!listed.ok) throw new Error(`listFileProposals failed: ${listed.status}`)
+		const { proposals } = (await listed.json()) as {
+			proposals: { id: string; changes: { id: string }[] }[]
+		}
+		const changeIds = proposals.find((p) => p.id === proposalId)?.changes.map((c) => c.id) ?? []
+		const res = await fetch(
+			`${this.baseURL}/api/files/${fileId}/proposals/${proposalId}/changes/accept`,
+			{
+				method: 'POST',
+				headers: this.headers(workspaceId),
+				body: JSON.stringify({ change_ids: changeIds }),
+			},
+		)
+		if (!res.ok) throw new Error(`acceptFileProposal failed: ${res.status}`)
+	}
+
 	async getFile(workspaceId: string, id: string): Promise<FileDetailResponse> {
 		const res = await fetch(`${this.baseURL}/api/files/${id}`, {
 			headers: this.headers(workspaceId),

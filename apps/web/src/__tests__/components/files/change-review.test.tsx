@@ -147,8 +147,8 @@ describe('ChangeReviewLayer', () => {
 		mount([proposal()])
 		fireEvent.click(await screen.findByRole('button', { name: 'Review changes' }))
 		const card = screen.getByRole('region', { name: 'Change 1' })
-		expect(card.querySelector('del')?.textContent).toContain('removed: quick')
-		expect(card.querySelector('ins')?.textContent).toContain('added: slow')
+		expect(card.querySelector('del')?.textContent?.replace(/\s+/g, ' ')).toContain('removed: quick')
+		expect(card.querySelector('ins')?.textContent?.replace(/\s+/g, ' ')).toContain('added: slow')
 	})
 
 	it('accepts with no applied_text when the proposed text is untouched', async () => {
@@ -268,7 +268,9 @@ describe('Accept all and Reject all', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Leave review without deciding' }))
 
 		expect(screen.getByText('editor')).toBeInTheDocument()
-		expect(screen.getByText('Copywriter proposed 2 changes to this text.')).toBeInTheDocument()
+		expect(
+			screen.getByText(bannerLine('Copywriter proposed 2 changes to this text.')),
+		).toBeInTheDocument()
 		expect(api.fileProposals.acceptAll).not.toHaveBeenCalled()
 		expect(api.fileProposals.rejectAll).not.toHaveBeenCalled()
 	})
