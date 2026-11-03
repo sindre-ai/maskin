@@ -156,10 +156,18 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 		}
 	}
 
+	/// One call: the server makes an agent that is given `workspace_id` a member in the same
+	/// transaction, so there is no half-made agent outside the workspace. The caller's key is
+	/// also the agent's id. The server does not cache this response (it carries the new agent's
+	/// API key), so the Idempotency-Key cannot dedupe a retry; a fixed id can: a retry after a
+	/// lost response hits "already exists" and is the agent we made.
 	public func create(draft: AgentDraft, idempotencyKey: String) async throws -> AgentSummary {
+		let agentID = UUID(uuidString: idempotencyKey)?.uuidString.lowercased()
 		var fields: [String: JSONValue] = [
 			"type": .string("agent"), "name": .string(draft.trimmedName),
+			"workspace_id": .string(workspaceID),
 		]
+		if let agentID { fields["id"] = .string(agentID) }
 		if !draft.trimmedDescription.isEmpty { fields["description"] = .string(draft.trimmedDescription) }
 		if !draft.systemPrompt.isEmpty { fields["system_prompt"] = .string(draft.systemPrompt) }
 		let payload = try Self.wire(
@@ -171,21 +179,11 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 		switch created {
 		case .created(let ok): id = try ok.body.json.id
 		case .badRequest: throw AgentsError("That name or description isn't valid.")
-		case .conflict: throw AgentsError("An agent with those details already exists.")
+		case .conflict:
+			// Our own id already exists: an earlier try of this same create got through.
+			guard let agentID else { throw AgentsError("An agent with those details already exists.") }
+			id = agentID
 		default: throw AgentsError("Couldn't create the agent.")
-		}
-		// A new agent is only visible here once it is a workspace member. A conflict means it
-		// already is.
-		// Its own key: the server keeps one ledger row per key, so reusing the actor's key would
-		// overwrite that row, and a retry after a lost response would create a second agent.
-		let added = try await IdempotencyKey.bind("\(idempotencyKey)-member") {
-			try await client.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members(
-				.init(
-					path: .init(id: workspaceID), body: .json(.init(actor_id: id, role: .member))))
-		}
-		switch added {
-		case .created: break
-		default: throw AgentsError("The agent was created, but couldn't be added to this workspace.")
 		}
 		return AgentSummary(
 			id: id, name: draft.trimmedName,
