@@ -47,6 +47,32 @@ export interface QueuedContact extends GateContact {
 	nextDialAt: string | null
 }
 
+const CALL_FIELD_MAX_LENGTH = 120
+
+function callFieldText(v: unknown): string {
+	if (typeof v === 'number' && Number.isFinite(v)) return String(v)
+	if (typeof v !== 'string') return ''
+	return v.replace(/\s+/g, ' ').trim().slice(0, CALL_FIELD_MAX_LENGTH)
+}
+
+/**
+ * The per-call variables the Rune SMB (DK) assistant reads, from the contact's metadata. A value
+ * the contact does not have is sent as an empty string so the assistant never speaks a raw
+ * placeholder. Text is flattened and capped because it came from the web and ends up in a prompt.
+ * The contact title is never split into a name: stamp metadata.contact_name instead.
+ */
+export function callFieldsOf(metadata: Record<string, unknown> | null): Record<string, string> {
+	const m = metadata ?? {}
+	return {
+		contact_name: callFieldText(m.contact_name),
+		contact_role: callFieldText(m.contact_role),
+		company_name: callFieldText(m.company_name),
+		industry: callFieldText(m.industry),
+		headcount: callFieldText(m.headcount),
+		contact_email: callFieldText(m.contact_email ?? m.email),
+	}
+}
+
 export interface DialerEvent {
 	workspaceId: string
 	actorId: string
@@ -302,6 +328,7 @@ export async function runDialerTick(
 				to,
 				from: fromNumber,
 				assistantId,
+				dynamicVariables: callFieldsOf(contact.metadata ?? null),
 				connectionId,
 				webhookUrl,
 				clientState,

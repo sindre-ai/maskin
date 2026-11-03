@@ -25,7 +25,14 @@ function clean(overrides: Record<string, unknown> = {}, status = 'voice_queued')
 	return {
 		id: 'c1',
 		status,
-		metadata: { owner: 'sebk', phone: '+4520123456', company_type: 'aps', ...overrides },
+		metadata: {
+			owner: 'sebk',
+			phone: '+4520123456',
+			company_type: 'aps',
+			cvr_ad_protection: false,
+			headcount: 12,
+			...overrides,
+		},
 	}
 }
 
@@ -268,6 +275,57 @@ describe('runDncGate', () => {
 				check: 'company_type',
 			})
 		})
+	})
+
+	describe('check 4a: CVR advertising protection', () => {
+		it('passes a contact whose cvr_ad_protection is false', async () => {
+			expect(await runDncGate(clean({ cvr_ad_protection: false }), deps())).toEqual({ pass: true })
+		})
+		it.each([
+			['true', true, 'is true'],
+			['missing', undefined, 'is missing'],
+			['null', null, 'is missing'],
+			['the string false', 'false', 'not a boolean'],
+		])('refuses cvr_ad_protection %s', async (_n, value, text) => {
+			const r = await refusal(clean({ cvr_ad_protection: value }))
+			expect(r.check).toBe('ad_protection')
+			expect(r.reason).toContain(text)
+		})
+		it('runs after the company type check and before the headcount check', async () => {
+			expect(
+				await refusal(clean({ company_type: undefined, cvr_ad_protection: true })),
+			).toMatchObject({ check: 'company_type' })
+			expect(await refusal(clean({ cvr_ad_protection: true, headcount: 1 }))).toMatchObject({
+				check: 'ad_protection',
+			})
+		})
+	})
+
+	describe('check 4a: headcount band (3 to 250)', () => {
+		it.each([3, 12, 250])('passes a headcount of %s', async (headcount) => {
+			expect(await runDncGate(clean({ headcount }), deps())).toEqual({ pass: true })
+		})
+		it.each([0, 1, 2, 251, 1000])(
+			'refuses a headcount of %s and names the band',
+			async (headcount) => {
+				const r = await refusal(clean({ headcount }))
+				expect(r.check).toBe('headcount')
+				expect(r.reason).toContain(`${headcount}`)
+				expect(r.reason).toContain('3 to 250')
+			},
+		)
+		it('refuses a missing headcount', async () => {
+			const r = await refusal(clean({ headcount: undefined }))
+			expect(r.check).toBe('headcount')
+			expect(r.reason).toContain('missing')
+		})
+		it.each(['12', '10-19', Number.NaN, [12]])(
+			'refuses a headcount that is not a number (%j)',
+			async (headcount) => {
+				const r = await refusal(clean({ headcount }))
+				expect(r.check).toBe('headcount')
+			},
+		)
 	})
 
 	describe('check 4b: +45 phone number', () => {

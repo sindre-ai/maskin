@@ -46,7 +46,14 @@ async function seedContact(
 	return insertObject(db, workspaceId, getTestActorId(), {
 		type,
 		status,
-		metadata: { owner: 'sebk', phone: '+4520123456', company_type: 'aps', ...metadata },
+		metadata: {
+			owner: 'sebk',
+			phone: '+4520123456',
+			company_type: 'aps',
+			cvr_ad_protection: false,
+			headcount: 12,
+			...metadata,
+		},
 	})
 }
 
@@ -168,7 +175,13 @@ describe('voice dialer against real Postgres', () => {
 		const STAMP = {
 			dnc_refusal: { check: 'hold', reason: 'stamped by an earlier tick', at: DUE },
 		}
-		const OK = { owner: 'sebk', phone: '+4520123456', company_type: 'aps' }
+		const OK = {
+			owner: 'sebk',
+			phone: '+4520123456',
+			company_type: 'aps',
+			cvr_ad_protection: false,
+			headcount: 12,
+		}
 
 		async function readIds(workspaceId: string, exclusion = EXCLUSION) {
 			const { store } = deps(workspaceId)
@@ -204,7 +217,7 @@ describe('voice dialer against real Postgres', () => {
 			['company_type padded', { ...OK, company_type: ' aps' }],
 			['company_type stored as a JSON number', { ...OK, company_type: 7 }],
 			['company_type stored as a JSON array', { ...OK, company_type: ['aps'] }],
-			['no phone', { owner: 'sebk', company_type: 'aps' }],
+			['no phone', { owner: 'sebk', company_type: 'aps', cvr_ad_protection: false, headcount: 12 }],
 			['phone that is not a number', { ...OK, phone: 'call me' }],
 			['phone stored as a JSON number', { ...OK, phone: 4520123456 }],
 			['phone with a non-Danish prefix', { ...OK, phone: '+4670123456' }],
@@ -212,7 +225,10 @@ describe('voice dialer against real Postgres', () => {
 			['phone with 0045 and spaces', { ...OK, phone: '0045 20 12 34 56' }],
 			['phone with a no-break space', { ...OK, phone: '+45 20 12 34 56' }],
 			['phone with brackets and dashes', { ...OK, phone: '(+45) 20-12-34-56' }],
-			['no owner', { phone: '+4520123456', company_type: 'aps' }],
+			[
+				'no owner',
+				{ phone: '+4520123456', company_type: 'aps', cvr_ad_protection: false, headcount: 12 },
+			],
 			['owner not a string', { ...OK, owner: 7 }],
 			['owner not a founder', { ...OK, owner: 'rune' }],
 			['owner in another case with padding', { ...OK, owner: '\tSebk\n' }],
@@ -376,6 +392,8 @@ describe('voice dialer against real Postgres', () => {
 			}
 			const dialable = await seedContact(ws.id, 'voice_queued', {
 				company_type: 'aps',
+				cvr_ad_protection: false,
+				headcount: 12,
 				next_dial_at: DUE,
 			})
 			const { d, createCall } = deps(ws.id)
@@ -514,6 +532,8 @@ describe('voice dialer against real Postgres', () => {
 						owner: 'sebk',
 						phone: '+4520123456',
 						company_type: 'aps',
+						cvr_ad_protection: false,
+						headcount: 12,
 						next_dial_at: LATER,
 					},
 				})

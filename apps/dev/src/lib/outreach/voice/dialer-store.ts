@@ -6,6 +6,8 @@ import { applyVoiceEvent, runAppliedEffects } from './apply'
 import { RETRY_STATUSES, dialAttemptOf } from './dialer'
 import type { DialerStore, QueueExclusion, QueuedContact } from './dialer'
 import {
+	DIALABLE_HEADCOUNT_MAX,
+	DIALABLE_HEADCOUNT_MIN,
 	ERASURE_MARKER_FIELD,
 	MAX_DIALS_PER_CONTACT,
 	PROTECT_TAGS,
@@ -87,6 +89,10 @@ function permanentlyRefused(exclusion: QueueExclusion) {
 			then (${field('dial_attempt_n')} #>> '{}')::numeric end >= ${MAX_DIALS_PER_CONTACT}::numeric, false)
 		or ${phone} is null
 		or coalesce(${field('company_type')} not in ('"aps"'::jsonb, '"as"'::jsonb), true)
+		or coalesce(${field('cvr_ad_protection')} is distinct from 'false'::jsonb, true)
+		or coalesce(jsonb_typeof(${field('headcount')}) is distinct from 'number', true)
+		or coalesce(case when jsonb_typeof(${field('headcount')}) = 'number'
+			then (${field('headcount')} #>> '{}')::numeric not between ${DIALABLE_HEADCOUNT_MIN}::numeric and ${DIALABLE_HEADCOUNT_MAX}::numeric end, false)
 		or coalesce(not (${isString('owner')}), true) or ${owner} = ''
 		${
 			slugs
