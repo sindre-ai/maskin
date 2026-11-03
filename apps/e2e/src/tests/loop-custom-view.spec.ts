@@ -150,11 +150,12 @@ test.describe('Loop page — custom view', () => {
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 
-		await expect(viewFrame(page).getByText('2 tasks done')).toBeVisible({ timeout: 15_000 })
-		await page.waitForTimeout(2_000)
+		// A view that keeps navigating is reset a few times, then dropped for the default page.
+		await expect(page.getByRole('heading', { name: 'Feedback loop' })).toBeVisible({
+			timeout: 30_000,
+		})
+		await expect(page.locator(FRAME)).toHaveCount(0)
 		expect(requested).toEqual([])
-		// The view is still the one on screen, not a reset or the default page.
-		await expect(viewFrame(page).getByText('2 tasks done')).toBeVisible()
 	})
 
 	for (const theme of ['light', 'dark'] as const) {
