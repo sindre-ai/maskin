@@ -120,7 +120,7 @@ public struct APIShareRemote: ShareRemote {
 		type: String, title: String, content: String, status: String, idempotencyKey: String
 	) async throws -> String {
 		do {
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.post_sol_api_sol_objects(
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
@@ -144,7 +144,7 @@ public struct APIShareRemote: ShareRemote {
 		do {
 			// Read only now, and drop the base64 copy as soon as the request body is built.
 			let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.post_sol_api_sol_files(
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
@@ -166,7 +166,7 @@ public struct APIShareRemote: ShareRemote {
 		fileID: String, toObject objectID: String, objectType: String, idempotencyKey: String
 	) async throws {
 		do {
-			let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
 				try await client.post_sol_api_sol_relationships(
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),

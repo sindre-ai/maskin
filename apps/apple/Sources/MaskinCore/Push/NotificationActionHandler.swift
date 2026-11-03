@@ -122,7 +122,7 @@ public struct NotificationActionHandler: Sendable {
 		// 1. The answer. 2. Mark the thread read, which is what clears it from the feed.
 		do {
 			try await attempt(until: deadline) { [payload] in
-				try await IdempotencyKey.$current.withValue(key + "-comment") {
+				try await IdempotencyKey.bind(key + "-comment") {
 					try await backend.postComment(
 						entityId: payload.objectId, content: content, parentEventId: payload.eventId)
 				}
@@ -133,7 +133,7 @@ public struct NotificationActionHandler: Sendable {
 		}
 		do {
 			try await attempt(until: deadline) { [payload] in
-				try await IdempotencyKey.$current.withValue(key + "-read") {
+				try await IdempotencyKey.bind(key + "-read") {
 					try await backend.markRead(entityId: payload.objectId, lastEventId: payload.eventId)
 				}
 			}

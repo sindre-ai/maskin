@@ -72,7 +72,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 	}
 
 	public func run(agentID: String, prompt: String?, idempotencyKey: String) async throws -> AgentStatus {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_actors_sol__lcub_id_rcub__sol_run(
 				.init(
 					path: .init(id: agentID),
@@ -87,7 +87,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 	}
 
 	public func pause(agentID: String, idempotencyKey: String) async throws -> AgentStatus {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_actors_sol__lcub_id_rcub__sol_pause(
 				.init(
 					path: .init(id: agentID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
@@ -100,7 +100,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 	}
 
 	public func reset(agentID: String, idempotencyKey: String) async throws -> AgentStatus {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_actors_sol__lcub_id_rcub__sol_reset(
 				.init(
 					path: .init(id: agentID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
@@ -113,7 +113,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 	}
 
 	public func stop(sessionID: String, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_stop(
 				.init(
 					path: .init(id: sessionID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
@@ -131,7 +131,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 		if let tools = edit.tools { fields["tools"] = AgentTool.toolsJSON(tools) }
 		let payload = try Self.wire(
 			fields, as: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.self)
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_actors_sol__lcub_id_rcub_(
 				.init(
 					path: .init(id: agentID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
@@ -145,7 +145,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 	}
 
 	public func delete(agentID: String, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.delete_sol_api_sol_actors_sol__lcub_id_rcub_(
 				.init(path: .init(id: agentID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		}
@@ -164,7 +164,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 		if !draft.systemPrompt.isEmpty { fields["system_prompt"] = .string(draft.systemPrompt) }
 		let payload = try Self.wire(
 			fields, as: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.self)
-		let created = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let created = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_actors(.init(body: .json(payload)))
 		}
 		let id: String
@@ -176,7 +176,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 		}
 		// A new agent is only visible here once it is a workspace member. A conflict means it
 		// already is.
-		let added = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let added = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members(
 				.init(
 					path: .init(id: workspaceID), body: .json(.init(actor_id: id, role: .member))))
