@@ -38,8 +38,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 			await page.goto(`/${account.workspaceId}/objects`)
 			await expect(page.getByText('Ask Line Test Bet')).toBeVisible({ timeout: 10000 })
 
-			// The pill is the shorthand; the ask line carries actor + text.
-			await expect(page.getByText('Ask', { exact: true })).toBeVisible()
+			// The row carries the ask line only (v16 dropped the "Ask" tag).
 			// The line names the asking actor. The source must be a workspace
 			// member (the API answers 404 for a foreign actor), so it reads by
 			// name. Only the actor name is its own span now ({who} asks — "{text}"
@@ -52,7 +51,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 	// The pill sits on `bg-accent` — per the accent-pairing rule it carries a
 	// `text-accent-foreground` child, so it must stay readable in both schemes.
 	for (const colorScheme of ['light', 'dark'] as const) {
-		test(`"Ask" pill is visible in ${colorScheme} mode`, async ({ page, account }) => {
+		test(`ask line is visible in ${colorScheme} mode`, async ({ page, account }) => {
 			await page.setViewportSize(SHIP_GATE_VIEWPORTS[0] ?? { width: 375, height: 812 })
 			await page.emulateMedia({ colorScheme })
 			const source = await account.api.createAgentActor('Asker Bot')
@@ -72,7 +71,7 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 
 			await page.goto(`/${account.workspaceId}/objects`)
 			await expect(page.getByText('Ask Scheme Test Bet')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('Ask', { exact: true })).toBeVisible()
+			await expect(page.getByText('Approve this bet').first()).toBeVisible()
 		})
 	}
 

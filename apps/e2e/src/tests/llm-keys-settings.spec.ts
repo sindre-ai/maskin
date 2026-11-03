@@ -121,11 +121,19 @@ test.describe('LLM API keys — settings screen', () => {
 		await expect(saved).toContainText('ends in 3333')
 
 		await page.getByPlaceholder('deepseek/deepseek-v4-flash').fill('model-b')
-		await page.getByRole('button', { name: 'Save' }).last().click()
+		const save = page.getByRole('button', { name: 'Save' }).last()
+		await save.click()
+		// Save turns disabled again once the PATCH has landed and the form is clean; reading the
+		// row before that races the request.
+		await expect(save).toBeDisabled({ timeout: 15_000 })
 
 		await expect(page.getByTestId('custom-llm-key-saved')).toContainText('ends in 3333')
+		await expect
+			.poll(async () => (await workspaceRow(account.apiKey, account.workspaceId)).settings, {
+				timeout: 15_000,
+			})
+			.toMatchObject({ custom_llm: { model: 'model-b' } })
 		const row = await workspaceRow(account.apiKey, account.workspaceId)
 		expect(row.llm_configured).toMatchObject({ custom_llm: true })
-		expect(row.settings).toMatchObject({ custom_llm: { model: 'model-b' } })
 	})
 })

@@ -3,7 +3,7 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
 // App shell — Direction 1 "One Shell" from the signed-off UX decision: shared
-// sidebar (216px ↔ 60px icon rail), per-view collapse persistence, header with
+// sidebar (248px ↔ 60px icon rail), per-view collapse persistence, header with
 // ⌘K trigger, right-edge create sheet, and the mobile off-canvas drawer. This spec exercises the shell behaviours that unit tests cannot:
 // the real viewport-driven mobile/desktop split, Radix Sheet overlay dismissal,
 // collapse state that survives a full reload, the create sheet's edge geometry,
@@ -80,7 +80,7 @@ test.describe('App shell', () => {
 		const sidebar = leftSidebar(page)
 		const forYou = sidebar.getByText('For you', { exact: true })
 
-		await expect.poll(sidebarWidth(page)).toBe(216)
+		await expect.poll(sidebarWidth(page)).toBe(248)
 		await expect(forYou).toBeVisible()
 
 		const rail = page.getByRole('button', { name: 'Toggle Sidebar' })
@@ -90,14 +90,11 @@ test.describe('App shell', () => {
 		await expect(forYou).toBeHidden()
 
 		await rail.click()
-		await expect.poll(sidebarWidth(page)).toBe(216)
+		await expect.poll(sidebarWidth(page)).toBe(248)
 		await expect(forYou).toBeVisible()
 	})
 
-	test('per-view collapse state persists across navigation and reload', async ({
-		page,
-		account,
-	}) => {
+	test('the collapsed state persists across navigation and reload', async ({ page, account }) => {
 		await page.setViewportSize({
 			width: VIEWPORTS.tabletLandscape.width,
 			height: VIEWPORTS.tabletLandscape.height,
@@ -105,23 +102,21 @@ test.describe('App shell', () => {
 		await page.goto(`/${account.workspaceId}`)
 		const rail = page.getByRole('button', { name: 'Toggle Sidebar' })
 
-		// Collapse on Home (view key `home`).
+		// One choice for the whole app (v11): collapse here and it stays collapsed
+		// on every page, through a full reload.
 		await rail.click()
 		await expect.poll(sidebarWidth(page)).toBe(60)
 
-		// Settings is its own view key — navigation re-expands the sidebar.
 		await page.goto(`/${account.workspaceId}/settings`)
-		await expect.poll(sidebarWidth(page)).toBe(216)
-
-		// Collapse again on Settings; a full reload keeps it collapsed.
-		await rail.click()
 		await expect.poll(sidebarWidth(page)).toBe(60)
 		await page.reload()
 		await expect.poll(sidebarWidth(page)).toBe(60)
 
-		// Back on Home the earlier collapsed state is still honored.
+		// Expanding again is remembered too.
+		await rail.click()
+		await expect.poll(sidebarWidth(page)).toBe(248)
 		await page.goto(`/${account.workspaceId}`)
-		await expect.poll(sidebarWidth(page)).toBe(60)
+		await expect.poll(sidebarWidth(page)).toBe(248)
 	})
 
 	test('header ⌘K trigger opens the command palette and Escape closes it', async ({

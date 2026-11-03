@@ -196,10 +196,16 @@ test.describe('Agent detail v11 — tabs, crumb bar, banners', () => {
 			// The Sessions tab lists the runs with a status word each.
 			await openAgentTab(page, 'sessions')
 			await expect(
-				page.getByRole('button', { name: /^Open Fix duplicate bookings/ }).getByText('Working'),
+				page
+					.getByRole('button', { name: /^Open Fix duplicate bookings/ })
+					.locator('..')
+					.getByText('Working'),
 			).toBeVisible()
 			await expect(
-				page.getByRole('button', { name: /^Open Open the pull request/ }).getByText('Done'),
+				page
+					.getByRole('button', { name: /^Open Open the pull request/ })
+					.locator('..')
+					.getByText('Done'),
 			).toBeVisible()
 		})
 

@@ -37,12 +37,10 @@ test.describe('Settings — Extensions page', () => {
 		}) => {
 			await setTheme(page, 'light')
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			await openExtensionsPage(page, account.workspaceId)
-
-			// Settings nav (vertical rail on md+, horizontal chip strip on mobile) exposes Extensions.
-			await expect(page.getByRole('link', { name: 'Extensions' }).first()).toBeVisible({
-				timeout: 10000,
-			})
+			// Extensions is reached from Item types (mockup), not from the settings nav.
+			await page.goto(`/${account.workspaceId}/settings/objects`)
+			await page.getByRole('link', { name: /^Extensions/ }).click({ timeout: 15000 })
+			await expect(page).toHaveURL(/\/settings\/extensions$/)
 
 			// The section and its helper text render.
 			await expect(

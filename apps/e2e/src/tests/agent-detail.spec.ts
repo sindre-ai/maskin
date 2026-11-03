@@ -38,7 +38,8 @@ test.describe('Agent detail — header and Usage block', () => {
 				page.locator('.max-w-280').getByRole('button', { name: /Disable agent|Enable agent/ }),
 			).toHaveCount(0)
 
-			// Usage block: label, tabs, both columns, budget line.
+			// Usage block (on the Sessions tab): label, tabs, both columns, budget line.
+			await openAgentTab(page, 'sessions')
 			const usage = page.getByRole('region', { name: 'Usage' })
 			await expect(usage).toBeVisible()
 			await expect(usage.getByText('Usage', { exact: true })).toBeVisible()

@@ -42,7 +42,7 @@ test.describe('Trigger detail page', () => {
 
 			// The plain-language read-back reflects the current event config.
 			const summary = page.getByText('What happens').locator('xpath=..')
-			await expect(summary).toContainText('When a insight is created')
+			await expect(summary).toContainText('When an insight is created')
 			await expect(summary).toContainText('Relay')
 
 			// The language bar's caption must stay on screen at 375px — it lives
