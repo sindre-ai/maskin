@@ -146,4 +146,20 @@ describe('handleBridgeMessage', () => {
 		})
 		expect(host.onDocHeight).toHaveBeenCalledTimes(1)
 	})
+
+	it('reports the needed width only when the content is wider than the frame', async () => {
+		const onDocOverflow = vi.fn()
+		const overflowHost = { ...host, onDocOverflow }
+		await handleBridgeMessage(overflowHost, {
+			source: frame,
+			data: { type: VIEWER_DOC_SIZE_MESSAGE, w: 900, cw: 900, h: 640 },
+		})
+		expect(onDocOverflow).not.toHaveBeenCalled()
+
+		await handleBridgeMessage(overflowHost, {
+			source: frame,
+			data: { type: VIEWER_DOC_SIZE_MESSAGE, w: 1400, cw: 900, h: 640 },
+		})
+		expect(onDocOverflow).toHaveBeenCalledWith(1400)
+	})
 })
