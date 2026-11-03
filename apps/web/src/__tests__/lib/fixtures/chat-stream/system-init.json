@@ -4,6 +4,6 @@
 	"session_id": "sess-chat-123",
 	"tools": ["list_objects", "search_objects"],
 	"mcp_servers": [{ "name": "maskin", "status": "connected" }],
-	"model": "claude-sonnet-4-5",
+	"model": "claude-sonnet-5-5",
 	"apiKeySource": "env"
 }

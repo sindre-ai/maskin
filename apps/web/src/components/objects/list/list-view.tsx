@@ -1,10 +1,13 @@
 import { EmptyState } from '@/components/shared/empty-state'
-import { Spinner } from '@/components/ui/spinner'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
+import { Button } from '@/components/ui/button'
+import { useObjectLoops } from '@/hooks/use-object-loops'
+import { GROUP_PAGE_SIZE } from '@/hooks/use-objects'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
-import { getStatusColor } from '@/lib/constants'
-import { getObjectGroupLabel, getObjectGroupValue } from '@/lib/objects-grouping'
+import { NO_VALUE_GROUP, getObjectGroupLabel, getObjectGroupValue } from '@/lib/objects-grouping'
 import { useNavigate } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import type { OnChangeFn } from '@tanstack/react-table'
@@ -20,9 +23,9 @@ import {
 } from 'react'
 import { ListRow } from './list-row'
 
-/** Rows shown per group before "Show N more" reveals the rest — keeps the
- *  collapsed-by-default list light, matching the mockup's per-group cap. */
-const LIST_GROUP_ROW_CAP = 6
+/** Rows shown per group before "Show N more" reveals the rest — the mockup's
+ *  own per-group cap (script 6748 `CAP = 40`). */
+const LIST_GROUP_ROW_CAP = 40
 
 // Imperative handle the Objects route uses to read the first-visible row at
 // navigate-away time and to restore the scroll position on a POP landing.
@@ -46,9 +49,22 @@ interface ListViewProps {
 	/** Pending asks keyed by the object they target, threaded from the Objects
 	 *  route. The row renders its ask line + pill from the entry for its id. */
 	asksByObjectId?: Map<string, NotificationResponse>
+	/** Total pending needs_input notifications per object id (including the
+	 *  entry in `asksByObjectId`). The row uses this to render the D3
+	 *  overflow suffix `+ N more` on multi-ask rows. Absent = 1 per row that
+	 *  has an ask. */
+	pendingAskCountByObjectId?: Map<string, number>
+	/** Exact group headers from the server, in display order. When given, `data`
+	 *  holds only the rows loaded so far: each header shows its server total and
+	 *  "Show more" asks for that group's next page instead of revealing rows
+	 *  already in hand. `value` is the server's spelling (`''` = no value). */
+	groupTotals?: ReadonlyArray<{ value: string; total: number }>
+	onLoadMoreInGroup?: (serverValue: string) => void
+	loadingGroups?: ReadonlySet<string>
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
 	isError?: boolean
+	error?: Error | null
 	fetchNextPage?: () => void
 	isLoading?: boolean
 	// Controlled group-expansion state (the same contract DataTable exposed).
@@ -58,12 +74,26 @@ interface ListViewProps {
 	onExpandedChange: (next: Record<string, boolean>) => void
 	// Fires synchronously right before a row-open navigate (see DataTable).
 	onCaptureViewState?: () => void
+	/** Filter-derived empty-state sentence, e.g. "No bets waiting on you in
+	 *  Define right now." Falls back to the unfiltered copy when absent. */
+	emptyTitle?: string
+	/** True while any filter pill is active — swaps the empty state's copy and
+	 *  surfaces the `Clear all filters` action (mockup 1021–1022). */
+	hasActiveFilters?: boolean
+	onClearFilters?: () => void
+	/** Resolves a type key to the workspace's singular display name. Passed in
+	 *  rather than read from `useWorkspace()` here so the list stays renderable
+	 *  outside a workspace provider; rows fall back to the raw key without it. */
+	objectTypeLabel?: (type: string) => string
 }
 
 interface ListGroup {
 	key: string
 	value: string
 	rows: ObjectResponse[]
+	/** Server total — set only when the headers come from the server. */
+	total?: number
+	serverValue?: string
 }
 
 export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListView(
@@ -78,14 +108,23 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		betStatuses,
 		showBetStatusIndicator,
 		asksByObjectId,
+		pendingAskCountByObjectId,
+		groupTotals,
+		onLoadMoreInGroup,
+		loadingGroups,
 		hasNextPage,
 		isFetchingNextPage,
 		isError,
+		error,
 		fetchNextPage,
 		isLoading,
 		expanded,
 		onExpandedChange,
 		onCaptureViewState,
+		emptyTitle,
+		hasActiveFilters,
+		onClearFilters,
+		objectTypeLabel,
 	},
 	ref,
 ) {
@@ -93,14 +132,55 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	const scrollRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 	const groupBy = grouping?.[0]
+	// D1 · Loop chip hydration. Reverse-index `in_loop` edges for the visible
+	// page so each row can render its first-loop chip. The hook fires ONE
+	// bounded batch of relationship queries after the list resolves — no
+	// server shape change, per the D1 acceptance criterion. A row's chip is
+	// absent (no reserved space) when the object has no `in_loop` edge.
+	const visibleObjectIds = useMemo(() => data.map((o) => o.id), [data])
+	const { data: loopsByObjectId } = useObjectLoops(workspaceId, visibleObjectIds)
+
+	// Rows the user is blocking float to the top of the pool (mockup fixture
+	// 6655's `nyOf`). A stable partition, so within each half the API's own
+	// sort order is untouched — and there is no synthetic "Waiting on you"
+	// group, which the mockup doesn't have either.
+	const rows = useMemo(() => {
+		if (!asksByObjectId || asksByObjectId.size === 0) return data
+		const waiting: ObjectResponse[] = []
+		const rest: ObjectResponse[] = []
+		for (const object of data) {
+			if (asksByObjectId.get(object.id)?.status === 'pending') waiting.push(object)
+			else rest.push(object)
+		}
+		return waiting.length === 0 ? data : [...waiting, ...rest]
+	}, [data, asksByObjectId])
 
 	// Groups preserve first-occurrence order across the API-sorted data, so the
 	// visible order follows the sort/order the shared filter model emitted.
 	const groups = useMemo<ListGroup[] | null>(() => {
 		if (!groupBy) return null
+		if (groupTotals) {
+			const rowsByValue = new Map<string, ObjectResponse[]>()
+			for (const object of rows) {
+				const value = getObjectGroupValue(object, groupBy)
+				const bucket = rowsByValue.get(value)
+				if (bucket) bucket.push(object)
+				else rowsByValue.set(value, [object])
+			}
+			return groupTotals.map((group) => {
+				const value = group.value === '' ? NO_VALUE_GROUP : group.value
+				return {
+					key: `${groupBy}:${value}`,
+					value,
+					rows: rowsByValue.get(value) ?? [],
+					total: group.total,
+					serverValue: group.value,
+				}
+			})
+		}
 		const byValue = new Map<string, ListGroup>()
 		const order: ListGroup[] = []
-		for (const object of data) {
+		for (const object of rows) {
 			const value = getObjectGroupValue(object, groupBy)
 			const existing = byValue.get(value)
 			if (existing) existing.rows.push(object)
@@ -111,7 +191,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			}
 		}
 		return order
-	}, [data, groupBy])
+	}, [rows, groupBy, groupTotals])
 
 	// Per-group "Show N more" reveals are view-local and intentionally not
 	// persisted — they are transient scrolling affordances, not view state.
@@ -155,8 +235,8 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			const anchorKey = groupId ?? ''
 			const anchorId = selectionAnchorRef.current[anchorKey]
 			const orderedIds = groupBy
-				? data.filter((o) => getObjectGroupValue(o, groupBy) === groupId).map((o) => o.id)
-				: data.map((o) => o.id)
+				? rows.filter((o) => getObjectGroupValue(o, groupBy) === groupId).map((o) => o.id)
+				: rows.map((o) => o.id)
 			if (Object.keys(rowSelection).length === 0 || !anchorId || !selectedIdSet.has(anchorId)) {
 				setSelected(targetId, true)
 				selectionAnchorRef.current = { ...selectionAnchorRef.current, [anchorKey]: targetId }
@@ -178,7 +258,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				return next
 			})
 		},
-		[groupBy, data, rowSelection, selectedIdSet, setSelected, onRowSelectionChange],
+		[groupBy, rows, rowSelection, selectedIdSet, setSelected, onRowSelectionChange],
 	)
 
 	const handleOpen = useCallback(
@@ -196,7 +276,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 
 	const toggleGroup = useCallback(
 		(group: ListGroup) => {
-			const open = expanded[group.key] === true
+			const open = expanded[group.key] !== false
 			onExpandedChange({ ...expanded, [group.key]: !open })
 		},
 		[expanded, onExpandedChange],
@@ -239,7 +319,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 					const target = dataRef.current.find((o) => o.id === rowId)
 					if (target) {
 						const groupKey = `${groupByValue}:${getObjectGroupValue(target, groupByValue)}`
-						if (expandedRef.current[groupKey] !== true) {
+						if (expandedRef.current[groupKey] === false) {
 							onExpandedChangeRef.current?.({
 								...expandedRef.current,
 								[groupKey]: true,
@@ -262,7 +342,11 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	)
 
 	// Infinite scroll sentinel — mirror of DataTable's: gated on hasNextPage /
-	// isFetchingNextPage / isError so a failure doesn't retry-loop.
+	// isFetchingNextPage / isError so a failure doesn't retry-loop. `isEmpty` is
+	// a dep because the empty branch renders its own sentinel node: without it
+	// the observer would keep watching the unmounted one and stall paging.
+	const isEmpty = groupTotals ? groupTotals.length === 0 : data.length === 0
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `isEmpty` re-arms the observer when the empty branch swaps in its own sentinel node
 	useEffect(() => {
 		if (!sentinelRef.current || !hasNextPage || isFetchingNextPage || isError) return
 		const observer = new IntersectionObserver(
@@ -273,7 +357,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		)
 		observer.observe(sentinelRef.current)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, isError, fetchNextPage])
+	}, [hasNextPage, isFetchingNextPage, isError, fetchNextPage, isEmpty])
 
 	const renderRows = (rows: ObjectResponse[]) =>
 		rows.map((object) => (
@@ -291,86 +375,145 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				betStatus={object.type === 'bet' ? betStatuses?.get(object.id) : undefined}
 				showBetStatusIndicator={showBetStatusIndicator}
 				ask={asksByObjectId?.get(object.id)}
+				pendingAskCount={pendingAskCountByObjectId?.get(object.id)}
 				columnVisibility={columnVisibility}
+				anySelected={selectedIdSet.size > 0}
+				typeLabel={objectTypeLabel?.(object.type)}
+				loop={loopsByObjectId.get(object.id)}
 			/>
 		))
 
 	if (isLoading) {
+		return <ListSkeleton />
+	}
+
+	if (isError && isEmpty) {
 		return (
-			<div className="flex items-center justify-center py-12">
-				<Spinner />
+			<QueryStateError
+				title="Couldn't load objects"
+				error={error instanceof Error ? error : new Error('Unknown error')}
+			/>
+		)
+	}
+
+	if (isEmpty) {
+		// The sentinel stays mounted even with nothing to show. Client-side
+		// narrowing (the Attention axis) can empty the loaded pages while
+		// matches remain unloaded — dropping the sentinel here would stop the
+		// infinite query dead and report "none" over a partial fetch.
+		return (
+			<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
+				{hasActiveFilters ? (
+					<EmptyState
+						title={emptyTitle ?? 'No objects match these filters.'}
+						action={
+							onClearFilters ? (
+								<Button variant="outline" size="sm" onClick={onClearFilters}>
+									Clear all filters
+								</Button>
+							) : undefined
+						}
+					/>
+				) : (
+					<EmptyState
+						title={emptyTitle ?? 'No objects found'}
+						description="Create your first object to get started"
+					/>
+				)}
+				<div ref={sentinelRef} className="h-1" />
+				{isFetchingNextPage && (
+					<div className="py-2">
+						<ListSkeleton rows={2} />
+					</div>
+				)}
 			</div>
 		)
 	}
 
-	if (data.length === 0) {
-		return (
-			<EmptyState title="No objects found" description="Create your first object to get started" />
-		)
-	}
-
 	return (
-		<div
-			ref={scrollRef}
-			className={cn('flex-1 min-h-0 overflow-auto rounded-xl border', 'touch-pan-y')}
-		>
+		<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
 			<ul className="m-0 list-none p-0" aria-label="Objects">
 				{groups === null
-					? renderRows(data)
+					? renderRows(rows)
 					: groups.map((group) => {
-							const open = expanded[group.key] === true
-							const capped = revealedGroups.has(group.key)
-								? group.rows
-								: group.rows.slice(0, LIST_GROUP_ROW_CAP)
-							const hiddenCount = group.rows.length - LIST_GROUP_ROW_CAP
-							const statusDot = groupBy === 'status' ? getStatusColor(group.value) : null
+							// Groups render open (mockup 995 `g.open` defaults true) — the
+							// expanded map only ever records an explicit collapse.
+							const open = expanded[group.key] !== false
+							// Server-headed groups show every row in hand and page for more;
+							// client-headed ones cap and reveal what is already loaded.
+							const serverPaged = group.total !== undefined
+							const capped =
+								serverPaged || revealedGroups.has(group.key)
+									? group.rows
+									: group.rows.slice(0, LIST_GROUP_ROW_CAP)
+							const hiddenCount = serverPaged
+								? (group.total ?? 0) - group.rows.length
+								: group.rows.length - LIST_GROUP_ROW_CAP
+							const loadingMore = loadingGroups?.has(group.serverValue ?? group.value) ?? false
 							return (
 								<li key={group.key}>
-									<div className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 hover:bg-muted/50">
+									{/* Sticky so the group a row belongs to stays readable while
+									    its rows scroll past (mockup 995). */}
+									<div className="sticky top-0 z-[2] flex w-full items-center gap-2 bg-background px-1 pt-4 pb-1.5">
 										<button
 											type="button"
 											onClick={() => toggleGroup(group)}
 											aria-expanded={open}
-											className="flex flex-1 items-center gap-2 text-left"
+											className="flex flex-1 items-center gap-2 text-left transition-opacity hover:opacity-75"
 										>
 											<ChevronRight
-												size={14}
+												size={12}
 												aria-hidden="true"
 												className={cn(
-													'shrink-0 text-muted-foreground transition-transform',
+													'shrink-0 text-muted-foreground/50 transition-transform',
 													open && 'rotate-90',
 												)}
 											/>
-											{statusDot && (
-												<span
-													aria-hidden="true"
-													className={cn(
-														'h-1.5 w-1.5 shrink-0 rounded-[2px] bg-current',
-														statusDot.text,
-													)}
-												/>
-											)}
-											<span className="text-sm font-medium">
+											{/* Mono, wide-tracked and colourless — the divider rule below
+											    carries the eye across the row, so the label doesn't also need
+											    a status swatch to mark where a group starts (mockup 748–752). */}
+											<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
 												{getObjectGroupLabel(groupBy, group.value, actors)}
 											</span>
-											<span className="text-xs tabular-nums text-muted-foreground">
-												{group.rows.length}
+											<span className="font-mono text-[10.5px] font-medium tabular-nums text-muted-foreground/50">
+												{group.total ?? group.rows.length}
 											</span>
+											{/* The hairline runs from the count to the right edge — a long
+											    scroll then always has a horizontal rule to break on. */}
+											<span aria-hidden="true" className="h-px flex-1 bg-muted" />
 										</button>
 									</div>
 									{open && (
 										<>
 											{renderRows(capped)}
-											{hiddenCount > 0 && !revealedGroups.has(group.key) && (
-												<button
-													type="button"
-													onClick={() => revealGroup(group.key)}
-													className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-												>
-													Show {hiddenCount} more
-													<ChevronRight size={12} aria-hidden="true" className="rotate-90" />
-												</button>
-											)}
+											{/* Rows still on their way: hold the space the group's total
+											    already promises, so nothing shifts when they land. */}
+											{serverPaged &&
+												hiddenCount > 0 &&
+												(group.rows.length === 0 || loadingMore) && (
+													<div className="py-1">
+														<ListSkeleton rows={Math.min(hiddenCount, 3)} />
+													</div>
+												)}
+											{hiddenCount > 0 &&
+												!(serverPaged
+													? group.rows.length === 0 || loadingMore
+													: revealedGroups.has(group.key)) && (
+													<button
+														type="button"
+														onClick={() =>
+															serverPaged
+																? onLoadMoreInGroup?.(group.serverValue ?? '')
+																: revealGroup(group.key)
+														}
+														className="ml-[30px] flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+													>
+														Show{' '}
+														{serverPaged ? Math.min(hiddenCount, GROUP_PAGE_SIZE) : hiddenCount}{' '}
+														more
+														<ChevronRight size={12} aria-hidden="true" className="rotate-90" />
+													</button>
+												)}
 										</>
 									)}
 								</li>
@@ -379,8 +522,8 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			</ul>
 			<div ref={sentinelRef} className="h-1" />
 			{isFetchingNextPage && (
-				<div className="flex items-center justify-center py-4">
-					<Spinner />
+				<div className="py-2">
+					<ListSkeleton rows={2} />
 				</div>
 			)}
 		</div>

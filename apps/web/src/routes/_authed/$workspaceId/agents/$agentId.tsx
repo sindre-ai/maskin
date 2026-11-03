@@ -1,10 +1,13 @@
 import { AgentCreateForm } from '@/components/agents/agent-create-form'
+import { AgentDetailView } from '@/components/agents/agent-detail-view'
 import { AgentDocument } from '@/components/agents/agent-document'
 import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
-import { api } from '@/lib/api'
+import { useDocumentTitle } from '@/hooks/use-document-title'
+import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
@@ -20,6 +23,7 @@ function AgentDetailPage() {
 	const { workspaceId } = useWorkspace()
 	// Use list-derived hook to check existence (returns undefined for new IDs, no 404)
 	const { data: agentListItem, isLoading } = useAgent(agentId, workspaceId)
+	useDocumentTitle(agentListItem?.name)
 	const createActor = useCreateActor(workspaceId)
 	const updateActor = useUpdateActor(workspaceId)
 	const isCreatedRef = useRef(false)
@@ -48,24 +52,22 @@ function AgentDetailPage() {
 				id: agentId,
 				type: 'agent',
 				name: data.name,
+				// The server adds the agent to this workspace in the same request.
+				workspace_id: workspaceId,
 			})
-			// Auto-add agent to workspace members
-			try {
-				await api.workspaces.members.add(workspaceId, {
-					actor_id: agentId,
-					role: 'member',
-				})
-			} catch {
-				// workspace membership may already exist
-			}
 			toast.success('Agent created')
 		} catch {
+			// The create itself failed. Allow a retry, and let the error surface
+			// through `createActor.error`, which AgentCreateForm renders inline.
 			isCreatedRef.current = false
 		}
 	}
 
 	const handleUpdate = (data: Record<string, unknown>) => {
-		updateActor.mutate({ id: agentId, data })
+		updateActor.mutate(
+			{ id: agentId, data },
+			{ onError: () => toast.error("Couldn't save that change") },
+		)
 	}
 
 	// Once created, render the full document editor (fetches full detail)
@@ -90,9 +92,9 @@ function AgentDetailPage() {
 
 /** Fetches the full agent detail and renders the document editor. */
 function AgentDetailLoaded({ agentId }: { agentId: string }) {
-	const { data: agent, isLoading } = useActor(agentId)
+	const { data: agent, isLoading, isError, error, refetch } = useActor(agentId)
 
-	if (isLoading || !agent) {
+	if (isLoading) {
 		return (
 			<div className="max-w-3xl mx-auto space-y-4">
 				<Skeleton className="h-8 w-64" />
@@ -102,5 +104,28 @@ function AgentDetailLoaded({ agentId }: { agentId: string }) {
 		)
 	}
 
-	return <AgentDocument agent={agent} />
+	if (isError && !agent) {
+		const is404 = error instanceof ApiError && error.status === 404
+		return (
+			<div className="max-w-3xl mx-auto">
+				<QueryStateError
+					title={is404 ? 'Agent not found' : "Couldn't load this agent"}
+					error={error ?? new Error('Something went wrong.')}
+					onRetry={() => refetch()}
+				/>
+			</div>
+		)
+	}
+
+	if (!agent) {
+		return (
+			<div className="max-w-3xl mx-auto space-y-4">
+				<Skeleton className="h-8 w-64" />
+				<Skeleton className="h-4 w-full max-w-96" />
+				<Skeleton className="h-32 w-full" />
+			</div>
+		)
+	}
+
+	return <AgentDetailView agent={agent} />
 }

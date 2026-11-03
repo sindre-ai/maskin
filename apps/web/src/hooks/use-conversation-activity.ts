@@ -8,6 +8,8 @@ import {
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
 import type { MessageResponse, SessionResponse } from '@/lib/api'
+import { toastSessionBudgetStopped } from '@/lib/session-errors'
+import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionActivityLogs } from './use-session-activity-logs'
 import { useActiveSessionsForConversation } from './use-sessions'
@@ -15,9 +17,22 @@ import { useActiveSessionsForConversation } from './use-sessions'
 export interface MessageTurnActivity {
 	sessionId: string
 	actorId: string
+	/**
+	 * The thread the session that produced this turn belongs to; null or absent
+	 * for the main chat. An agent can run one session per thread next to its main
+	 * one, so this is what keeps one thread's "working" row and Stop button from
+	 * showing up in another.
+	 */
+	threadRootId?: number | null
 	steps: ActivityStep[]
 	/** True for the single most recent turn of a session that hasn't reached a `result` envelope yet. */
 	inProgress: boolean
+	/**
+	 * True while the session is still booting (pending/starting/queued) — the
+	 * spinner shows so the user knows a reply is on its way, but there is no
+	 * live process to stop yet, so the stop control stays hidden.
+	 */
+	starting?: boolean
 	/** True when the session that would have produced this turn failed before (or shortly after) starting. */
 	failed?: boolean
 	/**
@@ -99,7 +114,15 @@ export interface ConversationActivity {
 }
 
 /**
- * Segments the conversation's most recent session per agent into per-message
+ * Which part of a conversation a view draws activity for: the main chat
+ * (`threadRootId: null`) or one thread (its root message id).
+ */
+export interface ActivityScope {
+	threadRootId: number | null
+}
+
+/**
+ * Segments the conversation's most recent session per agent and thread into per-message
  * activity turns: a running session's turns are split from its logs and
  * re-anchored to the reply message they produced (see `byReplyMessageId`'s
  * doc comment for why); a failed session — whether it died before ever
@@ -118,32 +141,71 @@ export interface ConversationActivity {
  * preset most agents actually use is HTTP-transport against the shared
  * backend process, where there's no single "current session" to read from
  * `process.env`, so `sessionId` comes back null for those replies. Only one
- * session can be active per (conversation, agent actor) at a time (enforced
- * by `sessions_conversation_actor_active_uniq`), and a new session can only
- * start once the previous one for that pair is terminal — so every message
- * this actor posted at or after `session.startedAt` unambiguously belongs to
- * this session, with no risk of pulling in an older, already-dead session's
- * messages.
+ * session can be active per (conversation, agent actor, thread) at a time (a
+ * thread is its root message id, the main chat is none), and a new session can
+ * only start once the previous one for that triple is terminal — so every
+ * message this actor posted at or after `session.startedAt` in that thread
+ * unambiguously belongs to this session, with no risk of pulling in an older,
+ * already-dead session's messages.
+ *
+ * Activity is therefore keyed by (agent, thread), not by agent alone: the main
+ * chat and each thread keep their own latest session, turns and Stop target.
+ * `scope` picks which of them a view draws — the main chat passes
+ * `{ threadRootId: null }`, a thread pane passes its root id — and no scope
+ * returns all of them. A conversation whose agents each run a single main
+ * session reads exactly as before.
  */
 export function useConversationActivity(
 	workspaceId: string,
 	conversationId: string | null,
 	messages: MessageResponse[],
+	scope?: ActivityScope,
 ): ConversationActivity {
 	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 
+	// The threads each agent runs a session of its own in. A message in one of
+	// those threads is that session's business, not the agent's main session's.
+	const threadsByActor = new Map<string, Set<number>>()
+	for (const session of sessions ?? []) {
+		const thread = sessionThread(session)
+		if (thread === null) continue
+		const threads = threadsByActor.get(session.actorId) ?? new Set<number>()
+		threads.add(thread)
+		threadsByActor.set(session.actorId, threads)
+	}
+	const inScope = (session: SessionResponse): boolean => {
+		if (!scope) return true
+		const thread = sessionThread(session)
+		if (scope.threadRootId === null) return thread === null
+		if (thread === scope.threadRootId) return true
+		// A main session still answers in a thread whose agent has no session of
+		// its own there, as it did before threads had sessions.
+		return thread === null && !threadsByActor.get(session.actorId)?.has(scope.threadRootId)
+	}
+
 	// Sessions come back newest-first (see the route's `orderBy(desc(sessions.createdAt))`)
-	// — keep only the latest session per agent, since that's the one whose
-	// status actually reflects "what's happening now" for that agent. An
-	// older failed attempt for an actor who has since retried (or replied
+	// — keep only the latest session per agent and thread, since that's the one
+	// whose status actually reflects "what's happening now" there. An older
+	// failed attempt for an actor who has since retried (or replied
 	// successfully) shouldn't keep showing a stale failure notice.
 	const latestByActor = new Map<string, SessionResponse>()
 	for (const session of sessions ?? []) {
-		if (!latestByActor.has(session.actorId)) latestByActor.set(session.actorId, session)
+		if (!inScope(session)) continue
+		const key = `${session.actorId}:${sessionThread(session) ?? 'main'}`
+		if (!latestByActor.has(key)) latestByActor.set(key, session)
 	}
 	const latestSessions = [...latestByActor.values()]
 	const activeSessions = latestSessions.filter((s) => s.status === 'running')
-	const failedSessions = latestSessions.filter((s) => s.status === 'failed')
+	// A session on its way up. Container/VM boot is the single longest wait in
+	// a chat turn — without surfacing these, the user stares at a silent
+	// thread for the exact window where knowing "a reply is coming" matters
+	// most. (Once running, the session appears via activeSessions instead.)
+	const bootingSessions = latestSessions.filter(
+		(s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued',
+	)
+	const failedSessions = latestSessions.filter(
+		(s) => s.status === 'failed' || s.status === 'user_stopped',
+	)
 	// 'timeout' is not a failure — the 2-hour backstop (session-manager.ts's
 	// reaper) is expected lifecycle, and the next message in this conversation
 	// spawns a fresh interactive session seeded with the recent history (see
@@ -222,6 +284,17 @@ export function useConversationActivity(
 	for (const session of failedSessions) {
 		const config = session.config as { conversation?: { message_id?: number } } | null
 		const messageId = config?.conversation?.message_id
+		// A user-initiated stop lands as status 'user_stopped'. Rows written before
+		// that status was stored carry status 'failed' with a marker in result
+		// instead (`stopped_by_user` on the remote path's provisional write,
+		// `user_stop_requested` once the genuine completion report or the local
+		// handleCompletion path landed), so both shapes still read as a stop.
+		// Either way it's an expected outcome, not an error — render it
+		// neutrally, like the mid-turn timeout notice.
+		const stoppedByUser =
+			session.status === 'user_stopped' ||
+			session.result?.stopped_by_user === true ||
+			session.result?.user_stop_requested === true
 		// A session that reached `running` and later died from classified credit/rate-limit
 		// exhaustion carries its message in `result.failure_reason.human_message`, not
 		// `result.error` (see classifyCreditExhaustion() in session-manager.ts) — prefer
@@ -230,13 +303,29 @@ export function useConversationActivity(
 		const errorText =
 			parseFailureReason(session.result)?.human_message ||
 			(typeof session.result?.error === 'string' ? session.result.error : undefined)
-		const turn: MessageTurnActivity = {
-			sessionId: session.id,
-			actorId: session.actorId,
-			steps: errorText ? [{ id: `${session.id}-error`, kind: 'error', text: errorText }] : [],
-			inProgress: false,
-			failed: true,
-		}
+		const turn: MessageTurnActivity = stoppedByUser
+			? {
+					sessionId: session.id,
+					actorId: session.actorId,
+					threadRootId: sessionThread(session),
+					steps: [
+						{
+							id: `${session.id}-stopped`,
+							kind: 'error',
+							text: 'Stopped — send another message (or retry) to continue.',
+						},
+					],
+					inProgress: false,
+					interrupted: true,
+				}
+			: {
+					sessionId: session.id,
+					actorId: session.actorId,
+					threadRootId: sessionThread(session),
+					steps: errorText ? [{ id: `${session.id}-error`, kind: 'error', text: errorText }] : [],
+					inProgress: false,
+					failed: true,
+				}
 		if (typeof messageId === 'number') {
 			const list = byTriggerMessageId.get(messageId) ?? []
 			list.push(turn)
@@ -269,7 +358,7 @@ export function useConversationActivity(
 		// *before* the session responding to it starts, so seeding the cutoff
 		// with the start time would exclude the very message being waited on.
 		// With no replies yet, every message in the thread is unanswered.
-		const actorReplies = messagesFromSession(messages, session)
+		const actorReplies = messagesFromSession(messages, session, threadsByActor)
 		let lastReplyAt = Number.NEGATIVE_INFINITY
 		for (const reply of actorReplies) {
 			if (!reply.createdAt) continue
@@ -279,6 +368,7 @@ export function useConversationActivity(
 		const unanswered = messages
 			.flatMap((m) => {
 				if (m.actorId === session.actorId) return []
+				if (!inSessionThread(m, session, threadsByActor)) return []
 				const at = m.createdAt ? new Date(m.createdAt).getTime() : Number.NaN
 				if (Number.isNaN(at)) {
 					// Undated message (mirrors messagesFromSession's leniency). We
@@ -301,6 +391,7 @@ export function useConversationActivity(
 		const turn: MessageTurnActivity = {
 			sessionId: session.id,
 			actorId: session.actorId,
+			threadRootId: sessionThread(session),
 			steps: [
 				{
 					id: `${session.id}-timeout`,
@@ -310,6 +401,30 @@ export function useConversationActivity(
 			],
 			inProgress: false,
 			interrupted: true,
+		}
+		if (typeof messageId === 'number') {
+			const list = byTriggerMessageId.get(messageId) ?? []
+			list.push(turn)
+			byTriggerMessageId.set(messageId, list)
+		} else {
+			fallback.push(turn)
+		}
+	}
+
+	for (const session of bootingSessions) {
+		// A booting session was spawned for a specific message — anchor its
+		// "starting…" spinner there. (Reused sessions never sit in a booting
+		// status, so config.conversation.message_id is the right anchor here,
+		// unlike the timeout notice above.)
+		const config = session.config as { conversation?: { message_id?: number } } | null
+		const messageId = config?.conversation?.message_id
+		const turn: MessageTurnActivity = {
+			sessionId: session.id,
+			actorId: session.actorId,
+			threadRootId: sessionThread(session),
+			steps: [],
+			inProgress: true,
+			starting: true,
 		}
 		if (typeof messageId === 'number') {
 			const list = byTriggerMessageId.get(messageId) ?? []
@@ -342,6 +457,7 @@ export function useConversationActivity(
 			fallback.push({
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				steps: [
 					{
 						id: `${session.id}-logs-error`,
@@ -357,7 +473,7 @@ export function useConversationActivity(
 		const { segments, unassigned } = segmentActivityByMessage(logs)
 		const idle = !isLive || isSessionIdleAwaitingInput(logs)
 
-		const agentMessages = mcpRepliesFromSession(messages, session)
+		const agentMessages = mcpRepliesFromSession(messages, session, threadsByActor)
 		const replySegments = segments.filter((s) => s.containsReply)
 
 		// Pair closed turns' `result` envelopes with the final_output messages
@@ -366,7 +482,7 @@ export function useConversationActivity(
 		// Ordinal pairing rather than id matching, for the same reason the reply
 		// pairing above uses it: messages.sessionId is null for HTTP-transport MCP.
 		const resultSegments = segments.filter((s) => s.result)
-		const finalOutputMessages = finalOutputsFromSession(messages, session)
+		const finalOutputMessages = finalOutputsFromSession(messages, session, threadsByActor)
 		const persistedFinalCount = finalOutputMessages.length
 		const pairedCount = Math.min(replySegments.length, agentMessages.length)
 		for (let i = 0; i < pairedCount; i++) {
@@ -377,6 +493,7 @@ export function useConversationActivity(
 			list.push({
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				steps: segment.steps,
 				inProgress: false,
 				...pendingFinalOutputFor(
@@ -411,6 +528,7 @@ export function useConversationActivity(
 			const turn: MessageTurnActivity = {
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				steps: segment.steps,
 				inProgress: false,
 				...pending,
@@ -446,11 +564,14 @@ export function useConversationActivity(
 			resultSegments.includes(lastSegment) &&
 			!pairedSegments.has(lastSegment)
 
-		if (!idle && lastSegment && !lastSegmentAlreadyPaired && !lastSegmentEmittedAsFinal) {
+		const emitsLiveTurn =
+			!idle && lastSegment && !lastSegmentAlreadyPaired && !lastSegmentEmittedAsFinal
+		if (emitsLiveTurn && lastSegment) {
 			const list = byTriggerMessageId.get(lastSegment.conversationMessageId) ?? []
 			list.push({
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				// Keep the steps we already have — they're still the best
 				// account of the turn — but stop claiming it's live when we
 				// can no longer read the logs that would prove it.
@@ -480,10 +601,16 @@ export function useConversationActivity(
 		// Still working but nothing tagged yet — either a turn that just
 		// started (log rows haven't caught up) or unassigned steps left over
 		// from a pre-tagging turn.
-		if (!idle && (segments.length === 0 || unassigned.length > 0)) {
+		//
+		// Never alongside a live turn from the same session: one session is one
+		// agent doing one thing, and leftover untagged steps are older work. Drawing
+		// both put two "is working on it" rows under a single message, with the
+		// stale one frozen while the other moved.
+		if (!idle && !emitsLiveTurn && (segments.length === 0 || unassigned.length > 0)) {
 			fallback.push({
 				sessionId: session.id,
 				actorId: session.actorId,
+				threadRootId: sessionThread(session),
 				steps: unassigned,
 				inProgress: !logsFailed,
 				...(logsFailed ? { interrupted: true } : {}),
@@ -564,6 +691,19 @@ function pendingFinalOutputFor(
 	if (!result) return {}
 	// Everything up to `persistedFinalCount` already exists as a real message.
 	if (resultSegments.indexOf(segment) < persistedFinalCount) return {}
+	// A failed turn's `result` text is the raw API error envelope, not an
+	// answer, and the backend never posts it verbatim: it either replays the
+	// turn (2s, then 8s, plus the write round-trip) or posts a written
+	// explanation. Rendering it optimistically would put `API Error: {...}` in
+	// the chat as the agent's reply for the whole of that window — the exact
+	// blob this feature exists to keep out — and the transcript's retraction
+	// can only take it back afterwards, once the replay envelope lands.
+	// Waiting for the persisted message costs a few seconds of silence and is
+	// always the message the human should actually read.
+	//
+	// Note this does not change the ordinal pairing above: the segment still
+	// counts in `resultSegments`, only its optimistic render is suppressed.
+	if (result.isError) return {}
 
 	const key = `${sessionId}-final-${result.logId}`
 	const seenAt = firstSeen.get(key)
@@ -581,8 +721,35 @@ function pendingFinalOutputFor(
 	}
 }
 
+/** The thread a session belongs to: its root message id, or null for the main chat. */
+function sessionThread(session: SessionResponse): number | null {
+	return session.threadRootId ?? null
+}
+
 /**
- * Messages this actor posted at or after the session started.
+ * Whether a message sits in the part of the conversation this session answers:
+ * a thread session answers its own thread, a main session answers everything
+ * except the threads its agent runs a session of its own in. With no thread
+ * sessions in the conversation every message belongs to the main session, as
+ * it always did.
+ */
+function inSessionThread(
+	message: MessageResponse,
+	session: SessionResponse,
+	threadsByActor: Map<string, Set<number>>,
+): boolean {
+	const own = sessionThread(session)
+	if (own !== null) return message.threadRootId === own || message.id === own
+	const threads = threadsByActor.get(session.actorId)
+	if (!threads) return true
+	return !(
+		(message.threadRootId != null && threads.has(message.threadRootId)) ||
+		threads.has(message.id)
+	)
+}
+
+/**
+ * Messages this actor posted in the session's thread at or after the session started.
  *
  * Scoped by `actorId` + start time rather than `messages.sessionId` for the
  * reason given in useConversationActivity's doc comment — that column is null
@@ -591,10 +758,12 @@ function pendingFinalOutputFor(
 function messagesFromSession(
 	messages: MessageResponse[],
 	session: SessionResponse,
+	threadsByActor: Map<string, Set<number>>,
 ): MessageResponse[] {
 	const startedAt = session.startedAt ? new Date(session.startedAt).getTime() : null
 	return messages.filter((m) => {
 		if (m.actorId !== session.actorId) return false
+		if (!inSessionThread(m, session, threadsByActor)) return false
 		if (startedAt === null || !m.createdAt) return true
 		return new Date(m.createdAt).getTime() >= startedAt
 	})
@@ -612,14 +781,68 @@ function messagesFromSession(
 function mcpRepliesFromSession(
 	messages: MessageResponse[],
 	session: SessionResponse,
+	threadsByActor: Map<string, Set<number>>,
 ): MessageResponse[] {
-	return messagesFromSession(messages, session).filter((m) => m.metadata?.source !== 'final_output')
+	return messagesFromSession(messages, session, threadsByActor).filter(
+		(m) => m.metadata?.source !== 'final_output',
+	)
 }
 
-/** This session's auto-posted end-of-turn messages, oldest first. */
+/**
+ * This session's auto-posted end-of-turn messages, oldest first.
+ *
+ * Counted against `resultSegments` by ordinal, so this must only include
+ * messages that a `result` envelope actually produced. An 'unanswered' retry
+ * notice is the one kind that never had one: the backend posts it precisely
+ * because the replayed turn never closed, and the transcript has already
+ * retracted the failed envelope that opened it (see `segmentActivityByMessage`).
+ * Counting it would leave `persistedFinalCount` permanently one ahead, and
+ * every later turn in the session would be read as already-persisted — so the
+ * agent's end-of-turn text would stop appearing until the next reload.
+ *
+ * The other retry notices are not excluded, and must not be: 'undeliverable'
+ * and 'unavailable' both leave the failed `result` envelope standing as a
+ * segment, so they still pair one-to-one.
+ */
 function finalOutputsFromSession(
 	messages: MessageResponse[],
 	session: SessionResponse,
+	threadsByActor: Map<string, Set<number>>,
 ): MessageResponse[] {
-	return messagesFromSession(messages, session).filter((m) => m.metadata?.source === 'final_output')
+	return messagesFromSession(messages, session, threadsByActor).filter(
+		(m) =>
+			m.metadata?.source === 'final_output' && m.metadata?.final_output?.retry !== 'unanswered',
+	)
+}
+
+/**
+ * Toasts the same "plan limit reached" message shown when a new session is
+ * blocked from starting, but for a session that was already running and got
+ * killed mid-conversation by SessionManager's budget watchdog — otherwise an
+ * interactive chat session just goes quiet with the reason only visible if
+ * the user happens to scroll up and read the inline error notice.
+ *
+ * Only fires on an observed running→failed transition (tracked per session
+ * id in a ref), not for a session that was already in a failed state on
+ * first load — opening an old, already-failed conversation shouldn't toast.
+ */
+export function useSessionBudgetStopToast(
+	workspaceId: string,
+	conversationId: string | null,
+): void {
+	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
+	const navigate = useNavigate()
+	const seenStatusRef = useRef<Map<string, string>>(new Map())
+
+	useEffect(() => {
+		for (const session of sessions ?? []) {
+			const prevStatus = seenStatusRef.current.get(session.id)
+			seenStatusRef.current.set(session.id, session.status)
+			if (prevStatus === undefined || prevStatus === session.status) continue
+			if (session.status !== 'failed' && session.status !== 'timeout') continue
+			const reason = parseFailureReason(session.result as Record<string, unknown> | null)
+			if (reason?.reason_code !== 'plan_cap_exceeded') continue
+			toastSessionBudgetStopped(navigate, workspaceId)
+		}
+	}, [sessions, navigate, workspaceId])
 }

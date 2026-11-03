@@ -6,7 +6,7 @@
 # list whenever a table is added to or removed from MIGRATIONS.md.
 #
 # This file is itself a protected path (.maskin/protected-paths.yml) — edits
-# here are always two-human PRs.
+# here are always human-review PRs.
 
 hot_tables:
   - webhook_deliveries

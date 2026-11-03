@@ -1,5 +1,5 @@
 import { trackScrollToTop } from '@/lib/analytics'
-import { useEffect, useRef } from 'react'
+import { type RefObject, useEffect, useRef } from 'react'
 
 // The workspace layout marks its scroll container with `data-scroll-root` — the
 // element that owns `overflow-auto` and receives real scroll events. `window`
@@ -28,6 +28,11 @@ interface UseScrollToTopEmitterOptions {
 	// and task pages without a rename.
 	objectSubtype: string
 	objectId: string
+	// The element that actually scrolls, when it isn't the layout's
+	// `[data-scroll-root]`. A route that publishes `scrollLocked` (the v2 object
+	// detail shell) makes that container `overflow-hidden` and owns its own
+	// scroller, so it hands the ref in rather than relying on the attribute.
+	scrollRootRef?: RefObject<HTMLElement | null>
 }
 
 // Emits `scroll_to_top` once per completed downward-then-upward gesture inside
@@ -38,6 +43,7 @@ export function useScrollToTopEmitter({
 	enabled,
 	objectSubtype,
 	objectId,
+	scrollRootRef,
 }: UseScrollToTopEmitterOptions): void {
 	const stateRef = useRef({ armed: false, maxDepthPx: 0, armAtDepthPx: 0 })
 
@@ -45,7 +51,8 @@ export function useScrollToTopEmitter({
 		if (!enabled) return
 		if (typeof document === 'undefined') return
 
-		const root = document.querySelector<HTMLElement>(`[${SCROLL_ROOT_ATTR}]`)
+		const root =
+			scrollRootRef?.current ?? document.querySelector<HTMLElement>(`[${SCROLL_ROOT_ATTR}]`)
 		if (!root) return
 
 		stateRef.current = { armed: false, maxDepthPx: 0, armAtDepthPx: 0 }
@@ -120,5 +127,5 @@ export function useScrollToTopEmitter({
 			clearSettleTimer()
 			root.removeEventListener('scroll', onScroll)
 		}
-	}, [enabled, objectSubtype, objectId])
+	}, [enabled, objectSubtype, objectId, scrollRootRef])
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import { workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import {
 	createWorkspaceSkillSchema,
 	parseSkillMd,
@@ -12,16 +12,23 @@ import {
 import AdmZip from 'adm-zip'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
+import { type ResolveMatch, resolveByIdOrName } from '../lib/resolve-by-id-or-name'
 import { serialize, serializeArray } from '../lib/serialize'
 import {
 	SKILL_BUNDLE_MAX_UNCOMPRESSED_BYTES,
 	type SkillBundleError,
 	extractSkillBundle,
 } from '../lib/skill-bundles'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 
 type Env = {
@@ -66,6 +73,40 @@ async function requireWorkspaceMember(db: Database, workspaceId: string, actorId
 	return member ?? null
 }
 
+// Get, update and delete accept a skill id or a skill name in the same path
+// segment. Both lookups are scoped to the workspace, so an id from another
+// workspace resolves to none.
+function resolveSkill(db: Database, workspaceId: string, ref: string) {
+	return resolveByIdOrName({
+		ref,
+		findById: async (id) => {
+			const [row] = await db
+				.select()
+				.from(workspaceSkills)
+				.where(and(eq(workspaceSkills.workspaceId, workspaceId), eq(workspaceSkills.id, id)))
+				.limit(1)
+			return row
+		},
+		findByName: (name) =>
+			db
+				.select()
+				.from(workspaceSkills)
+				.where(and(eq(workspaceSkills.workspaceId, workspaceId), eq(workspaceSkills.name, name))),
+	})
+}
+
+function skillNotFoundError(ref: string) {
+	return createApiError(
+		'NOT_FOUND',
+		`No skill with id or name '${ref}' in this workspace. Call list_workspace_skills for valid ids and names.`,
+	)
+}
+
+function skillAmbiguousError(ref: string, matches: ResolveMatch[]) {
+	const listed = matches.map((m) => `${m.id} (${m.name})`).join(', ')
+	return createApiError('CONFLICT', `More than one skill matches '${ref}': ${listed}. Pass the id.`)
+}
+
 // -- Response schemas --
 
 const workspaceSkillListItemSchema = z.object({
@@ -103,7 +144,7 @@ const workspaceSkillUploadResponseSchema = workspaceSkillDetailSchema.extend({
 const workspaceIdParam = z.object({ workspaceId: z.string().uuid() })
 const workspaceIdAndNameParam = z.object({
 	workspaceId: z.string().uuid(),
-	name: skillNameSchema,
+	name: skillNameSchema.describe('Skill id or name'),
 })
 
 // Snapshot-consistent cursor pagination — mirrors `objectQuerySchema`.
@@ -192,11 +233,11 @@ app.openapi(listWorkspaceSkillsRoute, (async (c) => {
 	const rows = await (cursorOn
 		? query.order === 'asc'
 			? baseSelect
-					.orderBy(asc(workspaceSkills.createdAt), asc(workspaceSkills.id))
+					.orderBy(asc(msCreatedAt(workspaceSkills.createdAt)), asc(workspaceSkills.id))
 					.limit(effectiveLimit ?? 100)
 					.offset(effectiveOffset ?? 0)
 			: baseSelect
-					.orderBy(desc(workspaceSkills.createdAt), asc(workspaceSkills.id))
+					.orderBy(desc(msCreatedAt(workspaceSkills.createdAt)), asc(workspaceSkills.id))
 					.limit(effectiveLimit ?? 100)
 					.offset(effectiveOffset ?? 0)
 		: effectiveLimit !== undefined
@@ -226,7 +267,11 @@ const getWorkspaceSkillRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Workspace skill not found',
+			description: 'No skill with this id or name',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'More than one skill matches; pass the id',
 		},
 	},
 })
@@ -234,22 +279,21 @@ const getWorkspaceSkillRoute = createRoute({
 app.openapi(getWorkspaceSkillRoute, (async (c) => {
 	const db = c.get('db')
 	const callerActorId = c.get('actorId')
-	const { workspaceId, name } = c.req.valid('param')
+	const { workspaceId, name: ref } = c.req.valid('param')
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	const [skill] = await db
-		.select()
-		.from(workspaceSkills)
-		.where(and(eq(workspaceSkills.workspaceId, workspaceId), eq(workspaceSkills.name, name)))
-		.limit(1)
-
-	if (!skill) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
+	const resolved = await resolveSkill(db, workspaceId, ref)
+	if (resolved.kind === 'none') {
+		return c.json(skillNotFoundError(ref), 404)
 	}
+	if (resolved.kind === 'ambiguous') {
+		return c.json(skillAmbiguousError(ref, resolved.matches), 409)
+	}
+	const skill = resolved.row
 
 	return c.json(serialize(skill) as z.infer<typeof workspaceSkillDetailSchema>, 200)
 }) as RouteHandler<typeof getWorkspaceSkillRoute, Env>)
@@ -258,6 +302,7 @@ app.openapi(getWorkspaceSkillRoute, (async (c) => {
 const createWorkspaceSkillRoute = createRoute({
 	method: 'post',
 	path: '/{workspaceId}/skills',
+	'x-viewer-policy': 'writer',
 	tags: ['Workspace Skills'],
 	summary: 'Create a workspace skill',
 	request: {
@@ -305,6 +350,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	// Invalid SKILL.md content is accepted so the user can land it in the UI
 	// and fix the formatting. Invalid rows are flagged `is_valid=false` and
@@ -381,7 +427,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 	// The mutation has already succeeded; a failing audit write must not
 	// translate into a 500 for the caller.
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerActorId,
 			action: 'created',
@@ -436,6 +482,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 const uploadWorkspaceSkillRoute = createRoute({
 	method: 'post',
 	path: '/{workspaceId}/skills/upload',
+	'x-viewer-policy': 'writer',
 	tags: ['Workspace Skills'],
 	summary: 'Upload a workspace skill from a single SKILL.md or a zip bundle',
 	request: {
@@ -515,6 +562,7 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
 	const formData = await c.req.formData()
 	const file = formData.get('file')
@@ -775,7 +823,7 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 	// Audit event — same shape as the JSON create path so existing listeners
 	// keep working. `content` is omitted to stay under the 8KB NOTIFY cap.
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerActorId,
 			action: replaceRow ? 'updated' : 'created',
@@ -1019,6 +1067,7 @@ app.openapi(listWorkspaceSkillFilesRoute, (async (c) => {
 const updateWorkspaceSkillRoute = createRoute({
 	method: 'put',
 	path: '/{workspaceId}/skills/{name}',
+	'x-viewer-policy': 'writer',
 	tags: ['Workspace Skills'],
 	summary: 'Update a workspace skill',
 	request: {
@@ -1046,11 +1095,11 @@ const updateWorkspaceSkillRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Workspace skill not found',
+			description: 'No skill with this id or name',
 		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'A skill with this name already exists',
+			description: 'A skill with this name already exists, or more than one skill matches',
 		},
 	},
 })
@@ -1059,23 +1108,23 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	const db = c.get('db')
 	const callerActorId = c.get('actorId')
 	const storage = c.get('agentStorage')
-	const { workspaceId, name } = c.req.valid('param')
+	const { workspaceId, name: ref } = c.req.valid('param')
 	const body = c.req.valid('json')
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
-	const [existing] = await db
-		.select()
-		.from(workspaceSkills)
-		.where(and(eq(workspaceSkills.workspaceId, workspaceId), eq(workspaceSkills.name, name)))
-		.limit(1)
-
-	if (!existing) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
+	const resolved = await resolveSkill(db, workspaceId, ref)
+	if (resolved.kind === 'none') {
+		return c.json(skillNotFoundError(ref), 404)
 	}
+	if (resolved.kind === 'ambiguous') {
+		return c.json(skillAmbiguousError(ref, resolved.matches), 409)
+	}
+	const existing = resolved.row
 
 	let parsed: ReturnType<typeof parseSkillMd> | null = null
 	try {
@@ -1168,7 +1217,7 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerActorId,
 			action: 'updated',
@@ -1196,6 +1245,7 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 const deleteWorkspaceSkillRoute = createRoute({
 	method: 'delete',
 	path: '/{workspaceId}/skills/{name}',
+	'x-viewer-policy': 'writer',
 	tags: ['Workspace Skills'],
 	summary: 'Delete a workspace skill',
 	request: {
@@ -1212,7 +1262,11 @@ const deleteWorkspaceSkillRoute = createRoute({
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
-			description: 'Workspace skill not found',
+			description: 'No skill with this id or name',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'More than one skill matches; pass the id',
 		},
 	},
 })
@@ -1221,22 +1275,22 @@ app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 	const db = c.get('db')
 	const callerActorId = c.get('actorId')
 	const storage = c.get('agentStorage')
-	const { workspaceId, name } = c.req.valid('param')
+	const { workspaceId, name: ref } = c.req.valid('param')
 
 	const member = await requireWorkspaceMember(db, workspaceId, callerActorId)
 	if (!member) {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
+	assertWorkspaceWriterRole(member.role)
 
-	const [existing] = await db
-		.select()
-		.from(workspaceSkills)
-		.where(and(eq(workspaceSkills.workspaceId, workspaceId), eq(workspaceSkills.name, name)))
-		.limit(1)
-
-	if (!existing) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace skill not found'), 404)
+	const resolved = await resolveSkill(db, workspaceId, ref)
+	if (resolved.kind === 'none') {
+		return c.json(skillNotFoundError(ref), 404)
 	}
+	if (resolved.kind === 'ambiguous') {
+		return c.json(skillAmbiguousError(ref, resolved.matches), 409)
+	}
+	const existing = resolved.row
 
 	// DB first — cascades remove agent_skills attachments. Delete S3 second as
 	// best-effort; an orphan S3 object keyed on the deleted skill's UUID is
@@ -1250,14 +1304,14 @@ app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 		logger.error('Failed to delete workspace skill from storage (orphan object left)', {
 			workspaceId,
 			skillId: existing.id,
-			name,
+			name: existing.name,
 			storageKey: existing.storageKey,
 			error: String(err),
 		})
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerActorId,
 			action: 'deleted',

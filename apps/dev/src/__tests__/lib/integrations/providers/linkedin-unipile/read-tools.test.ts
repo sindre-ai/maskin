@@ -1,0 +1,502 @@
+import type { Database } from '@maskin/db'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { credentialMock } = vi.hoisted(() => ({ credentialMock: vi.fn() }))
+vi.mock('../../../../../lib/integrations/lookup', () => ({
+	actorScopedProviders: new Set(['linkedin-unipile']),
+	findIntegrationRow: credentialMock,
+	getCredential: vi.fn(async () => ({ value: JSON.stringify({ account_id: 'acc_1' }) })),
+}))
+vi.mock('../../../../../lib/workspace-auth', () => ({ isWorkspaceMember: async () => true }))
+vi.mock('../../../../../lib/crypto', () => ({
+	decrypt: () => JSON.stringify({ account_id: 'acc_1' }),
+	encrypt: (v: string) => v,
+}))
+
+import { LinkedInIntegrationError } from '../../../../../lib/integrations/providers/linkedin-unipile/errors'
+import {
+	__setLinkedInClientForTests,
+	getLinkedInProfile,
+	listLinkedInConnections,
+	listLinkedInMessages,
+	searchLinkedInPeople,
+} from '../../../../../lib/integrations/providers/linkedin-unipile/operations'
+import { buildPeopleSearchUrl } from '../../../../../lib/integrations/providers/linkedin-unipile/unipile-client'
+
+/**
+ * The read tools, checked against payload SHAPES captured from
+ * api.unipile.com on 2026-09-04.
+ *
+ * The structure, field names, key order and id formats are exactly as the live
+ * API returned them — that is what these fixtures exist to pin. The identifying
+ * values are not: real names and LinkedIn member URNs belong to third parties
+ * who have no stake in this repo, so they are replaced with stand-ins of the
+ * same shape. Never paste a live capture in unedited.
+ *
+ * Pinning the real payloads matters more than usual here: three separate bugs
+ * in this provider (`data.link`, the `/chats` route, `/users/relations`)
+ * shipped green because the mock server agreed with the client while both
+ * disagreed with LinkedIn. A canned response that came from the live API is the
+ * only kind that can catch that.
+ */
+
+const ctx = { db: {} as Database, actorId: 'actor-1', workspaceId: 'ws-1' }
+
+/** Captured from GET /v2/{acc}/chats/{chat}/messages. */
+const LIVE_MESSAGES = {
+	data: [
+		{
+			object: 'Message',
+			id: 'CLASSIC_2-MTc4ODQ0NjQ3MTgxNGI3MjQyOS0xMDA=',
+			sender_id: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+			chat_id: 'CLASSIC_2-MDE0OWM0YjMtOWYxZA==',
+			timestamp: '2026-09-03T14:41:11.814Z',
+			is_sender: false,
+			text: 'Hi there, thanks for connecting!',
+		},
+	],
+	next_cursor: 'cur-msg',
+}
+
+/** Captured from GET /v2/{acc}/users/me/relations — person nests under `user`. */
+const LIVE_RELATIONS = {
+	data: [
+		{
+			id: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx2',
+			object: 'UserRelation',
+			created_at: '2026-07-02T00:00:00.000Z',
+			user: {
+				id: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx2',
+				object: 'User',
+				type: 'individual',
+				display_name: 'Ada Lovelace',
+				first_name: 'Ada',
+				last_name: 'Lovelace',
+				description: 'Head of Growth',
+				public_identifier: 'adalovelace',
+				profile_url: 'https://www.linkedin.com/in/adalovelace',
+			},
+		},
+	],
+	next_cursor: 'cur-rel',
+}
+
+/** Captured from POST /v2/{acc}/linkedin/search — flat, with `headline`. */
+const LIVE_SEARCH = {
+	data: [
+		{
+			object: 'PeopleSearchResult',
+			id: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx3',
+			display_name: 'Grace Hopper',
+			network_distance: 'SECOND_DEGREE',
+			member_id: '100000001',
+			public_identifier: 'gracehopper',
+			profile_url: 'https://www.linkedin.com/in/gracehopper',
+			location: 'Budapest',
+			headline: 'Software Engineer',
+		},
+	],
+	next_cursor: 'cur-search',
+}
+
+/** Captured from GET /v2/{acc}/users/me. */
+const LIVE_PROFILE = {
+	id: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx4',
+	object: 'UserProfile',
+	type: 'individual',
+	display_name: 'Alex Rivera',
+	public_identifier: 'alexrivera',
+	profile_url: 'https://www.linkedin.com/in/alexrivera',
+}
+
+type Recorded = { name: string; query: Record<string, unknown> }
+
+function stubClient(response: unknown, status = 200) {
+	const calls: Recorded[] = []
+	__setLinkedInClientForTests(() => {
+		const record = (name: string) => async (query: Record<string, unknown>) => {
+			calls.push({ name, query })
+			return { status, body: response, headers: {} }
+		}
+		return {
+			sendMessage: record('sendMessage'),
+			reply: record('reply'),
+			listConversations: record('listConversations'),
+			listMessages: record('listMessages'),
+			listRelations: record('listRelations'),
+			searchPeople: record('searchPeople'),
+			getProfile: record('getProfile'),
+		} as never
+	})
+	return calls
+}
+
+beforeEach(() => {
+	credentialMock.mockResolvedValue({
+		id: 'int-1',
+		actorId: 'actor-1',
+		credentials: 'encrypted',
+	})
+})
+
+afterEach(() => {
+	__setLinkedInClientForTests(null)
+	vi.restoreAllMocks()
+})
+
+describe('listLinkedInMessages', () => {
+	it('maps the live message payload onto the MCP shape', async () => {
+		stubClient(LIVE_MESSAGES)
+		const res = await listLinkedInMessages(ctx, { thread_id: 'chat-1' })
+		expect(res.messages).toEqual([
+			{
+				message_id: 'CLASSIC_2-MTc4ODQ0NjQ3MTgxNGI3MjQyOS0xMDA=',
+				text: 'Hi there, thanks for connecting!',
+				sent_at: '2026-09-03T14:41:11.814Z',
+				sender_urn: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx1',
+				from_me: false,
+			},
+		])
+		expect(res.next_cursor).toBe('cur-msg')
+	})
+
+	// v2 sends is_sender as 0/1 on some payloads and a boolean on others.
+	it('reads a numeric is_sender the same as a boolean one', async () => {
+		stubClient({ data: [{ id: 'm', text: 't', timestamp: 'x', sender_id: 's', is_sender: 1 }] })
+		const res = await listLinkedInMessages(ctx, { thread_id: 'chat-1' })
+		expect(res.messages[0].from_me).toBe(true)
+	})
+
+	it('rejects a missing thread_id without calling LinkedIn', async () => {
+		const calls = stubClient(LIVE_MESSAGES)
+		await expect(listLinkedInMessages(ctx, {})).rejects.toMatchObject({
+			code: 'INVALID_INPUT',
+		})
+		expect(calls).toHaveLength(0)
+	})
+
+	// An empty array would be reported to the user as "no messages in this
+	// thread", which is a wrong answer rather than a failed call.
+	it('throws rather than returning empty when the page shape is unrecognised', async () => {
+		stubClient({ unexpected: true })
+		await expect(listLinkedInMessages(ctx, { thread_id: 'chat-1' })).rejects.toBeInstanceOf(
+			LinkedInIntegrationError,
+		)
+	})
+})
+
+describe('listLinkedInConnections', () => {
+	it('unwraps the nested `user` object a relation carries', async () => {
+		stubClient(LIVE_RELATIONS)
+		const res = await listLinkedInConnections(ctx, {})
+		expect(res.people).toEqual([
+			{
+				recipient_urn: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx2',
+				name: 'Ada Lovelace',
+				headline: 'Head of Growth',
+				profile_url: 'https://www.linkedin.com/in/adalovelace',
+				public_identifier: 'adalovelace',
+				network_distance: '',
+				location: '',
+			},
+		])
+		expect(res.next_cursor).toBe('cur-rel')
+	})
+
+	it('calls listRelations, never the profile-lookup route', async () => {
+		const calls = stubClient(LIVE_RELATIONS)
+		await listLinkedInConnections(ctx, { limit: 10 })
+		expect(calls.map((c) => c.name)).toEqual(['listRelations'])
+	})
+})
+
+describe('searchLinkedInPeople', () => {
+	it('maps a live search result, keeping network_distance', async () => {
+		stubClient(LIVE_SEARCH)
+		const res = await searchLinkedInPeople(ctx, { keywords: 'engineer' })
+		expect(res.people[0]).toMatchObject({
+			recipient_urn: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx3',
+			name: 'Grace Hopper',
+			headline: 'Software Engineer',
+			// The agent needs this to know a 2nd-degree person usually cannot
+			// be DM'd without an invitation first.
+			network_distance: 'SECOND_DEGREE',
+		})
+	})
+
+	it('builds the LinkedIn search URL from plain keywords', async () => {
+		const calls = stubClient(LIVE_SEARCH)
+		await searchLinkedInPeople(ctx, { keywords: 'product manager oslo' })
+		expect(calls[0].query.keywords).toBe('product manager oslo')
+		expect(buildPeopleSearchUrl('product manager oslo')).toBe(
+			'https://www.linkedin.com/search/results/people/?keywords=product%20manager%20oslo',
+		)
+	})
+
+	it('returns the search_url it ran, built from keywords', async () => {
+		stubClient(LIVE_SEARCH)
+		const res = await searchLinkedInPeople(ctx, { keywords: 'Lyse driftsleder' })
+		expect(res.search_url).toBe(buildPeopleSearchUrl('Lyse driftsleder'))
+		expect(res.is_partial).toBeUndefined()
+		expect(res.dropped_rows).toBeUndefined()
+		expect(res.empty_reason).toBeUndefined()
+	})
+
+	it('returns a caller-supplied search_url as given', async () => {
+		stubClient(LIVE_SEARCH)
+		const url = 'https://www.linkedin.com/search/results/people/?keywords=cto&geoUrn=123'
+		const res = await searchLinkedInPeople(ctx, { keywords: 'ignored', search_url: url })
+		expect(res.search_url).toBe(url)
+	})
+
+	it('flags dropped rows when some rows cannot be parsed', async () => {
+		stubClient({ data: [...LIVE_SEARCH.data, { object: 'PeopleSearchResult' }] })
+		const res = await searchLinkedInPeople(ctx, { keywords: 'engineer' })
+		expect(res.people).toHaveLength(1)
+		expect(res.dropped_rows).toBe(1)
+		expect(res.is_partial).toBe(true)
+		expect(res.empty_reason).toBeUndefined()
+	})
+
+	it('flags is_partial, not an upstream zero, when every row is unparseable', async () => {
+		stubClient({ data: [{ object: 'PeopleSearchResult' }, { object: 'PeopleSearchResult' }] })
+		const res = await searchLinkedInPeople(ctx, { keywords: 'engineer' })
+		expect(res.people).toEqual([])
+		expect(res.dropped_rows).toBe(2)
+		expect(res.is_partial).toBe(true)
+		expect(res.empty_reason).toBeUndefined()
+	})
+
+	it('says an empty page is an upstream zero when nothing was dropped', async () => {
+		stubClient({ data: [] })
+		const res = await searchLinkedInPeople(ctx, { keywords: 'engineer' })
+		expect(res.people).toEqual([])
+		expect(res.empty_reason).toBe('upstream_returned_no_rows')
+		expect(res.is_partial).toBeUndefined()
+		expect(res.dropped_rows).toBeUndefined()
+		expect(res.search_url).toBe(buildPeopleSearchUrl('engineer'))
+	})
+
+	it('does not add search fields to list_connections', async () => {
+		stubClient(LIVE_RELATIONS)
+		const res = await listLinkedInConnections(ctx, { limit: 10 })
+		expect(Object.keys(res).sort()).toEqual(['next_cursor', 'people'])
+	})
+
+	it('requires keywords or search_url', async () => {
+		const calls = stubClient(LIVE_SEARCH)
+		await expect(searchLinkedInPeople(ctx, {})).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		expect(calls).toHaveLength(0)
+	})
+
+	// search_url is caller-supplied and rides a request made with the
+	// customer's credential — it must not become a way to point that request
+	// at another host.
+	it('refuses a search_url that is not on linkedin.com', async () => {
+		const calls = stubClient(LIVE_SEARCH)
+		await expect(
+			searchLinkedInPeople(ctx, { search_url: 'https://evil.example.com/harvest' }),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		expect(calls).toHaveLength(0)
+	})
+
+	it('accepts a genuine linkedin.com search URL', async () => {
+		const calls = stubClient(LIVE_SEARCH)
+		await searchLinkedInPeople(ctx, {
+			search_url: 'https://www.linkedin.com/search/results/people/?keywords=cto&geoUrn=123',
+		})
+		expect(calls[0].query.url).toContain('geoUrn=123')
+	})
+})
+
+describe('getLinkedInProfile', () => {
+	it('maps a live profile payload', async () => {
+		stubClient(LIVE_PROFILE)
+		const person = await getLinkedInProfile(ctx, { identifier: 'me' })
+		expect(person).toMatchObject({
+			recipient_urn: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxx4',
+			name: 'Alex Rivera',
+			public_identifier: 'alexrivera',
+		})
+	})
+
+	// v2 moved the provider-specific fields under `specifics`. Reading only the
+	// top-level key returned '' on every live profile — which is what
+	// fail-closed the rep lanes' DNC rule 3.
+	it('reads network_distance from specifics when v2 nests it', async () => {
+		stubClient({ ...LIVE_PROFILE, specifics: { network_distance: 'SECOND_DEGREE' } })
+		const person = await getLinkedInProfile(ctx, { identifier: 'alexrivera' })
+		expect(person.network_distance).toBe('SECOND_DEGREE')
+	})
+
+	it('prefers a top-level network_distance when both are present', async () => {
+		stubClient({
+			...LIVE_PROFILE,
+			network_distance: 'FIRST_DEGREE',
+			specifics: { network_distance: 'SECOND_DEGREE' },
+		})
+		const person = await getLinkedInProfile(ctx, { identifier: 'alexrivera' })
+		expect(person.network_distance).toBe('FIRST_DEGREE')
+	})
+
+	it('requires an identifier', async () => {
+		const calls = stubClient(LIVE_PROFILE)
+		await expect(getLinkedInProfile(ctx, {})).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		expect(calls).toHaveLength(0)
+	})
+
+	it('throws when the profile has no id to act on', async () => {
+		stubClient({ object: 'UserProfile', display_name: 'No Id' })
+		await expect(getLinkedInProfile(ctx, { identifier: 'x' })).rejects.toBeInstanceOf(
+			LinkedInIntegrationError,
+		)
+	})
+})
+
+describe('getLinkedInProfile sections', () => {
+	/** A v2 profile with the experience section, as the reference documents it. */
+	const WITH_EXPERIENCE = {
+		...LIVE_PROFILE,
+		specifics: {
+			network_distance: 'SECOND_DEGREE',
+			experience: [
+				{
+					id: 'exp-1',
+					company: { id: 'c1', name: 'Acme' },
+					job_title: 'Head of Growth',
+					started_on: '03/15/2024',
+				},
+				{
+					id: 'exp-2',
+					company: { id: 'c2', name: 'Globex' },
+					job_title: 'Growth Lead',
+					started_on: '01/01/2020',
+					ended_on: '02/28/2024',
+				},
+				{ id: 'exp-3', company: { name: 'Initech' }, job_title: 'Analyst', started_on: '06/2017' },
+			],
+		},
+	}
+
+	const withExperience = () =>
+		getLinkedInProfile(ctx, { identifier: 'alexrivera', sections: ['experience'] })
+
+	it('asks for the experience section only when sections includes it', async () => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		await withExperience()
+		expect(calls[0].query.with_sections).toEqual(['linkedin_experience'])
+	})
+
+	it('maps each position to company, title, ISO start and end, and current', async () => {
+		stubClient(WITH_EXPERIENCE)
+		const person = await withExperience()
+		expect(person.experience).toEqual([
+			{ company: 'Acme', title: 'Head of Growth', start: '2024-03-15', end: null, current: true },
+			{
+				company: 'Globex',
+				title: 'Growth Lead',
+				start: '2020-01-01',
+				end: '2024-02-28',
+				current: false,
+			},
+			{ company: 'Initech', title: 'Analyst', start: '2017-06', end: null, current: true },
+		])
+		expect(person.experience_unavailable).toBeUndefined()
+	})
+
+	it('returns an empty list when LinkedIn lists no jobs', async () => {
+		stubClient({ ...LIVE_PROFILE, specifics: { experience: [] } })
+		const person = await withExperience()
+		expect(person.experience).toEqual([])
+		expect(person.experience_unavailable).toBeUndefined()
+	})
+
+	// Off means rep lanes pay nothing and see exactly today's shape.
+	it('sends no sections and adds no experience keys by default', async () => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		const person = await getLinkedInProfile(ctx, { identifier: 'alexrivera' })
+		expect(calls[0].query).not.toHaveProperty('with_sections')
+		expect(Object.keys(person).sort()).toEqual([
+			'headline',
+			'location',
+			'name',
+			'network_distance',
+			'profile_url',
+			'public_identifier',
+			'recipient_urn',
+		])
+	})
+
+	it('treats an empty sections list as off', async () => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		const person = await getLinkedInProfile(ctx, { identifier: 'alexrivera', sections: [] })
+		expect(calls[0].query).not.toHaveProperty('with_sections')
+		expect(person).not.toHaveProperty('experience')
+	})
+
+	it.each([['education'], ['all'], ['about']])('rejects the %s section', async (section) => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		await expect(
+			getLinkedInProfile(ctx, { identifier: 'alexrivera', sections: [section] }),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		expect(calls).toHaveLength(0)
+	})
+
+	it('rejects a sections value that is not an array', async () => {
+		const calls = stubClient(WITH_EXPERIENCE)
+		await expect(
+			getLinkedInProfile(ctx, { identifier: 'alexrivera', sections: 'experience' }),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		expect(calls).toHaveLength(0)
+	})
+
+	// A throttled or rejected section pull must not fail the whole call, and
+	// must not look like a person with no jobs.
+	it('falls back to the base profile when the section pull is rejected', async () => {
+		const calls: Array<Record<string, unknown>> = []
+		__setLinkedInClientForTests(
+			() =>
+				({
+					getProfile: async (query: Record<string, unknown>) => {
+						calls.push(query)
+						return query.with_sections
+							? { status: 400, body: { error_code: 'invalid_input' }, headers: {} }
+							: { status: 200, body: LIVE_PROFILE, headers: {} }
+					},
+				}) as never,
+		)
+		const person = await withExperience()
+		expect(person).toMatchObject({ name: 'Alex Rivera', experience_unavailable: true })
+		expect(person).not.toHaveProperty('experience')
+		expect(calls).toHaveLength(2)
+		expect(calls[1]).not.toHaveProperty('with_sections')
+	})
+
+	it('flags experience_unavailable when the response carries no experience section', async () => {
+		stubClient({ ...LIVE_PROFILE, specifics: { network_distance: 'SECOND_DEGREE' } })
+		const person = await withExperience()
+		expect(person.experience_unavailable).toBe(true)
+		expect(person).not.toHaveProperty('experience')
+	})
+
+	// When the base profile fails as well, that error is the real answer.
+	it('still throws when the base profile cannot be fetched either', async () => {
+		__setLinkedInClientForTests(
+			() =>
+				({
+					getProfile: async () => ({ status: 404, body: { error_code: 'not_found' }, headers: {} }),
+				}) as never,
+		)
+		await expect(withExperience()).rejects.toBeInstanceOf(LinkedInIntegrationError)
+	})
+})
+
+describe('credential errors surface unchanged on the read tools', () => {
+	it('reports CREDENTIAL_NOT_CONNECTED when the workspace has no identity', async () => {
+		credentialMock.mockResolvedValue(null)
+		stubClient(LIVE_SEARCH)
+		await expect(searchLinkedInPeople(ctx, { keywords: 'x' })).rejects.toMatchObject({
+			code: 'CREDENTIAL_NOT_CONNECTED',
+		})
+	})
+})

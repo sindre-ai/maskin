@@ -1,4 +1,6 @@
 import * as Sentry from '@sentry/node'
+import { createSentryDedupe } from './sentry-dedupe'
+import { scrubBreadcrumbHook, scrubEvent, scrubLog } from './sentry-scrub'
 
 // Imported first (before any route/service modules) so the client exists
 // before anything can log an error. No-ops safely when the DSN is unset —
@@ -12,6 +14,7 @@ import * as Sentry from '@sentry/node'
 // gates unrelated prod-only behavior elsewhere in this app).
 const dsn = process.env.SENTRY_DSN_DEV
 const enabled = process.env.NODE_ENV === 'production' || process.env.SENTRY_FORCE_ENABLE === 'true'
+const dedupe = createSentryDedupe()
 if (dsn && enabled) {
 	// Guarded — this runs at module-import time, before the HTTP listener
 	// exists, so an uncaught throw here would crash the process on boot.
@@ -21,6 +24,19 @@ if (dsn && enabled) {
 			environment: process.env.NODE_ENV ?? 'development',
 			tracesSampleRate: 0.1,
 			sendDefaultPii: false,
+			// Logs are only on by default from @sentry/node 10.71.0; the lockfile
+			// resolves 10.70.0, so opt in explicitly (logger.info/warn send to Sentry Logs).
+			enableLogs: false,
+			// Drizzle failed-query errors carry every bound SQL value; strip them from
+			// everything that leaves the box (see sentry-scrub.ts).
+			beforeSendLog: scrubLog,
+			// Repeats of the few messages that exhausted the free quota are sent at most
+			// once an hour per workspace (see sentry-dedupe.ts), then scrubbed.
+			beforeSend: (event) => {
+				const kept = dedupe(event)
+				return kept && scrubEvent(kept)
+			},
+			beforeBreadcrumb: scrubBreadcrumbHook,
 		})
 	} catch (err) {
 		console.error('[sentry] init failed — error reporting is disabled', err)

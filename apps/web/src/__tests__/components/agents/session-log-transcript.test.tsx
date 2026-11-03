@@ -194,7 +194,7 @@ describe('getLatestActivityPreview', () => {
 				content: [{ type: 'tool_use', id: 't1', name: 'search_objects', input: {} }],
 			},
 		})
-		expect(getLatestActivityPreview([log(1, 'stdout', tool)])).toBe('Using search_objects')
+		expect(getLatestActivityPreview([log(1, 'stdout', tool)])).toBe('Search objects')
 	})
 
 	it('returns "Awaiting input" when the latest envelope is a successful result', () => {
@@ -227,7 +227,7 @@ describe('getLatestActivityPreview', () => {
 		})
 		const systemInit = JSON.stringify({ type: 'system', subtype: 'init' })
 		expect(getLatestActivityPreview([log(1, 'stdout', tool), log(2, 'stdout', systemInit)])).toBe(
-			'Using list_objects',
+			'List objects',
 		)
 	})
 
@@ -241,6 +241,37 @@ describe('getLatestActivityPreview', () => {
 		expect(preview).toBeTruthy()
 		expect(preview?.length).toBeLessThanOrEqual(80)
 		expect(preview?.endsWith('…')).toBe(true)
+	})
+
+	it('strips markdown markers so the one-line preview shows no literal stars', () => {
+		const assistant = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [
+					{
+						type: 'text',
+						text: '**Claimed by session 83e1** on `feat/task-bfe77591` with _two_ [links](https://maskin.io/x) and *more*',
+					},
+				],
+			},
+		})
+		expect(getLatestActivityPreview([log(1, 'stdout', assistant)])).toBe(
+			'Claimed by session 83e1 on feat/task-bfe77591 with two links and more',
+		)
+	})
+
+	it('leaves a lone asterisk and snake_case names alone', () => {
+		const assistant = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [{ type: 'text', text: 'Reading 2 * 3 in list_objects and get_file' }],
+			},
+		})
+		expect(getLatestActivityPreview([log(1, 'stdout', assistant)])).toBe(
+			'Reading 2 * 3 in list_objects and get_file',
+		)
 	})
 
 	it('returns null when there is nothing renderable yet', () => {
@@ -277,7 +308,48 @@ function taggedUserTurn(messageId: number, content: string): string {
 	})
 }
 
+function retriedUserTurn(content: string): string {
+	return JSON.stringify({
+		type: 'user',
+		message: { role: 'user', content },
+		maskin_retry: true,
+	})
+}
+
 describe('segmentActivityByMessage', () => {
+	it('retracts the result of a failed turn the backend is replaying', () => {
+		const failure = JSON.stringify({
+			type: 'result',
+			is_error: true,
+			result: 'API Error: {"type":"error","error":{"type":"api_error"}}',
+		})
+		const success = JSON.stringify({ type: 'result', is_error: false, result: 'The answer.' })
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', taggedUserTurn(7, 'hello')),
+			log(2, 'stdout', failure),
+			log(3, 'stdout', retriedUserTurn('hello')),
+			log(4, 'stdout', success),
+		])
+
+		// One segment, not two: the replay reopens the same turn rather than
+		// starting a new one.
+		expect(segments).toHaveLength(1)
+		// The failed envelope produces no chat message ever, so leaving it here
+		// would render the raw API error as the agent's answer and shift the
+		// ordinal result/message pairing for every later turn in the session.
+		expect(segments[0]?.result?.text).toBe('The answer.')
+		expect(segments[0]?.result?.isError).toBe(false)
+	})
+
+	it('does not render a replayed turn as the human sending a second message', () => {
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', taggedUserTurn(7, 'hello')),
+			log(2, 'stdout', retriedUserTurn('hello')),
+		])
+		expect(segments).toHaveLength(1)
+		expect(segments[0]?.steps).toEqual([])
+	})
+
 	it('returns one step per meaningful event, in chronological order, for an untagged (legacy) session', () => {
 		const first = JSON.stringify({
 			type: 'assistant',
@@ -296,7 +368,7 @@ describe('segmentActivityByMessage', () => {
 		])
 		expect(segments).toEqual([])
 		expect(unassigned).toEqual([
-			{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' },
+			{ id: '1-0', kind: 'tool_use', text: 'Search objects' },
 			{ id: '2-0', kind: 'text', text: 'Found 3 matches' },
 		])
 	})
@@ -412,12 +484,12 @@ describe('segmentActivityByMessage', () => {
 			{
 				conversationMessageId: 10,
 				containsReply: false,
-				steps: [{ id: '2-0', kind: 'tool_use', text: 'Using search_objects' }],
+				steps: [{ id: '2-0', kind: 'tool_use', text: 'Search objects' }],
 			},
 			{
 				conversationMessageId: 20,
 				containsReply: false,
-				steps: [{ id: '4-0', kind: 'tool_use', text: 'Using list_objects' }],
+				steps: [{ id: '4-0', kind: 'tool_use', text: 'List objects' }],
 			},
 		])
 	})
@@ -434,7 +506,7 @@ describe('segmentActivityByMessage', () => {
 			log(1, 'stdout', tool),
 			log(2, 'stdout', taggedUserTurn(10, 'hi')),
 		])
-		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' }])
+		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'Search objects' }])
 		expect(segments).toEqual([{ conversationMessageId: 10, containsReply: false, steps: [] }])
 	})
 
@@ -520,7 +592,7 @@ describe('segmentActivityByMessage', () => {
 				conversationMessageId: 10,
 				containsReply: false,
 				steps: [
-					{ id: '2-0', kind: 'tool_use', text: 'Using search_objects' },
+					{ id: '2-0', kind: 'tool_use', text: 'Search objects' },
 					{ id: '3-0', kind: 'text', text: 'Found 3 matches' },
 				],
 			},

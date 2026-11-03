@@ -27,7 +27,9 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import {
 	buildActorInsert,
@@ -710,7 +712,7 @@ export class LoopVersionPusher {
 				.where(eq(installedLoops.id, install.id))
 
 			if (createdBy) {
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId: install.workspaceId,
 					actorId: createdBy,
 					action: 'updated',
@@ -893,7 +895,8 @@ function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof act
 			(snapshot.llmConfig as Record<string, unknown>) ??
 			(snapshot.llm_config as Record<string, unknown>) ??
 			null,
-		tools: (snapshot.tools as Record<string, unknown>) ?? null,
+		// Same handling as buildActorInsert — see its comment.
+		tools: (dropLegacyBrowserFlag(snapshot.tools) as Record<string, unknown>) ?? null,
 	}
 }
 

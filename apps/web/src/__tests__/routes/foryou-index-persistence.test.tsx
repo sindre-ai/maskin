@@ -8,7 +8,7 @@ import type { UnreadItem } from '@/lib/api'
 // Routes are tested by extracting the component from the file route and
 // rendering it directly, mirroring objects-index-persistence.test.tsx. The
 // For You page keeps a local `sort` (session-only, out of scope) but persists
-// `mode` through the `__chrome__` display-settings row. These tests guard the
+// `mode` through the `__chrome__` display settings row. These tests guard the
 // hydrate (persisted list -> list rows) and write-through (toggle -> upsert
 // with foryouViewMode + unrelated settings preserved) directions.
 vi.mock('@tanstack/react-router', async () => {
@@ -31,11 +31,16 @@ type FeedState = {
 const feedState = globalThis as unknown as FeedState
 feedState.__foryouItems = []
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useUnread: () => ({
+vi.mock('@/hooks/use-for-you', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-for-you')>()),
+	useForYou: () => ({
 		data: { items: (globalThis as unknown as FeedState).__foryouItems },
 		isLoading: false,
 	}),
+	useDismissForYou: () => ({ mutateAsync: vi.fn().mockResolvedValue(undefined) }),
+}))
+
+vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => ({ mutate: vi.fn() }),
 	useMarkUnread: () => ({ mutate: vi.fn() }),
 }))
@@ -101,19 +106,31 @@ vi.mock('@/lib/api', () => {
 })
 
 // Heavy/unrelated children are stubbed so the test stays focused on mode
-// selection; ForYouListRow renders for real so list mode is asserted via
-// actual row links.
-vi.mock('@/components/foryou/foryou-card-queue', () => ({
-	ForYouCardQueue: () => <div data-testid="foryou-card-queue" />,
+// selection and ordering. The card stub reports which state the feed asked
+// for, which is what "cards vs list" means now that both modes render the
+// same component.
+vi.mock('@/components/foryou/feed-card', () => ({
+	FeedCard: ({
+		item,
+		expanded,
+	}: { item: { object?: { title?: string | null } }; expanded: boolean }) => (
+		<div data-testid="foryou-feed-card" data-expanded={String(expanded)}>
+			{item.object?.title}
+		</div>
+	),
 }))
-vi.mock('@/components/foryou/sparse-composer', () => ({
-	SparseComposer: () => null,
-}))
-vi.mock('@/components/foryou/north-star-prompt-card', () => ({
-	NorthStarPromptCard: () => null,
+const pageHeaderProps: { current: Record<string, unknown> } = { current: {} }
+vi.mock('@/components/layout/page-header', () => ({
+	PageHeader: (props: Record<string, unknown>) => {
+		pageHeaderProps.current = props
+		return null
+	},
 }))
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
 	OnboardingPromptCard: () => null,
+}))
+vi.mock('@/components/foryou/briefing-row', () => ({
+	BriefingRow: () => null,
 }))
 vi.mock('@/components/shared/create-picker', () => ({
 	CreatePicker: () => null,
@@ -204,44 +221,48 @@ describe('ForYou mode <-> persisted foryouViewMode mapping', () => {
 describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 	beforeEach(resetState)
 
-	it('renders the card queue when no display-settings row exists yet', async () => {
+	// "Cards" expands every card; "List" collapses them to rows. Both modes
+	// render the same FeedCard, so the assertion is on its state.
+	function cardStates() {
+		return screen.getAllByTestId('foryou-feed-card').map((el) => el.getAttribute('data-expanded'))
+	}
+
+	async function pickView(user: ReturnType<typeof userEvent.setup>, label: RegExp) {
+		await user.click(screen.getByRole('button', { name: /view options/i }))
+		await user.click(await screen.findByRole('menuitem', { name: label }))
+	}
+
+	it('expands every card when no display-settings row exists yet', async () => {
 		mount()
 		await flush()
-		expect(screen.getByTestId('foryou-card-queue')).toBeInTheDocument()
-		expect(
-			screen.queryByRole('link', { name: 'Renewal terms need a read' }),
-		).not.toBeInTheDocument()
+		expect(cardStates()).toEqual(['true', 'true'])
 		// No write happens on first paint for a user who never switches.
 		expect(settingsState.__dsUpsertCalls).toBe(0)
 	})
 
-	it('renders list rows on re-entry when list was persisted', async () => {
+	it('renders collapsed rows on re-entry when list was persisted', async () => {
 		settingsState.__dsPersisted = { foryouViewMode: 'list' }
 		mount()
 		await flush()
-		expect(screen.queryByTestId('foryou-card-queue')).not.toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Renewal terms need a read' })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Follow-up from customer call' })).toBeInTheDocument()
+		expect(cardStates()).toEqual(['false', 'false'])
+		expect(screen.getByText('Renewal terms need a read')).toBeInTheDocument()
+		expect(screen.getByText('Follow-up from customer call')).toBeInTheDocument()
 	})
 
-	it('renders the card queue when the persisted view is card', async () => {
+	it('expands every card when the persisted view is card', async () => {
 		settingsState.__dsPersisted = { foryouViewMode: 'card' }
 		mount()
 		await flush()
-		expect(screen.getByTestId('foryou-card-queue')).toBeInTheDocument()
-		expect(
-			screen.queryByRole('link', { name: 'Renewal terms need a read' }),
-		).not.toBeInTheDocument()
+		expect(cardStates()).toEqual(['true', 'true'])
 	})
 
-	it('persists foryouViewMode=list when the List tab is selected, preserving unrelated settings', async () => {
+	it('persists foryouViewMode=list when List is selected, preserving unrelated settings', async () => {
 		settingsState.__dsPersisted = { objectDetailSidebarCollapsed: true }
 		const user = userEvent.setup()
 		mount()
 		await flush()
 
-		await user.click(screen.getByRole('button', { name: /display options/i }))
-		await user.click(screen.getByRole('tab', { name: /list/i }))
+		await pickView(user, /^List/)
 		await flush()
 
 		expect(settingsState.__dsUpsertCalls).toBe(1)
@@ -249,18 +270,16 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 			objectDetailSidebarCollapsed: true,
 			foryouViewMode: 'list',
 		})
-		expect(screen.queryByTestId('foryou-card-queue')).not.toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Renewal terms need a read' })).toBeInTheDocument()
+		expect(cardStates()).toEqual(['false', 'false'])
 	})
 
-	it('does not re-upsert when the already-active List tab is clicked', async () => {
+	it('does not re-upsert when the already-active List row is clicked', async () => {
 		settingsState.__dsPersisted = { foryouViewMode: 'list' }
 		const user = userEvent.setup()
 		mount()
 		await flush()
 
-		await user.click(screen.getByRole('button', { name: /display options/i }))
-		await user.click(screen.getByRole('tab', { name: /list/i }))
+		await pickView(user, /^List/)
 		await flush()
 
 		expect(settingsState.__dsUpsertCalls).toBe(0)
@@ -271,54 +290,62 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		const user = userEvent.setup()
 		mount()
 		await flush()
-		expect(screen.getByRole('link', { name: 'Renewal terms need a read' })).toBeInTheDocument()
+		expect(cardStates()).toEqual(['false', 'false'])
 
-		await user.click(screen.getByRole('button', { name: /display options/i }))
-		await user.click(screen.getByRole('tab', { name: /cards/i }))
+		await pickView(user, /^Cards/)
 		await flush()
 
 		expect(settingsState.__dsLastUpsertBody).toMatchObject({ foryouViewMode: 'card' })
-		expect(screen.getByTestId('foryou-card-queue')).toBeInTheDocument()
+		expect(cardStates()).toEqual(['true', 'true'])
 	})
 })
 
-describe('ForYou Priority sort — ordered by attention score', () => {
+describe('ForYou curated order', () => {
 	beforeEach(() => {
 		settingsState.__dsPersisted = { foryouViewMode: 'list' }
 		settingsState.__dsUpsertCalls = 0
 		settingsState.__dsLastUpsertBody = null
 	})
 
-	it('orders cards by max_unread_attention desc, unscored last, default sort is priority', async () => {
+	it("shows the list in the Chief of Staff's order, not by attention or recency", async () => {
 		feedState.__foryouItems = [
 			{
-				...buildItem('low', 'Low attention item', 'insight'),
-				max_unread_attention: 2,
-				latest_activity_at: '2026-08-10T00:00:00.000Z',
-			},
-			{
-				...buildItem('unscored', 'Unscored item', 'insight'),
+				...buildItem('first', 'Ranked first', 'insight'),
 				max_unread_attention: null,
-				latest_activity_at: '2026-08-15T00:00:00.000Z',
+				latest_activity_at: '2026-08-01T00:00:00.000Z',
 			},
 			{
-				...buildItem('critical', 'Critical attention item', 'insight'),
+				...buildItem('second', 'Ranked second', 'insight'),
 				max_unread_attention: 5,
-				latest_activity_at: '2026-08-01T00:00:00.000Z',
+				latest_activity_at: '2026-08-15T00:00:00.000Z',
 			},
 		]
 
 		mount()
 		await flush()
 
-		const links = screen
-			.getAllByRole('link')
-			.filter((el) => /attention item|Unscored item/.test(el.textContent ?? ''))
-		const names = links.map((el) => el.textContent)
-		expect(names).toEqual([
-			expect.stringContaining('Critical attention item'),
-			expect.stringContaining('Low attention item'),
-			expect.stringContaining('Unscored item'),
+		expect(screen.getAllByTestId('foryou-feed-card').map((el) => el.textContent)).toEqual([
+			'Ranked first',
+			'Ranked second',
 		])
+	})
+})
+
+describe('ForYou nav identity', () => {
+	beforeEach(resetState)
+
+	it('publishes title/subtitle into the shared nav instead of its own identity node', async () => {
+		mount()
+		await flush()
+		expect(pageHeaderProps.current.title).toBe('For you')
+		expect(pageHeaderProps.current.subtitle).toBe('2 need you')
+		expect(pageHeaderProps.current.stickyIdentity).toBeUndefined()
+	})
+
+	it('reads "All caught up" once nothing is unread', async () => {
+		feedState.__foryouItems = []
+		mount()
+		await flush()
+		expect(pageHeaderProps.current.subtitle).toBe('All caught up')
 	})
 })

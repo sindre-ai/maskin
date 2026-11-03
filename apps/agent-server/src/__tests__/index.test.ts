@@ -1,36 +1,44 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { StorageProvider } from '@maskin/storage'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	FORCED_STOP_EXIT_CODE,
-	MAX_PREVIEW_GUEST_PORTS,
 	SESSION_EXIT_CODE_SENTINEL_TTL_MS,
-	type SessionPreviewState,
 	buildApp,
 	reconcileOnBoot,
 } from '../index'
 import type { AgentServerEnv } from '../lib/env'
 import { logger } from '../lib/logger'
+import { StallTracker } from '../lib/stall-tracker'
 import { ImageWarmer } from '../services/image-warmer'
 
 function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 	return {
 		PORT: 3001,
+		METRICS_PORT: 0,
+		AGENT_SERVER_STALL_THRESHOLD_MS: 300_000,
 		AGENT_SERVER_SECRET: 'test-secret-thirty-two-chars-long',
 		MSB_BIN: '/usr/local/bin/msb',
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',
 		S3_REGION: 'us-east-1',
 		WARM_POOL_REFRESH_MINUTES: 0,
-		BROWSER_SIDECAR_IMAGE: 'browser-sidecar:latest',
+		DESKTOP_IMAGE: 'desktop:latest',
 		AGENT_SERVER_SSH_KEY_PATH: '/tmp/agent-server-test/ssh/relay_key',
+		DESKTOP_RELAY_PORT_START: 20000,
+		DESKTOP_RELAY_PORT_END: 21999,
+		DESKTOP_RELAY_BLOCK_SIZE: 8,
+		DESKTOP_SNAPSHOTS: false,
+		DESKTOP_IDLE_MINUTES: 10,
 		SESSION_MAX_DURATION: '8h',
 		...overrides,
 	}
 }
 
-function makeRunner() {
+function makeRunner(opts: { existingSandboxes?: string[] } = {}) {
 	const calls: Array<{ args: readonly string[] }> = []
+	const existing = new Set(opts.existingSandboxes ?? [])
 	const run = async (
 		_bin: string,
 		args: readonly string[],
@@ -38,12 +46,19 @@ function makeRunner() {
 		calls.push({ args })
 		if (args[0] === '--version') return { stdout: 'microsandbox 0.5.4', stderr: '' }
 		if (args[0] === 'list') {
-			const sessionId = calls
+			// A live sandbox appears in `list` after either an explicit
+			// `existingSandboxes` seed (stop tests can name the id they want
+			// to look present) or after a `create` command earlier in the
+			// same run. `stopSandbox` matches on name via listSandboxNames,
+			// so tests must be able to make a specific id look present.
+			const created = calls
 				.map((c) => (c.args[0] === 'create' ? c.args[c.args.indexOf('--name') + 1] : null))
 				.filter((x): x is string => x !== null)
-				.pop()
+			const names = [...existing, ...created]
 			return {
-				stdout: JSON.stringify(sessionId ? [{ name: sessionId, status: 'Running' }] : []),
+				stdout: JSON.stringify(
+					names.length > 0 ? names.map((name) => ({ name, status: 'Running' })) : [],
+				),
 				stderr: '',
 			}
 		}
@@ -329,895 +344,6 @@ describe('POST /sessions validation', () => {
 		})
 		expect(res.status).toBe(400)
 	})
-
-	it('rejects an out-of-range previewGuestPorts entry with 400', async () => {
-		const { run } = makeRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-1',
-				image: 'alpine:3.20',
-				env: {},
-				previewGuestPorts: [70000],
-			}),
-		})
-		expect(res.status).toBe(400)
-	})
-
-	it('rejects a non-integer previewGuestPorts entry with 400', async () => {
-		const { run } = makeRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-1',
-				image: 'alpine:3.20',
-				env: {},
-				previewGuestPorts: [5173.5],
-			}),
-		})
-		expect(res.status).toBe(400)
-	})
-
-	it('rejects previewGuestPorts with 400 when browserRequired is not true', async () => {
-		const { run } = makeRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-1',
-				image: 'alpine:3.20',
-				env: {},
-				previewGuestPorts: [5173],
-			}),
-		})
-		expect(res.status).toBe(400)
-	})
-
-	it('rejects more than MAX_PREVIEW_GUEST_PORTS entries with 400', async () => {
-		const { run } = makeRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-1',
-				image: 'alpine:3.20',
-				env: {},
-				browserRequired: true,
-				previewGuestPorts: [1, 2, 3, 4, 5, 6, 7, 8, 9],
-			}),
-		})
-		expect(res.status).toBe(400)
-	})
-})
-
-describe('POST /sessions browserRequired wiring', () => {
-	function makePortAllocator(start: number): () => Promise<number> {
-		let next = start
-		return async () => next++
-	}
-
-	function makeSidecarAwareRunner(opts: { cdpFail?: boolean } = {}) {
-		const calls: Array<{ args: readonly string[] }> = []
-		const run = async (
-			_bin: string,
-			args: readonly string[],
-		): Promise<{ stdout: string; stderr: string }> => {
-			calls.push({ args })
-			if (args[0] === '--version') return { stdout: 'microsandbox 0.5.4', stderr: '' }
-			if (args[0] === 'list') {
-				const sessionId = calls
-					.map((c) => (c.args[0] === 'create' ? c.args[c.args.indexOf('--name') + 1] : null))
-					.filter((x): x is string => x !== null)
-					.pop()
-				return {
-					stdout: JSON.stringify(sessionId ? [{ name: sessionId, status: 'Running' }] : []),
-					stderr: '',
-				}
-			}
-			return { stdout: '', stderr: '' }
-		}
-		const cdpPollReady = opts.cdpFail
-			? async () => {
-					throw new Error('CDP not ready')
-				}
-			: async () => {}
-		// SSH-relay readiness (both `msb ssh serve` and the `ssh -L` tunnel) —
-		// stubbed to resolve immediately so relay setup never depends on real
-		// spawn/ssh binaries being present in the test environment.
-		const tcpPollReady = async () => {}
-		return { run, calls, cdpPollReady, tcpPollReady }
-	}
-
-	function netRuleValues(args: readonly string[] | undefined): string[] {
-		const values: string[] = []
-		if (!args) return values
-		for (let i = 0; i < args.length - 1; i++) {
-			if (args[i] === '--net-rule') values.push(args[i + 1] as string)
-		}
-		return values
-	}
-
-	it('provisions a sidecar, injects BROWSER_CDP_URL, and grants the session allow@private when browserRequired=true', async () => {
-		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({
-			env,
-			storage: null,
-			msb: {
-				msbBin: '/usr/local/bin/msb',
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39222),
-				cdpPollReady,
-				tcpPollReady,
-			},
-		})
-
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-betqa1',
-				image: 'maskin/agent-base:latest',
-				env: {},
-				browserRequired: true,
-			}),
-		})
-		expect(res.status).toBe(201)
-
-		const creates = calls.filter((c) => c.args[0] === 'create')
-		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-betqa1'))
-		const sessionCreate = creates.find((c) => c.args.includes('sess-betqa1'))
-		expect(sidecarCreate).toBeDefined()
-		expect(sessionCreate).toBeDefined()
-		// findPort call order: the sidecar's own bridge-published CDP port
-		// reserves the first available port — see provisionBrowserSidecar.
-		const sidecarHostPort = 39222
-		// Sidecar publishes its CDP port on the msb bridge.
-		expect(sidecarCreate?.args).toContain('-p')
-		expect(sidecarCreate?.args).toContain(`10.0.1.1:${sidecarHostPort}:9222`)
-		// Session VM must carry allow@private to reach the sidecar on the bridge —
-		// see PRIVATE_NET_RULE in microsandbox.ts for why this is temporarily
-		// broader than a narrow allow@host:tcp grant.
-		expect(sessionCreate?.args).toContain('allow@private')
-		expect(netRuleValues(sessionCreate?.args)).not.toContain(`allow@host:tcp:${sidecarHostPort}`)
-		// Session VM env must include BROWSER_CDP_URL pointing at the bridge.
-		const envFlags =
-			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain(`BROWSER_CDP_URL=http://10.0.1.1:${sidecarHostPort}`)
-	})
-
-	it('opens a preview SSH relay within DEV_SERVER_HOST_PORT_RANGE (covered by the sidecar’s standing grant) and returns preview_url', async () => {
-		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({
-			env,
-			storage: null,
-			msb: {
-				msbBin: '/usr/local/bin/msb',
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39500),
-				findPortInRange: makePortAllocator(3500),
-				cdpPollReady,
-				tcpPollReady,
-			},
-		})
-
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-preview',
-				image: 'maskin/agent-base:latest',
-				env: {},
-				browserRequired: true,
-				previewGuestPorts: [5173],
-			}),
-		})
-		expect(res.status).toBe(201)
-		const body = (await res.json()) as { preview_url?: string }
-		// findPortInRange call order: resolvePreviewPortMappings reserves the
-		// preview relayPort within [3000, 12000] before the sidecar is created.
-		const previewRelayPort = 3500
-		expect(body.preview_url).toBe(`http://host.microsandbox.internal:${previewRelayPort}`)
-
-		const creates = calls.filter((c) => c.args[0] === 'create')
-		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-preview'))
-		const sessionCreate = creates.find((c) => c.args.includes('sess-preview'))
-		expect(sidecarCreate).toBeDefined()
-		expect(sessionCreate).toBeDefined()
-
-		// Sidecar reaches the preview relay via its standing dev-server port
-		// range grant — no per-port rule tied to this specific relayPort, and
-		// no dependency on resolving it before the sidecar is created.
-		expect(netRuleValues(sidecarCreate?.args)).toContain('deny@[fd42:6d73:62::/48]')
-		expect(netRuleValues(sidecarCreate?.args)).toContain('allow@host:tcp:3000-12000')
-		expect(netRuleValues(sidecarCreate?.args)).not.toContain(`allow@host:tcp:${previewRelayPort}`)
-		expect(sidecarCreate?.args).not.toContain('allow@private')
-
-		// Sidecar publishes its own CDP port on the bridge; the session reaches
-		// it via allow@private, not a bridge-publish flag of its own.
-		expect(sidecarCreate?.args).toContain('-p')
-		expect(sessionCreate?.args).not.toContain('-p')
-		expect(sessionCreate?.args).toContain('allow@private')
-	})
-
-	it('still grants the standing dev-server port range to the sidecar when no previewGuestPorts are given', async () => {
-		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({
-			env,
-			storage: null,
-			msb: {
-				msbBin: '/usr/local/bin/msb',
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39222),
-				cdpPollReady,
-				tcpPollReady,
-			},
-		})
-
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-noprev',
-				image: 'maskin/agent-base:latest',
-				env: {},
-				browserRequired: true,
-			}),
-		})
-		expect(res.status).toBe(201)
-		const body = (await res.json()) as { preview_url?: string }
-		expect(body.preview_url).toBeUndefined()
-
-		const creates = calls.filter((c) => c.args[0] === 'create')
-		const sidecarCreate = creates.find((c) => c.args.includes('anko-browser-sess-noprev'))
-		expect(sidecarCreate).toBeDefined()
-		// The standing range grant is unconditional — present even with no
-		// previewGuestPorts requested, since a session may start a dev server
-		// ad hoc without declaring its port up front.
-		expect(netRuleValues(sidecarCreate?.args)).toEqual([
-			'deny@[fd42:6d73:62::/48]',
-			'allow@host:tcp:3000-12000',
-			'allow@public',
-			'allow@any:udp:53',
-			'allow@any:tcp:53',
-		])
-	})
-
-	it('provisions no sidecar, injects no BROWSER_CDP_URL, and adds no extra allow@host:tcp:<port> rule when browserRequired is absent', async () => {
-		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({
-			env,
-			storage: null,
-			msb: {
-				msbBin: '/usr/local/bin/msb',
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39222),
-				cdpPollReady,
-				tcpPollReady,
-			},
-		})
-
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-plain',
-				image: 'maskin/agent-base:latest',
-				env: {},
-			}),
-		})
-		expect(res.status).toBe(201)
-
-		const creates = calls.filter((c) => c.args[0] === 'create')
-		expect(creates.some((c) => c.args.some((a) => a.startsWith('anko-browser-')))).toBe(false)
-		const sessionCreate = creates.find((c) => c.args.includes('sess-plain'))
-		// Base session create args carry exactly the 4 default net-rules
-		// (allow@host:tcp:<hostPort>, allow@public, allow@any:udp:53, allow@any:tcp:53).
-		expect(netRuleValues(sessionCreate?.args)).toEqual([
-			'deny@[fd42:6d73:62::/48]',
-			`allow@host:tcp:${env.PORT}`,
-			'allow@public',
-			'allow@any:udp:53',
-			'allow@any:tcp:53',
-		])
-		const envFlags =
-			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
-	})
-
-	it('still spawns the session (without BROWSER_CDP_URL) when sidecar provisioning fails', async () => {
-		// CDP poll times out → provisionBrowserSidecar returns null.
-		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({
-			env,
-			storage: null,
-			msb: {
-				msbBin: '/usr/local/bin/msb',
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39222),
-				cdpPollReady,
-				tcpPollReady,
-			},
-		})
-
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-betqa2',
-				image: 'maskin/agent-base:latest',
-				env: {},
-				browserRequired: true,
-			}),
-		})
-		expect(res.status).toBe(201)
-
-		const sessionCreate = calls
-			.filter((c) => c.args[0] === 'create')
-			.find((c) => c.args.includes('sess-betqa2'))
-		expect(sessionCreate).toBeDefined()
-		// Sidecar failed → no extra allow@host:tcp rule, no BROWSER_CDP_URL injected.
-		expect(netRuleValues(sessionCreate?.args)).toEqual([
-			'deny@[fd42:6d73:62::/48]',
-			`allow@host:tcp:${env.PORT}`,
-			'allow@public',
-			'allow@any:udp:53',
-			'allow@any:tcp:53',
-		])
-		const envFlags =
-			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags.some((e) => e.startsWith('BROWSER_CDP_URL='))).toBe(false)
-	})
-
-	it('does not open a preview ssh relay when sidecar provisioning fails', async () => {
-		// CDP poll times out → provisionBrowserSidecar returns null, so nothing
-		// exists to consume the preview relay — it must not be opened.
-		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner({ cdpFail: true })
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({
-			env,
-			storage: null,
-			msb: {
-				msbBin: '/usr/local/bin/msb',
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39500),
-				cdpPollReady,
-				tcpPollReady,
-			},
-		})
-
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-sidecarfail-preview',
-				image: 'maskin/agent-base:latest',
-				env: {},
-				browserRequired: true,
-				previewGuestPorts: [5173],
-			}),
-		})
-		expect(res.status).toBe(201)
-		const body = (await res.json()) as { preview_url?: string; preview_forwarding_failed?: boolean }
-		expect(body.preview_url).toBeUndefined()
-		expect(body.preview_forwarding_failed).toBe(true)
-
-		const sessionCreate = calls
-			.filter((c) => c.args[0] === 'create')
-			.find((c) => c.args.includes('sess-sidecarfail-preview'))
-		expect(sessionCreate).toBeDefined()
-		// No sidecar means no consumer for the preview relay — the session gets
-		// no extra allow@host:tcp rule beyond its default 4.
-		expect(netRuleValues(sessionCreate?.args)).toEqual([
-			'deny@[fd42:6d73:62::/48]',
-			`allow@host:tcp:${env.PORT}`,
-			'allow@public',
-			'allow@any:udp:53',
-			'allow@any:tcp:53',
-		])
-	})
-
-	it('returns preview_forwarding_failed and still spawns the session when preview port resolution fails', async () => {
-		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({
-			env,
-			storage: null,
-			msb: {
-				msbBin: '/usr/local/bin/msb',
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				// Preview-port resolution fails. The sidecar's own CDP relay port
-				// allocation uses the separate findPort hook and still succeeds.
-				findPortInRange: async () => {
-					throw new Error('no free ports')
-				},
-				findPort: makePortAllocator(39222),
-				cdpPollReady,
-				tcpPollReady,
-			},
-		})
-
-		const res = await app.request('/sessions', {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-			},
-			body: JSON.stringify({
-				sessionId: 'sess-previewfail',
-				image: 'maskin/agent-base:latest',
-				env: {},
-				browserRequired: true,
-				previewGuestPorts: [5173],
-			}),
-		})
-		expect(res.status).toBe(201)
-		const body = (await res.json()) as {
-			preview_url?: string
-			preview_forwarding_failed?: boolean
-		}
-		expect(body.preview_forwarding_failed).toBe(true)
-		expect(body.preview_url).toBeUndefined()
-
-		const sessionCreate = calls
-			.filter((c) => c.args[0] === 'create')
-			.find((c) => c.args.includes('sess-previewfail'))
-		expect(sessionCreate).toBeDefined()
-		// Sidecar still provisions successfully (its own bridge-publish is
-		// unaffected by the preview-port failure) — session still gets allow@private.
-		expect(sessionCreate?.args).toContain('allow@private')
-	})
-
-	describe('POST /sessions/:id/preview-ports', () => {
-		it('opens a relay on demand for a session with a browser sidecar and returns previewUrl', async () => {
-			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			const app = buildApp({
-				env,
-				storage: null,
-				msb: {
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					findPort: makePortAllocator(39222),
-					findPortInRange: makePortAllocator(3800),
-					cdpPollReady,
-					tcpPollReady,
-				},
-			})
-
-			const createRes = await app.request('/sessions', {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-				},
-				body: JSON.stringify({
-					sessionId: 'sess-dynrelay',
-					image: 'maskin/agent-base:latest',
-					env: {},
-					browserRequired: true,
-				}),
-			})
-			expect(createRes.status).toBe(201)
-
-			// No bearer token — this route is VM-facing, same trust model as /complete.
-			const res = await app.request('/sessions/sess-dynrelay/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			expect(res.status).toBe(201)
-			expect(await res.json()).toEqual({
-				guestPort: 5173,
-				previewUrl: 'http://host.microsandbox.internal:3800',
-			})
-		})
-
-		it('is idempotent for a port it already has a relay for, without allocating a second relay', async () => {
-			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			const app = buildApp({
-				env,
-				storage: null,
-				msb: {
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					findPort: makePortAllocator(39222),
-					findPortInRange: makePortAllocator(3900),
-					cdpPollReady,
-					tcpPollReady,
-				},
-			})
-			await app.request('/sessions', {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-				},
-				body: JSON.stringify({
-					sessionId: 'sess-idempotent',
-					image: 'maskin/agent-base:latest',
-					env: {},
-					browserRequired: true,
-				}),
-			})
-
-			const first = await app.request('/sessions/sess-idempotent/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			expect(first.status).toBe(201)
-			const firstBody = (await first.json()) as { previewUrl: string }
-
-			const second = await app.request('/sessions/sess-idempotent/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			expect(second.status).toBe(200)
-			const secondBody = (await second.json()) as { previewUrl: string }
-			// Same relay returned — a second call to findPortInRange (which would
-			// yield 3901) must not have happened for the already-relayed port.
-			expect(secondBody.previewUrl).toBe(firstBody.previewUrl)
-		})
-
-		it('returns 404 for a session with no browser sidecar', async () => {
-			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			const app = buildApp({
-				env,
-				storage: null,
-				msb: {
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					findPort: makePortAllocator(39222),
-					cdpPollReady,
-					tcpPollReady,
-				},
-			})
-			await app.request('/sessions', {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-				},
-				body: JSON.stringify({
-					sessionId: 'sess-nosidecar',
-					image: 'maskin/agent-base:latest',
-					env: {},
-				}),
-			})
-
-			const res = await app.request('/sessions/sess-nosidecar/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			expect(res.status).toBe(404)
-		})
-
-		it('returns 404 for a session id agent-server has never seen', async () => {
-			const { run } = makeRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
-
-			const res = await app.request('/sessions/sess-unknown/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			expect(res.status).toBe(404)
-		})
-
-		it('rejects an invalid session id with 400', async () => {
-			const { run } = makeRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
-
-			const res = await app.request('/sessions/-bad/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			expect(res.status).toBe(400)
-		})
-
-		it('rejects a guestPort outside DEV_SERVER_HOST_PORT_RANGE with 400', async () => {
-			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			const app = buildApp({
-				env,
-				storage: null,
-				msb: {
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					findPort: makePortAllocator(39222),
-					cdpPollReady,
-					tcpPollReady,
-				},
-			})
-			await app.request('/sessions', {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-				},
-				body: JSON.stringify({
-					sessionId: 'sess-badport',
-					image: 'maskin/agent-base:latest',
-					env: {},
-					browserRequired: true,
-				}),
-			})
-
-			const res = await app.request('/sessions/sess-badport/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 80 }),
-			})
-			expect(res.status).toBe(400)
-		})
-
-		it('returns 502 when the relay fails to establish', async () => {
-			const { run, cdpPollReady } = makeSidecarAwareRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			const app = buildApp({
-				env,
-				storage: null,
-				msb: {
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					findPort: makePortAllocator(39222),
-					findPortInRange: makePortAllocator(3950),
-					cdpPollReady,
-					// SSH-relay readiness always times out — the sidecar's own CDP
-					// readiness (cdpPollReady) is a separate dependency, so the
-					// sidecar itself still provisions successfully.
-					tcpPollReady: async () => {
-						throw new Error('not ready')
-					},
-				},
-			})
-			await app.request('/sessions', {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-				},
-				body: JSON.stringify({
-					sessionId: 'sess-relayfail',
-					image: 'maskin/agent-base:latest',
-					env: {},
-					browserRequired: true,
-				}),
-			})
-
-			const res = await app.request('/sessions/sess-relayfail/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			expect(res.status).toBe(502)
-		})
-
-		it('coalesces two concurrent requests for the same port into a single relay instead of racing two', async () => {
-			// Regression coverage: the idempotency check (state.previewRelays.find)
-			// is synchronous, but establishing a relay is a multi-await async round
-			// trip — two requests for the same port that land before the first
-			// resolves used to each call establishPreviewPortRelay independently,
-			// opening two relays onto the same guest port (wasting a slot out of
-			// the fixed range and breaking the idempotency guarantee, since the
-			// two callers could get different previewUrls). The guest-side
-			// watcher's own 2s poll loop makes this a realistic, not merely
-			// theoretical, race — see preview-port-watcher.js's inFlight guard,
-			// added alongside this server-side fix as defense in depth.
-			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			let findPortInRangeCalls = 0
-			let releaseGate: (() => void) | undefined
-			const gate = new Promise<void>((resolve) => {
-				releaseGate = resolve
-			})
-			const app = buildApp({
-				env,
-				storage: null,
-				msb: {
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					findPort: makePortAllocator(39222),
-					// Gated so both concurrent requests below are guaranteed to reach
-					// the route's pendingRelays check before either's relay attempt
-					// resolves — a real race, not one that depends on incidental
-					// microtask ordering.
-					findPortInRange: async () => {
-						findPortInRangeCalls++
-						await gate
-						return 4100
-					},
-					cdpPollReady,
-					tcpPollReady,
-				},
-			})
-			await app.request('/sessions', {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-				},
-				body: JSON.stringify({
-					sessionId: 'sess-race',
-					image: 'maskin/agent-base:latest',
-					env: {},
-					browserRequired: true,
-				}),
-			})
-
-			const req1 = app.request('/sessions/sess-race/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			const req2 = app.request('/sessions/sess-race/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5173 }),
-			})
-			// Let both requests reach and call findPortInRange before releasing it.
-			await new Promise((r) => setTimeout(r, 10))
-			releaseGate?.()
-
-			const [res1, res2] = await Promise.all([req1, req2])
-			expect(res1.status).toBe(201)
-			expect(res2.status).toBe(201)
-			const body1 = (await res1.json()) as { previewUrl: string }
-			const body2 = (await res2.json()) as { previewUrl: string }
-			// Same relay for both — proves only one establishPreviewPortRelay
-			// attempt actually ran; the second request coalesced onto it instead
-			// of opening its own relay onto the same guest port.
-			expect(body1.previewUrl).toBe(body2.previewUrl)
-			expect(findPortInRangeCalls).toBe(1)
-		})
-
-		it('rejects a relay request beyond MAX_PREVIEW_GUEST_PORTS with 429, without allocating a port', async () => {
-			// Unlike the upfront previewGuestPorts declaration (capped at request
-			// time by Zod), the watcher can report an unbounded number of distinct
-			// LISTEN sockets over a session's lifetime — this is the server-side
-			// backstop against that turning into unbounded relay/process growth.
-			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
-			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-			let findPortInRangeCalls = 0
-			const app = buildApp({
-				env,
-				storage: null,
-				msb: {
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					findPort: makePortAllocator(39222),
-					findPortInRange: async () => {
-						findPortInRangeCalls++
-						return 4000 + findPortInRangeCalls
-					},
-					cdpPollReady,
-					tcpPollReady,
-				},
-			})
-			await app.request('/sessions', {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
-				},
-				body: JSON.stringify({
-					sessionId: 'sess-capped',
-					image: 'maskin/agent-base:latest',
-					env: {},
-					browserRequired: true,
-				}),
-			})
-
-			for (let i = 0; i < MAX_PREVIEW_GUEST_PORTS; i++) {
-				const res = await app.request('/sessions/sess-capped/preview-ports', {
-					method: 'POST',
-					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ guestPort: 5000 + i }),
-				})
-				expect(res.status).toBe(201)
-			}
-			expect(findPortInRangeCalls).toBe(MAX_PREVIEW_GUEST_PORTS)
-
-			const overCap = await app.request('/sessions/sess-capped/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5000 + MAX_PREVIEW_GUEST_PORTS }),
-			})
-			expect(overCap.status).toBe(429)
-			expect(await overCap.json()).toEqual({ error: 'too_many_preview_ports' })
-			// The rejection happened before any relay work started.
-			expect(findPortInRangeCalls).toBe(MAX_PREVIEW_GUEST_PORTS)
-
-			// A re-request for an already-relayed port still succeeds (idempotent
-			// path) even while at the cap — it's not claiming a new slot.
-			const stillOk = await app.request('/sessions/sess-capped/preview-ports', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ guestPort: 5000 }),
-			})
-			expect(stillOk.status).toBe(200)
-		})
-	})
 })
 
 describe('POST /sessions/:id/complete', () => {
@@ -1271,35 +397,46 @@ describe('POST /sessions/:id/stop', () => {
 	})
 
 	it('stops the sandbox immediately (not deferred) given a valid bearer token', async () => {
-		const { run, calls } = makeRunner()
+		const { run, calls } = makeRunner({ existingSandboxes: ['sess-stop'] })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
 
 		const res = await app.request('/sessions/sess-stop/stop', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			headers: {
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 		})
 
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true })
+		expect(await res.json()).toEqual({ stopped: 'sandbox-stopped' })
 		expect(calls.find((c) => c.args[0] === 'stop')?.args).toEqual(['stop', 'sess-stop'])
 	})
 
-	it('is idempotent — swallows a stop failure (e.g. sandbox already gone) and still returns ok', async () => {
+	it('is idempotent — reports sandbox-not-found without shelling out when the sandbox is already gone', async () => {
+		// A stop request for a session whose sandbox is no longer known to
+		// `msb list` used to shell out anyway and swallow the failure — the
+		// new handler observes the list first and returns `sandbox-not-found`
+		// without invoking `msb stop`, matching the settle-side contract
+		// where an absent sandbox is not itself a stop failure.
+		const { run, calls } = makeRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const run = async (_bin: string, args: readonly string[]) => {
-			if (args[0] === 'stop') throw new Error('sandbox not found')
-			return { stdout: '', stderr: '' }
-		}
 		const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
 
 		const res = await app.request('/sessions/sess-gone/stop', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			headers: {
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ reason: 'complete', source: 'sandbox-exit' }),
 		})
 
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true })
+		expect(await res.json()).toEqual({ stopped: 'sandbox-not-found' })
+		expect(calls.find((c) => c.args[0] === 'stop')).toBeUndefined()
 	})
 
 	it('rejects an invalid session id with 400 and does not shell out', async () => {
@@ -1319,7 +456,7 @@ describe('POST /sessions/:id/stop', () => {
 
 describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', () => {
 	it('seeds the forced-stop sentinel into sessionExitCodes before stopping the sandbox', async () => {
-		const { run } = makeRunner()
+		const { run } = makeRunner({ existingSandboxes: ['sess-stop'] })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const sessionExitCodes = new Map<string, number>()
 		const app = buildApp({
@@ -1331,7 +468,11 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 
 		const res = await app.request('/sessions/sess-stop/stop', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			headers: {
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 		})
 
 		expect(res.status).toBe(200)
@@ -1340,8 +481,17 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 
 	it('still seeds the sentinel even when the underlying stopSandbox call fails', async () => {
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+		// Sandbox in the `list` output so we reach the `stop` shell-out below,
+		// which throws to exercise the "already gone" outcome; the seed must
+		// have already happened by then.
 		const run = async (_bin: string, args: readonly string[]) => {
 			if (args[0] === 'stop') throw new Error('sandbox not found')
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'sess-gone', status: 'Running' }]),
+					stderr: '',
+				}
+			}
 			return { stdout: '', stderr: '' }
 		}
 		const sessionExitCodes = new Map<string, number>()
@@ -1354,10 +504,15 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 
 		const res = await app.request('/sessions/sess-gone/stop', {
 			method: 'POST',
-			headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+			headers: {
+				authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 		})
 
 		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ stopped: 'sandbox-already-gone' })
 		expect(sessionExitCodes.get('sess-gone')).toBe(FORCED_STOP_EXIT_CODE)
 	})
 
@@ -1382,7 +537,7 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 	})
 
 	it('self-cleans an orphaned sentinel after the TTL elapses (no live monitor ever consumed it)', async () => {
-		const { run } = makeRunner()
+		const { run } = makeRunner({ existingSandboxes: ['sess-orphan'] })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const sessionExitCodes = new Map<string, number>()
 		const app = buildApp({
@@ -1396,7 +551,11 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 		try {
 			const res = await app.request('/sessions/sess-orphan/stop', {
 				method: 'POST',
-				headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+				headers: {
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+					'content-type': 'application/json',
+				},
+				body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 			})
 			expect(res.status).toBe(200)
 			expect(sessionExitCodes.get('sess-orphan')).toBe(FORCED_STOP_EXIT_CODE)
@@ -1410,7 +569,7 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 	})
 
 	it('does not clobber a value a live monitor already wrote over the sentinel before the TTL fires', async () => {
-		const { run } = makeRunner()
+		const { run } = makeRunner({ existingSandboxes: ['sess-raced'] })
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const sessionExitCodes = new Map<string, number>()
 		const app = buildApp({
@@ -1424,7 +583,11 @@ describe('POST /sessions/:id/stop — exit code sentinel (Bug 1 regression)', ()
 		try {
 			const res = await app.request('/sessions/sess-raced/stop', {
 				method: 'POST',
-				headers: { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` },
+				headers: {
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+					'content-type': 'application/json',
+				},
+				body: JSON.stringify({ reason: 'stop', source: 'user-stop' }),
 			})
 			expect(res.status).toBe(200)
 
@@ -1629,38 +792,6 @@ describe('reconcileOnBoot', () => {
 		expect(fetchImpl).not.toHaveBeenCalled()
 	})
 
-	it('filters anko-browser-* sidecar names out of the reported sandbox list', async () => {
-		const { run } = makeReconcileRunner([
-			{ name: 'sess-1', status: 'Running' },
-			{ name: 'anko-browser-abc123', status: 'Running' },
-		])
-		const env = makeEnv({
-			AGENT_SESSION_ROOT: sessionRoot,
-			MASKIN_BASE_URL: 'http://maskin.test',
-			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
-		})
-		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
-			ok: true,
-			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
-		}))
-
-		await reconcileOnBoot({
-			env,
-			storage: null,
-			msb: { msbBin: '/usr/local/bin/msb', run },
-			sessionLogRouters: new Map(),
-			sessionExitCodes: new Map(),
-			fetchImpl: fetchImpl as unknown as typeof fetch,
-		})
-
-		expect(fetchImpl).toHaveBeenCalledTimes(1)
-		const call = fetchImpl.mock.calls[0]
-		if (!call) throw new Error('fetchImpl was not called')
-		const [, init] = call
-		const body = JSON.parse(init.body as string) as { sandboxes: string[] }
-		expect(body.sandboxes).toEqual(['sess-1'])
-	})
-
 	it('removes every orphan sandbox reported by /reconcile', async () => {
 		const { run, calls } = makeReconcileRunner([
 			{ name: 'sess-1', status: 'Running' },
@@ -1721,139 +852,6 @@ describe('reconcileOnBoot', () => {
 		// non-injectable timer — asserting on it finishing is exercised by the
 		// existing POST /sessions tests, not duplicated here.)
 		expect(sessionLogRouters.has('sess-claimed')).toBe(true)
-	})
-
-	it('reattaches a claimed session browser sidecar instead of leaking it', async () => {
-		const { run, calls } = makeReconcileRunner([
-			{ name: 'sess-claimed', status: 'Running' },
-			{ name: 'anko-browser-sess-claimed', status: 'Running' },
-		])
-		const env = makeEnv({
-			AGENT_SESSION_ROOT: sessionRoot,
-			MASKIN_BASE_URL: 'http://maskin.test',
-			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
-		})
-		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
-			ok: true,
-			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
-		}))
-		const sessionLogRouters = new Map<string, (line: string) => void>()
-
-		await reconcileOnBoot({
-			env,
-			storage: null,
-			msb: { msbBin: '/usr/local/bin/msb', run },
-			sessionLogRouters,
-			sessionExitCodes: new Map(),
-			fetchImpl: fetchImpl as unknown as typeof fetch,
-		})
-
-		// The sidecar is never sent to apps/dev...
-		const call = fetchImpl.mock.calls[0]
-		if (!call) throw new Error('fetchImpl was not called')
-		const [, init] = call
-		const body = JSON.parse(init.body as string) as { sandboxes: string[] }
-		expect(body.sandboxes).toEqual(['sess-claimed'])
-		// ...and, because it matches sess-claimed's naming convention, it's
-		// reattached rather than force-removed as an unmatched orphan sidecar.
-		expect(calls.find((c) => c.args[0] === 'remove')).toBeUndefined()
-		expect(sessionLogRouters.has('sess-claimed')).toBe(true)
-	})
-
-	it('reattaches a claimed session sidecar into sessionPreviewState so POST /sessions/:id/preview-ports works after a restart', async () => {
-		// Regression coverage: reconcileOnBoot used to reattach monitorSession
-		// (and sessionLogRouters/sessionExitCodes) for a session that survived a
-		// restart, but never wrote into sessionPreviewState — so a session with
-		// a live, reattached browser sidecar would get a permanent 404 from
-		// POST /sessions/:id/preview-ports for the rest of its lifetime, with no
-		// error surfaced anywhere. This drives the fix end-to-end: build the app
-		// and call reconcileOnBoot against the SAME sessionPreviewState map (the
-		// way main() wires them together), then hit the route through the app.
-		const { run } = makeReconcileRunner([
-			{ name: 'sess-restarted', status: 'Running' },
-			{ name: 'anko-browser-sess-restarted', status: 'Running' },
-		])
-		const env = makeEnv({
-			AGENT_SESSION_ROOT: sessionRoot,
-			MASKIN_BASE_URL: 'http://maskin.test',
-			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
-		})
-		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
-			ok: true,
-			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
-		}))
-		const msb = {
-			msbBin: '/usr/local/bin/msb',
-			run,
-			findPort: (() => {
-				let next = 39222
-				return async () => next++
-			})(),
-			findPortInRange: (() => {
-				let next = 4200
-				return async () => next++
-			})(),
-			cdpPollReady: async () => {},
-			tcpPollReady: async () => {},
-		}
-		const sessionPreviewState: SessionPreviewState = new Map()
-		const app = buildApp({ env, storage: null, msb, sessionPreviewState })
-
-		await reconcileOnBoot({
-			env,
-			storage: null,
-			msb,
-			sessionLogRouters: new Map(),
-			sessionExitCodes: new Map(),
-			sessionPreviewState,
-			fetchImpl: fetchImpl as unknown as typeof fetch,
-		})
-
-		// No bearer token — this route is VM-facing, same trust model as /complete.
-		const res = await app.request('/sessions/sess-restarted/preview-ports', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ guestPort: 5173 }),
-		})
-		expect(res.status).toBe(201)
-		expect(await res.json()).toEqual({
-			guestPort: 5173,
-			previewUrl: 'http://host.microsandbox.internal:4200',
-		})
-	})
-
-	it('removes a browser sidecar directly when its owning session no longer exists', async () => {
-		const { run, calls } = makeReconcileRunner([
-			{ name: 'anko-browser-orphaned-sess', status: 'Running' },
-		])
-		const env = makeEnv({
-			AGENT_SESSION_ROOT: sessionRoot,
-			MASKIN_BASE_URL: 'http://maskin.test',
-			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
-		})
-		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
-			ok: true,
-			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
-		}))
-
-		await reconcileOnBoot({
-			env,
-			storage: null,
-			msb: { msbBin: '/usr/local/bin/msb', run },
-			sessionLogRouters: new Map(),
-			sessionExitCodes: new Map(),
-			fetchImpl: fetchImpl as unknown as typeof fetch,
-		})
-
-		// Never reported to apps/dev (no owning session to false-positive-orphan).
-		const call = fetchImpl.mock.calls[0]
-		if (!call) throw new Error('fetchImpl was not called')
-		const [, init] = call
-		const body = JSON.parse(init.body as string) as { sandboxes: string[] }
-		expect(body.sandboxes).toEqual([])
-		// Removed directly since no claimed session ever matched it.
-		const removeCall = calls.find((c) => c.args[0] === 'remove')
-		expect(removeCall?.args).toEqual(['remove', '-f', '--quiet', 'anko-browser-orphaned-sess'])
 	})
 
 	it('recovers a session exit code and re-issues its stop from an on-disk marker', async () => {
@@ -2503,5 +1501,525 @@ describe('monitorSession — completion report retry and drop marker', () => {
 			'session completion report failed after all retries — session may appear running until watchdog fires',
 			expect.objectContaining({ sessionId, exitCode: 0 }),
 		)
+	})
+})
+
+describe('monitorSession — exit code and lost workspace save', () => {
+	// Same reattach-via-reconcileOnBoot approach as the completion-report
+	// describe above, with the sandbox reported gone on the second `list`.
+	function makeCompletingRunner(sessionName: string) {
+		let listCalls = 0
+		return async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'list') {
+				listCalls++
+				return {
+					stdout: JSON.stringify(listCalls === 1 ? [{ name: sessionName, status: 'Running' }] : []),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+	}
+
+	// Storage whose upload is throttled for good, so the push gives up after
+	// its retries (the production "SlowDown" case).
+	const throttledStorage = {
+		put: async () => {
+			throw new Error('SlowDown: Please reduce your request rate.')
+		},
+	} as unknown as StorageProvider
+
+	type Posted = { url: string; body: Record<string, unknown> }
+
+	async function runSession(opts: {
+		sessionId: string
+		storage: StorageProvider | null
+		exitCode?: number
+		lines?: string[]
+	}): Promise<Posted[]> {
+		const { sessionId } = opts
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		await mkdir(join(sessionRoot, sessionId), { recursive: true })
+
+		const posted: Posted[] = []
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init: RequestInit) => {
+				posted.push({ url, body: JSON.parse(init.body as string) })
+				return { ok: true, json: async () => ({}) }
+			}),
+		)
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+		const sessionExitCodes = new Map<string, number>()
+		if (opts.exitCode !== undefined) sessionExitCodes.set(sessionId, opts.exitCode)
+
+		// The workspace archive is built by a real tar child process, so real time
+		// has to pass between fake-timer steps.
+		const realSetTimeout = globalThis.setTimeout
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: opts.storage,
+				msb: { msbBin: '/usr/local/bin/msb', run: makeCompletingRunner(sessionId) },
+				sessionLogRouters,
+				sessionExitCodes,
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+			for (const line of opts.lines ?? []) sessionLogRouters.get(sessionId)?.(line)
+
+			for (let i = 0; i < 100 && !posted.some((p) => p.url.endsWith('/complete')); i++) {
+				await vi.advanceTimersByTimeAsync(5_000)
+				await new Promise((resolve) => realSetTimeout(resolve, 10))
+			}
+		} finally {
+			vi.useRealTimers()
+		}
+		return posted
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+		vi.restoreAllMocks()
+	})
+
+	it('keeps a clean run completed and logs a lost workspace when only the save fails', async () => {
+		const sessionId = 'sess-save-lost'
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+		vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		const posted = await runSession({ sessionId, storage: throttledStorage })
+
+		const complete = posted.find((p) => p.url.endsWith(`/sessions/${sessionId}/complete`))
+		expect(complete?.body).toEqual({ exitCode: 0 })
+		const logged = posted
+			.filter((p) => p.url.endsWith(`/sessions/${sessionId}/logs`))
+			.flatMap((p) => (p.body.logs as Array<{ content: string }>).map((l) => l.content))
+		expect(logged.some((l) => l.startsWith('[system] workspace lost:'))).toBe(true)
+		expect(errorSpy).toHaveBeenCalledWith(
+			'session workspace push failed after retries',
+			expect.objectContaining({ sessionId }),
+		)
+	})
+
+	it('still reports a non-zero exit code as failed, with or without a lost save', async () => {
+		vi.spyOn(logger, 'error').mockImplementation(() => {})
+		vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		const plain = await runSession({ sessionId: 'sess-exit-2', storage: null, exitCode: 2 })
+		const withLostSave = await runSession({
+			sessionId: 'sess-exit-3',
+			storage: throttledStorage,
+			exitCode: 3,
+		})
+
+		expect(plain.find((p) => p.url.endsWith('/complete'))?.body).toEqual({ exitCode: 2 })
+		expect(withLostSave.find((p) => p.url.endsWith('/complete'))?.body).toEqual({ exitCode: 3 })
+	})
+
+	it('writes the last output lines to the host log when the exit code is non-zero', async () => {
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		const lines = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`)
+
+		await runSession({ sessionId: 'sess-tail', storage: null, exitCode: 1, lines })
+
+		expect(warnSpy).toHaveBeenCalledWith('session exited non-zero, last output lines follow', {
+			sessionId: 'sess-tail',
+			exitCode: 1,
+			lastLines: lines.slice(5),
+		})
+	})
+
+	it('does not log an output tail when the exit code is zero', async () => {
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		await runSession({ sessionId: 'sess-clean', storage: null, lines: ['all good'] })
+
+		expect(warnSpy).not.toHaveBeenCalledWith(
+			'session exited non-zero, last output lines follow',
+			expect.anything(),
+		)
+	})
+})
+
+describe('POST /sessions/:id/logs/batch', () => {
+	const postBatch = (
+		app: ReturnType<typeof buildApp>,
+		id: string,
+		from: number,
+		lines: unknown[],
+	) =>
+		app.request(`/sessions/${id}/logs/batch`, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from, lines }),
+		})
+
+	const appWithRouter = (id: string) => {
+		const { run } = makeRunner()
+		const seen: string[] = []
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+		sessionLogRouters.set(id, (line) => seen.push(line))
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters,
+		})
+		return { app, seen }
+	}
+
+	it('stores a batch and acks the highest sequence it kept', async () => {
+		const { app, seen } = appWithRouter('sess-batch-1')
+		const res = await postBatch(app, 'sess-batch-1', 1, ['a', 'b', 'c'])
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ack: 3 })
+		expect(seen).toEqual(['a', 'b', 'c'])
+	})
+
+	// The guest resends anything it has not seen acked, so a lost ack means the
+	// same batch arrives twice. Appending it again would duplicate the agent's
+	// output in the transcript.
+	it('is idempotent when a batch whose ack was lost is resent', async () => {
+		const { app, seen } = appWithRouter('sess-batch-2')
+		await postBatch(app, 'sess-batch-2', 1, ['a', 'b'])
+		const res = await postBatch(app, 'sess-batch-2', 1, ['a', 'b'])
+		expect(await res.json()).toEqual({ ack: 2 })
+		expect(seen).toEqual(['a', 'b'])
+	})
+
+	it('appends only the new lines when a resend overlaps', async () => {
+		const { app, seen } = appWithRouter('sess-batch-3')
+		await postBatch(app, 'sess-batch-3', 1, ['a', 'b'])
+		const res = await postBatch(app, 'sess-batch-3', 2, ['b', 'c', 'd'])
+		expect(await res.json()).toEqual({ ack: 4 })
+		expect(seen).toEqual(['a', 'b', 'c', 'd'])
+	})
+
+	// Acking past a gap would let the guest discard lines that never arrived.
+	it('refuses to ack past a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-4')
+		await postBatch(app, 'sess-batch-4', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-4', 3, ['c', 'd'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
+	it('rejects a malformed body', async () => {
+		const { app } = appWithRouter('sess-batch-5')
+		expect((await postBatch(app, 'sess-batch-5', 0, ['a'])).status).toBe(400)
+		expect((await postBatch(app, 'sess-batch-5', 1, 'not-an-array' as never)).status).toBe(400)
+	})
+
+	// Review catch: after an agent-server restart the seq map is empty while the
+	// guest is already at sequence N. Refusing that as a gap acked 0 forever
+	// against a guest that was long past it — a permanent wedge plus a retry
+	// loop measured at ~3,400 requests/second. We have stored nothing, so there
+	// is nothing a wrong answer could discard: adopt the guest's position.
+	it('adopts the guest position on first contact rather than treating it as a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-restart')
+		const res = await postBatch(app, 'sess-batch-restart', 57, ['after-restart-1', 'x'])
+		expect(await res.json()).toEqual({ ack: 58 })
+		expect(seen).toEqual(['after-restart-1', 'x'])
+	})
+
+	// Review catch: when the guest's buffer overflows it drops its oldest lines,
+	// leaving a hole nothing can ever fill. Waiting for it is waiting forever.
+	it('accepts a declared resync after the guest dropped lines, and records the hole', async () => {
+		const { app, seen } = appWithRouter('sess-batch-drop')
+		await postBatch(app, 'sess-batch-drop', 1, ['a', 'b'])
+
+		const res = await app.request('/sessions/sess-batch-drop/logs/batch', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from: 9, lines: ['i', 'j'], resync: true, dropped: 6 }),
+		})
+		expect(await res.json()).toEqual({ ack: 10 })
+		expect(seen[0]).toBe('a')
+		expect(seen[1]).toBe('b')
+		// The discontinuity is recorded rather than left silent.
+		expect(seen[2]).toContain('6 line(s) of agent output were dropped')
+		expect(seen.slice(3)).toEqual(['i', 'j'])
+	})
+
+	// A gap the guest has NOT declared is still refused: acking it would let the
+	// guest discard lines that never arrived.
+	it('still refuses an undeclared gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-undeclared')
+		await postBatch(app, 'sess-batch-undeclared', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-undeclared', 5, ['e'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
+	// An unmonitored session must still be acked, or the guest retries forever
+	// against a server that is never going to store anything.
+	it('acks even when no log router is registered', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await postBatch(app, 'sess-batch-6', 1, ['a', 'b'])
+		expect(await res.json()).toEqual({ ack: 2 })
+	})
+})
+
+describe('GET /sessions/:id/input/stream', () => {
+	it('flushes turns parked before the stream connects and heartbeats the idle connection', async () => {
+		vi.useFakeTimers()
+		try {
+			const { run } = makeRunner()
+			const app = buildApp({
+				env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+			})
+
+			// A turn arrives while no reader is connected (the VM's input curl
+			// dropped) — it must park, not vanish.
+			const post = await app.request('/sessions/sess-stream-1/input', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: 'Bearer test-secret-thirty-two-chars-long',
+				},
+				body: JSON.stringify({ content: 'hello parked turn' }),
+			})
+			expect(post.status).toBe(200)
+
+			// The (re)connecting reader receives the parked turn immediately.
+			const res = await app.request('/sessions/sess-stream-1/input/stream')
+			expect(res.status).toBe(200)
+			const reader = res.body?.getReader()
+			if (!reader) throw new Error('stream response has no body')
+			const decoder = new TextDecoder()
+			const first = await reader.read()
+			const framed = JSON.parse(decoder.decode(first.value))
+			// Framed as {maskin_seq, turn} so the VM can ack what it consumed.
+			// `turn` is the exact envelope apps/dev put on the wire — the CLI's
+			// stdin must see those bytes unaltered.
+			expect(framed.maskin_seq).toBe(1)
+			expect(JSON.parse(framed.turn)).toEqual({
+				type: 'user',
+				message: { role: 'user', content: 'hello parked turn' },
+			})
+
+			// With nothing else flowing, the 30s keepalive newline arrives — the
+			// signal that stops NAT/proxy idle-timeouts from reaping the stream.
+			const nextRead = reader.read()
+			await vi.advanceTimersByTimeAsync(30_000)
+			const heartbeat = await nextRead
+			expect(decoder.decode(heartbeat.value)).toBe('\n')
+
+			// Tear the reader down and let the next heartbeat's failed write
+			// clean up the interval so the test leaves no live timers behind.
+			await reader.cancel()
+			await vi.advanceTimersByTimeAsync(30_000)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('replays an unacked turn on reconnect and drops it once acked', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const decoder = new TextDecoder()
+
+		const post = await app.request('/sessions/sess-stream-ack/input', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ content: 'needs an ack' }),
+		})
+		expect(post.status).toBe(200)
+
+		// First reader takes the turn and dies without acking — the production
+		// case, where the write succeeded into a socket the VM never read.
+		const first = await app.request('/sessions/sess-stream-ack/input/stream')
+		const r1 = first.body?.getReader()
+		if (!r1) throw new Error('stream response has no body')
+		expect(decoder.decode((await r1.read()).value)).toContain('needs an ack')
+		await r1.cancel()
+
+		// Reconnect with after=0: the turn is still owed, so it comes again.
+		const second = await app.request('/sessions/sess-stream-ack/input/stream?after=0')
+		const r2 = second.body?.getReader()
+		if (!r2) throw new Error('stream response has no body')
+		expect(decoder.decode((await r2.read()).value)).toContain('needs an ack')
+		await r2.cancel()
+
+		// Reconnect with after=1: acknowledged, so nothing is replayed. Proven
+		// by the 30s heartbeat arriving first instead of a turn.
+		vi.useFakeTimers()
+		try {
+			const third = await app.request('/sessions/sess-stream-ack/input/stream?after=1')
+			const r3 = third.body?.getReader()
+			if (!r3) throw new Error('stream response has no body')
+			const pending = r3.read()
+			await vi.advanceTimersByTimeAsync(30_000)
+			expect(decoder.decode((await pending).value)).toBe('\n')
+			await r3.cancel()
+			await vi.advanceTimersByTimeAsync(30_000)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+})
+
+describe('stall detection wiring', () => {
+	// The predicate itself is covered in stall-tracker.test.ts. What matters here
+	// is that the three facts it needs are actually fed to it from the routes —
+	// a correct predicate wired to nothing detects nothing, which is exactly how
+	// the seedInteractiveTurn bug survived: the local path did the work and the
+	// dispatched path silently didn't.
+	const auth = {
+		'content-type': 'application/json',
+		authorization: 'Bearer test-secret-thirty-two-chars-long',
+	}
+
+	function setup(thresholdMs = 60_000) {
+		let clock = 0
+		const stallTracker = new StallTracker({ now: () => clock, thresholdMs })
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			stallTracker,
+		})
+		return {
+			app,
+			stallTracker,
+			advance: (ms: number) => {
+				clock += ms
+			},
+		}
+	}
+
+	it('opens a pending window when POST /input delivers a turn', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-1', { interactive: true })
+
+		const res = await app.request('/sessions/sess-wire-1/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ content: 'are you there?' }),
+		})
+		expect(res.status).toBe(200)
+
+		advance(60_000)
+		expect(stallTracker.counts().undelivered).toBe(1)
+	})
+
+	it('queues a model switch as a control request without opening a pending turn', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-model', { interactive: true })
+
+		const res = await app.request('/sessions/sess-wire-model/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ model: 'deepseek/deepseek-v4-flash' }),
+		})
+		expect(res.status).toBe(200)
+
+		// Delivered to the CLI verbatim and in order with the turns around it.
+		const stream = await app.request('/sessions/sess-wire-model/input/stream')
+		const reader = stream.body?.getReader()
+		if (!reader) throw new Error('stream response has no body')
+		const first = await reader.read()
+		const framed = JSON.parse(new TextDecoder().decode(first.value))
+		const control = JSON.parse(framed.turn)
+		expect(control).toMatchObject({
+			type: 'control_request',
+			request: { subtype: 'set_model', model: 'deepseek/deepseek-v4-flash' },
+		})
+		expect(typeof control.request_id).toBe('string')
+		await reader.cancel()
+
+		// Nothing is waiting on the CLI for a reply, so the stall tracker has no
+		// turn to count as undelivered however long this sits.
+		advance(120_000)
+		expect(stallTracker.counts().undelivered).toBe(0)
+	})
+
+	it('rejects a model switch whose model name is not a model name', async () => {
+		const { app } = setup()
+		for (const model of ['', 'a b', 'x"y', 42, null]) {
+			const res = await app.request('/sessions/sess-wire-model-bad/input', {
+				method: 'POST',
+				headers: auth,
+				body: JSON.stringify({ model }),
+			})
+			expect(res.status).toBe(400)
+		}
+	})
+
+	it('records the guest ack from the input stream, moving the session to no_output', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-2', { interactive: true })
+		await app.request('/sessions/sess-wire-2/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ content: 'hello' }),
+		})
+
+		// The guest connects reporting it consumed seq 1 — the only place that
+		// high-water mark is observable in this process.
+		const stream = await app.request('/sessions/sess-wire-2/input/stream?after=1')
+		expect(stream.status).toBe(200)
+		await stream.body?.cancel()
+
+		advance(60_000)
+		const counts = stallTracker.counts()
+		expect(counts.undelivered).toBe(0)
+		expect(counts.no_output).toBe(1)
+	})
+
+	it('resets the silence clock on agent output posted to /logs/batch', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-3', { interactive: true })
+		await app.request('/sessions/sess-wire-3/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ content: 'hello' }),
+		})
+		const stream = await app.request('/sessions/sess-wire-3/input/stream?after=1')
+		await stream.body?.cancel()
+
+		advance(30_000)
+		const batch = await app.request('/sessions/sess-wire-3/logs/batch', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ from: 1, lines: [JSON.stringify({ type: 'result' })] }),
+		})
+		expect(batch.status).toBe(200)
+
+		advance(60_000)
+		expect(stallTracker.counts().no_output).toBe(0)
 	})
 })

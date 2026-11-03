@@ -31,6 +31,35 @@ describe('parseEnv', () => {
 		)
 	})
 
+	it('defaults METRICS_PORT to 9464', () => {
+		expect(parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) }).METRICS_PORT).toBe(9464)
+	})
+
+	it('accepts an explicit 0 as the disable sentinel', () => {
+		expect(parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), METRICS_PORT: '0' }).METRICS_PORT).toBe(
+			0,
+		)
+	})
+
+	it('rejects an empty METRICS_PORT rather than treating it as disabled', () => {
+		// `Number('')` is 0, so without an explicit guard a bare `METRICS_PORT=`
+		// line would silently land on the disable sentinel and the endpoint would
+		// never bind — with no error and no log to say so.
+		for (const v of ['', '   ']) {
+			expect(() => parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), METRICS_PORT: v })).toThrow(
+				/Invalid METRICS_PORT: empty/,
+			)
+		}
+	})
+
+	it('rejects METRICS_PORT values outside the valid range', () => {
+		for (const v of ['abc', '-1', '70000', '1.5']) {
+			expect(() => parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), METRICS_PORT: v })).toThrow(
+				/Invalid METRICS_PORT/,
+			)
+		}
+	})
+
 	it('rejects a missing or short AGENT_SERVER_SECRET', () => {
 		expect(() => parseEnv({})).toThrow()
 		expect(() => parseEnv({ AGENT_SERVER_SECRET: 'short' })).toThrow(/16 chars/)
@@ -40,7 +69,6 @@ describe('parseEnv', () => {
 		const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) })
 		expect(env.WARM_POOL_REFRESH_MINUTES).toBe(0)
 		expect(env.WARM_POOL_IMAGE).toBeUndefined()
-		expect(env.BROWSER_SIDECAR_IMAGE).toBe('browser-sidecar:latest')
 	})
 
 	it('parses a positive WARM_POOL_REFRESH_MINUTES alongside an image', () => {
@@ -48,11 +76,9 @@ describe('parseEnv', () => {
 			AGENT_SERVER_SECRET: 'a'.repeat(32),
 			WARM_POOL_REFRESH_MINUTES: '30',
 			WARM_POOL_IMAGE: 'maskin/agent-base:latest',
-			BROWSER_SIDECAR_IMAGE: 'maskin/browser-sidecar:latest',
 		})
 		expect(env.WARM_POOL_REFRESH_MINUTES).toBe(30)
 		expect(env.WARM_POOL_IMAGE).toBe('maskin/agent-base:latest')
-		expect(env.BROWSER_SIDECAR_IMAGE).toBe('maskin/browser-sidecar:latest')
 	})
 
 	it('rejects WARM_POOL_REFRESH_MINUTES outside 0..1440 or non-integer', () => {
@@ -69,6 +95,37 @@ describe('parseEnv', () => {
 		expect(() =>
 			parseEnv({ AGENT_SERVER_SECRET: secret, WARM_POOL_REFRESH_MINUTES: 'abc' }),
 		).toThrow(/Invalid WARM_POOL_REFRESH_MINUTES/)
+	})
+
+	it('leaves desktop snapshots off by default, with a 10 minute idle timeout', () => {
+		const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) })
+		expect(env.DESKTOP_SNAPSHOTS).toBe(false)
+		expect(env.DESKTOP_IDLE_MINUTES).toBe(10)
+	})
+
+	it.each(['1', 'true', 'TRUE'])('turns desktop snapshots on for DESKTOP_SNAPSHOTS=%s', (v) => {
+		const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), DESKTOP_SNAPSHOTS: v })
+		expect(env.DESKTOP_SNAPSHOTS).toBe(true)
+	})
+
+	it.each(['0', 'false', '', 'yes'])(
+		'keeps desktop snapshots off for DESKTOP_SNAPSHOTS=%j',
+		(v) => {
+			const env = parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), DESKTOP_SNAPSHOTS: v })
+			expect(env.DESKTOP_SNAPSHOTS).toBe(false)
+		},
+	)
+
+	it('rejects DESKTOP_IDLE_MINUTES outside 0..1440 or non-integer', () => {
+		const secret = 'a'.repeat(32)
+		expect(
+			parseEnv({ AGENT_SERVER_SECRET: secret, DESKTOP_IDLE_MINUTES: '0' }).DESKTOP_IDLE_MINUTES,
+		).toBe(0)
+		for (const bad of ['-1', '1441', '1.5', 'abc']) {
+			expect(() => parseEnv({ AGENT_SERVER_SECRET: secret, DESKTOP_IDLE_MINUTES: bad })).toThrow(
+				/Invalid DESKTOP_IDLE_MINUTES/,
+			)
+		}
 	})
 
 	it('defaults SESSION_MAX_DURATION to 8h and accepts msb duration syntax / disable', () => {
@@ -112,5 +169,34 @@ describe('parseEnv', () => {
 		expect(() =>
 			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_ID: 'not-a-uuid' }),
 		).toThrow()
+	})
+})
+
+describe('AGENT_SERVER_STALL_THRESHOLD_MS', () => {
+	it('defaults to 5 minutes', () => {
+		expect(parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) }).AGENT_SERVER_STALL_THRESHOLD_MS).toBe(
+			300_000,
+		)
+	})
+
+	it('accepts an override so the threshold can move without a deploy', () => {
+		expect(
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: '600000' })
+				.AGENT_SERVER_STALL_THRESHOLD_MS,
+		).toBe(600_000)
+	})
+
+	it('rejects a threshold below the guest re-dial interval', () => {
+		// Under 90s every healthy unacked window looks like a wedge — the floor
+		// is the point at which this alert becomes guaranteed noise.
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: '30000' }),
+		).toThrow(/AGENT_SERVER_STALL_THRESHOLD_MS/)
+	})
+
+	it('rejects a non-numeric threshold', () => {
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: 'soon' }),
+		).toThrow(/AGENT_SERVER_STALL_THRESHOLD_MS/)
 	})
 })

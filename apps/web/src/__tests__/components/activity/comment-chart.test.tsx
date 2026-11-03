@@ -40,6 +40,23 @@ describe('parseChartSpec', () => {
 		expect(result.ok).toBe(false)
 	})
 
+	it('never surfaces the raw JSON.parse error to the reader', () => {
+		// A truncated fenced block trips the parser with "Unexpected EOF"; that
+		// message must not reach the fallback copy.
+		const truncated = parseChartSpec('{"type":"bar","x":"day","series":["retention"],')
+		expect(truncated.ok).toBe(false)
+		if (!truncated.ok) {
+			expect(truncated.reason).toBe('the chart data is incomplete or malformed')
+			expect(truncated.reason).not.toMatch(/EOF|Unexpected|token/)
+		}
+	})
+
+	it('reports an empty source distinctly', () => {
+		const result = parseChartSpec('   ')
+		expect(result.ok).toBe(false)
+		if (!result.ok) expect(result.reason).toBe('the chart source is empty')
+	})
+
 	it('rejects unknown chart types', () => {
 		const result = parseChartSpec(
 			JSON.stringify({ type: 'pie', x: 'day', series: ['x'], data: [] }),

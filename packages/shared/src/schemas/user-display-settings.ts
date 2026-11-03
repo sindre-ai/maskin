@@ -47,6 +47,11 @@ const rowIdSchema = z.string().min(1).max(256)
 // list; the same bound as columnVisibility keeps payload size finite while
 // far exceeding any realistic group count.
 const GROUP_EXPANDED_MAX_ENTRIES = 200
+// Filter options the user pinned out of the Display panel into the toolbar's
+// chip row. Tokens look like `quick:starred`, `status:define`, `driver:<uuid>`
+// — the same 256-char bound as a column id, and a count cap well above the
+// handful of chips that fit on one toolbar row.
+const PINNED_FILTERS_MAX_ENTRIES = 50
 
 export const displaySettingsBodySchema = z
 	.object({
@@ -78,6 +83,12 @@ export const displaySettingsBodySchema = z
 			.record(rowIdSchema, z.boolean())
 			.refine((v) => Object.keys(v).length <= GROUP_EXPANDED_MAX_ENTRIES, {
 				message: `groupExpanded may have at most ${GROUP_EXPANDED_MAX_ENTRIES} entries`,
+			})
+			.optional(),
+		pinnedFilters: z
+			.array(columnIdSchema)
+			.max(PINNED_FILTERS_MAX_ENTRIES, {
+				message: `pinnedFilters may have at most ${PINNED_FILTERS_MAX_ENTRIES} entries`,
 			})
 			.optional(),
 		firstVisibleRowId: rowIdSchema.nullable().optional(),

@@ -1011,7 +1011,7 @@ export const workspaceSettingsSchema = z.object({
 	}),
 	statuses: z.record(z.array(z.string())).default({
 		insight: ['new', 'processing', 'clustered', 'discarded'],
-		bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+		bet: ['opportunity', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 		task: ['todo', 'in_progress', 'done', 'blocked'],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({}),
@@ -3121,7 +3121,7 @@ export async function runAgent(
 			iteration++
 
 			const response = await llm.chat({
-				model: (config.llmConfig.model as string) || 'claude-sonnet-4-20250514',
+				model: (config.llmConfig.model as string) || 'claude-sonnet-5-5',
 				messages,
 				tools,
 				temperature: config.llmConfig.temperature as number | undefined,
@@ -3469,7 +3469,7 @@ export class AnthropicAdapter implements LLMAdapter {
 		const otherMessages = options.messages.filter((m) => m.role !== 'system')
 
 		const body: Record<string, unknown> = {
-			model: options.model || 'claude-sonnet-4-20250514',
+			model: options.model || 'claude-sonnet-5-5',
 			max_tokens: 4096,
 			messages: otherMessages.map((m) => {
 				if (m.role === 'tool') {

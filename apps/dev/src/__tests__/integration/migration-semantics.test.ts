@@ -526,3 +526,133 @@ describe('Migration semantics — pg_constraint / pg_trigger assertions', () => 
 		).toBe(afterFirst.updated_at.getTime())
 	})
 })
+
+// 0066 retires the `qualified` bet status and the `commitment` object type.
+// Both only ever existed as stored workspace-settings data (plus, for
+// `qualified`, live bet rows), so the migration is the only thing that removes
+// them — and it must do so without touching the identically-named `qualified`
+// stage that legitimately exists on CRM types like `company`.
+describe('0066 — retiring the qualified bet status and the commitment type', () => {
+	async function seedLegacyWorkspace(name: string) {
+		const actorId = getTestActorId()
+		const [ws] = await sql<{ id: string }[]>`
+			INSERT INTO workspaces (name, settings, created_by)
+			VALUES (
+				${name},
+				${sql.json({
+					statuses: {
+						bet: ['signal', 'qualified', 'define', 'active', 'succeeded'],
+						company: ['identified', 'qualified', 'engaged'],
+						commitment: ['holding', 'at-risk', 'breached'],
+					},
+					display_names: { bet: 'Bet', commitment: 'Commitment' },
+					field_definitions: {
+						commitment: [{ name: 'floor', type: 'text', required: false }],
+					},
+				})},
+				${actorId}
+			)
+			RETURNING id
+		`
+		return { ws, actorId }
+	}
+
+	async function settingsOf(wsId: string) {
+		const [row] = await sql<{ settings: Record<string, unknown> }[]>`
+			SELECT settings FROM workspaces WHERE id = ${wsId}
+		`
+		return row.settings as {
+			statuses: Record<string, string[]>
+			display_names: Record<string, string>
+			field_definitions: Record<string, unknown[]>
+		}
+	}
+
+	it('drops qualified from statuses.bet while leaving the CRM company stage intact', async () => {
+		const { ws } = await seedLegacyWorkspace('qualified-retire-scoping')
+
+		await replayMigration('0066_drop_qualified_bet_status_and_commitment_type.sql')
+
+		const settings = await settingsOf(ws.id)
+		expect(settings.statuses.bet, 'qualified must be gone from bet').toEqual([
+			'signal',
+			'define',
+			'active',
+			'succeeded',
+		])
+		expect(
+			settings.statuses.company,
+			'company.qualified is a legitimate CRM stage and must survive',
+		).toEqual(['identified', 'qualified', 'engaged'])
+	})
+
+	it('removes the commitment key from statuses, display_names, and field_definitions', async () => {
+		const { ws } = await seedLegacyWorkspace('commitment-retire-settings')
+
+		await replayMigration('0066_drop_qualified_bet_status_and_commitment_type.sql')
+
+		const settings = await settingsOf(ws.id)
+		expect(settings.statuses.commitment).toBeUndefined()
+		expect(settings.display_names.commitment).toBeUndefined()
+		expect(settings.field_definitions.commitment).toBeUndefined()
+		expect(settings.display_names.bet, 'sibling keys must be untouched').toBe('Bet')
+	})
+
+	it('rehomes bets sitting in qualified to signal and writes an audit event for each', async () => {
+		const { ws, actorId } = await seedLegacyWorkspace('qualified-retire-rows')
+		const [bet] = await sql<{ id: string }[]>`
+			INSERT INTO objects (workspace_id, type, title, status, created_by)
+			VALUES (${ws.id}, 'bet', 'Unshaped bet', 'qualified', ${actorId})
+			RETURNING id
+		`
+		// A same-named status on a different type must not be swept up.
+		const [company] = await sql<{ id: string }[]>`
+			INSERT INTO objects (workspace_id, type, title, status, created_by)
+			VALUES (${ws.id}, 'company', 'Acme', 'qualified', ${actorId})
+			RETURNING id
+		`
+
+		await replayMigration('0066_drop_qualified_bet_status_and_commitment_type.sql')
+
+		const [movedBet] = await sql<{ status: string }[]>`
+			SELECT status FROM objects WHERE id = ${bet.id}
+		`
+		expect(movedBet.status).toBe('signal')
+
+		const [untouchedCompany] = await sql<{ status: string }[]>`
+			SELECT status FROM objects WHERE id = ${company.id}
+		`
+		expect(untouchedCompany.status, 'only type=bet is rehomed').toBe('qualified')
+
+		const [eventCount] = await sql<{ count: number }[]>`
+			SELECT count(*)::int AS count FROM events
+			WHERE entity_id = ${bet.id} AND entity_type = 'bet' AND action = 'updated'
+		`
+		expect(eventCount.count, 'every mutation writes an events row').toBe(1)
+	})
+
+	it('is idempotent: a second run changes nothing and writes no extra events', async () => {
+		const { ws, actorId } = await seedLegacyWorkspace('qualified-retire-idempotent')
+		const [bet] = await sql<{ id: string }[]>`
+			INSERT INTO objects (workspace_id, type, title, status, created_by)
+			VALUES (${ws.id}, 'bet', 'Unshaped bet', 'qualified', ${actorId})
+			RETURNING id
+		`
+
+		await replayMigration('0066_drop_qualified_bet_status_and_commitment_type.sql')
+		const afterFirst = await settingsOf(ws.id)
+
+		await replayMigration('0066_drop_qualified_bet_status_and_commitment_type.sql')
+		const afterSecond = await settingsOf(ws.id)
+
+		expect(afterSecond).toEqual(afterFirst)
+
+		const [eventCount] = await sql<{ count: number }[]>`
+			SELECT count(*)::int AS count FROM events
+			WHERE entity_id = ${bet.id} AND entity_type = 'bet' AND action = 'updated'
+		`
+		expect(eventCount.count, 'rerun must not re-log — the WHERE clause excludes signal rows').toBe(
+			1,
+		)
+	})
+})

@@ -1,9 +1,28 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState, relationships, sessions, triggers } from '@maskin/db/schema'
-import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
+import {
+	events,
+	actors,
+	objects,
+	relationships,
+	sessions,
+	triggers,
+	workspaceMembers,
+} from '@maskin/db/schema'
+import {
+	type LoopTarget,
+	SAFE_METADATA_FIELD_NAME_RE,
+	TERMINAL_BET_STATUSES,
+	findChange,
+	getChangesFromEventData,
+	listLoopStepsResponseSchema,
+	listLoopsResponseSchema,
+	loopTargetSchema,
+	readChanges,
+} from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 
@@ -14,6 +33,50 @@ import { serializeArray } from '../lib/serialize'
  * whole `/api/loops` response with a Postgres "invalid input syntax for type
  * uuid" error — it's just silently dropped, same as any other stale id. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Ids per `events` lookup. One query over every closed member of every loop
+ * (1,000+ ids) is a long scan that outlives the statement timeout on a busy
+ * database; small batches stay on the index and fail independently. */
+const EVENT_LOOKUP_CHUNK = 200
+
+type LoopEventRow = { entityId: string; data: unknown; createdAt: Date | null }
+
+/** Events for a set of objects, fetched in id batches. Best-effort: the close
+ * times these feed are enrichment with an `updated_at` fallback, so a slow or
+ * failed batch is logged and skipped rather than failing the whole loops list.
+ * A skipped object simply has no events and takes that fallback. */
+async function fetchEventsForObjects(
+	db: Database,
+	workspaceId: string,
+	entityIds: string[],
+	actions: string[],
+): Promise<LoopEventRow[]> {
+	const rows: LoopEventRow[] = []
+	for (let i = 0; i < entityIds.length; i += EVENT_LOOKUP_CHUNK) {
+		const chunk = entityIds.slice(i, i + EVENT_LOOKUP_CHUNK)
+		try {
+			const part = await db
+				.select({ entityId: events.entityId, createdAt: events.createdAt, data: events.data })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						inArray(events.entityId, chunk),
+						inArray(events.action, actions),
+					),
+				)
+				.orderBy(events.id)
+			rows.push(...part)
+		} catch (err) {
+			logger.warn('Loop close-time event lookup failed; falling back to updated_at', {
+				workspaceId,
+				chunkSize: chunk.length,
+				error: String(err),
+			})
+		}
+	}
+	return rows
+}
 
 /** Relationship `type` marking "this object is a member of this loop's
  * pipeline" — `source_id` is the loop, `target_id` is the child object.
@@ -74,7 +137,6 @@ const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
 	bet: [...TERMINAL_BET_STATUSES, 'archived'],
 	task: ['done', 'validated', 'discarded'],
 	insight: ['discarded'],
-	commitment: [], // commitments never terminate — they're standing state
 }
 
 /**
@@ -93,6 +155,90 @@ function readClosedStatuses(meta: Record<string, unknown>): Record<string, strin
 		}
 	}
 	return Object.keys(cleaned).length > 0 ? cleaned : null
+}
+
+/** One `closed_when` rule: a member counts as closed when `metadata[field] === value`. */
+type ClosedWhenRule = { field: string; value: string }
+
+/**
+ * Extract a loop's `metadata.closed_when` map: `{ <type>: ["<field>=<value>", ...] }`,
+ * e.g. `{ insight: ["loop_stage=live"] }`. A member of that type is closed when
+ * ANY of its rules matches (so two entries for one field read as "in [a, b]").
+ * The shape is the same string-array map as `closed_statuses` because that is the
+ * only nested metadata shape the write path accepts. Entries that are not
+ * `field=value` with a safe field name are dropped rather than erroring, same
+ * tolerance as `readClosedStatuses`.
+ */
+function readClosedWhen(meta: Record<string, unknown>): Record<string, ClosedWhenRule[]> | null {
+	const raw = meta.closed_when
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+	const cleaned: Record<string, ClosedWhenRule[]> = {}
+	for (const [type, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (!Array.isArray(value)) continue
+		const rules: ClosedWhenRule[] = []
+		for (const entry of value) {
+			if (typeof entry !== 'string') continue
+			const sep = entry.indexOf('=')
+			if (sep <= 0) continue
+			const field = entry.slice(0, sep)
+			const ruleValue = entry.slice(sep + 1)
+			if (!SAFE_METADATA_FIELD_NAME_RE.test(field) || ruleValue.length === 0) continue
+			rules.push({ field, value: ruleValue })
+		}
+		if (rules.length > 0) cleaned[type] = rules
+	}
+	return Object.keys(cleaned).length > 0 ? cleaned : null
+}
+
+function matchesClosedWhen(rules: ClosedWhenRule[], metadata: unknown): boolean {
+	if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
+	const meta = metadata as Record<string, unknown>
+	return rules.some((rule) => meta[rule.field] === rule.value)
+}
+
+/**
+ * Extract a loop's `metadata.targets` (bet D5). Returns `null` when the field
+ * is absent, not an array, or every row inside failed Zod validation — the
+ * frontend then renders no `<TargetsAndOwners>` section. Malformed individual
+ * entries are dropped rather than 500-ing the whole `/api/loops` response,
+ * same tolerance the rest of this file already gives hand-edited metadata.
+ */
+function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
+	const raw = meta.targets
+	if (!Array.isArray(raw)) return null
+	const cleaned: LoopTarget[] = []
+	for (const entry of raw) {
+		const parsed = loopTargetSchema.safeParse(entry)
+		if (parsed.success) cleaned.push(parsed.data)
+	}
+	return cleaned.length > 0 ? cleaned : null
+}
+
+/** Longest tag we show, and the most per loop: tags are short labels, not sentences. */
+const LOOP_TAG_MAX_LENGTH = 40
+const LOOP_TAG_MAX_COUNT = 10
+
+/**
+ * Extract a loop's `metadata.tags`: the non-empty strings, trimmed, de-duplicated
+ * (case-insensitively, first spelling wins) and capped. Anything else in the
+ * array is dropped — same tolerance as the other metadata readers, a hand-edited
+ * blob must not 500 the page.
+ */
+function readLoopTags(meta: Record<string, unknown>): string[] {
+	const raw = meta.tags
+	if (!Array.isArray(raw)) return []
+	const seen = new Set<string>()
+	const tags: string[] = []
+	for (const entry of raw) {
+		if (typeof entry !== 'string') continue
+		const tag = entry.trim().slice(0, LOOP_TAG_MAX_LENGTH)
+		const key = tag.toLowerCase()
+		if (tag.length === 0 || seen.has(key)) continue
+		seen.add(key)
+		tags.push(tag)
+		if (tags.length >= LOOP_TAG_MAX_COUNT) break
+	}
+	return tags
 }
 
 const listLoopsQuerySchema = z.object({
@@ -127,7 +273,6 @@ const listLoopsRoute = createRoute({
 
 app.openapi(listLoopsRoute, (async (c) => {
 	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id } = c.req.valid('query')
 
@@ -173,40 +318,169 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// pointing at unknown ids).
 	const loopIdArray = sql.raw(`ARRAY[${loopIds.map((id) => `'${id}'`).join(',')}]::uuid[]`)
 
-	// Per-loop child-object rows in a single scan. Whether a member counts as
-	// "closed" depends on the loop's own `metadata.closed_statuses` override
-	// (falling back to TERMINAL_STATUSES_BY_TYPE), so the terminal test is
-	// per-loop and computed here rather than in a shared SQL literal list.
-	// Loops hold at most tens of members, so row-level fetch + JS aggregation
-	// stays cheap.
-	const childRows = await db.execute<{
-		loop_id: string
-		type: string
-		status: string
-		created_at: string | Date
-		updated_at: string | Date
-	}>(
+	const closedStatusOverridesByLoop = new Map<string, Record<string, string[]>>()
+	const closedWhenByLoop = new Map<string, Record<string, ClosedWhenRule[]>>()
+	for (const l of loopRows) {
+		const meta = (l.metadata as Record<string, unknown> | null) ?? {}
+		const override = readClosedStatuses(meta)
+		if (override) closedStatusOverridesByLoop.set(l.id, override)
+		const closedWhen = readClosedWhen(meta)
+		if (closedWhen) closedWhenByLoop.set(l.id, closedWhen)
+	}
+
+	const closedStatusesFor = (loopId: string, type: string): string[] =>
+		closedStatusOverridesByLoop.get(loopId)?.[type] ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
+	const isClosedByStatus = (loopId: string, type: string, status: string): boolean =>
+		closedStatusesFor(loopId, type).includes(status)
+
+	// "Is this member closed" as one SQL predicate over the `r` (edge) and `o`
+	// (member) aliases, built from each loop's own closed_statuses / closed_when
+	// (falling back to TERMINAL_STATUSES_BY_TYPE). Both the grouped count and
+	// the closed-member read below use it, so they cannot disagree. Statuses and
+	// rule values are bound parameters; rule field names are already restricted
+	// to SAFE_METADATA_FIELD_NAME_RE by readClosedWhen. A rule matches like
+	// matchesClosedWhen: the metadata value is that exact string.
+	const closedTerms: ReturnType<typeof sql>[] = []
+	for (const l of loopRows) {
+		const types = new Set([
+			...Object.keys(TERMINAL_STATUSES_BY_TYPE),
+			...Object.keys(closedStatusOverridesByLoop.get(l.id) ?? {}),
+			...Object.keys(closedWhenByLoop.get(l.id) ?? {}),
+		])
+		for (const type of types) {
+			const conditions: ReturnType<typeof sql>[] = []
+			const statuses = closedStatusesFor(l.id, type)
+			if (statuses.length > 0) {
+				conditions.push(
+					sql`o.status IN (${sql.join(
+						statuses.map((st) => sql`${st}`),
+						sql`, `,
+					)})`,
+				)
+			}
+			for (const rule of closedWhenByLoop.get(l.id)?.[type] ?? []) {
+				conditions.push(sql`o.metadata -> ${rule.field}::text = to_jsonb(${rule.value}::text)`)
+			}
+			if (conditions.length === 0) continue
+			closedTerms.push(
+				sql`(r.source_id = ${l.id}::uuid AND o.type = ${type} AND (${sql.join(conditions, sql` OR `)}))`,
+			)
+		}
+	}
+	const isClosedSql =
+		closedTerms.length > 0 ? sql`(${sql.join(closedTerms, sql` OR `)})` : sql`false`
+
+	// Counts come from one grouped query: members bucketed by loop, closed or not,
+	// never one row per member. Loops can hold thousands of members.
+	const countRows = await db.execute<{ loop_id: string; is_closed: boolean; n: number | string }>(
 		sql`
-			SELECT r.source_id AS loop_id, o.type, o.status, o.created_at, o.updated_at
+			SELECT r.source_id AS loop_id, ${isClosedSql} AS is_closed, count(*) AS n
 			FROM ${relationships} r
 			JOIN ${objects} o ON o.id = r.target_id
 			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
 				AND r.source_id = ANY(${loopIdArray})
 				AND o.workspace_id = ${workspaceId}
+			GROUP BY r.source_id, is_closed
 		`,
 	)
 
-	const closedStatusOverridesByLoop = new Map<string, Record<string, string[]>>()
-	for (const l of loopRows) {
-		const meta = (l.metadata as Record<string, unknown> | null) ?? {}
-		const override = readClosedStatuses(meta)
-		if (override) closedStatusOverridesByLoop.set(l.id, override)
+	// Only closed members are read per row, and only the columns the close time
+	// needs: the median is the middle of per-member durations, which a count
+	// cannot give. In-progress members are never fetched. The clock starts when
+	// the member joined the loop (the in_loop edge), not when the object was
+	// created: an object can exist long before it enters a loop.
+	const childRows = await db.execute<{
+		loop_id: string
+		id: string
+		type: string
+		status: string
+		joined_at: string | Date
+		updated_at: string | Date
+	}>(
+		sql`
+			SELECT r.source_id AS loop_id, o.id, o.type, o.status,
+				COALESCE(r.created_at, o.created_at) AS joined_at, o.updated_at
+			FROM ${relationships} r
+			JOIN ${objects} o ON o.id = r.target_id
+			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
+				AND r.source_id = ANY(${loopIdArray})
+				AND o.workspace_id = ${workspaceId}
+				AND ${isClosedSql}
+		`,
+	)
+
+	// A member closed only by a `closed_when` rule (a metadata edit, so no status
+	// change) has no close time on its row: updated_at moves on every later edit.
+	// Its update events carry the old and new metadata, so the close time is the
+	// last event that moved it into a matching state.
+	const stageClosedIds = Array.from(
+		new Set(
+			childRows
+				.filter((row) => !isClosedByStatus(row.loop_id, row.type, row.status))
+				.map((row) => row.id),
+		),
+	)
+	const stageEventsByObject = new Map<string, Array<{ createdAt: Date | null; data: unknown }>>()
+	if (stageClosedIds.length > 0) {
+		const stageEvents = await fetchEventsForObjects(db, workspaceId, stageClosedIds, [
+			'updated',
+			'status_changed',
+		])
+		for (const ev of stageEvents) {
+			const list = stageEventsByObject.get(ev.entityId) ?? []
+			list.push({ createdAt: ev.createdAt, data: ev.data })
+			stageEventsByObject.set(ev.entityId, list)
+		}
+	}
+	const stageClosedAt = (row: { loop_id: string; id: string; type: string }): Date | null => {
+		const rules = closedWhenByLoop.get(row.loop_id)?.[row.type] ?? []
+		let closedAt: Date | null = null
+		for (const ev of stageEventsByObject.get(row.id) ?? []) {
+			const change = findChange(readChanges(ev.data), 'metadata')
+			if (!change || !ev.createdAt) continue
+			if (!matchesClosedWhen(rules, change.old) && matchesClosedWhen(rules, change.new)) {
+				closedAt = ev.createdAt
+			}
+		}
+		return closedAt
 	}
 
-	const isClosedForLoop = (loopId: string, type: string, status: string): boolean => {
-		const override = closedStatusOverridesByLoop.get(loopId)?.[type]
-		const terminal = override ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
-		return terminal.includes(status)
+	// A closed member keeps its in_loop edge, so its close time comes from the
+	// first status-change event that moved it into the loop's closed set, not
+	// from updated_at (any later edit moves that). One batched query for every
+	// status-closed member across all loops in the request, never one per member;
+	// no closed members, no query.
+	const closedObjectIds = Array.from(
+		new Set(
+			childRows
+				.filter((row) => isClosedByStatus(row.loop_id, row.type, row.status))
+				.map((row) => row.id),
+		),
+	)
+	const statusEventsByObject = new Map<string, Array<{ status: unknown; at: Date }>>()
+	if (closedObjectIds.length > 0) {
+		const statusEventRows = await fetchEventsForObjects(db, workspaceId, closedObjectIds, [
+			'status_changed',
+		])
+		for (const ev of statusEventRows) {
+			if (!ev.createdAt) continue
+			const status = findChange(getChangesFromEventData(ev.data, ['status']), 'status')?.new
+			if (status === undefined) continue
+			const list = statusEventsByObject.get(ev.entityId) ?? []
+			list.push({ status, at: ev.createdAt })
+			statusEventsByObject.set(ev.entityId, list)
+		}
+	}
+
+	// Close time for a member closed by status: the first event that moved it
+	// into the closed set, falling back to updated_at when it has none (closed
+	// before events carried a diff, or the status was set directly).
+	const statusClosedAtMs = (row: (typeof childRows)[number]): number => {
+		const terminal = closedStatusesFor(row.loop_id, row.type)
+		const moved = statusEventsByObject
+			.get(row.id)
+			?.find((ev) => typeof ev.status === 'string' && terminal.includes(ev.status))
+		return (moved?.at ?? new Date(row.updated_at)).getTime()
 	}
 
 	const childStatsByLoop = new Map<
@@ -214,22 +488,28 @@ app.openapi(listLoopsRoute, (async (c) => {
 		{ inProgressCount: number; closedCount: number; medianCloseMs: number | null }
 	>()
 	{
-		const closeDurationsByLoop = new Map<string, number[]>()
-		for (const row of childRows) {
+		for (const row of countRows) {
 			const stats = childStatsByLoop.get(row.loop_id) ?? {
 				inProgressCount: 0,
 				closedCount: 0,
 				medianCloseMs: null,
 			}
-			if (isClosedForLoop(row.loop_id, row.type, row.status)) {
-				stats.closedCount += 1
-				const durations = closeDurationsByLoop.get(row.loop_id) ?? []
-				durations.push(new Date(row.updated_at).getTime() - new Date(row.created_at).getTime())
-				closeDurationsByLoop.set(row.loop_id, durations)
-			} else {
-				stats.inProgressCount += 1
-			}
+			if (row.is_closed) stats.closedCount += Number(row.n)
+			else stats.inProgressCount += Number(row.n)
 			childStatsByLoop.set(row.loop_id, stats)
+		}
+		const closeDurationsByLoop = new Map<string, number[]>()
+		for (const row of childRows) {
+			const closedAtMs = isClosedByStatus(row.loop_id, row.type, row.status)
+				? statusClosedAtMs(row)
+				: (stageClosedAt(row)?.getTime() ?? new Date(row.updated_at).getTime())
+			// Closed before it joined the loop: it never went through this loop, so
+			// it has no time to close and stays out of the median.
+			const durationMs = closedAtMs - new Date(row.joined_at).getTime()
+			if (durationMs < 0) continue
+			const durations = closeDurationsByLoop.get(row.loop_id) ?? []
+			durations.push(durationMs)
+			closeDurationsByLoop.set(row.loop_id, durations)
 		}
 		// Median matches percentile_cont(0.5): linear interpolation — for an
 		// even count, the mean of the two middle values.
@@ -257,54 +537,43 @@ app.openapi(listLoopsRoute, (async (c) => {
 		}
 	}
 
-	// Per-viewer "waiting on you" flag: does the viewer have any unread event
-	// on any object currently linked to this loop? Reuses the `read_state`
-	// last-read expression pattern from `subscriptions.ts`. Unlike
-	// `getUnreadCount` (which filters `action = 'commented'` to count unread
-	// comments specifically), this matches ANY event on the child object —
-	// a status/lifecycle change is exactly the "needs a human" signal this
-	// flag exists for, and those events are logged with `entity_type` set to
-	// the object's concrete type (task/bet/insight), not `'object'` (that
-	// value is reserved for comment events — see objects.ts's object-detail
-	// route). So we match on `entity_id` alone, which already scopes
-	// precisely to this one object regardless of which entity_type the event
-	// was logged under. `read_state` itself is always keyed by the generic
-	// `entity_type = 'object'` for objects, so that half stays fixed.
-	// A loop with zero child objects always resolves to false.
-	const waitingRows = await db.execute<{ loop_id: string; waiting: boolean }>(
-		sql`
-			SELECT
-				r.source_id AS loop_id,
-				EXISTS (
-					SELECT 1
-					FROM ${events} e
-					WHERE e.workspace_id = ${workspaceId}
-						AND e.entity_id = o.id
-						AND e.actor_id <> ${actorId}
-						AND e.id > COALESCE(
-							(
-								SELECT last_read_event_id FROM ${readState}
-								WHERE actor_id = ${actorId}
-									AND entity_type = 'object'
-									AND entity_id = o.id
-							),
-							0
-						)
-				) AS waiting
-			FROM ${relationships} r
-			JOIN ${objects} o ON o.id = r.target_id
-			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
-				AND r.source_id = ANY(${loopIdArray})
-				AND o.workspace_id = ${workspaceId}
-			GROUP BY r.source_id, o.id
-		`,
-	)
-
-	// A loop is "waiting on viewer" if ANY of its child objects has unread
-	// events for the viewer — collapse the per-child rows here.
+	// "Waiting on you" flag + count. Same predicate the D3 `AskBanner` uses on
+	// the loop-detail page (`GET /:id/steps` further down this file, and
+	// `packages/shared/src/loops/waiting-on-viewer.ts`): a step is waiting
+	// when at least one session on that step's trigger sits in
+	// `status = 'waiting_for_input'`. Unifying to one predicate here means the
+	// loops-list `waiting_on_you` pill, the loops-list `waitingCount`, the
+	// loop-detail `Asks waiting` tile, and the AskBanner all count exactly
+	// the thing the user thinks they count — an agent step blocked awaiting
+	// their input. Previously this was "any unread event on any child
+	// object", which mixed status-change notifications into the "waiting on
+	// me" signal and let the banner fire while the tile still read 0.
+	const pendingByTrigger = new Map<string, number>()
+	if (allTriggerIds.length > 0) {
+		const pendingRows = await db
+			.select({ triggerId: sessions.triggerId, count: sql<number>`COUNT(*)::int` })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					inArray(sessions.triggerId, allTriggerIds),
+					eq(sessions.status, 'waiting_for_input'),
+				),
+			)
+			.groupBy(sessions.triggerId)
+		for (const row of pendingRows) {
+			if (row.triggerId) pendingByTrigger.set(row.triggerId, row.count)
+		}
+	}
 	const waitingByLoop = new Map<string, boolean>()
-	for (const row of waitingRows) {
-		waitingByLoop.set(row.loop_id, waitingByLoop.get(row.loop_id) === true || row.waiting === true)
+	const waitingCountByLoop = new Map<string, number>()
+	for (const { loopId, triggerIds: perLoopTriggerIds } of perLoopTriggers) {
+		let count = 0
+		for (const tid of perLoopTriggerIds) {
+			count += pendingByTrigger.get(tid) ?? 0
+		}
+		waitingCountByLoop.set(loopId, count)
+		waitingByLoop.set(loopId, count > 0)
 	}
 
 	const LIVE_STATUSES = new Set(['learning', 'supervised', 'fully_autonomous'])
@@ -336,6 +605,8 @@ app.openapi(listLoopsRoute, (async (c) => {
 				typeof meta.close_condition === 'string' && meta.close_condition.length > 0
 					? meta.close_condition
 					: null
+			const targets = readLoopTargets(meta)
+			const tags = readLoopTags(meta)
 
 			const stats = childStatsByLoop.get(row.id) ?? {
 				inProgressCount: 0,
@@ -352,6 +623,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				),
 			)
 			const waitingOnViewer = waitingByLoop.get(row.id) === true
+			const waitingCount = waitingCountByLoop.get(row.id) ?? 0
 
 			// Composite pill signal. `draft`/`paused` are not "live" — they render
 			// as themselves regardless of read state. The three live statuses
@@ -376,12 +648,16 @@ app.openapi(listLoopsRoute, (async (c) => {
 				pill,
 				entryCondition,
 				closeCondition,
+				tags,
+				driverId: row.driver,
 				inProgressCount: stats.inProgressCount,
 				closedCount: stats.closedCount,
 				medianTimeToCloseMs: stats.medianCloseMs,
 				agentIds,
 				triggerIds,
 				waitingOnViewer,
+				waitingCount,
+				targets,
 				createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 				updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
 			}
@@ -474,6 +750,7 @@ app.openapi(loopActivityRoute, (async (c) => {
 		'session_completed',
 		'session_failed',
 		'session_timeout',
+		'session_stopped',
 		'session_paused',
 	]
 
@@ -505,5 +782,174 @@ app.openapi(loopActivityRoute, (async (c) => {
 		events: serializeArray(rows) as z.infer<typeof eventResponseSchema>[],
 	})
 }) as RouteHandler<typeof loopActivityRoute, Env>)
+
+/**
+ * `GET /api/loops/:id/steps` — the loop-detail vertical-story renderer's data
+ * feed (Loops v4 / D6c). Returns one `LoopStep` per trigger id in
+ * `metadata.trigger_ids`, preserved in that order (a spine, not a set). Each
+ * step carries the three Loops v4 fields the renderer keys off
+ * (`handsOffToActorId`, `escalatesToActorId`, `escalateAfterMs`) plus resolved
+ * actor names for the hands-off / escalation targets so the frontend doesn't
+ * need a second lookup, and a per-viewer `waitingOnViewer` + `pendingCount`
+ * derived from sessions currently in `waiting_for_input` for that trigger.
+ *
+ * Returns `{ steps: [] }` — not 404 — for a loop with no triggers or an
+ * unknown id, mirroring `/api/loops` and `/api/loops/:id/activity` so a
+ * foreign / deleted id doesn't leak existence.
+ *
+ * This is a read-only endpoint. Step CRUD lives on the composer path
+ * (POST/PATCH /api/triggers, POST/DELETE /api/relationships) — D6 is a READ
+ * rewrite (see SPEC rabbit hole).
+ */
+const loopStepsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/steps',
+	tags: ['loops'],
+	summary: 'Vertical-story step spine for one loop',
+	description:
+		"Returns the loop's ordered step spine — one row per trigger id in `metadata.trigger_ids`, with hands-off / escalates fields and per-viewer waiting-on-viewer counts pre-resolved so the vertical-story renderer can spread it as-is. Empty array for a loop with no triggers or an unknown id.",
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			description: 'Ordered LoopStep spine (may be empty)',
+			content: { 'application/json': { schema: listLoopStepsResponseSchema } },
+		},
+		400: {
+			description: 'Missing workspace ID or malformed loop id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(loopStepsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: loopId } = c.req.valid('param')
+
+	const [loop] = await db
+		.select({ metadata: objects.metadata })
+		.from(objects)
+		.where(
+			and(eq(objects.id, loopId), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')),
+		)
+		.limit(1)
+
+	if (!loop) {
+		return c.json({ steps: [] })
+	}
+
+	const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+	const raw = meta.trigger_ids
+	const orderedTriggerIds = Array.isArray(raw)
+		? raw.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))
+		: []
+
+	if (orderedTriggerIds.length === 0) {
+		return c.json({ steps: [] })
+	}
+
+	// Load every trigger referenced by the loop. Foreign / deleted ids drop
+	// out silently, same tolerance as `/api/loops`.
+	const triggerRows = await db
+		.select({
+			id: triggers.id,
+			name: triggers.name,
+			type: triggers.type,
+			actionPrompt: triggers.actionPrompt,
+			config: triggers.config,
+			targetActorId: triggers.targetActorId,
+			handsOffToActorId: triggers.handsOffToActorId,
+			escalatesToActorId: triggers.escalatesToActorId,
+			escalateAfterMs: triggers.escalateAfterMs,
+		})
+		.from(triggers)
+		.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, orderedTriggerIds)))
+
+	const triggerById = new Map(triggerRows.map((t) => [t.id, t]))
+
+	// One batched actor lookup for the three per-step actor refs (target /
+	// hands-off / escalates). Missing ids, and ids of actors who are not members
+	// of this workspace, just resolve to null on the step.
+	const actorIds = new Set<string>()
+	for (const t of triggerRows) {
+		if (t.targetActorId) actorIds.add(t.targetActorId)
+		if (t.handsOffToActorId) actorIds.add(t.handsOffToActorId)
+		if (t.escalatesToActorId) actorIds.add(t.escalatesToActorId)
+	}
+	const actorRows =
+		actorIds.size > 0
+			? await db
+					.select({ id: actors.id, name: actors.name, description: actors.description })
+					.from(actors)
+					.innerJoin(
+						workspaceMembers,
+						and(
+							eq(workspaceMembers.actorId, actors.id),
+							eq(workspaceMembers.workspaceId, workspaceId),
+						),
+					)
+					.where(inArray(actors.id, Array.from(actorIds)))
+			: []
+	const actorById = new Map(actorRows.map((a) => [a.id, a]))
+
+	// Per-step waitingOnViewer + pendingCount derived from sessions currently
+	// in `waiting_for_input` for the trigger. Same shape T1's shared predicate
+	// will formalise (`packages/shared/src/loops/waiting-on-viewer.ts`) — kept
+	// inlined here for D6c so this task doesn't wait on T1 landing; the two
+	// can consolidate later when the shared helper module ships.
+	const pendingRows =
+		orderedTriggerIds.length > 0
+			? await db
+					.select({ triggerId: sessions.triggerId, count: sql<number>`COUNT(*)::int` })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.workspaceId, workspaceId),
+							inArray(sessions.triggerId, orderedTriggerIds),
+							eq(sessions.status, 'waiting_for_input'),
+						),
+					)
+					.groupBy(sessions.triggerId)
+			: []
+	const pendingByTrigger = new Map<string, number>()
+	for (const r of pendingRows) {
+		if (r.triggerId) pendingByTrigger.set(r.triggerId, r.count)
+	}
+
+	const steps = orderedTriggerIds
+		.map((triggerId) => {
+			const t = triggerById.get(triggerId)
+			if (!t) return null
+			const agent = t.targetActorId ? (actorById.get(t.targetActorId) ?? null) : null
+			const handsOffToActor = t.handsOffToActorId
+				? (actorById.get(t.handsOffToActorId) ?? null)
+				: null
+			const escalatesToActor = t.escalatesToActorId
+				? (actorById.get(t.escalatesToActorId) ?? null)
+				: null
+			const pendingCount = pendingByTrigger.get(t.id) ?? 0
+			return {
+				triggerId: t.id,
+				triggerName: t.name,
+				triggerActionPrompt: t.actionPrompt,
+				triggerType: t.type,
+				triggerConfig: (t.config as Record<string, unknown> | null) ?? undefined,
+				agent,
+				handsOffToActorId: t.handsOffToActorId,
+				escalatesToActorId: t.escalatesToActorId,
+				escalateAfterMs: t.escalateAfterMs,
+				handsOffToActor,
+				escalatesToActor,
+				waitingOnViewer: pendingCount > 0,
+				pendingCount,
+			}
+		})
+		.filter((s): s is NonNullable<typeof s> => s !== null)
+
+	return c.json({ steps })
+}) as RouteHandler<typeof loopStepsRoute, Env>)
 
 export default app

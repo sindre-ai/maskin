@@ -14,16 +14,40 @@ services:
       retries: 5
 
   seaweedfs:
-    image: chrislusf/seaweedfs
+    # Pinned, not the implicit latest tag: a deploy or a rollback pulls this
+    # exact release, so the image cannot drift between two deploys. 4.48 is
+    # what latest resolves to today (released 2026-09-28). Bump it on purpose.
+    image: chrislusf/seaweedfs:4.48
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         cat > /tmp/s3.json <<'CONF'
         {"identities":[{"name":"admin","credentials":[{"accessKey":"admin","secretKey":"admin"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
         CONF
-        exec weed server -s3 -s3.config=/tmp/s3.json -dir=/data
+        exec weed server -s3 -s3.config=/tmp/s3.json -dir=/data -metricsPort=9327 -metricsIp=0.0.0.0
     volumes:
       - seaweed_data:/data
+    # Prometheus metrics, scraped by Alloy on the host.
+    # See observability/coolify-host/ for the collector config and the
+    # disk-headroom alert this feeds.
+    #
+    # -metricsPort turns the endpoint ON. Without it `weed` serves no
+    # /metrics at all — the port flag is the switch, not just the address,
+    # so there is nothing to scrape on a default install.
+    #
+    # -metricsIp=0.0.0.0 is NOT redundant. It defaults to `-ip.bind`, which
+    # for `weed server` resolves to the container's own eth0 address (e.g.
+    # 10.0.0.3), not localhost. VERIFIED 2026-08-27 on the Coolify box: with
+    # the port flag alone, `wget http://127.0.0.1:9327/metrics` from inside
+    # the container is refused while the same request to the container IP
+    # succeeds. Binding 0.0.0.0 removes the dependency on an address that
+    # changes whenever Docker reassigns the subnet.
+    ports:
+      # Loopback-only on purpose. The endpoint is unauthenticated and exposes
+      # bucket/volume topology, so the bind address is the security boundary —
+      # the same reasoning as agent-server's loopback /metrics listener. Alloy
+      # runs on this host, so it costs nothing.
+      - "127.0.0.1:9327:9327"
 
   agent-base:
     build:
@@ -36,6 +60,17 @@ services:
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
+      args:
+        # The SPA is built inside this image, so anything the bundle needs must
+        # arrive as a build arg — .git is in .dockerignore, so the build cannot
+        # derive the commit itself the way apps/agent-server/build.mjs does.
+        #
+        # Coolify sets SOURCE_COMMIT for the deployment it is building. It
+        # becomes Faro's app.version, which is what distinguishes one release
+        # from another in Grafana. Empty here (a plain `docker compose build`
+        # outside Coolify) reports as "unknown" rather than silently looking
+        # like a real version — see apps/web/src/lib/faro.ts.
+        VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
     # No host port publish: Coolify's Traefik proxy routes the domain to this
     # container over the internal network (ports_exposes=3000). Publishing host
     # :3000 collides with the production app when both run on the same server.
@@ -68,6 +103,51 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-admin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-admin}
       S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+      # Product analytics. A variable that is not listed in this block never
+      # reaches the container, however it is set in Coolify. The server-side
+      # PostHog capture reads this key; empty disables capture.
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      # Feature flags (apps/dev/src/lib/feature-flags.ts). Same rule as above:
+      # not listed here means never in the container. All three are read once
+      # at boot, so a change needs a restart. Empty means every flag is off for
+      # everyone. FF_TESTER_ACTOR_IDS is comma separated actor ids,
+      # FF_TESTER_FEATURES is comma separated flag ids, and
+      # FF_WORKSPACE_FEATURES is comma separated workspaceId:flagId pairs.
+      FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
+      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
+      FF_WORKSPACE_FEATURES: ${FF_WORKSPACE_FEATURES:-}
+      # POST /mcp rate limit (apps/dev/src/lib/mcp-rate-limit.ts). Read once at
+      # boot, so a change needs a restart. MODE is log-only, enforce or off; empty
+      # or anything else is log-only. The boot line mcp_rate_limit_config shows the
+      # resolved values. EXEMPT_ACTOR_IDS is comma separated actor ids.
+      MASKIN_MCP_RATE_LIMIT_MODE: ${MASKIN_MCP_RATE_LIMIT_MODE:-log-only}
+      MASKIN_MCP_RATE_LIMIT_AGENT_PER_MIN: ${MASKIN_MCP_RATE_LIMIT_AGENT_PER_MIN:-600}
+      MASKIN_MCP_RATE_LIMIT_HUMAN_PER_MIN: ${MASKIN_MCP_RATE_LIMIT_HUMAN_PER_MIN:-120}
+      MASKIN_MCP_RATE_LIMIT_UNKNOWN_PER_MIN: ${MASKIN_MCP_RATE_LIMIT_UNKNOWN_PER_MIN:-300}
+      MASKIN_MCP_RATE_LIMIT_WRITE_COST: ${MASKIN_MCP_RATE_LIMIT_WRITE_COST:-3}
+      MASKIN_MCP_RATE_LIMIT_EXEMPT_ACTOR_IDS: ${MASKIN_MCP_RATE_LIMIT_EXEMPT_ACTOR_IDS:-}
+      # MCP modern-protocol flag: off or on. Read once at boot, so a change
+      # needs a restart. Empty or any other value is treated as off.
+      MASKIN_MCP_MODERN: ${MASKIN_MCP_MODERN:-off}
+      # Who is served the modern path while the flag is on: probe, slice:N,
+      # workspaces:id,id or all. Read once at boot. Empty or unparseable is
+      # treated as probe, so a bare flag flip cannot move the fleet.
+      MASKIN_MCP_MODERN_SCOPE: ${MASKIN_MCP_MODERN_SCOPE:-probe}
+      # SHA-256 hex of the canary's API key (comma separated) that scope probe
+      # admits. A hash is not secret. Empty means nobody matches, so probe
+      # behaves as off.
+      MASKIN_MCP_PROBE_KEY_SHA256: ${MASKIN_MCP_PROBE_KEY_SHA256:-}
+      # Claude login handling. Same rule as above: not listed here means never in
+      # the container. Both are read on every session launch, so a change needs
+      # an app restart only. MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED: only the
+      # literal true turns it on (the platform renews the login at launch and the
+      # agent container gets an access token, never the refresh token); empty or
+      # anything else keeps the current behaviour. CLAUDE_LAUNCH_BUFFER_MS: how
+      # much access-token life a launch must start with; empty means the 3 hour
+      # default.
+      MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED: ${MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED:-}
+      CLAUDE_LAUNCH_BUFFER_MS: ${CLAUDE_LAUNCH_BUFFER_MS:-}
       # GitHub integration (optional)
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
@@ -77,6 +157,16 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      # Keychain master key (64 hex chars). Set it in Coolify. Unset: envelope encryption
+      # is unavailable and the server logs a warning at start.
+      KEYCHAIN_MASTER_KEY: ${KEYCHAIN_MASTER_KEY:-}
+      KEYCHAIN_MASTER_KEY_PREVIOUS: ${KEYCHAIN_MASTER_KEY_PREVIOUS:-}
+      # Invite emails. Set RESEND_API_KEY and APP_URL together: with a key and no
+      # APP_URL, invite creation returns 500. Do not add EMAIL_FROM here: the
+      # email package reads it with ??, so an empty value would beat the
+      # notifications@maskin.io default.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      APP_URL: ${APP_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

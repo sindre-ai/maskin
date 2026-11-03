@@ -187,9 +187,13 @@ test.describe('Create overlay', () => {
 			expect(emptyFill).not.toBe('transparent')
 
 			await typeChip(page, 'Bet').click()
+			// The spine carries `transition-colors`, so the computed value right after
+			// the class swap is still the old colour — poll until the transition lands.
+			await expect
+				.poll(() => spine(page).evaluate((el) => getComputedStyle(el).backgroundColor))
+				.not.toBe(emptyFill)
 			const typedFill = await spine(page).evaluate((el) => getComputedStyle(el).backgroundColor)
 			expect(typedFill).not.toBe('rgba(0, 0, 0, 0)')
-			expect(typedFill).not.toBe(emptyFill)
 
 			// The pill carries text, so it must be legible against its own tint.
 			await expect(page.getByRole('button', { name: /remove bet type/i })).toBeVisible()

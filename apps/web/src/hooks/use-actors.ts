@@ -70,9 +70,13 @@ export function useUpdateActor(workspaceId?: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateActorInput }) =>
 			api.actors.update(id, data, workspaceId),
-		onSuccess: (_result, { id }) => {
+		onSuccess: (_result, { id, data }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+			// The default workspace is read back from the workspaces list (`isDefault`).
+			if (data.default_workspace_id !== undefined) {
+				queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all() })
+			}
 		},
 	})
 }

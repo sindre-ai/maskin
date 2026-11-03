@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { __resetPosthogEventBudgetForTesting } from '../../lib/analytics/event-budget'
 import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
 
 function makeFakeClient(overrides: Partial<TelemetryClient> = {}) {
@@ -9,6 +10,12 @@ function makeFakeClient(overrides: Partial<TelemetryClient> = {}) {
 }
 
 describe('RuntimeTelemetry', () => {
+	beforeEach(() => {
+		// The gauge is sampled; 0 is always under the rate, so every tick is sent.
+		vi.spyOn(Math, 'random').mockReturnValue(0)
+		__resetPosthogEventBudgetForTesting()
+	})
+
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
@@ -33,6 +40,8 @@ describe('RuntimeTelemetry', () => {
 				agent_server_url: 'local-docker',
 				session_start_latency_ms: 1234,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -57,6 +66,8 @@ describe('RuntimeTelemetry', () => {
 				duration_ms: 5000,
 				agent_server_url: 'local-docker',
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -79,6 +90,8 @@ describe('RuntimeTelemetry', () => {
 				agent_server_url: 'local-docker',
 				host_isolation_ok: true,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -98,7 +111,10 @@ describe('RuntimeTelemetry', () => {
 			properties: {
 				agent_server_url: 'https://agent-server-finland.maskin.internal',
 				concurrent_count: 47,
+				sample_rate: 0.1,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
 		})
 	})
@@ -227,7 +243,142 @@ describe('RuntimeTelemetry', () => {
 				end_reason: 'user_stopped',
 				duration_ms: 8,
 				$process_person_profile: false,
+				surface: 'backend',
+				actor_type: 'system',
 			},
+		})
+	})
+
+	describe('runtime_session_ended duplicate guard', () => {
+		const ended = (sessionId: string) => ({
+			sessionId,
+			endReason: 'failed' as const,
+			durationMs: 1,
+		})
+
+		it('sends one event per session however many times the end is recorded', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client })
+
+			for (let i = 0; i < 1000; i++) telemetry.recordSessionEnded(ended('sess-loop'))
+
+			expect(capture).toHaveBeenCalledTimes(1)
+		})
+
+		it('still sends one event for each distinct session', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client })
+
+			telemetry.recordSessionEnded(ended('sess-a'))
+			telemetry.recordSessionEnded(ended('sess-b'))
+			telemetry.recordSessionEnded(ended('sess-a'))
+
+			expect(capture.mock.calls.map(([p]) => p.distinctId)).toEqual(['sess-a', 'sess-b'])
+		})
+
+		it('does not suppress other events for the same session', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client })
+
+			telemetry.recordSessionStarted({
+				sessionId: 'sess-a',
+				agentServerUrl: 'local-docker',
+				sessionStartLatencyMs: 1,
+			})
+			telemetry.recordSessionEnded(ended('sess-a'))
+			telemetry.recordSessionEnded(ended('sess-a'))
+
+			expect(capture.mock.calls.map(([p]) => p.event)).toEqual([
+				'runtime_session_started',
+				'runtime_session_ended',
+			])
+		})
+
+		it('forgets the oldest session once the limit is reached, so memory stays bounded', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDedupLimit: 2 })
+
+			telemetry.recordSessionEnded(ended('sess-1'))
+			telemetry.recordSessionEnded(ended('sess-2'))
+			telemetry.recordSessionEnded(ended('sess-3')) // evicts sess-1
+			telemetry.recordSessionEnded(ended('sess-3')) // still remembered
+			telemetry.recordSessionEnded(ended('sess-1')) // forgotten, sends again
+
+			expect(capture.mock.calls.map(([p]) => p.distinctId)).toEqual([
+				'sess-1',
+				'sess-2',
+				'sess-3',
+				'sess-1',
+			])
+		})
+
+		it('sends every call when the limit is 0', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDedupLimit: 0 })
+
+			telemetry.recordSessionEnded(ended('sess-a'))
+			telemetry.recordSessionEnded(ended('sess-a'))
+
+			expect(capture).toHaveBeenCalledTimes(2)
+		})
+	})
+
+	describe('runtime_session_ended daily cap', () => {
+		const ended = (sessionId: string) => ({
+			sessionId,
+			endReason: 'failed' as const,
+			durationMs: 1,
+		})
+
+		it('stops sending once the day is full, even for new session ids', () => {
+			vi.useFakeTimers()
+			vi.setSystemTime(new Date('2026-10-26T10:00:00Z'))
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDailyCap: 3 })
+
+			for (let i = 0; i < 100; i++) telemetry.recordSessionEnded(ended(`sess-${i}`))
+
+			expect(capture).toHaveBeenCalledTimes(3)
+		})
+
+		it('starts counting again on the next UTC day', () => {
+			vi.useFakeTimers()
+			vi.setSystemTime(new Date('2026-10-26T23:59:00Z'))
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDailyCap: 2 })
+
+			for (let i = 0; i < 5; i++) telemetry.recordSessionEnded(ended(`day1-${i}`))
+			vi.setSystemTime(new Date('2026-10-27T00:01:00Z'))
+			for (let i = 0; i < 5; i++) telemetry.recordSessionEnded(ended(`day2-${i}`))
+
+			expect(capture).toHaveBeenCalledTimes(4)
+		})
+
+		it('does not cap other events', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDailyCap: 1 })
+
+			telemetry.recordSessionEnded(ended('sess-a'))
+			telemetry.recordSessionEnded(ended('sess-b'))
+			telemetry.recordCrossSessionCheck({
+				sessionId: 'sess-b',
+				agentServerUrl: 'local-docker',
+				hostIsolationOk: true,
+			})
+
+			expect(capture.mock.calls.map(([p]) => p.event)).toEqual([
+				'runtime_session_ended',
+				'runtime_cross_session_check',
+			])
+		})
+
+		it('sends every call when the cap is 0', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ client, endedDailyCap: 0 })
+
+			for (let i = 0; i < 10; i++) telemetry.recordSessionEnded(ended(`sess-${i}`))
+
+			expect(capture).toHaveBeenCalledTimes(10)
 		})
 	})
 })

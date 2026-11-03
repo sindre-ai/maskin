@@ -1,0 +1,176 @@
+{
+	"note": "Hand-authored in the documented Docs API documents.get response shape (fields: documentId,title,revisionId,body.content). Not a live recording.",
+	"interactions": [
+		{
+			"match": { "path": "/v1/documents/doc-plan" },
+			"status": 200,
+			"body": {
+				"documentId": "doc-plan",
+				"title": "Quarterly plan",
+				"revisionId": "rev-42",
+				"body": {
+					"content": [
+						{ "endIndex": 1, "sectionBreak": { "sectionStyle": {} } },
+						{
+							"startIndex": 1,
+							"endIndex": 16,
+							"paragraph": {
+								"paragraphStyle": { "namedStyleType": "HEADING_1" },
+								"elements": [
+									{ "startIndex": 1, "endIndex": 16, "textRun": { "content": "Quarterly plan\n" } }
+								]
+							}
+						},
+						{
+							"startIndex": 16,
+							"endIndex": 31,
+							"paragraph": {
+								"paragraphStyle": { "namedStyleType": "NORMAL_TEXT" },
+								"elements": [
+									{
+										"startIndex": 16,
+										"endIndex": 22,
+										"textRun": { "content": "Revenue", "textStyle": { "bold": true } }
+									},
+									{ "startIndex": 22, "endIndex": 31, "textRun": { "content": " is up.\n" } }
+								]
+							}
+						},
+						{
+							"startIndex": 31,
+							"endIndex": 50,
+							"paragraph": {
+								"paragraphStyle": { "namedStyleType": "NORMAL_TEXT" },
+								"bullet": { "listId": "kix.a" },
+								"elements": [
+									{
+										"startIndex": 31,
+										"endIndex": 50,
+										"textRun": { "content": "Hire two engineers\n" }
+									}
+								]
+							}
+						},
+						{
+							"startIndex": 50,
+							"endIndex": 64,
+							"paragraph": {
+								"paragraphStyle": { "namedStyleType": "NORMAL_TEXT" },
+								"bullet": { "listId": "kix.a", "nestingLevel": 1 },
+								"elements": [
+									{ "startIndex": 50, "endIndex": 64, "textRun": { "content": "Backend first\n" } }
+								]
+							}
+						},
+						{
+							"startIndex": 64,
+							"endIndex": 70,
+							"paragraph": {
+								"paragraphStyle": { "namedStyleType": "HEADING_2" },
+								"elements": [
+									{ "startIndex": 64, "endIndex": 70, "textRun": { "content": "Risks\n" } }
+								]
+							}
+						},
+						{
+							"startIndex": 70,
+							"endIndex": 100,
+							"table": {
+								"rows": 2,
+								"columns": 2,
+								"tableRows": [
+									{
+										"tableCells": [
+											{
+												"content": [
+													{
+														"startIndex": 72,
+														"endIndex": 77,
+														"paragraph": { "elements": [{ "textRun": { "content": "Risk\n" } }] }
+													}
+												]
+											},
+											{
+												"content": [
+													{
+														"startIndex": 78,
+														"endIndex": 84,
+														"paragraph": { "elements": [{ "textRun": { "content": "Owner\n" } }] }
+													}
+												]
+											}
+										]
+									},
+									{
+										"tableCells": [
+											{
+												"content": [
+													{
+														"startIndex": 86,
+														"endIndex": 92,
+														"paragraph": { "elements": [{ "textRun": { "content": "Churn\n" } }] }
+													}
+												]
+											},
+											{
+												"content": [
+													{
+														"startIndex": 93,
+														"endIndex": 97,
+														"paragraph": { "elements": [{ "textRun": { "content": "Ana\n" } }] }
+													},
+													{
+														"startIndex": 97,
+														"endIndex": 99,
+														"paragraph": { "elements": [{ "textRun": { "content": "EU\n" } }] }
+													}
+												]
+											}
+										]
+									}
+								]
+							}
+						},
+						{
+							"startIndex": 100,
+							"endIndex": 117,
+							"paragraph": {
+								"paragraphStyle": { "namedStyleType": "NORMAL_TEXT" },
+								"bullet": { "listId": "kix.b" },
+								"elements": [
+									{
+										"startIndex": 100,
+										"endIndex": 117,
+										"textRun": { "content": "Second list item\n" }
+									}
+								]
+							}
+						},
+						{
+							"startIndex": 117,
+							"endIndex": 128,
+							"paragraph": {
+								"paragraphStyle": { "namedStyleType": "NORMAL_TEXT" },
+								"bullet": { "listId": "kix.c" },
+								"elements": [
+									{ "startIndex": 117, "endIndex": 128, "textRun": { "content": "Other list\n" } }
+								]
+							}
+						}
+					]
+				}
+			}
+		},
+		{
+			"match": { "path": "/v1/documents/doc-missing" },
+			"status": 404,
+			"body": {
+				"error": {
+					"code": 404,
+					"message": "Requested entity was not found.",
+					"status": "NOT_FOUND"
+				}
+			}
+		}
+	]
+}

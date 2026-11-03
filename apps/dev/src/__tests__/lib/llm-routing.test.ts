@@ -15,16 +15,30 @@ vi.mock('../../lib/crypto', () => ({
 	encrypt: (input: string) => input,
 }))
 
+import { API_KEY_CREDIT_MARK_WINDOW_MS, fingerprintStoredKey } from '../../lib/api-key-credit-mark'
 import {
-	FallbackQuotaExceededError,
+	PRO_HARD_CAP_DEFAULT_USD_CENTS,
+	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
+} from '../../lib/billing-defaults'
+import { preflightLlmCredentials } from '../../lib/llm-routing'
+import {
+	CREDENTIAL_RESOLUTION_TIMEOUT_MS,
+	CredentialResolutionTimeoutError,
+	LEGACY_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
+	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
-	LLM_ROUTE_SYSTEM_FALLBACK,
-	getActorFallbackTokenUsage24h,
+	LlmCredentialsUnavailableError,
+	PlanCapExceededError,
+	ceilCents,
+	checkPlanCap,
+	getWorkspacePlanUsdCentsUsage,
 	readFallbackConfig,
+	resolveChatCredentials,
 	resolveLlmRoute,
+	withCredentialResolutionTimeout,
 } from '../../lib/llm-routing'
 import type { WorkspaceSettings } from '../../lib/types'
 
@@ -34,12 +48,23 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_BASE_URL',
 	'MASKIN_FALLBACK_MODEL',
 	'MASKIN_FALLBACK_SMALL_MODEL',
-	'MASKIN_FALLBACK_DAILY_TOKEN_LIMIT',
+	'MASKIN_FALLBACK_ZDR',
+	'MASKIN_FALLBACK_PROVIDER_IGNORE',
+	'MASKIN_FALLBACK_PROVIDER_ONLY',
+	'MASKIN_FALLBACK_TTFT_TIMEOUT_MS',
+	'MASKIN_TEXT_ONLY_MODELS',
 ] as const
 
 beforeEach(() => {
 	for (const k of FALLBACK_ENV_KEYS) delete process.env[k]
+	// Most tests are not about the provider allow list (it defaults on); the
+	// 'provider allow list' blocks below pin the default and the override.
+	process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'none'
 	process.env.MASKIN_CLAUDE_FAILOVER_ENABLED = undefined
+	// These tests are about route priority, not refresh behaviour: keep the
+	// platform refresh off so a fixture token never triggers a real refresh call.
+	// The flag-on contract is in claude-launch-refresh.test.ts.
+	process.env.MASKIN_CLAUDE_PLATFORM_REFRESH_ENABLED = 'false'
 })
 
 afterEach(() => {
@@ -69,7 +94,7 @@ function emptySettings(): WorkspaceSettings {
  * workspace" and returns null without touching claude_oauth data.
  */
 function dbWithFallbackUsage(
-	rows: Array<{ inputTokens: number; outputTokens: number }>,
+	rows: Array<{ inputTokens: number; outputTokens: number; totalCostUsd?: string | null }>,
 	workspaceRow?: { id: string; settings: Record<string, unknown> },
 ) {
 	const where = vi.fn(() => {
@@ -86,6 +111,10 @@ function dbWithFallbackUsage(
 	} as unknown as Database
 }
 
+// Same shape as dbWithFallbackUsage — the workspace-plan query has the same
+// drizzle call chain (select → from → where). Aliased for readability.
+const dbWithSessionUsage = dbWithFallbackUsage
+
 function claudeOAuthWorkspaceRow(claudeOAuth: Record<string, unknown>): {
 	id: string
 	settings: Record<string, unknown>
@@ -97,7 +126,6 @@ describe('readFallbackConfig', () => {
 	it('returns undefined apiKey when env not set', () => {
 		const cfg = readFallbackConfig({})
 		expect(cfg.apiKey).toBeUndefined()
-		expect(cfg.dailyTokenLimit).toBe(550_000)
 	})
 
 	it('falls back to default model when small model not set', () => {
@@ -107,33 +135,6 @@ describe('readFallbackConfig', () => {
 		})
 		expect(cfg.smallModel).toBe('foo/bar')
 	})
-
-	it('uses default 550k limit on invalid input', () => {
-		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: 'not-a-number' })
-		expect(cfg.dailyTokenLimit).toBe(550_000)
-	})
-
-	it('rejects negative limits and falls back to default', () => {
-		const cfg = readFallbackConfig({ MASKIN_FALLBACK_DAILY_TOKEN_LIMIT: '-100' })
-		expect(cfg.dailyTokenLimit).toBe(550_000)
-	})
-})
-
-describe('getActorFallbackTokenUsage24h', () => {
-	it('sums input + output tokens, treating null as 0', async () => {
-		const db = dbWithFallbackUsage([
-			{ inputTokens: 1000, outputTokens: 200 },
-			{ inputTokens: 0, outputTokens: 50 },
-			// biome-ignore lint/suspicious/noExplicitAny: simulating null DB columns
-			{ inputTokens: null as any, outputTokens: 75 },
-		])
-		expect(await getActorFallbackTokenUsage24h(db, 'actor-1')).toBe(1325)
-	})
-
-	it('returns 0 when actor has no fallback sessions', async () => {
-		const db = dbWithFallbackUsage([])
-		expect(await getActorFallbackTokenUsage24h(db, 'actor-2')).toBe(0)
-	})
 })
 
 describe('resolveLlmRoute priority order', () => {
@@ -141,6 +142,7 @@ describe('resolveLlmRoute priority order', () => {
 		db: dbWithFallbackUsage([]),
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
+		enterprise: true,
 	}
 
 	it('1. agent anthropic api_key wins over everything', async () => {
@@ -166,19 +168,19 @@ describe('resolveLlmRoute priority order', () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
-			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-sonnet-4-6' },
+			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_AGENT)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
-	it('omits ANTHROPIC_MODEL when agent has no model preference', async () => {
+	it('defaults ANTHROPIC_MODEL to Sonnet when agent has no model preference', async () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
 			agent: { provider: 'anthropic', apiKey: 'sk-agent' },
 		})
-		expect(result?.envVars.ANTHROPIC_MODEL).toBeUndefined()
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('returns null for non-anthropic agent override (caller handles)', async () => {
@@ -190,7 +192,17 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result).toBeNull()
 	})
 
-	it('2. workspace custom_llm overrides Claude OAuth', async () => {
+	it('2. Claude OAuth overrides custom_llm', async () => {
+		const db = dbWithFallbackUsage(
+			[],
+			claudeOAuthWorkspaceRow({
+				encryptedAccessToken: 'oauth-access',
+				encryptedRefreshToken: 'oauth-refresh',
+				// Beyond the 10 min refresh buffer so the resolver doesn't try to
+				// hit the real refresh endpoint from the unit test.
+				expiresAt: Date.now() + 60 * 60 * 1000,
+			}),
+		)
 		const settings = emptySettings()
 		settings.custom_llm = {
 			enabled: true,
@@ -199,20 +211,17 @@ describe('resolveLlmRoute priority order', () => {
 			model: 'deepseek/deepseek-v4-flash',
 		}
 		const result = await resolveLlmRoute({
-			...baseParams,
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
 			wsSettings: settings,
+			enterprise: true,
 			agent: {},
 		})
-		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
-		expect(result?.envVars).toMatchObject({
-			ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
-			ANTHROPIC_AUTH_TOKEN: 'sk-or-test',
-			ANTHROPIC_API_KEY: '',
-			ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
-			ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
-		})
-		// OAuth env vars should NOT be set when custom_llm wins.
-		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBeUndefined()
+		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
+		expect(result?.envVars.CLAUDE_OAUTH_ACCESS_TOKEN).toBe('oauth-access')
+		// custom_llm env vars should NOT be set when OAuth wins.
+		expect(result?.envVars.ANTHROPIC_BASE_URL).toBeUndefined()
 	})
 
 	it('2b. agent-level model preference is NOT forwarded on the custom_llm route (workspace-configured model wins)', async () => {
@@ -226,7 +235,7 @@ describe('resolveLlmRoute priority order', () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: settings,
-			agent: { model: 'claude-sonnet-4-6' },
+			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
 		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
@@ -264,6 +273,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
+			enterprise: true,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
@@ -277,7 +287,7 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBeUndefined()
 	})
 
-	it('3b. agent-level model preference is forwarded on the OAuth route', async () => {
+	it('3b. the OAuth route always uses Sonnet 5.5 at high effort, ignoring the agent model', async () => {
 		const expiresAt = Date.now() + 60 * 60 * 1000
 		const db = dbWithFallbackUsage(
 			[],
@@ -294,10 +304,12 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: emptySettings(),
-			agent: { model: 'claude-sonnet-4-6' },
+			enterprise: true,
+			agent: { model: 'some-other-model' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
+		expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBe('high')
 	})
 
 	it('4. workspace api_key when OAuth absent', async () => {
@@ -312,16 +324,28 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
 	})
 
+	it('4a. workspace api_key route defaults to Sonnet when the agent has no model', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+		const result = await resolveLlmRoute({
+			...baseParams,
+			wsSettings: settings,
+			agent: {},
+		})
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
+	})
+
 	it('4b. agent-level model preference is forwarded on the workspace api_key route', async () => {
 		const settings = emptySettings()
 		settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: settings,
-			agent: { model: 'claude-opus-4-7' },
+			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-opus-4-7')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('falls through OAuth errors to next route', async () => {
@@ -342,40 +366,10 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
+			enterprise: true,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
-	})
-
-	it('5. system fallback when nothing else set and env configured', async () => {
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
-		process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
-		process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
-		const result = await resolveLlmRoute({
-			...baseParams,
-			wsSettings: emptySettings(),
-			agent: {},
-		})
-		expect(result?.route).toBe(LLM_ROUTE_SYSTEM_FALLBACK)
-		expect(result?.envVars).toMatchObject({
-			ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
-			ANTHROPIC_AUTH_TOKEN: 'sk-or-system',
-			ANTHROPIC_API_KEY: '',
-			ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
-		})
-	})
-
-	it('5b. agent-level model preference is NOT forwarded on the system fallback route (operator-configured model wins)', async () => {
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
-		process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
-		process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
-		const result = await resolveLlmRoute({
-			...baseParams,
-			wsSettings: emptySettings(),
-			agent: { model: 'claude-sonnet-4-6' },
-		})
-		expect(result?.route).toBe(LLM_ROUTE_SYSTEM_FALLBACK)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
 	})
 
 	it('returns null when nothing is configured', async () => {
@@ -387,35 +381,1298 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result).toBeNull()
 	})
 
-	it('throws FallbackQuotaExceededError when over the daily limit', async () => {
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
-		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
-		const db = dbWithFallbackUsage([
-			{ inputTokens: 800, outputTokens: 250 }, // 1050 > 1000
-		])
-		await expect(
-			resolveLlmRoute({
+	describe('maskin_plan route', () => {
+		beforeEach(() => {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+			process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
+			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
+		})
+
+		it.each(['pro', 'team', 'trial'] as const)(
+			'%s plan routes through Maskin OR + Deepseek v4 Flash',
+			async (plan) => {
+				const settings = emptySettings()
+				settings.billing = { plan }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					// Maskin-funded => not enterprise. Route 5 is gated on the
+					// entitlement as well as the plan, so say so explicitly.
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
+				expect(result?.envVars).toMatchObject({
+					ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+					ANTHROPIC_AUTH_TOKEN: 'sk-or-maskin',
+					ANTHROPIC_API_KEY: '',
+					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
+					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
+				})
+				// Thinking is off (MAX_THINKING_TOKENS=0) because DeepSeek maps low
+				// effort to high, so effort alone leaves the hidden reasoning in place.
+				// Web search is off because OpenRouter cannot run the CLI's server-side tool.
+				expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBe('low')
+				expect(result?.envVars.MAX_THINKING_TOKENS).toBe('0')
+				expect(result?.envVars.MASKIN_DISABLE_WEB_SEARCH).toBe('1')
+				// modelName carries through to `sessions.model_name` — the local
+				// cost resolver keys OpenRouter's pricing table on it.
+				expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
+			},
+		)
+
+		describe('image stripping for text-only models', () => {
+			async function resolveEnv(model: string) {
+				process.env.MASKIN_FALLBACK_MODEL = model
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('asks the container to strip images for a text-only model', async () => {
+				const env = await resolveEnv('deepseek/deepseek-v4-flash-0731')
+				expect(env?.MASKIN_STRIP_IMAGES).toBe('1')
+			})
+
+			it('leaves a vision model alone so it receives images unchanged', async () => {
+				const env = await resolveEnv('anthropic/claude-sonnet-4.5')
+				expect(env?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+
+			it.each(['', 'none', ' NONE '])(
+				'MASKIN_TEXT_ONLY_MODELS=%j turns stripping off',
+				async (value) => {
+					process.env.MASKIN_TEXT_ONLY_MODELS = value
+					const env = await resolveEnv('deepseek/deepseek-v4-flash')
+					expect(env?.MASKIN_STRIP_IMAGES).toBeUndefined()
+				},
+			)
+
+			it('MASKIN_TEXT_ONLY_MODELS replaces the default list when set', async () => {
+				process.env.MASKIN_TEXT_ONLY_MODELS = 'foo, Bar'
+				expect((await resolveEnv('acme/BAR-1'))?.MASKIN_STRIP_IMAGES).toBe('1')
+				const deepseek = await resolveEnv('deepseek/deepseek-v4-flash')
+				expect(deepseek?.MASKIN_STRIP_IMAGES).toBeUndefined()
+			})
+		})
+
+		describe('provider block list', () => {
+			async function resolveEnv() {
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('hands the container the list through MASKIN_PROVIDER_PREFS', async () => {
+				process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({ ignore: ['CoreWeave'] })
+			})
+
+			it('sets no MASKIN_PROVIDER_PREFS when the list is empty', async () => {
+				expect(await resolveEnv()).not.toHaveProperty('MASKIN_PROVIDER_PREFS')
+			})
+		})
+
+		describe('provider allow list', () => {
+			async function resolveEnv() {
+				const settings = emptySettings()
+				settings.billing = { plan: 'pro' }
+				const result = await resolveLlmRoute({
+					...baseParams,
+					enterprise: false,
+					db: dbWithSessionUsage([]),
+					wsSettings: settings,
+					agent: {},
+				})
+				return result?.envVars
+			}
+
+			it('restricts agent sessions to DigitalOcean and GMICloud by default', async () => {
+				Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
+					only: ['digitalocean', 'gmicloud'],
+				})
+			})
+
+			it('asks the proxy to guard time to first token at 8s by default', async () => {
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('8000')
+			})
+
+			it('takes the first-token timeout from MASKIN_FALLBACK_TTFT_TIMEOUT_MS', async () => {
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = '6000'
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBe('6000')
+			})
+
+			it.each(['0', 'none', 'abc', '-5'])('turns the guard off for %s', async (value) => {
+				process.env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS = value
+				expect((await resolveEnv())?.MASKIN_TTFT_TIMEOUT_MS).toBeUndefined()
+			})
+
+			it('sends the allow list together with the block list', async () => {
+				process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'digitalocean'
+				process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({
+					only: ['digitalocean'],
+					ignore: ['CoreWeave'],
+				})
+			})
+
+			it('sends no zdr to agent sessions even when it is on', async () => {
+				process.env.MASKIN_FALLBACK_ZDR = '1'
+				process.env.MASKIN_FALLBACK_PROVIDER_ONLY = 'digitalocean'
+				const env = await resolveEnv()
+				expect(JSON.parse(env?.MASKIN_PROVIDER_PREFS ?? 'null')).toEqual({ only: ['digitalocean'] })
+			})
+		})
+
+		it('maskin_plan is only used when no BYO credentials are present', async () => {
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				enterprise: false,
+				db: dbWithSessionUsage([]),
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
+			expect(result?.envVars.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-maskin')
+		})
+
+		it('OAuth wins over maskin_plan — never counts against cap', async () => {
+			const db = dbWithSessionUsage(
+				[],
+				claudeOAuthWorkspaceRow({
+					encryptedAccessToken: 'oauth-access',
+					encryptedRefreshToken: 'r',
+					expiresAt: Date.now() + 60 * 60 * 1000,
+				}),
+			)
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			const result = await resolveLlmRoute({
+				...baseParams,
 				db,
-				workspaceId: 'ws-1',
-				actorId: 'actor-1',
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_OAUTH)
+		})
+
+		it('custom_llm wins over maskin_plan', async () => {
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			settings.custom_llm = {
+				enabled: true,
+				base_url: 'https://example.com',
+				api_key: 'sk-cust',
+				model: 'mod',
+			}
+			const result = await resolveLlmRoute({
+				...baseParams,
+				db: dbWithSessionUsage([]),
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		})
+
+		it('workspace api_key wins over maskin_plan', async () => {
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			settings.llm_keys = { anthropic: 'sk-ant-x' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				db: dbWithSessionUsage([]),
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		})
+
+		it('agent anthropic api_key still wins over paid plan', async () => {
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				wsSettings: settings,
+				agent: { provider: 'anthropic', apiKey: 'sk-agent' },
+			})
+			expect(result?.route).toBe(LLM_ROUTE_AGENT)
+		})
+
+		// The stored plan is NOT a reliable signal of enterprise status:
+		// `plan: 'enterprise'` is only written once a BYO credential is actually
+		// connected (billingAfterByoTransition), and absent billing defaults to
+		// 'trial'. So an entitled workspace whose BYO credential is missing or
+		// broken reaches route 5 with a stored plan that Maskin funds — and would
+		// spend Maskin's OpenRouter key on a customer who pays for their own LLM.
+		// The gate has to be the entitlement, not the plan.
+		it('an enterprise workspace still stored as trial does NOT reach maskin_plan', async () => {
+			const settings = emptySettings()
+			settings.billing = { plan: 'trial' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				enterprise: true,
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result).toBeNull()
+		})
+
+		it('an enterprise workspace with NO billing block does NOT reach maskin_plan', async () => {
+			const result = await resolveLlmRoute({
+				...baseParams,
+				enterprise: true,
 				wsSettings: emptySettings(),
 				agent: {},
-			}),
-		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
+			})
+			expect(result).toBeNull()
+		})
+
+		it('enterprise plan does NOT route through maskin_plan', async () => {
+			const settings = emptySettings()
+			settings.billing = { plan: 'enterprise' }
+			settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+			expect(result?.envVars.ANTHROPIC_API_KEY).toBe('sk-ant-from-ws')
+		})
+
+		it('falls through when paid plan is set but operator OR key is missing', async () => {
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = ''
+			const settings = emptySettings()
+			settings.billing = { plan: 'pro' }
+			settings.llm_keys = { anthropic: 'sk-ant-recover' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		})
+
+		it('no billing block defaults to trial and routes through maskin_plan when no BYO set', async () => {
+			const result = await resolveLlmRoute({
+				...baseParams,
+				// The absent-billing default is 'trial', which Maskin funds — but only
+				// for a non-entitled workspace. The enterprise counterpart of this
+				// case is covered above and must resolve to null.
+				enterprise: false,
+				db: dbWithSessionUsage([]),
+				wsSettings: emptySettings(),
+				agent: {},
+			})
+			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
+		})
+	})
+})
+
+describe('getWorkspacePlanUsdCentsUsage', () => {
+	it("sums each session's reported dollar cost, falling back to a flat token rate when unreported", async () => {
+		const db = dbWithSessionUsage([
+			{ totalCostUsd: '1.00', inputTokens: 0, outputTokens: 0 },
+			{ totalCostUsd: '0.50', inputTokens: 0, outputTokens: 0 },
+			// No reported cost — falls back to LEGACY_TOKENS_PER_USD_CENT
+			// (200,000 tokens/cent): 16,000 tokens -> 0.08 cents, which rounds up
+			// to the whole cent on the aggregate below.
+			{ totalCostUsd: null, inputTokens: 16_000, outputTokens: 0 },
+		])
+		expect(await getWorkspacePlanUsdCentsUsage(db, 'ws-1', 0)).toBe(151)
 	})
 
-	it('does NOT consume the fallback when usage is exactly at the limit', async () => {
-		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-system'
-		process.env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT = '1000'
-		const db = dbWithFallbackUsage([{ inputTokens: 1000, outputTokens: 0 }])
+	it('returns 0 when the workspace has no maskin_plan sessions', async () => {
+		const db = dbWithSessionUsage([])
+		expect(await getWorkspacePlanUsdCentsUsage(db, 'ws-2')).toBe(0)
+	})
+})
+
+describe('checkPlanCap', () => {
+	const ORIG_TRIAL_CAP = process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS
+
+	afterEach(() => {
+		if (ORIG_TRIAL_CAP === undefined) process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = undefined
+		else process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = ORIG_TRIAL_CAP
+	})
+
+	it('treats missing billing as trial — enforces cap when over limit', async () => {
+		// Trial default is $10.00 (1,000 cents); $10.01 of reported cost is over.
+		const db = dbWithSessionUsage([{ totalCostUsd: '10.01', inputTokens: 0, outputTokens: 0 }])
+		const err = await checkPlanCap({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: emptySettings(),
+			enterprise: false,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(PlanCapExceededError)
+		expect(err.plan).toBe('trial')
+		expect(err.cap).toBe(1_000)
+	})
+
+	it('is a no-op for enterprise — explicit opt-out', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'enterprise', hard_cap_usd_cents: 100, period_start: 0 }
+		const db = dbWithSessionUsage([{ totalCostUsd: '99.00', inputTokens: 0, outputTokens: 0 }])
+		await expect(
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+		).resolves.toBeUndefined()
+	})
+
+	// Regression: this pair used to assert the opposite — that a paid plan with
+	// no `hard_cap_usd_cents` yet was uncapped. That window is real (delayed or
+	// failed Stripe webhook) and it let a pro/team workspace spend without
+	// bound on Maskin's OpenRouter account. The cap now falls back to the
+	// plan's published default instead of to infinity.
+	it.each([
+		['pro', PRO_HARD_CAP_DEFAULT_USD_CENTS],
+		['team', TEAM_HARD_CAP_DEFAULT_USD_CENTS],
+	] as const)(
+		'falls back to the %s default cap when Stripe has not written hard_cap_usd_cents',
+		async (plan, capCents) => {
+			const settings = emptySettings()
+			settings.billing = { plan, period_start: Math.floor(Date.now() / 1000) - 60 }
+			// One cent over the plan's default cap.
+			const overCapUsd = ((capCents + 1) / 100).toFixed(2)
+			const db = dbWithSessionUsage([{ totalCostUsd: overCapUsd, inputTokens: 0, outputTokens: 0 }])
+			await expect(
+				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+			).rejects.toBeInstanceOf(PlanCapExceededError)
+		},
+	)
+
+	it.each([
+		['pro', PRO_HARD_CAP_DEFAULT_USD_CENTS],
+		['team', TEAM_HARD_CAP_DEFAULT_USD_CENTS],
+	] as const)(
+		'stays under the %s default cap when usage has not reached it',
+		async (plan, capCents) => {
+			const settings = emptySettings()
+			settings.billing = { plan, period_start: Math.floor(Date.now() / 1000) - 60 }
+			const underCapUsd = ((capCents - 1) / 100).toFixed(2)
+			const db = dbWithSessionUsage([
+				{ totalCostUsd: underCapUsd, inputTokens: 0, outputTokens: 0 },
+			])
+			await expect(
+				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+			).resolves.toBeUndefined()
+		},
+	)
+
+	it('throws PlanCapExceededError when usage equals hard_cap_usd_cents', async () => {
+		// period_start is stored in Unix SECONDS (Stripe format).
+		const periodStartSec = Math.floor(Date.now() / 1000) - 60
+		const settings = emptySettings()
+		settings.billing = {
+			plan: 'pro',
+			hard_cap_usd_cents: 1_000,
+			period_start: periodStartSec,
+		}
+		const db = dbWithSessionUsage([
+			{ totalCostUsd: '10.00', inputTokens: 0, outputTokens: 0 }, // exactly at cap ($10.00 = 1000¢)
+		])
+		const err = await checkPlanCap({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: settings,
+			enterprise: false,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(PlanCapExceededError)
+		expect(err.plan).toBe('pro')
+		expect(err.used).toBe(1_000)
+		expect(err.cap).toBe(1_000)
+		// period_end is in ms: period_start (seconds → ms) + 30 days.
+		expect(err.periodEnd).toBe(periodStartSec * 1000 + 30 * 24 * 60 * 60 * 1000)
+	})
+
+	it('honors explicit period_end on the error payload', async () => {
+		// period_start / period_end are Unix SECONDS; periodEnd on the error is MS.
+		const settings = emptySettings()
+		settings.billing = {
+			plan: 'pro',
+			hard_cap_usd_cents: 1,
+			period_start: 1,
+			period_end: 999_999,
+		}
+		const db = dbWithSessionUsage([{ totalCostUsd: '0.01', inputTokens: 0, outputTokens: 0 }])
+		const err = await checkPlanCap({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: settings,
+			enterprise: false,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(PlanCapExceededError)
+		expect(err.periodEnd).toBe(999_999 * 1000)
+	})
+
+	it('uses MASKIN_TRIAL_HARD_CAP_USD_CENTS when trial has no explicit cap', async () => {
+		process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = '50'
+		const settings = emptySettings()
+		settings.billing = { plan: 'trial' }
+		const db = dbWithSessionUsage([{ totalCostUsd: '0.50', inputTokens: 0, outputTokens: 0 }])
+		const err = await checkPlanCap({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: settings,
+			enterprise: false,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(PlanCapExceededError)
+		expect(err.plan).toBe('trial')
+		expect(err.cap).toBe(50)
+		// Trial with no period_start has periodEnd: null — frontend handles it.
+		expect(err.periodEnd).toBeNull()
+	})
+
+	it('falls back to the $10.00 trial default when env var is unset/invalid', async () => {
+		process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = undefined
+		const settings = emptySettings()
+		settings.billing = { plan: 'trial' }
+		const db = dbWithSessionUsage([{ totalCostUsd: '10.00', inputTokens: 0, outputTokens: 0 }])
+		await expect(
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+		).rejects.toBeInstanceOf(PlanCapExceededError)
+	})
+
+	it('explicit billing.hard_cap_usd_cents overrides the trial default', async () => {
+		process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = '50'
+		const settings = emptySettings()
+		settings.billing = { plan: 'trial', hard_cap_usd_cents: 200 }
+		const db = dbWithSessionUsage([{ totalCostUsd: '0.60', inputTokens: 0, outputTokens: 0 }])
+		// Used (60¢) is below explicit cap (200¢) even though it exceeds env default (50¢).
+		await expect(
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+		).resolves.toBeUndefined()
+	})
+
+	it('resolveLlmRoute rejects with PlanCapExceededError when over the cap', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		const settings = emptySettings()
+		settings.billing = { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 }
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.00', inputTokens: 0, outputTokens: 0 }])
 		await expect(
 			resolveLlmRoute({
 				db,
 				workspaceId: 'ws-1',
 				actorId: 'actor-1',
-				wsSettings: emptySettings(),
+				wsSettings: settings,
+				enterprise: false,
 				agent: {},
 			}),
-		).rejects.toBeInstanceOf(FallbackQuotaExceededError)
+		).rejects.toBeInstanceOf(PlanCapExceededError)
+	})
+})
+
+describe('ceilCents', () => {
+	// The reason this helper exists rather than a bare Math.ceil: floating-point
+	// dollar→cent conversion lands a hair ABOVE an exact integer for a subset of
+	// ordinary prices, and Math.ceil then bills a whole cent that was never
+	// spent. $10.05 over a $10.00 cap is 5 cents of overage, not 6.
+	it('does not round up a value that is only above an integer by IEEE754 dust', () => {
+		expect(10.05 * 100).toBeGreaterThan(1005) // the dust this guards against
+		expect(ceilCents(10.05 * 100)).toBe(1005)
+	})
+
+	it('leaves values that already land exactly alone', () => {
+		expect(ceilCents(10.01 * 100)).toBe(1001)
+		expect(ceilCents(10.3 * 100)).toBe(1030)
+		expect(ceilCents(0)).toBe(0)
+	})
+
+	it('still rounds genuine sub-cent usage up to a whole cent', () => {
+		// The token-rate fallback is the only producer of fractional cents; its
+		// smallest non-zero output (1 / LEGACY_TOKENS_PER_USD_CENT = 5e-6)
+		// must not be snapped away to zero.
+		expect(ceilCents(1 / LEGACY_TOKENS_PER_USD_CENT)).toBe(1)
+		expect(ceilCents(1004.5)).toBe(1005)
+	})
+})
+
+// The OAuth resolver reports an unusable credential two ways: it throws, or it
+// returns null. Both must reach the caller as LlmCredentialsUnavailableError
+// when nothing else is configured — a session that launches with no
+// ANTHROPIC_* env is the failure this whole path exists to prevent.
+describe('resolveLlmRoute when the Claude OAuth route yields nothing', () => {
+	const deadSlot = {
+		encryptedAccessToken: 'oauth-access',
+		encryptedRefreshToken: 'oauth-refresh',
+		// Already expired, so the resolver must refresh — and the refresh below
+		// fails, leaving it with no usable token.
+		expiresAt: Date.now() - 60_000,
+	}
+
+	beforeEach(() => {
+		// A refresh that never succeeds: the resolver classifies this as a
+		// transport error, keeps the (expired) token, and returns null rather
+		// than throwing. That null is the branch under test.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				throw new Error('network unreachable')
+			}),
+		)
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	function paramsWithDeadOAuth(settings: WorkspaceSettings) {
+		settings.claude_oauth = deadSlot
+		return {
+			db: dbWithFallbackUsage([], claudeOAuthWorkspaceRow(deadSlot)),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: settings,
+			enterprise: true,
+			agent: {},
+			env: {} as NodeJS.ProcessEnv,
+		}
+	}
+
+	it('throws LlmCredentialsUnavailableError when no other route is configured', async () => {
+		await expect(resolveLlmRoute(paramsWithDeadOAuth(emptySettings()))).rejects.toBeInstanceOf(
+			LlmCredentialsUnavailableError,
+		)
+	})
+
+	it('carries the reason through to the persisted failure_reason', async () => {
+		const err = await resolveLlmRoute(paramsWithDeadOAuth(emptySettings())).catch((e) => e)
+		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
+		const reason = (err as LlmCredentialsUnavailableError).toFailureReason()
+		expect(reason.reason_code).toBe('not_logged_in')
+		// The resolver reports WHY, so the detail names the specific failure
+		// rather than the old catch-all "did not yield a usable token".
+		expect(reason.verbatim_output).toMatch(/could not be reached/i)
+	})
+
+	it('marks an unreachable token endpoint transient, and says so to the user', async () => {
+		// This fixture's refresh fails with a network error, not a rejection —
+		// we never learned the subscription is bad. Reporting it as permanent
+		// would tell the user to reconnect a credential that may be fine and
+		// would deny the dispatcher the retry that recovers it.
+		const err = (await resolveLlmRoute(paramsWithDeadOAuth(emptySettings())).catch(
+			(e) => e,
+		)) as LlmCredentialsUnavailableError
+		expect(err.transient).toBe(true)
+		expect(err.toFailureReason().human_message).toMatch(/usually temporary/i)
+		expect(err.toFailureReason().human_message).not.toMatch(/Connect a Claude subscription/i)
+	})
+
+	it('does NOT throw when custom_llm still resolves', async () => {
+		// The fall-through the comment in resolveLlmRoute promises: a dead
+		// subscription behind a working custom endpoint is recoverable, and
+		// turning it into a hard failure would break every such workspace.
+		const settings = emptySettings()
+		settings.custom_llm = {
+			enabled: true,
+			base_url: 'https://example.com',
+			api_key: 'sk-cust',
+			model: 'mod',
+		}
+		const result = await resolveLlmRoute(paramsWithDeadOAuth(settings))
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+	})
+
+	it('does NOT throw when the workspace anthropic key still resolves', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-ws' }
+		const result = await resolveLlmRoute(paramsWithDeadOAuth(settings))
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+	})
+
+	it('returns null (no throw) when the workspace has no OAuth configured at all', async () => {
+		// A null from a workspace with nothing connected is "route not
+		// configured", not a failure — it must keep falling through to the
+		// caller's own non-anthropic handling.
+		const result = await resolveLlmRoute({
+			db: dbWithFallbackUsage([]),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: emptySettings(),
+			enterprise: true,
+			agent: {},
+			env: {} as NodeJS.ProcessEnv,
+		})
+		expect(result).toBeNull()
+	})
+})
+
+// Route 4 leaves the workspace Anthropic key alone while it is marked out of
+// credit (api-key-credit-mark.ts). The mark's write is covered against real
+// Postgres in integration/api-key-credit-mark.test.ts; here it is given.
+describe('resolveLlmRoute with a workspace API key marked out of credit', () => {
+	const KEY = 'sk-ant-ws'
+	const MARKED_AT = Date.parse('2026-11-01T12:00:00Z')
+
+	function settingsWithMark(overrides: { at?: number; key?: string } = {}) {
+		const settings = emptySettings() as WorkspaceSettings & Record<string, unknown>
+		settings.llm_keys = { anthropic: KEY }
+		settings.anthropic_key_out_of_credit = {
+			at: overrides.at ?? MARKED_AT,
+			key: overrides.key ?? fingerprintStoredKey(KEY),
+		}
+		return settings as WorkspaceSettings
+	}
+
+	function pick(settings: WorkspaceSettings, now: number, db = dbWithFallbackUsage([])) {
+		vi.useFakeTimers({ toFake: ['Date'] })
+		vi.setSystemTime(now)
+		return resolveLlmRoute({
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: settings,
+			enterprise: true,
+			agent: {},
+			env: {} as NodeJS.ProcessEnv,
+		})
+	}
+
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('skips the key inside the window and fails the start with the credit reason', async () => {
+		const err = await pick(settingsWithMark(), MARKED_AT + 60_000).catch((e) => e)
+		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
+		expect(err.apiKeyOutOfCredit).toBe(true)
+		expect(err.transient).toBe(false)
+		expect(err.noCredentialsConfigured).toBe(false)
+		expect(err.toFailureReason()).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'credit_balance_low',
+		})
+		expect(err.toFailureReason().human_message).toMatch(/run out of credit/i)
+	})
+
+	it('tries the key again once 30 minutes have passed', async () => {
+		const result = await pick(settingsWithMark(), MARKED_AT + API_KEY_CREDIT_MARK_WINDOW_MS + 1)
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+		expect(result?.envVars.ANTHROPIC_API_KEY).toBe(KEY)
+	})
+
+	it('ignores a mark written for a key that has since been replaced', async () => {
+		const settings = settingsWithMark({ key: fingerprintStoredKey('sk-ant-old') })
+		const result = await pick(settings, MARKED_AT + 60_000)
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+	})
+
+	it('still prefers custom_llm, and uses it while the key is marked', async () => {
+		const settings = settingsWithMark()
+		settings.custom_llm = {
+			enabled: true,
+			base_url: 'https://example.com',
+			api_key: 'sk-cust',
+			model: 'mod',
+		}
+		const result = await pick(settings, MARKED_AT + 60_000)
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+	})
+
+	it('does not touch a workspace whose key has no mark', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: KEY }
+		const result = await pick(settings, MARKED_AT)
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+	})
+})
+
+// The offline gate that runs before a session is marked `starting`. It answers
+// "is any route configured at all", never "is the credential live" — liveness
+// stays with the (now timeout-bounded) probe inside resolveLlmRoute. Its
+// priority order must track resolveLlmRoute's, so each route gets a case.
+describe('preflightLlmCredentials', () => {
+	const noEnv: NodeJS.ProcessEnv = {}
+	/** Failover on — `active_slot` is what the resolver will read. */
+	const failoverEnv: NodeJS.ProcessEnv = { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' }
+	/** Kill-switch flipped — legacy primary-only path. */
+	const failoverOffEnv: NodeJS.ProcessEnv = { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' }
+
+	const slotData = () => ({
+		encryptedAccessToken: 'a',
+		encryptedRefreshToken: 'r',
+		expiresAt: Date.now() + 3_600_000,
+	})
+
+	// Route 5's gate again, from the pre-flight side. Pre-flight decides whether
+	// createSession returns 402 before a session row exists, so if it still
+	// believes an enterprise workspace can fall back to the Maskin plan, the
+	// launch is greenlit and the leak happens at container start instead.
+	it('does NOT pass an enterprise workspace on the Maskin plan fallback', () => {
+		const maskinFunded: NodeJS.ProcessEnv = { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-maskin' }
+		// Non-entitled, same settings: the Maskin plan legitimately covers it.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { billing: { plan: 'trial' } },
+				agent: {},
+				enterprise: false,
+				env: maskinFunded,
+			}),
+		).toBeNull()
+		// Entitled, no BYO credential configured: must be refused, not funded.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { billing: { plan: 'trial' } },
+				agent: {},
+				enterprise: true,
+				env: maskinFunded,
+			}),
+		).not.toBeNull()
+	})
+
+	it('passes when the agent carries its own key', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: {},
+				agent: { provider: 'anthropic', apiKey: 'sk-ant-agent' },
+				enterprise: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('fails a non-anthropic agent key when the workspace is not entitled', () => {
+		// session-manager injects OPENAI_API_KEY for these itself rather than via
+		// resolveLlmRoute — but that injection is inside `if (enterprise)`. An
+		// unentitled workspace therefore gets no env at all, which is exactly the
+		// gap the pre-flight exists to catch; treating the key as "configured"
+		// here would let it launch credential-less.
+		//
+		// Run WITH the operator's OpenRouter key set, i.e. production. An agent
+		// key on a non-anthropic provider makes resolveLlmRoute return null
+		// BEFORE it reaches the Maskin plan, so the plan is not a route for this
+		// agent and must not rescue the gate. Checking step 5 anyway is how this
+		// shape used to pass and then launch with no LLM env at all.
+		const gap = preflightLlmCredentials({
+			wsSettings: {},
+			agent: { provider: 'openai', apiKey: 'sk-openai' },
+			enterprise: false,
+			env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.detail).toMatch(/not entitled/i)
+	})
+
+	it('fails an agent key on a provider Maskin cannot inject', () => {
+		// `llmProvider` is free text. resolveLlmRoute handles only anthropic here
+		// and session-manager injects only openai, so a third provider has no
+		// injection site anywhere — it would launch with no credential env.
+		const gap = preflightLlmCredentials({
+			wsSettings: {},
+			agent: { provider: 'cohere', apiKey: 'sk-cohere' },
+			enterprise: true,
+			env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.detail).toMatch(/cohere/i)
+	})
+
+	it('still lets an unentitled ANTHROPIC agent key fall through to the Maskin plan', () => {
+		// The mirror of the two above: resolveLlmRoute's anthropic branch does
+		// NOT early-return when the workspace is unentitled — it falls through to
+		// routes 2-5, so the plan can still carry the session. Refusing here
+		// would ground every trial workspace whose agent happens to hold a key.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { billing: { plan: 'trial' } },
+				agent: { provider: 'anthropic', apiKey: 'sk-ant-agent' },
+				enterprise: false,
+				env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
+			}),
+		).toBeNull()
+	})
+
+	it('passes a non-anthropic agent key when the workspace IS entitled', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: {},
+				agent: { provider: 'openai', apiKey: 'sk-openai' },
+				enterprise: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('passes a workspace holding only an OpenAI key', () => {
+		// Injected by session-manager after resolveLlmRoute returns, so it never
+		// appears in that ladder — but it is a real route and must not be
+		// refused a launch.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { llm_keys: { openai: 'sk-openai-ws' } },
+				agent: {},
+				enterprise: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('passes when the ACTIVE Claude OAuth slot holds data', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'a',
+							encryptedRefreshToken: 'r',
+							expiresAt: Date.now() + 3_600_000,
+						},
+						failover: { active_slot: 'primary' },
+					},
+				},
+				agent: {},
+				enterprise: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('fails when active_slot points at an unconfigured slot and failover is ON', () => {
+		// The incident shape: `claude_oauth` exists on the row, so a naive
+		// truthiness check reads as "connected", but the slot actually selected
+		// for the next launch has nothing in it.
+		const gap = preflightLlmCredentials({
+			wsSettings: {
+				claude_oauth: { primary: slotData(), failover: { active_slot: 'backup' } },
+			},
+			agent: {},
+			enterprise: true,
+			env: failoverEnv,
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.humanMessage).toMatch(/no LLM credentials/i)
+	})
+
+	it('passes on a stale active_slot: backup once failover is switched OFF', () => {
+		// The kill-switch path. resolveClaudeCredentialsWithFailover ignores
+		// `active_slot` when the flag is off and reads `primary` directly, so a
+		// workspace left on backup by an earlier failover still routes. Checking
+		// `active_slot` unconditionally here would permanently refuse to launch
+		// the very workspaces the switch was thrown to rescue.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: {
+					claude_oauth: { primary: slotData(), failover: { active_slot: 'backup' } },
+				},
+				agent: {},
+				enterprise: true,
+				env: failoverOffEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('fails with failover OFF when only a backup slot is configured', () => {
+		// Mirror image: the flag-off resolver reads `primary` and nothing else,
+		// so a backup-only workspace genuinely has no OAuth route.
+		const gap = preflightLlmCredentials({
+			wsSettings: {
+				claude_oauth: { backup: slotData(), failover: { active_slot: 'backup' } },
+			},
+			agent: {},
+			enterprise: true,
+			env: failoverOffEnv,
+		})
+		expect(gap).not.toBeNull()
+	})
+
+	it('passes on a complete custom_llm config and fails on a partial one', () => {
+		const complete = {
+			custom_llm: {
+				enabled: true,
+				base_url: 'https://openrouter.ai/api',
+				api_key: 'sk-or',
+				model: 'deepseek/deepseek-v4-flash',
+			},
+		}
+		expect(
+			preflightLlmCredentials({
+				wsSettings: complete,
+				agent: {},
+				enterprise: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+
+		// Same bar as buildCustomLlmEnv — a config missing its model is skipped
+		// there, so it must not count as configured here either.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { custom_llm: { ...complete.custom_llm, model: '' } },
+				agent: {},
+				enterprise: true,
+				env: noEnv,
+			}),
+		).not.toBeNull()
+	})
+
+	it('passes on a workspace anthropic key', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { llm_keys: { anthropic: 'sk-ant-ws' } },
+				agent: {},
+				enterprise: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('ignores BYO credentials when the workspace is not entitled', () => {
+		// resolveLlmRoute only *reaches* routes 1-4 when entitled, so a stored
+		// key on a non-entitled workspace is not a route. With no funded plan
+		// configured either, that workspace has nowhere to go.
+		const gap = preflightLlmCredentials({
+			wsSettings: { llm_keys: { anthropic: 'sk-ant-ws' } },
+			agent: {},
+			enterprise: false,
+			env: noEnv,
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.detail).toMatch(/not entitled/i)
+	})
+
+	it('passes on the Maskin plan route when the operator key is configured', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { billing: { plan: 'pro' } },
+				agent: {},
+				enterprise: false,
+				env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
+			}),
+		).toBeNull()
+	})
+
+	it('fails when nothing at all is configured', () => {
+		const gap = preflightLlmCredentials({
+			wsSettings: {},
+			agent: {},
+			enterprise: true,
+			env: noEnv,
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.detail).toMatch(/No Claude subscription/i)
+	})
+})
+
+describe('LlmCredentialsUnavailableError.toFailureReason workspace name', () => {
+	it('names the workspace and the setting to change when the name is known', () => {
+		const reason = new LlmCredentialsUnavailableError('nothing configured', false, {
+			workspaceName: 'Growth',
+		}).toFailureReason()
+		expect(reason.reason_code).toBe('not_logged_in')
+		expect(reason.human_message).toContain('"Growth"')
+		expect(reason.human_message).toMatch(/Settings → Keys/)
+	})
+
+	it('keeps the generic message when no name is given', () => {
+		const reason = new LlmCredentialsUnavailableError('nothing configured').toFailureReason()
+		expect(reason.human_message).toBe(LlmCredentialsUnavailableError.humanMessage)
+	})
+
+	it('does not tell a transient failure to reconnect, even with a name', () => {
+		const reason = new LlmCredentialsUnavailableError('timeout', true, {
+			workspaceName: 'Growth',
+		}).toFailureReason()
+		expect(reason.human_message).toMatch(/usually temporary/i)
+		expect(reason.human_message).not.toContain('"Growth"')
+	})
+})
+
+const NOT_ENTITLED = { enterprise: false, billingOwnerId: null }
+
+describe('resolveChatCredentials — system fallback entitlement', () => {
+	it('does not fall back to the Maskin OpenRouter key on the enterprise plan', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		expect(
+			resolveChatCredentials({
+				wsSettings: { billing: { plan: 'enterprise' } } as WorkspaceSettings,
+				workspace: NOT_ENTITLED,
+				agent: { provider: null, apiKey: null, model: null },
+			}),
+		).toBeNull()
+	})
+
+	// billingAfterByoTransition() leaves `billing` undefined when the workspace
+	// never had a billing block, so an entitled workspace reads as the `trial`
+	// default. The entitlement column is what catches it.
+	it('does not fall back for an enterprise_granted workspace whose plan never transitioned', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		expect(
+			resolveChatCredentials({
+				wsSettings: {},
+				workspace: { enterpriseGranted: true, billingOwnerId: null },
+				agent: { provider: null, apiKey: null, model: null },
+			}),
+		).toBeNull()
+	})
+
+	it('does not fall back for an enterprise billing owner', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_ENTERPRISE_ACTOR_IDS = '11111111-1111-4111-8111-111111111111'
+		expect(
+			resolveChatCredentials({
+				wsSettings: {},
+				workspace: {
+					enterprise: false,
+					billingOwnerId: '11111111-1111-4111-8111-111111111111',
+				},
+				agent: { provider: null, apiKey: null, model: null },
+			}),
+		).toBeNull()
+	})
+
+	it('still uses the enterprise workspace own credentials when configured', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		const creds = resolveChatCredentials({
+			wsSettings: {
+				billing: { plan: 'enterprise' },
+				llm_keys: { anthropic: 'sk-ant-workspace' },
+			} as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds).toEqual({
+			provider: 'anthropic',
+			apiKey: 'sk-ant-workspace',
+			model: expect.any(String),
+		})
+	})
+
+	it('still falls back for a Maskin-funded plan', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-or-maskin')
+	})
+
+	it('still falls back when no billing block exists (defaults to trial)', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		const creds = resolveChatCredentials({
+			wsSettings: {},
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-or-maskin')
+	})
+})
+
+describe('MASKIN_FALLBACK_PROVIDER_IGNORE block list', () => {
+	it('parses a comma separated list, trimming blanks', () => {
+		expect(
+			readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_IGNORE: ' CoreWeave, ,Foo ' }).ignoreProviders,
+		).toEqual(['CoreWeave', 'Foo'])
+	})
+
+	it('defaults to an empty list', () => {
+		expect(readFallbackConfig({}).ignoreProviders).toEqual([])
+	})
+
+	it('sends ignore alongside zdr on the funded chat route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		process.env.MASKIN_FALLBACK_PROVIDER_IGNORE = 'CoreWeave'
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.providerPrefs).toEqual({ zdr: true, ignore: ['CoreWeave'] })
+	})
+})
+
+describe('MASKIN_FALLBACK_PROVIDER_ONLY allow list', () => {
+	it('defaults to DigitalOcean and GMICloud when unset', () => {
+		expect(readFallbackConfig({}).onlyProviders).toEqual(['digitalocean', 'gmicloud'])
+	})
+
+	it('parses a comma separated list, trimming blanks', () => {
+		expect(
+			readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_ONLY: ' digitalocean, ,Foo ' }).onlyProviders,
+		).toEqual(['digitalocean', 'Foo'])
+	})
+
+	it.each(['', 'none', ' NONE '])('lifts the restriction when set to %j', (value) => {
+		expect(readFallbackConfig({ MASKIN_FALLBACK_PROVIDER_ONLY: value }).onlyProviders).toEqual([])
+	})
+
+	it('sends only on the funded chat route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.providerPrefs).toEqual({ only: ['digitalocean', 'gmicloud'] })
+	})
+
+	it('does not send it to a customer endpoint or key', () => {
+		Reflect.deleteProperty(process.env, 'MASKIN_FALLBACK_PROVIDER_ONLY')
+		const creds = resolveChatCredentials({
+			wsSettings: { llm_keys: { anthropic: 'sk-ant-own' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds).not.toHaveProperty('providerPrefs')
+	})
+})
+
+describe('MASKIN_FALLBACK_ZDR gate', () => {
+	it.each([
+		['true', true],
+		['1', true],
+		[' TRUE ', true],
+		['false', false],
+		['0', false],
+		['', false],
+	])('readFallbackConfig reads %j as zdr=%s', (value, expected) => {
+		expect(readFallbackConfig({ MASKIN_FALLBACK_ZDR: value }).zdr).toBe(expected)
+	})
+
+	it('defaults zdr to off when the env var is unset', () => {
+		expect(readFallbackConfig({}).zdr).toBe(false)
+	})
+
+	const funded = () =>
+		resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+
+	it('flag off: the funded route carries no providerPrefs', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		expect(funded()).not.toHaveProperty('providerPrefs')
+	})
+
+	it('flag on: the funded route asks for zdr', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		expect(funded()?.providerPrefs).toEqual({ zdr: true })
+	})
+
+	it('flag on: an agent key route carries no providerPrefs', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: 'openai', apiKey: 'sk-agent', model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-agent')
+		expect(creds).not.toHaveProperty('providerPrefs')
+	})
+
+	it('flag on: a workspace custom_llm route carries no providerPrefs', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		const creds = resolveChatCredentials({
+			wsSettings: {
+				billing: { plan: 'pro' },
+				custom_llm: {
+					enabled: true,
+					base_url: 'https://llm.example.com/v1',
+					api_key: 'sk-custom',
+					model: 'm',
+				},
+			} as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.baseUrl).toBe('https://llm.example.com/v1')
+		expect(creds).not.toHaveProperty('providerPrefs')
+	})
+
+	it('flag on: a workspace Anthropic key route carries no providerPrefs', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = '1'
+		const creds = resolveChatCredentials({
+			wsSettings: {
+				billing: { plan: 'pro' },
+				llm_keys: { anthropic: 'sk-ant-workspace' },
+			} as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.provider).toBe('anthropic')
+		expect(creds).not.toHaveProperty('providerPrefs')
+	})
+})
+
+describe('withCredentialResolutionTimeout', () => {
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('rejects with the credential-resolution timeout once the guard time passes, and not before', async () => {
+		vi.useFakeTimers()
+		const outcome = withCredentialResolutionTimeout(new Promise<never>(() => {})).then(
+			() => null,
+			(err: unknown) => err,
+		)
+		let settled = false
+		void outcome.then(() => {
+			settled = true
+		})
+
+		await vi.advanceTimersByTimeAsync(CREDENTIAL_RESOLUTION_TIMEOUT_MS - 1)
+		expect(settled).toBe(false)
+
+		await vi.advanceTimersByTimeAsync(1)
+		const err = await outcome
+		expect(err).toBeInstanceOf(CredentialResolutionTimeoutError)
+		// Same family as the other launch failures, so the existing handlers run.
+		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
+	})
+
+	it('returns the result and leaves no timer behind when resolution finishes in time', async () => {
+		vi.useFakeTimers()
+		await expect(withCredentialResolutionTimeout(Promise.resolve('ok'))).resolves.toBe('ok')
+		expect(vi.getTimerCount()).toBe(0)
+	})
+
+	it('passes through the original error when resolution fails before the guard time', async () => {
+		vi.useFakeTimers()
+		const boom = new Error('boom')
+		await expect(withCredentialResolutionTimeout(Promise.reject(boom))).rejects.toBe(boom)
+		expect(vi.getTimerCount()).toBe(0)
+	})
+})
+
+describe('CredentialResolutionTimeoutError', () => {
+	it('is a permanent failure the dispatcher fails at once, not a retry', () => {
+		expect(new CredentialResolutionTimeoutError().transient).toBe(false)
+	})
+
+	it('names credential lookup as the step that timed out and does not blame the credentials', () => {
+		const reason = new CredentialResolutionTimeoutError().toFailureReason()
+		expect(reason.reason_code).toBe('startup_stalled')
+		expect(reason.human_message).toMatch(/looking up the LLM credentials/i)
+		expect(reason.human_message).toMatch(/30 seconds/)
+		expect(reason.human_message).not.toMatch(/Connect a Claude subscription/i)
+		expect(reason.verbatim_output).toMatch(/resolveLlmRoute/)
 	})
 })

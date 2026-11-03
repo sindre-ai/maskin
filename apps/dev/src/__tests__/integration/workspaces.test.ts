@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
+	events,
 	actors,
 	agentSkills,
 	objects,
@@ -13,10 +14,12 @@ import {
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { onTestFinished } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { insertActor } from '../factories'
+import { openSecret } from '../../lib/workspace-secrets'
+import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { db, getTestActorId } from './global-setup'
+import { db, getTestActorId, sql } from './global-setup'
 
 // POST /api/workspaces kicks off the Chief of Staff welcome session
 // fire-and-forget (.catch(), not awaited) right after the create transaction
@@ -44,20 +47,6 @@ const { capturePosthogEventMock } = vi.hoisted(() => ({
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
-
-// Failure injection for the partial-seed rollback test. provisionWorkspace()
-// calls seedDefaultAgentActors() module-internally, so mocking that export
-// wouldn't intercept it — instead we mock the `@maskin/auth` boundary it really
-// crosses and make one generateApiKey() call throw. That runs the *real* seed
-// code, so the test covers production rollback behaviour rather than a
-// hand-rolled stand-in. Defaults to the genuine implementation; only the
-// rollback test arms a failure via mockImplementationOnce.
-const { generateApiKeyMock } = vi.hoisted(() => ({ generateApiKeyMock: vi.fn() }))
-vi.mock('@maskin/auth', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('@maskin/auth')>()
-	generateApiKeyMock.mockImplementation(actual.generateApiKey)
-	return { ...actual, generateApiKey: generateApiKeyMock }
-})
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 const { bootstrapDefaultAgents } = await import('../../services/workspace-bootstrap')
@@ -135,6 +124,30 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 	return app
 }
 
+/**
+ * Flips the `enterprise_granted` ops grant via the real admin route.
+ *
+ * The allowlist is scoped to just this call rather than the whole test: an
+ * actor in MASKIN_ENTERPRISE_ACTOR_IDS is enterprise-entitled outright, so leaving
+ * it set would make every later assertion pass through the allowlist and never
+ * touch the per-workspace grant these tests are about.
+ */
+async function grantEnterpriseAsOps(
+	app: ReturnType<typeof createApp>,
+	workspaceId: string,
+): Promise<Response> {
+	const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+	process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+	try {
+		return await app.request(
+			jsonRequest('PATCH', `/api/workspaces/admin/${workspaceId}`, { enterprise_granted: true }),
+		)
+	} finally {
+		// '' parses to an empty allowlist, same as unset.
+		process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+	}
+}
+
 async function agentNamesFor(workspaceId: string): Promise<string[]> {
 	const rows = await db
 		.select({ name: actors.name })
@@ -153,6 +166,14 @@ async function memberActorIdsFor(workspaceId: string): Promise<string[]> {
 		.from(workspaceMembers)
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 	return rows.map((r) => r.actorId).sort()
+}
+
+async function storedSettings(id: string): Promise<Record<string, unknown>> {
+	const [row] = await db
+		.select({ settings: workspacesTable.settings })
+		.from(workspacesTable)
+		.where(eq(workspacesTable.id, id))
+	return row.settings as Record<string, unknown>
 }
 
 describe('Workspaces Integration', () => {
@@ -176,17 +197,114 @@ describe('Workspaces Integration', () => {
 			expect(body.settings.display_names).toBeDefined()
 		})
 
+		it('enables the work, knowledge and crm extensions with their defaults', async () => {
+			const app = createApp()
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Extensions Default' }),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
+
+			// The row that actually landed in Postgres carries each enabled
+			// module's own defaults, so the Knowledge/People/Companies tabs have
+			// statuses and display names behind them from the first render.
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, body.id))
+			const settings = row?.settings as {
+				enabled_modules: string[]
+				display_names: Record<string, string>
+				statuses: Record<string, string[]>
+				field_definitions: Record<string, Array<{ name: string }>>
+				relationship_types: string[]
+			}
+			expect(settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
+			expect(settings.display_names).toMatchObject({
+				knowledge: 'Knowledge',
+				contact: 'Person',
+				company: 'Company',
+			})
+			expect(settings.statuses.knowledge).toEqual(['draft', 'validated', 'deprecated'])
+			expect(settings.statuses.contact).toContain('new_lead')
+			expect(settings.statuses.company).toContain('prospect')
+			expect(settings.field_definitions.contact?.map((f) => f.name)).toContain('linkedin_url')
+			expect(settings.relationship_types).toEqual(
+				expect.arrayContaining(['informs', 'about', 'works_at']),
+			)
+		})
+
+		it('honours an explicit enabled_modules list on create', async () => {
+			const app = createApp()
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					name: 'Work Only',
+					settings: { enabled_modules: ['work'] },
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.enabled_modules).toEqual(['work'])
+			expect(body.settings.statuses.contact).toBeUndefined()
+		})
+
 		it('lists workspaces for the current actor', async () => {
 			const app = createApp()
 
-			// Create two workspaces
-			await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 1' }))
-			await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 2' }))
+			// A trial-tier actor may only own one workspace (see
+			// workspace-capacity.test.ts) — raise the first to pro before creating
+			// a second, so this test exercises listing rather than the ownership
+			// cap. Seeded on the row because the API refuses `settings.billing`.
+			const first = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 1' }))
+			const ws1 = await first.json()
+			await setWorkspacePlan(db, ws1.id, 'pro')
+			const second = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 2' }))
+			expect(second.status).toBe(201)
 
 			const res = await app.request(jsonGet('/api/workspaces'))
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+		})
+
+		it('reports a human member count per workspace, excluding seeded agents', async () => {
+			const app = createApp()
+
+			// Creating a workspace also seeds six default agent actors as members.
+			// The count is about people, so a solo workspace must still read 1.
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Counted WS' }),
+			)
+			const workspace = await created.json()
+
+			const solo = await app.request(jsonGet('/api/workspaces'))
+			const soloRow = (await solo.json()).find((w: { id: string }) => w.id === workspace.id) as {
+				memberCount: number
+			}
+			expect(soloRow.memberCount).toBe(1)
+
+			// Add a second human — the count moves; adding an agent would not.
+			// A trial workspace seats exactly one human (SEAT_CAPS.trial), so the
+			// add would be rejected on the seat cap and the count would never
+			// move. Raise the plan first, and assert the add actually landed —
+			// otherwise a rejected member reads here as a wrong count.
+			await setWorkspacePlan(db, workspace.id, 'pro')
+			const teammate = await insertActor(db)
+			// People can't be added by id any more; seed the membership directly.
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: workspace.id, actorId: teammate.id, role: 'member' })
+
+			const paired = await app.request(jsonGet('/api/workspaces'))
+			const pairedRow = (await paired.json()).find(
+				(w: { id: string }) => w.id === workspace.id,
+			) as { memberCount: number }
+			expect(pairedRow.memberCount).toBe(2)
 		})
 	})
 
@@ -235,6 +353,11 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
+			// New workspaces default to enterprise: false — grant entitlement so
+			// this test can exercise the llm_keys deep-merge itself, not the gate.
+			const grant = await grantEnterpriseAsOps(app, ws.id)
+			expect(grant.status).toBe(200)
+
 			await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
 					settings: { llm_keys: { anthropic: 'sk-ant-AAA' } },
@@ -246,10 +369,12 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterSet = await second.json()
-			expect(afterSet.settings.llm_keys).toEqual({
-				anthropic: 'sk-ant-AAA',
-				openai: 'sk-oai-BBB',
-			})
+			// No caller gets a key back; the row holds both, sealed.
+			expect(afterSet.settings.llm_keys).toBeUndefined()
+			expect(afterSet.llm_configured).toMatchObject({ anthropic: true, openai: true })
+			const setKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(openSecret(setKeys.llm_keys.anthropic)).toBe('sk-ant-AAA')
+			expect(openSecret(setKeys.llm_keys.openai)).toBe('sk-oai-BBB')
 
 			// `null` inside llm_keys signals deletion; other providers stay.
 			const third = await app.request(
@@ -258,7 +383,485 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			const afterDelete = await third.json()
-			expect(afterDelete.settings.llm_keys).toEqual({ openai: 'sk-oai-BBB' })
+			expect(afterDelete.llm_configured).toMatchObject({ anthropic: false, openai: true })
+			const deletedKeys = (await storedSettings(ws.id)) as { llm_keys: Record<string, string> }
+			expect(deletedKeys.llm_keys.anthropic).toBeUndefined()
+			expect(openSecret(deletedKeys.llm_keys.openai)).toBe('sk-oai-BBB')
+		})
+	})
+
+	// The by-ID routes are not covered by authMiddleware's header check (the MCP
+	// update_workspace tool sends no X-Workspace-Id), so the route itself has to
+	// look at the caller. The test caller is the workspace owner; each test
+	// changes that one membership row (or the caller's actor type) to become the
+	// caller under test, and asserts on the persisted workspace row.
+	describe('PATCH /api/workspaces/:id caller check', () => {
+		async function createWorkspace(name: string) {
+			const app = createApp()
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name }))
+			const ws = await res.json()
+			// Entitled, so a 403 in these tests can only come from the caller check.
+			expect((await grantEnterpriseAsOps(app, ws.id)).status).toBe(200)
+			return { app, ws }
+		}
+
+		async function workspaceRow(id: string) {
+			const [row] = await db
+				.select({ name: workspacesTable.name, settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, id))
+			return row
+		}
+
+		function setCallerRole(workspaceId: string, role: string) {
+			return db
+				.update(workspaceMembers)
+				.set({ role })
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, workspaceId),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+		}
+
+		it('returns 404 to a non-member and leaves name and settings unchanged', async () => {
+			const { app, ws } = await createWorkspace('Not Yours')
+			const before = await workspaceRow(ws.id)
+			await db
+				.delete(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, ws.id),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+
+			const rename = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Hijacked' }),
+			)
+			const merge = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { display_names: { insight: 'Hijacked' } },
+				}),
+			)
+
+			expect(rename.status).toBe(404)
+			expect(merge.status).toBe(404)
+			expect(await workspaceRow(ws.id)).toEqual(before)
+		})
+
+		const STORED_CUSTOM_LLM = {
+			enabled: true,
+			base_url: 'https://llm.test',
+			api_key: 'sk-custom-AAA',
+			model: 'model-a',
+		}
+
+		// Stores BYO credentials as the owner, then demotes the caller to a plain member.
+		async function createWorkspaceWithKeysAndDemote(name: string) {
+			const { app, ws } = await createWorkspace(name)
+			const stored = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-stored' }, custom_llm: STORED_CUSTOM_LLM },
+				}),
+			)
+			expect(stored.status).toBe(200)
+			await setCallerRole(ws.id, 'member')
+			return { app, ws }
+		}
+
+		it('returns 403 to a plain member changing name, llm_keys or custom_llm, row unchanged', async () => {
+			const { app, ws } = await createWorkspaceWithKeysAndDemote('Members Pin Only')
+			const before = await workspaceRow(ws.id)
+
+			const bodies = [
+				{ name: 'Renamed' },
+				{ settings: { llm_keys: { anthropic: 'sk-ant-other' } } },
+				{ settings: { llm_keys: { openai: 'sk-oai-new' } } },
+				{ settings: { llm_keys: { anthropic: null } } },
+				{ settings: { custom_llm: { ...STORED_CUSTOM_LLM, base_url: 'https://other.test' } } },
+			]
+			for (const body of bodies) {
+				const res = await app.request(jsonRequest('PATCH', `/api/workspaces/${ws.id}`, body))
+				expect(res.status).toBe(403)
+			}
+			expect(await workspaceRow(ws.id)).toEqual(before)
+		})
+
+		it('lets a plain member re-send llm_keys, custom_llm and name unchanged alongside a member-level edit', async () => {
+			const { app, ws } = await createWorkspaceWithKeysAndDemote('Members Spread Settings')
+			const before = await workspaceRow(ws.id)
+			const pinned = randomUUID()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					name: before.name,
+					settings: {
+						pinned_files: [pinned],
+						llm_keys: { anthropic: 'sk-ant-stored', openai: null },
+						custom_llm: STORED_CUSTOM_LLM,
+					},
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const after = await workspaceRow(ws.id)
+			expect(after.name).toBe(before.name)
+			expect(after.settings).toEqual({ ...(before.settings as object), pinned_files: [pinned] })
+		})
+
+		it('lets a plain member pin files and change other member-level settings', async () => {
+			const { app, ws } = await createWorkspace('Members Pin')
+			await setCallerRole(ws.id, 'member')
+			const pinned = randomUUID()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { settings: { pinned_files: [pinned] } }),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await workspaceRow(ws.id)).settings).toMatchObject({ pinned_files: [pinned] })
+		})
+
+		it.each(['owner', 'admin'])('lets a human %s rename and merge llm_keys', async (role) => {
+			const { app, ws } = await createWorkspace(`Renamed by ${role}`)
+			await setCallerRole(ws.id, role)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					name: `Renamed by ${role}!`,
+					settings: { llm_keys: { openai: 'sk-oai-BBB' } },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const row = await workspaceRow(ws.id)
+			expect(row.name).toBe(`Renamed by ${role}!`)
+			const stored = (row.settings as { llm_keys: { openai: string } }).llm_keys.openai
+			expect(stored).not.toContain('sk-oai-BBB')
+			expect(openSecret(stored)).toBe('sk-oai-BBB')
+		})
+
+		it('returns 403 to an agent member holding the owner role, row unchanged', async () => {
+			const { app, ws } = await createWorkspace('Agents Do Not Admin')
+			const before = await workspaceRow(ws.id)
+			await db.update(actors).set({ type: 'agent' }).where(eq(actors.id, getTestActorId()))
+			try {
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-AAA' } },
+					}),
+				)
+				expect(res.status).toBe(403)
+			} finally {
+				await db.update(actors).set({ type: 'human' }).where(eq(actors.id, getTestActorId()))
+			}
+			expect(await workspaceRow(ws.id)).toEqual(before)
+		})
+
+		it('returns 403 to an agent member holding the admin role sending name, row unchanged', async () => {
+			const { app, ws } = await createWorkspace('Agents Do Not Rename')
+			await setCallerRole(ws.id, 'admin')
+			const before = await workspaceRow(ws.id)
+			await db.update(actors).set({ type: 'agent' }).where(eq(actors.id, getTestActorId()))
+			try {
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Renamed by agent' }),
+				)
+				expect(res.status).toBe(403)
+			} finally {
+				await db.update(actors).set({ type: 'human' }).where(eq(actors.id, getTestActorId()))
+			}
+			expect(await workspaceRow(ws.id)).toEqual(before)
+		})
+
+		it('answers a non-member of an existing workspace and a missing id with the same 404 body', async () => {
+			const { app, ws } = await createWorkspace('Same Body')
+			await db
+				.delete(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, ws.id),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+
+			const existing = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Renamed' }),
+			)
+			const missing = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${randomUUID()}`, { name: 'Renamed' }),
+			)
+
+			expect(existing.status).toBe(404)
+			expect(missing.status).toBe(404)
+			expect(await existing.json()).toEqual(await missing.json())
+		})
+
+		it("returns 404 to a key from workspace A against workspace B on PATCH and GET members, B's row unchanged", async () => {
+			const app = createApp()
+			const wsA = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Workspace A' }))
+			).json()
+			const otherOwner = await insertActor(db, { type: 'human' })
+			const wsB = await insertWorkspace(db, otherOwner.id, { name: 'Workspace B' })
+			const before = await workspaceRow(wsB.id)
+			const membersBefore = await memberActorIdsFor(wsB.id)
+
+			// The caller (owner of A) is not a member of B.
+			expect(await memberActorIdsFor(wsB.id)).not.toContain(getTestActorId())
+			expect(wsA.id).not.toBe(wsB.id)
+
+			const bodies = [
+				{ name: 'Taken over' },
+				{ settings: { llm_keys: { anthropic: 'sk-ant-AAA' } } },
+				{ settings: { display_names: { insight: 'Taken over' } } },
+			]
+			for (const body of bodies) {
+				const res = await app.request(jsonRequest('PATCH', `/api/workspaces/${wsB.id}`, body))
+				expect(res.status).toBe(404)
+			}
+			const members = await app.request(jsonGet(`/api/workspaces/${wsB.id}/members`))
+			expect(members.status).toBe(404)
+
+			expect(await workspaceRow(wsB.id)).toEqual(before)
+			expect(await memberActorIdsFor(wsB.id)).toEqual(membersBefore)
+		})
+
+		it('still rejects settings.billing and settings.claude_oauth with 400 for an owner', async () => {
+			const { app, ws } = await createWorkspace('Stripe Owns Billing')
+
+			const billing = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { billing: { plan: 'team', status: 'active' } },
+				}),
+			)
+			const oauth = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { settings: { claude_oauth: {} } }),
+			)
+
+			expect(billing.status).toBe(400)
+			expect(oauth.status).toBe(400)
+		})
+	})
+
+	describe('GET /api/workspaces/:id/members caller check', () => {
+		it('returns 404 to a non-member and the list to a member', async () => {
+			const app = createApp()
+			const ws = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Member List' }))
+			).json()
+
+			const asMember = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+			expect(asMember.status).toBe(200)
+			expect((await asMember.json()).length).toBeGreaterThan(0)
+
+			await db
+				.delete(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, ws.id),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+			const asStranger = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+			expect(asStranger.status).toBe(404)
+		})
+	})
+
+	describe('enterprise entitlement gate', () => {
+		it('defaults new workspaces to enterprise: false', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement Default' }),
+			)
+			const ws = await createRes.json()
+			expect(ws.enterprise).toBe(false)
+		})
+
+		it('returns enterprise on GET /api/workspaces so the settings UI can gate on it', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement In List' }),
+			)
+			const ws = await createRes.json()
+			const grant = await grantEnterpriseAsOps(app, ws.id)
+			expect(grant.status).toBe(200)
+
+			const listRes = await app.request(jsonGet('/api/workspaces'))
+			expect(listRes.status).toBe(200)
+			const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
+			const listed = list.find((w) => w.id === ws.id)
+			expect(listed?.enterprise).toBe(true)
+		})
+
+		it('entitles an enterprise billing owner without any per-workspace grant', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owner Entitlement' }),
+			)
+			const ws = await createRes.json()
+			expect(ws.enterprise).toBe(false)
+
+			// The allowlist is read from process.env at call time, so flipping it
+			// here exercises exactly what a founder deployment configures.
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const listRes = await app.request(jsonGet('/api/workspaces'))
+				const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
+				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(true)
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-enterprise' } },
+					}),
+				)
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.settings.llm_keys).toBeUndefined()
+				expect(body.llm_configured.anthropic).toBe(true)
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
+		it('leaves non-allowlisted owners blocked while an allowlist is configured', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Non Allowlisted Owner' }),
+			)
+			const ws = await createRes.json()
+
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = randomUUID()
+			try {
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-blocked' } },
+					}),
+				)
+				expect(res.status).toBe(403)
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
+		it('blocks adding a BYO anthropic key when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked Anthropic Key' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-blocked' } },
+				}),
+			)
+			expect(res.status).toBe(403)
+
+			const [row] = await db.select().from(workspacesTable).where(eq(workspacesTable.id, ws.id))
+			const llmKeys = (row.settings as Record<string, unknown>).llm_keys as Record<string, unknown>
+			expect(llmKeys.anthropic).toBeUndefined()
+		})
+
+		it('blocks adding a BYO openai key when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked OpenAI Key' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { openai: 'sk-oai-blocked' } },
+				}),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('blocks enabling custom_llm when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked Custom LLM' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: {
+						custom_llm: {
+							enabled: true,
+							base_url: 'https://openrouter.ai/api',
+							api_key: 'sk-or-blocked',
+							model: 'deepseek/deepseek-v4-flash',
+						},
+					},
+				}),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('allows adding BYO credentials once an admin flips enterprise_granted', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Allowed After Admin Flip' }),
+			)
+			const ws = await createRes.json()
+
+			// Granted as ops, then read back as an ordinary owner: the PATCH below
+			// must succeed on the strength of the per-workspace grant alone.
+			const adminRes = await grantEnterpriseAsOps(app, ws.id)
+			expect(adminRes.status).toBe(200)
+			const adminBody = await adminRes.json()
+			expect(adminBody.enterprise).toBe(true)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-allowed' } },
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(true)
+		})
+
+		it('does not block deleting an existing (pre-entitlement) BYO key', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Delete Still Allowed' }),
+			)
+			const ws = await createRes.json()
+
+			// Grant, add a key, then revoke entitlement while the key is still set.
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
+			)
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-old' } },
+				}),
+			)
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: false }),
+			)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.settings.llm_keys).toBeUndefined()
+			expect(body.llm_configured.anthropic).toBe(false)
+			const stored = (await storedSettings(ws.id)) as { llm_keys?: Record<string, string> }
+			expect(stored.llm_keys?.anthropic).toBeUndefined()
 		})
 	})
 
@@ -271,9 +874,16 @@ describe('Workspaces Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Members Test' }),
 			)
 			const ws = await createRes.json()
+			// Trial's seat cap is 1 (owner only) — bump to pro so a second member
+			// can actually be added (see workspace-capacity.test.ts for cap coverage).
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Create another actor to add as member
-			const newActor = await insertActor(db, { name: 'New Member', email: 'member@test.com' })
+			const newActor = await insertActor(db, {
+				type: 'agent',
+				name: 'New Member',
+				createdBy: getTestActorId(),
+			})
 
 			// Add member
 			const addRes = await app.request(
@@ -306,6 +916,214 @@ describe('Workspaces Integration', () => {
 		})
 	})
 
+	// Every guard on this route depends on DB semantics a mocked db cannot
+	// express — a FOR UPDATE re-read, a COUNT over the owner rows, and an audit
+	// insert that has to share the update's transaction. The mocked unit tests
+	// in __tests__/routes/workspaces.test.ts cover request shape only.
+	describe('PATCH /api/workspaces/:id/members/:actorId', () => {
+		/** Creates a pro workspace owned by the test actor, plus one extra human member. */
+		async function workspaceWithMember() {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Role Change' }),
+			)
+			const ws = await createRes.json()
+			await setWorkspacePlan(db, ws.id, 'pro')
+			const member = await insertActor(db, { name: 'Member', email: `${randomUUID()}@test.com` })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: member.id, role: 'member' })
+			return { app, ws, member }
+		}
+
+		function setRole(workspaceId: string, actorId: string, role: string) {
+			return db
+				.update(workspaceMembers)
+				.set({ role })
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+				)
+		}
+
+		function roleOf(workspaceId: string, actorId: string) {
+			return db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+				)
+				.limit(1)
+				.then((rows) => rows[0]?.role)
+		}
+
+		it('promotes a member to admin and writes the audit event in the same transaction', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(await roleOf(ws.id, member.id)).toBe('admin')
+
+			// The audit row is the half most easily dropped — it lives inside the
+			// transaction, so a rollback must take it with the role change.
+			// Scoped to 'updated': adding the member in the fixture already wrote a
+			// 'created' row for the same entity, and this assertion is about the
+			// role change specifically.
+			const audit = await db
+				.select({ action: events.action, data: events.data })
+				.from(events)
+				.where(
+					and(
+						eq(events.entityType, 'workspace_member'),
+						eq(events.entityId, member.id),
+						eq(events.action, 'updated'),
+					),
+				)
+			expect(audit).toHaveLength(1)
+			expect(audit[0].action).toBe('updated')
+			expect(audit[0].data).toMatchObject({ role: { from: 'member', to: 'admin' } })
+		})
+
+		it('refuses to demote the last owner and leaves the role untouched', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			// Hand the sole ownership to `member` and drop the caller to admin —
+			// the caller can't reach this branch by targeting themselves (that is a
+			// separate 400), so the only route in is an admin demoting the owner.
+			await setRole(ws.id, member.id, 'owner')
+			await setRole(ws.id, getTestActorId(), 'admin')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'member' }),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toMatch(/last owner/i)
+			expect(await roleOf(ws.id, member.id)).toBe('owner')
+
+			// A rejected demotion must not leave an audit row behind. Scoped to
+			// 'updated' so the fixture's own 'created' row for this member doesn't
+			// mask a regression here.
+			const audit = await db
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(
+						eq(events.entityType, 'workspace_member'),
+						eq(events.entityId, member.id),
+						eq(events.action, 'updated'),
+					),
+				)
+			expect(audit).toHaveLength(0)
+		})
+
+		it('refuses to change the billing owner, so billing_owner_id can never point at a non-owner', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			await db
+				.update(workspacesTable)
+				.set({ billingOwnerId: member.id })
+				.where(eq(workspacesTable.id, ws.id))
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(400)
+			expect(await roleOf(ws.id, member.id)).toBe('member')
+		})
+
+		it('rejects a plain member changing someone else’s role with 403', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			await setRole(ws.id, getTestActorId(), 'member')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(403)
+			expect(await roleOf(ws.id, member.id)).toBe('member')
+		})
+
+		it('rejects targeting yourself with 400', async () => {
+			const { app, ws } = await workspaceWithMember()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${getTestActorId()}`, {
+					role: 'admin',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(await roleOf(ws.id, getTestActorId())).toBe('owner')
+		})
+
+		it('returns 404 for an actor who is not a member of this workspace', async () => {
+			const { app, ws } = await workspaceWithMember()
+			const stranger = await insertActor(db, { email: `${randomUUID()}@test.com` })
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${stranger.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	// Regression cover for the merge this PR widened. `applyModuleDefaults()` in
+	// workspace-bootstrap previously folded in only `display_names` and
+	// `statuses`, silently discarding the `field_definitions` and
+	// `relationship_types` that crm/knowledge/work all declare — so every
+	// workspace was created missing them. Asserting on the persisted row (not the
+	// response body) is the point: the drop happened on the way into the DB.
+	describe('module default settings applied at creation', () => {
+		it('persists field_definitions and relationship_types from every enabled module', async () => {
+			const app = createApp()
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Module Defaults' }),
+			)
+			expect(res.status).toBe(201)
+			const ws = await res.json()
+
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, ws.id))
+				.limit(1)
+			const settings = row?.settings as {
+				enabled_modules?: string[]
+				display_names?: Record<string, string>
+				field_definitions?: Record<string, unknown[]>
+				relationship_types?: string[]
+			}
+
+			// Guards the premise: without crm enabled the assertions below would
+			// pass vacuously against a workspace that never had those types.
+			expect(settings.enabled_modules).toEqual(expect.arrayContaining(['work', 'knowledge', 'crm']))
+
+			// crm and knowledge each contribute field definitions — the key that
+			// used to be dropped entirely.
+			expect(Object.keys(settings.field_definitions ?? {})).toEqual(
+				expect.arrayContaining(['contact', 'company', 'knowledge']),
+			)
+			expect(settings.field_definitions?.contact?.length).toBeGreaterThan(0)
+
+			// relationship_types is unioned across modules rather than overwritten,
+			// so crm's entries survive alongside knowledge's.
+			expect(settings.relationship_types).toEqual(
+				expect.arrayContaining(['works_at', 'decision_maker_at']),
+			)
+			// Unioned, not duplicated.
+			expect(new Set(settings.relationship_types).size).toBe(settings.relationship_types?.length)
+
+			// The keys that already worked must keep working.
+			expect(Object.keys(settings.display_names ?? {})).toEqual(
+				expect.arrayContaining(['contact', 'company']),
+			)
+		})
+	})
+
 	describe('default agent seeding', () => {
 		it('seeds all default agents atomically inside the create transaction', async () => {
 			const app = createApp()
@@ -322,41 +1140,56 @@ describe('Workspaces Integration', () => {
 		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {
 			const app = createApp()
 
-			const first = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
-			).json()
-			const second = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
-			).json()
+			// The ownership cap (trial tier: 1 owned workspace) would otherwise
+			// block the second create below — bypass it via the enterprise
+			// allowlist so this test can focus on its actual subject: agent-seed
+			// isolation between two workspaces owned by the same creator.
+			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const first = await (
+					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
+				).json()
+				const second = await (
+					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
+				).json()
 
-			expect(first.id).not.toBe(second.id)
-			expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
-			expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+				expect(first.id).not.toBe(second.id)
+				expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+				expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 
-			// Agent actor rows are distinct between workspaces — a workspace's
-			// members must not overlap another workspace's, otherwise
-			// permissions/skills would leak across tenants.
-			const firstAgentIds = new Set(
-				(
+				// Agent actor rows are distinct between workspaces — a workspace's
+				// members must not overlap another workspace's, otherwise
+				// permissions/skills would leak across tenants.
+				const firstAgentIds = new Set(
+					(
+						await db
+							.select({ actorId: workspaceMembers.actorId })
+							.from(workspaceMembers)
+							.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+							.where(eq(workspaceMembers.workspaceId, first.id))
+					)
+						.map((r) => r.actorId)
+						.filter((id) => id !== getTestActorId()),
+				)
+				const secondAgentIds = (
 					await db
 						.select({ actorId: workspaceMembers.actorId })
 						.from(workspaceMembers)
 						.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-						.where(eq(workspaceMembers.workspaceId, first.id))
+						.where(eq(workspaceMembers.workspaceId, second.id))
 				)
 					.map((r) => r.actorId)
-					.filter((id) => id !== getTestActorId()),
-			)
-			const secondAgentIds = (
-				await db
-					.select({ actorId: workspaceMembers.actorId })
-					.from(workspaceMembers)
-					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-					.where(eq(workspaceMembers.workspaceId, second.id))
-			)
-				.map((r) => r.actorId)
-				.filter((id) => id !== getTestActorId())
-			for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
+					.filter((id) => id !== getTestActorId())
+				for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
+			} finally {
+				if (ORIGINAL_ENV === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+				} else {
+					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = ORIGINAL_ENV
+				}
+			}
 		})
 
 		it('re-invoking the seeding path against an already-seeded workspace inserts zero new agent rows', async () => {
@@ -451,10 +1284,15 @@ describe('Workspaces Integration', () => {
 				.select({ name: triggers.name })
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
-			expect(triggerRows).toHaveLength(15)
+			// Bumped from 13 to 14 with the addition of the Beat 6 chained
+			// "Deep-research brief validated → Signal Analyst clustering" trigger
+			// in DEFAULT_WORKSPACE_TRIGGERS, to 15 with the Chief of Staff's
+			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
+			// the list" cron.
+			expect(triggerRows).toHaveLength(16)
 		})
 
-		it('seeds the Bet discovery loop, Workspace improvements, Knowledge Wiki, and Competitor intelligence loops wired to their triggers', async () => {
+		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -470,7 +1308,6 @@ describe('Workspaces Integration', () => {
 
 			expect(loopRows.map((r) => r.title).sort()).toEqual([
 				'Bet discovery loop',
-				'Competitor intelligence',
 				'Knowledge Wiki → digest',
 				'Workspace improvements',
 			])
@@ -515,17 +1352,6 @@ describe('Workspaces Integration', () => {
 					triggerIdByName.get('Compile the twice-weekly digest'),
 				]),
 			)
-
-			const competitorIntelligenceLoop = loopRows.find((r) => r.title === 'Competitor intelligence')
-			const competitorIntelligenceTriggerIds =
-				(competitorIntelligenceLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
-				[]
-			expect(new Set(competitorIntelligenceTriggerIds)).toEqual(
-				new Set([
-					triggerIdByName.get('Weekly competitor sweep'),
-					triggerIdByName.get('Monthly list revalidation'),
-				]),
-			)
 		})
 
 		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
@@ -545,7 +1371,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(4)
+			expect(loopRows).toHaveLength(3)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
@@ -599,18 +1425,28 @@ describe('Workspaces Integration', () => {
 
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
 			// Agents seed in DEFAULT_AGENT_IDS order — Workspace Coach, Chief of
-			// Staff, Driver, then Strategist. Each mints an API key first, so
-			// throwing on the 4th generateApiKey() call fails strategist after
-			// agents 1-3 are already written into the transaction. Everything —
+			// Staff, Driver, then Strategist. A trigger that rejects the Strategist
+			// actor insert fails the 4th agent after agents 1-3 are already written
+			// into the transaction, running the real seed code. Everything —
 			// including those three partial actor inserts — must roll back.
-			const realGenerateApiKey = generateApiKeyMock.getMockImplementation()
-			generateApiKeyMock
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(realGenerateApiKey)
-				.mockImplementationOnce(() => {
-					throw new Error('mock failure on 4th agent')
-				})
+			onTestFinished(async () => {
+				await sql`drop trigger if exists test_reject_strategist on actors`
+				await sql`drop function if exists test_reject_strategist()`
+			})
+			await sql`
+				create function test_reject_strategist() returns trigger as $$
+				begin
+					if new.name = 'Strategist' then
+						raise exception 'mock failure on 4th agent';
+					end if;
+					return new;
+				end;
+				$$ language plpgsql
+			`
+			await sql`
+				create trigger test_reject_strategist before insert on actors
+				for each row execute function test_reject_strategist()
+			`
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
 			const membersBefore = await db
@@ -681,8 +1517,11 @@ describe('Workspaces Integration', () => {
 			)
 			expect(created.status).toBe(201)
 			const ws = await created.json()
+			// Trial seats exactly one human (the owner); this test is about the
+			// re-add being a no-op, not about the cap.
+			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const newMember = await insertActor(db)
+			const newMember = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
@@ -716,8 +1555,9 @@ describe('Workspaces Integration', () => {
 			)
 			expect(created.status).toBe(201)
 			const ws = await created.json()
+			await setWorkspacePlan(db, ws.id, 'pro')
 
-			const admin = await insertActor(db)
+			const admin = await insertActor(db, { type: 'agent', createdBy: getTestActorId() })
 
 			const first = await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {

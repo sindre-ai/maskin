@@ -162,6 +162,39 @@ describe('SessionGithubLogClassifier — fault-injection: distinct tags land', (
 		return classifier.classifyLine('sess', toolResultLine(toolUseId, body))
 	}
 
+	it('tags a 404 on a call that sent pullNumber as a string as 404-not-found', async () => {
+		const classifier = new SessionGithubLogClassifier(async () => true)
+		classifier.registerSession('sess', [install])
+
+		await classifier.classifyLine(
+			'sess',
+			JSON.stringify({
+				type: 'assistant',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 'toolu_404',
+							name: 'mcp__github-sindre-ai__pull_request_read',
+							input: { method: 'get', owner: 'sindre-ai', repo: 'maskin', pullNumber: '99999999' },
+						},
+					],
+				},
+			}),
+		)
+		const out = await classifier.classifyLine(
+			'sess',
+			toolResultLine(
+				'toolu_404',
+				'failed to get pull request: GET https://api.github.com/repos/sindre-ai/maskin/pulls/99999999: 404 Not Found []',
+			),
+		)
+
+		expect(out?.classified.cause_tag).toBe('404-not-found')
+		expect(out?.taggedLine).toContain('cause_tag=404-not-found')
+		expect(out?.taggedLine).not.toContain('schema-validation')
+	})
+
 	it('lands 401-unauth, 403-permission, schema-validation, token-expired-mid-session, and missing-token in one session', async () => {
 		const classifier = new SessionGithubLogClassifier(async () => true)
 		classifier.registerSession('sess', [install, staleInstall])

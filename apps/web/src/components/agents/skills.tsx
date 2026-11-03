@@ -1,3 +1,4 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -27,6 +28,7 @@ import {
 	useAttachSkill,
 	useDetachSkill,
 } from '@/hooks/use-agent-skill-attachments'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDeleteSkill, useSaveSkill, useSkill, useSkills } from '@/hooks/use-skills'
 import { useWorkspaceSkills } from '@/hooks/use-workspace-skills'
 import type { AttachedWorkspaceSkill, SkillListItem, WorkspaceSkillListItem } from '@/lib/api'
@@ -48,16 +50,21 @@ import {
 	User,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 interface SkillsProps {
 	actorId: string
 	readOnly?: boolean
+	/** Draw attached workspace skills above the attach control (the v2 order)
+	 *  rather than below it. Defaults to the pre-v2 order. */
+	attachedFirst?: boolean
 }
 
-export function Skills({ actorId, readOnly = false }: SkillsProps) {
+export function Skills({ actorId, readOnly = false, attachedFirst = false }: SkillsProps) {
 	const { workspaceId } = useWorkspace()
 	const { data: skills, isLoading } = useSkills(actorId, workspaceId)
 	const deleteSkill = useDeleteSkill(actorId, workspaceId)
+	const canWrite = useCanWrite()
 
 	const [addingSkill, setAddingSkill] = useState(false)
 	const [editingSkill, setEditingSkill] = useState<string | null>(null)
@@ -65,7 +72,9 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 
 	const handleDelete = useCallback(
 		(name: string) => {
-			deleteSkill.mutate(name)
+			deleteSkill.mutate(name, {
+				onError: () => toast.error(`Couldn't delete ${name}`),
+			})
 		},
 		[deleteSkill],
 	)
@@ -78,7 +87,12 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 
 	return (
 		<div>
-			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} readOnly={readOnly} />
+			<WorkspaceSkillsSection
+				actorId={actorId}
+				workspaceId={workspaceId}
+				readOnly={readOnly}
+				attachedFirst={attachedFirst}
+			/>
 
 			<SkillsSectionHeader icon={User} label="Personal" count={skillList.length} className="mt-4" />
 
@@ -105,7 +119,9 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 				</div>
 			) : (
 				<p className="text-xs text-muted-foreground mb-3">
-					No personal skills configured. Add skills to extend what this agent can do.
+					{readOnly
+						? 'No personal skills yet.'
+						: 'No personal skills configured. Add skills to extend what this agent can do.'}
 				</p>
 			)}
 
@@ -115,14 +131,28 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 						<SkillForm actorId={actorId} onDone={() => setAddingSkill(false)} />
 					) : (
 						<div className="flex flex-wrap items-center gap-2">
-							<Button size="sm" variant="outline" onClick={() => setAddingSkill(true)}>
-								<Plus className="h-3.5 w-3.5 mr-1" />
-								Add Skill
-							</Button>
-							<Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-								<FileText className="h-3.5 w-3.5 mr-1" />
-								Import SKILL.md
-							</Button>
+							<ViewerTooltip>
+								<Button
+									size="sm"
+									variant="outline"
+									disabled={!canWrite}
+									onClick={() => setAddingSkill(true)}
+								>
+									<Plus className="h-3.5 w-3.5 mr-1" />
+									Add Skill
+								</Button>
+							</ViewerTooltip>
+							<ViewerTooltip>
+								<Button
+									size="sm"
+									variant="outline"
+									disabled={!canWrite}
+									onClick={() => setImportOpen(true)}
+								>
+									<FileText className="h-3.5 w-3.5 mr-1" />
+									Import SKILL.md
+								</Button>
+							</ViewerTooltip>
 						</div>
 					)}
 
@@ -141,15 +171,19 @@ function WorkspaceSkillsSection({
 	actorId,
 	workspaceId,
 	readOnly = false,
+	attachedFirst = false,
 }: {
 	actorId: string
 	workspaceId: string
 	readOnly?: boolean
+	attachedFirst?: boolean
 }) {
 	const { data: workspaceSkills, isLoading: isLoadingWorkspace } = useWorkspaceSkills(workspaceId)
 	const { data: attachments, isLoading: isLoadingAttachments } = useAgentSkillAttachments(actorId)
 	const attachSkill = useAttachSkill(actorId)
 	const detachSkill = useDetachSkill(actorId)
+	const canWrite = useCanWrite()
+
 	const [open, setOpen] = useState(false)
 	const [query, setQuery] = useState('')
 
@@ -159,6 +193,27 @@ function WorkspaceSkillsSection({
 	)
 	const attached = attachments ?? []
 	const attachedIds = new Set(attached.map((s) => s.id))
+	// One definition, rendered in one of two places: v2 reads the list top-down
+	// and puts the "attach another" control at the end of it (mockup 2450–2456),
+	// while the pre-v2 order leads with the control. Rendering it twice would
+	// duplicate every attached skill on screen.
+	const attachedRows =
+		!isLoading && attached.length > 0 ? (
+			<div className={cn('space-y-2', !attachedFirst && 'mt-2')}>
+				{attached.map((skill) => (
+					<AttachedSkillRow
+						key={skill.id}
+						skill={skill}
+						onRemove={() =>
+							detachSkill.mutate(skill.id, {
+								onError: () => toast.error(`Couldn't detach ${skill.name}`),
+							})
+						}
+						readOnly={readOnly}
+					/>
+				))}
+			</div>
+		) : null
 
 	const showEmptyState = !isLoading && available.length === 0 && attached.length === 0
 
@@ -186,6 +241,12 @@ function WorkspaceSkillsSection({
 
 			{isLoading && <p className="text-xs text-muted-foreground">Loading workspace skills...</p>}
 
+			{/* Read-only is how agent detail renders this block, so the section
+			    cannot just fall silent when there is nothing attached (mockup 2482). */}
+			{readOnly && !isLoading && attached.length === 0 && (
+				<p className="text-xs text-muted-foreground">No workspace skills attached.</p>
+			)}
+
 			{showEmptyState && !readOnly && (
 				<p className="text-xs text-muted-foreground">
 					No workspace skills in this workspace yet. Create one in{' '}
@@ -201,19 +262,24 @@ function WorkspaceSkillsSection({
 				</p>
 			)}
 
+			{attachedFirst && attachedRows}
+
 			{!readOnly && !isLoading && available.length > 0 && (
 				<ResponsivePopover open={open} onOpenChange={handleOpenChange}>
-					<ResponsivePopoverTrigger asChild>
-						<Button
-							size="sm"
-							variant="outline"
-							aria-label="Attach workspace skill"
-							aria-expanded={open}
-						>
-							<Plus className="h-3.5 w-3.5 mr-1" />
-							Attach workspace skill
-						</Button>
-					</ResponsivePopoverTrigger>
+					<ViewerTooltip>
+						<ResponsivePopoverTrigger asChild>
+							<Button
+								size="sm"
+								variant="outline"
+								aria-label="Attach workspace skill"
+								aria-expanded={open}
+								disabled={!canWrite}
+							>
+								<Plus className="h-3.5 w-3.5 mr-1" />
+								Attach workspace skill
+							</Button>
+						</ResponsivePopoverTrigger>
+					</ViewerTooltip>
 					<ResponsivePopoverContent
 						className="md:w-72 md:p-0"
 						align="start"
@@ -238,9 +304,13 @@ function WorkspaceSkillsSection({
 											value={`${skill.name} ${skill.description ?? ''}`}
 											onSelect={() => {
 												if (isAttached) {
-													detachSkill.mutate(skill.id)
+													detachSkill.mutate(skill.id, {
+														onError: () => toast.error(`Couldn't detach ${skill.name}`),
+													})
 												} else {
-													attachSkill.mutate(skill.id)
+													attachSkill.mutate(skill.id, {
+														onError: () => toast.error(`Couldn't attach ${skill.name}`),
+													})
 												}
 												setOpen(false)
 											}}
@@ -273,18 +343,7 @@ function WorkspaceSkillsSection({
 				</ResponsivePopover>
 			)}
 
-			{!isLoading && attached.length > 0 && (
-				<div className="mt-2 space-y-2">
-					{attached.map((skill) => (
-						<AttachedSkillRow
-							key={skill.id}
-							skill={skill}
-							onRemove={() => detachSkill.mutate(skill.id)}
-							readOnly={readOnly}
-						/>
-					))}
-				</div>
-			)}
+			{!attachedFirst && attachedRows}
 		</div>
 	)
 }
@@ -325,10 +384,11 @@ function AttachedSkillRow({
 	onRemove: () => void
 	readOnly?: boolean
 }) {
+	const canWrite = useCanWrite()
 	const isFolder = skill.isFolder === true
 	const fileCount = skill.fileCount ?? 0
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2">
 			<Library className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
 				<div className="flex items-center gap-1.5">
@@ -340,15 +400,18 @@ function AttachedSkillRow({
 				)}
 			</div>
 			{!readOnly && (
-				<Button
-					size="sm"
-					variant="ghost"
-					className="text-muted-foreground shrink-0"
-					onClick={onRemove}
-					aria-label={`Remove ${skill.name}`}
-				>
-					Remove
-				</Button>
+				<ViewerTooltip>
+					<Button
+						size="sm"
+						variant="ghost"
+						className="text-muted-foreground shrink-0"
+						disabled={!canWrite}
+						onClick={onRemove}
+						aria-label={`Remove ${skill.name}`}
+					>
+						Remove
+					</Button>
+				</ViewerTooltip>
 			)}
 		</div>
 	)
@@ -357,7 +420,7 @@ function AttachedSkillRow({
 function FolderBadge({ fileCount }: { fileCount: number }) {
 	return (
 		<span
-			className="inline-flex items-center gap-1 rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shrink-0"
+			className="inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shrink-0"
 			aria-label={`Folder skill with ${fileCount} file${fileCount === 1 ? '' : 's'}`}
 		>
 			<span aria-hidden="true">📁</span>
@@ -380,9 +443,10 @@ function SkillCard({
 	readOnly?: boolean
 }) {
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const canWrite = useCanWrite()
 
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2">
 			<BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
@@ -402,24 +466,30 @@ function SkillCard({
 					</div>
 				) : (
 					<div className="flex items-center gap-1 shrink-0">
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground"
-							onClick={onEdit}
-							aria-label="Edit skill"
-						>
-							<Pencil className="h-3.5 w-3.5" />
-						</Button>
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground hover:text-error"
-							onClick={() => setConfirmDelete(true)}
-							aria-label="Delete skill"
-						>
-							<Trash2 className="h-3.5 w-3.5" />
-						</Button>
+						<ViewerTooltip>
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground"
+								disabled={!canWrite}
+								onClick={onEdit}
+								aria-label="Edit skill"
+							>
+								<Pencil className="h-3.5 w-3.5" />
+							</Button>
+						</ViewerTooltip>
+						<ViewerTooltip>
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground hover:text-error"
+								disabled={!canWrite}
+								onClick={() => setConfirmDelete(true)}
+								aria-label="Delete skill"
+							>
+								<Trash2 className="h-3.5 w-3.5" />
+							</Button>
+						</ViewerTooltip>
 					</div>
 				))}
 		</div>
@@ -489,12 +559,16 @@ function SkillForm({
 					frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
 				},
 			},
-			{ onSuccess: onDone },
+			{
+				onSuccess: onDone,
+				onError: (err) =>
+					toast.error(err instanceof Error ? err.message : `Couldn't save ${name.trim()}`),
+			},
 		)
 	}
 
 	return (
-		<div className="rounded-md border border-border bg-bg-surface p-3 space-y-2">
+		<div className="rounded-md border border-border bg-card p-3 space-y-2">
 			<div className="flex gap-2">
 				<div className="flex-1">
 					<Label>Name</Label>
@@ -641,6 +715,8 @@ function ImportSkillDialog({
 						setRaw('')
 						onClose()
 					},
+					onError: (err) =>
+						setError(err instanceof Error ? err.message : 'Could not save the imported skill.'),
 				},
 			)
 		} catch {

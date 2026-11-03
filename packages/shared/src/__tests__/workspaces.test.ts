@@ -16,7 +16,6 @@ describe('workspaceSettingsSchema', () => {
 			bet: 'Bet',
 			task: 'Task',
 			loop: 'Loop',
-			commitment: 'Commitment',
 		})
 		expect(result.statuses.insight).toEqual([
 			'new',
@@ -27,7 +26,7 @@ describe('workspaceSettingsSchema', () => {
 			'discarded',
 		])
 		expect(result.statuses.bet).toEqual([
-			'signal',
+			'opportunity',
 			'define',
 			'active',
 			'live',
@@ -37,6 +36,7 @@ describe('workspaceSettingsSchema', () => {
 			'archived',
 		])
 		expect(result.statuses.task).toEqual([
+			'backlog',
 			'todo',
 			'in_progress',
 			'in_review',
@@ -54,7 +54,7 @@ describe('workspaceSettingsSchema', () => {
 			'relates_to',
 			'duplicates',
 		])
-		expect(result.max_concurrent_sessions).toBe(3)
+		expect(result.max_concurrent_sessions).toBe(10)
 		expect(result.llm_keys).toEqual({})
 	})
 

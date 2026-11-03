@@ -5,6 +5,7 @@ import {
 	actorToolsSchema,
 	actorTypeSchema,
 	createActorSchema,
+	firstStepSchema,
 	llmConfigSchema,
 	loginSchema,
 	updateActorSchema,
@@ -27,6 +28,12 @@ describe('actorToolsSchema', () => {
 	it('defaults mcpServers to empty object', () => {
 		const result = actorToolsSchema.parse({})
 		expect(result.mcpServers).toEqual({})
+	})
+
+	it('leaves envFrom absent when not provided and accepts a list of names', () => {
+		expect(actorToolsSchema.parse({})).not.toHaveProperty('envFrom')
+		const result = actorToolsSchema.parse({ envFrom: ['AGENT_SECRET_COOLIFY'] })
+		expect(result.envFrom).toEqual(['AGENT_SECRET_COOLIFY'])
 	})
 
 	it('accepts mcpServers with stdio config', () => {
@@ -169,7 +176,7 @@ describe('updateActorSchema', () => {
 			tools: { mcpServers: {} },
 			memory: { key: 'value' },
 			llm_provider: 'anthropic',
-			llm_config: { model: 'claude-opus-4-7' },
+			llm_config: { model: 'claude-sonnet-5-5' },
 		}
 		expect(updateActorSchema.parse(writableFromResponse)).toEqual(writableFromResponse)
 	})
@@ -263,5 +270,97 @@ describe('updateActorSchema does not accept is_system or isSystem', () => {
 		} as Record<string, unknown>) as Record<string, unknown>
 		expect(parsed.isSystem).toBeUndefined()
 		expect(parsed.is_system).toBeUndefined()
+	})
+})
+
+describe('createActorSchema first_steps and needed_integrations', () => {
+	const base = { type: 'agent', name: 'Scout' } as const
+
+	it('accepts one to four steps and one to four provider names', () => {
+		const parsed = createActorSchema.parse({
+			...base,
+			first_steps: [
+				{ label: 'Summarise open tasks', prompt: 'Summarise open tasks', action: 'send' },
+				{ label: 'Give me a first task', prompt: 'Here is a first task for you: ', action: 'fill' },
+			],
+			needed_integrations: ['linear', 'gmail'],
+		})
+		expect(parsed.first_steps).toHaveLength(2)
+		expect(parsed.needed_integrations).toEqual(['linear', 'gmail'])
+	})
+
+	it('keeps a fill prompt exactly as written, trailing space included', () => {
+		const step = firstStepSchema.parse({
+			label: 'Draft',
+			prompt: 'Draft a reply to: ',
+			action: 'fill',
+		})
+		expect(step.prompt).toBe('Draft a reply to: ')
+	})
+
+	it('rejects an empty list and a fifth step or provider', () => {
+		const step = { label: 'A', prompt: 'A', action: 'send' }
+		expect(createActorSchema.safeParse({ ...base, first_steps: [] }).success).toBe(false)
+		expect(createActorSchema.safeParse({ ...base, first_steps: Array(5).fill(step) }).success).toBe(
+			false,
+		)
+		expect(createActorSchema.safeParse({ ...base, needed_integrations: [] }).success).toBe(false)
+		expect(
+			createActorSchema.safeParse({ ...base, needed_integrations: ['a', 'b', 'c', 'd', 'e'] })
+				.success,
+		).toBe(false)
+	})
+
+	it('rejects a send step whose prompt differs from its label', () => {
+		const result = firstStepSchema.safeParse({
+			label: 'Read my inbox',
+			prompt: 'Delete my inbox',
+			action: 'send',
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it('rejects a send step whose prompt ends in a space', () => {
+		const result = firstStepSchema.safeParse({
+			label: 'Read my inbox',
+			prompt: 'Read my inbox ',
+			action: 'send',
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it('accepts a send step when only surrounding whitespace in the label differs', () => {
+		const result = firstStepSchema.safeParse({
+			label: ' Read my inbox',
+			prompt: 'Read my inbox',
+			action: 'send',
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('rejects control characters and line breaks in a label or prompt', () => {
+		for (const bad of ['two\nlines', 'tab\there', 'bell\u0007', 'nul\u0000']) {
+			expect(firstStepSchema.safeParse({ label: bad, prompt: 'ok', action: 'fill' }).success).toBe(
+				false,
+			)
+			expect(firstStepSchema.safeParse({ label: 'ok', prompt: bad, action: 'fill' }).success).toBe(
+				false,
+			)
+		}
+	})
+
+	it('rejects a label over 60 characters and a prompt over 200', () => {
+		expect(
+			firstStepSchema.safeParse({ label: 'x'.repeat(61), prompt: 'x', action: 'fill' }).success,
+		).toBe(false)
+		expect(
+			firstStepSchema.safeParse({ label: 'x', prompt: 'x'.repeat(201), action: 'fill' }).success,
+		).toBe(false)
+	})
+
+	it('rejects an action other than send or fill', () => {
+		expect(firstStepSchema.safeParse({ label: 'x', prompt: 'x', action: 'run' }).success).toBe(
+			false,
+		)
 	})
 })

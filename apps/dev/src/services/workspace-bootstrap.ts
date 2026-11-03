@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	agentSkills,
 	objects,
@@ -11,10 +9,11 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
+import { applyModuleDefaults } from '@maskin/module-sdk'
 import {
 	CHIEF_OF_STAFF_DEFAULT,
 	DEFAULT_WORKSPACE_AGENTS,
+	DEFAULT_WORKSPACE_KNOWLEDGE,
 	DEFAULT_WORKSPACE_LOOPS,
 	DEFAULT_WORKSPACE_TRIGGERS,
 	type SeedSkill,
@@ -23,11 +22,26 @@ import {
 	skillNameSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { isEnterpriseActor } from '../lib/enterprise'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
-import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
+import {
+	buildChiefOfStaffKickoffPrompt,
+	shouldSkipOnboardingKickoff,
+} from '../lib/onboarding/chief-of-staff-kickoff'
+import {
+	OwnershipCapExceededError,
+	computeEffectiveTier,
+	lockActorForOwnershipClaim,
+	ownedWorkspacePlans,
+	ownershipCapForTier,
+	resolvePlanTier,
+} from '../lib/workspace-capacity'
+import { sealWorkspaceLlmSecrets } from '../lib/workspace-secrets'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
 export const DEFAULT_AGENT_IDS = [
@@ -78,6 +92,11 @@ type ActorSpec = {
 	llmProvider: string | null
 	llmConfig: Record<string, unknown> | null
 	tools: Record<string, unknown> | null
+	// Passed through to `actors.metadata` on insert. Currently only carries
+	// `voice_enabled` for Chief of Staff (Voice v1 bet 16bd0042); left as an
+	// open record so future default-agent metadata (e.g. per-agent voice
+	// picker in v2) can land here without another schema change.
+	metadata: Record<string, unknown> | null
 }
 
 function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
@@ -91,6 +110,7 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
 			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: WORKSPACE_COACH_DEFAULT.tools as Record<string, unknown>,
+			metadata: null,
 		}
 	}
 	if (agentId === 'chief_of_staff') {
@@ -103,6 +123,9 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
 			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: CHIEF_OF_STAFF_DEFAULT.tools as Record<string, unknown>,
+			// Voice v1: not read by POST /api/voice-sessions, which only checks that
+			// the target is an agent. Chief of Staff is the only default-on candidate.
+			metadata: { ...(CHIEF_OF_STAFF_DEFAULT.metadata ?? {}) },
 		}
 	}
 	const agent = DEFAULT_WORKSPACE_AGENTS.find((a) => a.$id === agentId)
@@ -116,6 +139,7 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 		llmProvider: null,
 		llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
 		tools: (agent.tools ?? null) as Record<string, unknown> | null,
+		metadata: null,
 	}
 }
 
@@ -167,7 +191,7 @@ export async function seedDefaultAgentActors(
 					llmProvider: spec.llmProvider,
 					llmConfig: spec.llmConfig,
 					tools: spec.tools,
-					apiKey: generateApiKey().key,
+					metadata: spec.metadata,
 					createdBy,
 				})
 				.returning()
@@ -230,7 +254,7 @@ export async function ensureChiefOfStaffActor(
 			llmProvider: chiefSpec.llmProvider,
 			llmConfig: chiefSpec.llmConfig,
 			tools: chiefSpec.tools,
-			apiKey: generateApiKey().key,
+			metadata: chiefSpec.metadata,
 			createdBy,
 		})
 		.returning()
@@ -281,7 +305,7 @@ export async function pinDefaultAgentIfUnset(
  * same actor/skill pair (e.g. Chief of Staff re-resolved via
  * ensureChiefOfStaffActor on every bootstrap run).
  */
-async function attachSkill(
+export async function attachSkill(
 	db: Database,
 	agentStorage: AgentStorageManager,
 	workspaceId: string,
@@ -440,7 +464,6 @@ export async function bootstrapDefaultAgents(
 					systemPrompt,
 					tools: (agent.tools ?? null) as Record<string, unknown> | null,
 					llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
-					apiKey: generateApiKey().key,
 					createdBy,
 				})
 				.returning()
@@ -494,15 +517,27 @@ export async function bootstrapDefaultAgents(
 			continue
 		}
 
+		// If the seed prompt references its own trigger id via {{trigger_id}},
+		// pre-generate the UUID and interpolate before insert so the agent has
+		// a literal id to pass to update_trigger for self-disable. Used by the
+		// onboarding-only Chief of Staff triggers that must fire once per
+		// workspace and disable themselves afterwards.
+		const referencesTriggerId = trigger.actionPrompt.includes('{{trigger_id}}')
+		const preGeneratedId = referencesTriggerId ? randomUUID() : undefined
+		const actionPrompt = preGeneratedId
+			? trigger.actionPrompt.replaceAll('{{trigger_id}}', preGeneratedId)
+			: trigger.actionPrompt
+
 		try {
 			const [created] = await db
 				.insert(triggers)
 				.values({
+					...(preGeneratedId ? { id: preGeneratedId } : {}),
 					workspaceId,
 					name: trigger.name,
 					type: trigger.type,
 					config: trigger.config as Record<string, unknown>,
-					actionPrompt: trigger.actionPrompt,
+					actionPrompt,
 					targetActorId,
 					enabled: trigger.enabled,
 					createdBy,
@@ -576,7 +611,7 @@ export async function bootstrapDefaultAgents(
 				continue
 			}
 
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId: createdBy,
 				action: 'created',
@@ -593,6 +628,67 @@ export async function bootstrapDefaultAgents(
 		}
 	}
 
+	// Seed default knowledge objects — the onboarding checklist and any future
+	// template-provisioned knowledge. Idempotent per workspace via
+	// `metadata.seed_slug`, NOT title: a user who renames the checklist in the
+	// UI keeps the same slug and therefore the same row on re-bootstrap, so a
+	// title match would let a rename mint a duplicate that poisons the workspace.
+	// createdBy is chiefId when Chief of Staff exists; the top-level bootstrap
+	// createdBy (the workspace owner) is only used if CoS seeding failed above.
+	for (const seed of DEFAULT_WORKSPACE_KNOWLEDGE) {
+		const [existing] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'knowledge'),
+					sql`${objects.metadata}->>'seed_slug' = ${seed.seedSlug}`,
+				),
+			)
+			.limit(1)
+
+		if (existing) continue
+
+		try {
+			const [created] = await db
+				.insert(objects)
+				.values({
+					workspaceId,
+					type: 'knowledge',
+					title: seed.title,
+					content: seed.body,
+					status: 'draft',
+					createdBy: chiefId ?? createdBy,
+					metadata: { seed_slug: seed.seedSlug },
+				})
+				.returning()
+
+			if (!created) {
+				logger.error('Failed to create default knowledge object during workspace bootstrap', {
+					workspaceId,
+					seedSlug: seed.seedSlug,
+				})
+				continue
+			}
+
+			await recordEvent(db, {
+				workspaceId,
+				actorId: chiefId ?? createdBy,
+				action: 'created',
+				entityType: 'knowledge',
+				entityId: created.id,
+				data: created,
+			})
+		} catch (err) {
+			logger.error('Failed to seed default knowledge during workspace bootstrap', {
+				workspaceId,
+				seedSlug: seed.seedSlug,
+				err,
+			})
+		}
+	}
+
 	// Kick off Chief of Staff's welcome + first-pass-research session directly —
 	// do NOT rely on an `actor.created` event trigger for this. The owner's
 	// actor row is inserted (and this function is invoked) before any of the
@@ -602,29 +698,39 @@ export async function bootstrapDefaultAgents(
 	// time Chief of Staff is created for this workspace (chiefIsNew), so
 	// idempotent re-runs of this function (e.g. a template backfill on an
 	// existing workspace) never re-kick the welcome session.
-	if (chiefIsNew && chiefId && sessionManager) {
+	if (chiefIsNew && chiefId && sessionManager && !shouldSkipOnboardingKickoff()) {
 		const [owner] = await db
 			.select({ name: actors.name, email: actors.email })
 			.from(actors)
 			.where(eq(actors.id, createdBy))
 			.limit(1)
 
-		sessionManager
-			.createSession(workspaceId, {
-				actorId: chiefId,
-				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
-				createdBy,
-			})
-			.catch((err) =>
-				logger.error(
-					'Failed to kick off Chief of Staff welcome session during workspace bootstrap',
-					{
-						workspaceId,
-						err,
-					},
-				),
-			)
+		startSession({
+			workspaceId,
+			actorId: chiefId,
+			callerKind: 'internal',
+			actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
+			createdBy,
+			// Welcome kickoff has no originating object.
+			initiatedFromObjectId: null,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Failed to kick off Chief of Staff welcome session during workspace bootstrap', {
+				workspaceId,
+				err,
+			}),
+		)
 	}
+}
+
+/** Lowercased part after the last "@", or undefined if there is no usable domain. */
+function emailDomain(email: string | null | undefined): string | undefined {
+	if (!email?.includes('@')) return undefined
+	const domain = email
+		.slice(email.lastIndexOf('@') + 1)
+		.trim()
+		.toLowerCase()
+	return domain || undefined
 }
 
 /**
@@ -668,15 +774,49 @@ export async function provisionWorkspace(params: {
 }): Promise<typeof workspaces.$inferSelect | null> {
 	const { db, agentStorage, sessionManager, name, ownerActorId } = params
 
-	const parsedSettings = workspaceSettingsSchema.parse(params.settings ?? {})
-	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
+	// Every workspace is provisioned on the trial tier — `billing` is written
+	// only by the Stripe webhook and /api/billing/*. POST /api/workspaces
+	// rejects a caller-supplied `billing` outright; this strip is the
+	// chokepoint that also covers signup and the dev bootstrap, and keeps a
+	// future caller from reopening the hole. It matters doubly because
+	// `candidatePlan` below is derived from these settings, so an unstripped
+	// `billing.plan` would let the request validate its own ownership cap.
+	const requestedSettings =
+		params.settings && typeof params.settings === 'object' && !Array.isArray(params.settings)
+			? (({ billing: _ignored, ...rest }) => rest)(params.settings as Record<string, unknown>)
+			: params.settings
+
+	const parsedSettings = workspaceSettingsSchema.parse(requestedSettings ?? {})
+	// The request may carry LLM keys in plain text; the row only ever holds sealed ones.
+	const settings = sealWorkspaceLlmSecrets(
+		applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules),
+	)
 
 	let chiefOfStaffId: string | undefined
 
+	const candidatePlan = resolvePlanTier(settings)
+
 	const workspace = await db.transaction(async (tx) => {
+		// Serializes ownership-cap claims for this actor against any concurrent
+		// workspace creation / transfer-ownership acceptance racing the same
+		// actor's cap. See lockActorForOwnershipClaim's docstring.
+		await lockActorForOwnershipClaim(tx, ownerActorId)
+
+		const ownedPlans = await ownedWorkspacePlans(tx, ownerActorId)
+		const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
+		const cap = ownershipCapForTier(effectiveTier)
+		if (cap !== null && ownedPlans.length >= cap && !isEnterpriseActor(ownerActorId)) {
+			throw new OwnershipCapExceededError({
+				actorId: ownerActorId,
+				effectiveTier,
+				used: ownedPlans.length,
+				cap,
+			})
+		}
+
 		const [ws] = await tx
 			.insert(workspaces)
-			.values({ name, settings, createdBy: ownerActorId })
+			.values({ name, settings, createdBy: ownerActorId, billingOwnerId: ownerActorId })
 			.returning()
 
 		if (!ws) {
@@ -712,11 +852,32 @@ export async function provisionWorkspace(params: {
 
 	if (!workspace) return null
 
+	// The workspace is already committed, so a failed owner lookup must never
+	// fail provisioning — the event just goes out without owner_email_domain.
+	// Read here, once, rather than reusing the welcome-session read below: that
+	// one is gated on sessionManager and may not run.
+	let ownerEmailDomain: string | undefined
+	try {
+		const [ownerRow] = await db
+			.select({ email: actors.email })
+			.from(actors)
+			.where(eq(actors.id, ownerActorId))
+			.limit(1)
+		ownerEmailDomain = emailDomain(ownerRow?.email)
+	} catch (err) {
+		logger.warn(
+			'provisionWorkspace: owner email lookup failed — sending workspace_created without owner_email_domain',
+			{ workspaceId: workspace.id, err },
+		)
+	}
+
 	// Fire-and-forget by design — the analytics client never throws (see posthog.ts).
+	// Only the domain is sent; the full address is PII and stays out of PostHog.
 	void capturePosthogEvent('workspace_created', workspace.id, {
 		workspace_id: workspace.id,
 		workspace_name: workspace.name,
 		created_by: ownerActorId,
+		...(ownerEmailDomain ? { owner_email_domain: ownerEmailDomain } : {}),
 	})
 
 	// The actor + member rows are already committed above, so this call is a
@@ -744,22 +905,25 @@ export async function provisionWorkspace(params: {
 	// kickoff — fire the welcome session here instead. It can't be driven by an
 	// `actor.created` event trigger either: the owner's actor row predates every
 	// trigger in this workspace.
-	if (chiefOfStaffId && sessionManager) {
+	if (chiefOfStaffId && sessionManager && !shouldSkipOnboardingKickoff()) {
 		const [owner] = await db
 			.select({ name: actors.name, email: actors.email })
 			.from(actors)
 			.where(eq(actors.id, ownerActorId))
 			.limit(1)
 
-		sessionManager
-			.createSession(workspace.id, {
-				actorId: chiefOfStaffId,
-				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
-				createdBy: ownerActorId,
-			})
-			.catch((err) =>
-				logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
-			)
+		startSession({
+			workspaceId: workspace.id,
+			actorId: chiefOfStaffId,
+			callerKind: 'internal',
+			actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
+			createdBy: ownerActorId,
+			// Welcome kickoff has no originating object.
+			initiatedFromObjectId: null,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
+		)
 	}
 
 	return workspace

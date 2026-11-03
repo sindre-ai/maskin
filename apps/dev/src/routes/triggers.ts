@@ -1,11 +1,20 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, triggers } from '@maskin/db/schema'
+import { objects, triggers } from '@maskin/db/schema'
 import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
-import { and, asc, count, desc, eq } from 'drizzle-orm'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
+import {
+	detectSuspiciousFilterEntries,
+	trackTriggerConfigSuspicious,
+} from '../lib/analytics/trigger-matcher-events'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent, recordEvents } from '../lib/events/record-event'
 import {
 	errorSchema,
 	idParamSchema,
@@ -13,22 +22,120 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
+import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
+import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 	}
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
+// The model route is stamped on the session at dispatch (from the target agent
+// and workspace settings), never read from the trigger. The config schemas
+// strip unknown keys, so without this check a caller who sends one of these
+// gets a 200 and the field silently vanishes. Read from the raw request body:
+// by the time the handler runs, `c.req.valid('json')` has already dropped them.
+const MODEL_ROUTE_CONFIG_KEYS = ['llm_route', 'llm_oauth_slot'] as const
+
+async function findModelRouteKeyInConfig(c: {
+	req: { json: () => Promise<unknown> }
+}): Promise<string | undefined> {
+	const raw = (await c.req.json()) as { config?: unknown } | null
+	const config = raw?.config
+	if (typeof config !== 'object' || config === null) return undefined
+	return MODEL_ROUTE_CONFIG_KEYS.find((key) => key in config)
+}
+
+function modelRouteConfigError(key: string) {
+	return createApiError(
+		'VALIDATION_ERROR',
+		`config.${key} is not a trigger setting: the model route is resolved at dispatch from the target agent and workspace settings`,
+	)
+}
+
+/**
+ * Kick off the Slack trigger setup service after the DB commit — never inside
+ * the transaction (spec §2). `row.type !== 'event'` excludes cron and reminder
+ * triggers; `extractSlackChannelIds` returning an empty array excludes every
+ * other event trigger, since only Slack ones carry `event.channel` /
+ * `event.item.channel` conditions.
+ *
+ * The one case where an empty channel list still runs: a trigger that already
+ * has `metadata.slack_setup`. That is a Slack trigger whose last channel was
+ * just removed, and the service needs to run to clear the outcomes the form
+ * would otherwise keep showing.
+ */
+/**
+ * Write-time warning for filters whose values the matcher will never resolve
+ * (a non-array object, or `null`). Emits one `trigger_config_suspicious`
+ * PostHog row per suspicious entry so bet #8's dashboard catches bad configs
+ * at save time instead of after they sit dead in the runtime. Non-blocking on
+ * purpose — `triggers.config` is `jsonb` and hard-rejecting on save could
+ * strand triggers whose author already relied on the config being writable
+ * (tech spec §2.3, last paragraph). Fire-and-forget: the PostHog helper
+ * swallows its own errors, so a rejected promise here would be a code bug.
+ */
+function warnOnSuspiciousFilter(
+	actorId: string,
+	row: { id: string; workspaceId: string; config: unknown },
+): void {
+	const config = row.config as { filter?: Record<string, unknown> } | null
+	const filter = config?.filter
+	if (!filter) return
+	for (const entry of detectSuspiciousFilterEntries(filter)) {
+		void trackTriggerConfigSuspicious({
+			workspaceId: row.workspaceId,
+			triggerId: row.id,
+			actorId,
+			filterKey: entry.key,
+			filterShape: entry.shape,
+		})
+	}
+}
+
+function kickOffSlackSetup(
+	db: Database,
+	actorId: string,
+	row: {
+		id: string
+		workspaceId: string
+		name: string
+		type: string
+		config: unknown
+		metadata?: unknown
+	},
+): void {
+	if (row.type !== 'event') return
+	const channelIds = extractSlackChannelIds(row.config as Record<string, unknown> | null)
+	const hasStaleSetup =
+		(row.metadata as Record<string, unknown> | null | undefined)?.slack_setup !== undefined
+	if (channelIds.length === 0 && !hasStaleSetup) return
+	// Fire-and-forget — the route response is what the frontend awaits, not the
+	// setup outcome. `runSlackTriggerSetup` swallows its own errors so a
+	// rejected promise here would be a runtime bug, not a Slack API failure.
+	void runSlackTriggerSetup(db, {
+		triggerId: row.id,
+		workspaceId: row.workspaceId,
+		channelIds,
+		triggerName: row.name,
+		actorId,
+	})
+}
+
 // POST /api/triggers
 const createTriggerRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Create a trigger',
 	request: {
@@ -61,8 +168,12 @@ app.openapi(createTriggerRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = c.req.valid('json')
+
+	const modelRouteKey = await findModelRouteKeyInConfig(c)
+	if (modelRouteKey) return c.json(modelRouteConfigError(modelRouteKey), 400)
 
 	// Validate cron expression eagerly so users get immediate feedback
 	if (body.type === 'cron') {
@@ -72,6 +183,10 @@ app.openapi(createTriggerRoute, async (c) => {
 			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
 		}
 	}
+
+	// The trigger starts its target agent on every fire, so the agent has to be a
+	// member of this workspace.
+	await assertInWorkspace(db, workspaceId, { actors: [body.target_actor_id] })
 
 	const created = await db.transaction(async (tx) => {
 		const [row] = await tx
@@ -91,7 +206,7 @@ app.openapi(createTriggerRoute, async (c) => {
 
 		if (!row) throw new Error('Failed to create trigger')
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -102,6 +217,14 @@ app.openapi(createTriggerRoute, async (c) => {
 
 		return row
 	})
+
+	// Post-commit — the transaction is done, the row exists. Kick off the
+	// Slack setup service (join channels + post confirmations) if the trigger
+	// is Slack-shaped. Never blocks the response.
+	kickOffSlackSetup(db, actorId, created)
+	// Emit `trigger_config_suspicious` for any filter entry whose value is a
+	// non-array object or `null` — matcher will never resolve those.
+	warnOnSuspiciousFilter(actorId, created)
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -119,7 +242,17 @@ const listTriggersQuerySchema = z.object({
 	snapshot_at: z.string().datetime().optional(),
 	cursor_created_at: z.string().datetime().optional(),
 	cursor_id: z.string().uuid().optional(),
+	// Filters combine with AND and apply to the rows and to X-Total-Count alike.
+	target_actor_id: z.string().uuid().optional(),
+	enabled: z.enum(['true', 'false']).optional(),
+	// Case-insensitive substring of the trigger name.
+	q: z.string().trim().min(1).max(200).optional(),
 })
+
+/** Escape LIKE wildcards (percent, underscore) and the escape character itself. */
+function escapeLike(value: string): string {
+	return value.replace(/[%_\\]/g, '\\$&')
+}
 
 // GET /api/triggers
 const listTriggersRoute = createRoute({
@@ -154,8 +287,19 @@ app.openapi(listTriggersRoute, (async (c) => {
 	const query = c.req.valid('query')
 	const { limit, offset } = query
 
+	const filterConditions = [eq(triggers.workspaceId, workspaceId)]
+	if (query.target_actor_id)
+		filterConditions.push(eq(triggers.targetActorId, query.target_actor_id))
+	if (query.enabled) filterConditions.push(eq(triggers.enabled, query.enabled === 'true'))
+	if (query.q) {
+		filterConditions.push(sql`${triggers.name} ILIKE ${`%${escapeLike(query.q)}%`} ESCAPE '\\'`)
+	}
+
 	if (limit === undefined) {
-		const results = await db.select().from(triggers).where(eq(triggers.workspaceId, workspaceId))
+		const results = await db
+			.select()
+			.from(triggers)
+			.where(and(...filterConditions))
 		c.header('X-Total-Count', String(results.length))
 		return c.json(serializeArray(results) as z.infer<typeof triggerResponseSchema>[])
 	}
@@ -165,14 +309,12 @@ app.openapi(listTriggersRoute, (async (c) => {
 		{ createdAt: triggers.createdAt, id: triggers.id },
 		query,
 	)
-	const listWhere = cursorConditions.length
-		? and(eq(triggers.workspaceId, workspaceId), ...cursorConditions)
-		: eq(triggers.workspaceId, workspaceId)
+	const listWhere = and(...filterConditions, ...cursorConditions)
 
 	const orderBy = cursorOn
 		? query.order === 'asc'
-			? [asc(triggers.createdAt), asc(triggers.id)]
-			: [desc(triggers.createdAt), asc(triggers.id)]
+			? [asc(msCreatedAt(triggers.createdAt)), asc(triggers.id)]
+			: [desc(msCreatedAt(triggers.createdAt)), asc(triggers.id)]
 		: []
 
 	const skipOffset = useKeysetSeek(query)
@@ -185,13 +327,13 @@ app.openapi(listTriggersRoute, (async (c) => {
 	// advances.
 	const totalWhere = query.snapshot_at
 		? and(
-				eq(triggers.workspaceId, workspaceId),
+				...filterConditions,
 				...buildCreatedAtCursorConditions(
 					{ createdAt: triggers.createdAt, id: triggers.id },
 					{ snapshot_at: query.snapshot_at },
 				),
 			)
-		: eq(triggers.workspaceId, workspaceId)
+		: and(...filterConditions)
 
 	const [results, totalRow] = await Promise.all([
 		listQueryOrdered.limit(limit).offset(skipOffset ? 0 : (offset ?? 0)),
@@ -206,6 +348,7 @@ app.openapi(listTriggersRoute, (async (c) => {
 const updateTriggerRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Update a trigger',
 	request: {
@@ -238,9 +381,12 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	// Verify trigger exists and actor is a workspace member
 	const [trigger] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
-	if (!trigger || !(await isWorkspaceMember(db, actorId, trigger.workspaceId))) {
+	if (!trigger || !(await isWorkspaceWriter(db, actorId, trigger.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
+
+	const modelRouteKey = await findModelRouteKeyInConfig(c)
+	if (modelRouteKey) return c.json(modelRouteConfigError(modelRouteKey), 400)
 
 	// Validate config against the effective post-update type — the type in the
 	// body if changing it, otherwise the stale DB value — so a config-only PATCH
@@ -267,6 +413,9 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		}
 	}
 
+	// Checked against the trigger's own workspace, which is where it will fire.
+	await assertInWorkspace(db, trigger.workspaceId, { actors: [body.target_actor_id] })
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (body.type) updateData.type = body.type
@@ -275,11 +424,28 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id
 	if (body.enabled !== undefined) updateData.enabled = body.enabled
 
+	// PR D — Slack auto-resume. When the resume UX flips a trigger back on it
+	// also passes `clear_auto_paused: true` so the row's `metadata.auto_paused`
+	// is REMOVED (not just skipped). Removal matters: PR C's
+	// `handleMemberLeftChannel` stamps a fresh `previous_enabled` on the next
+	// kick, and a stale `auto_paused` object would keep the red banner
+	// rendering even after the trigger is re-enabled. Sibling metadata keys
+	// (notably PR B's `slack_setup`) are preserved by picking off only
+	// `auto_paused` from the existing object. Safe when metadata is null/empty.
+	if (body.clear_auto_paused === true) {
+		// Removal happens in SQL (`metadata - 'auto_paused'`, see
+		// `lib/trigger-metadata.ts`) rather than as a spread of the `trigger` row
+		// read before the transaction — that read is already stale by the time
+		// the UPDATE runs, so spreading it would clobber a `slack_setup` written
+		// by the in-flight setup service.
+		updateData.metadata = removeTriggerMetadataKey('auto_paused')
+	}
+
 	const updated = await db.transaction(async (tx) => {
 		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 		if (!row) return null
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: trigger.workspaceId,
 			actorId,
 			action: 'updated',
@@ -293,6 +459,16 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 
+	// Post-commit — same rules as create. Fires when the PATCH touched
+	// `config` (channel list may have changed) or `name` (confirmation copy
+	// uses the trigger name). Body.enabled toggles don't need a re-run, but
+	// we skip via the empty-channel-list short-circuit anyway.
+	kickOffSlackSetup(db, actorId, updated)
+	// Re-check for suspicious filter shapes only when the config actually
+	// changed — otherwise a plain enable/disable would spam PostHog with the
+	// same suspicious entry every toggle.
+	if (body.config) warnOnSuspiciousFilter(actorId, updated)
+
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
 
@@ -300,6 +476,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 const deleteTriggerRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Delete a trigger',
 	request: {
@@ -323,14 +500,47 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const [existing] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 
 	await db.transaction(async (tx) => {
 		await tx.delete(triggers).where(eq(triggers.id, id))
 
-		await tx.insert(events).values({
+		// Cascade-prune the deleted trigger's id from every loop's
+		// metadata.trigger_ids in the same workspace, in the same transaction.
+		// Without this, `get_loop` keeps rendering an orphaned step slot per
+		// deleted id (triggerName/agent all null) and the setup check reads
+		// "no agent assigned" for a trigger that no longer exists. Single
+		// atomic UPDATE — jsonb_agg over the array minus this id, coalesced
+		// to '[]' so an array of one becomes an empty array (not null).
+		const prunedLoops = await tx
+			.update(objects)
+			.set({
+				metadata: sql`jsonb_set(
+					${objects.metadata},
+					'{trigger_ids}',
+					COALESCE(
+						(
+							SELECT jsonb_agg(elem)
+							FROM jsonb_array_elements(${objects.metadata} -> 'trigger_ids') AS elem
+							WHERE elem <> to_jsonb(${id}::text)
+						),
+						'[]'::jsonb
+					)
+				)`,
+				updatedAt: new Date(),
+			})
+			.where(
+				and(
+					eq(objects.workspaceId, existing.workspaceId),
+					eq(objects.type, 'loop'),
+					sql`${objects.metadata} -> 'trigger_ids' ? ${id}`,
+				),
+			)
+			.returning({ id: objects.id })
+
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'deleted',
@@ -338,6 +548,23 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 			entityId: id,
 			data: { trigger_name: existing.name, type: existing.type },
 		})
+
+		// Emit an `updated` event per affected loop so the SSE feed invalidates
+		// the loop rows the cascade just changed (matches the every-mutation-
+		// gets-an-event convention in .claude/rules/known-pitfalls.md).
+		if (prunedLoops.length > 0) {
+			await recordEvents(
+				tx,
+				prunedLoops.map((loop) => ({
+					workspaceId: existing.workspaceId,
+					actorId,
+					action: 'updated' as const,
+					entityType: 'object' as const,
+					entityId: loop.id,
+					data: { cascade: 'trigger_deleted', trigger_id: id },
+				})),
+			)
+		}
 	})
 
 	return c.json({ deleted: true })

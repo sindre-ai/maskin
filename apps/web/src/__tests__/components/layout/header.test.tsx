@@ -13,6 +13,8 @@ vi.mock('@tanstack/react-router', () => ({
 		},
 	]),
 	useNavigate: () => navigateMock,
+	useRouterState: ({ select }: { select: (s: unknown) => unknown }) =>
+		select({ location: { pathname: '/ws-1/objects' } }),
 	useRouter: () => ({ history: { back: vi.fn() } }),
 }))
 
@@ -27,7 +29,9 @@ vi.mock('@/hooks/use-available-object-types', () => ({
 	],
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -166,13 +170,46 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		render(<Header />)
 		expect(screen.getByRole('button', { name: 'Custom Action' })).toBeInTheDocument()
+	})
+
+	it('puts titleTabs beside the heading, ahead of the search and New cluster', () => {
+		vi.mocked(usePageHeader).mockReturnValue({
+			actions: null,
+			titleTabs: <button type="button">All</button>,
+			stickyIdentity: null,
+			setTitle: vi.fn(),
+			setSubtitle: vi.fn(),
+			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
+			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
+			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
+		})
+
+		render(<Header />)
+		const tab = screen.getByRole('button', { name: 'All' })
+		const search = screen.getByRole('button', { name: /search or run a command/i })
+
+		// The mockup's left cluster is `<h1>` → tabs → spacer, so the tabs come
+		// before the search field. Anything published as `actions` instead lands
+		// past it, in the right-hand cluster.
+		expect(tab.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 
 	it('only shows the hamburger SidebarTrigger below md', () => {
@@ -182,9 +219,14 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 		render(<Header />)
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
@@ -210,9 +252,14 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -240,9 +287,14 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -272,9 +324,14 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		render(<Header />)
@@ -284,41 +341,14 @@ describe('Header', () => {
 		expect(slots.length).toBeGreaterThan(0)
 	})
 
-	// v2 puts the ⌘K chip inside the expanded workspace-search field (mockup
-	// lines 206–212), so it is two steps by mouse. Keyboard users still reach the
-	// palette through its own global ⌘K listener.
-	it('opens the command palette from the ⌘K chip inside the expanded search', async () => {
+	it('opens the command palette from the header search button', async () => {
 		setPaletteOpen.mockClear()
 		const user = userEvent.setup()
-		vi.mocked(useMatches).mockReturnValue([
-			{
-				routeId: '/_authed/$workspaceId/objects/',
-				pathname: '/ws-1/objects',
-				params: { workspaceId: 'ws-1' },
-			},
-		] as unknown as ReturnType<typeof useMatches>)
 		render(<Header />)
 
-		await user.click(screen.getByRole('button', { name: 'Search the workspace' }))
-		await user.click(screen.getByRole('button', { name: 'Open commands' }))
+		await user.click(screen.getByRole('button', { name: 'Search or run a command' }))
 
 		expect(setPaletteOpen).toHaveBeenCalledWith(true)
-	})
-
-	it('collapses the workspace search to an icon until it is opened', async () => {
-		const user = userEvent.setup()
-		vi.mocked(useMatches).mockReturnValue([
-			{
-				routeId: '/_authed/$workspaceId/objects/',
-				pathname: '/ws-1/objects',
-				params: { workspaceId: 'ws-1' },
-			},
-		] as unknown as ReturnType<typeof useMatches>)
-		render(<Header />)
-
-		expect(screen.queryByRole('textbox', { name: 'Search the workspace' })).not.toBeInTheDocument()
-		await user.click(screen.getByRole('button', { name: 'Search the workspace' }))
-		expect(screen.getByRole('textbox', { name: 'Search the workspace' })).toBeInTheDocument()
 	})
 
 	// For You used to render its own create affordance, so the nav suppressed the
@@ -344,9 +374,14 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 		vi.mocked(useMatches).mockReturnValue([
 			{
@@ -357,5 +392,33 @@ describe('Header', () => {
 		] as unknown as ReturnType<typeof useMatches>)
 		render(<Header />)
 		expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument()
+	})
+})
+
+describe('Header leadingActions', () => {
+	it('renders a page control before the workspace search, and plain actions after it', () => {
+		vi.mocked(usePageHeader).mockReturnValue({
+			leadingActions: <button type="button">Take over</button>,
+			actions: <button type="button">After search</button>,
+			stickyIdentity: null,
+			setTitle: vi.fn(),
+			setSubtitle: vi.fn(),
+			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
+			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
+			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
+		})
+		render(<Header />)
+
+		const lead = screen.getByRole('button', { name: 'Take over' })
+		const search = screen.getByRole('button', { name: 'Search or run a command' })
+		const after = screen.getByRole('button', { name: 'After search' })
+		expect(lead.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(search.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 })

@@ -22,7 +22,7 @@ test.describe('Bulk-select — checkbox tap zones (ship gate)', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Tap Zone Test Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects`)
@@ -50,7 +50,7 @@ test.describe('Bulk-select — grouped list selection', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Group Signal Bet',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
@@ -64,25 +64,24 @@ test.describe('Bulk-select — grouped list selection', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?groupBy=status`)
-			// Groups start collapsed, so leaf titles aren't rendered yet — wait
-			// for the group-header label with its row count instead.
-			await expect(page.getByText('define', { exact: true })).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('Group Define Bet A')).not.toBeVisible()
-
-			// Expand the define group; its two leaves appear under it.
-			await page.getByRole('button', { name: /^define/ }).click()
+			// Groups rest open, so the header and its leaves render together.
+			await expect(page.getByRole('button', { name: /^define \d+$/ })).toBeVisible({
+				timeout: 10000,
+			})
 			await expect(page.getByText('Group Define Bet A')).toBeVisible()
 
-			// Selecting leaves one at a time grows the bulk bar count.
-			const leafCheckboxes = page.getByRole('checkbox', { name: 'Select row' })
-			await leafCheckboxes.first().click()
+			// Selecting leaves one at a time grows the bulk bar count. Scope each
+			// checkbox to its own row — other status groups are open too, so a
+			// positional selector would not reliably land on the define leaves.
+			const leafRow = (title: string) => page.locator('[data-obj-id]').filter({ hasText: title })
+			await leafRow('Group Define Bet A').getByRole('checkbox', { name: 'Select row' }).click()
 			await expect(page.getByLabel('1 selected')).toBeVisible()
 
-			await leafCheckboxes.nth(1).click()
+			await leafRow('Group Define Bet B').getByRole('checkbox', { name: 'Select row' }).click()
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 
 			// Selection is keyed by object id and survives collapsing the group.
-			await page.getByRole('button', { name: /^define/ }).click()
+			await page.getByRole('button', { name: /^define \d+$/ }).click()
 			await expect(page.getByText('Group Define Bet A')).not.toBeVisible()
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 		})
@@ -100,15 +99,17 @@ test.describe('Bulk-select — archive action', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Archive Bet A',
-				status: 'signal',
+				status: 'opportunity',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Archive Bet B',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects`)
+			// Archive is a bet-only bulk action (T5), so the bar only offers it while
+			// the bet tab is active.
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 			await expect(page.getByText('Archive Bet A')).toBeVisible({ timeout: 10000 })
 			await expect(page.getByText('Archive Bet B')).toBeVisible()
 
@@ -136,7 +137,7 @@ test.describe('Bulk-select — shift-click range selection', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: `Shift Select Bet ${i}`,
-				status: 'signal',
+				status: 'opportunity',
 			})
 		}
 
@@ -145,17 +146,21 @@ test.describe('Bulk-select — shift-click range selection', () => {
 		// which otherwise makes this locator ambiguous.
 		await expect(page.getByText('Shift Select Bet').first()).toBeVisible({ timeout: 10000 })
 
-		// Ordinary click anchors the range on the first row.
-		await page.getByRole('checkbox', { name: 'Select row' }).first().click()
+		// A new workspace is seeded with other rows (the onboarding knowledge page
+		// and the default loops) in other status groups, and the list sorts by
+		// updatedAt, so where those land relative to the three bets is a race.
+		// Scope to the bets' own rows instead of the page-wide first/nth(2) row.
+		const betRows = page.locator('[data-obj-id]').filter({ hasText: 'Shift Select Bet' })
+		await expect(betRows).toHaveCount(3)
+
+		// Ordinary click anchors the range on the first bet row.
+		await betRows.first().getByRole('checkbox', { name: 'Select row' }).click()
 		await expect(page.getByLabel('1 selected')).toBeVisible()
 
-		// Shift-click the third row's background. The checkbox and the title
+		// Shift-click the last bet row's background. The checkbox and the title
 		// Link both stop propagation, so the shift-click must land on the row's
 		// own surface (what a real user clicks in the gap between cells).
-		await page
-			.locator('[data-obj-id]')
-			.nth(2)
-			.click({ modifiers: ['Shift'] })
+		await betRows.last().click({ modifiers: ['Shift'] })
 		await expect(page.getByLabel('3 selected')).toBeVisible()
 	})
 })

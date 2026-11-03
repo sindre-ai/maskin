@@ -9,11 +9,14 @@
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
+  --fw-650: 650;       /* v4: maps to semibold natively */
   --fw-bold: 700;
+  --fw-750: 750;       /* v4 titles: maps to bold + tracking natively */
 
   /* --- UI size scale ---
      The v2 mockup uses a dense set of px sizes. Ordered small→large.
-     Half-step sizes are intentional — the mockup uses them, do not round. */
+     Half-step sizes are intentional for the web mockup; the native generator
+     skips them (v4 iOS scale has none) except --text-13-5, still used by one caller. */
   --text-7-5: 7.5px;   /* micro tally */
   --text-8: 8px;       /* dense group-header tag */
   --text-8-5: 8.5px;   /* uppercase micro-label at max compression ("VIEW", "MENTIONED") */
@@ -31,8 +34,15 @@
   --text-15: 15px;
   --text-16: 16px;     /* brief headline, section-heading */
   --text-17: 17px;
-  --text-19: 19px;     /* screen heading */
+  --text-18: 18px;
+  --text-19: 19px;     /* screen heading (not in the v4 scale; kept for existing callers) */
+  --text-20: 20px;     /* v4 */
   --text-22: 22px;     /* page headline */
+  --text-24: 24px;     /* v4 sheet / thread / flow-name title */
+  --text-26: 26px;     /* v4 */
+  --text-28: 28px;     /* v4 */
+  --text-32: 32px;     /* v4 */
+  --text-34: 34px;     /* v4 large title */
 
   /* --- line heights --- */
   --lh-tight: 1;

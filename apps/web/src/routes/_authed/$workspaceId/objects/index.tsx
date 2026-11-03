@@ -1,25 +1,38 @@
 import { AskPanel } from '@/components/asks/ask-panel'
-import { ImportDialog } from '@/components/imports/import-dialog'
+import { PageHeader } from '@/components/layout/page-header'
 import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { getStaticColumns } from '@/components/objects/data-table/columns'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
-import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
+import {
+	DataTableToolbar,
+	type ToolbarQuickChip,
+} from '@/components/objects/data-table/data-table-toolbar'
+import {
+	type DisplayFilterSectionModel,
+	pinToken,
+} from '@/components/objects/data-table/display-filter-section'
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
-import { FilterChip } from '@/components/shared/filter-chip'
+import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
 import { RouteError } from '@/components/shared/route-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { useImportToast } from '@/hooks/use-imports'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
-import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
+import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
+import {
+	useBulkResultHandlers,
+	useBulkUpdateObjects,
+	useGroupedObjects,
+	useObjectFacets,
+} from '@/hooks/use-objects'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -32,15 +45,33 @@ import {
 } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { MAX_CHAT_OBJECT_REFERENCES } from '@/lib/chat-selection'
+import { cn } from '@/lib/cn'
+import { getStatusColor } from '@/lib/constants'
 import {
+	DEFAULT_ORDER,
+	DEFAULT_SORT,
 	fromUrlSearch,
+	urlIsInDefaultShape as isUrlInDefaultShape,
 	toBoardParams,
 	toDisplaySettingsBody,
 	toListParams,
 } from '@/lib/objects-filter-model'
 import type { ObjectsFilterModel } from '@/lib/objects-filter-model'
+import { NO_VALUE_GROUP } from '@/lib/objects-grouping'
+import {
+	UPDATED_BUCKETS,
+	UPDATED_BUCKET_LABELS,
+	type UpdatedBucket,
+	isUpdatedBucket,
+	isUpdatedWithinWeek,
+	startOfLocalDay,
+	updatedBucketOf,
+	updatedBucketWindow,
+} from '@/lib/objects-updated-buckets'
 import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
@@ -61,7 +92,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
-	component: ObjectsPage,
+	component: ObjectsRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 	validateSearch: (search: Record<string, unknown>) => {
 		// Pass through dynamic `metadata.<field>` filter keys so they persist in
@@ -90,17 +121,38 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			rawIncludeArchived === 1 ||
 			rawIncludeArchived === true ||
 			rawIncludeArchived === 'true'
+		// Quick filters are client-side narrowings of the loaded rows, so they live
+		// in the URL rather than the persisted DisplaySettings blob: a deep link to
+		// "starred, updated today" has to carry its own filter set.
+		const isOn = (v: unknown) => v === '1' || v === 1 || v === true || v === 'true'
+		const fresh = isOn(search.fresh)
+		const starred = isOn(search.starred)
+		const updated = isUpdatedBucket(search.updated) ? search.updated : undefined
+		// Attention is a client-side axis: "waiting on you" comes from pending
+		// needs_input notifications and "agent working" from activeSessionId —
+		// neither is a server-side list filter, so it narrows loaded rows only.
+		const rawAttention = search.attention
+		const attention =
+			rawAttention === 'waiting' || rawAttention === 'working' ? rawAttention : undefined
 		return {
 			type: typeof search.type === 'string' ? search.type : undefined,
 			status: typeof search.status === 'string' ? search.status : undefined,
 			driver: typeof search.driver === 'string' ? search.driver : undefined,
-			sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
+			attention,
+			fresh: fresh ? (1 as const) : undefined,
+			starred: starred ? (1 as const) : undefined,
+			updated,
+			// ORDER BY rests on Last updated (mockup script 8725) — an absent param
+			// reads as the shared default rather than pinning it into every URL.
+			sort: typeof search.sort === 'string' ? search.sort : DEFAULT_SORT,
 			order:
 				typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
 					? (search.order as 'asc' | 'desc')
-					: 'desc',
+					: DEFAULT_ORDER,
 			q: typeof search.q === 'string' ? search.q : undefined,
-			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
+			// GROUP BY rests on `none` (a flat list). `none` stays an explicit sentinel so a
+			// persisted or deep-linked grouping can still be told apart from "no param".
+			groupBy: typeof search.groupBy === 'string' ? search.groupBy : 'none',
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
 			includeArchived: includeArchived ? (1 as const) : undefined,
 			...metadataFilters,
@@ -112,7 +164,14 @@ const PAGE_SIZE = 50
 const BOARD_PAGE_SIZE = 20
 const BOARD_MANUAL_SORT = 'boardOrder'
 
-function ObjectsPage() {
+// Recency and Starred come pinned out of the box (mockup 6029's
+// `{ fresh: true, star: true, work: false }`). Both are workspace-agnostic —
+// unlike a status or driver pin, they mean the same thing on day one as they
+// do on day one hundred, so they are safe to pre-place in the chip row.
+const DEFAULT_PINNED_FILTERS = ['quick:fresh', 'quick:starred']
+
+function ObjectsRoute() {
+	useDocumentTitle('Objects')
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })
@@ -123,19 +182,36 @@ function ObjectsPage() {
 		sort,
 		order,
 		q,
-		groupBy,
+		groupBy: groupByParam,
 		ids: idsFilter,
 		includeArchived: includeArchivedParam,
+		attention,
+		fresh: freshParam,
+		starred: starredParam,
+		updated,
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
+	// `none` is the URL's way of saying "explicitly ungrouped".
+	const groupBy = groupByParam === 'none' ? undefined : groupByParam
+	const fresh = freshParam === 1
+	const starred = starredParam === 1
 	// Per the task scope, the "Show" section (with the Include archived toggle)
 	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
 	// keep the existing panel shape until archive lands for their type.
 	const supportsIncludeArchived = typeFilter === 'bet'
 
-	const [importOpen, setImportOpen] = useState(false)
+	const objectTypeLabel = useObjectTypeLabel()
+	// Which Display-panel filter options are promoted to the toolbar chip row.
+	// Per-actor and per-tab, so it rides the same persisted DisplaySettings row
+	// as the rest of the panel rather than a second store the panel can drift
+	// from. Order is pin order — chips appear where the user put them.
+	const [pinnedFilters, setPinnedFilters] = useState<string[]>(DEFAULT_PINNED_FILTERS)
+	const handleTogglePinnedFilter = useCallback((token: string) => {
+		setPinnedFilters((current) =>
+			current.includes(token) ? current.filter((t) => t !== token) : [...current, token],
+		)
+	}, [])
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
-	const { startTracking: trackImport } = useImportToast(workspaceId)
 	const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		createdBy: false,
@@ -232,29 +308,52 @@ function ObjectsPage() {
 	// Pending asks scoped to the current selection. An ask is a needs_input
 	// notification whose object is one of the selected rows; Approve/Hold
 	// round-trips through the respond endpoint and the panel reflects the done
-	// state via the resolved status.
+	// state via the resolved status. Only asks targeted at the current actor
+	// count — the notifications feed is workspace-wide, so a mention pulling
+	// another actor into the loop lands here too and must not surface as an
+	// ask the reader can answer.
 	const actorsById = useMemo(() => new Map((actors ?? []).map((a) => [a.id, a])), [actors])
 	const [asksOpen, setAsksOpen] = useState(false)
+	const currentActorId = getStoredActor()?.id
 	const { data: needsInputNotifications } = useNotifications(workspaceId, {
 		type: 'needs_input',
 	})
+	const asksForCurrentActor = useMemo(
+		() => (needsInputNotifications ?? []).filter((n) => n.targetActorId === currentActorId),
+		[needsInputNotifications, currentActorId],
+	)
 	const selectedAsks = useMemo(() => {
-		if (!needsInputNotifications) return []
 		const selected = new Set(selectedIds)
-		return needsInputNotifications.filter((n) => n.objectId != null && selected.has(n.objectId))
-	}, [needsInputNotifications, selectedIds])
+		return asksForCurrentActor.filter((n) => n.objectId != null && selected.has(n.objectId))
+	}, [asksForCurrentActor, selectedIds])
 	const askCount = selectedAsks.length
 	// Pending asks keyed by the object they target, for the per-row ask line +
 	// "Waiting on you" pill on the List surface. Only status 'pending' counts as
 	// waiting — a resolved ask drops out of the map (and the row hides the pill).
 	const pendingAsksByObjectId = useMemo(() => {
 		const map = new Map<string, NotificationResponse>()
-		for (const n of needsInputNotifications ?? []) {
+		for (const n of asksForCurrentActor) {
 			if (n.status !== 'pending' || !n.objectId) continue
 			if (!map.has(n.objectId)) map.set(n.objectId, n)
 		}
 		return map
-	}, [needsInputNotifications])
+	}, [asksForCurrentActor])
+	// D3 · Multi-ask overflow. The ask-line on a row renders the FIRST pending
+	// ask (from `pendingAsksByObjectId`) plus a plain `+ N more` counter when
+	// this map's entry for that id is ≥ 2. Kept as a separate memo so the
+	// first-ask map's ordering (oldest first, insertion order) stays the
+	// single source of truth for which ask is "the first". Derived off the
+	// same per-actor list as `pendingAsksByObjectId`, so the counter counts
+	// only the reader's own asks — an ask targeting another actor is not
+	// overflow the reader can act on.
+	const pendingAskCountByObjectId = useMemo(() => {
+		const map = new Map<string, number>()
+		for (const n of asksForCurrentActor) {
+			if (n.status !== 'pending' || !n.objectId) continue
+			map.set(n.objectId, (map.get(n.objectId) ?? 0) + 1)
+		}
+		return map
+	}, [asksForCurrentActor])
 	const respondNotification = useRespondNotification(workspaceId)
 	const handleRespond = useCallback(
 		(id: string, response: 'approve' | 'hold') => {
@@ -346,30 +445,155 @@ function ObjectsPage() {
 		[filterModel, supportsIncludeArchived],
 	)
 
-	// Infinite query — use search endpoint when q is present
+	// The quick filters (Starred, New last 7 days, Updated, Working, Waiting on you)
+	// narrow on the server, like every other filter, so a count and the rows it
+	// counts can never disagree — and so they reach rows that have not loaded yet.
+	const waitingIds = useMemo(
+		() => [...pendingAsksByObjectId.keys()].sort(),
+		[pendingAsksByObjectId],
+	)
+	const quickParams = useMemo(() => {
+		const params: Record<string, string> = {}
+		if (starred) params.starred = 'true'
+		if (attention === 'working') params.working = 'true'
+		if (attention === 'waiting') params.attention_ids = waitingIds.join(',')
+		let after: Date | undefined
+		let before: Date | undefined
+		if (fresh) after = new Date(Date.now() - 7 * 86_400_000)
+		if (updated) {
+			const window = updatedBucketWindow(updated)
+			if (window.after && (!after || window.after > after)) after = window.after
+			before = window.before
+		}
+		if (after) params.updated_after = after.toISOString()
+		if (before) params.updated_before = before.toISOString()
+		return params
+	}, [starred, attention, waitingIds, fresh, updated])
+
+	// Everything that decides WHICH rows match, with the sort that orders them.
+	const listParams = useMemo<Record<string, string>>(
+		() => ({ ...filters, ...quickParams, ...(q ? { q } : {}) }),
+		[filters, quickParams, q],
+	)
+
+	// Exact totals — tab counts, group headers and filter chips all read these,
+	// never a count of whichever rows have loaded.
+	const grouped = !!groupBy
+	const facetParams = useMemo(() => {
+		const { sort: _sort, order: _order, ...matching } = listParams
+		return {
+			...matching,
+			group_by: groupBy ?? 'status',
+			tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+			day_start: startOfLocalDay().toISOString(),
+			...(waitingIds.length > 0 ? { waiting_ids: waitingIds.join(',') } : {}),
+		}
+	}, [listParams, groupBy, waitingIds])
+	const facetsQuery = useObjectFacets(workspaceId, facetParams)
+	const facets = facetsQuery.data
+
+	// Flat list (no grouping): infinite scroll, ordered by the chosen sort.
 	const infiniteQuery = useInfiniteQuery({
-		queryKey: queryKeys.objects.listInfinite(workspaceId, { ...filters, q }),
-		queryFn: ({ pageParam }) => {
-			const params: Record<string, string> = {
-				...filters,
+		queryKey: queryKeys.objects.listInfinite(workspaceId, listParams),
+		queryFn: ({ pageParam }) =>
+			api.objects.list(workspaceId, {
+				...listParams,
 				limit: String(PAGE_SIZE),
 				offset: String(pageParam),
-			}
-			if (q) {
-				params.q = q
-				return api.objects.search(workspaceId, params)
-			}
-			return api.objects.list(workspaceId, params)
-		},
+			}),
 		getNextPageParam: (lastPage, allPages) => {
 			if (lastPage.length < PAGE_SIZE) return undefined
 			return allPages.flat().length
 		},
 		initialPageParam: 0,
 		placeholderData: keepPreviousData,
+		enabled: !grouped,
 	})
 
-	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+	// Grouped list: headers and totals come from the facets above; each group
+	// fetches only its own rows, a page at a time.
+	const isGroupOpen = useCallback(
+		(value: string) => expanded[`${groupBy}:${value === '' ? NO_VALUE_GROUP : value}`] !== false,
+		[expanded, groupBy],
+	)
+	const groupedQuery = useGroupedObjects({
+		workspaceId,
+		params: listParams,
+		groupBy: groupBy ?? 'status',
+		groups: facets?.groups,
+		isGroupOpen,
+		enabled: grouped && !!facets,
+	})
+	const listLoading = grouped ? facetsQuery.isLoading : infiniteQuery.isLoading
+
+	const flatObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+	const allObjects = grouped ? groupedQuery.rows : flatObjects
+
+	// Starred set — derived from server-truth `is_starred_by_me` on the loaded
+	// pages, mirroring the pre-D5 shape the Starred quick filter + its count
+	// consume. SSE-driven cache invalidations refresh the list, so this stays
+	// in sync with cross-device toggles without a second store.
+	const starredIds = useMemo(() => {
+		const ids = new Set<string>()
+		for (const o of allObjects) if (o.is_starred_by_me) ids.add(o.id)
+		return ids
+	}, [allObjects])
+
+	// The Attention axis has no server-side equivalent — "waiting on you" is a
+	// pending needs_input notification and "agent working" is a live session, so
+	// it narrows the rows already loaded rather than the query. Applied to the
+	// rendered rows only; type-tab counts and bulk-selection lookups stay on the
+	// unfiltered set so a filtered-out selection can still be acted on.
+	const matchesAttention = useCallback(
+		(object: ObjectResponse) => {
+			if (!attention) return true
+			if (attention === 'waiting') return pendingAsksByObjectId.has(object.id)
+			return !!object.activeSessionId
+		},
+		[attention, pendingAsksByObjectId],
+	)
+	// Quick + Updated narrow the same way, and for the same reason: neither
+	// recency buckets nor a personal star set exist server-side. Type-tab counts
+	// and bulk-selection lookups stay on the unfiltered set so a filtered-out
+	// selection can still be acted on.
+	const hasClientFilter = !!attention || fresh || starred || !!updated
+	const matchesClientFilters = useCallback(
+		(object: ObjectResponse) =>
+			matchesAttention(object) &&
+			(!fresh || isUpdatedWithinWeek(object)) &&
+			(!starred || starredIds.has(object.id)) &&
+			(!updated || updatedBucketOf(object.updatedAt) === updated),
+		[matchesAttention, fresh, starred, starredIds, updated],
+	)
+	// The list is already narrowed on the server; `matchesClientFilters` now only
+	// serves the board, whose columns come from a separate endpoint.
+	const listObjects = allObjects
+
+	// Per-tab counts for the type tab strip — the server's totals, so a type never
+	// reads zero just because none of its rows have loaded yet. Type counts ignore
+	// the selected type, so the other tabs keep their numbers while one is open.
+	const countsByType = useMemo(() => {
+		const byType = facets?.by_type
+		if (!byType) return undefined
+		const counts: Record<string, number> = {
+			all: Object.values(byType).reduce((sum, n) => sum + n, 0),
+		}
+		for (const tab of tabs) {
+			if (tab.value) counts[tab.value] = byType[tab.value] ?? 0
+		}
+		return counts
+	}, [tabs, facets])
+	// The mockup keeps `All` always and drops every type tab with nothing in it, so
+	// an empty workspace shows one tab, not a row of zeroes. The totals are exact,
+	// so the rule applies from the first paint; the open tab always stays.
+	const tabsWithCounts = useMemo(() => {
+		if (!countsByType) return tabs.map((t) => ({ ...t, count: undefined }))
+		const withCounts = tabs.map((t) => ({
+			...t,
+			count: t.value ? countsByType[t.value] : countsByType.all,
+		}))
+		return withCounts.filter((t) => !t.value || (t.count ?? 0) > 0 || t.value === typeFilter)
+	}, [tabs, countsByType, typeFilter])
 
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
@@ -383,6 +607,23 @@ function ObjectsPage() {
 	// Board view needs a single active object type with at least one configured
 	// status, so List is the only option on the All tab.
 	const boardSupported = Boolean(typeFilter && (statusesByType[typeFilter]?.length ?? 0) > 0)
+	// Every enabled type that could render a board, in tab order. The Display
+	// panel's Board control is offered whenever this is non-empty — not only
+	// when the *current* type qualifies — because the mockup treats Board as a
+	// destination rather than a mode: `setObjBoard` sets the type to a
+	// board-capable one and switches, instead of greying the control out on the
+	// All tab and leaving the user with nothing to click (script 7834).
+	const boardCapableTypes = useMemo(() => {
+		const statusMap = settings?.statuses as Record<string, string[]> | undefined
+		if (!statusMap) return []
+		const enabled = new Set(tabs.map((t) => t.value).filter(Boolean))
+		return tabs
+			.map((t) => t.value)
+			.filter((type): type is string => !!type && enabled.has(type))
+			.filter((type) => (statusMap[type]?.length ?? 0) > 0)
+	}, [settings, tabs])
+	// Bet is the mockup's own board type, so it wins when the workspace has it.
+	const boardLandingType = boardCapableTypes.includes('bet') ? 'bet' : boardCapableTypes[0]
 	// Effective view: even if the user previously chose Board for this type, an
 	// unsupported context (All tab, type with zero configured statuses) renders
 	// List. We never write that fallback back to settings — the stored
@@ -582,16 +823,20 @@ function ObjectsPage() {
 	}, [])
 
 	// "Reset to default" from the Display menu — restores every display axis on
-	// the shared model: order back to created-desc, no grouping, all filters
+	// the shared model: order back to the route default, no grouping, all filters
 	// (status/driver/metadata) cleared, archived hidden, columns back to the
 	// default set. `view` and `q` are deliberately untouched (separate surfaces).
 	const handleResetToDefault = useCallback(() => {
 		const cleared: Record<string, string | undefined> = {
-			sort: 'createdAt',
-			order: 'desc',
+			sort: DEFAULT_SORT,
+			order: DEFAULT_ORDER,
 			groupBy: undefined,
 			status: undefined,
 			driver: undefined,
+			attention: undefined,
+			fresh: undefined,
+			starred: undefined,
+			updated: undefined,
 			includeArchived: undefined,
 		}
 		for (const key of Object.keys(searchParams)) {
@@ -632,14 +877,14 @@ function ObjectsPage() {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: fires once when the load-gate flips; ref reads current key
 	useEffect(() => {
 		if (!shouldRestoreScrollRef.current) return
-		if (infiniteQuery.isLoading) return
+		if (listLoading) return
 		if (allObjects.length === 0) return
 		const { firstVisibleRowId } = getViewState(workspaceId, displaySettingsKey)
 		if (firstVisibleRowId) {
 			listViewRef.current?.scrollToRowId(firstVisibleRowId)
 		}
 		shouldRestoreScrollRef.current = false
-	}, [infiniteQuery.isLoading, allObjects.length])
+	}, [listLoading, allObjects.length])
 
 	const displaySettingsQuery = useUserDisplaySettings(workspaceId, displaySettingsKey)
 	const updateDisplaySettings = useUpdateUserDisplaySettings(workspaceId)
@@ -652,42 +897,43 @@ function ObjectsPage() {
 	const updateMutateRef = useRef(updateDisplaySettings.mutate)
 	updateMutateRef.current = updateDisplaySettings.mutate
 	const hydratedTypesRef = useRef<Set<string>>(new Set())
+	// Set when the user picks Board from a tab that can't render one. The switch
+	// to a board-capable type re-arms hydration for BOTH the outgoing and the
+	// destination key, and hydration restores that tab's own saved view — which
+	// would swallow the choice the user just made. Keyed by destination so the
+	// outgoing tab's pass can't consume it first.
+	const pendingViewRef = useRef<{ key: string; view: DisplayPanelView } | null>(null)
 
 	const urlIsInDefaultShape = useMemo(
-		() =>
-			(!searchParams.sort || searchParams.sort === 'createdAt') &&
-			(!searchParams.order || searchParams.order === 'desc') &&
-			!searchParams.groupBy &&
-			!searchParams.status &&
-			!searchParams.driver &&
-			Object.keys(metadataFilters).length === 0,
-		[
-			searchParams.sort,
-			searchParams.order,
-			searchParams.groupBy,
-			searchParams.status,
-			searchParams.driver,
-			metadataFilters,
-		],
+		() => isUrlInDefaultShape(searchParams, metadataFilters),
+		[searchParams, metadataFilters],
 	)
 
 	useEffect(() => {
 		if (hydratedTypesRef.current.has(displaySettingsKey)) return
-		if (!displaySettingsQuery.isSuccess) return
+		// A failed read is treated like "nothing persisted": there is no saved
+		// view to apply either way, and gating on `isSuccess` alone would leave
+		// the write-through effect disarmed for the rest of the session, so
+		// nothing the user changed afterwards would ever be saved.
+		if (!displaySettingsQuery.isSuccess && !displaySettingsQuery.isError) return
 		// Mark hydrated even if there are no persisted settings yet — that lets
 		// the write-through effect start tracking once the user makes their
 		// first change, without re-running this hydrate block.
 		hydratedTypesRef.current.add(displaySettingsKey)
+		const pending = pendingViewRef.current
+		const pendingView = pending?.key === displaySettingsKey ? pending.view : null
+		if (pendingView) pendingViewRef.current = null
 		const persisted = displaySettingsQuery.data
 		if (!persisted) {
 			// No saved view for this key — fall back to the route default.
-			setView('list')
+			setView(pendingView ?? 'list')
+			setPinnedFilters(DEFAULT_PINNED_FILTERS)
 			return
 		}
 		const s = persisted.settings
 		// View hydrates regardless of urlIsInDefaultShape: `view` is route-local
 		// (not in the URL), so the URL's shape can't conflict with it.
-		setView(s.view ?? 'list')
+		setView(pendingView ?? s.view ?? 'list')
 		if (urlIsInDefaultShape) {
 			const updates: Record<string, string | undefined> = {}
 			if (s.sort) updates.sort = s.sort
@@ -706,6 +952,9 @@ function ObjectsPage() {
 		// This applies on the All tab too — `__all__` is its own row, so
 		// switching between All and a type tab restores each side's own state.
 		if (s.columnVisibility) setColumnVisibility(s.columnVisibility)
+		// `?? DEFAULT` only for a row saved before pins existed — an explicit empty
+		// array is a user who unpinned everything, and must survive a reload.
+		setPinnedFilters(s.pinnedFilters ?? DEFAULT_PINNED_FILTERS)
 		// Cross-session bootstrap for the group-expansion + scroll-anchor
 		// state that T1 extended on the shared DisplaySettingsBody. In-session
 		// restore comes from the ephemeral view-state store (session-scoped by
@@ -731,6 +980,7 @@ function ObjectsPage() {
 	}, [
 		displaySettingsKey,
 		displaySettingsQuery.isSuccess,
+		displaySettingsQuery.isError,
 		displaySettingsQuery.data,
 		urlIsInDefaultShape,
 		updateSearch,
@@ -765,22 +1015,22 @@ function ObjectsPage() {
 	// toggle analytics with source: 'user'. The silent restore above bypasses
 	// this handler (it calls `setExpanded` directly), so every fire here is
 	// user-initiated by construction. `expanded` on the analytics payload is
-	// the net direction of the update — true when a group's open count grew
-	// (user opened a group), false when it shrank (user closed one).
+	// the net direction of the update — true when the number of explicitly
+	// collapsed groups shrank (user opened one), false when it grew.
 	const handleExpandedChange = useCallback(
 		(next: Record<string, boolean>) => {
-			// Strip falsy entries — ListView only ever writes `true` values, and
-			// closing a group is modeled by the key's absence (DataTable-era
-			// blobs round-trip cleanly through this same contract).
-			const nextMap: Record<string, boolean> = {}
-			for (const [id, on] of Object.entries(next)) if (on) nextMap[id] = true
-			const prevOpen = Object.values(expanded).filter(Boolean).length
-			const nextOpen = Object.values(nextMap).filter(Boolean).length
+			// Keep the map verbatim, `false` entries included. Groups now rest
+			// open, so a collapse is recorded as an explicit `false` — dropping
+			// it would silently re-open the group on the next render. DataTable-
+			// era blobs (only `true` values) still round-trip unchanged.
+			const nextMap: Record<string, boolean> = { ...next }
+			const prevClosed = Object.values(expanded).filter((v) => v === false).length
+			const nextClosed = Object.values(nextMap).filter((v) => v === false).length
 			setExpanded(nextMap)
 			patchViewState(workspaceId, displaySettingsKey, { expandedGroupIds: nextMap })
 			trackObjectsListGroupToggled({
 				source: 'user',
-				expanded: nextOpen > prevOpen,
+				expanded: nextClosed < prevClosed,
 				objectType: typeFilter ?? null,
 			})
 		},
@@ -799,6 +1049,8 @@ function ObjectsPage() {
 			...toDisplaySettingsBody(filterModel),
 			view,
 		}
+		// Always written, empty included — see the hydrate note above.
+		settings.pinnedFilters = pinnedFilters
 		if (Object.keys(expanded).length > 0) {
 			settings.groupExpanded = expanded
 		}
@@ -813,7 +1065,7 @@ function ObjectsPage() {
 			updateMutateRef.current({ objectType: displaySettingsKey, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [displaySettingsKey, view, filterModel, expanded, capturedAnchor])
+	}, [displaySettingsKey, view, filterModel, expanded, capturedAnchor, pinnedFilters])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
@@ -846,7 +1098,348 @@ function ObjectsPage() {
 	// the toggle in DisplayPanel; mirroring it here keeps the chip in lockstep
 	// so a leftover URL param on a non-bet tab doesn't render an orphan chip.
 	const archivedChipActive = supportsIncludeArchived && includeArchived
-	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0 || archivedChipActive
+
+	// Board columns, narrowed by the client-side Attention axis so List and
+	// Board answer the same question. Totals shrink with the visible rows.
+	const boardColumns = useMemo(() => {
+		const columns = boardQuery.data?.columns ?? []
+		if (!attention) return columns
+		return columns.map((column) => {
+			const objects = column.objects.filter(matchesAttention)
+			return { ...column, objects, total: objects.length }
+		})
+	}, [boardQuery.data, attention, matchesAttention])
+
+	// Chip counts are the server's totals under the other active filters — each
+	// facet ignores its own axis, so a chip shows what picking it would give.
+	const attentionCounts = useMemo(
+		() => ({ waiting: facets?.waiting ?? 0, working: facets?.working ?? 0 }),
+		[facets],
+	)
+	const freshCount = facets?.fresh ?? 0
+	const starredCount = facets?.starred ?? 0
+	const statusCounts = useMemo(() => new Map(Object.entries(facets?.by_status ?? {})), [facets])
+	const driverCounts = useMemo(() => new Map(Object.entries(facets?.by_driver ?? {})), [facets])
+	const updatedCounts = useMemo(
+		() => new Map(Object.entries(facets?.updated ?? {}) as Array<[UpdatedBucket, number]>),
+		[facets],
+	)
+
+	// Single-select toggles: picking the active value again clears the axis, so
+	// a chip is always its own off-switch (mockup `on ? null : key`).
+	const toggleStatus = useCallback(
+		(status: string) =>
+			updateSearch({ status: activeStatuses.join(',') === status ? undefined : status }),
+		[activeStatuses, updateSearch],
+	)
+	const toggleDriver = useCallback(
+		(driverId: string) =>
+			updateSearch({ driver: activeDrivers.join(',') === driverId ? undefined : driverId }),
+		[activeDrivers, updateSearch],
+	)
+	const toggleAttention = useCallback(
+		(value: 'waiting' | 'working') =>
+			updateSearch({ attention: attention === value ? undefined : value }),
+		[attention, updateSearch],
+	)
+
+	// The four FILTERS axes, in the mockup's order. Built once and consumed
+	// twice — by the Display panel's collapsible rows and by the toolbar's
+	// pinned-chip row — so a pinned chip can never disagree with the panel row
+	// it was promoted from.
+	const filterSections = useMemo<DisplayFilterSectionModel[]>(() => {
+		const statuses = [...new Set(Object.values(statusesByType).flat())]
+		const driverOptions = (actors ?? []).filter((actor) => driverCounts.has(actor.id))
+		return [
+			{
+				id: 'quick',
+				label: 'Quick',
+				summary:
+					[fresh && 'New last 7 days', starred && 'Starred', attention === 'working' && 'Working']
+						.filter(Boolean)
+						.join(', ') || 'None',
+				options: [
+					{
+						id: 'fresh',
+						label: 'New last 7 days',
+						count: freshCount,
+						active: fresh,
+						onToggle: () => updateSearch({ fresh: fresh ? undefined : 1 }),
+					},
+					{
+						id: 'starred',
+						label: 'Starred',
+						count: starredCount,
+						active: starred,
+						onToggle: () => updateSearch({ starred: starred ? undefined : 1 }),
+					},
+					{
+						id: 'working',
+						label: 'Working',
+						count: attentionCounts.working,
+						active: attention === 'working',
+						onToggle: () => toggleAttention('working'),
+					},
+					{
+						id: 'waiting',
+						label: 'Waiting on you',
+						count: attentionCounts.waiting,
+						active: attention === 'waiting',
+						onToggle: () => toggleAttention('waiting'),
+					},
+				],
+			},
+			{
+				id: 'updated',
+				label: 'Updated',
+				summary: updated ? UPDATED_BUCKET_LABELS[updated] : 'Any time',
+				options: UPDATED_BUCKETS.map((bucket) => ({
+					id: bucket,
+					label: UPDATED_BUCKET_LABELS[bucket],
+					count: updatedCounts.get(bucket) ?? 0,
+					active: updated === bucket,
+					onToggle: () => updateSearch({ updated: updated === bucket ? undefined : bucket }),
+				})),
+			},
+			{
+				id: 'status',
+				label: 'Status',
+				summary: activeStatuses.length > 0 ? statusChipValue : 'Any status',
+				options: statuses.map((status) => ({
+					id: status,
+					label: status.replace(/_/g, ' '),
+					count: statusCounts.get(status) ?? 0,
+					active: activeStatuses.includes(status),
+					onToggle: () => toggleStatus(status),
+				})),
+			},
+			{
+				id: 'driver',
+				label: 'Driver',
+				summary: activeDrivers.length > 0 ? driverChipValue : 'Anyone',
+				options: driverOptions.map((actor) => ({
+					id: actor.id,
+					label: actor.name,
+					count: driverCounts.get(actor.id) ?? 0,
+					active: activeDrivers.includes(actor.id),
+					onToggle: () => toggleDriver(actor.id),
+				})),
+			},
+		]
+	}, [
+		statusesByType,
+		actors,
+		fresh,
+		starred,
+		attention,
+		updated,
+		freshCount,
+		starredCount,
+		attentionCounts,
+		updatedCounts,
+		statusCounts,
+		driverCounts,
+		activeStatuses,
+		activeDrivers,
+		statusChipValue,
+		driverChipValue,
+		updateSearch,
+		toggleStatus,
+		toggleDriver,
+		toggleAttention,
+	])
+
+	// Pinned options, resolved back to live toggles in pin order. A token whose
+	// option no longer exists (a status removed from the workspace, a driver who
+	// left) is skipped rather than rendered dead — the pin stays stored so the
+	// chip returns if the value does.
+	const quickChips = useMemo<ToolbarQuickChip[]>(() => {
+		const byToken = new Map<string, ToolbarQuickChip>()
+		for (const section of filterSections) {
+			for (const option of section.options) {
+				byToken.set(pinToken(section.id, option.id), {
+					id: pinToken(section.id, option.id),
+					// Quick toggles are self-describing ("Starred"); a status or driver
+					// value is not, so it carries its axis into the chip row.
+					label:
+						section.id !== 'quick'
+							? `${section.label}: ${option.label}`
+							: option.id === 'starred'
+								? `★ ${option.label}`
+								: option.label,
+					active: option.active,
+					onToggle: option.onToggle,
+				})
+			}
+		}
+		return pinnedFilters
+			.map((token) => byToken.get(token))
+			.filter((c): c is ToolbarQuickChip => !!c)
+	}, [filterSections, pinnedFilters])
+
+	const clearAllFilters = useCallback(() => {
+		const cleared: Record<string, string | number | undefined> = {
+			status: undefined,
+			driver: undefined,
+			attention: undefined,
+			fresh: undefined,
+			starred: undefined,
+			updated: undefined,
+			includeArchived: undefined,
+			q: undefined,
+		}
+		for (const key of Object.keys(searchParamsRef.current)) {
+			if (key.startsWith('metadata.')) cleared[key] = undefined
+		}
+		updateSearch(cleared)
+	}, [updateSearch])
+
+	// Every active filter as a removable pill (mockup 914–918) — except one
+	// whose option is pinned. A pinned chip already renders that filter's on/off
+	// state, and a pill beside it would be a second control for the same bit
+	// (mockup 6015/6018/6019 gate every pill on `!pinsF[...]`).
+	const pinnedSet = useMemo(() => new Set(pinnedFilters), [pinnedFilters])
+	const filterPills = useMemo(() => {
+		const pills: Array<{ id: string; label: string; value: string; onRemove: () => void }> = []
+		if (activeStatuses.length > 0 && !activeStatuses.every((v) => pinnedSet.has(`status:${v}`))) {
+			pills.push({
+				id: 'status',
+				label: 'Status',
+				value: statusChipValue,
+				onRemove: () => updateSearch({ status: undefined }),
+			})
+		}
+		if (activeDrivers.length > 0 && !activeDrivers.every((v) => pinnedSet.has(`driver:${v}`))) {
+			pills.push({
+				id: 'driver',
+				label: 'Driver',
+				value: driverChipValue,
+				onRemove: () => updateSearch({ driver: undefined }),
+			})
+		}
+		if (attention && !pinnedSet.has(`quick:${attention}`)) {
+			pills.push({
+				id: 'attention',
+				label: 'Attention',
+				value: attention === 'waiting' ? 'waiting on you' : 'agent working',
+				onRemove: () => updateSearch({ attention: undefined }),
+			})
+		}
+		if (fresh && !pinnedSet.has('quick:fresh')) {
+			pills.push({
+				id: 'fresh',
+				label: 'Quick',
+				value: 'new last 7 days',
+				onRemove: () => updateSearch({ fresh: undefined }),
+			})
+		}
+		if (starred && !pinnedSet.has('quick:starred')) {
+			pills.push({
+				id: 'starred',
+				label: 'Quick',
+				value: 'starred',
+				onRemove: () => updateSearch({ starred: undefined }),
+			})
+		}
+		if (updated && !pinnedSet.has(`updated:${updated}`)) {
+			pills.push({
+				id: 'updated',
+				label: 'Updated',
+				value: UPDATED_BUCKET_LABELS[updated].toLowerCase(),
+				onRemove: () => updateSearch({ updated: undefined }),
+			})
+		}
+		for (const [field, value] of Object.entries(metadataFilters)) {
+			if (!value) continue
+			pills.push({
+				id: `metadata.${field}`,
+				label: field.replace(/_/g, ' '),
+				value,
+				onRemove: () => updateSearch({ [`metadata.${field}`]: undefined }),
+			})
+		}
+		if (archivedChipActive) {
+			pills.push({
+				id: 'archived',
+				label: 'Include',
+				value: 'archived',
+				onRemove: () => updateSearch({ includeArchived: undefined }),
+			})
+		}
+		if (q) {
+			pills.push({
+				id: 'q',
+				label: 'Search',
+				value: q,
+				onRemove: () => updateSearch({ q: undefined }),
+			})
+		}
+		return pills
+	}, [
+		activeStatuses,
+		activeDrivers,
+		attention,
+		fresh,
+		starred,
+		updated,
+		metadataFilters,
+		archivedChipActive,
+		q,
+		statusChipValue,
+		driverChipValue,
+		pinnedSet,
+		updateSearch,
+	])
+
+	// Whether the list is narrowed at all. Deliberately NOT `filterPills.length`:
+	// a pinned filter renders as a chip instead of a pill, so counting pills would
+	// report "unfiltered" for a workspace that is very much filtered — and the
+	// empty state would then offer no way back out.
+	const hasAnyActiveFilter =
+		activeStatuses.length > 0 ||
+		activeDrivers.length > 0 ||
+		!!attention ||
+		fresh ||
+		starred ||
+		!!updated ||
+		!!q ||
+		archivedChipActive ||
+		Object.values(metadataFilters).some(Boolean)
+
+	// Filtered-empty sentence, built from what is actually applied (mockup 1021).
+	const filteredEmptyTitle = useMemo(() => {
+		if (!hasAnyActiveFilter) return 'No objects found'
+		const noun = typeFilter ? `${typeFilter}s` : 'objects'
+		const clauses: string[] = []
+		if (attention === 'waiting') clauses.push('waiting on you')
+		if (attention === 'working') clauses.push('with an agent working')
+		if (starred) clauses.push('you starred')
+		if (fresh) clauses.push('touched in the last 7 days')
+		if (updated) clauses.push(`updated ${UPDATED_BUCKET_LABELS[updated].toLowerCase()}`)
+		if (activeStatuses.length > 0) clauses.push(`in ${statusChipValue}`)
+		if (activeDrivers.length > 0) clauses.push(`driven by ${driverChipValue}`)
+		if (q) clauses.push(`matching “${q}”`)
+		return clauses.length === 0
+			? `No ${noun} match these filters.`
+			: `No ${noun} ${clauses.join(' ')} right now.`
+	}, [
+		hasAnyActiveFilter,
+		typeFilter,
+		attention,
+		starred,
+		fresh,
+		updated,
+		activeStatuses.length,
+		activeDrivers.length,
+		statusChipValue,
+		driverChipValue,
+		q,
+	])
+
+	// Archived rows only exist in the totals while the toggle is on, so the count
+	// is only truthful then — omitted otherwise rather than shown as 0.
+	const archivedCount =
+		supportsIncludeArchived && includeArchived ? (facets?.by_status.archived ?? 0) : undefined
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -855,6 +1448,31 @@ function ObjectsPage() {
 
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
 	const queryClient = useQueryClient()
+
+	// Single-object status advance from the board card's `→` affordance.
+	// The bulk endpoint reports per-row failures as HTTP 200 with
+	// `results:[{ok:false,error}]`, so `onError` alone never fires for them and
+	// the optimistic patch would sit there until `onSettled` refetched and
+	// snapped the card back with nothing said. Mirrors the drag path's check in
+	// `board-view.tsx` — a missing entry counts as a failure, since the server
+	// never confirmed this id.
+	const handleAdvanceStatus = useCallback(
+		(objectId: string, status: string) => {
+			bulkUpdate.mutate(
+				{ ids: [objectId], patch: { status } },
+				{
+					onSuccess: (data) => {
+						const result = Array.isArray(data?.results)
+							? data.results.find((item) => item.id === objectId)
+							: undefined
+						if (!result?.ok) toast.error(result?.error ?? 'Failed to move object')
+					},
+					onError: () => toast.error('Failed to move object'),
+				},
+			)
+		},
+		[bulkUpdate],
+	)
 
 	// Matches the handleBulkDelete pattern: on partial success, prune selection
 	// to the ids that still need attention so the bulk bar stays pinned to the
@@ -922,6 +1540,42 @@ function ObjectsPage() {
 	// resolve to an absolute URL for clipboard payloads but pass the path directly
 	// to window.open for new-tab navigation.
 	const objectPath = useCallback((id: string) => `/${workspaceId}/objects/${id}`, [workspaceId])
+
+	// The rows `Select all` is allowed to reach. Deliberately the *rendered* set,
+	// not `visibleObjects`: the quick filters narrow what each view shows, and
+	// selecting past them would hand bulk actions rows the user can't see. The
+	// list gets that for free from `listObjects`; the board filters here with the
+	// same predicate it passes to `BoardView` as `clientFilter`.
+	const selectableObjects = useMemo(() => {
+		if (effectiveView !== 'board') return listObjects
+		return hasClientFilter ? boardInitialObjects.filter(matchesClientFilters) : boardInitialObjects
+	}, [effectiveView, listObjects, hasClientFilter, boardInitialObjects, matchesClientFilters])
+
+	const handleSelectAll = useCallback(() => {
+		setRowSelection(Object.fromEntries(selectableObjects.map((o) => [o.id, true])))
+	}, [selectableObjects])
+
+	// Hands the selection to a new chat as *references* rather than acting on it
+	// in place — `chats/new` reads `objectIds` as a comma-separated list.
+	//
+	// Trimmed here rather than at the far end: `Select all` will happily select
+	// more objects than the chat can resolve into chips, and a link that carries
+	// ids nothing will render is how the extras used to disappear without a
+	// word. Cut the list where it stops being deliverable, and say so.
+	const handleAskAgent = useCallback(() => {
+		if (selectedIds.length === 0) return
+		const carried = selectedIds.slice(0, MAX_CHAT_OBJECT_REFERENCES)
+		if (selectedIds.length > carried.length) {
+			toast.warning(
+				`Only the first ${carried.length} of ${selectedIds.length} selected objects were attached to the chat.`,
+			)
+		}
+		navigate({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId },
+			search: { objectIds: carried.join(',') },
+		})
+	}, [selectedIds, navigate, workspaceId])
 
 	// Selected objects we have loaded data for. Titles aren't available for rows
 	// outside the current pages, so copy-title actions warn when any selected id
@@ -1059,10 +1713,81 @@ function ObjectsPage() {
 		reportBulkResult({ results }, ids.length, 'deleted')
 	}, [selectedIds, queryClient, workspaceId, reportBulkResult])
 
+	// Type-tab switch. Owned by the route (not the nav) because it resets the
+	// per-tab hydration gate, the session view-state slot, and the whole search
+	// shape — the nav only renders the strip this handler is bound into.
+	const handleTypeFilterChange = useCallback(
+		(value: string | undefined) => {
+			// Clear the outgoing key (real type or `__all__`) so the destination
+			// tab re-hydrates from its own persisted row instead of inheriting
+			// the previous tab's settings.
+			hydratedTypesRef.current.delete(displaySettingsKey)
+			// Same story for the session view-state — an expansion or scroll
+			// anchor built on the outgoing tab must not leak back onto it if the
+			// user returns. Drop the store slot and reset local expanded so the
+			// destination tab starts at its own defaults.
+			clearViewState(workspaceId, displaySettingsKey)
+			setExpanded({})
+			setCapturedAnchor(undefined)
+			navigate({
+				to: '/$workspaceId/objects',
+				params: { workspaceId },
+				search: {
+					type: value || undefined,
+					sort: DEFAULT_SORT,
+					order: DEFAULT_ORDER,
+					status: undefined,
+					driver: undefined,
+					attention: undefined,
+					fresh: undefined,
+					starred: undefined,
+					updated: undefined,
+					q: undefined,
+					groupBy: 'none',
+					ids: undefined,
+					includeArchived: undefined,
+				},
+				replace: true,
+			})
+		},
+		[displaySettingsKey, workspaceId, navigate],
+	)
+
+	// Published into the shared nav row's *left* cluster, immediately after the
+	// <h1> — the mockup puts the type tabs beside "Objects" (146–153), not out
+	// beyond the search field. PageHeader's effect deps are `[titleTabs]`, so a
+	// fresh node every render would re-set context state on every pass;
+	// memoised for that reason.
+	const headerTabs = useMemo(
+		() => (
+			<FilterTabs
+				variant="nav"
+				tabs={tabsWithCounts}
+				value={typeFilter}
+				onChange={handleTypeFilterChange}
+				aria-label="Type filter"
+				// Below md, drop the tabs onto their own row (`basis-full`) after the
+				// title + search cluster (`order-2`) — otherwise the tabs share the
+				// header row with an expanded NavSearch and get clipped mid-label
+				// (last tab reads as "Custo…"). Restored to the inline "beside <h1>"
+				// arrangement at md and above with `md:basis-auto md:order-none`.
+				className="ml-[14px] min-w-0 basis-full order-2 md:basis-auto md:order-none"
+			/>
+		),
+		[tabsWithCounts, typeFilter, handleTypeFilterChange],
+	)
+
 	return (
-		<div className="flex flex-col flex-1 min-h-0">
+		// The shared scroll area already supplies the page gutter, so the screen
+		// only claims the column + the overflow lock: exactly one scroller (the
+		// list/board region) on this route, matching the mockup's frame (852).
+		<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+			{/* No subtitle: the mockup's Objects header carries the count on the
+			    active type tab (`All 1,063`), not beside the <h1> — printing it in
+			    both places states the same number twice, three characters apart. */}
+			<PageHeader title="Objects" titleTabs={headerTabs} scrollLocked />
 			{idsFilter && (
-				<div className="flex items-center gap-2 mx-6 mb-3 px-3 py-2 rounded-md bg-muted/50 border text-sm">
+				<div className="mb-3 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
 					<span className="text-muted-foreground">
 						Showing{' '}
@@ -1087,40 +1812,12 @@ function ObjectsPage() {
 				columns={columnInfo}
 				columnVisibility={effectiveVisibility}
 				onColumnVisibilityChange={handleColumnVisibilityChange}
-				tabs={tabs}
-				typeFilter={typeFilter}
-				onTypeFilterChange={(value) => {
-					// Clear the outgoing key (real type or `__all__`) so the destination
-					// tab re-hydrates from its own persisted row instead of inheriting
-					// the previous tab's settings.
-					hydratedTypesRef.current.delete(displaySettingsKey)
-					// Same story for the session view-state — an expansion or
-					// scroll anchor built on the outgoing tab must not leak
-					// back onto it if the user returns. Drop the store slot
-					// and reset local expanded so the destination tab starts
-					// with all groups closed.
-					clearViewState(workspaceId, displaySettingsKey)
-					setExpanded({})
-					setCapturedAnchor(undefined)
-					navigate({
-						to: '/$workspaceId/objects',
-						params: { workspaceId },
-						search: {
-							type: value || undefined,
-							sort: 'createdAt',
-							order: 'desc',
-							status: undefined,
-							driver: undefined,
-							q: undefined,
-							groupBy: undefined,
-							ids: undefined,
-							includeArchived: undefined,
-						},
-						replace: true,
-					})
-				}}
-				search={q}
-				onSearchChange={(value) => updateSearch({ q: value || undefined })}
+				quickChips={quickChips}
+				filterPills={filterPills}
+				onClearAllFilters={clearAllFilters}
+				filterSections={filterSections}
+				pinnedFilters={pinnedFilters}
+				onTogglePinnedFilter={handleTogglePinnedFilter}
 				statusFilter={statusFilter}
 				onStatusFilterChange={(value) => updateSearch({ status: value })}
 				statusesByType={statusesByType}
@@ -1131,9 +1828,13 @@ function ObjectsPage() {
 				metadataFilters={metadataFilters}
 				onMetadataFilterChange={(field, value) => updateSearch({ [`metadata.${field}`]: value })}
 				onResetFilters={() => {
-					const cleared: Record<string, string | undefined> = {
+					const cleared: Record<string, string | number | undefined> = {
 						status: undefined,
 						driver: undefined,
+						attention: undefined,
+						fresh: undefined,
+						starred: undefined,
+						updated: undefined,
 					}
 					for (const key of Object.keys(searchParams)) {
 						if (key.startsWith('metadata.')) cleared[key] = undefined
@@ -1150,8 +1851,9 @@ function ObjectsPage() {
 				order={order}
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
-				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				onGroupByChange={(value) => updateSearch({ groupBy: value ?? 'none' })}
 				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
+				archivedCount={archivedCount}
 				onIncludeArchivedChange={
 					supportsIncludeArchived
 						? // Must be the number 1, not the string '1' — the router's default
@@ -1163,9 +1865,25 @@ function ObjectsPage() {
 				}
 				view={effectiveView}
 				onViewChange={(next) => {
+					// Board on a type that can't render one (the All tab, or a type with
+					// no configured statuses) lands on the board-capable type rather
+					// than refusing the click.
+					if (next === 'board' && !boardSupported) {
+						if (!boardLandingType) return
+						pendingViewRef.current = { key: boardLandingType, view: 'board' }
+						setView('board')
+						handleTypeFilterChange(boardLandingType)
+						trackEvent('objects_control_changed', {
+							source: 'objects-page',
+							control: 'view',
+							value: next,
+							objectType: boardLandingType,
+						})
+						return
+					}
 					setView(next)
 					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
-						updateSearch({ sort: 'createdAt', order: 'desc' })
+						updateSearch({ sort: DEFAULT_SORT, order: DEFAULT_ORDER })
 					}
 					// One analytics line per user-initiated switch so we can count
 					// distinct operators reaching for Board (the bet's success
@@ -1177,52 +1895,10 @@ function ObjectsPage() {
 						objectType: typeFilter ?? null,
 					})
 				}}
-				boardSupported={boardSupported}
-				onImportClick={() => setImportOpen(true)}
+				boardSupported={boardSupported || !!boardLandingType}
 				onResetToDefault={handleResetToDefault}
 			/>
 
-			{hasChipFilters && (
-				<div className="flex items-center gap-2 mx-6 mb-3 flex-wrap">
-					{activeStatuses.length > 0 && (
-						<FilterChip
-							label="Status"
-							value={statusChipValue}
-							onRemove={() => updateSearch({ status: undefined })}
-						/>
-					)}
-					{activeDrivers.length > 0 && (
-						<FilterChip
-							label="Driver"
-							value={driverChipValue}
-							onRemove={() => updateSearch({ driver: undefined })}
-						/>
-					)}
-					{archivedChipActive && (
-						<FilterChip
-							label="Include"
-							value="archived"
-							onRemove={() => updateSearch({ includeArchived: undefined })}
-						/>
-					)}
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-						onClick={() =>
-							updateSearch({
-								status: undefined,
-								driver: undefined,
-								includeArchived: undefined,
-							})
-						}
-					>
-						Clear all
-					</Button>
-				</div>
-			)}
-
-			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 			<CreatePicker
 				open={createPickerOpen}
 				onOpenChange={setCreatePickerOpen}
@@ -1231,15 +1907,20 @@ function ObjectsPage() {
 			/>
 
 			{effectiveView === 'board' && typeFilter ? (
-				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">
+				<div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-4">
 					<BoardView
 						objectType={typeFilter}
-						columns={boardQuery.data?.columns ?? []}
+						clientFilter={hasClientFilter ? matchesClientFilters : undefined}
+						columns={boardColumns}
+						asksByObjectId={pendingAsksByObjectId}
+						onAdvance={handleAdvanceStatus}
 						boardParams={boardParams ?? {}}
 						pageSize={BOARD_PAGE_SIZE}
 						statusesByType={statusesByType}
 						workspaceId={workspaceId}
 						isLoading={boardQuery.isLoading}
+						isError={boardQuery.isError}
+						error={boardQuery.error}
 						actors={actors}
 						selectedIds={selectedIds}
 						onObjectSelectionChange={handleObjectSelectionChange}
@@ -1255,7 +1936,7 @@ function ObjectsPage() {
 			) : (
 				<ListView
 					ref={listViewRef}
-					data={allObjects}
+					data={listObjects}
 					workspaceId={workspaceId}
 					actors={actors}
 					rowSelection={rowSelection}
@@ -1265,18 +1946,30 @@ function ObjectsPage() {
 					betStatuses={betStatuses}
 					showBetStatusIndicator={showBetStatusIndicator}
 					asksByObjectId={pendingAsksByObjectId}
-					hasNextPage={infiniteQuery.hasNextPage}
-					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
-					isError={infiniteQuery.isError}
-					fetchNextPage={infiniteQuery.fetchNextPage}
-					isLoading={infiniteQuery.isLoading}
+					pendingAskCountByObjectId={pendingAskCountByObjectId}
+					groupTotals={grouped ? facets?.groups : undefined}
+					onLoadMoreInGroup={groupedQuery.loadMoreInGroup}
+					loadingGroups={groupedQuery.loadingGroups}
+					hasNextPage={grouped ? groupedQuery.hasMoreGroups : infiniteQuery.hasNextPage}
+					isFetchingNextPage={grouped ? false : infiniteQuery.isFetchingNextPage}
+					isError={grouped ? !!groupedQuery.error || facetsQuery.isError : infiniteQuery.isError}
+					error={grouped ? (groupedQuery.error ?? facetsQuery.error) : infiniteQuery.error}
+					fetchNextPage={grouped ? groupedQuery.loadMoreGroups : infiniteQuery.fetchNextPage}
+					isLoading={listLoading}
 					expanded={expanded}
 					onExpandedChange={handleExpandedChange}
 					onCaptureViewState={handleCaptureViewState}
+					emptyTitle={filteredEmptyTitle}
+					hasActiveFilters={hasAnyActiveFilter}
+					onClearFilters={clearAllFilters}
+					objectTypeLabel={objectTypeLabel}
 				/>
 			)}
 			<BulkActionBar
 				selectedCount={selectedIds.length}
+				totalCount={selectableObjects.length}
+				onSelectAll={handleSelectAll}
+				onAskAgent={handleAskAgent}
 				statusOptions={bulkStatusOptions}
 				ownerOptions={bulkOwnerOptions}
 				onStatusChange={handleBulkStatusChange}
@@ -1287,7 +1980,11 @@ function ObjectsPage() {
 				onOpenLinks={handleOpenLinks}
 				onAnswerAsks={() => setAsksOpen(true)}
 				askCount={askCount}
-				onArchive={handleBulkArchive}
+				// Archive is offered only where `Show archived` is — otherwise an
+				// archived row leaves the list with no toggle to bring it back,
+				// stranding it. Both gate on `supportsIncludeArchived` (bet-only
+				// per T5) so the action and its escape hatch stay in lockstep.
+				onArchive={supportsIncludeArchived ? handleBulkArchive : undefined}
 				onDelete={handleBulkDelete}
 				onClear={clearSelection}
 			/>

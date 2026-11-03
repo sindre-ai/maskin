@@ -326,4 +326,21 @@ describe('ActivityComment', () => {
 			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
 		).toBeGreaterThanOrEqual(1)
 	})
+	it('renders a long bubble comment in full, formatted, with no Show more toggle', () => {
+		const tail = 'the very last words of a long comment'
+		const content = `This **matters** and [the retry window](/ws-1/objects/abc) explains why. ${'padding words to make this comment long '.repeat(8)}${tail}`
+		const event = buildEventResponse({
+			id: 1,
+			action: 'commented',
+			data: { content },
+		})
+
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" variant="bubble" />)
+
+		expect(screen.queryByRole('button', { name: /show (more|less)/i })).not.toBeInTheDocument()
+		expect(document.body.textContent).toContain(tail)
+		expect(screen.getByText('matters').tagName).toBe('STRONG')
+		expect(screen.getByRole('link', { name: 'the retry window' })).toBeInTheDocument()
+		expect(document.body.textContent).not.toContain('**matters**')
+	})
 })

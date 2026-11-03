@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { messageCardAnswerSchema, messageQuestionAnswerSchema } from './conversations'
 
 export const sessionStatusSchema = z.enum([
 	'pending',
@@ -11,6 +12,7 @@ export const sessionStatusSchema = z.enum([
 	'completed',
 	'failed',
 	'timeout',
+	'user_stopped',
 ])
 export type SessionStatus = z.infer<typeof sessionStatusSchema>
 
@@ -37,7 +39,47 @@ export const mcpServerHttpSchema = z.object({
 	headers: z.record(z.string()).default({}),
 })
 
-export const mcpServerSchema = z.union([mcpServerStdioSchema, mcpServerHttpSchema])
+/**
+ * Infer a missing `type` from the shape of the entry.
+ *
+ * The stdio branch defaults `type` to "stdio" but the http branch requires the
+ * literal, so `{ url, headers }` — the shape people naturally write, and the
+ * shape most MCP docs show — matched neither branch and failed the union with a
+ * bare "Invalid input" naming no field. That error is indistinguishable from
+ * "MCP servers can't be set here", which is how it kept getting read.
+ *
+ * An explicit `type` is always honoured; this only fills in a missing one.
+ *
+ * Two shapes are deliberately left alone rather than guessed at:
+ *
+ * - `type` present but `undefined` — an `in` check would treat that as stated
+ *   and skip inference, so a caller building `{ type: cfg.type, url }` from a
+ *   partly-populated object would get the same bare "Invalid input" this
+ *   function exists to remove. It is a missing type, so it is inferred.
+ * - An entry carrying BOTH `url` and `command`. That is how every provider
+ *   config in this repo describes an `mcp-remote` server (see
+ *   providers/linear/config.ts), so it is the shape a caller copying one will
+ *   produce, and it has always parsed as stdio — the union tries stdio first
+ *   and drops `url` as an unknown key. Inferring `http` from the `url` would
+ *   flip a working stdio server into an http one with `command`, `args` and
+ *   `env` stripped and no Authorization header: connected, zero tools, no
+ *   error — exactly the failure this whole change set out to remove, and on
+ *   already-stored rows rather than new input. Ambiguous, so left to the
+ *   union's existing stdio-wins behaviour.
+ */
+const inferMcpServerType = (value: unknown): unknown => {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
+	const server = value as Record<string, unknown>
+	if (server.type !== undefined) return server
+	if (typeof server.command === 'string') return server
+	if (typeof server.url === 'string') return { ...server, type: 'http' }
+	return server
+}
+
+export const mcpServerSchema = z.preprocess(
+	inferMcpServerType,
+	z.union([mcpServerStdioSchema, mcpServerHttpSchema]),
+)
 
 export const runtimeConfigSchema = z.object({
 	max_turns: z.number().int().positive().optional(),
@@ -79,10 +121,6 @@ export const sessionConversationContextSchema = z.object({
 })
 export type SessionConversationContext = z.infer<typeof sessionConversationContextSchema>
 
-// Mirrors MAX_PREVIEW_GUEST_PORTS in apps/agent-server/src/index.ts — a
-// session only ever needs to forward a handful of local dev servers.
-const MAX_PREVIEW_GUEST_PORTS = 8
-
 export const sessionConfigSchema = z.object({
 	base_image: z.string().default('agent-base:latest'),
 	runtime: sessionRuntimeSchema.default('claude-code'),
@@ -96,19 +134,6 @@ export const sessionConfigSchema = z.object({
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
 	conversation: sessionConversationContextSchema.optional(),
-	// When true, provision a browser sidecar and inject BROWSER_CDP_URL so
-	// @playwright/mcp can attach. See needsBrowserSidecar() in session-manager.ts
-	// for the legacy auto-detection path (MCP config referencing ${BROWSER_CDP_URL}).
-	browserRequired: z.boolean().default(false),
-	// Guest port(s) inside the session to publish on the msb bridge gateway
-	// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
-	// reach them. Only takes effect when browserRequired is also true —
-	// session-manager.ts's buildLaunchSpec() forces browserRequired on whenever
-	// this is non-empty, so passing one without the other is still safe.
-	previewGuestPorts: z
-		.array(z.number().int().positive().max(65535))
-		.max(MAX_PREVIEW_GUEST_PORTS)
-		.optional(),
 })
 
 export const createSessionSchema = z.object({
@@ -123,20 +148,84 @@ export const createSessionSchema = z.object({
 	// `sessions.config.entry_agent_role` so downstream analytics can attribute
 	// every session to the agent that received the owner's first turn.
 	entry_agent_role: z.string().max(64).optional(),
+	// Object this session is being started for (bet, task, insight, or any
+	// first-class object). Optional on the wire — a missing value means
+	// "no originating object known" and lands as NULL on the row. When set
+	// the id is threaded into `sessions.initiated_from_object_id`,
+	// carried onto the `session_failed` event's `data.initiated_from` block
+	// (with the object's type looked up from it) and onto the PostHog
+	// `runtime_session_ended` event as `context_object_id` (parent bet
+	// Criterion 3).
+	initiated_from_object_id: z.string().uuid().optional(),
+	// Handed-off strip anchors. `spawned_by_message_id` is the assistant message
+	// that triggered this sub-agent spawn (bigint to match `messages.id`);
+	// `depends_on_session_ids` names the sessions this one is blocked behind.
+	// Both optional — a spawn without them reads as "no strip".
+	spawned_by_message_id: z.number().int().positive().optional(),
+	depends_on_session_ids: z.array(z.string().uuid()).optional(),
+	// A session started from inside a chat is interactive by default: it can ask
+	// the person a question and ends when it returns its result. Pass `false` to
+	// run it as a plain one-shot job instead.
+	interactive: z.boolean().optional(),
+	// Ask for the helper's final message to be sent back to the session that
+	// started it when this one ends. Stored in config only when the spawn link
+	// is accepted; unset keeps the return exactly as it is without the flag.
+	notify_on_complete: z.boolean().optional(),
 })
 
 export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
+	trigger_id: z.string().uuid().optional(),
 	mention_object_id: z.string().uuid().optional(),
 	conversation_id: z.string().uuid().optional(),
 	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
 	updated_before: z.string().datetime({ offset: true }).optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
 	updated_after: z.string().datetime({ offset: true }).optional(),
-	limit: z.coerce.number().int().min(1).max(100).default(20),
+	/**
+	 * Cursor for backward pagination through the lean list. Half-open, exclusive:
+	 * returns rows with `updated_at < before`. Pass the last row's `updated_at`
+	 * back to walk further into history. Composes with `updated_after` for a
+	 * bounded window. Both cursor styles (this + `updated_before`) coexist because
+	 * the UI's offset-based paging still needs `updated_before`/`offset` for a
+	 * stable page-index view.
+	 */
+	before: z.string().datetime({ offset: true }).optional(),
+	/**
+	 * When false (the default), rows arrive in the lean shape
+	 * `{ id, title, status, updated_at }` — roughly 10x smaller than the fat
+	 * payload, so a caller sees ~50 sessions at a glance instead of ~4.
+	 * When true, rows are the full serialized `sessions` row (today's shape)
+	 * so existing callers keep working during the compat window. The UI hook
+	 * ships this PR with `verbose: true` so `main` is unchanged; the follow-up
+	 * bet migrates the UI to lean rows and drops the flag.
+	 */
+	// Not z.coerce.boolean(): Boolean('false') is true, so ?verbose=false would
+	// silently return the fat shape. Map the literal strings instead.
+	verbose: z.preprocess(
+		(v) => (v === 'true' ? true : v === 'false' ? false : v),
+		z.boolean().default(false),
+	),
+	limit: z.coerce.number().int().min(1).max(200).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
 })
+
+/**
+ * Lean row shape returned by `list_sessions` when `verbose` is false (the
+ * default). `title` is synthesized on the read path (see route handler):
+ * trigger name if `trigger_id` is set, else the first ~60 chars of
+ * `action_prompt`, else the fallback `Session <id[:8]>`.
+ */
+export const sessionLeanRowSchema = z.object({
+	id: z.string().uuid(),
+	title: z.string(),
+	status: sessionStatusSchema,
+	updated_at: z.string().datetime().nullable(),
+	// Short failure line (200 characters at most), set only when status is failed.
+	failure_reason: z.string().nullable(),
+})
+export type SessionLeanRow = z.infer<typeof sessionLeanRowSchema>
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
@@ -164,6 +253,140 @@ export const sessionLogQuerySchema = z.object({
 	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
+// ── Activity trace (GET /api/sessions/:id/activity) ──────────────────────
+
+/** Rows of `session_logs` the activity endpoint will scan in one request. */
+export const SESSION_ACTIVITY_SCAN_ROWS = 2000
+
+export const sessionActivityQuerySchema = z.object({
+	/** Newest N turns to return (a turn = one conversation message the agent answered). */
+	limit_turns: z.coerce.number().int().min(1).max(20).default(5),
+	/**
+	 * Return only the turn triggered by this conversation message id. If the turn
+	 * is outside the newest-rows window, the server anchors a scan at that turn's
+	 * tagged user envelope instead, so any tagged turn can be looked up directly.
+	 */
+	message_id: z.coerce.number().int().positive().optional(),
+	/**
+	 * Exclusive upper bound on `session_logs.id`; pass a previous response's
+	 * `oldest_log_id` to page toward older turns.
+	 */
+	before_log_id: z.coerce.number().int().positive().optional(),
+})
+
+/**
+ * Turns are delimited by user envelopes tagged with `maskin_message_id`.
+ * Log rows written before that tagging existed (and any rows ahead of the
+ * first tagged envelope) belong to no turn and are intentionally dropped,
+ * mirroring the web transcript's `unassigned` bucket which the chat never shows.
+ */
+export const sessionActivityStepSchema = z.object({
+	/** Stable across polls: `<logId>-<blockIndex>` (`<logId>-stderr` for stderr). */
+	id: z.string(),
+	kind: z.enum(['tool_use', 'thinking', 'text', 'error']),
+	/** Short human label, at most 120 chars, e.g. `Using Read`. */
+	label: z.string().max(120),
+	/** Optional one-line input summary, at most 300 chars. */
+	detail: z.string().max(300).optional(),
+	started_at: z.string().nullable(),
+	finished_at: z.string().nullable(),
+	status: z.enum(['running', 'completed', 'failed']),
+})
+
+export const sessionActivityTurnSchema = z.object({
+	/** The conversation `messages.id` that triggered this turn. */
+	message_id: z.number().int(),
+	started_at: z.string().nullable(),
+	finished_at: z.string().nullable(),
+	/** `running` until a `result` envelope closes the turn. */
+	status: z.enum(['running', 'completed', 'failed']),
+	/** True once the turn called the conversation-reply tool. */
+	contains_reply: z.boolean(),
+	result: z
+		.object({ text: z.string().max(8000), is_error: z.boolean(), log_id: z.number().int() })
+		.nullable(),
+	steps: z.array(sessionActivityStepSchema).max(100),
+	/** True when more than 100 steps happened and the oldest were dropped. */
+	steps_truncated: z.boolean(),
+	/**
+	 * True when the scan window began in the middle of this turn: the turn's
+	 * tagged user envelope was recovered with one extra lookup, but the log
+	 * rows between that envelope and the window were not loaded, so its earliest
+	 * steps are missing. Only ever set on the oldest returned turn.
+	 */
+	partial: z.boolean(),
+})
+
+export const sessionActivityResponseSchema = z.object({
+	session_id: z.string().uuid(),
+	/** Oldest to newest. */
+	turns: z.array(sessionActivityTurnSchema),
+	/** Pass as `before_log_id` to fetch older turns. Null when nothing was scanned. */
+	oldest_log_id: z.number().int().nullable(),
+	/** The scan window was full, so older turns probably exist. */
+	has_older: z.boolean(),
+})
+
+export type SessionActivityStep = z.infer<typeof sessionActivityStepSchema>
+export type SessionActivityTurn = z.infer<typeof sessionActivityTurnSchema>
+export type SessionActivityResponse = z.infer<typeof sessionActivityResponseSchema>
+
+/**
+ * Query params for the deep-read log endpoint that mirrors the `get_session_logs`
+ * MCP tool. Distinct from `sessionLogQuerySchema` above (which serves today's
+ * `/api/sessions/:id/logs` UI/HTTP callers and keeps ascending order for
+ * backward compat — see spec §8 rabbit hole 5).
+ *
+ * `direction` is the one axis the caller sets — it fixes both which end to
+ * page from AND the response order. Default `newest_first` lands on the
+ * ending, where a failure lives; `oldest_first` is the rare "jump to boot"
+ * case. Response rows are returned in the requested direction (NOT reversed).
+ *
+ * Cursors compose: `before_id: N` walks backward through history (rows
+ * satisfy `id < N`), `after_id: N` is a live tail (rows satisfy `id > N`),
+ * and passing both yields the bounded window `after_id < id < before_id`.
+ */
+export const sessionLogsDeepQuerySchema = z.object({
+	direction: z.enum(['newest_first', 'oldest_first']).default('newest_first'),
+	before_id: z.coerce.number().int().positive().optional(),
+	after_id: z.coerce.number().int().positive().optional(),
+	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
+	limit: z.coerce.number().int().min(1).max(500).default(100),
+})
+
+/**
+ * Row shape returned by the deep-read log endpoint and by `get_session` when
+ * `include_logs` is true. `id` is the monotonic `bigserial` primary key on
+ * `session_logs` — safe for cursor pagination.
+ */
+export const sessionLogRowSchema = z.object({
+	id: z.number().int().positive(),
+	stream: z.enum(['stdout', 'stderr', 'system']),
+	content: z.string(),
+	created_at: z.string().datetime().nullable(),
+})
+
+/**
+ * Query params for `GET /api/sessions/:id`. `include_logs=true` folds the
+ * newest-first log tail into the response body under a `logs` key, honoring
+ * `log_limit`. The bug this closes was that today's handler ignores both
+ * flags — the MCP `get_session` tool advertised them for months while
+ * silently returning session metadata only.
+ *
+ * String coercion for `include_logs`: HTTP query params arrive as strings, so
+ * `z.boolean()` alone rejects `?include_logs=true`. Preprocess the literal
+ * "true"/"false" strings to actual booleans before parsing.
+ */
+export const getSessionQuerySchema = z.object({
+	include_logs: z
+		.preprocess(
+			(v) => (v === 'true' ? true : v === 'false' ? false : v),
+			z.boolean().default(false),
+		)
+		.optional(),
+	log_limit: z.coerce.number().int().min(1).max(500).default(100),
+})
+
 export const sessionParamsSchema = z.object({
 	id: z.string().uuid(),
 })
@@ -179,6 +402,10 @@ export const sessionInputAttachmentSchema = z.object({
 export const sessionInputSchema = z.object({
 	content: z.string().min(1),
 	attachments: z.array(sessionInputAttachmentSchema).optional(),
+	/** Set when this input answers a question the session asked in a chat. */
+	question_answer: messageQuestionAnswerSchema.optional(),
+	/** Set when this input answers a card the session is waiting on in a chat. */
+	card_answer: messageCardAnswerSchema.optional(),
 })
 
 export const sessionUsageBucketSchema = z.enum(['hour', 'day', 'week'])
@@ -217,6 +444,22 @@ export const sessionUsageResponseSchema = z.object({
 })
 export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
 
+export const sessionStatsRowSchema = z.object({
+	actor_id: z.string().uuid(),
+	total: z.number().int().min(0),
+	// Sessions in running, starting or pending.
+	active: z.number().int().min(0),
+	total_cost_usd: z.number(),
+	// Same basis as /sessions/usage: settled (or, while open, last active) in the last 30 days.
+	last_30d_cost_usd: z.number(),
+	// Status of the actor's newest session by created_at.
+	latest_status: z.string(),
+	latest_session_at: z.string().nullable(),
+})
+
+export const sessionStatsResponseSchema = z.array(sessionStatsRowSchema)
+export type SessionStatsRow = z.infer<typeof sessionStatsRowSchema>
+
 /**
  * Reason codes for classified session failures. Credit/rate-limit codes are
  * detected from the session stdout tail; infrastructure codes are written by
@@ -235,6 +478,19 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - billing_error         402 — credit balance exhausted
  * - max_plan_rate_limit   402 — Max plan temporary rate limit
  * - rate_limit_error      429 — Anthropic rate limit
+ * - oauth_revoked         401 — "OAuth access token has been revoked" from the
+ *                         Claude Code CLI's own error line. Distinct from the
+ *                         limit codes above: the credential itself is bad, not
+ *                         just spent. Routes into the same runtime failover
+ *                         path so the retry lands on the next slot; if that
+ *                         slot's token is only expired-not-revoked, the retry's
+ *                         session-start refresh recovers it in place.
+ * - oauth_expired         401 — "Failed to authenticate: OAuth session expired
+ *                         and could not be refreshed", the CLI's final error
+ *                         when its login lapsed. Auth-class like not_logged_in,
+ *                         but not a failover trigger and never retried.
+ * - invalid_api_key       401 — "Invalid API key", the CLI's final error when
+ *                         the API key is rejected. Handled like oauth_expired.
  *
  * OpenRouter HTTP error codes:
  * - insufficient_credits  402 — OpenRouter credit balance exhausted
@@ -243,6 +499,16 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - agent_server_lost     The agent-server restarted and no longer holds
  *                         the microsandbox for this session — the work is
  *                         irrecoverable and the row is closed out.
+ * - startup_stalled       Launch never completed: the session sat in
+ *                         `starting` past the zombie window with no container
+ *                         and no sandbox, and was force-failed.
+ * - container_lost       The session's container was gone (exited, reaped or
+ *                         orphaned by a backend restart) while the row was
+ *                         still active; the row is closed out.
+ * - plan_cap_exceeded     The session was deliberately stopped mid-run by
+ *                         SessionManager's budget watchdog because workspace
+ *                         usage crossed the plan cap with no usage credits
+ *                         left to cover it — not a provider-side failure.
  */
 export const failureReasonCodeSchema = z.enum([
 	'session_limit',
@@ -255,16 +521,47 @@ export const failureReasonCodeSchema = z.enum([
 	'billing_error',
 	'max_plan_rate_limit',
 	'rate_limit_error',
+	'oauth_revoked',
+	'oauth_expired',
+	'invalid_api_key',
 	'insufficient_credits',
 	'agent_server_lost',
+	'container_lost',
+	'plan_cap_exceeded',
 	// The session could not be handed to any agent-server before the dispatch
 	// queue ran out of attempts. Recoverable by starting a new session.
 	'dispatch_failed',
 	// The session's agent was deleted (or removed by a loop uninstall/version
 	// push) while the session was still live, so it was stopped mid-run.
 	'agent_deleted',
+	// The session never left `starting` — launch stalled before any container
+	// or sandbox existed, and the zombie reaper closed it out. Written by
+	// SessionManager's cleanup pass, which knows the session stalled but not
+	// why; `verbatim_output` carries whatever the row still shows (elapsed
+	// time, resolved route if any) so the stall is at least diagnosable from
+	// the session itself instead of only from server logs.
+	'startup_stalled',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
+
+// §7.5 / §17.2 sources for the `reset_at` value on a credit-exhaustion failure.
+// Stamped alongside `reset_at` when a companion parser (parseSubscriptionLimitReset,
+// parseCliResetBanner) produced the value; left absent when reset_at is null or
+// was written by a non-parsing path (e.g. an integration test seeding retry_at
+// directly). `reset_source` names which signal fed the parse; `reset_confidence`
+// classifies whether it was an authoritative pre-flight probe or an advisory
+// mid-session banner. The retry-scheduler carries both onto the
+// session_retry_scheduled audit event's data field.
+export const resetSourceSchema = z.enum([
+	'anthropic-ratelimit-unified-reset',
+	'retry-after-header',
+	'cli-banner',
+	'agent-server-callback',
+])
+export type ResetSource = z.infer<typeof resetSourceSchema>
+
+export const resetConfidenceSchema = z.enum(['authoritative', 'advisory'])
+export type ResetConfidence = z.infer<typeof resetConfidenceSchema>
 
 export const sessionResultFailureReasonSchema = z.object({
 	provider: z.string(),
@@ -273,12 +570,17 @@ export const sessionResultFailureReasonSchema = z.object({
 	http_status: z.number().int().nullable(),
 	reset_at: z.string().nullable(),
 	verbatim_output: z.string().nullable(),
+	reset_source: resetSourceSchema.optional(),
+	reset_confidence: resetConfidenceSchema.optional(),
 })
 export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReasonSchema>
 
 export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
+	// Human-readable note for sessions that ended successfully without an exit
+	// code — e.g. the watchdog's graceful close of an idle chat session.
+	summary: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
 	// Set only by SessionManager.stopSession()'s provisional terminal write —
 	// see markRemoteSessionComplete() in apps/dev/src/services/session-manager.ts.
@@ -288,5 +590,12 @@ export const sessionResultSchema = z.object({
 	// to overwrite a record still carrying this marker with the real exit code;
 	// it is never set on a genuine report itself.
 	stopped_by_user: z.boolean().optional(),
+	// The user asked for this session to stop. Unlike `stopped_by_user` (the
+	// provisional-write marker that gates markRemoteSessionComplete's CAS
+	// overwrite), this is a pure UI flag: it survives the genuine completion
+	// report so a user-initiated stop keeps rendering as "stopped", never as
+	// a failure. Set by the local handleCompletion path and carried forward
+	// by markRemoteSessionComplete when it overwrites a provisional stop.
+	user_stop_requested: z.boolean().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

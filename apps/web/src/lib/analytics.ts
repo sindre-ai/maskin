@@ -38,6 +38,7 @@ export function trackEvent(
 
 export type TaxonomyEntityType =
 	| 'object'
+	| 'actor'
 	| 'agent'
 	| 'bet'
 	| 'task'
@@ -49,8 +50,12 @@ export type TaxonomyEntityType =
 	| 'relationship'
 	| 'file'
 	| 'loop'
+	| 'conversation'
 
-type EventSource = 'web' | 'mcp' | 'trigger'
+// `file_viewer` was added so `comment_posted.source` can attribute review
+// comments back to the viewer surface — required for the "≥40% comment-after-
+// view within 24h" success criterion on the file-review viewer bet.
+type EventSource = 'web' | 'mcp' | 'trigger' | 'file_viewer'
 
 interface BaseProps {
 	entity_id: string
@@ -112,6 +117,35 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 	trackEvent('agent_session_started', fillBase(p))
 }
 
+// The browser does not send agent_session_completed or trigger_fired: the
+// backend already reports completions (with trigger provenance), and the
+// browser copies were about half of all PostHog events, outside the backend
+// daily caps. This one event a day per browser says someone opened the app,
+// which is all the browser has to add. It is the daily and weekly active users
+// event.
+const APP_ACTIVE_DAY_KEY = 'maskin-app-active-day'
+
+// Kept in memory too, so a browser with no usable storage sends once per page
+// load instead of on every mount.
+let appActiveDaySent = ''
+
+// Returns true when it sent the event, false when today's was already sent from
+// this browser. `utc_day` is the same day format as the backend's
+// loop_active_day. Call it after identify so the event lands on the person.
+export function trackAppActive(now: Date = new Date()): boolean {
+	const utcDay = now.toISOString().slice(0, 10)
+	if (appActiveDaySent === utcDay) return false
+	appActiveDaySent = utcDay
+	try {
+		if (localStorage.getItem(APP_ACTIVE_DAY_KEY) === utcDay) return false
+		localStorage.setItem(APP_ACTIVE_DAY_KEY, utcDay)
+	} catch {
+		// No storage: the in-memory record above still stops repeats this page load.
+	}
+	trackEvent('app_active', { utc_day: utcDay })
+	return true
+}
+
 // Operator opened a chat with Maskin (Sindre, or a one-shot agent via the `/`
 // picker). Powers the founder-substitution measurement on the
 // `Chat — Maskin becomes the operator's default AI client` bet: counted against
@@ -129,12 +163,14 @@ export function trackChatSessionStarted(
 		entity_type: 'session'
 		entry_point: ChatSessionEntryPoint
 		entry_agent_role: string | null
+		participant_count: number
 	},
 ): void {
 	trackEvent('chat_session_started', {
 		...fillBase(p),
 		entry_point: p.entry_point,
 		entry_agent_role: p.entry_agent_role,
+		participant_count: p.participant_count,
 	})
 }
 
@@ -192,31 +228,61 @@ export function deriveEntryAgentRole(name: string | null | undefined): string | 
 		.replace(/^-+|-+$/g, '')
 }
 
-export function trackAgentSessionCompleted(
-	p: BaseProps & { entity_type: 'session'; outcome: 'completed' | 'failed' | 'timeout' },
-): void {
-	trackEvent('agent_session_completed', { ...fillBase(p), outcome: p.outcome })
+export type CommentLengthBucket = '1-50' | '51-200' | '201-1000' | '1000+'
+
+export interface CommentShape {
+	is_multiline: boolean
+	length_bucket: CommentLengthBucket
+}
+
+// What a comment looks like without what it says: PostHog never gets the text.
+export function commentShape(text: string): CommentShape {
+	const length = text.trim().length
+	return {
+		is_multiline: text.trim().includes('\n'),
+		length_bucket:
+			length <= 50 ? '1-50' : length <= 200 ? '51-200' : length <= 1000 ? '201-1000' : '1000+',
+	}
 }
 
 export function trackCommentPosted(
-	p: BaseProps & { is_reply: boolean; attachment_count: number; content: string },
+	p: BaseProps & CommentShape & { is_reply: boolean; attachment_count: number },
 ): void {
 	trackEvent('comment_posted', {
 		...fillBase(p),
 		is_reply: p.is_reply,
 		attachment_count: p.attachment_count,
-		content: p.content,
+		is_multiline: p.is_multiline,
+		length_bucket: p.length_bucket,
 	})
 }
 
-export function trackTriggerFired(p: BaseProps & { entity_type: 'trigger' }): void {
-	trackEvent('trigger_fired', { ...fillBase(p), source: 'trigger' })
-}
+// `source` on `relationship_created` is the UI attribution point Analytics
+// asked for on the parent bet (comment 522050): the D11 dashed CTAs on the
+// Relationships tab need to be filterable in PostHog against the generic
+// AddLinkForm / drag-drop / batch-attach paths that also emit this event.
+// Widening beyond the base `EventSource` here (not in `BaseProps`) keeps the
+// SDK-source semantic ('web' | 'mcp' | 'trigger') clean everywhere else while
+// still emitting a single `source` property on the event.
+export type RelationshipCreatedSource =
+	| EventSource
+	| 'relationships_tab_link_cta'
+	| 'relationships_tab_upload_cta'
 
 export function trackRelationshipCreated(
-	p: BaseProps & { entity_type: 'relationship'; relationship_type: string },
+	p: Omit<BaseProps, 'source'> & {
+		entity_type: 'relationship'
+		relationship_type: string
+		source?: RelationshipCreatedSource
+	},
 ): void {
-	trackEvent('relationship_created', { ...fillBase(p), relationship_type: p.relationship_type })
+	trackEvent('relationship_created', {
+		entity_id: p.entity_id,
+		entity_type: p.entity_type,
+		source: p.source ?? 'web',
+		flow_id: p.flow_id ?? null,
+		relationship_type: p.relationship_type,
+	})
 }
 
 export function trackObjectAttachedFile(
@@ -236,23 +302,8 @@ export function trackObjectAttachedFile(
 // id) to count workspaces where the same mini-app was opened on 7 consecutive
 // days, so exactly-once-per-open emission is enforced at the call site.
 
-export function trackMiniAppFileViewed(
-	p: BaseProps & { entity_type: 'file'; file_name: string },
-): void {
-	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
-}
-
-// For You sparse-state composer. `items_count` is the rendered item count on
-// the For You feed at the moment of the event (0–2 for the sparse range).
-// `workspace_id` rides via PostHog super-properties registered on workspace
-// mount — do not pass it explicitly.
-
-export function trackForyouSparseComposerShown(p: { items_count: number }): void {
-	trackEvent('foryou_sparse_composer_shown', { items_count: p.items_count })
-}
-
-export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
-	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
+export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): void {
+	trackEvent('mini_app_file_viewed', fillBase(p))
 }
 
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
@@ -272,6 +323,48 @@ export function trackChatImageUpload(p: { outcome: 'success' | 'failure' }): voi
 	trackEvent('chat_image_upload', { platform: detectPlatform(), outcome: p.outcome })
 }
 
+// Chat composer `/` unified picker — fires when a Reference row is committed
+// into the composer selection (either an object or a notification). The parent
+// bet's success metric pairs this with turn sends against the same session to
+// measure whether references travel through to a completed exchange, so
+// `object_type` is the row's own `type` column ('bet' | 'task' | 'insight' |
+// 'notification' | any custom object type) and rides alongside the standard
+// `entity_id`. `workspace_id` / `actor_id` come in via the PostHog
+// super-properties registered on workspace mount.
+export type ChatReferenceObjectType = 'notification' | (string & {})
+
+export function trackChatObjectReferenceCreated(p: {
+	entity_id: string
+	object_type: ChatReferenceObjectType
+}): void {
+	trackEvent('chat_object_reference_created', {
+		entity_id: p.entity_id,
+		object_type: p.object_type,
+		source: 'web',
+	})
+}
+
+// Fires when the `/` picker's Reference search endpoint fails. Paired at query
+// time with `chat_object_reference_created` to compute error-rate on the
+// picker; it carries the error name only, never the message. See the parent bet's "Retry works from the
+// error state" gate.
+export function trackChatSlashPickerError(p: { errorClass: string }): void {
+	trackEvent('chat_slash_picker_error', {
+		error_class: p.errorClass,
+		source: 'web',
+	})
+}
+
+// Fires every time the composer's `add_agent` reducer action lands — the `@`
+// picker, or the `+ · Mention an agent` shortcut. `entity_id` is the picked
+// actor id; `kind` splits agent vs. human so the mention-adoption metric can
+// see if humans are actually being mentioned in practice.
+export function trackChatMentionInserted(
+	p: BaseProps & { entity_type: 'actor'; kind: 'agent' | 'human' },
+): void {
+	trackEvent('chat_mention_inserted', { ...fillBase(p), kind: p.kind })
+}
+
 // Sidebar legibility bet — click-through proxy for the qualitative ship metric.
 // `workspace_id` already rides via the PostHog super-property registered on
 // workspace mount; the explicit `workspaceId` here is a duplicate the Analyst
@@ -281,8 +374,29 @@ export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }):
 	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
 }
 
-export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): void {
-	trackEvent('sidebar.agent_activity.expanded', { workspaceId: p.workspaceId })
+// Mobile switcher bug (taps register, menu doesn't open): the two events below
+// split "the tap never reached the trigger" (no `open_attempted`) from "the
+// menu opened and closed again before the user could see it" (`open_attempted`
+// then `dismissed_immediately`), which have different fixes. `pointerType`
+// ('touch' | 'mouse' | 'pen') lets mobile and desktop be compared directly.
+export function trackSidebarWorkspaceSwitcherOpenAttempted(p: {
+	workspaceId: string
+	pointerType: string
+}): void {
+	trackEvent('sidebar.workspace_switcher.open_attempted', {
+		workspaceId: p.workspaceId,
+		pointerType: p.pointerType,
+	})
+}
+
+export function trackSidebarWorkspaceSwitcherDismissedImmediately(p: {
+	workspaceId: string
+	openMs: number
+}): void {
+	trackEvent('sidebar.workspace_switcher.dismissed_immediately', {
+		workspaceId: p.workspaceId,
+		openMs: p.openMs,
+	})
 }
 
 // Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
@@ -296,35 +410,6 @@ export type NavItemSource = 'top-nav' | 'footer' | 'favorites' | 'bottom-nav'
 
 export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
 	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
-}
-
-// Ship-metric events for the For You onboarding prompt bet — response rate =
-// count(north_star_prompt_response) / count(north_star_prompt_impression),
-// filtered to workspaces with no prior bets. `workspace_id` is passed on the
-// event (not via super properties) so the PostHog cohort filter can key off it
-// without depending on the workspace mount having already registered.
-//
-// Both events fire with `send_instantly: true` so posthog-js bypasses its
-// ~3-second batching queue. The response event was being lost in prod because
-// the card unmounts immediately after submit and users often tab away right
-// after — the batched event never made it out of the browser, so the event
-// name never even landed in the PostHog project taxonomy. The impression uses
-// the same flag for parity: both halves of the ratio must have identical
-// delivery semantics or the ship metric is biased.
-export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
-	trackEvent(
-		'north_star_prompt_impression',
-		{ workspace_id: p.workspace_id },
-		{ send_instantly: true },
-	)
-}
-
-export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
-	trackEvent(
-		'north_star_prompt_response',
-		{ workspace_id: p.workspace_id },
-		{ send_instantly: true },
-	)
 }
 
 // Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
@@ -415,41 +500,6 @@ export function trackScrollToTop(
 	})
 }
 
-// Ship-metric events for the bidirectional swipe-to-read/unread bet on the For
-// You page. Fire on the *completed* swipe — inside the post-Undo timer commit,
-// so tapping Undo within the 4.5s window emits nothing. `mobile` is computed at
-// emission from `window.innerWidth <= 768` rather than snapshotted at hook mount
-// because the DoD keys the mobile/desktop split off the viewport width the
-// gesture actually completes on. `via` is fixed to 'swipe' so the toolbar
-// mark-read button can be instrumented separately later without back-filling.
-function isMobileViewport(): boolean {
-	if (typeof window === 'undefined') return false
-	return window.innerWidth <= 768
-}
-
-interface ForyouCardMarkedProps {
-	entity_type: string
-	entity_id: string
-}
-
-export function trackForyouCardMarkedRead(p: ForyouCardMarkedProps): void {
-	trackEvent('foryou_card_marked_read', {
-		entity_type: p.entity_type,
-		entity_id: p.entity_id,
-		mobile: isMobileViewport(),
-		via: 'swipe',
-	})
-}
-
-export function trackForyouCardMarkedUnread(p: ForyouCardMarkedProps): void {
-	trackEvent('foryou_card_marked_unread', {
-		entity_type: p.entity_type,
-		entity_id: p.entity_id,
-		mobile: isMobileViewport(),
-		via: 'swipe',
-	})
-}
-
 // Ship-metric event for the object-detail sidebar bet. Fires on every open and
 // every close of the right sidebar in `ObjectDocument`. `state` is the state
 // being transitioned TO; `viewport` matches the workspace's 375 / 768 / 1024
@@ -510,6 +560,18 @@ export function trackForyouCardAction(p: {
 	})
 }
 
+// Restores the mark-read side of the For You engagement contract, deleted in
+// PR #1459 when the new-design flag was retired. Client-side and next to the
+// gesture: fired BEFORE the mark-read mutation so an API failure doesn't lose
+// the intent signal, and once per invocation (the server drops the card once
+// read, so there is no natural dedup boundary here — the surface itself is).
+export function trackForyouCardMarkedRead(p: { card_kind: CardKind; card_id: string }): void {
+	trackEvent('foryou_card_marked_read', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+	})
+}
+
 // Per-mutation event for the Bulk select bet's ship metric (avg ≥5 objects
 // changed per cleanup session, baseline 1). Fires once per successful object
 // mutation from the three object hooks — single update, single delete, and one
@@ -550,10 +612,90 @@ export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
 	trackEvent('command_palette_opened', { surface: p.surface, source: 'web' })
 }
 
+export type SearchResultGroup = 'chats' | 'loops' | 'agents' | 'people' | 'objects' | 'automations'
+
+// Which search UI produced the event. Events from the old page and launcher carry
+// 'legacy' (or nothing, when they predate the field), so the two stay comparable.
+export type SearchUiVersion = 'legacy' | 'v2'
+
+// How a v2 search began: typed in the field, restored from the URL, handed over
+// from the launcher, or picked from the recent searches.
+export type SearchEntry = 'typed' | 'url' | 'palette_handover' | 'recent'
+
+export type SearchSortKey = 'rel' | 'recent' | 'az'
+
+// Fires once per settled query on either surface. Never carries the query text
+// (queries can name customers and PostHog is a third party): only its length
+// and word count. `result_count` is the hook's full total across all five
+// groups, not the rows a surface shows; zero-result means result_count 0 with
+// is_partial false.
+export function trackSearchPerformed(p: {
+	surface: SearchSurface
+	search_id: string
+	result_count: number
+	is_partial: boolean
+	query_length: number
+	words_count: number
+	type_filter: string | null
+	status_filter: string | null
+	// Added by the v2 page. The names above are frozen; these are new and optional.
+	ui_version?: SearchUiVersion
+	entry?: SearchEntry
+	pill_count?: number
+	filter_count?: number
+	sort?: SearchSortKey
+}): void {
+	trackEvent('search_performed', { ...p, ui_version: p.ui_version ?? 'legacy', source: 'web' })
+}
+
+// Fires for every result row on both surfaces. `search_id` joins the open to
+// its `search_performed` (null when there is no query: recents, the palette's
+// empty-query list). `position` is 1-based in rendered order. Only has_query
+// true opens count toward the search-to-open metric.
 export function trackSearchResultOpened(
-	p: BaseProps & { entity_type: TaxonomyEntityType; surface: SearchSurface },
+	p: BaseProps & {
+		entity_type: TaxonomyEntityType
+		surface: SearchSurface
+		search_id: string | null
+		has_query: boolean
+		result_count: number
+		position: number
+		result_group: SearchResultGroup
+		ui_version?: SearchUiVersion
+	},
 ): void {
-	trackEvent('search_result_opened', { ...fillBase(p), surface: p.surface })
+	trackEvent('search_result_opened', {
+		...fillBase(p),
+		ui_version: p.ui_version ?? 'legacy',
+		surface: p.surface,
+		search_id: p.search_id,
+		has_query: p.has_query,
+		result_count: p.result_count,
+		position: p.position,
+		result_group: p.result_group,
+	})
+}
+
+export type SearchFilterDimension = 'type' | 'status' | 'participant' | 'updated' | 'sort' | 'clear'
+export type SearchFilterAction = 'add' | 'remove' | 'set' | 'reset'
+export type SearchFilterKind = 'chip' | 'pill' | 'display_menu' | 'clear_button'
+export type SearchFilterVia = 'click' | 'tab' | 'backspace' | 'typed' | 'keyboard'
+
+// Fires when a person changes a search filter on the v2 page: a chip, a pill, the
+// Display menu or Clear filters. Never fires for a change that comes from the URL
+// (a reload, back, a hand-over). `value` is a type key, a status group key, an actor id
+// (participant, never sent) or a sort / updated key, empty for a clear. Never carries the query text.
+// For the participant dimension the value is an actor id, so it is dropped here.
+export function trackSearchFilterChanged(p: {
+	surface: SearchSurface
+	dimension: SearchFilterDimension
+	action: SearchFilterAction
+	value: string
+	kind: SearchFilterKind
+	via: SearchFilterVia
+}): void {
+	const value = p.dimension === 'participant' ? undefined : p.value
+	trackEvent('search_filter_changed', { ...p, value, ui_version: 'v2', source: 'web' })
 }
 
 // Ship-metric event for the language-only loop builder bet — fires once when
@@ -566,6 +708,82 @@ export function trackSearchResultOpened(
 // `send_instantly: true` so the emission is not lost to posthog-js's batching
 // queue — the bet's exit gate keys off this event staying non-zero. Exactly-once
 // per accepted loop is enforced at the call site (the create completion path).
+// File-review viewer events (5). Property schemas are the measurement
+// contract — do not add/rename/reorder fields without updating the shape
+// spec and the PostHog catalog. `file_id` is the file's uuid; `workspace_id`
+// and `actor_id` ride on the PostHog super-properties registered at
+// workspace mount, so they aren't repeated here.
+
+export type FileViewerZoomMode = 'fit' | 'plus' | 'minus' | 'pinch' | 'wheel'
+
+export function trackFileViewerZoomUsed(p: {
+	file_id: string
+	mode: FileViewerZoomMode
+	zoom_level: number
+}): void {
+	trackEvent('file_viewer_zoom_used', {
+		file_id: p.file_id,
+		mode: p.mode,
+		zoom_level: p.zoom_level,
+	})
+}
+
+export function trackFileViewerPageNavigated(p: {
+	file_id: string
+	from_page: number
+	to_page: number
+	total_pages: number
+}): void {
+	trackEvent('file_viewer_page_navigated', {
+		file_id: p.file_id,
+		from_page: p.from_page,
+		to_page: p.to_page,
+		total_pages: p.total_pages,
+	})
+}
+
+export type FileViewerPinVariant = 'deck' | 'mockup' | 'single'
+
+export function trackFileViewerPinPlaced(p: {
+	file_id: string
+	page: number | null
+	variant: FileViewerPinVariant
+}): void {
+	trackEvent('file_viewer_pin_placed', {
+		file_id: p.file_id,
+		page: p.page,
+		variant: p.variant,
+	})
+}
+
+export function trackFileViewerRoundSent(p: {
+	file_id: string
+	comment_count: number
+	attaching_object_id: string
+	driver_id: string
+	round_id: string
+}): void {
+	trackEvent('file_viewer_round_sent', {
+		file_id: p.file_id,
+		comment_count: p.comment_count,
+		attaching_object_id: p.attaching_object_id,
+		driver_id: p.driver_id,
+		round_id: p.round_id,
+	})
+}
+
+export function trackFileViewerCommentResolved(p: {
+	file_id: string
+	comment_id: string
+	resolved_by: string
+}): void {
+	trackEvent('file_viewer_comment_resolved', {
+		file_id: p.file_id,
+		comment_id: p.comment_id,
+		resolved_by: p.resolved_by,
+	})
+}
+
 export function trackLoopCreatedViaLanguage(p: {
 	workspace_id: string
 	loop_id: string
@@ -583,4 +801,92 @@ export function trackLoopCreatedViaLanguage(p: {
 		},
 		{ send_instantly: true },
 	)
+}
+
+// PR D — fires when the trigger owner clicks Resume on an auto-paused Slack
+// trigger (either from the dropdown at $triggerId.tsx or the red banner in
+// `SlackTriggerSetupStatus`). Complementary to PR C's backend
+// `slack.trigger.auto_paused` event, so a PostHog funnel can measure
+// pause→resume latency and rate. `time_since_pause_ms` is `now -
+// metadata.auto_paused.paused_at` — computed at the call site so the query
+// doesn't have to join across two events. Fires only on a user-initiated
+// resume of an auto-paused trigger; a plain manual-pause → resume is
+// deliberately NOT tracked here (that's the existing `trigger_updated`).
+export function trackSlackTriggerResumedFromAutoPause(p: {
+	workspace_id: string
+	trigger_id: string
+	channel_id: string
+	time_since_pause_ms: number
+}): void {
+	trackEvent('slack.trigger.resumed_from_auto_pause', {
+		workspace_id: p.workspace_id,
+		trigger_id: p.trigger_id,
+		channel_id: p.channel_id,
+		time_since_pause_ms: p.time_since_pause_ms,
+	})
+}
+
+// LOAD-BEARING for the Loops v4 polish bet's Won / Lost falsification metric
+// (Decide ↓ click-through ≥ 30% on sessions where the AskBanner renders). Fires
+// on the D3 AskBanner's Decide click. `loopId` and `pendingCount` are the two
+// fields the bet's PostHog query pairs the event with; camelCase kept
+// intentionally minimal here — this event has no taxonomy join outside its own
+// numerator, and the bet SHAPE names the payload as `{loopId, pendingCount}`.
+export function trackAskBannerDecideClicked(p: {
+	loopId: string
+	pendingCount: number
+}): void {
+	trackEvent('ask_banner_decide_clicked', {
+		loopId: p.loopId,
+		pendingCount: p.pendingCount,
+	})
+}
+
+// Ship-metric events for the chat thread `HANDED OFF` sub-agent delegation
+// strip bet (bet/444b-handed-off-strip). `handed_off_strip_shown` counts
+// impressions — one per assistant-message bubble that renders the strip in a
+// given browser session, not per render — so the denominator answers "how
+// often did a reader actually see it". `handed_off_strip_row_clicked` is the
+// numerator: a click through to a sub-agent's own thread, which is the value
+// the strip exists to deliver. `messageId` scopes each pair to one bubble so
+// the two events can join without double-counting. `subAgentCount` is on the
+// shown event so we can slice CTR by strip size; `sessionId` is on the click
+// event so we can attribute the drilldown to the specific sub-agent row.
+export function trackHandedOffStripShown(p: {
+	messageId: number
+	subAgentCount: number
+}): void {
+	trackEvent('handed_off_strip_shown', {
+		message_id: p.messageId,
+		sub_agent_count: p.subAgentCount,
+		source: 'web',
+	})
+}
+
+export function trackHandedOffStripRowClicked(p: {
+	messageId: number
+	sessionId: string
+	subAgentActorId: string
+	subAgentStatus: string
+}): void {
+	trackEvent('handed_off_strip_row_clicked', {
+		message_id: p.messageId,
+		session_id: p.sessionId,
+		sub_agent_actor_id: p.subAgentActorId,
+		sub_agent_status: p.subAgentStatus,
+		source: 'web',
+	})
+}
+
+// Ship-metric event for D8 of the Loops v4 UX/UI polish bet
+// (bet/d166-loops-v4-polish). Fires once per click on the "Mark read" CTA
+// inside the loop-detail TimelineTab's `NEW · {n} unread` divider.
+export function trackMarkReadClicked(p: { loop_id: string; unread_count: number }): void {
+	trackEvent('mark_read_clicked', {
+		loop_id: p.loop_id,
+		unread_count: p.unread_count,
+		entity_id: p.loop_id,
+		entity_type: 'loop',
+		source: 'web',
+	})
 }

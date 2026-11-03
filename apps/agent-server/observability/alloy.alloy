@@ -1,0 +1,587 @@
+// Grafana Alloy — ship agent-server's structured logs to Loki, and this host's
+// resource metrics plus agent-server's own build metrics to Prometheus.
+//
+// This is HOST configuration, not application configuration. agent-server
+// itself has no vendor SDK and no knowledge of Loki: it writes one NDJSON
+// object per line to stdout/stderr (see src/lib/logger.ts), systemd captures
+// that into journald (StandardOutput=journal in
+// systemd/maskin-agent-server.service), and this file is the only place the
+// log backend is named. Swapping Loki for another destination means replacing
+// the loki.write component below and nothing else.
+//
+// There are THREE pipelines here, in this order:
+//
+//   1. LOGS      — journald → Loki
+//   2. HOST      — node_exporter (embedded) → Prometheus
+//   3. APP       — agent-server's own /metrics → Prometheus
+//
+// The host half is fully detached from the application: node_exporter reads
+// /proc and /sys, and nothing in apps/agent-server/src/ is involved. The app
+// half is not — it scrapes a real endpoint the service serves, on a
+// loopback-only listener. That endpoint currently carries build identity
+// (maskin_build_info) only; session gauges are the next piece of work.
+//
+// All three pipelines share the `env` and `instance` labels on purpose: that
+// shared identity is what lets you pivot from a CPU spike in PromQL to this
+// host's logs for the same instant in LogQL. See README.md → "Correlating
+// metrics and logs".
+//
+// Install: /etc/alloy/config.alloy — bootstrapped by hand once, then kept in
+// sync from this file by .github/workflows/agent-server-deploy.yml on every
+// deploy. Edit this file, not the installed copy.
+// Settings: see alloy.env.example — every deployment-specific value is read
+// from the environment so this file can be committed unmodified.
+//
+// Full setup instructions: ./README.md
+
+// ---------------------------------------------------------------------------
+// Source — journald, filtered to the agent-server unit
+// ---------------------------------------------------------------------------
+
+// Journal fields arrive prefixed with `__journal_` and are dropped unless
+// explicitly promoted here.
+loki.relabel "journal" {
+	forward_to = []
+
+	rule {
+		source_labels = ["__journal__systemd_unit"]
+		target_label  = "unit"
+	}
+
+	rule {
+		source_labels = ["__journal_syslog_identifier"]
+		target_label  = "service_name"
+	}
+
+	// `job` MUST be set here, not in loki.source.journal's `labels` block.
+	//
+	// loki.source.journal stamps job="<component id>" — literally
+	// "loki.source.journal.agent_server" — and that beats the static value in
+	// the `labels` argument. The symptom is nasty: everything looks healthy,
+	// entries are accepted with 204s, `loki_write_dropped_entries_total` stays
+	// 0, and the logs are genuinely in Loki — but every documented query in
+	// the README selects on job="maskin-agent-server" and matches nothing.
+	//
+	// Verified 2026-08-26: before this rule, the `job` label browser showed a
+	// single value, "loki.source.journal.agent_server". Relabel rules run
+	// after the component's own labelling, so setting it here wins.
+	//
+	// This is the same failure the metrics pipeline has with
+	// prometheus.exporter.unix pre-stamping job="integrations/unix" — see the
+	// discovery.relabel.host rule below. In both cases the fix is: set `job`
+	// in a relabel rule, never as a static label.
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("LOKI_JOB_LABEL"), "maskin-agent-server")
+	}
+}
+
+loki.source.journal "agent_server" {
+	// Alloy reads the persistent journal directly; it needs to run as root or
+	// as a member of the systemd-journal group.
+	path = coalesce(sys.env("ALLOY_JOURNAL_PATH"), "/var/log/journal")
+
+	// Matches the SyslogIdentifier set by the systemd unit. Only this unit's
+	// entries are read, so an unrelated chatty service can't inflate the bill.
+	matches = "SYSLOG_IDENTIFIER=" + coalesce(sys.env("AGENT_SERVER_SYSLOG_ID"), "maskin-agent-server")
+
+	// NOTE: `job` is deliberately absent here — it is set in
+	// loki.relabel.journal above, because a static value in this block loses
+	// to the component's own job="<component id>". `env` and `instance` are
+	// not pre-stamped by the component, so they are safe to set statically
+	// (verified: both arrive intact).
+	labels = {
+		env = coalesce(sys.env("DEPLOY_ENV"), "production"),
+
+		// Identifies the box. The metrics pipeline below applies the SAME
+		// value, so {instance="agent-1"} selects this host in both LogQL
+		// and PromQL. Bounded by the number of hosts, so safe as a label.
+		instance = coalesce(sys.env("AGENT_SERVER_INSTANCE"), "UNCONFIGURED-" + constants.hostname),
+	}
+
+	relabel_rules = loki.relabel.journal.rules
+	forward_to    = [loki.process.agent_server.receiver]
+}
+
+// ---------------------------------------------------------------------------
+// Processing — parse the NDJSON, and split fields by cardinality
+// ---------------------------------------------------------------------------
+
+loki.process "agent_server" {
+	forward_to = [loki.write.default.receiver]
+
+	// Every logger call emits {level, time, msg, ...ctx}. Lines that aren't
+	// JSON (e.g. the "[sentry] captureMessage failed" fallback writes, Node
+	// startup banners, or an uncaught-exception stack trace) extract nothing
+	// and pass through with the labels above — they are not dropped. See the
+	// note on stage.timestamp below for how their timestamps are handled.
+	stage.json {
+		expressions = {
+			level      = "level",
+			time       = "time",
+			source     = "source",
+			stream     = "stream",
+			session_id = "sessionId",
+		}
+	}
+
+	// Prefer the application's own timestamp over journald's ingest time, so
+	// ordering survives a collector restart or an ingest backlog.
+	//
+	// action_on_failure MUST be "skip". The default is "fudge", which stamps a
+	// line that has no extractable `time` with last-successful-timestamp + 1ns
+	// rather than failing. That default is actively harmful here: every
+	// non-JSON line (see stage.json above) would be dated from whenever the
+	// last JSON line happened to arrive. An uncaught-exception stack trace
+	// printed after a quiet period would land minutes or hours before the
+	// incident window you are looking at — precisely the query this pipeline
+	// exists to serve. "skip" leaves journald's own ingest timestamp on those
+	// lines, which is both correct and roughly right.
+	stage.timestamp {
+		source            = "time"
+		format            = "RFC3339"
+		action_on_failure = "skip"
+	}
+
+	// LABELS — low cardinality ONLY.
+	//
+	// Loki creates one stream per unique label combination, and the index
+	// grows with that count. `level` has four values; `source` has a handful
+	// (currently only 'msb-exec' plus absent). Both are safe and both are
+	// worth having as labels because they are the usual first filter.
+	stage.labels {
+		values = {
+			level  = "",
+			source = "",
+		}
+	}
+
+	// STRUCTURED METADATA — unbounded values go here, never in labels.
+	//
+	// `sessionId` is one value per agent session, forever. As a label it would
+	// produce an unbounded number of tiny streams: an index far larger than
+	// the logs, slow queries, and on a usage-billed backend a cost that scales
+	// with session count rather than log volume. Structured metadata (Loki
+	// 3.0+) keeps it filterable at query time with no index cost.
+	stage.structured_metadata {
+		values = {
+			session_id = "",
+			stream     = "",
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Destination
+// ---------------------------------------------------------------------------
+
+loki.write "default" {
+	endpoint {
+		url = sys.env("LOKI_URL")
+
+		// Multi-tenant Loki: sets X-Scope-OrgID. Leave unset for a
+		// single-tenant or Grafana Cloud stack.
+		tenant_id = sys.env("LOKI_TENANT_ID")
+
+		// Grafana Cloud: username is the numeric stack id, password is an
+		// access policy token with logs:write.
+		//
+		// Self-hosted Loki with no auth: comment this whole block out rather
+		// than leaving the values blank — an empty basic_auth still sends an
+		// Authorization header.
+		basic_auth {
+			username = sys.env("LOKI_USERNAME")
+			password = sys.env("LOKI_PASSWORD")
+		}
+	}
+
+	// Survive a brief Loki outage or restart without losing the window you'd
+	// actually want to investigate.
+	wal {
+		enabled = true
+	}
+}
+
+// ===========================================================================
+// METRICS — host resources → Prometheus
+// ===========================================================================
+//
+// The question this half exists to answer is "what is the CPU/memory/disk on
+// the Finland box doing right now", without ssh. It is capacity monitoring,
+// not incident-second-resolution telemetry, which is why the scrape interval
+// is 60s rather than the usual 15s.
+
+// ---------------------------------------------------------------------------
+// Source — node_exporter, embedded in Alloy
+// ---------------------------------------------------------------------------
+
+prometheus.exporter.unix "host" {
+	// COLLECTORS — an explicit list, not the default set.
+	//
+	// Grafana Cloud's free tier allows 10k active series. MEASURED on this
+	// box: the original seven-collector set ran 460 series; the full list
+	// below runs 887 — about 9% of the allowance, for one host. The initial
+	// "500–1000, be frugal" assumption was pessimistic, and the headroom is
+	// far larger than it looked. The list is therefore chosen on whether a
+	// collector's cost is BOUNDED, not on whether it is strictly essential.
+	//
+	// (887 also came in well under the ~1,500–2,500 predicted when adding
+	// these — worth remembering that per-collector series counts are cheap
+	// to measure and easy to over-estimate. Measure before trimming.)
+	//
+	// The distinction that matters is fixed vs unbounded cardinality:
+	//
+	//   FIXED     — emits the same handful of series no matter how busy the
+	//               host gets. Costs the same on an idle box and a saturated
+	//               one. Safe to enable liberally.
+	//   UNBOUNDED — emits one series per entity, where entities keep
+	//               appearing. This is the metrics-side version of putting
+	//               sessionId in a Loki label.
+	//
+	// Everything here is FIXED. The core set:
+	//
+	//   cpu        — utilisation, per core, per mode
+	//   meminfo    — total/available/cached; the memory-pressure signal
+	//   loadavg    — 1/5/15m; 3 series, the cheapest saturation indicator
+	//   filesystem — free bytes per mount; answers "will the disk fill"
+	//   diskstats  — IOPS and I/O time; microVM disk images live here
+	//   netdev     — bytes/errors per interface
+	//   uname      — one series, but it labels kernel version onto the host
+	//
+	// Added so Grafana Cloud's prebuilt "Linux Server" integration dashboards
+	// populate — they query these by name, and a panel whose metric is absent
+	// renders empty with no explanation:
+	//
+	//   processes  — MEASURED: aggregate counts grouped by process STATE, not
+	//                one series per process. This box had 532 processes in 3
+	//                distinct states, so ~8 series total, and that does not
+	//                move with session count. An earlier revision of this file
+	//                claimed processes scaled with msb session churn and
+	//                excluded it on that basis; that was wrong. It is also the
+	//                closest thing here to a "how much work is this box doing"
+	//                signal.
+	//   vmstat     — page faults, OOM kills. Fixed set of counters.
+	//   filefd     — file descriptors allocated vs max. 2 series.
+	//   netstat    — TCP/UDP/ICMP counters. ~30 series, fixed.
+	//   sockstat   — socket counts by protocol. ~20 series, fixed.
+	//   softnet    — packet processing drops/squeezes. Fixed.
+	//   stat       — context switches, interrupts, procs running. Fixed.
+	//   timex      — clock sync status. Cheap, and clock drift on a VM host
+	//                silently corrupts log ordering, which this whole
+	//                directory depends on.
+	//   os         — one series carrying distro/version labels.
+	//   netclass   — per-interface link state/MTU/speed. Interfaces are few
+	//                and stable on this host.
+	//   nf_conntrack — connection tracking table usage vs limit. 2 series,
+	//                and exhausting it is a real failure mode for a box
+	//                running many microVMs behind a NAT.
+	//
+	// Deliberately NOT enabled:
+	//
+	//   textfile   — nothing writes .prom files on this box. Enabling it is
+	//                an open door: any future script dropping a file there
+	//                adds series nobody reviewed. Off until something needs
+	//                it.
+	//
+	// `systemd` is enabled but HEAVILY FILTERED — see the block below. It is
+	// the one genuinely expensive collector here: MEASURED 513 systemd units
+	// on this host (163 of them services, the rest timers/sockets/mounts/
+	// devices), each reporting across several states. Unfiltered that is
+	// roughly 2,500 series — a quarter of the free-tier allowance spent on
+	// units nobody will ever query.
+	set_collectors = [
+		"cpu",
+		"meminfo",
+		"loadavg",
+		"filesystem",
+		"diskstats",
+		"netdev",
+		"uname",
+		"processes",
+		"vmstat",
+		"filefd",
+		"netstat",
+		"sockstat",
+		"softnet",
+		"stat",
+		"timex",
+		"os",
+		"netclass",
+		"nf_conntrack",
+		"systemd",
+	]
+
+	systemd {
+		// Restrict to agent-server's own unit. This turns the most expensive
+		// collector on the list into ~5 series while keeping the only part of
+		// it anyone would actually look at: is agent-server up, and how often
+		// has it restarted.
+		//
+		// Restart count is the useful one. A unit that is "active" right now
+		// but has restarted eleven times today is invisible in a status check
+		// and obvious here — and Restart=on-failure in the unit file means
+		// crash-looping looks healthy from the outside.
+		//
+		// NOTE: this is host-level service health, NOT per-agent-session
+		// metrics. No node_exporter collector can see inside the application;
+		// nothing here knows what a session is. Session-level visibility comes
+		// from the LOGS, which carry session_id on every line (see the LogQL
+		// cookbook in README.md). Metrics tell you the box is struggling; logs
+		// tell you which session caused it. Real per-session metrics mean
+		// instrumenting agent-server itself — which the APP pipeline at the
+		// bottom of this file now does, though so far only for build identity.
+		// Aggregate session gauges land there next; they will never appear
+		// here, because no node_exporter collector can produce them.
+		unit_include = coalesce(sys.env("AGENT_SERVER_SYSTEMD_UNIT"), "maskin-agent-server[.]service")
+
+		// Restart counters are not on by default.
+		enable_restarts = true
+	}
+
+	filesystem {
+		// One series set per mount point, so a mount that appears and
+		// disappears per microVM would churn filesystem series with session
+		// lifecycle — the metrics-side equivalent of putting sessionId in a
+		// Loki label. Only real, persistent disks are wanted here.
+		//
+		// MEASURED on a live host with two msb sandboxes running:
+		// `mount | grep -iE 'msb|microsandbox'`
+		// returned ZERO rows. microsandbox does not create host mounts per
+		// microVM at all — it is libkrun/KVM with the guest rootfs inside
+		// the VM, not an overlay assembled on the host the way Docker does
+		// it. So this exclusion is belt-and-braces, not load-bearing.
+		//
+		// It is kept anyway, and filters by FILESYSTEM TYPE rather than by
+		// path, because the failure mode is silent: if a future msb release
+		// does start mounting per sandbox, a type filter still catches it,
+		// whereas a path filter would need to have guessed the right
+		// directory. (An earlier draft guessed /var/lib/microsandbox, which
+		// does not exist — MSB_BIN is /root/.microsandbox/bin/msb.)
+		//
+		// What survives this filter, verified by `df -hT` on that box, is
+		// exactly: /dev/md2 ext4 on / and /dev/md1 ext3 on /boot. Two real
+		// block devices, both stable. The 7 overlay + 7 nsfs mounts present
+		// belong to Docker (the Coolify stack, see README) and are excluded
+		// twice over — by type, and by the /var/lib/docker/ path rule below.
+		// tmpfs is excluded on purpose: it is RAM, meminfo already measures
+		// it, and /run/user/<uid> mounts come and go with logins.
+		//
+		// mount_points_exclude is upstream node_exporter's default, verbatim
+		// — pseudo-filesystem directories only, no invented paths.
+		mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)"
+		fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fuse.*|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|ramfs|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs|virtiofs)$"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Labels — must agree with the logs pipeline above
+// ---------------------------------------------------------------------------
+
+discovery.relabel "host" {
+	targets = prometheus.exporter.unix.host.targets
+
+	// prometheus.scrape would otherwise set `instance` to the scrape target's
+	// address ("127.0.0.1:12345"), which is both meaningless and identical on
+	// every host. Overriding it here with the same expression the journal
+	// source uses is what makes the two pipelines joinable.
+	rule {
+		target_label = "instance"
+		replacement  = coalesce(sys.env("AGENT_SERVER_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
+	}
+
+	// `job` MUST be forced here, not left to prometheus.scrape's job_name.
+	//
+	// prometheus.exporter.unix stamps its own `job="integrations/unix"` onto
+	// the targets it exports. A target that already carries a `job` label
+	// keeps it — prometheus.scrape's job_name only fills in targets that have
+	// none. So setting job_name alone is SILENTLY INERT: the config reads as
+	// though it works, `alloy validate` passes, metrics arrive, and every
+	// series lands under a job value nothing queries.
+	//
+	// Verified 2026-08-26: with job_name alone, node_uname_info came back as
+	// job="integrations/unix". Relabelling here overrides it, because
+	// discovery.relabel runs on the target list before the scrape.
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("PROM_JOB_LABEL"), "integrations/node_exporter")
+	}
+}
+
+prometheus.scrape "host" {
+	targets    = discovery.relabel.host.output
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	// `job` is intentionally NOT "maskin-agent-server" (the logs value).
+	// These series describe the HOST — kernel, disks, NICs — not the
+	// agent-server process; none of them would exist or change if the
+	// service were stopped. Naming them after the application would imply
+	// application instrumentation that does not exist here. `env` and
+	// `instance` are the labels shared with logs, and they are the ones
+	// correlation actually needs.
+	//
+	// The value is Grafana Cloud's own convention rather than a plain "node":
+	// their prebuilt Linux Server integration dashboards filter on
+	// job="integrations/node_exporter", so matching it means the whole
+	// prebuilt node dashboard set populates on its own. Under any other
+	// value those dashboards render empty and the CPU/memory/disk panels
+	// have to be rebuilt by hand — which is most of the reason this pipeline
+	// exists. This still satisfies the "not named after the application"
+	// intent above; it just uses the name the ecosystem already agrees on.
+	//
+	// NOTE: this attribute does NOT actually decide the label — the
+	// discovery.relabel rule above does, because the exporter pre-stamps
+	// `job`. It is kept aligned so the two never disagree if the exporter
+	// ever stops setting it.
+	job_name = coalesce(sys.env("PROM_JOB_LABEL"), "integrations/node_exporter")
+
+	// Capacity monitoring. 60s over a month is ~43k samples per series;
+	// at 15s it would be four times the ingest for a view nobody reads at
+	// that resolution.
+	scrape_interval = "60s"
+	scrape_timeout  = "10s"
+}
+
+// ---------------------------------------------------------------------------
+// Destination
+// ---------------------------------------------------------------------------
+//
+// NOTE: this is NOT the Loki endpoint. In Grafana Cloud the Prometheus push
+// URL, and especially the numeric username, differ from Loki's — see
+// alloy.env.example. A single access policy token scoped logs:write +
+// metrics:write serves both, but the usernames do not interchange, and
+// crossing them yields a 401 that reads like a bad token.
+
+prometheus.remote_write "default" {
+	endpoint {
+		url = sys.env("PROM_URL")
+
+		// Grafana Cloud: username is the numeric PROMETHEUS instance id,
+		// password is an access policy token with metrics:write.
+		//
+		// Self-hosted Prometheus with no auth: comment this whole block out
+		// rather than leaving the values blank — an empty basic_auth still
+		// sends an Authorization header.
+		basic_auth {
+			username = sys.env("PROM_USERNAME")
+			password = sys.env("PROM_PASSWORD")
+		}
+	}
+
+	// Mirrors the durability the loki.write component gets from its own WAL:
+	// a brief remote outage or an Alloy restart must not lose the window you
+	// would actually want to investigate. prometheus.remote_write keeps a WAL
+	// unconditionally; these values just make the retention explicit rather
+	// than implicit, and are long enough to ride out a short outage.
+	wal {
+		truncate_frequency = "2h"
+		min_keepalive_time = "5m"
+		max_keepalive_time = "8h"
+	}
+}
+
+// ===========================================================================
+// METRICS — agent-server application → Prometheus
+// ===========================================================================
+//
+// The third pipeline, and the only one that talks to the APPLICATION rather
+// than to the host or the journal. It answers "what commit is each box
+// running right now", without ssh — a question that cost real debugging time
+// twice (the #1450–#1454 wedge investigation asked it four separate times and
+// answered it by grepping container image layers; #1465 found the deploy
+// workflow had never installed the systemd unit, so the repo copy and the live
+// copy had silently diverged for months).
+//
+// Source is GET /metrics on agent-server's LOOPBACK-ONLY listener — a second
+// HTTP server bound to 127.0.0.1:METRICS_PORT, separate from the public
+// listener on PORT. The endpoint is unauthenticated, so the bind address is
+// the security boundary; see the comment on the metrics listener in
+// apps/agent-server/src/index.ts. Alloy runs on the same box, so scraping
+// loopback costs nothing.
+//
+// A note on the top of this file: it used to say there was "deliberately no
+// /metrics endpoint on agent-server". That is no longer true — this is it.
+// The scope claim behind it still holds, though: this is build identity only.
+// Session gauges are the next piece of work.
+
+// ---------------------------------------------------------------------------
+// Target — a static loopback endpoint, relabelled to match the other pipelines
+// ---------------------------------------------------------------------------
+
+discovery.relabel "agent_server" {
+	targets = [{
+		__address__ = "127.0.0.1:" + coalesce(sys.env("AGENT_SERVER_METRICS_PORT"), "9464"),
+	}]
+
+	// The join key. This MUST be the same expression the journal source and
+	// the node_exporter pipeline use, or {instance="agent-1"} stops
+	// selecting the same host across logs and metrics — which is the entire
+	// reason the label exists. Without this rule, prometheus.scrape would set
+	// instance="127.0.0.1:9464": meaningless, and identical on every box.
+	//
+	// Note this deliberately OVERWRITES the `instance` label the application
+	// also puts on maskin_build_info. The two are computed from the same env
+	// var and should agree; if they ever drift, the collector's value is the
+	// one that wins, and the mismatch is visible as a
+	// maskin_build_info{instance=...} label whose value differs from the
+	// series' own instance.
+	rule {
+		target_label = "instance"
+		replacement  = coalesce(sys.env("AGENT_SERVER_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
+	}
+
+	// `job` is set HERE, in a relabel rule — never as a static label and never
+	// left to prometheus.scrape's job_name alone.
+	//
+	// This is the third instance of the same trap in this file (see
+	// loki.relabel.journal and discovery.relabel.host above). A component that
+	// pre-stamps `job` beats job_name, because job_name only fills in targets
+	// that have none. Everything looks healthy while every documented query
+	// returns empty.
+	//
+	// A static target list like this one carries no `job` of its own, so
+	// job_name below would in fact work today. The rule is here anyway: it
+	// costs one block, it is what the other two pipelines do, and it means a
+	// future change to how these targets are discovered — a discovery.http, a
+	// second exporter — cannot silently reintroduce the bug.
+	//
+	// The value IS named after the application, unlike the host pipeline's
+	// "integrations/node_exporter". These series describe the agent-server
+	// process itself, so naming them after it is correct here — and it matches
+	// LOKI_JOB_LABEL, so job="maskin-agent-server" selects this service in both
+	// LogQL and PromQL.
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("AGENT_SERVER_PROM_JOB_LABEL"), "maskin-agent-server")
+	}
+}
+
+prometheus.scrape "agent_server" {
+	targets    = discovery.relabel.agent_server.output
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	// Kept aligned with the relabel rule above so the two can never disagree,
+	// even though the rule is what actually decides the label.
+	job_name = coalesce(sys.env("AGENT_SERVER_PROM_JOB_LABEL"), "maskin-agent-server")
+
+	// 60s, matching the host pipeline. maskin_build_info changes only on
+	// deploy; a faster interval would buy nothing but ingest. The session
+	// gauges that land here next are a capacity signal, not a
+	// second-resolution one, so this stays appropriate for them too.
+	scrape_interval = "60s"
+	scrape_timeout  = "10s"
+
+	// agent-server down (or mid-restart) makes this scrape fail, which is
+	// correct and self-describing: `up{job="maskin-agent-server"}` becomes 0
+	// and the build-info series goes stale. No extra alerting wiring is needed
+	// for "is the process even there".
+}

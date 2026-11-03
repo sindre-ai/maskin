@@ -1,35 +1,38 @@
-import { CommandPalette } from '@/components/command-palette'
+import { LiveCallSurface } from '@/components/agents/live-call-surface'
+import { VoiceCallHost } from '@/components/agents/voice-call-host'
+import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { Header } from '@/components/layout/header'
-import { LegacyCommandPalette } from '@/components/layout/legacy/command-palette'
-import { LegacyHeader } from '@/components/layout/legacy/header'
-import { LegacyAppSidebar } from '@/components/layout/legacy/sidebar'
-import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
+import { CommandPaletteV2 } from '@/components/search/command-palette-v2'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { trackAppActive } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
+import { setFaroUser } from '@/lib/faro'
+import { setLastWorkspaceId } from '@/lib/last-workspace'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
 	identifyForWorkspace,
 	registerWorkspaceProperties,
 	setCapturingEnabled,
+	setWorkspaceGroup,
 } from '@/lib/posthog'
+import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
-import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
+import { deriveConversationTitle } from '@maskin/shared'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
@@ -52,15 +55,24 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
-	// The single flag boundary for the v2 redesign. Everything below renders
-	// either the v2 shell or the pre-v2 one restored under components/layout/legacy.
-	// If you find yourself reading this flag anywhere else, the boundary is wrong.
-	const newDesign = useFeatureFlag('new-design')
+	// Remember the workspace once it resolves from the user's memberships, so a
+	// stale or foreign id in the URL is never stored as "last used".
+	const hasWorkspace = Boolean(workspace)
+	useEffect(() => {
+		if (hasWorkspace) setLastWorkspaceId(workspaceId)
+	}, [hasWorkspace, workspaceId])
 
 	const matches = useMatches()
 	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
 	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
 	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
+	// While a call is open below 1100px the sidebar folds to its icon rail so the
+	// thread keeps room next to the call panel (design: sidebar 230 + chat + panel
+	// at 1100 and up, an icon rail between 700 and 1099). The person's own choice
+	// is left alone, so it is back as they had it when the call ends.
+	const onCall = useVoiceCallLive()
+	const narrowForCall = useMediaQuery('(max-width: 1099px)')
+	const railForCall = onCall && narrowForCall
 
 	// Pin the Synthesizer's join keys on every analytics event from this workspace,
 	// and apply the workspace's Privacy & data settings — both the share-usage
@@ -82,7 +94,18 @@ function WorkspaceLayout() {
 			actor_type: actor.type,
 		})
 		setCapturingEnabled(shareUsage)
-		void identifyForWorkspace(actor.id, anonymizeWorkspace)
+		setWorkspaceGroup(workspaceId, workspace.createdAt)
+		// Faro gets ids only — never the actor's email or the workspace name.
+		// Unlike PostHog this is not gated on the share-usage analytics toggle:
+		// it is crash reporting, the same category as Sentry, which is likewise
+		// ungated.
+		setFaroUser(actor.id, workspaceId)
+		void identifyForWorkspace(actor.id, anonymizeWorkspace, {
+			name: actor.name,
+			email: actor.email,
+		}).then(() => {
+			if (shareUsage) trackAppActive()
+		})
 	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 
 	if (!workspace) {
@@ -95,39 +118,38 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			{/* Carries the flag read above to the v2 components that route pages render
-			    (the create overlay, the comment composer) and that therefore cannot be
-			    swapped here alongside the shell. Still one read of the flag. */}
-			<NewDesignProvider value={newDesign}>
-				<NewConversationProvider>
-					<CommandPaletteProvider>
-						<PendingPromptBootstrap />
-						<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-						<PendingCommentsProvider workspaceId={workspaceId}>
-							<PageHeaderProvider>
-								<ContentPushShell>
-									<SidebarProvider
-										open={open}
-										onOpenChange={setOpen}
-										className="h-screen !min-h-0"
-										data-shell={newDesign ? 'v2' : 'v1'}
-									>
-										{newDesign ? <AppSidebar /> : <LegacyAppSidebar />}
-										<SidebarInset className="min-w-0">
-											{newDesign ? <Header /> : <LegacyHeader />}
-											<MainScrollArea>
-												<Outlet />
-											</MainScrollArea>
-										</SidebarInset>
-										{newDesign && <MobileNav />}
-									</SidebarProvider>
-								</ContentPushShell>
-							</PageHeaderProvider>
-							{newDesign ? <CommandPalette /> : <LegacyCommandPalette />}
-						</PendingCommentsProvider>
-					</CommandPaletteProvider>
-				</NewConversationProvider>
-			</NewDesignProvider>
+			<NewConversationProvider>
+				<CommandPaletteProvider>
+					<PendingPromptBootstrap />
+					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+					<PendingCommentsProvider workspaceId={workspaceId}>
+						<PageHeaderProvider>
+							<ContentPushShell>
+								<SidebarProvider
+									open={open && !railForCall}
+									onOpenChange={(next) => {
+										if (!railForCall) setOpen(next)
+									}}
+									className="h-dvh !min-h-0"
+									data-shell="v2"
+								>
+									<AppSidebar />
+									<SidebarInset className="min-w-0">
+										<Header />
+										<TrialExpiredBanner workspaceId={workspaceId} />
+										<MainScrollArea>
+											<Outlet />
+										</MainScrollArea>
+									</SidebarInset>
+									<LiveCallSurface />
+								</SidebarProvider>
+							</ContentPushShell>
+						</PageHeaderProvider>
+						<CommandPaletteV2 />
+						<VoiceCallHost />
+					</PendingCommentsProvider>
+				</CommandPaletteProvider>
+			</NewConversationProvider>
 		</WorkspaceContext.Provider>
 	)
 }
@@ -159,7 +181,7 @@ function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
 								type: 'bet',
 								title: d.title ?? undefined,
 								content: d.content ?? undefined,
-								status: 'signal',
+								status: 'opportunity',
 							}),
 						),
 				),
@@ -192,7 +214,7 @@ function PendingPromptBootstrap() {
 		localStorage.removeItem('maskin_pending_prompt')
 		createConversation
 			.mutateAsync({
-				title: NEW_CONVERSATION_PLACEHOLDER_TITLE,
+				title: deriveConversationTitle(prompt, defaultAgent.name),
 				participant_actor_ids: [defaultAgent.id],
 				initial_message: prompt,
 			})
@@ -237,16 +259,14 @@ function ContentPushShell({ children }: { children: ReactNode }) {
  * own internal scroll region on the active card's thread) — the container
  * then clips instead of scrolling, so only that inner region scrolls.
  *
- * Mobile leaves `pb-20`/`scroll-pb-20` of space so the fixed `MobileNav`
- * bottom bar never covers the last row of content or a scroll-into-view
- * target; desktop resets both back to zero via `md:p-8`/`md:scroll-pb-0`.
+ * Padding steps up from `px-4 pt-4` on mobile to `p-8` from `md:` up.
  */
 function MainScrollArea({ children }: { children: ReactNode }) {
 	const { scrollLocked } = usePageHeader()
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 px-4 pb-20 pt-4 scroll-pb-20 md:p-8 md:scroll-pb-0',
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:p-8',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}
 			data-scroll-root

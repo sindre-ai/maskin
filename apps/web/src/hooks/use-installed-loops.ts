@@ -14,7 +14,8 @@ export function useInstalledLoops(workspaceId: string) {
 export function useInstallLoop(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: ({ loopId }: { loopId: string }) => api.installedLoops.install(workspaceId, loopId),
+		mutationFn: ({ loopId, source }: { loopId: string; source?: 'detail' }) =>
+			api.installedLoops.install(workspaceId, loopId, source),
 		onSuccess: () => {
 			toast.success('Loop installed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.installedLoops.all(workspaceId) })

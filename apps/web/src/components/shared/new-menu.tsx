@@ -1,4 +1,11 @@
+import { ImportDialog } from '@/components/imports/import-dialog'
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
+import {
+	SplitButton,
+	SplitButtonChevron,
+	SplitButtonPrimary,
+} from '@/components/shared/split-button'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -9,15 +16,35 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useCanWrite } from '@/hooks/use-can-write'
+import { useImportToast } from '@/hooks/use-imports'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { defaultTypeColor, objectTypeDescriptions, typeColors } from '@/lib/constants'
-import { Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search } from 'lucide-react'
-import { useState } from 'react'
+import { useWorkspace } from '@/lib/workspace-context'
+import { Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search, Upload } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
 
 interface CreateConfig {
 	type: CreatableType
 	subtype?: string
+}
+
+/**
+ * Contract that lets a page swap the label + click handler on the primary
+ * half of the split New button (D4 verb-swap). The chevron half is left
+ * alone so the shared new-menu contents stay identical in both states — the
+ * "still lets reader + New a related object" clause in the acceptance
+ * criteria hinges on that.
+ */
+export interface NewMenuPrimaryOverride {
+	label: string
+	title?: string
+	ariaLabel?: string
+	icon: ReactNode
+	onClick: () => void
+	/** Disables both halves at 60% opacity — D4's read-only rule. */
+	disabled?: boolean
 }
 
 interface NewMenuProps {
@@ -34,6 +61,14 @@ interface NewMenuProps {
 	// here so the copy lives with the menu it mirrors. Omit to keep the whole
 	// button as the menu trigger.
 	primaryKind?: PrimaryKind
+	// Live label/action swap on the primary half — driven by the object-detail
+	// pending-ask cache (D4). Overrides `primaryKind` while set; the chevron
+	// still opens the same menu, unchanged.
+	primaryOverride?: NewMenuPrimaryOverride
+	// D4 read-only rule — dims both halves at 60% opacity and blocks
+	// interaction. Set independently of `primaryOverride` so a read-only object
+	// with no pending ask still disables its default `+ New` button.
+	disabled?: boolean
 }
 
 export type PrimaryKind = 'chat' | 'object' | 'loop' | 'agent'
@@ -56,10 +91,23 @@ const PRIMARY_TITLE: Record<PrimaryKind, string> = {
 	agent: 'New agent — describe what it should own',
 }
 
+function ImportFlow({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+	const { workspaceId } = useWorkspace()
+	const { startTracking } = useImportToast(workspaceId)
+	return <ImportDialog open onOpenChange={onOpenChange} onImportStarted={startTracking} />
+}
+
 // The single "+ New" control used everywhere (global header, For You page) so
 // the trigger and dropdown contents can never drift apart between pages.
-export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuProps) {
+export function NewMenu({
+	onNewChat,
+	hideObjectSection,
+	primaryKind,
+	primaryOverride,
+	disabled,
+}: NewMenuProps) {
 	const [createConfig, setCreateConfig] = useState<CreateConfig | null>(null)
+	const [importOpen, setImportOpen] = useState(false)
 	const { setOpen: setPaletteOpen } = useCommandPalette()
 	// The menu lists the types this workspace actually defines — modules and
 	// custom extensions included. Hardcoding the three built-ins hid every
@@ -79,99 +127,145 @@ export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuPr
 		if (kind === 'agent') return setCreateConfig({ type: 'agent' })
 	}
 
+	// D4: the pending-ask override wins over `primaryKind` while it is set.
+	// The chevron menu contents stay the same in both states — that's why the
+	// override never touches the DropdownMenu below.
+	const hasPrimary = Boolean(primaryOverride) || Boolean(kind)
+	const primaryLabel = primaryOverride
+		? primaryOverride.label
+		: kind
+			? PRIMARY_LABEL[kind]
+			: undefined
+	const primaryTitle = primaryOverride?.title ?? (kind ? PRIMARY_TITLE[kind] : undefined)
+	const primaryAriaLabel = primaryOverride?.ariaLabel ?? primaryLabel
+	const primaryIcon = primaryOverride ? (
+		primaryOverride.icon
+	) : (
+		<Plus aria-hidden className="size-[14px]" />
+	)
+	const primaryOnClick = primaryOverride ? primaryOverride.onClick : runPrimary
+
+	// A caller can independently disable the whole control (D4 read-only) OR
+	// pass an override that itself carries a disabled bit — either dims both
+	// halves. A viewer creates nothing from here (objects, loops, agents, chats,
+	// imports), so the whole control is off for them.
+	const canWrite = useCanWrite()
+	const isDisabled = disabled || primaryOverride?.disabled === true || !canWrite
+
 	return (
 		<>
-			<div className="inline-flex h-[30px] shrink-0 items-stretch">
-				{kind && (
-					<Button
-						size="sm"
-						onClick={runPrimary}
-						title={PRIMARY_TITLE[kind]}
-						aria-label={PRIMARY_LABEL[kind]}
-						className="h-[30px] gap-1.5 rounded-lg rounded-r-none px-2.5 text-xs font-semibold"
-					>
-						<Plus aria-hidden className="size-[14px]" />
-						<span className="hidden sm:inline">New</span>
-					</Button>
-				)}
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button
-							size="sm"
-							aria-label={kind ? 'More ways to start' : 'New'}
-							title={kind ? 'More ways to start' : undefined}
-							className={
-								kind
-									? 'h-[30px] w-6 rounded-lg rounded-l-none border-l border-l-muted-foreground px-0'
-									: 'h-[30px] gap-1.5 rounded-lg px-3 text-[11.5px] font-semibold'
-							}
-						>
-							{!kind && <Plus aria-hidden className="size-[13px]" />}
-							{!kind && <span className="hidden sm:inline">New</span>}
-							<ChevronDown aria-hidden className="size-3 opacity-70" />
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-72">
-						<DropdownMenuItem onSelect={onNewChat} className="items-start gap-2.5 py-2">
-							<span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
-								<MessageSquare size={13} />
-							</span>
-							<span className="min-w-0 flex-1">
-								<span className="block text-sm font-medium">New chat</span>
-								<span className="block text-xs text-muted-foreground">
-									Talk — your agents have the context
+			<ViewerTooltip>
+				<SplitButton disabled={isDisabled}>
+					{hasPrimary && primaryLabel && (
+						<SplitButtonPrimary
+							label={primaryLabel}
+							title={primaryTitle}
+							ariaLabel={primaryAriaLabel}
+							icon={primaryIcon}
+							onClick={primaryOnClick}
+							disabled={isDisabled}
+						/>
+					)}
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							{hasPrimary ? (
+								<SplitButtonChevron
+									ariaLabel="More ways to start"
+									title="More ways to start"
+									disabled={isDisabled}
+								/>
+							) : (
+								<Button
+									size="sm"
+									aria-label="New"
+									disabled={isDisabled}
+									className={cn('h-[30px] gap-1.5 rounded-lg px-3 text-[11.5px] font-semibold')}
+								>
+									<Plus aria-hidden className="size-[13px]" />
+									<span className="hidden sm:inline">New</span>
+									<ChevronDown aria-hidden className="size-3 opacity-70" />
+								</Button>
+							)}
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end" className="w-72">
+							<DropdownMenuItem onSelect={onNewChat} className="items-start gap-2.5 py-2">
+								<span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
+									<MessageSquare size={13} />
 								</span>
-							</span>
-						</DropdownMenuItem>
-						{!hideObjectSection && (
-							<>
-								<DropdownMenuSeparator />
-								<div className="eyebrow px-2 py-1">Create an object</div>
-								{objectTypes.map((item) => {
-									const description = objectTypeDescriptions[item.value]
-									return (
-										<DropdownMenuItem
-											key={item.value}
-											onSelect={() => setCreateConfig({ type: 'object', subtype: item.value })}
-											className="items-start gap-2.5"
-										>
-											<span
-												className={cn(
-													'mt-1 h-2.5 w-2.5 shrink-0 rounded-sm',
-													typeColors[item.value]?.bg ?? defaultTypeColor.bg,
-												)}
-											/>
-											<span className="min-w-0 flex-1">
-												<span className="block text-sm">New {item.label.toLowerCase()}</span>
-												{description && (
-													<span className="block truncate text-xs text-muted-foreground">
-														{description}
-													</span>
-												)}
-											</span>
-										</DropdownMenuItem>
-									)
-								})}
-							</>
-						)}
-						<DropdownMenuSeparator />
-						<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'loop' })}>
-							<RefreshCw size={14} className="text-muted-foreground" />
-							New loop
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'agent' })}>
-							<Bot size={14} className="text-muted-foreground" />
-							New agent
-						</DropdownMenuItem>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem onSelect={() => setPaletteOpen(true)}>
-							<Search size={14} className="text-muted-foreground" />
-							Find a past conversation
-							<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
+								<span className="min-w-0 flex-1">
+									<span className="block text-sm font-medium">New chat</span>
+									<span className="block text-xs text-muted-foreground">
+										Talk — your agents have the context
+									</span>
+								</span>
+							</DropdownMenuItem>
+							{!hideObjectSection && (
+								<>
+									<DropdownMenuSeparator />
+									<div className="eyebrow px-2 py-1">Create an object</div>
+									{objectTypes.map((item) => {
+										const description = objectTypeDescriptions[item.value]
+										return (
+											<DropdownMenuItem
+												key={item.value}
+												onSelect={() => setCreateConfig({ type: 'object', subtype: item.value })}
+												className="items-start gap-2.5"
+											>
+												<span
+													className={cn(
+														'mt-1 h-2.5 w-2.5 shrink-0 rounded-sm',
+														typeColors[item.value]?.bg ?? defaultTypeColor.bg,
+													)}
+												/>
+												<span className="min-w-0 flex-1">
+													<span className="block text-sm">New {item.label.toLowerCase()}</span>
+													{description && (
+														<span className="block truncate text-xs text-muted-foreground">
+															{description}
+														</span>
+													)}
+												</span>
+											</DropdownMenuItem>
+										)
+									})}
+								</>
+							)}
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'loop' })}>
+								<RefreshCw size={14} className="text-muted-foreground" />
+								New loop
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => setCreateConfig({ type: 'agent' })}>
+								<Bot size={14} className="text-muted-foreground" />
+								New agent
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => setPaletteOpen(true)}>
+								<Search size={14} className="text-muted-foreground" />
+								Find a past conversation
+								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
+							</DropdownMenuItem>
+							{/* Import lives in the New menu, not a page toolbar (mockup 245–247):
+						    bringing a CSV in is a way of starting something, and it is not
+						    specific to whichever list happens to be on screen. */}
+							<DropdownMenuItem onSelect={() => setImportOpen(true)}>
+								<Upload size={14} className="text-muted-foreground" />
+								<span className="min-w-0 flex-1">
+									<span className="block text-sm">Import</span>
+									<span className="block truncate text-xs text-muted-foreground">
+										Bring files, docs, or a CSV into the workspace
+									</span>
+								</span>
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</SplitButton>
+			</ViewerTooltip>
+			{/* Mounted only while open: it owns the import toast subscription, which
+			    needs a QueryClient and a workspace. Keeping that behind the open flag
+			    means the New button itself carries no data dependency, so every
+			    surface that renders it stays cheap. */}
+			{importOpen && <ImportFlow onOpenChange={setImportOpen} />}
 			<CreatePicker
 				open={createConfig !== null}
 				onOpenChange={(next) => {

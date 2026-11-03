@@ -39,63 +39,80 @@ describe('classify', () => {
 		expect(a.score).toBe(b.score)
 	})
 
-	it('floors to 100 on protected path match', () => {
+	it('does not block on a protected path alone', () => {
 		const v = classify(
 			input({
 				files: [file({ path: 'packages/auth/src/index.ts' })],
 				protected_paths: ['packages/auth/**'],
 			}),
 		)
-		expect(v.score).toBe(100)
-		expect(v.band).toBe('two_human_required')
-		expect(v.floors_applied.some((f) => f.kind === 'protected_path')).toBe(true)
+		expect(v.band).toBe('auto')
+		expect(v.floors_applied).toEqual([])
 	})
 
-	it('regex floor lifts a low score to 60', () => {
-		const floors: RegexFloor[] = [
-			{
-				pattern: '^-.*require_admin\\(',
-				description: 'Removal of admin authorization check',
-			},
-		]
+	it('does not block on a regex floor hit alone', () => {
+		const floors: RegexFloor[] = [{ pattern: '^-.*require_admin\\(', description: 'x' }]
 		const v = classify(
 			input({
 				regex_floors: floors,
-				files: [
-					file({
-						patch: '@@ -1,1 +1,1 @@\n-  require_admin(req)\n+  // permissive',
-					}),
-				],
+				files: [file({ patch: '@@ -1,1 +1,1 @@\n-  require_admin(req)\n+  // permissive' })],
 			}),
 		)
-		expect(v.score).toBeGreaterThanOrEqual(60)
-		expect(v.band).not.toBe('auto')
-		expect(v.floors_applied.some((f) => f.kind === 'regex_floor_hit')).toBe(true)
+		expect(v.band).toBe('auto')
 	})
 
-	it('caps additive score at 100 even without floor', () => {
+	it('stays auto at exactly 1000 changed lines', () => {
+		const v = classify(input({ files: [file({ additions: 600, deletions: 400 })] }))
+		expect(v.band).toBe('auto')
+	})
+
+	it('requires human review above 1000 changed lines', () => {
+		const v = classify(input({ files: [file({ additions: 600, deletions: 401 })] }))
+		expect(v.band).toBe('human_review_required')
+		expect(v.score).toBe(100)
+		expect(v.floors_applied.some((f) => f.kind === 'loc_gate')).toBe(true)
+	})
+
+	it('stays auto with two code lines changed in a database file', () => {
 		const v = classify(
 			input({
 				files: [
-					...Array.from({ length: 30 }, (_, i) =>
-						file({ path: `apps/dev/src/file${i}.ts`, additions: 200, deletions: 100 }),
-					),
 					file({
-						path: 'infra/main.tf',
-						patch: '+resource "aws_iam_role" "x" {}',
-					}),
-					file({
-						path: 'apps/web/src/config.ts',
-						patch: '@@ -1,1 +1,1 @@\n+const k = "AKIAEXAMPLE12345EXAM"',
+						path: 'packages/db/drizzle/0099_x.sql',
+						patch:
+							'@@ -1,1 +1,1 @@\n+-- a comment\n+\n+ALTER TABLE a ADD COLUMN b text;\n+CREATE INDEX i ON a(b);',
 					}),
 				],
-				new_deps_with_cve: ['lodash@4.17.20'],
-				public_api_surface_delta: 5,
-				ai_generated_marker: true,
-				missing_tests_for_logic: true,
 			}),
 		)
-		expect(v.score).toBe(100)
+		expect(v.band).toBe('auto')
+	})
+
+	it('requires human review with more than two code lines changed in a database file', () => {
+		const v = classify(
+			input({
+				files: [
+					file({
+						path: 'packages/db/src/schema.ts',
+						patch:
+							'@@ -1,1 +1,1 @@\n+// note\n+export const a = 1\n+export const b = 2\n-export const c = 3',
+					}),
+				],
+			}),
+		)
+		expect(v.band).toBe('human_review_required')
+		expect(v.floors_applied.some((f) => f.kind === 'db_change_gate')).toBe(true)
+	})
+
+	it('keeps the additive score below the auto ceiling when no gate fires', () => {
+		const v = classify(
+			input({
+				files: [file({ path: '.github/workflows/ci.yml', additions: 400, deletions: 0 })],
+				new_deps_with_cve: ['lodash@4.17.20'],
+			}),
+		)
+		expect(v.band).toBe('auto')
+		expect(v.score).toBeLessThan(25)
 	})
 
 	it('detects DDL in .sql files even when path-based detection misses', () => {
@@ -110,29 +127,6 @@ describe('classify', () => {
 			}),
 		)
 		expect(v.signals.some((s) => s.kind === 'paths_migrations_ddl')).toBe(true)
-	})
-
-	it('promotes squawk hot-table findings into the regex floor band', () => {
-		const v = classify(
-			input({
-				files: [
-					file({
-						path: 'apps/dev/migrations/0042_users.sql',
-						patch: '+CREATE INDEX users_email_idx ON users(email);',
-					}),
-				],
-				hot_tables: ['users'],
-				squawk_findings: [
-					{
-						rule: 'disallowed-unique-constraint',
-						severity: 'error',
-						path: 'apps/dev/migrations/0042_users.sql',
-						hot_table_hit: true,
-					},
-				],
-			}),
-		)
-		expect(v.score).toBeGreaterThanOrEqual(60)
 	})
 
 	it('flags secret-like patterns in added lines', () => {

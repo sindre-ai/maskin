@@ -45,8 +45,41 @@ function stripMcpServers(tools: unknown): unknown {
 	if (tools === null || typeof tools !== 'object' || Array.isArray(tools)) {
 		return tools
 	}
-	const { mcpServers, ...rest } = tools as Record<string, unknown>
+	const { mcpServers: _mcpServers, ...rest } = tools as Record<string, unknown>
 	return rest
+}
+
+/**
+ * Snapshots published before agents got their own computer carry a
+ * `tools.browser` flag that used to be expanded into a Playwright MCP server.
+ * The browser sidecar is gone, so the flag means nothing; drop it on install
+ * rather than copy a dead key onto the new actor.
+ */
+export function dropLegacyBrowserFlag(tools: unknown): unknown {
+	if (tools === null || typeof tools !== 'object' || Array.isArray(tools)) {
+		return tools
+	}
+	const { browser: _browser, ...rest } = tools as Record<string, unknown>
+	return rest
+}
+
+// llm_config carries the actor's own provider credential (llmConfig.apiKey) and
+// can carry endpoint/header overrides. item_snapshot is readable outside the
+// publishing workspace, so llmConfig is deny-by-default: only these keys
+// survive and every other key (including ones added later) is dropped.
+// Installers supply their own apiKey after install.
+const LLM_CONFIG_ALLOWLIST = ['provider', 'model'] as const
+
+function allowlistLlmConfig(llmConfig: unknown): Record<string, unknown> | null {
+	if (llmConfig === null || typeof llmConfig !== 'object' || Array.isArray(llmConfig)) {
+		return null
+	}
+	const source = llmConfig as Record<string, unknown>
+	const out: Record<string, unknown> = {}
+	for (const key of LLM_CONFIG_ALLOWLIST) {
+		if (key in source) out[key] = source[key]
+	}
+	return out
 }
 
 export function actorSnapshot(row: ActorSnapshotSource): Record<string, unknown> {
@@ -58,7 +91,7 @@ export function actorSnapshot(row: ActorSnapshotSource): Record<string, unknown>
 		description: row.description,
 		systemPrompt: row.systemPrompt,
 		llmProvider: row.llmProvider,
-		llmConfig: row.llmConfig,
+		llmConfig: allowlistLlmConfig(row.llmConfig),
 		tools: stripMcpServers(row.tools),
 	}
 }

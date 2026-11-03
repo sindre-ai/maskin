@@ -63,10 +63,10 @@ describe('queryClient', () => {
 	})
 
 	describe('mutation cache onError', () => {
-		function triggerMutationError(error: Error) {
+		function triggerMutationError(error: Error, meta?: Record<string, unknown>) {
 			// MutationCache stores the constructor options as `config` at runtime (not in TS types)
 			// biome-ignore lint/suspicious/noExplicitAny: accessing internal config property
-			;(queryClient.getMutationCache() as any).config.onError(error)
+			;(queryClient.getMutationCache() as any).config.onError(error, undefined, undefined, { meta })
 		}
 
 		it('has accessible onError handler on mutation cache config', () => {
@@ -85,6 +85,12 @@ describe('queryClient', () => {
 		it('shows toast with ApiError message', () => {
 			triggerMutationError(new ApiError(500, 'Database connection failed'))
 			expect(toast.error).toHaveBeenCalledWith('Database connection failed')
+		})
+
+		it('stays quiet for a mutation that shows its own error message', () => {
+			vi.mocked(toast.error).mockClear()
+			triggerMutationError(new ApiError(429, 'Too Many Requests'), { handlesOwnErrors: true })
+			expect(toast.error).not.toHaveBeenCalled()
 		})
 
 		it('suppresses toast when ApiError has field errors', () => {

@@ -1,13 +1,14 @@
-import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { randomBytes } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { type Database, createDb } from '@maskin/db'
-import { splitStatements } from '@maskin/db/migrate-utils'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import postgres from 'postgres'
-import { createApiError, formatZodError } from '../../lib/errors'
+import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from '../../lib/errors'
+import { PlanCapExceededError } from '../../lib/llm-routing'
+import { OwnershipCapExceededError, SeatCapExceededError } from '../../lib/workspace-capacity'
+import type { AgentStorageManager } from '../../services/agent-storage'
 import type { SessionManager } from '../../services/session-manager'
+import { TEMPLATE_DB, withDatabase } from './global-db-template'
 
 type Env = {
 	Variables: {
@@ -16,6 +17,7 @@ type Env = {
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -25,6 +27,16 @@ export let db: Database
 export let sql: ReturnType<typeof postgres>
 
 let testActorId: string
+let baseUrl: string | undefined
+let dbName: string | undefined
+
+// Set by tests whose routes read c.get('agentStorage'). Kept as a setter so this
+// shared harness does not import the storage service for every test file.
+let testAgentStorage: AgentStorageManager | undefined
+
+export function setTestAgentStorage(agentStorage: AgentStorageManager | undefined) {
+	testAgentStorage = agentStorage
+}
 
 /**
  * Creates an integration test app with a real DB, auth bypassed.
@@ -54,15 +66,74 @@ export function createIntegrationApp(
 		c.set('actorId', testActorId)
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
-		// Routes that delete an actor/loop stop that actor's live sessions
-		// first (see stopSessionsForActors). No containers run under the
-		// integration harness, so a resolving stub is the honest stand-in —
-		// leaving this unset made the route read `undefined` and 500.
+		// Routes fire-and-forget a welcome/onboarding session via
+		// c.get('sessionManager').createSession(...) (see routes/workspaces.ts),
+		// and routes that delete an actor/loop stop that actor's live sessions
+		// first (see stopSessionsForActors). Both are read unguarded, so every
+		// route mounted through this shared harness needs a resolving stub here
+		// even if the test never asserts on session lifecycle itself.
 		c.set('sessionManager', {
 			stopSession: async () => {},
-			createSession: async () => undefined,
+			createSession: async () => ({}),
 		} as unknown as SessionManager)
+		if (testAgentStorage) c.set('agentStorage', testAgentStorage)
 		await next()
+	})
+
+	// Mirrors the cap-exceeded branches of app-factory.ts's onError (minus
+	// Sentry/verbose logging, which aren't relevant to this harness) so
+	// integration tests exercise the same thrown-error → typed-response mapping
+	// real requests get in production, instead of a raw framework 500.
+	app.onError((err, c) => {
+		if (err instanceof PlanCapExceededError) {
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.PLAN_CAP_EXCEEDED,
+						message: err.message,
+						plan: err.plan,
+						used: err.used,
+						cap: err.cap,
+						period_end: err.periodEnd,
+					},
+				},
+				402,
+			)
+		}
+		if (err instanceof SeatCapExceededError) {
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.SEAT_CAP_EXCEEDED,
+						message: err.message,
+						workspace_id: err.workspaceId,
+						plan: err.plan,
+						used: err.used,
+						cap: err.cap,
+					},
+				},
+				403,
+			)
+		}
+		if (err instanceof OwnershipCapExceededError) {
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.OWNERSHIP_CAP_EXCEEDED,
+						message: err.message,
+						actor_id: err.actorId,
+						effective_tier: err.effectiveTier,
+						used: err.used,
+						cap: err.cap,
+					},
+				},
+				403,
+			)
+		}
+		if ('status' in err && typeof err.status === 'number') {
+			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
+		}
+		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 	})
 
 	for (const { path, module } of routeModules) {
@@ -86,38 +157,23 @@ beforeAll(async () => {
 		)
 	}
 
-	sql = postgres(url)
-	db = createDb(url)
-
-	// Drop and recreate schema so migrations are idempotent across CI runs
-	await sql`DROP SCHEMA public CASCADE`
-	await sql`CREATE SCHEMA public`
-
-	// Mirror packages/db/src/migrate.ts: the tracking table must exist so any
-	// migration or rollback file that touches it (e.g. reversibility tests)
-	// runs identically to production.
-	await sql`
-		CREATE TABLE IF NOT EXISTS "_migrations" (
-			"name" text PRIMARY KEY,
-			"applied_at" timestamp with time zone DEFAULT now()
-		)
-	`
-
-	// Run migrations
-	const __dirname = dirname(fileURLToPath(import.meta.url))
-	const migrationsDir = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
-	const files = readdirSync(migrationsDir)
-		.filter((f) => f.endsWith('.sql'))
-		.sort()
-
-	for (const file of files) {
-		const content = readFileSync(join(migrationsDir, file), 'utf-8')
-		// One statement per query message — see packages/db/src/migrate-utils.ts.
-		for (const statement of splitStatements(content)) {
-			await sql.unsafe(statement)
-		}
-		await sql`INSERT INTO "_migrations" ("name") VALUES (${file}) ON CONFLICT DO NOTHING`
+	// Every test file gets its own database cloned from the migrated template
+	// (global-db-template.ts), so files are isolated from each other and can run
+	// in parallel workers. Tests that open their own connection (e.g. a
+	// PgNotifyBridge) read DATABASE_URL, so point it at this file's database.
+	baseUrl = url
+	dbName = `maskin_it_${process.pid}_${randomBytes(4).toString('hex')}`
+	const admin = postgres(url, { max: 1, onnotice: () => {} })
+	try {
+		await admin.unsafe(`CREATE DATABASE "${dbName}" TEMPLATE "${TEMPLATE_DB}"`)
+	} finally {
+		await admin.end()
 	}
+	const fileUrl = withDatabase(url, dbName)
+	process.env.DATABASE_URL = fileUrl
+
+	sql = postgres(fileUrl, { onnotice: () => {} })
+	db = createDb(fileUrl)
 
 	// Create a test actor to use across all integration tests
 	const [actor] = await sql`
@@ -126,24 +182,63 @@ beforeAll(async () => {
 		RETURNING id
 	`
 	testActorId = actor.id
+	await registerTestActorKey()
 })
 
+// Requests look keys up by hash in api_keys, so the shared test actor's key has to be registered
+// there; the actors.api_key column alone no longer authenticates anything.
+async function registerTestActorKey() {
+	await sql`
+		INSERT INTO api_keys (actor_id, key_hash, last4, kind)
+		VALUES (
+			${testActorId},
+			encode(sha256(convert_to('ank_testintegration', 'UTF8')), 'hex'),
+			'tion',
+			'primary'
+		)
+		ON CONFLICT (key_hash) DO NOTHING
+	`
+}
+
 beforeEach(async () => {
-	// Clean all data except the test actor
-	await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+	// Clean all data except the test actor. A previous test can leave fire-and-forget work running
+	// (e.g. the new agent's intro chat), which takes row locks that TRUNCATE's table locks can
+	// deadlock against. Postgres aborts one side; retrying the cleanup is safe.
+	for (let attempt = 1; ; attempt++) {
+		try {
+			await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, linkedin_tool_calls, linkedin_actions, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+			break
+		} catch (err) {
+			if ((err as { code?: string }).code !== '40P01' || attempt >= 5) throw err
+			await new Promise((resolve) => setTimeout(resolve, 100 * attempt))
+		}
+	}
+
+	// actors.default_workspace_id references workspaces, so Postgres cascades the
+	// TRUNCATE above into actors (CASCADE follows FK definitions, not row data) and
+	// removes the test actor. Put it back under the same id so every test still
+	// finds it, as the comment above promises.
+	await sql`
+		INSERT INTO actors (id, type, name, email, api_key)
+		VALUES (${testActorId}, 'human', 'Integration Test Actor', 'integration@test.com', 'ank_testintegration')
+		ON CONFLICT (id) DO NOTHING
+	`
+	await registerTestActorKey()
 })
 
 afterAll(async () => {
-	// Clean up the test actor and close connections. `createDb()` opens its own
-	// independent postgres.js client (separate pool from `sql`) — leaving it
-	// open here leaks a connection pool per test *file* (setupFiles' beforeAll/
-	// afterAll run fresh per file), which exhausts Postgres's max_connections
-	// once enough integration test files exist. See known-pitfalls.md.
-	if (sql) {
-		await sql`TRUNCATE actors CASCADE`
-		await sql.end()
-	}
-	if (db) {
-		await db.$client.end()
+	// Close every connection (`createDb()` opens its own independent postgres.js
+	// client, separate pool from `sql` — see known-pitfalls.md), then drop this
+	// file's database so clones don't accumulate across the run.
+	if (sql) await sql.end()
+	if (db) await db.$client.end()
+	if (baseUrl && dbName) {
+		process.env.DATABASE_URL = baseUrl
+		const admin = postgres(baseUrl, { max: 1, onnotice: () => {} })
+		try {
+			await admin.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`)
+		} finally {
+			await admin.end()
+		}
 	}
 })

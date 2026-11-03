@@ -1,104 +1,394 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { TestWrapper } from '../setup'
 
-const mockCreateConversationMutateAsync = vi.fn()
-const mockUploadFile = vi.fn()
-
+const mockNavigate = vi.fn()
+const mockSearch = vi.fn(() => ({}) as Record<string, string | undefined>)
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
 		createFileRoute: () => (options: Record<string, unknown>) => ({
 			...options,
-			useSearch: () => ({}),
+			useSearch: () => mockSearch(),
 		}),
+		useSearch: () => mockSearch(),
+		useNavigate: () => mockNavigate,
 	}
 })
 
+const mockCreateConversation = vi.fn()
+const mockConversationsInfinite = vi.fn()
+vi.mock('@/hooks/use-conversations', () => ({
+	useCreateConversation: () => ({ mutateAsync: mockCreateConversation, isPending: false }),
+	useConversationsInfinite: () => ({ data: mockConversationsInfinite() }),
+}))
+
+const mockActiveAgents = vi.fn()
+vi.mock('@/hooks/use-active-agents', () => ({
+	useActiveAgents: () => mockActiveAgents(),
+}))
+
+const mockActors = vi.fn()
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: mockActors() }),
+	useDefaultChatAgent: () => ({ id: 'cos-1', name: 'Chief of Staff' }),
+}))
+
+const mockMembers = vi.fn()
+vi.mock('@/hooks/use-workspaces', () => ({
+	useWorkspaceMembers: () => ({ data: mockMembers() }),
+}))
+
+const mockReferencedObjects = vi.fn()
+vi.mock('@/hooks/use-objects', () => ({
+	useObjects: () => ({ data: mockReferencedObjects() }),
+}))
+
+const toastCapture = vi.hoisted(() => ({ warning: vi.fn() }))
+vi.mock('sonner', () => ({ toast: { warning: toastCapture.warning } }))
+
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { settings: {} } }),
 }))
 
 vi.mock('@/lib/auth', () => ({
-	getStoredActor: () => ({ id: 'human-1', name: 'You' }),
+	getStoredActor: () => ({ id: 'me-1', name: 'You', type: 'human' }),
 }))
 
-vi.mock('@/hooks/use-conversations', () => ({
-	useCreateConversation: () => ({
-		mutateAsync: mockCreateConversationMutateAsync,
-		isPending: false,
-	}),
-}))
-
-vi.mock('@/hooks/use-workspaces', () => ({
-	useWorkspaceMembers: () => ({ data: [] }),
-}))
-
-vi.mock('@/hooks/use-actors', () => ({
-	useActors: () => ({
-		data: [{ id: 'agent-1', name: 'Builder', type: 'agent' }],
-	}),
-}))
-
-vi.mock('@/hooks/use-files', () => ({
-	useUploadFile: () => mockUploadFile,
-}))
-
-vi.mock('@/lib/file-utils', () => ({
-	readFileAsBase64: async () => 'AAAA',
-}))
-
-vi.mock('@/components/chat/slash-picker', () => ({
-	SlashPicker: () => null,
-}))
-
+const trackChatSessionStartedMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/analytics', () => ({
-	deriveEntryAgentRole: () => 'coach',
-	trackSpecialistSummonedManually: () => {},
+	deriveEntryAgentRole: (name: string | null) =>
+		name ? name.toLowerCase().replace(/\s+/g, '-') : null,
+	trackChatSessionStarted: trackChatSessionStartedMock,
+}))
+
+// The real composer pulls the whole chat surface in; this route needs only the
+// two things it does — carry a controlled draft, and hand a message to onSend.
+vi.mock('@/components/chat/chat', () => ({
+	Composer: ({
+		onSend,
+		textareaLabel,
+		placeholder,
+		value,
+		onValueChange,
+	}: {
+		onSend: (value: string) => Promise<void>
+		textareaLabel: string
+		placeholder: string
+		value?: string
+		onValueChange?: (next: string) => void
+	}) => (
+		<textarea
+			aria-label={textareaLabel}
+			placeholder={placeholder}
+			value={value ?? ''}
+			onChange={(e) => onValueChange?.(e.target.value)}
+			onKeyDown={(e) => {
+				if (e.key === 'Enter') void onSend((e.target as HTMLTextAreaElement).value)
+			}}
+		/>
+	),
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/chats/new'
 
-const NewConversationPage = (Route as unknown as { component: React.FC }).component
+const NewChatPage = (Route as unknown as { component: React.FC }).component
 
-function getFileInput(container: HTMLElement): HTMLInputElement {
-	const input = container.querySelector<HTMLInputElement>('input[type="file"]')
-	if (!input) throw new Error('composer file input not found')
-	return input
+const CHIEF = {
+	id: 'cos-1',
+	name: 'Chief of Staff',
+	type: 'agent',
+	description: 'Starts anywhere and hands it to the agent that owns it',
+}
+const FORGE = { id: 'forge-1', name: 'Forge', type: 'agent', description: 'Ships billing fixes' }
+const SENTINEL = {
+	id: 'sentinel-1',
+	name: 'Sentinel',
+	type: 'agent',
+	description: 'Watches accounts',
 }
 
-describe('New conversation page — attachments', () => {
+function conversationsPage(
+	convs: Array<{
+		id: string
+		lastMessageAt: string | null
+		participants: Array<{
+			actorId: string
+			actorName: string
+			actorType: 'human' | 'agent' | 'system'
+		}>
+	}>,
+) {
+	return {
+		pages: [
+			{
+				conversations: convs.map((c) => ({
+					id: c.id,
+					workspaceId: 'ws-1',
+					title: '',
+					createdBy: 'me-1',
+					lastMessageAt: c.lastMessageAt,
+					createdAt: c.lastMessageAt,
+					updatedAt: c.lastMessageAt,
+					pinned: false,
+					archived: false,
+					unread_count: 0,
+					snippet: null,
+					snippet_actor_id: null,
+					snippet_actor_name: null,
+					participants: c.participants.map((p) => ({ ...p, joinedAt: null, addedBy: null })),
+				})),
+				has_more: false,
+			},
+		],
+	}
+}
+
+describe('New chat', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mockCreateConversationMutateAsync.mockResolvedValue({ id: 'convo-1' })
+		mockSearch.mockReturnValue({})
+		mockActiveAgents.mockReturnValue({
+			agents: [],
+			activeSessionCount: 1,
+			isLoading: false,
+			isError: false,
+		})
+		mockActors.mockReturnValue([CHIEF, FORGE, SENTINEL])
+		mockMembers.mockReturnValue([])
+		mockReferencedObjects.mockReturnValue(undefined)
+		mockConversationsInfinite.mockReturnValue(undefined)
+		mockCreateConversation.mockResolvedValue({ id: 'conv-1' })
 	})
 
-	it('includes an attached file in initial_message_metadata when starting a new conversation', async () => {
-		mockUploadFile.mockResolvedValueOnce({ id: 'file-1' })
+	it('does not render the removed CHAT_SUGGESTIONS list', () => {
+		render(<NewChatPage />)
+		expect(screen.queryByText('What needs a decision from me today?')).not.toBeInTheDocument()
+		expect(screen.queryByText('Summarise what the loops did overnight')).not.toBeInTheDocument()
+	})
+
+	describe('intro under the heading', () => {
+		const idle = { agents: [], activeSessionCount: 0, isLoading: false, isError: false }
+
+		it('with nothing running shows one plain line and starter chips, not the running-work paragraph', () => {
+			mockActiveAgents.mockReturnValue(idle)
+			render(<NewChatPage />)
+			expect(screen.getByText('What are we working on?')).toBeInTheDocument()
+			expect(
+				screen.getByText(/The Chief of Staff is your first point of contact/),
+			).toBeInTheDocument()
+			expect(
+				screen.getByRole('button', { name: 'Help me set up my first agent' }),
+			).toBeInTheDocument()
+			expect(
+				screen.getByRole('button', { name: 'What should I do first in this workspace?' }),
+			).toBeInTheDocument()
+			expect(
+				screen.getByRole('button', { name: 'Explain how agents, loops and tasks fit together' }),
+			).toBeInTheDocument()
+			expect(screen.queryByText(/Your agents are already inside the work/)).not.toBeInTheDocument()
+		})
+
+		it('keeps the running-work paragraph and no chips while work is running', () => {
+			render(<NewChatPage />)
+			expect(screen.getByText(/Your agents are already inside the work/)).toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: 'Help me set up my first agent' }),
+			).not.toBeInTheDocument()
+		})
+
+		it('shows neither paragraph while activity loads, and falls back to the running paragraph on error', () => {
+			mockActiveAgents.mockReturnValue({ ...idle, isLoading: true })
+			const { unmount } = render(<NewChatPage />)
+			expect(screen.queryByText(/first point of contact/)).not.toBeInTheDocument()
+			expect(screen.queryByText(/Your agents are already inside the work/)).not.toBeInTheDocument()
+			unmount()
+			mockActiveAgents.mockReturnValue({ ...idle, isError: true })
+			render(<NewChatPage />)
+			expect(screen.getByText(/Your agents are already inside the work/)).toBeInTheDocument()
+		})
+
+		it('a chip fills the message box and sends nothing', async () => {
+			mockActiveAgents.mockReturnValue(idle)
+			const user = userEvent.setup()
+			render(<NewChatPage />)
+			await screen.findByLabelText('Remove Chief of Staff')
+			await user.click(screen.getByRole('button', { name: 'Help me set up my first agent' }))
+			expect(screen.getByLabelText('Message this conversation')).toHaveValue(
+				'Help me set up my first agent',
+			)
+			expect(mockCreateConversation).not.toHaveBeenCalled()
+		})
+	})
+
+	it('seeds the workspace default chat agent as an initial chip', async () => {
+		render(<NewChatPage />)
+		expect(await screen.findByLabelText('Remove Chief of Staff')).toBeInTheDocument()
+	})
+
+	it('seeds the ?agentId= URL param as a chip when present', async () => {
+		mockSearch.mockReturnValue({ agentId: 'forge-1' })
+		render(<NewChatPage />)
+		expect(await screen.findByLabelText('Remove Forge')).toBeInTheDocument()
+	})
+
+	it('puts the ?text= URL param in the message box and sends nothing', async () => {
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'what changed today' })
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Forge')
+		expect(screen.getByLabelText('Message this conversation')).toHaveValue('what changed today')
+		expect(mockCreateConversation).not.toHaveBeenCalled()
+	})
+
+	it('replaces the message box when the ?text= param changes on the mounted page', async () => {
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'first question' })
+		const { rerender } = render(<NewChatPage />)
+		await screen.findByLabelText('Remove Forge')
+		expect(screen.getByLabelText('Message this conversation')).toHaveValue('first question')
+
+		mockSearch.mockReturnValue({ agentId: 'forge-1', text: 'second question' })
+		rerender(<NewChatPage />)
+
+		await waitFor(() =>
+			expect(screen.getByLabelText('Message this conversation')).toHaveValue('second question'),
+		)
+		expect(mockCreateConversation).not.toHaveBeenCalled()
+	})
+
+	it('renders a RECENT eyebrow with recently-collaborated actors once the To field is focused', async () => {
+		mockConversationsInfinite.mockReturnValue(
+			conversationsPage([
+				{
+					id: 'c-1',
+					lastMessageAt: '2026-09-01T10:00:00.000Z',
+					participants: [
+						{ actorId: 'me-1', actorName: 'You', actorType: 'human' },
+						{ actorId: 'forge-1', actorName: 'Forge', actorType: 'agent' },
+					],
+				},
+			]),
+		)
 		const user = userEvent.setup()
-		const { container } = render(<NewConversationPage />, { wrapper: TestWrapper })
+		render(<NewChatPage />)
+		expect(screen.queryByText('RECENT')).not.toBeInTheDocument()
+		await user.click(screen.getByLabelText('Add recipients'))
+		expect(screen.getByText('RECENT')).toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
+	})
 
-		await user.click(screen.getByLabelText('Add people or agents'))
-		await user.click(await screen.findByText('Builder'))
-
-		const input = getFileInput(container)
-		const pdf = new File(['%PDF-1.4'], 'report.pdf', { type: 'application/pdf' })
-		fireEvent.change(input, { target: { files: [pdf] } })
-		await waitFor(() => expect(mockUploadFile).toHaveBeenCalledTimes(1))
-
-		await user.type(screen.getByPlaceholderText('Message this conversation'), 'hello')
-		await user.click(screen.getByRole('button', { name: 'Send message' }))
-
-		await waitFor(() => expect(mockCreateConversationMutateAsync).toHaveBeenCalledTimes(1))
-		const [input1] = mockCreateConversationMutateAsync.mock.calls[0]
-		expect(input1.initial_message_metadata.attachments).toEqual([
-			expect.objectContaining({
-				file_id: 'file-1',
-				name: 'report.pdf',
-				mime_type: 'application/pdf',
-			}),
+	it('never offers integration system members as recipients, typed or in RECENT', async () => {
+		mockMembers.mockReturnValue([
+			{ actorId: 'slack-1', name: 'Slack', type: 'system', role: 'member' },
+			{ actorId: 'sam-1', name: 'Sam Slack', type: 'human', role: 'member' },
 		])
+		mockConversationsInfinite.mockReturnValue(
+			conversationsPage([
+				{
+					id: 'c-1',
+					lastMessageAt: '2026-09-01T10:00:00.000Z',
+					participants: [
+						{ actorId: 'slack-1', actorName: 'Slack', actorType: 'system' },
+						{ actorId: 'forge-1', actorName: 'Forge', actorType: 'agent' },
+					],
+				},
+			]),
+		)
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await user.click(screen.getByLabelText('Add recipients'))
+		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /^Slack/ })).not.toBeInTheDocument()
+		await user.type(screen.getByLabelText('Add recipients'), 'sl')
+		expect(screen.getByRole('option', { name: /Sam Slack/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /^Slack/ })).not.toBeInTheDocument()
+	})
+
+	it('omits the RECENT section entirely when the derivation returns zero candidates', async () => {
+		mockConversationsInfinite.mockReturnValue({ pages: [] })
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await user.click(screen.getByLabelText('Add recipients'))
+		expect(screen.queryByText('RECENT')).not.toBeInTheDocument()
+	})
+
+	it('switches the dropdown label to ADD SOMEONE — PERSON OR AGENT once the input has 1+ chars', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await user.type(screen.getByLabelText('Add recipients'), 'f')
+		expect(screen.getByText('ADD SOMEONE — PERSON OR AGENT')).toBeInTheDocument()
+	})
+
+	it('renders the muted empty-match line when the typed query has no matches', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await user.type(screen.getByLabelText('Add recipients'), 'zzz-nothing')
+		expect(screen.getByText('No agent by that name')).toBeInTheDocument()
+	})
+
+	it('commits the highlighted row when Enter is pressed in the input', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		const input = screen.getByLabelText('Add recipients')
+		await user.type(input, 'Forge{Enter}')
+		expect(screen.getByLabelText('Remove Forge')).toBeInTheDocument()
+	})
+
+	it('removes a chip via its × button', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		const removeBtn = await screen.findByLabelText('Remove Chief of Staff')
+		await user.click(removeBtn)
+		expect(screen.queryByLabelText('Remove Chief of Staff')).not.toBeInTheDocument()
+	})
+
+	it('pops the last chip when Backspace is pressed on an empty input', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		const input = screen.getByLabelText('Add recipients')
+		await user.click(input)
+		await user.keyboard('{Backspace}')
+		expect(screen.queryByLabelText('Remove Chief of Staff')).not.toBeInTheDocument()
+	})
+
+	it('renders the chatGroupNote inline once 2+ recipients are selected', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		await user.type(screen.getByLabelText('Add recipients'), 'Forge{Enter}')
+		expect(await screen.findByLabelText('Remove Forge')).toBeInTheDocument()
+		expect(screen.getByText('Everyone sees everything')).toBeInTheDocument()
+	})
+
+	it('fires chat_session_started with participant_count=1 on a solo send', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		await user.type(
+			screen.getByLabelText('Message this conversation'),
+			'What are we working on?{Enter}',
+		)
+		await waitFor(() => expect(trackChatSessionStartedMock).toHaveBeenCalledTimes(1))
+		expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+			expect.objectContaining({ participant_count: 1 }),
+		)
+	})
+
+	it('fires chat_session_started with participant_count=2 on a group send', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		await user.type(screen.getByLabelText('Add recipients'), 'Forge{Enter}')
+		await screen.findByLabelText('Remove Forge')
+		await user.type(
+			screen.getByLabelText('Message this conversation'),
+			'What are we working on?{Enter}',
+		)
+		await waitFor(() => expect(trackChatSessionStartedMock).toHaveBeenCalledTimes(1))
+		expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+			expect.objectContaining({ participant_count: 2 }),
+		)
 	})
 })

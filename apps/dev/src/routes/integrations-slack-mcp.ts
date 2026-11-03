@@ -9,9 +9,11 @@ import {
 	createSlackMcpServer,
 	isSlackBotToken,
 } from '../lib/integrations/providers/slack/mcp-server'
+import { directPostChannelsFromConfig } from '../lib/integrations/providers/slack/send-object'
+import { toolGateFor } from '../lib/integrations/tool-gate'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
@@ -31,7 +33,12 @@ const app = new Hono<Env>()
 async function resolveSlackBotToken(
 	db: Database,
 	workspaceId: string,
-): Promise<{ botToken: string; slackTeamId: string | undefined } | null> {
+): Promise<{
+	botToken: string
+	integrationId: string
+	slackTeamId: string | undefined
+	directPostChannels: string[] | undefined
+} | null> {
 	const [integration] = await db
 		.select()
 		.from(integrations)
@@ -70,7 +77,9 @@ async function resolveSlackBotToken(
 
 	return {
 		botToken: accessToken as string,
+		integrationId: integration.id,
 		slackTeamId: integration.externalId ?? undefined,
+		directPostChannels: directPostChannelsFromConfig(integration.config),
 	}
 }
 
@@ -104,7 +113,7 @@ app.post('/', async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
@@ -124,14 +133,27 @@ app.post('/', async (c) => {
 	const agentLabel = actor.name?.trim() ? `${actor.name} · in ${workspace.name}` : ''
 	const iconUrl = process.env.MASKIN_MACHINE_ICON_URL?.trim() || undefined
 
-	const mcpServer = createSlackMcpServer({
-		botToken: resolved.botToken,
-		agentLabel,
-		iconUrl,
+	const gate = await toolGateFor(db, {
 		workspaceId,
 		actorId,
-		slackTeamId: resolved.slackTeamId,
+		integrationId: resolved.integrationId,
+		provider: 'slack',
+		providerLabel: 'Slack',
 	})
+	const mcpServer = createSlackMcpServer(
+		{
+			botToken: resolved.botToken,
+			integrationId: resolved.integrationId,
+			agentLabel,
+			iconUrl,
+			workspaceId,
+			actorId,
+			slackTeamId: resolved.slackTeamId,
+			db,
+			directPostChannels: resolved.directPostChannels,
+		},
+		gate,
+	)
 
 	// sessionIdGenerator: undefined = stateless mode. Each POST is self-contained:
 	// tools are registered synchronously before connect(), so initialize/tools-list/

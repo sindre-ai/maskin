@@ -4,6 +4,7 @@ import { events as eventsTable, files, integrations } from '@maskin/db/schema'
 import { MAX_FILE_SIZE_BYTES } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, sql } from 'drizzle-orm'
+import { sha256Hex } from '../../../file-save'
 import { fileStorageKey } from '../../../file-urls'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
@@ -12,8 +13,13 @@ import { getProvider } from '../../registry'
 import type { NormalizedEvent, WebhookFanOutContext } from '../../types'
 import { maybePromptAccountLink } from './account-link'
 import { extractMentionFields, handleSlackMention, isMentionEntityType } from './mention'
+import { isAllowedSlackHost } from './slack-api'
 import { handleLinkShared } from './unfurl'
-import { publishAppHomeView } from './webhooks'
+import {
+	type SlackMemberLeftPayload,
+	handleMemberLeftChannel,
+	publishAppHomeView,
+} from './webhooks'
 
 /**
  * Slack file object shape from Events API message payloads. Slack returns many
@@ -34,22 +40,6 @@ interface SlackFile {
 const MAX_FILES_PER_EVENT = 20
 /** Slack file download timeout */
 const DOWNLOAD_TIMEOUT_MS = 30_000
-
-// Defense-in-depth: refuse to send the bot token to anything but a Slack-owned host.
-// Node fetch already strips Authorization on cross-origin redirects, so token exfil via
-// a malicious url_private is bounded today — this guard removes a class of regressions
-// if that behaviour ever changes.
-function isAllowedSlackHost(url: string): boolean {
-	let parsed: URL
-	try {
-		parsed = new URL(url)
-	} catch {
-		return false
-	}
-	if (parsed.protocol !== 'https:') return false
-	const host = parsed.hostname.toLowerCase()
-	return host === 'slack.com' || host.endsWith('.slack.com')
-}
 
 function extractSlackFiles(data: Record<string, unknown>): SlackFile[] | null {
 	const event = data.event as Record<string, unknown> | undefined
@@ -208,6 +198,7 @@ async function persistOne(
 			mimeType,
 			sizeBytes: bytes.byteLength,
 			storageKey,
+			contentHash: sha256Hex(bytes),
 			createdBy: actorId,
 		})
 		.returning()
@@ -370,6 +361,24 @@ export async function slackWebhookFanOut(ctx: WebhookFanOutContext): Promise<Nor
 			await handleLinkShared(db, ctx.integrationId, ctx.normalized)
 		} catch (err) {
 			logger.error('Slack link_shared: handler failed', {
+				integrationId: ctx.integrationId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+		return []
+	}
+
+	// member_left_channel is a bot-lifecycle event, not a message. The auto-pause
+	// handler mutates trigger rows directly (see webhooks.ts) — no events row is
+	// needed downstream, and returning `[]` keeps the events log free of bot
+	// membership churn. The generic `member_joined_channel` path still flows
+	// through unchanged so trigger authors can still filter on joins if they add
+	// that entity type in the future.
+	if (ctx.normalized.entityType === 'slack.member' && ctx.normalized.action === 'left') {
+		try {
+			await handleMemberLeftChannel(db, ctx.normalized.data as SlackMemberLeftPayload)
+		} catch (err) {
+			logger.error('Slack member_left_channel: handler failed', {
 				integrationId: ctx.integrationId,
 				error: err instanceof Error ? err.message : String(err),
 			})

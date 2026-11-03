@@ -1,5 +1,6 @@
 import type { ResolvedProvider } from './types'
 
+import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
@@ -9,14 +10,32 @@ import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/r
 import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
-import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
+import { config as googleDriveConfig } from './providers/google-drive/config'
+import { setupDriveInstall } from './providers/google-drive/install'
+import { resolveExternalId as googleDriveResolveExternalId } from './providers/google-drive/resolve-id'
+import { stopDriveChannel } from './providers/google-drive/watch'
+import { driveWebhookVerifier } from './providers/google-drive/webhooks'
+import { config as googleMeetConfig } from './providers/google-meet/config'
+import { resolveExternalId as googleMeetResolveExternalId } from './providers/google-meet/resolve-id'
+import { fanOutMeetEvent, setupMeetWatch, stopMeetWatch } from './providers/google-meet/watch'
+import {
+	extractMeetDeliveryId,
+	meetEventNormalizer,
+	meetWebhookVerifier,
+	resolveMeetInstallationId,
+} from './providers/google-meet/webhooks'
+import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
+import { startGscBackfill } from './providers/google-search-console/sync'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
+import { config as linkedinConfig } from './providers/linkedin-unipile/config'
+import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as resendConfig } from './providers/resend/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
@@ -33,6 +52,8 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+import { ubersuggestAuth } from './providers/ubersuggest/auth'
+import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -91,15 +112,99 @@ providers.set('gmail', {
 providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
-	preDisconnect: revokeGoogleCalendarGrant,
+})
+
+// google-drive — provider registration + connect/revoke path. Workspace-scoped
+// like Gmail / GCal / Meet (deliberately NOT in `actorScopedProviders`).
+// `postInstall` stores config.drive.peopleId and opens the changes.watch channel;
+// `preDisconnect` only stops the channel. It does not revoke the Google grant: that
+// grant is shared with other workspaces and Google providers (same as Calendar).
+// Deliveries do not go through the '/:provider' catch-all: webhookApp has a dedicated
+// POST /google-drive route (token check, channel-id join, dedup, fan-out in
+// google-drive/webhook-handler.ts), so no pre-handler or fan-out hook is set here.
+// The verifier below only keeps the catch-all closed if that route is ever removed.
+providers.set('google-drive', {
+	config: googleDriveConfig,
+	customWebhookVerifier: driveWebhookVerifier,
+	resolveExternalId: googleDriveResolveExternalId,
+	postInstall: setupDriveInstall,
+	preDisconnect: stopDriveChannel,
+})
+
+// google-meet — provider registration + Task 3 (read-path / async ingest) webhook
+// wiring. Wiring the provider:
+//  - lets `google-meet` appear in `GET /api/integrations/providers`,
+//  - exercises the generic OAuth machinery + `INTEGRATION_ENCRYPTION_KEY`
+//    decrypt path against a new Google provider (bet smokes S1 + S3),
+//  - lets the callback route persist `config.meet.peopleId` (S12 smoke),
+//  - keeps the row workspace-scoped like Gmail / GCal — Meet is deliberately
+//    NOT added to `actorScopedProviders` in `lib/integrations/lookup.ts`.
+// `postInstall` opens the Workspace Events subscription; the verifier +
+// normalizer + fan-out map Pub/Sub push deliveries to integration rows.
+providers.set('google-meet', {
+	config: googleMeetConfig,
+	customWebhookVerifier: meetWebhookVerifier,
+	customNormalizer: meetEventNormalizer,
+	resolveExternalId: googleMeetResolveExternalId,
+	resolveInstallationId: resolveMeetInstallationId,
+	extractDeliveryId: extractMeetDeliveryId,
+	postInstall: setupMeetWatch,
+	webhookFanOut: fanOutMeetEvent,
+	preDisconnect: stopMeetWatch,
+})
+
+// google-search-console — `postInstall` starts the detached 16-month backfill; the
+// daily delta sync runs from services/gsc-sync-scheduler.ts.
+providers.set('google-search-console', {
+	config: googleSearchConsoleConfig,
+	postInstall: startGscBackfill,
 })
 
 providers.set('posthog', {
 	config: posthogConfig,
 })
 
+// resend — bring-your-own integration for customer-domain email send+receive
+// (bet cf2bcc85). Deliberately no `extractDeliveryId` / `customWebhookVerifier`
+// / `customNormalizer` / `webhookFanOut` / `postInstall` / `preDisconnect` on
+// this entry — Resend deliveries land on a dedicated `webhookApp.post(
+// '/resend/:token', ...)` route (Task 3) that reads the per-row Svix secret
+// inline and dedupes on `data.email_id` from the payload. If anyone later
+// tries to route Resend through the `/:provider` catch-all, they will silently
+// lose dedup because there's no `extractDeliveryId` here — the config comment
+// spells the same warning out at the source of truth (spec §12.3).
+providers.set('resend', {
+	config: resendConfig,
+})
+
+providers.set('custom-mcp', {
+	config: customMcpConfig,
+})
+
 providers.set('skjald', {
 	config: skjaldConfig,
+})
+
+providers.set('ubersuggest', {
+	config: ubersuggestConfig,
+	customAuth: ubersuggestAuth,
+})
+
+// linkedin-unipile — the connect + callback flow is LinkedIn's Hosted Auth
+// Wizard, not OAuth2. The provider is registered here (so it appears in
+// GET /api/integrations/providers alongside the others) but the connect
+// route lives at apps/dev/src/routes/integrations-linkedin-unipile.ts and
+// is mounted BEFORE the generic /api/integrations route in app-factory.ts
+// so the specific prefix wins the trie. The generic connect handler must
+// NOT run for this provider — it would try to build an OAuth2 authorization
+// URL and fail.
+providers.set('linkedin-unipile', {
+	config: linkedinConfig,
+	// P3-B: symmetric disconnect. On disconnect, ask Unipile to delete the
+	// upstream account (best-effort; 404/5xx never block the local disconnect).
+	// Closes the recurring-cost leak from insight (3) "Unipile pile-up on
+	// disconnect". Same helper is exported for P3-H (reconnect-orphan cleanup).
+	preDisconnect: deleteUnipileAccountOnDisconnect,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ test.describe('Loop detail page', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/loops`)
-			await page.getByText('Customer feedback loop').click()
+			await page.getByText('Customer feedback loop', { exact: true }).click()
 
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops/${loop.id}`), {
 				timeout: 10000,
@@ -52,27 +52,129 @@ test.describe('Loop detail page', () => {
 			await expect(
 				page.getByText('Every customer who gives feedback hears back within 30 days').first(),
 			).toBeVisible()
-			// The four-sentence plain-language summary renders from the same loop.
-			await expect(page.getByTestId('loop-summary')).toContainText(
-				'Every customer who gives feedback hears back within 30 days',
-			)
-			// Scoped to the stat block — the plain-language summary above also
-			// contains "in progress" in prose form ("Right now N items are in
-			// progress."), which otherwise makes these locators ambiguous.
+			// Scoped to the stat block — the labels also read in prose elsewhere on
+			// the page, which otherwise makes these ambiguous.
 			const stats = page.getByTestId('loop-stats')
-			await expect(stats.getByText('in progress')).toBeVisible()
-			await expect(stats.getByText('closed')).toBeVisible()
-			await expect(stats.getByText('median to close')).toBeVisible()
+			await expect(stats.getByText('Cycles running')).toBeVisible()
+			await expect(stats.getByText('Closed this month')).toBeVisible()
+			await expect(stats.getByText('Median cycle time')).toBeVisible()
+			await expect(stats.getByText('Asks waiting')).toBeVisible()
+			await expect(stats.getByText('Next fire')).toBeVisible()
 			await expect(page.getByText('The loop, right now')).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
 			await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible()
-			await expect(
-				page.getByText('Normalises the Slack event into the shared source'),
-			).toBeVisible()
-			// T2 sections — latest activity and the changes log with undo.
-			await expect(page.getByRole('heading', { name: 'Latest activity' })).toBeVisible()
-			await expect(page.getByRole('heading', { name: 'Changes' })).toBeVisible()
-			await expect(page.getByRole('button', { name: /undo/i }).first()).toBeVisible()
+			// Step rows show the trigger's title, not its action prompt (#2777).
+			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
+			// The right-now note reads as one line: primitives · triggers on ·
+			// cycles (mockup 1891).
+			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
+			// The shared object timeline replaces the old loop-specific activity
+			// and changes sections — same Activity rule the object page carries.
+			await expect(page.getByText('Activity', { exact: true })).toBeVisible()
+			// The filter chips carry their count in the label — `All (3)`.
+			await expect(page.getByRole('button', { name: /^All \(\d+\)$/ })).toBeVisible()
+
+			// The composer is the last thing in the reader column — it sits below
+			// the timeline, not above the story. Compare document order rather
+			// than bounding boxes: the composer is `sticky bottom-0`, so while the
+			// timeline is below the fold its pinned y is the smaller number at
+			// every viewport where the page scrolls.
+			const composer = page.getByPlaceholder('Listening — speak in plain words')
+			const composerFollowsActivity = await composer.evaluate((node) => {
+				const activity = [...document.querySelectorAll('span')].find(
+					(el) => el.textContent?.trim() === 'Activity',
+				)
+				if (!activity) throw new Error('missing Activity label')
+				// DOCUMENT_POSITION_FOLLOWING — the composer comes after it.
+				return Boolean(activity.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
+			})
+			expect(composerFollowsActivity).toBe(true)
+
+			// A step row is the only route into a loop-owned trigger now that
+			// /triggers redirects.
+			await page.getByText('Triage feedback', { exact: true }).click()
+			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
+				timeout: 10000,
+			})
+		})
+
+		test(`pre-first-run banner reads in light and dark at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const agent = await account.api.createAgentActor('Relay')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			const loop = await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Brand new loop',
+				status: 'learning',
+			})
+			const trigger = await account.api.createTrigger(account.workspaceId, {
+				name: 'Nightly sweep',
+				type: 'cron',
+				action_prompt: 'Sweep the backlog',
+				target_actor_id: agent.id,
+				config: { expression: '0 3 * * *' },
+			})
+			await account.api.updateObject(loop.id, account.workspaceId, {
+				metadata: { trigger_ids: [trigger.id] },
+			})
+
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+
+			const banner = page.getByText(/Built from what you said — nothing has fired yet/)
+			await page.emulateMedia({ colorScheme: 'light' })
+			await expect(banner).toBeVisible({ timeout: 10000 })
+			await page.emulateMedia({ colorScheme: 'dark' })
+			await expect(banner).toBeVisible()
+			await expect(page.getByText(/The first cycle opens/)).toBeVisible()
+		})
+	}
+
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`title and description edit in place and persist at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const loop = await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Renewals loop',
+				status: 'learning',
+				content: 'Every renewal is reviewed before it lapses',
+			})
+
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+
+			// Title: click the heading, type, commit with Enter.
+			const heading = page.getByRole('heading', { name: 'Renewals loop' })
+			await expect(heading).toBeVisible({ timeout: 10000 })
+			await heading.click()
+			const titleField = page.getByLabel('Loop title')
+			await titleField.fill('Renewals loop v2')
+			await titleField.press('Enter')
+			await expect(page.getByRole('heading', { name: 'Renewals loop v2' })).toBeVisible()
+
+			// Description: click the rendered markdown, type, commit on blur.
+			await page.getByText('Every renewal is reviewed before it lapses').click()
+			const body = page.getByLabel('Description')
+			await expect(body).toBeVisible()
+			await body.fill('Every renewal is reviewed **two weeks** before it lapses')
+			await body.blur()
+			await expect(page.getByText('two weeks')).toBeVisible()
+
+			await page.reload()
+			await expect(page.getByRole('heading', { name: 'Renewals loop v2' })).toBeVisible({
+				timeout: 10000,
+			})
+			await expect(page.getByText('two weeks')).toBeVisible()
+
+			// The pre-v2 edit affordance is gone — the page itself is the editor.
+			await expect(page.getByRole('button', { name: 'Edit this loop' })).toHaveCount(0)
+			await expect(page.getByText('say what should change — no builder')).toHaveCount(0)
 		})
 	}
 
@@ -146,4 +248,44 @@ test.describe('Loop detail page', () => {
 		})
 		await expect(page).not.toHaveURL(new RegExp(`${account.workspaceId}/objects/${loop.id}`))
 	})
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`removes a loop and returns to the index @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const loop = await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Retire this loop',
+				status: 'learning',
+			})
+
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await expect(page.getByRole('heading', { name: 'Retire this loop' })).toBeVisible({
+				timeout: 10000,
+			})
+
+			// Delete is a destructive item inside the header dropdown, next to
+			// Pause/Resume. Exact — the app-shell also renders a "More ways to
+			// start" control that a substring match would also pick up.
+			await page.getByRole('button', { name: 'More', exact: true }).click()
+			await page.getByRole('menuitem', { name: 'Delete loop' }).click()
+
+			// Inline confirm mirrors PR #1667 — Cancel is a real escape hatch, the
+			// pill and dropdown come back afterwards.
+			await expect(page.getByText('Delete this loop?')).toBeVisible()
+			await page.getByRole('button', { name: 'Cancel' }).click()
+			await expect(page.getByTestId('loop-pill')).toBeVisible()
+
+			// Confirming actually removes the loop and lands back on the /loops
+			// index without it in the list.
+			await page.getByRole('button', { name: 'More', exact: true }).click()
+			await page.getByRole('menuitem', { name: 'Delete loop' }).click()
+			await page.getByRole('button', { name: 'Confirm' }).click()
+
+			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops/?$`), {
+				timeout: 15_000,
+			})
+			await expect(page.getByRole('link', { name: /Retire this loop/ })).toHaveCount(0)
+		})
+	}
 })

@@ -1,4 +1,6 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import React, { type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -10,9 +12,24 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-import { useConversationActivity } from '@/hooks/use-conversation-activity'
+const navigateMock = vi.fn()
+vi.mock('@tanstack/react-router', () => ({
+	Link: ({ children }: { children: ReactNode }) => children,
+	useNavigate: () => navigateMock,
+}))
+
+vi.mock('sonner', () => ({
+	toast: { error: vi.fn() },
+}))
+
+import {
+	useConversationActivity,
+	useSessionBudgetStopToast,
+} from '@/hooks/use-conversation-activity'
 import type { MessageResponse, SessionLogResponse, SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
+import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -61,6 +78,7 @@ function buildMessage(overrides: Partial<MessageResponse> & { id: number }): Mes
 		metadata: null,
 		sessionId: null,
 		createdAt: null,
+		editedAt: null,
 		...overrides,
 	}
 }
@@ -92,6 +110,13 @@ function toolUse(name: string) {
 
 function resultEnvelope() {
 	return JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done' })
+}
+
+function createWrapper() {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+	const wrapper = ({ children }: { children: ReactNode }) =>
+		React.createElement(QueryClientProvider, { client: queryClient }, children)
+	return { wrapper, queryClient }
 }
 
 beforeEach(() => {
@@ -202,6 +227,25 @@ describe('useConversationActivity', () => {
 		})
 	})
 
+	it('shows one live turn per session when untagged steps sit before the tagged turn', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
+		vi.mocked(api.sessions.logs).mockResolvedValue([
+			buildLog({ id: 1, content: toolUse('update_objects') }),
+			buildLog({ id: 2, content: taggedUserTurn(10, 'hi') }),
+			buildLog({ id: 3, content: toolUse('search_repositories') }),
+		])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(10)).toHaveLength(1)
+		expect(result.current.fallback).toEqual([])
+	})
+
 	it('does not add a fallback entry once the session goes idle with no in-progress turn', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
 		vi.mocked(api.sessions.logs).mockResolvedValue([
@@ -286,6 +330,34 @@ describe('useConversationActivity', () => {
 		])
 		// Logs are never fetched for a session that never ran.
 		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+
+	it('surfaces a user_stopped session as a neutral stopped turn, not a failure', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'user_stopped',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+				result: { exit_code: 143 },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+
+		const turn = result.current.byTriggerMessageId.get(10)?.[0]
+		expect(turn).toMatchObject({
+			sessionId: 'sess-1',
+			inProgress: false,
+			interrupted: true,
+			steps: [{ kind: 'error', text: 'Stopped — send another message (or retry) to continue.' }],
+		})
+		expect(turn?.failed).toBeUndefined()
 	})
 
 	it('shows nothing for a timed-out session that already replied — the 2h backstop is expected, not an error', async () => {
@@ -593,6 +665,94 @@ describe('useConversationActivity', () => {
 	})
 })
 
+function budgetFailureReason() {
+	return {
+		provider: 'maskin',
+		reason_code: 'plan_cap_exceeded',
+		human_message:
+			'Session stopped — usage exceeded the plan cap and no usage credits are available.',
+		http_status: null,
+		reset_at: null,
+		verbatim_output: null,
+	}
+}
+
+describe('useSessionBudgetStopToast', () => {
+	it('toasts the plan-limit message once a running session transitions to failed with plan_cap_exceeded', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValueOnce([
+			buildSession({ id: 'sess-1', status: 'running' }),
+		])
+		const { wrapper, queryClient } = createWrapper()
+		const queryKey = queryKeys.sessions.byConversation(workspaceId, conversationId)
+		renderHook(() => useSessionBudgetStopToast(workspaceId, conversationId), { wrapper })
+		// Wait for the *data* to land, not just for the queryFn to have been
+		// called — otherwise the cache mutation below can race the in-flight
+		// fetch and become the first (untoasted) observation of this session.
+		await waitFor(() =>
+			expect(queryClient.getQueryData(queryKey)).toMatchObject([{ status: 'running' }]),
+		)
+		expect(toast.error).not.toHaveBeenCalled()
+
+		act(() => {
+			queryClient.setQueryData(queryKey, [
+				buildSession({
+					id: 'sess-1',
+					status: 'failed',
+					result: { exit_code: 143, failure_reason: budgetFailureReason() },
+				}),
+			])
+		})
+
+		await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
+		expect(toast.error).toHaveBeenCalledWith(
+			'Plan limit reached — buy usage credits or upgrade to keep going',
+			expect.objectContaining({ action: expect.objectContaining({ label: 'Go to Billing' }) }),
+		)
+	})
+
+	it('does not toast for a session that was already failed on first load', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValueOnce([
+			buildSession({
+				id: 'sess-1',
+				status: 'failed',
+				result: { exit_code: 143, failure_reason: budgetFailureReason() },
+			}),
+		])
+		const { wrapper } = createWrapper()
+		renderHook(() => useSessionBudgetStopToast(workspaceId, conversationId), { wrapper })
+		await waitFor(() => expect(api.sessions.list).toHaveBeenCalledTimes(1))
+
+		expect(toast.error).not.toHaveBeenCalled()
+	})
+
+	it('does not toast a running-to-failed transition for an unrelated failure reason', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValueOnce([
+			buildSession({ id: 'sess-1', status: 'running' }),
+		])
+		const { wrapper, queryClient } = createWrapper()
+		const queryKey = queryKeys.sessions.byConversation(workspaceId, conversationId)
+		renderHook(() => useSessionBudgetStopToast(workspaceId, conversationId), { wrapper })
+		await waitFor(() =>
+			expect(queryClient.getQueryData(queryKey)).toMatchObject([{ status: 'running' }]),
+		)
+
+		act(() => {
+			queryClient.setQueryData(queryKey, [
+				buildSession({
+					id: 'sess-1',
+					status: 'failed',
+					result: { error: 'Claude credentials not connected' },
+				}),
+			])
+		})
+		await waitFor(() =>
+			expect(queryClient.getQueryData(queryKey)).toMatchObject([{ status: 'failed' }]),
+		)
+
+		expect(toast.error).not.toHaveBeenCalled()
+	})
+})
+
 describe('useConversationActivity — auto-posted final output', () => {
 	const sessionId = 'session-final'
 	const startedAt = new Date(1000).toISOString()
@@ -632,6 +792,76 @@ describe('useConversationActivity — auto-posted final output', () => {
 		const pending = turnsFor(result).find((t) => t.pendingFinalOutput)?.pendingFinalOutput
 		expect(pending?.text).toBe('Here is the answer.')
 		expect(pending?.isError).toBe(false)
+	})
+
+	it('does not render a failed turn raw error envelope as the agent reply', async () => {
+		// The backend is either replaying this turn (2s, then 8s) or about to
+		// post a written explanation. Showing the raw envelope in the meantime
+		// puts `API Error: {...}` in the chat as the answer — the exact blob
+		// this feature exists to keep out.
+		const { result } = setup(
+			[buildMessage({ id: 1, content: 'hi' })],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'hi') }),
+				buildLog({
+					id: 2,
+					content: JSON.stringify({
+						type: 'result',
+						is_error: true,
+						result: 'API Error: {"type":"error","error":{"type":"api_error"}}',
+					}),
+				}),
+			],
+		)
+
+		await waitFor(() => expect(turnsFor(result).length).toBeGreaterThan(0))
+		expect(turnsFor(result).every((t) => !t.pendingFinalOutput)).toBe(true)
+	})
+
+	it('keeps pairing later turns after an unanswered-replay notice', async () => {
+		// The notice has no `result` envelope behind it — the replayed turn
+		// never closed. Counting it would leave persistedFinalCount one ahead
+		// and silently stop every later turn's text from rendering.
+		const { result } = setup(
+			[
+				buildMessage({ id: 1, content: 'hi' }),
+				buildMessage({
+					id: 2,
+					actorId: 'agent-1',
+					actorType: 'agent',
+					content: 'the run never came back',
+					metadata: {
+						source: 'final_output',
+						final_output: { dedupe_key: 'abc-unanswered', retry: 'unanswered' },
+					},
+					sessionId,
+				}),
+				buildMessage({ id: 3, content: 'again' }),
+			],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'hi') }),
+				// The failed envelope was retracted by the replay, so this turn
+				// contributes no result segment — matching the notice above.
+				buildLog({
+					id: 2,
+					content: JSON.stringify({ type: 'result', is_error: true, result: 'API Error: {}' }),
+				}),
+				buildLog({
+					id: 3,
+					content: JSON.stringify({
+						type: 'user',
+						message: { role: 'user', content: 'hi' },
+						maskin_retry: true,
+					}),
+				}),
+				buildLog({ id: 4, content: taggedUserTurn(3, 'again') }),
+				buildLog({ id: 5, content: finalResult('The later answer.') }),
+			],
+		)
+
+		await waitFor(() => expect(turnsFor(result).some((t) => t.pendingFinalOutput)).toBe(true))
+		const texts = turnsFor(result).map((t) => t.pendingFinalOutput?.text)
+		expect(texts).toContain('The later answer.')
 	})
 
 	it('drops the pending output once the persisted message arrives', async () => {
@@ -752,7 +982,7 @@ describe('useConversationActivity — auto-posted final output', () => {
 		// the trail sits directly above the answer it explains.
 		await waitFor(() => expect(result.current.byReplyMessageId.has(2)).toBe(true))
 		const turn = result.current.byReplyMessageId.get(2)?.[0]
-		expect(turn?.steps.map((s) => s.text)).toEqual(['Using search_objects'])
+		expect(turn?.steps.map((s) => s.text)).toEqual(['Search objects'])
 		expect(turn?.pendingFinalOutput).toBeUndefined()
 	})
 
@@ -824,5 +1054,143 @@ describe('useConversationActivity — auto-posted final output', () => {
 
 		result.current.loadOlderActivity()
 		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
+	})
+})
+
+describe('useConversationActivity — one session per agent and thread', () => {
+	const mainSession = buildSession({ id: 'sess-main', threadRootId: null })
+	const threadSession = buildSession({ id: 'sess-thread', threadRootId: 20 })
+
+	// Both sessions belong to agent-1; each is mid-turn on a different message.
+	function mockMainAndThreadSessions() {
+		vi.mocked(api.sessions.list).mockResolvedValue([threadSession, mainSession])
+		vi.mocked(api.sessions.logs).mockImplementation(async (id: string) =>
+			id === 'sess-thread'
+				? [
+						buildLog({ id: 1, sessionId: id, content: taggedUserTurn(21, 'in the thread') }),
+						buildLog({ id: 2, sessionId: id, content: toolUse('search_objects') }),
+					]
+				: [
+						buildLog({ id: 3, sessionId: id, content: taggedUserTurn(30, 'in the main chat') }),
+						buildLog({ id: 4, sessionId: id, content: toolUse('search_objects') }),
+					],
+		)
+	}
+
+	const messages = [
+		buildMessage({ id: 20, actorId: 'human-1', content: 'thread root' }),
+		buildMessage({ id: 21, actorId: 'human-1', content: 'in the thread', threadRootId: 20 }),
+		buildMessage({ id: 30, actorId: 'human-1', content: 'in the main chat' }),
+	]
+
+	it('keeps both sessions of one agent, each live turn with its own session and thread', async () => {
+		mockMainAndThreadSessions()
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(30)).toBeDefined())
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(21)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(21)).toMatchObject([
+			{ sessionId: 'sess-thread', threadRootId: 20, inProgress: true },
+		])
+		expect(result.current.byTriggerMessageId.get(30)).toMatchObject([
+			{ sessionId: 'sess-main', threadRootId: null, inProgress: true },
+		])
+	})
+
+	it('the main chat shows only the main session, so Stop there targets the main session', async () => {
+		mockMainAndThreadSessions()
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages, { threadRootId: null }),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(30)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(30)?.map((t) => t.sessionId)).toEqual([
+			'sess-main',
+		])
+		expect(result.current.byTriggerMessageId.get(21)).toBeUndefined()
+		expect(api.sessions.logs).not.toHaveBeenCalledWith(
+			'sess-thread',
+			workspaceId,
+			expect.anything(),
+		)
+	})
+
+	it("a thread shows only its own session's turn, not the main session's", async () => {
+		mockMainAndThreadSessions()
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages, { threadRootId: 20 }),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(21)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(21)?.map((t) => t.sessionId)).toEqual([
+			'sess-thread',
+		])
+		expect(result.current.byTriggerMessageId.get(30)).toBeUndefined()
+		expect(api.sessions.logs).not.toHaveBeenCalledWith('sess-main', workspaceId, expect.anything())
+	})
+
+	it("does not pair a thread reply with the main session's turn, or the other way round", async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([threadSession, mainSession])
+		vi.mocked(api.sessions.logs).mockImplementation(async (id: string) =>
+			id === 'sess-thread'
+				? [
+						buildLog({ id: 1, sessionId: id, content: taggedUserTurn(21, 'in the thread') }),
+						buildLog({ id: 2, sessionId: id, content: replyTool() }),
+						buildLog({ id: 3, sessionId: id, content: resultEnvelope() }),
+					]
+				: [
+						buildLog({ id: 4, sessionId: id, content: taggedUserTurn(30, 'in the main chat') }),
+						buildLog({ id: 5, sessionId: id, content: replyTool() }),
+						buildLog({ id: 6, sessionId: id, content: resultEnvelope() }),
+					],
+		)
+		const withReplies = [
+			...messages,
+			buildMessage({ id: 22, actorId: 'agent-1', content: 'thread answer', threadRootId: 20 }),
+			buildMessage({ id: 31, actorId: 'agent-1', content: 'main answer' }),
+		]
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, withReplies),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byReplyMessageId.get(22)).toBeDefined())
+		await waitFor(() => expect(result.current.byReplyMessageId.get(31)).toBeDefined())
+
+		expect(result.current.byReplyMessageId.get(22)?.map((t) => t.sessionId)).toEqual([
+			'sess-thread',
+		])
+		expect(result.current.byReplyMessageId.get(31)?.map((t) => t.sessionId)).toEqual(['sess-main'])
+	})
+
+	it("routes a thread session's untagged first moments to fallback, marked with its thread", async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([threadSession, mainSession])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages, { threadRootId: 20 }),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.fallback).toHaveLength(1))
+
+		expect(result.current.fallback[0]).toMatchObject({ sessionId: 'sess-thread', threadRootId: 20 })
+	})
+
+	it('a thread whose agent has no session of its own still reads its main session, as before', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([mainSession])
+		vi.mocked(api.sessions.logs).mockResolvedValue([
+			buildLog({ id: 1, content: taggedUserTurn(21, 'in the thread') }),
+			buildLog({ id: 2, content: toolUse('search_objects') }),
+		])
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages, { threadRootId: 20 }),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(21)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(21)).toMatchObject([{ sessionId: 'sess-main' }])
 	})
 })

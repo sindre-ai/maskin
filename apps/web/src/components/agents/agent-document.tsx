@@ -1,4 +1,5 @@
 import { ForkDialog } from '@/components/marketplace/fork-dialog'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
@@ -20,6 +21,7 @@ import {
 	useResetActor,
 	useUpdateActor,
 } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
@@ -30,9 +32,11 @@ import {
 	useSessionErrorLog,
 	useSessionLogs,
 } from '@/hooks/use-sessions'
+import { ApiError } from '@/lib/api'
 import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
+import { toastSessionCreateError } from '@/lib/session-errors'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -57,7 +61,6 @@ import { TypeBadge } from '../shared/type-badge'
 import { AgentAvatarUpload } from './agent-avatar-upload'
 import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
-import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
@@ -76,7 +79,6 @@ interface AgentDocumentViewProps {
 	onUpdateSystemPrompt: (systemPrompt: string) => void
 	onUpdateLlmProvider: (provider: string) => void
 	onUpdateLlmConfig: (config: Record<string, unknown>) => void
-	onUpdateTools: (tools: Record<string, unknown>) => void
 	onUpdateMemory: (memory: Record<string, unknown>) => void
 	onRun: () => void
 	onPause: () => void
@@ -120,7 +122,6 @@ export function AgentDocumentView({
 	onUpdateSystemPrompt,
 	onUpdateLlmProvider,
 	onUpdateLlmConfig,
-	onUpdateTools,
 	onUpdateMemory,
 	onRun,
 	onPause,
@@ -422,16 +423,11 @@ export function AgentDocumentView({
 									value={modelDraft}
 									onChange={(e) => !isManaged && setModelDraft(e.target.value)}
 									onBlur={isManaged ? undefined : handleModelBlur}
-									placeholder="e.g. claude-opus-4-7"
+									placeholder="e.g. claude-sonnet-5-5"
 									readOnly={isManaged}
 								/>
 							</div>
 						</div>
-					</Section>
-
-					{/* MCP Servers */}
-					<Section title="MCP Servers">
-						<McpServers tools={agent.tools} onUpdate={onUpdateTools} readOnly={isManaged} />
 					</Section>
 
 					{/* Skills */}
@@ -589,6 +585,8 @@ function SessionRow({
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
 	const [showError, setShowError] = useState(false)
 	const createSession = useCreateSession(workspaceId)
+	const canWrite = useCanWrite()
+	const navigate = useNavigate()
 
 	const result = session.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
@@ -645,20 +643,25 @@ function SessionRow({
 						>
 							{showError ? 'Hide' : 'Error'}
 						</button>
-						<button
-							type="button"
-							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
-							onClick={(e) => {
-								e.stopPropagation()
-								createSession.mutate({
-									actor_id: agentId,
-									action_prompt: session.actionPrompt,
-								})
-							}}
-							disabled={createSession.isPending}
-						>
-							{createSession.isPending ? 'Restarting…' : 'Restart'}
-						</button>
+						<ViewerTooltip>
+							<button
+								type="button"
+								className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
+								onClick={(e) => {
+									e.stopPropagation()
+									createSession.mutate(
+										{
+											actor_id: agentId,
+											action_prompt: session.actionPrompt,
+										},
+										{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
+									)
+								}}
+								disabled={createSession.isPending || !canWrite}
+							>
+								{createSession.isPending ? 'Restarting…' : 'Restart'}
+							</button>
+						</ViewerTooltip>
 					</>
 				)}
 				{duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
@@ -832,16 +835,19 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 
 	const handleUpdateLlmConfig = useCallback(
 		(llm_config: Record<string, unknown>) => {
-			updateActor.mutate({ id: agent.id, data: { llm_config } })
+			updateActor.mutate(
+				{ id: agent.id, data: { llm_config } },
+				{
+					onError: (err) =>
+						toast.error(
+							err instanceof ApiError && err.status === 403
+								? err.message
+								: `Couldn't save model settings for ${agent.name}`,
+						),
+				},
+			)
 		},
-		[agent.id, updateActor],
-	)
-
-	const handleUpdateTools = useCallback(
-		(tools: Record<string, unknown>) => {
-			updateActor.mutate({ id: agent.id, data: { tools } })
-		},
-		[agent.id, updateActor],
+		[agent.id, agent.name, updateActor],
 	)
 
 	const handleUpdateMemory = useCallback(
@@ -868,12 +874,11 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onUpdateSystemPrompt={handleUpdateSystemPrompt}
 				onUpdateLlmProvider={handleUpdateLlmProvider}
 				onUpdateLlmConfig={handleUpdateLlmConfig}
-				onUpdateTools={handleUpdateTools}
 				onUpdateMemory={handleUpdateMemory}
 				onRun={() =>
 					run.mutate(
 						{ id: agent.id },
-						{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
+						{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
 					)
 				}
 				onNewConversation={() =>

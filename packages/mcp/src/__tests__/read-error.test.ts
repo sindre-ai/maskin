@@ -361,3 +361,58 @@ describe('read-side handler error envelopes (T2 DoD)', () => {
 		expect(err?.next.tool).toBe('list_workspaces')
 	})
 })
+
+describe('provider_terminal — codes that must never be retried', () => {
+	function errWithCode(status: number, code: string): Error {
+		const err = new Error(`API error ${status}: upstream said no`)
+		;(err as Error & { apiErrorCode?: string }).apiErrorCode = code
+		return err
+	}
+
+	// Regression: apiFetch dropped the backend's `error.code`, and 423/424 match
+	// no status branch, so both of these classified as 'unknown' — whose guidance
+	// says "Retry once." For a restricted LinkedIn account that is the one action
+	// the error taxonomy explicitly forbids, because retrying deepens the
+	// upstream restriction.
+	it('classifies a restricted account as provider_terminal, not unknown', () => {
+		expect(classifyReadError(errWithCode(423, 'LINKEDIN_ACCOUNT_RESTRICTED'))).toBe(
+			'provider_terminal',
+		)
+	})
+
+	it('classifies a missing credential as provider_terminal', () => {
+		expect(classifyReadError(errWithCode(424, 'CREDENTIAL_NOT_CONNECTED'))).toBe(
+			'provider_terminal',
+		)
+	})
+
+	it('classifies a revoked credential as provider_terminal', () => {
+		expect(classifyReadError(errWithCode(401, 'CREDENTIAL_REVOKED'))).toBe('provider_terminal')
+	})
+
+	it('falls back to the status when no code is attached', () => {
+		expect(classifyReadError(new Error('API error 423: restricted'))).toBe('provider_terminal')
+		expect(classifyReadError(new Error('API error 424: not connected'))).toBe('provider_terminal')
+	})
+
+	it('never advises a retry for a provider_terminal error', () => {
+		for (const tool of ['create_object', 'update_object', 'unknown_tool']) {
+			const next = pickNext(tool, 'provider_terminal')
+			expect(next.hint).toMatch(/do not retry/i)
+			expect(next.hint).not.toMatch(/retry (the same call|once)/i)
+		}
+	})
+
+	// LinkedIn's tools moved to the provider's own MCP server, but its six-class
+	// codes still arrive here as upstream errors carrying an HTTP status, so the
+	// classification must keep handling them.
+	it('builds a full envelope for a restricted account', () => {
+		const body = buildReadErrorBody(
+			'create_object',
+			errWithCode(423, 'LINKEDIN_ACCOUNT_RESTRICTED'),
+		)
+		expect(body.error.tool).toBe('create_object')
+		expect(body.error.reason).toMatch(/connection unavailable/i)
+		expect(body.error.next.hint).toMatch(/do not retry/i)
+	})
+})

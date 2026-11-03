@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
 import { X } from 'lucide-react'
@@ -11,6 +12,7 @@ export function MetadataBadgesView({
 	object: ObjectResponse
 	onRemove?: (key: string) => void
 }) {
+	const canWrite = useCanWrite()
 	const metadata = object.metadata
 	if (!metadata) return null
 
@@ -28,8 +30,10 @@ export function MetadataBadgesView({
 							variant="ghost"
 							size="icon"
 							className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity ml-0.5"
+							disabled={!canWrite}
 							onClick={() => onRemove(key)}
-							title="Remove field"
+							title={`Remove ${key} field`}
+							aria-label={`Remove ${key} field`}
 						>
 							<X className="h-3 w-3" />
 						</Button>
@@ -58,7 +62,7 @@ export function MetadataBadges({
 	return <MetadataBadgesView object={object} onRemove={handleRemove} />
 }
 
-function formatValue(value: unknown): string {
+export function formatValue(value: unknown): string {
 	if (value === null || value === undefined) return ''
 	if (typeof value === 'boolean') return value ? 'Yes' : 'No'
 	if (value instanceof Date || (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value))) {

@@ -1,34 +1,103 @@
 import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
-	events,
+	type AgentGrantAccess,
 	actors,
+	agentChatGrants,
+	agentGrants,
+	extensions,
 	integrations,
 	webhookDeliveries,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
+import {
+	NATIVE_OAUTH_RETURN_URLS,
+	type NativeOAuthOutcome,
+	buildNativeOAuthReturnUrl,
+	parseNativeOAuthReturnUrl,
+	skjaldOutcomePayloadSchema,
+	skjaldTranscriptionCompletedPayloadSchema,
+	webhookConfigSchema,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import type { Context } from 'hono'
+import { getCookie, setCookie } from 'hono/cookie'
+import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
-import { isAuthRevokedError } from '../lib/integrations/errors'
+import { recordEvent } from '../lib/events/record-event'
+import { requireCredentials } from '../lib/integrations/credential-column'
+import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
+import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
+import { getEnvOrThrow } from '../lib/integrations/env'
+import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
+import {
+	allowWebhookRequest,
+	deliveryEntityId,
+	extensionProvider,
+	isStaleDelivery,
+	mapWebhookEvent,
+	verifyExtensionSignature,
+} from '../lib/integrations/extensions'
+import { ensureExtensionSystemActor, readExtensionSecret } from '../lib/integrations/extensions-db'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
+import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
+import { decodeLaunchTicket, encodeLaunchTicket } from '../lib/integrations/oauth/native-launch'
+import { resolveOrigin } from '../lib/integrations/oauth/origins'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
+import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
+import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import {
 	DiscoveryError,
+	NoGithubInstallationsError,
+	UnauthorizedGithubInstallationError,
+	type UserInstallation,
+	buildAppInstallUrl,
 	fetchInstallationOwnerLogin,
 	mintInstallationTokenWithRecovery,
 } from '../lib/integrations/providers/github/auth'
-import { persistRecoveredInstallationId } from '../lib/integrations/providers/github/installation-recovery'
-import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
+import {
+	persistRecoveredInstallationId,
+	propagateRecoveredInstallationId,
+} from '../lib/integrations/providers/github/installation-recovery'
+import { GOOGLE_DRIVE_PROVIDER } from '../lib/integrations/providers/google-drive/token'
+import {
+	type DriveIntegrationConfig,
+	carriedDriveConfig,
+} from '../lib/integrations/providers/google-drive/watch'
+import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
+import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
+import {
+	isSubdomainName,
+	isValidHostname,
+	precheckResendDomain,
+} from '../lib/integrations/providers/resend/dns-precheck'
+import {
+	DomainAlreadyClaimedError,
+	DomainRegisterError,
+	type ResendDomainListPage,
+	adoptResendDomain,
+	findResendDomainByName,
+	registerResendDomain,
+} from '../lib/integrations/providers/resend/domain-register'
+import {
+	type ResendEmailReceived,
+	resendEmailReceivedSchema,
+} from '../lib/integrations/providers/resend/schemas'
+import { verifyResendSvix } from '../lib/integrations/providers/resend/svix'
+import {
+	upsertSkjaldMeeting,
+	upsertSkjaldOutcomeMeeting,
+} from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
 	dispatchMaskinWorkspaceCommand,
@@ -54,6 +123,7 @@ import {
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
 import { getProvider, listProviders } from '../lib/integrations/registry'
+import { integrationScopeGaps, parseScopes } from '../lib/integrations/scope-drift'
 import type {
 	NormalizedEvent,
 	ResolvedProvider,
@@ -70,13 +140,17 @@ import {
 	providerInfoSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
-import { serializeArray } from '../lib/serialize'
+import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
+import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { type ResendDomainGetResponse, mapTopStatus } from '../services/resend-domain-verifier'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		storageProvider: StorageProvider
@@ -85,7 +159,7 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-// ── GET /api/integrations ──────────────────────────────────────────────────
+// ── GET /api/integrations ────────────────────────────────────────
 
 const listIntegrationsRoute = createRoute({
 	method: 'get',
@@ -112,16 +186,81 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		.from(integrations)
 		.where(eq(integrations.workspaceId, workspaceId))
 
+	const grantRows = await db
+		.select({
+			integrationId: agentGrants.integrationId,
+			actorId: agentGrants.actorId,
+			access: agentGrants.access,
+		})
+		.from(agentGrants)
+		.where(eq(agentGrants.workspaceId, workspaceId))
+	const chatRows = await db
+		.select({
+			integrationId: agentChatGrants.integrationId,
+			actorId: agentChatGrants.actorId,
+			conversationId: agentChatGrants.conversationId,
+		})
+		.from(agentChatGrants)
+		.where(eq(agentChatGrants.workspaceId, workspaceId))
+	const chatsByIntegration = new Map<string, { actorId: string; conversationId: string }[]>()
+	for (const g of chatRows) {
+		const list = chatsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, conversationId: g.conversationId })
+		chatsByIntegration.set(g.integrationId, list)
+	}
+	const grantsByIntegration = new Map<string, { actorId: string; access: AgentGrantAccess }[]>()
+	for (const g of grantRows) {
+		const list = grantsByIntegration.get(g.integrationId) ?? []
+		list.push({ actorId: g.actorId, access: g.access })
+		grantsByIntegration.set(g.integrationId, list)
+	}
+
 	// Never expose credentials
 	const safe = results.map((r) => {
-		const { credentials, ...rest } = r
-		return rest
+		// dekCiphertext is the wrapped data key: ciphertext, but it has no
+		// business leaving the server.
+		const { credentials, dekCiphertext: _dekCiphertext, ...rest } = r
+
+		// Flag installs whose token predates a scope the provider now requires.
+		// Only the scope NAMES leave this function — the decrypted blob does not.
+		// Best-effort throughout: a provider we no longer register, an
+		// undecryptable blob (almost always an encryption-key rotation) or an
+		// inactive row must never take the whole integrations list down.
+		let missingScopes: string[] = []
+		let grantedScopes: string[] = []
+		// OAuth scopes only mean something for a registered provider; a saved key or login has none.
+		if (rest.status === 'active' && credentials && rest.providerMode === 'registered') {
+			try {
+				const provider = getProvider(rest.provider)
+				if (provider) {
+					const parsed = JSON.parse(decrypt(credentials as string)) as StoredCredentials
+					missingScopes = integrationScopeGaps(provider.config, parsed).missing
+					grantedScopes = typeof parsed.scope === 'string' ? [...parseScopes(parsed.scope)] : []
+				}
+			} catch (err) {
+				logger.warn('Could not evaluate integration scope drift', {
+					workspaceId,
+					integrationId: rest.id,
+					provider: rest.provider,
+					error: String(err),
+				})
+			}
+		}
+
+		return {
+			...rest,
+			missingScopes,
+			needsReconnect: missingScopes.length > 0,
+			grantedScopes,
+			agentGrants: grantsByIntegration.get(rest.id) ?? [],
+			chatGrants: chatsByIntegration.get(rest.id) ?? [],
+		}
 	})
 
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])
 }) as RouteHandler<typeof listIntegrationsRoute, Env>)
 
-// ── GET /api/integrations/providers ────────────────────────────────────────
+// ── GET /api/integrations/providers ────────────────────────────────
 
 const listProvidersRoute = createRoute({
 	method: 'get',
@@ -137,24 +276,585 @@ const listProvidersRoute = createRoute({
 })
 
 app.openapi(listProvidersRoute, (async (c) => {
-	const providers = listProviders().map((p) => ({
-		name: p.config.name,
-		displayName: p.config.displayName,
-		authType: p.config.auth.type,
-		events: p.config.events?.definitions ?? [],
-		externalIdDisplay: p.config.externalIdDisplay,
-	}))
+	const providers = listProviders()
+		.filter((p) => p.config.name !== CUSTOM_MCP_PROVIDER)
+		.map((p) => ({
+			name: p.config.name,
+			displayName: p.config.displayName,
+			authType: p.config.auth.type,
+			events: p.config.events?.definitions ?? [],
+			externalIdDisplay: p.config.externalIdDisplay,
+			// Serve the MCP surface so clients that aren't the web UI can discover
+			// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
+			// provider with autoInject=false is otherwise undiscoverable and reads
+			// as "OAuth connected, zero tools" with nothing explaining the gap.
+			...(p.config.mcp && {
+				mcp: {
+					envKey: p.config.mcp.envKey,
+					autoInject: p.config.mcp.autoInject ?? false,
+					...(p.config.mcp.server && { server: p.config.mcp.server }),
+				},
+			}),
+		}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
 }) as RouteHandler<typeof listProvidersRoute, Env>)
+
+// ── GitHub: bind an existing App installation to another workspace ─────────
+//
+// GitHub installs its App once per org. Hitting "Connect" from a second
+// workspace bounces the user to the existing installation's configure page and
+// never fires our callback with an `installation_id`, so that workspace could
+// never get a row. Everything downstream is already per-row and multi-workspace
+// safe — the webhook route fans out to every active integration matching the
+// installation id, and each row mints its own token — so the second workspace
+// doesn't need to talk to GitHub at all. It binds to the installation the
+// caller can already reach from one of their other workspaces.
+
+const GITHUB_INSTALLATION_ID_RE = /^\d+$/
+
+/**
+ * Bind a GitHub App installation to a workspace: provision the provider's
+ * system actor into that workspace, then upsert the integration row active and
+ * write the audit event.
+ *
+ * Shared by the two paths that can produce a binding without an install
+ * callback — `POST /github/link` (copy a row from a workspace the caller
+ * belongs to) and `POST /github/select-installation` (the caller proved GitHub
+ * org membership via user authorization). Both end in exactly the same row
+ * shape, so the upsert lives here rather than being written twice.
+ */
+async function bindGithubInstallation(opts: {
+	db: Database
+	workspaceId: string
+	actorId: string
+	installationId: string
+	ownerLogin?: string
+	credentials: StoredCredentials
+	/** Recorded on the audit event so the two paths stay distinguishable. */
+	reason: string
+	sourceWorkspaceId?: string
+}): Promise<typeof integrations.$inferSelect | null> {
+	const { db, workspaceId, actorId, installationId, ownerLogin, credentials, reason } = opts
+
+	// Same system actor the OAuth callback provisions, scoped into this
+	// workspace. Deliberately re-derived rather than copied from any source row —
+	// each workspace owns its own membership.
+	const systemActorName = getProvider('github').config.displayName
+	let [systemActor] = await db
+		.select()
+		.from(actors)
+		.where(and(eq(actors.type, 'system'), eq(actors.name, systemActorName)))
+		.limit(1)
+
+	if (!systemActor) {
+		const [newActor] = await db
+			.insert(actors)
+			.values({
+				type: 'system',
+				name: systemActorName,
+				createdBy: actorId,
+			})
+			.returning()
+		if (!newActor) return null
+		systemActor = newActor
+	}
+
+	const [existingMember] = await db
+		.select()
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(workspaceMembers.actorId, systemActor.id),
+			),
+		)
+		.limit(1)
+
+	if (!existingMember) {
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: systemActor.id,
+			role: 'system',
+		})
+	}
+
+	const encryptedCredentials = encrypt(JSON.stringify(credentials))
+	const config: IntegrationConfig = { system_actor_id: systemActor.id }
+	if (ownerLogin) config.owner_login = ownerLogin
+
+	// A prior row for the same installation in this workspace — active, or
+	// revoked by an earlier disconnect — would trip the partial unique index on
+	// (workspace_id, provider, external_id), so refresh in place instead. Same
+	// shape the OAuth callback uses for re-connects.
+	const [existing] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.externalId, installationId),
+			),
+		)
+		.limit(1)
+
+	const [row] = existing
+		? await db
+				.update(integrations)
+				.set({
+					status: 'active',
+					credentials: encryptedCredentials,
+					config,
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, existing.id))
+				.returning()
+		: await db
+				.insert(integrations)
+				.values({
+					workspaceId,
+					provider: 'github',
+					status: 'active',
+					externalId: installationId,
+					credentials: encryptedCredentials,
+					config,
+					createdBy: actorId,
+				})
+				.returning()
+
+	if (!row) return null
+
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: existing ? 'updated' : 'created',
+		entityType: 'integration',
+		entityId: row.id,
+		data: {
+			provider: 'github',
+			external_id: installationId,
+			...(ownerLogin ? { owner_login: ownerLogin } : {}),
+			reason,
+			...(opts.sourceWorkspaceId ? { source_workspace_id: opts.sourceWorkspaceId } : {}),
+		},
+	})
+
+	return row
+}
+
+const linkableInstallationSchema = z.object({
+	installationId: z.string(),
+	ownerLogin: z.string().nullable(),
+	alreadyLinked: z.boolean(),
+})
+
+const listLinkableRoute = createRoute({
+	method: 'get',
+	path: '/github/linkable',
+	tags: ['integrations'],
+	summary: 'List GitHub installations this actor can bind to the workspace',
+	request: {
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Installations visible to the caller from their own workspaces',
+			content: { 'application/json': { schema: z.array(linkableInstallationSchema) } },
+		},
+	},
+})
+
+/** Active GitHub rows in workspaces the actor belongs to. This is the
+ *  authorization boundary for linking: an actor may only bind an installation
+ *  they can already reach. */
+async function listVisibleGithubInstallations(db: Database, actorId: string) {
+	return await db
+		.select({
+			externalId: integrations.externalId,
+			workspaceId: integrations.workspaceId,
+			credentials: integrations.credentials,
+			config: integrations.config,
+		})
+		.from(integrations)
+		.innerJoin(workspaceMembers, eq(workspaceMembers.workspaceId, integrations.workspaceId))
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.status, 'active'),
+				isNotNull(integrations.externalId),
+			),
+		)
+}
+
+app.openapi(listLinkableRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const visible = await listVisibleGithubInstallations(db, actorId)
+
+	// One entry per installation, not per row: the same org reached from three
+	// workspaces is still one thing the user can add here.
+	const byInstallation = new Map<string, z.infer<typeof linkableInstallationSchema>>()
+	for (const row of visible) {
+		const installationId = row.externalId
+		if (!installationId) continue
+		const ownerLogin = (row.config as IntegrationConfig)?.owner_login ?? null
+		const alreadyLinked = row.workspaceId === workspaceId
+		const existing = byInstallation.get(installationId)
+		if (existing) {
+			existing.alreadyLinked = existing.alreadyLinked || alreadyLinked
+			existing.ownerLogin = existing.ownerLogin ?? ownerLogin
+			continue
+		}
+		byInstallation.set(installationId, { installationId, ownerLogin, alreadyLinked })
+	}
+
+	return c.json([...byInstallation.values()])
+}) as RouteHandler<typeof listLinkableRoute, Env>)
+
+const linkInstallationRoute = createRoute({
+	method: 'post',
+	path: '/github/link',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Bind an existing GitHub App installation to this workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ installation_id: z.string().min(1) }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Installation bound to the workspace',
+			content: { 'application/json': { schema: integrationResponseSchema } },
+		},
+		400: {
+			description: 'Invalid installation id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No installation with that id is visible to this actor',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(linkInstallationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { installation_id: installationId } = c.req.valid('json')
+
+	if (!GITHUB_INSTALLATION_ID_RE.test(installationId)) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'installation_id must be a numeric GitHub installation id'),
+			400,
+		)
+	}
+
+	// Authorization: the caller must already reach this installation from a
+	// workspace they belong to. Without this check any actor could bind
+	// themselves to any org's installation by guessing a small integer.
+	const visible = await listVisibleGithubInstallations(db, actorId)
+	const source = visible.find((row) => row.externalId === installationId)
+	if (!source) {
+		return c.json(
+			createApiError(
+				'NOT_FOUND',
+				'No GitHub installation with that id is connected to any of your workspaces',
+			),
+			404,
+		)
+	}
+
+	// Re-encrypt rather than copying the source ciphertext, so the rows stay
+	// independent if credential storage ever becomes per-row keyed.
+	const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(source)))
+	const ownerLogin = (source.config as IntegrationConfig)?.owner_login
+
+	const row = await bindGithubInstallation({
+		db,
+		workspaceId,
+		actorId,
+		installationId,
+		ownerLogin,
+		credentials,
+		reason: 'linked_existing_installation',
+		sourceWorkspaceId: source.workspaceId,
+	})
+
+	if (!row) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to link GitHub installation'), 500)
+	}
+
+	logger.info('Linked existing GitHub installation to workspace', {
+		integrationId: row.id,
+		workspaceId,
+		installationId,
+		ownerLogin,
+		sourceWorkspaceId: source.workspaceId,
+	})
+
+	const { credentials: _credentials, ...safe } = row
+	return c.json(serialize(safe) as z.infer<typeof integrationResponseSchema>)
+}) as RouteHandler<typeof linkInstallationRoute, Env>)
 
 // ── POST /api/integrations/:provider/connect ───────────────────────────────
 
 const providerParamSchema = z.object({ provider: z.string() })
 
+// ── GitHub: resolve a multi-installation user authorization ───────────────
+//
+// When `login/oauth/authorize` proves the caller can reach more than one
+// installation, the callback parks the candidates on the pending row rather
+// than guessing. These two routes read that list back and finalize the choice.
+// Authorization has two halves, and both are needed. The parked list bounds
+// *what* can be selected: it was built from GitHub's answer to "which
+// installations can THIS user reach", so a caller can only ever select
+// something GitHub already vouched for. The row's `createdBy` bounds *who* can
+// spend it: the list is one specific human's proof of org access, so it stays
+// theirs rather than becoming a workspace-wide grant. See readPendingSelection.
+
+const pendingSelectionSchema = z.object({
+	integrationId: z.string(),
+	installations: z.array(
+		z.object({ installationId: z.string(), ownerLogin: z.string().nullable() }),
+	),
+})
+
+const getPendingSelectionRoute = createRoute({
+	method: 'get',
+	path: '/github/pending-selection/{id}',
+	tags: ['integrations'],
+	summary: 'Read the installations awaiting selection on a pending GitHub connect',
+	request: {
+		params: z.object({ id: z.string().uuid() }),
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Installations the authorizing GitHub user can reach',
+			content: { 'application/json': { schema: pendingSelectionSchema } },
+		},
+		404: {
+			description: 'No pending selection with that id in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+/** How long a parked candidate list stays selectable, measured from the moment
+ *  the callback wrote it. Mirrors the 10-minute OAuth state window above: the
+ *  picker opens on the redirect, so this only ever has to cover the seconds it
+ *  takes to click an org — not a user who wandered off. An abandoned list going
+ *  cold matters because it is a standing grant of someone else's GitHub reach. */
+const PENDING_SELECTION_MAX_AGE_MS = 10 * 60 * 1000
+
+/** Load a pending row's parked installation choices, scoped to the workspace
+ *  AND to the actor who started the authorization.
+ *
+ *  Returns null when the row is missing, belongs elsewhere, was started by
+ *  someone else, is not pending, has gone stale, or holds no choice list — all
+ *  of which are a 404 to the caller.
+ *
+ *  The `createdBy` and age filters are load-bearing, not defence in depth. The
+ *  candidate list is the *result* of one specific human proving to GitHub which
+ *  orgs they can reach, so it is a credential scoped to that human. Matching on
+ *  workspace alone would let any member of the workspace — including one with no
+ *  GitHub access to the org at all, and including members added later — spend a
+ *  colleague's proof. That would reinstate exactly the entitlement confusion the
+ *  user-authorization flow exists to remove. */
+async function readPendingSelection(
+	db: Database,
+	id: string,
+	workspaceId: string,
+	actorId: string,
+): Promise<{ row: typeof integrations.$inferSelect; choices: UserInstallation[] } | null> {
+	const [row] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.id, id),
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.status, 'pending'),
+				eq(integrations.createdBy, actorId),
+			),
+		)
+		.limit(1)
+
+	if (!row || !row.credentials) return null
+
+	// Age is checked here rather than in SQL so a null `updatedAt` reads as
+	// "unknown, not expired" instead of silently excluding the row.
+	const parkedAt = row.updatedAt?.getTime()
+	if (parkedAt !== undefined && Date.now() - parkedAt > PENDING_SELECTION_MAX_AGE_MS) {
+		logger.info('Pending GitHub selection has expired', {
+			integrationId: row.id,
+			workspaceId,
+			actorId,
+		})
+		return null
+	}
+
+	let parsed: { installation_choices?: UserInstallation[] }
+	try {
+		parsed = JSON.parse(decrypt(row.credentials))
+	} catch (err) {
+		// Almost always an encryption-key rotation between the callback writing
+		// this list and the user picking from it. Without this line the caller is
+		// told the attempt "expired" and no operator ever learns otherwise.
+		logger.warn('Failed to decrypt parked GitHub installation choices', {
+			integrationId: row.id,
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return null
+	}
+	const choices = parsed.installation_choices
+	if (!Array.isArray(choices) || choices.length === 0) return null
+	return { row, choices }
+}
+
+app.openapi(getPendingSelectionRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const pending = await readPendingSelection(db, id, workspaceId, actorId)
+	if (!pending) {
+		return c.json(createApiError('NOT_FOUND', 'No pending GitHub selection with that id'), 404)
+	}
+
+	return c.json({ integrationId: pending.row.id, installations: pending.choices })
+}) as RouteHandler<typeof getPendingSelectionRoute, Env>)
+
+const selectInstallationRoute = createRoute({
+	method: 'post',
+	path: '/github/select-installation',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Finalize a GitHub connect by choosing one of the authorized installations',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						integration_id: z.string().uuid(),
+						installation_id: z.string().min(1),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Installation bound to the workspace',
+			content: { 'application/json': { schema: integrationResponseSchema } },
+		},
+		400: {
+			description: 'Invalid installation id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No pending selection, or the id was not among the authorized choices',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(selectInstallationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { integration_id: integrationId, installation_id: installationId } = c.req.valid('json')
+
+	if (!GITHUB_INSTALLATION_ID_RE.test(installationId)) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'installation_id must be a numeric GitHub installation id'),
+			400,
+		)
+	}
+
+	const pending = await readPendingSelection(db, integrationId, workspaceId, actorId)
+	if (!pending) {
+		return c.json(createApiError('NOT_FOUND', 'No pending GitHub selection with that id'), 404)
+	}
+
+	// Authorization: the id must be one GitHub itself listed for this user during
+	// the authorization round-trip. Anything else — including a valid
+	// installation id belonging to an org they cannot reach — is a 404.
+	const chosen = pending.choices.find((i) => i.installationId === installationId)
+	if (!chosen) {
+		return c.json(
+			createApiError('NOT_FOUND', 'That installation was not among the authorized choices'),
+			404,
+		)
+	}
+
+	const row = await bindGithubInstallation({
+		db,
+		workspaceId,
+		actorId,
+		installationId,
+		ownerLogin: chosen.ownerLogin ?? undefined,
+		credentials: { installation_id: installationId },
+		reason: 'selected_authorized_installation',
+	})
+
+	if (!row) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to bind GitHub installation'), 500)
+	}
+
+	// Drop the pending row — its only job was to carry the candidate list. Guard
+	// against deleting the row we just wrote: bindGithubInstallation refreshes a
+	// pre-existing row for this installation in place, which may be this very id
+	// if a prior attempt already got this far.
+	if (row.id !== pending.row.id) {
+		await db.delete(integrations).where(eq(integrations.id, pending.row.id))
+		await recordEvent(db, {
+			workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: 'integration',
+			entityId: pending.row.id,
+			data: {
+				provider: 'github',
+				status: 'pending',
+				reason: 'installation_selection_completed',
+				bound_integration_id: row.id,
+			},
+		})
+	}
+
+	logger.info('Bound GitHub installation from user-authorized selection', {
+		integrationId: row.id,
+		workspaceId,
+		installationId,
+		ownerLogin: chosen.ownerLogin,
+	})
+
+	const { credentials: _credentials, ...safe } = row
+	return c.json(serialize(safe) as z.infer<typeof integrationResponseSchema>)
+}) as RouteHandler<typeof selectInstallationRoute, Env>)
+
 const connectRoute = createRoute({
 	method: 'post',
 	path: '/{provider}/connect',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Start integration connection flow',
 	request: {
@@ -171,12 +871,25 @@ const connectRoute = createRoute({
 						install_url: z.string().optional(),
 						webhook_url: z.string().optional(),
 						integration_id: z.string().optional(),
+						// resend two-call handshake extension (spec §2): /connect
+						// returns the DNS records + verification status alongside the
+						// webhook URL so the Slice 2 UI can render Step 3 immediately.
+						dns_records: z.array(z.record(z.unknown())).optional(),
+						verification_status: z.string().optional(),
 					}),
 				},
 			},
 		},
 		400: {
 			description: 'Error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'The install URL could not be built due to a server-side fault',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		502: {
+			description: 'The provider could not be reached while building the install URL',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -186,7 +899,15 @@ app.openapi(connectRoute, (async (c) => {
 	const db = c.get('db')
 	const { provider: providerName } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const actorId = c.get('actorId')
+
+	if (providerName === CUSTOM_MCP_PROVIDER) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Custom tool servers are added from the Tools section'),
+			400,
+		)
+	}
 
 	let resolved: ResolvedProvider
 	try {
@@ -199,6 +920,7 @@ app.openapi(connectRoute, (async (c) => {
 				undefined,
 				`Available providers: ${listProviders()
 					.map((p) => p.config.name)
+					.filter((name) => name !== CUSTOM_MCP_PROVIDER)
 					.join(', ')}`,
 			),
 			400,
@@ -209,7 +931,10 @@ app.openapi(connectRoute, (async (c) => {
 	// so we activate the integration synchronously from the configured env var
 	// and return a redirect back to the same settings page.
 	if (resolved.config.auth.type === 'api_key') {
-		const body = (await c.req.json().catch(() => ({}))) as { api_key?: string }
+		const body = (await c.req.json().catch(() => ({}))) as {
+			api_key?: string
+			return_to?: unknown
+		}
 		const apiKey = body.api_key
 		if (!apiKey) {
 			logger.warn(`api_key provider ${providerName} missing request body api_key`)
@@ -234,9 +959,16 @@ app.openapi(connectRoute, (async (c) => {
 				createdBy: actorId,
 			})
 			.onConflictDoUpdate({
-				target: [integrations.workspaceId, integrations.provider, integrations.externalId],
-				// The matching unique index is partial (WHERE external_id IS NOT NULL),
-				// so Postgres only accepts this conflict target with the same predicate.
+				target: [
+					integrations.workspaceId,
+					integrations.actorId,
+					integrations.provider,
+					integrations.externalId,
+				],
+				// The matching unique index is partial (WHERE external_id IS NOT NULL) and
+				// declared NULLS NOT DISTINCT so a workspace-scoped upsert (actor_id = NULL
+				// on both rows) still collides — Postgres only accepts this conflict target
+				// with the same predicate.
 				targetWhere: isNotNull(integrations.externalId),
 				set: {
 					status: 'active',
@@ -270,7 +1002,7 @@ app.openapi(connectRoute, (async (c) => {
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to activate integration'), 500)
 		}
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -285,8 +1017,22 @@ app.openapi(connectRoute, (async (c) => {
 			integrationId,
 		})
 
-		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-		return c.json({ install_url: `${frontendUrl}/${workspaceId}/settings/integrations` })
+		void trackIntegrationConnected({
+			provider: providerName,
+			workspaceId,
+			actorId,
+			integrationId,
+			authType: 'api_key',
+		})
+
+		// The client navigates to this URL once the key is saved. A caller that
+		// started from a chat passes `return_to` so the user stays in that chat.
+		return c.json({
+			install_url: frontendUrlForReturn(
+				workspaceId,
+				sanitizeReturnPath(body.return_to, workspaceId),
+			),
+		})
 	}
 
 	// manual providers have no OAuth redirect and no outbound-callable API key —
@@ -307,7 +1053,6 @@ app.openapi(connectRoute, (async (c) => {
 				.values({
 					type: 'system',
 					name: systemActorName,
-					apiKey: generateApiKey().key,
 					createdBy: actorId,
 				})
 				.returning()
@@ -340,7 +1085,241 @@ app.openapi(connectRoute, (async (c) => {
 		}
 
 		const token = randomBytes(24).toString('hex')
-		const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
+		const webhookUrl = `${resolvePublicOrigin(c.req.url, c.req.header())}/api/webhooks/${providerName}/${token}`
+
+		// Resend two-call handshake (spec §2 + §Load-bearing #3). When the
+		// caller supplies { api_key, receive_subdomain } we verify the key,
+		// register the receive subdomain on the customer's own Resend account,
+		// and seed credentials + config.resend with the DNS records Slice 2
+		// renders at Step 3. Body-absent falls through to the Skjald-style
+		// insert below — unchanged.
+		const rawBody = (await c.req.json().catch(() => ({}))) as {
+			api_key?: unknown
+			receive_subdomain?: unknown
+			expose_to_agent_sessions?: unknown
+		}
+		const resendApiKey =
+			typeof rawBody.api_key === 'string' && rawBody.api_key.trim().length > 0
+				? rawBody.api_key.trim()
+				: null
+		const resendSubdomain =
+			typeof rawBody.receive_subdomain === 'string' && rawBody.receive_subdomain.trim().length > 0
+				? rawBody.receive_subdomain.trim()
+				: null
+		// Opt out of agent-session exposure at connect time; absent keeps the default (true).
+		const exposeToAgentSessions =
+			typeof rawBody.expose_to_agent_sessions === 'boolean'
+				? rawBody.expose_to_agent_sessions
+				: null
+
+		// A key we are about to ignore must fail here, not later. Without this the
+		// fall-through insert below writes empty credentials and the caller gets a
+		// row that looks connected, then a webhook 500 at delivery time.
+		if (resendApiKey && !(providerName === 'resend' && resendSubdomain)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					providerName === 'resend'
+						? 'Resend needs receive_subdomain together with api_key, send both to POST /api/integrations/resend/connect'
+						: `Provider ${providerName} does not take an api_key on connect`,
+					[{ field: 'code', message: 'API_KEY_NOT_ACCEPTED' }],
+				),
+				400,
+			)
+		}
+
+		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
+			// Server-side guard behind the dialog's advisory pre-check: a malformed
+			// name never reaches Resend, and a bare domain that already carries
+			// someone else's mail is refused, since adding our MX to it reroutes
+			// the whole domain. A bare domain with no mail stays allowed.
+			if (!isValidHostname(resendSubdomain)) {
+				return c.json(
+					createApiError('BAD_REQUEST', 'Not a valid hostname', [
+						{ field: 'code', message: 'INVALID_DOMAIN' },
+					]),
+					400,
+				)
+			}
+			const precheck = isSubdomainName(resendSubdomain)
+				? null
+				: await precheckResendDomain(resendSubdomain)
+			if (precheck?.warn) {
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						'This name already carries mail, use a dedicated hostname such as mail.example.com',
+						[
+							{ field: 'code', message: 'BARE_DOMAIN_HAS_MAIL' },
+							{ field: 'existing_mx', message: precheck.existingMx.join(', ') },
+						],
+					),
+					400,
+				)
+			}
+
+			// Step 1 — verify the API key against Resend by listing domains.
+			// 401 → INVALID_API_KEY (Step 1 error state).
+			const verifyRes = await fetch('https://api.resend.com/domains?limit=100', {
+				method: 'GET',
+				headers: { Authorization: `Bearer ${resendApiKey}` },
+			})
+			if (verifyRes.status === 401) {
+				const errBody = (await verifyRes.json().catch(() => null)) as {
+					name?: string
+				} | null
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						'Resend rejected the API key',
+						[
+							{ field: 'code', message: 'INVALID_API_KEY' },
+							{ field: 'resend_error', message: errBody?.name ?? 'unauthorized' },
+						],
+						'Resend GET /domains returned 401',
+					),
+					400,
+				)
+			}
+			if (!verifyRes.ok) {
+				logger.warn('resend.connect.verify_failed', {
+					workspaceId,
+					status: verifyRes.status,
+				})
+				return c.json(
+					createApiError('BAD_REQUEST', 'Could not verify the Resend API key', [
+						{ field: 'code', message: 'INVALID_API_KEY' },
+					]),
+					400,
+				)
+			}
+
+			// Step 2 — adopt the subdomain if it already exists in the customer's
+			// Resend account, otherwise register it. Every Resend call runs before
+			// the row insert, so a failure here never leaves a resend_domain_id.
+			const domainList = (await verifyRes.json().catch(() => ({}))) as ResendDomainListPage
+			let registration: Awaited<ReturnType<typeof registerResendDomain>>
+			try {
+				const existingDomainId = await findResendDomainByName(
+					resendApiKey,
+					resendSubdomain,
+					domainList,
+				)
+				if (existingDomainId) {
+					const [claimedBy] = await db
+						.select({ id: integrations.id })
+						.from(integrations)
+						.where(
+							and(
+								eq(integrations.provider, 'resend'),
+								sql`${integrations.config}->'resend'->>'resend_domain_id' = ${existingDomainId}`,
+							),
+						)
+						.limit(1)
+					if (claimedBy) throw new DomainAlreadyClaimedError('domain_already_claimed')
+					registration = await adoptResendDomain(resendApiKey, existingDomainId)
+				} else {
+					registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				}
+			} catch (err) {
+				if (err instanceof DomainAlreadyClaimedError) {
+					return c.json(
+						createApiError('BAD_REQUEST', 'Resend reports this domain is already claimed', [
+							{ field: 'code', message: 'DOMAIN_ALREADY_CLAIMED' },
+							{ field: 'resend_error', message: err.resendCode ?? 'domain_already_claimed' },
+						]),
+						400,
+					)
+				}
+				if (err instanceof DomainRegisterError) {
+					logger.warn('resend.connect.domain_register_failed', {
+						workspaceId,
+						status: err.status,
+						resend_code: err.resendCode,
+					})
+					return c.json(
+						createApiError(
+							'BAD_REQUEST',
+							err.message || 'Resend rejected the domain registration',
+							[{ field: 'code', message: 'DOMAIN_REGISTER_FAILED' }],
+						),
+						400,
+					)
+				}
+				logger.error('resend.connect.unexpected_error', {
+					workspaceId,
+					err: String(err),
+				})
+				throw err
+			}
+
+			// An adopted domain may already be verified; seed the real status so the
+			// poller does not leave it sitting at pending.
+			const resendVerificationStatus = mapTopStatus(
+				registration.verificationStatus as ResendDomainGetResponse['status'],
+			)
+			const resendConfig: IntegrationConfig = {
+				system_actor_id: systemActor.id,
+				...(exposeToAgentSessions !== null && { expose_to_agent_sessions: exposeToAgentSessions }),
+				resend: {
+					receive_subdomain: resendSubdomain,
+					resend_domain_id: registration.resendDomainId,
+					verification_status: resendVerificationStatus,
+					last_polled_at: null,
+					webhook_url: webhookUrl,
+					dns_records: registration.dnsRecords,
+					capabilities: registration.capabilities,
+					verification_error: null,
+				},
+			}
+
+			const encryptedResendCredentials = encrypt(
+				JSON.stringify({ accessToken: resendApiKey } satisfies StoredCredentials),
+			)
+
+			const [resendRow] = await db
+				.insert(integrations)
+				.values({
+					workspaceId,
+					provider: providerName,
+					status: 'awaiting_secret',
+					externalId: token,
+					credentials: encryptedResendCredentials,
+					config: resendConfig,
+					createdBy: actorId,
+				})
+				.returning({ id: integrations.id })
+
+			if (!resendRow) {
+				return c.json(createApiError('INTERNAL_ERROR', 'Failed to create integration'), 500)
+			}
+
+			await recordEvent(db, {
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'integration',
+				entityId: resendRow.id,
+				data: {
+					provider: providerName,
+					external_id: token,
+					auth_type: 'manual',
+					resend_domain_id: registration.resendDomainId,
+				},
+			})
+
+			return c.json({
+				integration_id: resendRow.id,
+				webhook_url: webhookUrl,
+				dns_records: registration.dnsRecords,
+				verification_status: resendVerificationStatus,
+			})
+		}
+
+		const activeConfig: IntegrationConfig = {
+			system_actor_id: systemActor.id,
+			...(exposeToAgentSessions !== null && { expose_to_agent_sessions: exposeToAgentSessions }),
+		}
 
 		const [row] = await db
 			.insert(integrations)
@@ -359,7 +1338,7 @@ app.openapi(connectRoute, (async (c) => {
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to create integration'), 500)
 		}
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -368,17 +1347,55 @@ app.openapi(connectRoute, (async (c) => {
 			data: { provider: providerName, external_id: token, auth_type: 'manual' },
 		})
 
-		const webhookUrl = `${resolvePublicOrigin(c.req.url, c.req.header())}/api/webhooks/${providerName}/${token}`
 		return c.json({ webhook_url: webhookUrl, integration_id: row.id })
+	}
+
+	const oauthBody = (await c.req.json().catch(() => ({}))) as {
+		install_new_org?: boolean
+		return_to?: unknown
+		native_return_url?: unknown
+		origin?: unknown
+	}
+
+	// Page that started the flow, so a cancel can land back on it. Looked up in a
+	// server-side table; a value that is supplied but unknown is refused.
+	let origin: string | undefined
+	if (oauthBody.origin !== undefined && oauthBody.origin !== null) {
+		if (!resolveOrigin(oauthBody.origin, providerName)) {
+			return c.json(createApiError('BAD_REQUEST', 'origin is not allowed for this provider'), 400)
+		}
+		origin = oauthBody.origin as string
+	}
+
+	// Native app return target. Strictly allowlisted by exact match; a value that
+	// is supplied but not allowed is refused outright rather than ignored, so a
+	// native client never silently falls back to the web redirect.
+	let nativeReturn: string | undefined
+	if (oauthBody.native_return_url !== undefined && oauthBody.native_return_url !== null) {
+		nativeReturn = parseNativeOAuthReturnUrl(oauthBody.native_return_url)
+		if (!nativeReturn) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'native_return_url is not an allowed return target',
+					undefined,
+					`Allowed: ${NATIVE_OAUTH_RETURN_URLS.join(', ')}`,
+				),
+				400,
+			)
+		}
 	}
 
 	// Create signed state containing workspace + actor info + one-time nonce
 	const nonce = randomBytes(16).toString('hex')
-	const statePayload: Record<string, unknown> = {
+	const statePayload: OAuthStatePayload = {
 		workspaceId,
 		actorId,
 		ts: Date.now(),
 		nonce,
+		returnTo: sanitizeReturnPath(oauthBody.return_to, workspaceId),
+		...(nativeReturn ? { nativeReturn } : {}),
+		...(origin ? { origin } : {}),
 	}
 
 	// If provider uses PKCE, generate and include code verifier in state
@@ -386,7 +1403,23 @@ app.openapi(connectRoute, (async (c) => {
 		statePayload.codeVerifier = generateCodeVerifier()
 	}
 
-	const state = encrypt(JSON.stringify(statePayload))
+	const state = encodeState(statePayload)
+
+	// GitHub only: "install on another org". The authorize URL below lists just
+	// the installations the user already has, so an org without the App can never
+	// appear there. This sends them to the App's install page instead, carrying
+	// the same signed state, so the post-install callback matches the pending row
+	// minted below and handleCallback binds the new installation directly.
+	const installNewOrg = providerName === 'github' && oauthBody.install_new_org === true
+
+	// Bind the state to *this* browser. `state` is a sealed envelope with no
+	// session binding, so on its own it authorizes whoever presents it — and the
+	// GitHub user-authorization endpoint returns without any prompt for a user
+	// who already approved the App. Without this cookie an attacker could start a
+	// connect in their own workspace, hand the resulting authorize URL to a
+	// victim, and have the victim's org bound into the attacker's workspace on a
+	// single click. The callback requires cookie === state.nonce.
+	setOAuthNonceCookie(c, providerName, nonce)
 
 	// Store the nonce in DB to prevent replay attacks. We intentionally avoid an
 	// upsert here because the integrations table uses partial unique indexes, and
@@ -410,24 +1443,59 @@ app.openapi(connectRoute, (async (c) => {
 			logger.info(`Re-used pending integration nonce for ${providerName}`, {
 				workspaceId,
 				actorId,
-				nonce,
 			})
 		} else {
 			throw err
 		}
 	}
-	// Build install URL based on auth type
+	// Build install URL based on auth type. The redirect URI is derived once,
+	// here, so custom handlers and the generic OAuth2 path cannot disagree about
+	// which origin serves the callback.
+	const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 	let installUrl: string
 	if (resolved.customAuth) {
-		installUrl = resolved.customAuth.getInstallUrl(state)
+		try {
+			// A custom handler may call the provider here (e.g. Ubersuggest's RFC 7591
+			// dynamic client registration). The pending nonce row inserted above is
+			// left in place on failure: it is keyed by a fresh nonce, is never matched
+			// by a callback, and is what lets the user simply hit Connect again.
+			installUrl = installNewOrg
+				? buildAppInstallUrl(state)
+				: await resolved.customAuth.getInstallUrl(state, redirectUri)
+		} catch (err) {
+			const upstream = err instanceof ProviderUnreachableError
+			logger.error(`Failed to build install URL for provider ${providerName}`, {
+				workspaceId,
+				actorId,
+				upstream,
+				error: err instanceof Error ? err.message : String(err),
+				cause: err instanceof Error && err.cause ? String(err.cause) : undefined,
+			})
+			// Only a genuine upstream failure is retryable. A local fault (missing
+			// INTEGRATION_ENCRYPTION_KEY, malformed state) must not be dressed up as
+			// "please try again" — that loops forever and no operator learns the real
+			// cause. No BAD_GATEWAY member on the shared union, so the status carries
+			// the distinction and the code carries "not the caller's fault".
+			if (upstream) {
+				return c.json(
+					createApiError(
+						'INTERNAL_ERROR',
+						`Could not reach ${resolved.config.displayName} to start the connection — please try again`,
+					),
+					502,
+				)
+			}
+			return c.json(
+				createApiError(
+					'INTERNAL_ERROR',
+					`Could not start the ${resolved.config.displayName} connection — this is a server misconfiguration, not a transient failure`,
+				),
+				500,
+			)
+		}
 	} else if (resolved.config.auth.type === 'oauth2') {
-		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 		const handler = new OAuth2Handler(resolved.config.auth.config)
-		installUrl = handler.createAuthorizationUrl(
-			state,
-			redirectUri,
-			statePayload.codeVerifier as string | undefined,
-		)
+		installUrl = handler.createAuthorizationUrl(state, redirectUri, statePayload.codeVerifier)
 	} else {
 		return c.json(
 			createApiError('BAD_REQUEST', `Provider ${providerName} does not support OAuth connect`),
@@ -435,10 +1503,95 @@ app.openapi(connectRoute, (async (c) => {
 		)
 	}
 
+	// Native: the cookie set above lands in the app's URL session, not in the
+	// web-auth browser that will finish the flow. Route that browser through our
+	// own launch endpoint first so the binding cookie is set where it is checked.
+	if (nativeReturn) {
+		const ticket = encodeLaunchTicket({
+			kind: 'native-launch',
+			provider: providerName,
+			nonce,
+			installUrl,
+			ts: Date.now(),
+			workspaceId,
+			nativeReturn,
+		})
+		const origin = resolvePublicOrigin(c.req.url, c.req.header())
+		return c.json({
+			install_url: `${origin}/api/integrations/${providerName}/native-launch?ticket=${ticket}`,
+		})
+	}
+
 	return c.json({ install_url: installUrl })
 }) as RouteHandler<typeof connectRoute, Env>)
+declareNativeConnectBody(connectRoute)
 
-// ── GET /api/integrations/:provider/callback ───────────────────────────────
+// ── GET /api/integrations/:provider/native-launch ────────────────────────
+
+app.get('/:provider/native-launch', async (c) => {
+	const db = c.get('db')
+	const providerName = c.req.param('provider')
+	const ticket = decodeLaunchTicket(c.req.query('ticket') ?? '')
+	if (!ticket || ticket.provider !== providerName) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid or expired launch link — please start again'),
+			400,
+		)
+	}
+	// Single-use: claim the pending row with one compare-and-set UPDATE. The
+	// marker lives in the row's (otherwise unused on pending rows) metadata, so
+	// concurrent opens race on the row lock and exactly one sees the marker unset.
+	// A launch link for a flow that already completed (or was never persisted)
+	// matches no pending row at all.
+	const [claimed] = await db
+		.update(integrations)
+		.set({
+			metadata: sql`coalesce(${integrations.metadata}, '{}'::jsonb) || jsonb_build_object('native_launched_at', now()::text)`,
+		})
+		.where(
+			and(
+				eq(integrations.provider, providerName),
+				eq(integrations.externalId, ticket.nonce),
+				eq(integrations.status, 'pending'),
+				sql`${integrations.metadata} ->> 'native_launched_at' IS NULL`,
+			),
+		)
+		.returning({ id: integrations.id })
+	if (!claimed) {
+		const [stillPending] = await db
+			.select({ id: integrations.id })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.provider, providerName),
+					eq(integrations.externalId, ticket.nonce),
+					eq(integrations.status, 'pending'),
+				),
+			)
+			.limit(1)
+		// Already opened: end the web-auth session in the app rather than on a bare error.
+		if (stillPending && ticket.workspaceId && parseNativeOAuthReturnUrl(ticket.nativeReturn)) {
+			c.header('Cache-Control', 'no-store')
+			return c.redirect(
+				buildNativeOAuthReturnUrl(ticket.nativeReturn as string, {
+					provider: providerName,
+					workspaceId: ticket.workspaceId,
+					status: 'error',
+					reason: 'state_expired',
+				}),
+			)
+		}
+		return c.json(
+			createApiError('BAD_REQUEST', 'Invalid or expired launch link — please start again'),
+			400,
+		)
+	}
+	setOAuthNonceCookie(c, providerName, ticket.nonce)
+	c.header('Cache-Control', 'no-store')
+	return c.redirect(ticket.installUrl)
+})
+
+// ── GET /api/integrations/:provider/callback ─────────────────────────────
 
 const callbackRoute = createRoute({
 	method: 'get',
@@ -475,23 +1628,68 @@ app.openapi(callbackRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Missing state parameter'), 400)
 	}
 
-	let stateData: {
-		workspaceId: string
-		actorId: string
-		ts: number
-		nonce: string
-		codeVerifier?: string
-	}
+	let stateData: OAuthStatePayload
 	try {
-		stateData = JSON.parse(decrypt(stateParam))
+		stateData = decodeState(stateParam)
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
 	}
+	// A sealed blob that decrypts but is not a connect state (e.g. a native launch
+	// ticket, which carries a nonce and workspaceId but never an actorId) must not
+	// reach the nonce/workspace lookups below.
+	if (
+		typeof stateData?.nonce !== 'string' ||
+		typeof stateData.workspaceId !== 'string' ||
+		typeof stateData.actorId !== 'string'
+	) {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
+	}
+
+	// Native-app flows end by redirecting to the app with an outcome rather than
+	// to the web UI or a bare JSON error the web-auth session would just display.
+	// The target was allowlisted when the state was minted and is sealed in it;
+	// it is re-checked by buildNativeOAuthReturnUrl before it reaches a 302.
+	const nativeEnd = (outcome: Omit<NativeOAuthOutcome, 'provider' | 'workspaceId'>) =>
+		c.redirect(
+			buildNativeOAuthReturnUrl(stateData.nativeReturn as string, {
+				provider: providerName,
+				workspaceId: stateData.workspaceId,
+				...outcome,
+			}),
+		)
+	const native = parseNativeOAuthReturnUrl(stateData.nativeReturn) !== undefined
 
 	// Check state age (max 10 minutes)
 	if (Date.now() - stateData.ts > 10 * 60 * 1000) {
+		if (native) return nativeEnd({ status: 'error', reason: 'state_expired' })
 		return c.json(
 			createApiError('BAD_REQUEST', 'State expired — please restart the connection flow'),
+			400,
+		)
+	}
+
+	// Require the state-binding cookie set by POST /:provider/connect. This is
+	// what proves the browser finishing the flow is the one that started it.
+	// `state` alone does not: it is a sealed envelope that authorizes whoever
+	// presents it, and the GitHub user-authorization endpoint returns straight to
+	// us with no prompt for anyone who has already approved the App — so a
+	// handed-over authorize URL would otherwise bind the *clicker's* org into the
+	// *sender's* workspace. Compared before any DB work so a forwarded link costs
+	// nothing.
+	const boundNonce = getCookie(c, oauthNonceCookieName(providerName))
+	if (boundNonce !== stateData.nonce) {
+		logger.warn('OAuth callback rejected — state not bound to this browser', {
+			provider: providerName,
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			hadCookie: boundNonce !== undefined,
+		})
+		if (native) return nativeEnd({ status: 'error', reason: 'not_bound' })
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'This connection was not started in this browser — please start it again from your workspace settings',
+			),
 			400,
 		)
 	}
@@ -511,6 +1709,7 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (!pendingIntegration) {
+		if (native) return nativeEnd({ status: 'error', reason: 'invalid_state' })
 		return c.json(createApiError('BAD_REQUEST', 'Invalid or already used state token'), 400)
 	}
 
@@ -527,33 +1726,162 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (!member) {
+		if (native) return nativeEnd({ status: 'error', reason: 'not_member' })
 		return c.json(createApiError('FORBIDDEN', 'Actor is no longer a member of this workspace'), 400)
+	}
+
+	// The user declined consent on the provider's page: it calls back with
+	// `error=access_denied` and no code. The web flow keeps its existing response;
+	// a native session gets told, so it can close instead of showing a bare error.
+	// The pending row is left for the TTL, exactly as an abandoned web flow is.
+	if (native && query.error && !query.code) {
+		clearOAuthNonceCookie(c, providerName)
+		return nativeEnd({ status: 'error', reason: 'denied' })
+	}
+
+	// Web flow that started from a page with a registered origin (the Drive
+	// connect wizard): a cancel goes back there. Sits after the state, cookie,
+	// pending-row and member checks, so a forged or replayed cancel gets the same
+	// 400s as before. Flows without an origin, and any error other than
+	// access_denied, keep the response below.
+	if (!native && !query.code && query.error === 'access_denied' && stateData.origin !== undefined) {
+		const origin = resolveOrigin(stateData.origin, providerName)
+		if (origin) {
+			logger.info('OAuth consent cancelled, returning to origin', {
+				provider: providerName,
+				workspaceId: stateData.workspaceId,
+				origin: stateData.origin,
+			})
+			clearOAuthNonceCookie(c, providerName)
+			return c.redirect(
+				frontendUrlForReturn(
+					stateData.workspaceId,
+					`/${stateData.workspaceId}${origin.path}?oauth=cancelled`,
+				),
+			)
+		}
+		logger.warn('OAuth state carried an origin that no longer resolves', {
+			provider: providerName,
+			origin: stateData.origin,
+		})
 	}
 
 	// Handle provider-specific callback
 	let credentials: StoredCredentials
 	try {
+		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 		if (resolved.customAuth) {
-			credentials = await resolved.customAuth.handleCallback(query)
+			credentials = await resolved.customAuth.handleCallback(query, redirectUri)
 		} else if (resolved.config.auth.type === 'oauth2') {
 			const code = query.code
 			if (!code) {
+				if (native) return nativeEnd({ status: 'error', reason: 'missing_code' })
 				return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
 			}
-			const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 			const handler = new OAuth2Handler(resolved.config.auth.config, resolved.parseTokenResponse)
 			credentials = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
 		} else {
+			if (native) return nativeEnd({ status: 'error', reason: 'unsupported' })
 			return c.json(createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'), 400)
 		}
 	} catch (err) {
+		// The user authorized us but has not installed the App anywhere yet. That
+		// is a next step, not a failure — send them to the install page, carrying
+		// the same state so the resulting install callback still matches this
+		// pending row.
+		if (err instanceof NoGithubInstallationsError) {
+			logger.info('GitHub user has no accessible installations — redirecting to install page', {
+				workspaceId: stateData.workspaceId,
+				actorId: stateData.actorId,
+			})
+			return c.redirect(buildAppInstallUrl(stateParam))
+		}
+		// A callback naming an installation the authenticated user cannot reach is
+		// a hand-written URL, not a fault — refuse it loudly rather than folding it
+		// into the generic retry-shaped token_exchange_failed.
+		if (err instanceof UnauthorizedGithubInstallationError) {
+			logger.warn('GitHub callback named an installation the user cannot reach', {
+				workspaceId: stateData.workspaceId,
+				actorId: stateData.actorId,
+				error: err.message,
+			})
+			clearOAuthNonceCookie(c, providerName)
+			if (native) return nativeEnd({ status: 'error', reason: 'installation_unauthorized' })
+			return c.json(
+				createApiError(
+					'FORBIDDEN',
+					'That GitHub installation is not one your GitHub account can access',
+				),
+				400,
+			)
+		}
 		logger.error(`OAuth callback token exchange failed for provider ${providerName}`, {
 			workspaceId: stateData.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
 		})
+		if (native) return nativeEnd({ status: 'error', reason: 'token_exchange_failed' })
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.redirect(
 			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=token_exchange_failed`,
+		)
+	}
+
+	// The user can reach several installations of the App. Park the choices on
+	// the pending row and let them pick — resolving this server-side would mean
+	// guessing which org they meant. The row stays `pending` (so it is not yet a
+	// usable integration) and carries no credential beyond the candidate list.
+	if (credentials.pending_installation_selection) {
+		const choices = (credentials.installation_choices ?? []) as UserInstallation[]
+		await db
+			.update(integrations)
+			.set({
+				credentials: encrypt(JSON.stringify({ installation_choices: choices })),
+				updatedAt: new Date(),
+			})
+			.where(eq(integrations.id, pendingIntegration.id))
+
+		// Audit the park like every other mutation on this table. Besides the
+		// trail, this is what fires the PG NOTIFY → SSE invalidation, so a settings
+		// page already open when the callback lands learns the row changed instead
+		// of showing stale state until a manual refresh. The candidate list itself
+		// is deliberately not in `data` — only its size, since the payload is
+		// mirrored into the realtime feed.
+		await recordEvent(db, {
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: pendingIntegration.id,
+			data: {
+				provider: providerName,
+				status: 'pending',
+				reason: 'awaiting_installation_selection',
+				choice_count: choices.length,
+			},
+		})
+
+		logger.info('GitHub user authorized with multiple installations — awaiting selection', {
+			workspaceId: stateData.workspaceId,
+			integrationId: pendingIntegration.id,
+			count: choices.length,
+		})
+
+		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+		// The state has now been consumed. Selection continues over the authenticated
+		// POST /github/select-installation, which carries its own `createdBy` check,
+		// so the binding cookie has no further job.
+		clearOAuthNonceCookie(c, providerName)
+		if (native) {
+			return nativeEnd({ status: 'selection_required', integrationId: pendingIntegration.id })
+		}
+		// The org picker lives on the settings page, so this one stops there; it
+		// carries the return path so the page can send the user on to the chat
+		// once they have picked.
+		const selectReturnTo = sanitizeReturnPath(stateData.returnTo, stateData.workspaceId)
+		return c.redirect(
+			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?select_github=${pendingIntegration.id}${
+				selectReturnTo ? `&return_to=${encodeURIComponent(selectReturnTo)}` : ''
+			}`,
 		)
 	}
 
@@ -571,7 +1899,6 @@ app.openapi(callbackRoute, (async (c) => {
 			.values({
 				type: 'system',
 				name: systemActorName,
-				apiKey: generateApiKey().key,
 				createdBy: stateData.actorId,
 			})
 			.returning()
@@ -643,9 +1970,35 @@ app.openapi(callbackRoute, (async (c) => {
 		}
 	}
 
+	// google-meet only: resolve the caller's Google People id and persist it on
+	// the row before activation. Task 3's Workspace Events subscription uses this
+	// value to build `targetResource=//cloudidentity.googleapis.com/users/{peopleId}`,
+	// and `webhookPreHandler` reads it to map deliveries back to `external_id`.
+	// A missing People id fails the connect (redirect with `people_id_fetch_failed`)
+	// rather than activating a row Task 3 would immediately mark broken —
+	// stored `config.meet.peopleId` is a hard postcondition of the S12 smoke.
+	let meetPeopleId: string | undefined
+	if (providerName === 'google-meet' && credentials.accessToken) {
+		try {
+			meetPeopleId = await resolveMeetPeopleId(credentials.accessToken)
+		} catch (err) {
+			logger.error('Failed to resolve Google Meet People id at OAuth callback', {
+				workspaceId: stateData.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			clearOAuthNonceCookie(c, providerName)
+			if (native) return nativeEnd({ status: 'error', reason: 'people_id_fetch_failed' })
+			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+			return c.redirect(
+				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=people_id_fetch_failed`,
+			)
+		}
+	}
+
 	const encryptedCredentials = encrypt(JSON.stringify(credentials))
 	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) activeConfig.owner_login = ownerLogin
+	if (meetPeopleId) activeConfig.meet = { peopleId: meetPeopleId }
 
 	// Re-connecting an installation whose externalId is stable across connects
 	// (GitHub installation ids, Slack team ids via resolveExternalId): refresh
@@ -669,7 +2022,26 @@ app.openapi(callbackRoute, (async (c) => {
 		)
 		.limit(1)
 
+	// Reconnecting onto a row that was already active is a refresh, not a new
+	// connect, so it must not count toward integration_connected.
+	const isNewConnect = existingSameInstall?.status !== 'active'
+
 	if (existingSameInstall) {
+		// A reconnect rewrites config from scratch, which would drop the Drive
+		// first-use stamp (config.first_tool_call_at) and send the customer UI back
+		// to the first-call state. Carry just that key over from the prior row.
+		const priorConfig = existingSameInstall.config as DriveIntegrationConfig | null
+		const priorFirstToolCallAt = priorConfig?.first_tool_call_at
+		if (priorFirstToolCallAt) activeConfig.first_tool_call_at = priorFirstToolCallAt
+
+		// The same reconnect would also drop the Drive folder watches
+		// (config.drive.watchedFolders). Carry the block over minus its channel
+		// fields, which postInstall mints fresh below.
+		if (providerName === GOOGLE_DRIVE_PROVIDER) {
+			const drive = carriedDriveConfig(priorConfig)
+			if (drive) activeConfig.drive = drive
+		}
+
 		await db
 			.update(integrations)
 			.set({
@@ -724,6 +2096,10 @@ app.openapi(callbackRoute, (async (c) => {
 				.update(integrations)
 				.set({ status: 'error', updatedAt: new Date() })
 				.where(eq(integrations.id, integrationId))
+			if (native) {
+				clearOAuthNonceCookie(c, providerName)
+				return nativeEnd({ status: 'error', reason: 'post_install_failed' })
+			}
 			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 			return c.redirect(
 				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=post_install_failed`,
@@ -732,7 +2108,7 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 
 	// Log event
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: stateData.workspaceId,
 		actorId: stateData.actorId,
 		action: 'created',
@@ -745,16 +2121,35 @@ app.openapi(callbackRoute, (async (c) => {
 		},
 	})
 
-	// Redirect to frontend settings/integrations page
-	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
+	if (isNewConnect) {
+		void trackIntegrationConnected({
+			provider: providerName,
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			integrationId,
+			authType: 'oauth',
+		})
+	}
+
+	// Back to where the user started the connect (an agent's Connect card in a
+	// chat), or the settings page when the flow began there. Re-checked even
+	// though the state is sealed: this value ends up in a 302.
+	clearOAuthNonceCookie(c, providerName)
+	if (native) return nativeEnd({ status: 'connected', integrationId })
+	return c.redirect(
+		frontendUrlForReturn(
+			stateData.workspaceId,
+			sanitizeReturnPath(stateData.returnTo, stateData.workspaceId),
+		),
+	)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
-// ── DELETE /api/integrations/:id ───────────────────────────────────────────
+// ── DELETE /api/integrations/:id ──────────────────────────────────────
 
 const deleteIntegrationRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Disconnect an integration',
 	request: {
@@ -770,6 +2165,10 @@ const deleteIntegrationRoute = createRoute({
 			description: 'Integration not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'Keychain credential: use POST /integrations/:id/remove',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -779,6 +2178,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const [existing] = await db
 		.select()
@@ -787,52 +2187,108 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		.limit(1)
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
 
-	// Provider-specific cleanup before flipping status to 'revoked'. Runs while
-	// credentials are still readable so the provider can call its remote API
-	// (e.g. Gmail's users.stop) with a valid token. Provider implementations
-	// are responsible for swallowing errors so disconnect always proceeds.
-	//
-	// Credentials are decrypted lazily (only when a preDisconnect hook exists) and
-	// only for non-pending integrations — pending rows have credentials: '' because
-	// the OAuth flow was never completed and there is nothing to revoke at the provider.
-	try {
-		const resolved = getProvider(existing.provider)
-		if (resolved.preDisconnect && existing.status !== 'pending') {
-			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
-			await resolved.preDisconnect({
-				db,
-				integrationId: existing.id,
-				workspaceId: existing.workspaceId,
-				credentials,
-			})
-		}
-	} catch (err) {
-		logger.warn(`preDisconnect failed for provider ${existing.provider}`, {
-			integrationId: existing.id,
-			error: err instanceof Error ? err.message : String(err),
-		})
+	// A vaulted Keychain credential is removed through POST /:id/remove, which
+	// limits it to its creator or an admin, zeroises the secret and appends to the
+	// audit chain. This route would only flip the status and leave the ciphertext.
+	if (existing.providerMode === 'byo_apikey' || existing.providerMode === 'byo_login') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This is a Keychain credential. Remove it from Keychain (POST /api/integrations/:id/remove).',
+			),
+			409,
+		)
 	}
 
-	await db.transaction(async (tx) => {
-		await tx
-			.update(integrations)
-			.set({ status: 'revoked', updatedAt: new Date() })
-			.where(eq(integrations.id, id))
-
-		await tx.insert(events).values({
-			workspaceId: existing.workspaceId,
-			actorId,
-			action: 'updated',
-			entityType: 'integration',
-			entityId: id,
-			data: { status: 'revoked', reason: 'user_disconnected' },
-		})
-	})
+	await disconnectIntegrationRow(db, existing, actorId)
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
 
-// ── POST /api/integrations/:id/complete ─────────────────────────────────────
+// ── PATCH /api/integrations/:id ───────────────────────────────────────
+// Only setting today: whether agent sessions receive this integration's token
+// and auto-inject MCP server. Stored as config.expose_to_agent_sessions and
+// merged into the existing config, so system_actor_id and provider keys stay.
+
+const updateIntegrationRoute = createRoute({
+	method: 'patch',
+	path: '/{id}',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Update integration settings',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						expose_to_agent_sessions: z
+							.boolean()
+							.describe(
+								'When false, agent sessions get neither this integration token nor its MCP server; server-side use of the credential is unaffected',
+							),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Integration updated',
+			content: { 'application/json': { schema: integrationResponseSchema } },
+		},
+		404: {
+			description: 'Integration not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateIntegrationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { expose_to_agent_sessions } = c.req.valid('json')
+
+	const [existing] = await db
+		.select()
+		.from(integrations)
+		.where(and(eq(integrations.id, id), eq(integrations.workspaceId, workspaceId)))
+		.limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	const nextConfig: IntegrationConfig = {
+		...((existing.config as IntegrationConfig | null) ?? {}),
+		expose_to_agent_sessions,
+	}
+
+	const updated = await db.transaction(async (tx) => {
+		const [row] = await tx
+			.update(integrations)
+			.set({ config: nextConfig, updatedAt: new Date() })
+			.where(eq(integrations.id, id))
+			.returning()
+		await recordEvent(tx, {
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: { expose_to_agent_sessions },
+		})
+		return row
+	})
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+
+	// Never expose credentials
+	const { credentials: _credentials, dekCiphertext: _dekCiphertext, ...safe } = updated
+	return c.json(serialize(safe) as z.infer<typeof integrationResponseSchema>)
+}) as RouteHandler<typeof updateIntegrationRoute, Env>)
+
+// ── POST /api/integrations/:id/complete ─────────────────────────────────
 // Finishes a manual-auth handshake: the user pastes the provider-generated
 // secret (e.g. Skjald's per-webhook HMAC secret) into Maskin over an
 // authenticated session, completing the row the connect route's 'manual'
@@ -841,6 +2297,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 const completeIntegrationRoute = createRoute({
 	method: 'post',
 	path: '/{id}/complete',
+	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: 'Complete a manual-auth integration handshake by supplying the provider secret',
 	request: {
@@ -868,6 +2325,7 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = (await c.req.json().catch(() => ({}))) as { secret?: string }
 	const secret = body.secret?.trim()
@@ -893,13 +2351,40 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Integration is not awaiting a secret'), 400)
 	}
 
+	// Parse-then-merge fallback (spec §2). Skjald stores credentials as an
+	// encrypted raw string; the resend two-call handshake seeds credentials as
+	// encrypt(JSON.stringify({ accessToken })) at /connect and expects /complete
+	// to merge { webhookSecret } into that same JSON blob. Preserve both shapes
+	// with one handler.
+	let credentialsPayload: string
+	let parsedAccessToken: string | null = null
+	try {
+		if (existing.credentials) {
+			const parsed = JSON.parse(decrypt(existing.credentials)) as StoredCredentials
+			if (parsed && typeof parsed.accessToken === 'string' && parsed.accessToken.length > 0) {
+				credentialsPayload = encrypt(
+					JSON.stringify({ ...parsed, webhookSecret: secret } satisfies StoredCredentials),
+				)
+				parsedAccessToken = parsed.accessToken
+			} else {
+				credentialsPayload = encrypt(secret)
+			}
+		} else {
+			credentialsPayload = encrypt(secret)
+		}
+	} catch {
+		// Existing blob wasn't parseable JSON (Skjald raw shape, or empty) —
+		// preserve Skjald's shape verbatim.
+		credentialsPayload = encrypt(secret)
+	}
+
 	await db.transaction(async (tx) => {
 		await tx
 			.update(integrations)
-			.set({ credentials: encrypt(secret), status: 'active', updatedAt: new Date() })
+			.set({ credentials: credentialsPayload, status: 'active', updatedAt: new Date() })
 			.where(eq(integrations.id, id))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'updated',
@@ -909,12 +2394,112 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 		})
 	})
 
+	// Endpoint-cap soft warning for resend (spec §7). Pro=5, Scale=10 webhook
+	// endpoints per Resend account. When a customer connects the same Resend
+	// account to N Maskin workspaces, they burn N of their plan's endpoints —
+	// so log when the count hits the ceiling. Never hard-fail: the customer
+	// has already added the endpoint on their side; refusing to activate the
+	// row leaves them holding a live webhook we've disowned.
+	if (existing.provider === 'resend' && parsedAccessToken) {
+		try {
+			const cap = await fetch('https://api.resend.com/webhooks', {
+				method: 'GET',
+				headers: { Authorization: `Bearer ${parsedAccessToken}` },
+			})
+			if (cap.ok) {
+				const payload = (await cap.json().catch(() => null)) as {
+					data?: unknown[]
+				} | null
+				const endpointCount = Array.isArray(payload?.data) ? payload.data.length : 0
+				if (endpointCount >= 5) {
+					logger.warn('resend.webhook_endpoints.at_ceiling', {
+						workspace_id: existing.workspaceId,
+						endpoint_count: endpointCount,
+					})
+				}
+			}
+		} catch (err) {
+			logger.warn('resend.webhook_endpoints.check_failed', {
+				workspace_id: existing.workspaceId,
+				err: String(err),
+			})
+		}
+	}
+
+	void trackIntegrationConnected({
+		provider: existing.provider,
+		workspaceId: existing.workspaceId,
+		actorId,
+		integrationId: id,
+		authType: 'manual',
+	})
+
 	return c.json({ activated: true })
 }) as RouteHandler<typeof completeIntegrationRoute, Env>)
 
-// ── GET /api/integrations/:id/github-token ─────────────────────────────────
+// ── POST /api/integrations/resend/dns-precheck ──────────────────────────
+//
+// Server-side DNS pre-check for the Slice 2 connect dialog (spec §8.2). The
+// customer pastes a receive subdomain in Step 2; before we ship them the
+// DNS records to add, we look up whatever MX records that name already has
+// so the UI can surface the s3-root-mx warning ("this domain already has
+// mail — adding our MX will replace it"). Node's dns.promises.resolveMx
+// fires a UDP lookup direct to the OS resolver; no external service, no
+// egress config change.
+
+const dnsPrecheckRoute = createRoute({
+	method: 'post',
+	path: '/resend/dns-precheck',
+	tags: ['integrations'],
+	summary: 'Server-side MX pre-check for the resend connect dialog',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ domain: z.string().min(1) }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'MX pre-check result',
+			content: {
+				'application/json': {
+					schema: z.object({
+						existing_mx: z.array(z.string()),
+						is_subdomain: z.boolean(),
+						warn: z.boolean(),
+					}),
+				},
+			},
+		},
+		400: {
+			description: 'Missing or malformed domain',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(dnsPrecheckRoute, (async (c) => {
+	const { domain } = c.req.valid('json')
+	const trimmed = domain.trim()
+	if (!trimmed) {
+		return c.json(createApiError('BAD_REQUEST', 'domain is required'), 400)
+	}
+
+	const { existingMx, isSubdomain, warn } = await precheckResendDomain(trimmed)
+	return c.json({ existing_mx: existingMx, is_subdomain: isSubdomain, warn })
+}) as RouteHandler<typeof dnsPrecheckRoute, Env>)
+
+// ── GET /api/integrations/:id/github-token ──────────────────────────────
 
 const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+// Why a caller is re-minting, so re-mints can be counted per week. Only these
+// two values are ever logged; anything else is ignored and never written out.
+const GITHUB_TOKEN_REMINT_REASONS = ['mcp_age', 'mcp_401'] as const
 
 const githubTokenRoute = createRoute({
 	method: 'get',
@@ -934,6 +2519,15 @@ const githubTokenRoute = createRoute({
 						'and mints against the fresh install (mid-session App-reinstall recovery). ' +
 						'Ignored when the flag is off — behavior is identical to the legacy path.',
 					example: 'sindre-ai/maskin',
+				}),
+			reason: z
+				.string()
+				.optional()
+				.openapi({
+					description:
+						'Why the caller is re-minting (mcp_age or mcp_401). Logged for counting only; ' +
+						'any other value is ignored and the response is unchanged.',
+					example: 'mcp_age',
 				}),
 		}),
 		headers: workspaceIdHeader,
@@ -962,7 +2556,7 @@ app.openapi(githubTokenRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { repo } = c.req.valid('query')
+	const { repo, reason } = c.req.valid('query')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [integration] = await db
@@ -979,6 +2573,14 @@ app.openapi(githubTokenRoute, (async (c) => {
 		.limit(1)
 	if (!integration) return c.json(createApiError('NOT_FOUND', 'GitHub integration not found'), 404)
 
+	const remintReason = GITHUB_TOKEN_REMINT_REASONS.find((r) => r === reason)
+	if (remintReason) {
+		logger.info('GitHub token re-mint requested', {
+			integrationId: integration.id,
+			reason: remintReason,
+		})
+	}
+
 	// Recovery path: on stale-cache 404 we re-discover the current install for
 	// the target repo and mint against it, so an App reinstalled mid-session
 	// doesn't surface raw 401 as a task failure. Gated by env flag (default off)
@@ -990,8 +2592,11 @@ app.openapi(githubTokenRoute, (async (c) => {
 
 	if (recoveryRepo) {
 		try {
-			const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
-			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
+			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(integration)))
+			const result = await mintInstallationTokenWithRecovery(credentials, {
+				repo: recoveryRepo,
+				expectedOwnerLogin: (integration.config as IntegrationConfig | null)?.owner_login,
+			})
 			if (result.recovered) {
 				const oldInstallationId = credentials.installation_id as string | undefined
 				if (oldInstallationId) {
@@ -1008,6 +2613,36 @@ app.openapi(githubTokenRoute, (async (c) => {
 						newInstallationId: result.installationId,
 						repo: recoveryRepo,
 					})
+
+					// The same installation can be bound to other workspaces
+					// (POST /github/link). Rotate their cached id too, so a
+					// workspace that only consumes webhooks isn't left holding a
+					// dead id until it happens to mint a token itself. Keyed on
+					// this row's `external_id`, not on `oldInstallationId` — the
+					// latter tracks the credentials blob, which rotates while
+					// `external_id` stays at its original value.
+					//
+					// Second boundary around an already best-effort helper: the
+					// token is minted and persisted by this point, so nothing a
+					// sibling write does may turn this call into a failure.
+					if (integration.externalId) {
+						try {
+							await propagateRecoveredInstallationId(db, {
+								sourceIntegrationId: integration.id,
+								sourceExternalId: integration.externalId,
+								actorId,
+								expectedOldInstallationId: oldInstallationId,
+								newInstallationId: result.installationId,
+								repo: recoveryRepo,
+							})
+						} catch (propagateErr) {
+							logger.warn('Failed to propagate recovered installation id to siblings', {
+								integrationId: integration.id,
+								externalId: integration.externalId,
+								error: propagateErr instanceof Error ? propagateErr.message : String(propagateErr),
+							})
+						}
+					}
 				}
 				logger.info('Recovered GitHub App installation id mid-session', {
 					integrationId: integration.id,
@@ -1087,6 +2722,7 @@ const slackConversationSchema = z.object({
 	is_im: z.boolean(),
 	is_mpim: z.boolean(),
 	is_channel: z.boolean(),
+	is_member: z.boolean(),
 })
 
 const listSlackConversationsRoute = createRoute({
@@ -1180,7 +2816,7 @@ app.openapi(listSlackConversationsRoute, (async (c) => {
 	}
 }) as RouteHandler<typeof listSlackConversationsRoute, Env>)
 
-// ── GET /api/integrations/:id/slack/users ──────────────────────────────────
+// ── GET /api/integrations/:id/slack/users ────────────────────────────────
 
 const slackUserSchema = z.object({
 	id: z.string(),
@@ -1263,7 +2899,7 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 
 export default app
 
-// ── Webhook handler (mounted separately at /api/webhooks) ──────────────────
+// ── Webhook handler (mounted separately at /api/webhooks) ──────────────────────
 
 // Slack entity types the normalizer emits for inbound user-to-agent traffic.
 // `slack.app_mention` covers `@Maskin` in any channel; `slack.direct_message`
@@ -1374,7 +3010,11 @@ webhookApp.post('/slack-commands', async (c) => {
 		// Should be unreachable — slack config is always timestamp-scheme.
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
 	}
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack slash-command signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
 	}
@@ -1394,7 +3034,7 @@ webhookApp.post('/slack-commands', async (c) => {
 	return c.json({ response_type: 'ephemeral', text: result.responseText })
 })
 
-// ── Slack account-link interactivity ──────────────────────────────────────
+// ── Slack account-link interactivity ──────────────────────────────────
 //
 // Slack POSTs Block Kit `block_actions` payloads here when the user interacts
 // with the account-link picker (form-encoded with a `payload` field). The
@@ -1413,7 +3053,11 @@ webhookApp.post('/slack-actions-account-link', async (c) => {
 	if (!webhookConfig || 'type' in webhookConfig) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack webhook config missing'), 500)
 	}
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack interactive signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid Slack signature'), 401)
 	}
@@ -1473,7 +3117,11 @@ webhookApp.post('/slack-interactive', async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Slack provider webhook config missing'), 500)
 	}
 
-	if (!webhookHandler.verify(webhookConfig, body, headers)) {
+	if (
+		!webhookHandler.verify(webhookConfig, body, headers, {
+			secret: getEnvOrThrow(webhookConfig.secretEnv),
+		})
+	) {
 		logger.warn('Slack interactive: signature verification failed')
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 	}
@@ -1577,7 +3225,7 @@ webhookApp.post('/slack-interactive', async (c) => {
 	return c.json({ ok: true })
 })
 
-// ── Skjald meeting-completed webhook ────────────────────────────────────────
+// ── Skjald meeting-completed webhook ────────────────────────────────────
 // Registered before the generic `/:provider` catch-all so this path-literal
 // route wins. Skjald has no central app-level secret — every desktop install
 // mints its own locally — so this bypasses the generic single-secret
@@ -1613,7 +3261,7 @@ webhookApp.post('/skjald/:token', async (c) => {
 		if (typeof value === 'string') headers[key.toLowerCase()] = value
 	}
 
-	const secret = decrypt(integration.credentials)
+	const secret = decrypt(requireCredentials(integration))
 	const verified = verifyTimestampSignature(body, headers, secret, {
 		signatureHeader: 'x-skjald-signature',
 		timestampHeader: 'x-skjald-timestamp',
@@ -1697,24 +3345,46 @@ webhookApp.post('/skjald/:token', async (c) => {
 		}
 	}
 
-	if (eventType !== 'transcription.completed') {
+	// `transcription.completed` is the desktop app's event; `outcome.created` / `outcome.updated` are what the iOS
+	// app and the v2 destinations send (the written-up outcome, with the transcript only when the person allows it).
+	// Both end in the same `meeting` object, matched on Skjald's meeting id.
+	const isOutcomeEvent = eventType === 'outcome.created' || eventType === 'outcome.updated'
+	if (eventType !== 'transcription.completed' && !isOutcomeEvent) {
 		// Unknown/future event type — ack without processing so Skjald doesn't retry.
 		await releaseClaim()
 		return c.json({ ok: true, skipped: 'unhandled_event' })
 	}
 
-	const parsedPayload = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
-	if (!parsedPayload.success) {
+	let upsertMeeting: (() => Promise<{ objectId: string; action: 'created' | 'updated' }>) | null =
+		null
+	if (isOutcomeEvent) {
+		const parsed = skjaldOutcomePayloadSchema.safeParse(payload)
+		if (parsed.success) {
+			upsertMeeting = () =>
+				upsertSkjaldOutcomeMeeting(db, {
+					workspaceId: integration.workspaceId,
+					systemActorId,
+					payload: parsed.data,
+				})
+		}
+	} else {
+		const parsed = skjaldTranscriptionCompletedPayloadSchema.safeParse(payload)
+		if (parsed.success) {
+			upsertMeeting = () =>
+				upsertSkjaldMeeting(db, {
+					workspaceId: integration.workspaceId,
+					systemActorId,
+					payload: parsed.data,
+				})
+		}
+	}
+	if (!upsertMeeting) {
 		await releaseClaim()
-		return c.json(createApiError('BAD_REQUEST', 'Invalid transcription.completed payload'), 400)
+		return c.json(createApiError('BAD_REQUEST', `Invalid ${eventType} payload`), 400)
 	}
 
 	try {
-		const result = await upsertSkjaldMeeting(db, {
-			workspaceId: integration.workspaceId,
-			systemActorId,
-			payload: parsedPayload.data,
-		})
+		const result = await upsertMeeting()
 
 		await commitWebhookDelivery(db, {
 			eventRows: [
@@ -1751,6 +3421,453 @@ webhookApp.post('/skjald/:token', async (c) => {
 	}
 })
 
+// ── Resend inbound-email webhook ────────────────────────────────────────
+// Registered BEFORE the generic `/:provider` catch-all so this literal-prefix
+// route wins Hono's trie match. If the order were reversed, `/resend/*` would
+// hit the generic handler, which resolves `resend`'s ProviderConfig, finds no
+// `webhook` field, and returns 400 "Provider does not support webhooks" — the
+// exact regression tech-spec §12.4 pins with a framework test.
+//
+// The Svix verifier can't be wired via `ResolvedProvider.customWebhookVerifier`
+// — that hook's `(body, headers) => boolean` signature has no db handle and
+// can't reach the per-row `whsec_...` secret. Every Resend install mints its
+// own webhook and its own signing secret, so verification MUST happen after we
+// look up the integration row. That's why this looks like Skjald's route
+// rather than the catch-all path.
+webhookApp.post('/resend/:token', async (c) => {
+	const db = c.get('db')
+	const token = c.req.param('token')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.provider, 'resend'),
+				eq(integrations.externalId, token),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+
+	if (!integration) {
+		return c.json(createApiError('NOT_FOUND', 'Unknown webhook'), 404)
+	}
+
+	const body = await c.req.text()
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	// Δ vs Skjald #1 — JSON credentials blob `{ accessToken, webhookSecret }`.
+	// Skjald stores the raw signing secret; Resend needs the API key alongside
+	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
+	//
+	// A row with no credentials (empty column, or a blob without both keys) is a
+	// permanent misconfiguration, not a transient fault. It answers 409 with a
+	// reason instead of a 500: Resend retries a 5xx on its backoff schedule and
+	// would hit the same failure every time.
+	const credentialsMissing = () => {
+		logger.warn('resend.webhook.credentials_missing', {
+			integration_id: integration.id,
+			workspace_id: integration.workspaceId,
+		})
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This Resend connection has no credentials. Reconnect Resend with POST /api/integrations/resend/connect.',
+				[{ field: 'code', message: 'INTEGRATION_CREDENTIALS_MISSING' }],
+				'Reconnect Resend in this workspace, sending api_key and receive_subdomain.',
+			),
+			409,
+		)
+	}
+	if (!integration.credentials) return credentialsMissing()
+
+	let stored: { accessToken?: string; webhookSecret?: string }
+	try {
+		stored = JSON.parse(decrypt(requireCredentials(integration))) as {
+			accessToken?: string
+			webhookSecret?: string
+		}
+	} catch {
+		logger.error('Resend webhook: credentials blob is unparseable', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
+	}
+	const { accessToken, webhookSecret } = stored
+	if (!accessToken || !webhookSecret) return credentialsMissing()
+
+	// Δ vs Skjald #2 — Svix HMAC-SHA256 base64, not sha256-hex over `{ts}.{body}`.
+	const verified = verifyResendSvix(body, headers, webhookSecret)
+	if (!verified) {
+		logger.warn('Resend webhook: signature verification failed', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	const integrationConfig = integration.config as IntegrationConfig
+	const systemActorId = integrationConfig?.system_actor_id
+	if (!systemActorId) {
+		logger.error('Resend webhook: integration missing system_actor_id', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(body)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
+	}
+
+	// Δ vs Skjald #3 — event type comes from the payload body, not a header.
+	const parsed = resendEmailReceivedSchema.safeParse(payload)
+	if (!parsed.success || parsed.data.type !== 'email.received') {
+		return c.json({ ok: true, skipped: 'unhandled_event' })
+	}
+	// Δ vs Skjald #4 — dedup key = `email_id` from body.
+	const emailId = parsed.data.data.email_id
+
+	logger.info('resend.webhook.received', {
+		email_id: emailId,
+		workspace_id: integration.workspaceId,
+		ts: new Date().toISOString(),
+	})
+
+	// Claim the delivery so a retry that lands mid-fetch is recognised as a
+	// duplicate — same pattern as Skjald (2488-2504) + the /:provider catch-all.
+	// Fail open on a dedup-table outage so a Postgres blip doesn't stall
+	// legitimate deliveries.
+	let claimRowId: string | null = null
+	try {
+		const rows = await db
+			.insert(webhookDeliveries)
+			.values({
+				provider: 'resend',
+				externalId: emailId,
+				workspaceId: integration.workspaceId,
+			})
+			.onConflictDoNothing({
+				target: [
+					webhookDeliveries.provider,
+					webhookDeliveries.externalId,
+					webhookDeliveries.workspaceId,
+				],
+			})
+			.returning({ id: webhookDeliveries.id })
+		if (rows.length === 0) {
+			// Only ack a retry once the original has finished. If the claim is still
+			// unprocessed the first body-fetch is in flight and may yet fail and
+			// release it — a 2xx here would tell Resend the email was delivered and
+			// nothing would ever retry it. A non-2xx makes Resend retry again.
+			const [existing] = await db
+				.select({ processedAt: webhookDeliveries.processedAt })
+				.from(webhookDeliveries)
+				.where(
+					and(
+						eq(webhookDeliveries.provider, 'resend'),
+						eq(webhookDeliveries.externalId, emailId),
+						eq(webhookDeliveries.workspaceId, integration.workspaceId),
+					),
+				)
+				.limit(1)
+			if (!existing?.processedAt) {
+				logger.info('resend.dedupe.in_flight', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+				})
+				return c.json(createApiError('CONFLICT', 'Delivery still in flight — will retry'), 409)
+			}
+			logger.info('resend.dedupe.hit', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		claimRowId = rows[0]?.id ?? null
+	} catch (err) {
+		logger.error('Failed to claim resend delivery; processing without dedup', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
+		})
+	}
+
+	const releaseClaim = async () => {
+		if (!claimRowId) return
+		try {
+			await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
+		} catch (err) {
+			logger.error('Failed to release resend webhook delivery claim', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+				err: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	// verify → claim → fetch → enrich → commit. Fetch after the claim so a
+	// retry mid-fetch doesn't burn 2× the API budget; fetch before the commit
+	// so `events.data` carries the full body when the trigger fires.
+	let enriched: ResendEmailReceived
+	try {
+		enriched = await fetchResendBodyWithRetry(accessToken, emailId, parsed.data)
+	} catch (err) {
+		logger.error('resend.body_fetch.failed', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Body fetch failed — will retry'), 500)
+	}
+
+	// Empty-body guard (spec §5.3 — load-bearing). If Resend returned a body
+	// with neither html nor text, do NOT dispatch a session — that's the
+	// prevented failure mode. Do NOT release the claim either: a retry would
+	// fetch the same empty body. Commit an empty eventRows + claimRowId so
+	// `webhook_deliveries.processed_at` is set (empty eventRows skips the
+	// events insert but still runs the gated UPDATE at commit.ts:49-55).
+	if (!enriched.data.html && !enriched.data.text) {
+		logger.warn('resend.body_empty', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+		})
+		try {
+			await commitWebhookDelivery(db, { eventRows: [], claimRowId })
+		} catch (err) {
+			if (err instanceof ClaimReleasedError) {
+				logger.warn('resend.claim.released', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+					claim_row_id: err.claimRowId,
+				})
+			} else {
+				logger.error('Resend webhook: failed to mark claim processed on empty body', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+					err: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+		return c.json({ ok: true, skipped: 'empty_body' })
+	}
+
+	try {
+		await commitWebhookDelivery(db, {
+			eventRows: [
+				{
+					workspaceId: integration.workspaceId,
+					actorId: systemActorId,
+					action: 'received',
+					entityType: 'resend.email',
+					entityId: integration.id,
+					data: enriched.data as Record<string, unknown>,
+				},
+			],
+			claimRowId,
+		})
+		logger.info('resend.session_dispatched', {
+			workspace_id: integration.workspaceId,
+			email_id: emailId,
+			entity_type: 'resend.email',
+		})
+		return c.json({ ok: true })
+	} catch (err) {
+		if (err instanceof ClaimReleasedError) {
+			logger.warn('resend.claim.released', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+				claim_row_id: err.claimRowId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		logger.error('Resend webhook processing failed', {
+			integrationId: integration.id,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+})
+
+// ── Custom extension webhook ────────────────────────────────────────────
+// Registered before the generic `/:provider` catch-all, like the Skjald and
+// Resend token routes. `:token` is the opaque routing factor stored on the
+// `extensions` row (identifies the extension and its workspace); the
+// per-extension signing secret, decrypted from `integrations`
+// (provider 'extension:{slug}'), is the authentication factor. Signature
+// scheme, event mapping and rate limit all come from the row's webhook_config.
+// Failures that write nothing (bad signature, bad JSON, unmapped payload)
+// leave no row; only committed deliveries reach webhook_deliveries.
+webhookApp.post('/x/:token', async (c) => {
+	const startedAt = Date.now()
+	const db = c.get('db')
+	const token = c.req.param('token')
+
+	const [ext] = await db
+		.select()
+		.from(extensions)
+		.where(and(eq(extensions.webhookToken, token), eq(extensions.status, 'active')))
+		.limit(1)
+	if (!ext) {
+		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	}
+
+	const parsedConfig = webhookConfigSchema.safeParse(ext.webhookConfig)
+	if (!parsedConfig.success) {
+		logger.error('Extension webhook: stored webhook_config is invalid', { extensionId: ext.id })
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	const config = parsedConfig.data
+
+	const body = await c.req.text()
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	let secret: string | null
+	try {
+		secret = await readExtensionSecret(db, ext.workspaceId, ext.slug)
+	} catch (err) {
+		logger.error('Extension webhook: could not read signing secret', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	if (!secret) {
+		logger.error('Extension webhook: no signing secret stored', { extensionId: ext.id })
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+
+	let verified: boolean
+	try {
+		verified = verifyExtensionSignature(webhookHandler, config, body, headers, secret)
+	} catch (err) {
+		logger.error('Extension webhook: signature check could not run', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Extension misconfigured'), 500)
+	}
+	if (!verified) {
+		logger.warn('Extension webhook: signature verification failed', { extensionId: ext.id })
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	if (isStaleDelivery(config, headers)) {
+		logger.warn('Extension webhook: delivery older than maxAgeSeconds', { extensionId: ext.id })
+		return c.json(createApiError('UNAUTHORIZED', 'Delivery is too old'), 401)
+	}
+
+	if (!allowWebhookRequest(token, config.rateLimit.perMinute)) {
+		return c.json(createApiError('RATE_LIMITED', 'Too many requests'), 429)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(body)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
+	}
+
+	const mapped = mapWebhookEvent(config.eventMap, payload)
+	if (!mapped.ok) {
+		return c.json(createApiError('VALIDATION_ERROR', mapped.message), 422)
+	}
+	const { externalId, entityType, action, data } = mapped.event
+
+	const provider = extensionProvider(ext.slug)
+	// The claim key is external id + action, so a cancel after a create for the same
+	// booking is a new delivery while a retry of the same event is still a duplicate.
+	// The event entity id below stays on the bare external id.
+	const claimKey = `${externalId}:${action}`
+	let claimRowId: string | null
+	try {
+		const rows = await db
+			.insert(webhookDeliveries)
+			.values({ provider, externalId: claimKey, workspaceId: ext.workspaceId })
+			.onConflictDoNothing({
+				target: [
+					webhookDeliveries.provider,
+					webhookDeliveries.externalId,
+					webhookDeliveries.workspaceId,
+				],
+			})
+			.returning({ id: webhookDeliveries.id })
+		if (rows.length === 0) {
+			return c.json({ ok: true, status: 'duplicate' })
+		}
+		claimRowId = rows[0]?.id ?? null
+	} catch (err) {
+		logger.error('Extension webhook: could not claim delivery', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+
+	const releaseClaim = async () => {
+		if (!claimRowId) return
+		try {
+			await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
+		} catch (err) {
+			logger.error('Extension webhook: could not release delivery claim', {
+				extensionId: ext.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	try {
+		const systemActorId = await ensureExtensionSystemActor(db, ext.workspaceId, ext.createdBy)
+		await commitWebhookDelivery(db, {
+			eventRows: [
+				{
+					workspaceId: ext.workspaceId,
+					actorId: systemActorId,
+					action,
+					entityType,
+					entityId: deliveryEntityId(ext.id, externalId),
+					data: data as Record<string, unknown>,
+				},
+			],
+			claimRowId,
+		})
+	} catch (err) {
+		if (err instanceof ClaimReleasedError) {
+			logger.warn('Extension webhook claim gone or already processed at commit time', {
+				extensionId: ext.id,
+				claimRowId: err.claimRowId,
+			})
+			return c.json({ ok: true, status: 'duplicate' })
+		}
+		logger.error('Extension webhook processing failed', {
+			extensionId: ext.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+
+	void capturePosthogEvent('webhook_delivery_committed', ext.workspaceId, {
+		provider,
+		external_id: externalId,
+		workspace_id: ext.workspaceId,
+		latency_ms: Date.now() - startedAt,
+	})
+
+	return c.json({ ok: true, status: 'committed' })
+})
+
 // `asyncProcessing` providers (Slack) hand fan-out + events insert off to the
 // event loop so the route can ack fast — the caller never gets a handle on
 // that background promise. Track it here so integration tests (running
@@ -1763,6 +3880,21 @@ const pendingAsyncWebhookWork = new Set<Promise<unknown>>()
 export async function __flushAsyncWebhookProcessingForTests(): Promise<void> {
 	await Promise.all(pendingAsyncWebhookWork)
 }
+
+// ── Google Drive channel notifications ──────────────────────────────────
+// Registered ahead of the '/:provider' catch-all on purpose. Drive pushes carry an
+// empty body (the catch-all rejects that as invalid JSON) and identify the
+// delivery by X-Goog-Channel-ID, not by the Google account email the catch-all
+// joins on (two workspaces can connect the same account). Token check, channel
+// join, dedup and fan-out live in the provider's webhook-handler.
+webhookApp.post('/google-drive', async (c) => {
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+	const result = await processDriveWebhook(c.get('db'), headers)
+	return c.json(result.body, result.status)
+})
 
 webhookApp.post('/:provider', async (c) => {
 	const db = c.get('db')
@@ -1801,7 +3933,11 @@ webhookApp.post('/:provider', async (c) => {
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}
 	} else {
-		if (!webhookHandler.verify(webhookConfig, body, headers)) {
+		if (
+			!webhookHandler.verify(webhookConfig, body, headers, {
+				secret: getEnvOrThrow(webhookConfig.secretEnv),
+			})
+		) {
 			logger.warn(`Webhook signature verification failed for ${providerName}`)
 			return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 		}
@@ -1825,6 +3961,27 @@ webhookApp.post('/:provider', async (c) => {
 	if (!normalized) {
 		// Event type we don't handle — acknowledge it
 		return c.json({ ok: true, skipped: true })
+	}
+
+	// Some providers (Google Meet) deliver payloads keyed on an indirect
+	// identifier (People-id via Workspace Events) rather than the row's
+	// external_id. The resolveInstallationId hook is the join that swaps the
+	// placeholder for the real external_id before the integrations lookup.
+	if (resolved.resolveInstallationId) {
+		const resolvedId = await resolved.resolveInstallationId({
+			db,
+			provider: providerName,
+			normalized,
+			payload,
+			headers,
+		})
+		if (!resolvedId) {
+			logger.info(`Meet-shape provider ${providerName} had no matching row for delivered id`, {
+				installationId: normalized.installationId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		normalized.installationId = resolvedId
 	}
 
 	// Find ALL matching active integrations. A single external install (e.g. one
@@ -2147,11 +4304,52 @@ webhookApp.post('/:provider', async (c) => {
 	return c.json({ ok: true, count: totalInserted, workspaces: eligible.length })
 })
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────
+
+/** Lifetime of the state-binding cookie, in seconds. Matches the 10-minute
+ *  `state` age check in the callback so neither outlives the other. */
+const OAUTH_NONCE_COOKIE_MAX_AGE = 10 * 60
+
+/** Per-provider so two connect flows started in different tabs (e.g. GitHub and
+ *  Slack) do not clobber each other's binding. */
+function oauthNonceCookieName(providerName: string): string {
+	return `maskin_oauth_nonce_${providerName}`
+}
+
+/**
+ * Bind an OAuth `state` to the browser that requested it.
+ *
+ * `SameSite=Lax` is required, not incidental: the callback arrives as a
+ * top-level GET navigation from the provider's domain, which Lax permits and
+ * Strict would drop — silently breaking every connect.
+ */
+function setOAuthNonceCookie(c: Context<Env>, providerName: string, nonce: string): void {
+	const secure = resolvePublicOrigin(c.req.url, c.req.header()).startsWith('https://')
+	setCookie(c, oauthNonceCookieName(providerName), nonce, {
+		httpOnly: true,
+		sameSite: 'Lax',
+		secure,
+		path: '/api/integrations',
+		maxAge: OAUTH_NONCE_COOKIE_MAX_AGE,
+	})
+}
+
+/** Clear the binding once a callback has consumed it, so a replay of the same
+ *  state cannot ride a still-live cookie. */
+function clearOAuthNonceCookie(c: Context<Env>, providerName: string): void {
+	const secure = resolvePublicOrigin(c.req.url, c.req.header()).startsWith('https://')
+	setCookie(c, oauthNonceCookieName(providerName), '', {
+		httpOnly: true,
+		sameSite: 'Lax',
+		secure,
+		path: '/api/integrations',
+		maxAge: 0,
+	})
+}
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 // In production, use the configured origin to prevent X-Forwarded-Host injection
-function resolvePublicOrigin(
+export function resolvePublicOrigin(
 	requestUrl: string,
 	headers: Record<string, string | undefined>,
 ): string {

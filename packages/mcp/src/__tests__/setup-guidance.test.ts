@@ -8,6 +8,7 @@ import {
 	checkBet,
 	checkLoop,
 	findMentionedProviders,
+	readWorkspaceLlmReadiness,
 	toNextSteps,
 	toProseBlock,
 } from '../setup-guidance'
@@ -45,6 +46,22 @@ function ctx(fields: Partial<LoopCheckContext> = {}): LoopCheckContext {
 	}
 }
 
+describe('readWorkspaceLlmReadiness', () => {
+	it('counts a key as set when llm_configured says one is stored, without any key in settings', () => {
+		expect(readWorkspaceLlmReadiness({}, { anthropic: true, openai: false }).hasLlmKey).toBe(true)
+		expect(readWorkspaceLlmReadiness({}, { anthropic: false, openai: true }).hasLlmKey).toBe(true)
+	})
+
+	it('reports no key when llm_configured is all false and settings hold none', () => {
+		expect(readWorkspaceLlmReadiness({}, { anthropic: false, openai: false }).hasLlmKey).toBe(false)
+		expect(readWorkspaceLlmReadiness({}).hasLlmKey).toBe(false)
+	})
+
+	it('still reads llm_keys from settings for a server that does not send llm_configured', () => {
+		expect(readWorkspaceLlmReadiness({ llm_keys: { anthropic: 'sk-fake' } }).hasLlmKey).toBe(true)
+	})
+})
+
 describe('checkLoop — first-test fixture (bet DoD #8)', () => {
 	it('produces steps_have_agents:fail (first) and connectors_connected:warn with connect_integration fix', () => {
 		const steps: LoopStep[] = [
@@ -70,7 +87,8 @@ describe('checkLoop — first-test fixture (bet DoD #8)', () => {
 		expect(connectors?.fix?.args_hint.toLowerCase()).toContain('posthog')
 
 		const prose = toProseBlock(checks)
-		expect(prose).toMatch(/relay these setup gaps to the user/)
+		expect(prose).toMatch(/Blockers — tell the user/)
+		expect(prose).toMatch(/Not blockers — fix these yourself/)
 	})
 })
 
@@ -203,7 +221,7 @@ describe('checkBet', () => {
 			{ id: 't1', type: 'task', status: 'todo', content: fullContent, driver: 'actor-1' },
 			{ workspace: readyWorkspace, statusOrder: ['todo', 'done'] },
 		)
-		expect(checks.find((c) => c.name === 'driver_set')).toBeDefined()
+		expect(checks.find((c) => c.name === 'status_progression')).toBeDefined()
 	})
 
 	describe('content_quality', () => {
@@ -247,41 +265,40 @@ describe('checkBet', () => {
 			expect(c?.message).toMatch(/no driver/)
 		})
 
-		it('warns to confirm the driver when one is set', () => {
+		it('does not flag a driver that is already set', () => {
 			const checks = checkBet(
 				{ id: 'b1', type: 'bet', content: fullContent, driver: 'actor-1' },
 				{ workspace: readyWorkspace, statusOrder: [] },
 			)
-			const c = checks.find((c) => c.name === 'driver_set')
-			expect(c?.status).toBe('warn')
-			expect(c?.message).toContain('actor-1')
-			expect(c?.message).toMatch(/confirm/)
+			expect(checks.find((c) => c.name === 'driver_set')).toBeUndefined()
 		})
 	})
 
 	describe('status_progression', () => {
-		it('asks whether to progress when status is the entry status', () => {
+		it('flags the entry status as an FYI without telling the agent to ask or progress', () => {
 			const checks = checkBet(
-				{ id: 'b1', type: 'bet', status: 'signal', content: fullContent, driver: 'actor-1' },
-				{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
+				{ id: 'b1', type: 'bet', status: 'opportunity', content: fullContent, driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: ['opportunity', 'qualified', 'active'] },
 			)
 			const c = checks.find((c) => c.name === 'status_progression')
 			expect(c?.status).toBe('warn')
-			expect(c?.message).toContain('signal')
+			expect(c?.message).toContain('opportunity')
 			expect(c?.message).toContain('qualified')
+			expect(c?.message).not.toMatch(/ask the user/i)
+			expect(c?.fix).toBeUndefined()
 		})
 
 		it('does not fire once the object is past the entry status', () => {
 			const checks = checkBet(
 				{ id: 'b1', type: 'bet', status: 'active', content: fullContent, driver: 'actor-1' },
-				{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
+				{ workspace: readyWorkspace, statusOrder: ['opportunity', 'qualified', 'active'] },
 			)
 			expect(checks.find((c) => c.name === 'status_progression')).toBeUndefined()
 		})
 
 		it('does not fire when there is no status order to progress along', () => {
 			const checks = checkBet(
-				{ id: 'b1', type: 'bet', status: 'signal', content: fullContent, driver: 'actor-1' },
+				{ id: 'b1', type: 'bet', status: 'opportunity', content: fullContent, driver: 'actor-1' },
 				{ workspace: readyWorkspace, statusOrder: [] },
 			)
 			expect(checks.find((c) => c.name === 'status_progression')).toBeUndefined()
@@ -376,8 +393,8 @@ describe('checkActor', () => {
 		expect(wired.find((c) => c.name === 'automation_wired')).toBeUndefined()
 	})
 
-	it('always asks about a dry run for agents', () => {
-		const checks = checkActor({
+	it('has no dry-run item and no "ask the user" text when only warn items remain', () => {
+		const noGaps = checkActor({
 			id: 'a1',
 			type: 'agent',
 			systemPrompt: fullPrompt,
@@ -385,14 +402,19 @@ describe('checkActor', () => {
 			nonMaskinMcpServerCount: 2,
 			wiredToAutomation: true,
 		})
-		expect(checks).toEqual([
-			{
-				name: 'dry_run_suggested',
-				status: 'warn',
-				message: expect.stringContaining('dry-run'),
-				fix: expect.objectContaining({ tool: 'run_agent' }),
-			},
-		])
+		expect(noGaps).toEqual([])
+
+		const onlyWarns = checkActor({ id: 'a1', type: 'agent' })
+		expect(onlyWarns.length).toBeGreaterThan(0)
+		expect(onlyWarns.every((c) => c.status === 'warn')).toBe(true)
+		expect(onlyWarns.some((c) => c.name === 'dry_run_suggested')).toBe(false)
+
+		const prose = toProseBlock(onlyWarns)
+		expect(prose).not.toMatch(/ask the user/i)
+		expect(prose).not.toMatch(/dry-run/i)
+		expect(prose).not.toMatch(/Blockers/)
+		expect(prose).toMatch(/Not blockers — fix these yourself/)
+		for (const c of onlyWarns) expect(c.message).not.toMatch(/ask the user/i)
 	})
 })
 
@@ -449,8 +471,8 @@ describe('toProseBlock', () => {
 			}),
 		)
 		const prose = toProseBlock(checks)
-		expect(prose.startsWith('IMPORTANT — before ending your turn')).toBe(true)
-		expect(prose).toMatch(/do not skip this silently/)
+		expect(prose.startsWith('Blockers — tell the user')).toBe(true)
+		expect(prose).not.toMatch(/IMPORTANT/)
 		expect(prose).toMatch(/1\./)
 		expect(prose).toContain('update_trigger')
 	})

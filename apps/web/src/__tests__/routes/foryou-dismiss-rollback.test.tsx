@@ -1,0 +1,404 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { UnreadItem } from '@/lib/api'
+
+/**
+ * Dismissing a card that already carries a decision receipt clears it out of
+ * `decided`, and the server has already dropped it from the list — so a
+ * dismissal that then fails leaves the card in neither place. Without a
+ * rollback it disappears for good while the toast promises the opposite.
+ */
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../mocks/router')
+	return {
+		...mockTanStackRouter(),
+		createFileRoute: () => (options: Record<string, unknown>) => options,
+	}
+})
+
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
+
+type TestState = {
+	__items: UnreadItem[]
+	__markReadFails: boolean
+	__dismissFails: boolean
+	__lastMutateOptions?: unknown
+	__createCalls: Array<Record<string, unknown>>
+	__markReadCalls: Array<Record<string, unknown>>
+	__dismissCalls: Array<Record<string, unknown>>
+}
+const testState = globalThis as unknown as TestState
+testState.__items = []
+testState.__markReadFails = false
+testState.__dismissFails = false
+testState.__createCalls = []
+testState.__markReadCalls = []
+testState.__dismissCalls = []
+
+vi.mock('@/hooks/use-for-you', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-for-you')>()),
+	useForYou: () => ({
+		data: { items: (globalThis as unknown as TestState).__items },
+		isLoading: false,
+	}),
+	// Dismiss is its own call, separate from mark-read. `mutateAsync` returns a promise per
+	// call, so each caller keeps its own success/failure handling.
+	useDismissForYou: () => ({
+		mutateAsync: (vars: Record<string, unknown>) => {
+			const state = globalThis as unknown as TestState
+			state.__dismissCalls.push(vars)
+			if (!state.__dismissFails) return Promise.resolve({})
+			return Promise.reject(new Error('dismiss failed'))
+		},
+	}),
+}))
+
+vi.mock('@/hooks/use-subscriptions', () => ({
+	useMarkRead: () => ({
+		// `mutateAsync` returns a promise per call, so each caller keeps its own
+		// success/failure handling. This is the API the route must use.
+		mutateAsync: (vars: Record<string, unknown>) => {
+			const state = globalThis as unknown as TestState
+			state.__markReadCalls.push(vars)
+			if (!state.__markReadFails) return Promise.resolve({})
+			return Promise.reject(new Error('mark-read failed'))
+		},
+		// `mutate` is modelled the way react-query really behaves, so a
+		// regression back to it is caught rather than passing against a kinder
+		// stub. The hook holds ONE mutation observer; every `observer.mutate()`
+		// overwrites the previous call's options and detaches its observer, so
+		// across a bulk loop only the LAST call's `onError` can ever fire.
+		mutate: (_vars: unknown, opts?: { onError?: () => void }) => {
+			const state = globalThis as unknown as TestState
+			state.__lastMutateOptions = opts
+			queueMicrotask(() => {
+				if (!state.__markReadFails) return
+				if (state.__lastMutateOptions !== opts) return // observer was stolen by a later call
+				opts?.onError?.()
+			})
+		},
+	}),
+	useMarkUnread: () => ({ mutateAsync: () => Promise.resolve({}), mutate: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-user-display-settings', () => ({
+	useUserDisplaySettings: () => ({ data: undefined, isFetched: true }),
+	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn() }),
+}))
+
+vi.mock('@/lib/api', () => {
+	class ApiError extends Error {}
+	return {
+		ApiError,
+		api: {
+			events: {
+				create: async (_ws: string, input: Record<string, unknown>) => {
+					;(globalThis as unknown as TestState).__createCalls.push(input)
+					return { id: 'evt-1' }
+				},
+			},
+		},
+	}
+})
+
+// The stub exposes the two callbacks this test drives and reports whether the
+// route is still handing it a decision receipt.
+vi.mock('@/components/foryou/feed-card', () => ({
+	FeedCard: ({
+		item,
+		decided,
+		onDecide,
+		onMarkRead,
+		onReplied,
+	}: {
+		item: { object?: { title?: string | null } }
+		decided: { id: string; label: string } | null
+		onDecide: (option: { id: string; label: string }) => void
+		onMarkRead: () => void
+		onReplied: () => void
+	}) => (
+		<div data-testid="foryou-feed-card" data-decided={String(Boolean(decided))}>
+			{item.object?.title}
+			<button type="button" onClick={() => onDecide({ id: 'approve', label: 'Approve' })}>
+				decide
+			</button>
+			<button type="button" onClick={onMarkRead}>
+				dismiss
+			</button>
+			<button type="button" onClick={onReplied}>
+				reply
+			</button>
+		</div>
+	),
+}))
+vi.mock('@/components/layout/page-header', () => ({ PageHeader: () => null }))
+vi.mock('@/components/foryou/onboarding-prompt-card', () => ({ OnboardingPromptCard: () => null }))
+vi.mock('@/components/foryou/briefing-row', () => ({ BriefingRow: () => null }))
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
+
+import { Route } from '@/routes/_authed/$workspaceId/index'
+
+const ForYouPage = (Route as unknown as { component: React.FC }).component
+
+function buildItem(id: string, title: string): UnreadItem {
+	return {
+		entity_type: 'object',
+		entity_id: id,
+		unread_count: 1,
+		mentioning_unread_count: 0,
+		max_unread_attention: null,
+		latest_event_id: 42,
+		latest_activity_at: '2026-08-11T10:00:00.000Z',
+		latest_mention: {
+			event_id: 4242,
+			actor_id: 'agent-1',
+			created_at: '2026-08-11T10:00:00.000Z',
+			content: 'Which way do we go?',
+			attention: null,
+			decision: null,
+		},
+		object: {
+			id,
+			workspaceId: 'ws-1',
+			type: 'insight',
+			title,
+			content: null,
+			status: 'active',
+			metadata: null,
+			driver: null,
+			activeSessionId: null,
+			createdBy: 'actor-1',
+			createdAt: null,
+			updatedAt: null,
+		},
+	}
+}
+
+async function renderFeed() {
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false, gcTime: 0 } },
+	})
+	const view = render(
+		<QueryClientProvider client={client}>
+			<ForYouPage />
+		</QueryClientProvider>,
+	)
+	await act(async () => {
+		await Promise.resolve()
+	})
+	return view
+}
+
+describe('For You — dismiss rollback', () => {
+	beforeEach(() => {
+		testState.__items = [buildItem('thread-1', 'Renewal terms need a read')]
+		testState.__markReadFails = false
+		testState.__dismissFails = false
+		testState.__createCalls = []
+		testState.__markReadCalls = []
+		testState.__dismissCalls = []
+	})
+
+	it('keeps the decision receipt when dismissing it fails', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+
+		// Take an option — the card flips to its receipt.
+		await user.click(screen.getByRole('button', { name: 'decide' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+		expect(screen.getByTestId('foryou-feed-card')).toHaveAttribute('data-decided', 'true')
+
+		// Now dismiss it and let the dismissal fail.
+		testState.__dismissFails = true
+		await user.click(screen.getByRole('button', { name: 'dismiss' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		const card = screen.getByTestId('foryou-feed-card')
+		expect(card).toBeInTheDocument()
+		expect(card).toHaveAttribute('data-decided', 'true')
+	})
+
+	// The answer belongs under the question. Posted loose on the object, the
+	// agent that asked has to infer from timing which of its asks was answered.
+	it('threads the taken option under the comment that raised the card', async () => {
+		const view = await renderFeed()
+		await act(async () => {
+			view.getByText('decide').click()
+		})
+		expect(testState.__createCalls).toHaveLength(1)
+		expect(testState.__createCalls[0]).toMatchObject({
+			entity_id: 'thread-1',
+			content: 'Approve',
+			parent_event_id: 4242,
+		})
+	})
+
+	// A typed answer settles the thread just as taking an option does. It used
+	// to leave the card sitting in the feed, so the reader saw their own answer
+	// still asking to be answered.
+	it('marks the thread read when the reader types an answer', async () => {
+		const view = await renderFeed()
+		await act(async () => {
+			view.getByText('reply').click()
+		})
+		expect(testState.__markReadCalls).toMatchObject([
+			{ entityType: 'object', entityId: 'thread-1', lastEventId: 42 },
+		])
+	})
+
+	// The reader's own reply becomes a new unread event on the object, so the
+	// unread feed's next refetch returns the card again — leaving them looking
+	// at a card they just answered. Hide it optimistically the same way the
+	// "Mark as read" button does.
+	it('hides the card when the reader types an answer', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+	})
+
+	// The hide is for the mention the reader answered, not for the thread: when
+	// the agent answers the reply, that newer mention must show up live.
+	it('shows the card again when the thread gets a newer mention after the reply', async () => {
+		const user = userEvent.setup()
+		const view = await renderFeed()
+
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+
+		// A refetch that returns the same event id (the mark-read racing the
+		// refetch) must not bring the card back.
+		view.rerender(
+			<QueryClientProvider client={new QueryClient()}>
+				<ForYouPage />
+			</QueryClientProvider>,
+		)
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+
+		// The agent answers: the same entity comes back with a higher event id.
+		testState.__items = [
+			{ ...buildItem('thread-1', 'Renewal terms need a read'), latest_event_id: 43 },
+		]
+		view.rerender(
+			<QueryClientProvider client={new QueryClient()}>
+				<ForYouPage />
+			</QueryClientProvider>,
+		)
+
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+	})
+
+	// Symmetric to the bulk-dismiss rollback: if the mark-read fails after a
+	// typed reply, the card has to come back — otherwise it stays hidden
+	// forever behind an optimistic dismiss whose write never landed.
+	it('puts the card back when the mark-read after a typed reply fails', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+
+		testState.__markReadFails = true
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+	})
+
+	// Opening a page moves the read position and must not retire a card, so Dismiss
+	// is its own call. It names the comment that raised the card (a decision card has
+	// no notification) and never touches the read position.
+	it('dismisses by the comment that raised the card, without marking it read', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+
+		await user.click(screen.getByRole('button', { name: 'dismiss' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(testState.__dismissCalls).toEqual([{ body: { source_comment_id: 4242 } }])
+		expect(testState.__markReadCalls).toEqual([])
+	})
+
+	it('dismisses a curated card by its notification', async () => {
+		const user = userEvent.setup()
+		testState.__items = [
+			{
+				...buildItem('thread-1', 'Renewal terms need a read'),
+				curated: { headline: 'Renewal', rationale: null, notification_id: 'notif-1' },
+			},
+		]
+		await renderFeed()
+
+		await user.click(screen.getByRole('button', { name: 'dismiss' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(testState.__dismissCalls).toEqual([{ body: { notification_id: 'notif-1' } }])
+	})
+
+	it('still hides the card when the dismissal succeeds', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+
+		await user.click(screen.getByRole('button', { name: 'decide' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+		await user.click(screen.getByRole('button', { name: 'dismiss' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+	})
+
+	// The regression this file is really about. "Dismiss all" marks every card
+	// read through one shared mutation observer, so a rollback hung off
+	// per-call `mutate` callbacks would fire for the LAST card only and leave
+	// every other one hidden for good — the column emptied against a backend
+	// that rejected the whole batch. Seeding a single item, as the two tests
+	// above do, passes either way.
+	it('puts every card back when a bulk dismissal fails', async () => {
+		testState.__items = [
+			buildItem('thread-1', 'Renewal terms need a read'),
+			buildItem('thread-2', 'Trigger settings rewrite'),
+			buildItem('thread-3', 'Pricing page copy'),
+		]
+		await renderFeed()
+		expect(screen.getAllByTestId('foryou-feed-card')).toHaveLength(3)
+
+		testState.__dismissFails = true
+		// Alt+U is the keyboard mirror of the `···` menu's "Dismiss all".
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyU', altKey: true }))
+		})
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.getAllByTestId('foryou-feed-card')).toHaveLength(3)
+	})
+})

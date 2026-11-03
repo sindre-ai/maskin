@@ -22,12 +22,19 @@ vi.mock('@/lib/analytics', () => ({
 	},
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: buildWorkspaceWithRole() }),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({ data: undefined }),
+	useActors: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-notifications', () => ({
+	useNotifications: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-events', () => ({
@@ -48,6 +55,7 @@ vi.mock('@/hooks/use-objects', () => ({
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useSubscribe: () => ({ mutate: vi.fn() }),
 	useUnsubscribe: () => ({ mutate: vi.fn() }),
+	useSubscribers: () => ({ data: { actors: [] } }),
 }))
 
 vi.mock('@/components/shared/agent-working-badge', () => ({

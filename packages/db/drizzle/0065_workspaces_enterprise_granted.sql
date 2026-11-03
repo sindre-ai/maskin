@@ -1,0 +1,17 @@
+-- Unify the BYO-LLM capability with the enterprise designation.
+--
+-- `byollm_allowed` was a per-workspace grant of one capability (may connect
+-- own LLM credentials) that sat *beside* the env-based enterprise allowlist
+-- (MASKIN_ENTERPRISE_ACTOR_IDS), which grants exemption from the plan cap,
+-- credit debiting, the seat cap and the ownership cap. Two names, two
+-- predicates, one of which implied the other — see `byollmEntitled()`.
+--
+-- BYO-LLM is now simply one of the things an enterprise workspace gets, so
+-- the column is the *DB half* of a single `isEnterprise()` predicate (the env
+-- allowlist being the other half). Renamed to say so.
+--
+-- Rename rather than add/backfill/drop: `workspaces` is small and this column
+-- is read on the session-dispatch path only. Note a rename is not readable by
+-- both old and new code, so this wants a deploy where the app restarts with
+-- the migration rather than a long rolling window.
+ALTER TABLE "workspaces" RENAME COLUMN "byollm_allowed" TO "enterprise_granted";

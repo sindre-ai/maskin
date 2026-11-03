@@ -3,7 +3,7 @@ import type { ClassifierVerdict, SignalHit } from './types.js'
 const BAND_LABEL: Record<ClassifierVerdict['band'], string> = {
 	auto: 'AUTO-APPROVE ELIGIBLE',
 	agent_recommends_human: 'AGENT RECOMMENDS HUMAN',
-	two_human_required: 'TWO-HUMAN REQUIRED',
+	human_review_required: 'HUMAN REVIEW REQUIRED',
 }
 
 export function renderRiskScoreBlock(verdict: ClassifierVerdict): string {

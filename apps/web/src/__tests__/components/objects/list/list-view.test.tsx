@@ -19,6 +19,7 @@ const mockNavigate = vi.fn()
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => mockNavigate,
+	useRouter: () => ({ invalidate: vi.fn() }),
 	Link: ({ children, ...props }: { children: ReactNode } & Record<string, unknown>) => {
 		const { to, params, onClick, ...rest } = props
 		return (
@@ -43,14 +44,36 @@ vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => <span>agent working</span>,
 }))
 
+// D1 loop chip is hydrated via `useObjectLoops`, which reads through
+// `useLoops` → `useQuery` and therefore needs a `QueryClientProvider`. These
+// tests exercise ListView without any loop-chip state, so a stub map keeps the
+// component contract intact without pulling react-query into the render tree.
+vi.mock('@/hooks/use-object-loops', () => ({
+	useObjectLoops: () => ({ data: new Map(), isLoading: false, isError: false }),
+}))
+
+// D5 client migration: ListRow uses `useStar`, which reaches for a
+// QueryClientProvider + WorkspaceContext. Stub the hook so the ListView
+// tests keep their pre-D5 shape (no server-truth wiring needed here — the
+// hook is exercised directly in `use-star.test.ts`).
+vi.mock('@/hooks/use-star', () => ({
+	useStar: () => ({ isStarred: false, isSaving: false, toggle: vi.fn() }),
+}))
+
 // jsdom does not support IntersectionObserver; the sentinel effect needs it.
+// Observed nodes are recorded so a test can assert the infinite-scroll sentinel
+// is actually being watched.
+const observedNodes: Element[] = []
 globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
-	observe: vi.fn(),
+	observe: (node: Element) => observedNodes.push(node),
 	unobserve: vi.fn(),
 	disconnect: vi.fn(),
 }))
 
 const deployedAt = '2026-08-01T12:00:00.000Z'
+
+// RelativeTime's compact age column: "now", "3d", or a locale date past a month.
+const AGE_TOKEN = /^(now|\d+[mhd]|\p{L}{3,} \d+|\d+\.? \p{L}{3,}\.?)$/u
 
 // Wraps ListView so checkbox clicks and group-header toggles in tests visibly
 // round-trip through the controlled rowSelection + expanded boundaries.
@@ -133,15 +156,90 @@ describe('ListView', () => {
 		expect(headers[1]?.textContent).toContain('done')
 		expect(headers[1]?.textContent).toContain('1')
 
-		// Rows land under their owning group (expanded group in DOM).
-		act(() => {
-			headers[0]?.click()
-		})
+		// Groups render open by default (mockup 995), so rows are already in the
+		// DOM under their owning group.
 		expect(screen.getByText('Alpha')).toBeInTheDocument()
 		expect(screen.getByText('Gamma')).toBeInTheDocument()
 	})
 
-	it('shows type label, name link, status tag, updated time and chevron on each row', () => {
+	describe('with group totals from the server', () => {
+		it('shows the exact total of each group, not the number of rows loaded', () => {
+			const data = [
+				buildObjectResponse({
+					id: 'obj-1',
+					title: 'Alpha',
+					status: 'active',
+					updatedAt: deployedAt,
+				}),
+			]
+			renderListView({
+				data,
+				grouping: ['status'] as GroupingState,
+				groupTotals: [
+					{ value: 'active', total: 19 },
+					{ value: 'opportunity', total: 103 },
+				],
+			})
+
+			const headers = groupHeaders()
+			expect(headers).toHaveLength(2)
+			expect(headers[0]?.textContent).toContain('19')
+			expect(headers[1]?.textContent).toContain('103')
+		})
+
+		it('asks for the next page of just that group when Show more is clicked', async () => {
+			const onLoadMoreInGroup = vi.fn()
+			const data = [
+				buildObjectResponse({
+					id: 'obj-1',
+					title: 'Alpha',
+					status: 'active',
+					updatedAt: deployedAt,
+				}),
+				buildObjectResponse({
+					id: 'obj-2',
+					title: 'Beta',
+					status: 'active',
+					updatedAt: deployedAt,
+				}),
+			]
+			renderListView({
+				data,
+				grouping: ['status'] as GroupingState,
+				groupTotals: [{ value: 'active', total: 60 }],
+				onLoadMoreInGroup,
+			})
+
+			await userEvent.click(screen.getByRole('button', { name: /show 25 more/i }))
+			expect(onLoadMoreInGroup).toHaveBeenCalledWith('active')
+		})
+
+		it('keeps a group with nothing loaded yet at its real total', () => {
+			renderListView({
+				data: [],
+				grouping: ['status'] as GroupingState,
+				groupTotals: [{ value: 'active', total: 19 }],
+			})
+
+			expect(groupHeaders()[0]?.textContent).toContain('19')
+			expect(screen.queryByText('No objects found')).toBeNull()
+		})
+
+		it('files rows with no value under the empty-string group the server sends', () => {
+			const data = [buildObjectResponse({ id: 'obj-1', title: 'Alpha', driver: null })]
+			renderListView({
+				data,
+				grouping: ['driver'] as GroupingState,
+				groupTotals: [{ value: '', total: 7 }],
+			})
+
+			expect(groupHeaders()[0]?.textContent).toContain('No value')
+			expect(groupHeaders()[0]?.textContent).toContain('7')
+			expect(screen.getByText('Alpha')).toBeInTheDocument()
+		})
+	})
+
+	it('shows type label, name link, status tag and updated time on each row', () => {
 		const data = [
 			buildObjectResponse({
 				id: 'obj-1',
@@ -164,14 +262,16 @@ describe('ListView', () => {
 			params: { workspaceId: 'ws-1', objectId: 'obj-1' },
 		})
 
-		// Status tag (StatusBadge dot-word renders the de-underscored status).
-		expect(screen.getByText('in progress')).toBeInTheDocument()
+		// Status tag (StatusBadge `word` renders the humanised status).
+		expect(screen.getByText('In progress')).toBeInTheDocument()
 
-		// Updated-time (RelativeTime) renders something for a known date.
-		expect(screen.getByText(/ago/i)).toBeInTheDocument()
+		// Updated-time (RelativeTime, compact age column) renders something for a
+		// known date — "3d", "2h", "now", or a locale date fallback past a month
+		// ("5 Jul", "Jul 5", "5. jul.").
+		expect(screen.getByText(AGE_TOKEN)).toBeInTheDocument()
 
-		// Per-row open chevron.
-		expect(screen.getAllByRole('button', { name: /open object/i })).not.toHaveLength(0)
+		// No trailing open chevron — the whole row is the target (mockup 764).
+		expect(screen.queryAllByRole('button', { name: /open object/i })).toHaveLength(0)
 	})
 
 	it('toggles row selection through the controlled rowSelection boundary', async () => {
@@ -219,9 +319,9 @@ describe('ListView', () => {
 		expect(screen.getAllByRole('checkbox')[2]).toBeChecked()
 	})
 
-	it('caps a group at six rows with an expandable "Show N more" affordance', async () => {
+	it('caps a group at forty rows with an expandable "Show N more" affordance', async () => {
 		const user = userEvent.setup()
-		const data = Array.from({ length: 8 }, (_, i) =>
+		const data = Array.from({ length: 42 }, (_, i) =>
 			buildObjectResponse({
 				id: `obj-${i + 1}`,
 				title: `Row ${i + 1}`,
@@ -230,16 +330,13 @@ describe('ListView', () => {
 			}),
 		)
 		renderListView({ data, grouping: ['status'] as GroupingState })
-		act(() => {
-			groupHeaders()[0]?.click()
-		})
 
-		expect(screen.getAllByRole('checkbox')).toHaveLength(6)
+		expect(screen.getAllByRole('checkbox')).toHaveLength(40)
 		const showMore = screen.getByRole('button', { name: /show 2 more/i })
 		expect(showMore).toBeInTheDocument()
 
 		await user.click(showMore)
-		expect(screen.getAllByRole('checkbox')).toHaveLength(8)
+		expect(screen.getAllByRole('checkbox')).toHaveLength(42)
 		expect(screen.queryByRole('button', { name: /show 2 more/i })).toBeNull()
 	})
 
@@ -250,13 +347,7 @@ describe('ListView', () => {
 			buildObjectResponse({ id: 'obj-2', title: 'Beta', status: 'done', updatedAt: deployedAt }),
 		]
 		renderListView({ data, grouping: ['status'] as GroupingState })
-		// Expand both groups so collapsing one can be checked against the other.
-		act(() => {
-			groupHeaders()[0]?.click()
-		})
-		act(() => {
-			groupHeaders()[1]?.click()
-		})
+		// Both groups start open, so collapsing one can be checked against the other.
 		expect(screen.getByText('Alpha')).toBeInTheDocument()
 		expect(screen.getByText('Beta')).toBeInTheDocument()
 
@@ -280,10 +371,14 @@ describe('ListView', () => {
 		})
 
 		// Pending-ask pill (bg-accent + text-accent-foreground per the "Needs
-		// you" accent-pairing rule) and the "<Agent> asks · <text>" line.
+		// you" accent-pairing rule) and the D3 ask line — SPEC copy is
+		// `{who} asks — "{text}"` with the asker's name in a bold span and
+		// the glue text on the parent paragraph.
 		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
-		expect(screen.getByText(/Alice asks/i)).toBeInTheDocument()
-		expect(screen.getByText(/Please approve this shipment/i)).toBeInTheDocument()
+		const asker = screen.getByText('Alice')
+		expect(asker.parentElement?.textContent).toContain(
+			'Alice asks — “Please approve this shipment”',
+		)
 	})
 
 	it('hides the ask pill + line once the row ask is resolved, and never for a row with no ask', () => {
@@ -308,6 +403,24 @@ describe('ListView', () => {
 		expect(screen.queryByText(/Alice asks/i)).toBeNull()
 	})
 
+	it('passes the real query error through to the inline error card', () => {
+		renderListView({
+			data: [],
+			isError: true,
+			error: new Error('Network request failed: 500'),
+		})
+
+		expect(screen.getByText("Couldn't load objects")).toBeInTheDocument()
+		expect(screen.getByText('Network request failed: 500')).toBeInTheDocument()
+	})
+
+	it('falls back to a generic error when isError fires without a concrete error', () => {
+		renderListView({ data: [], isError: true })
+
+		expect(screen.getByText("Couldn't load objects")).toBeInTheDocument()
+		expect(screen.getByText('Unknown error')).toBeInTheDocument()
+	})
+
 	it('composes shared primitives — Checkbox, StatusBadge, RelativeTime — instead of bespoke markup', () => {
 		const data = [
 			buildObjectResponse({
@@ -322,10 +435,140 @@ describe('ListView', () => {
 
 		// ui/checkbox renders a native checkbox role.
 		expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(0)
-		// shared/status-badge renders the status word (dot-word variant).
-		// shared/relative-time renders the "x ago" timestamp.
+		// shared/status-badge renders the status word (`word` variant).
+		// shared/relative-time renders the compact age token.
 		// shared/actor-avatar is absent (no driver) — null driver renders nothing.
-		expect(screen.getAllByText('done').length).toBeGreaterThan(0)
-		expect(screen.getByText(/ago/i)).toBeInTheDocument()
+		expect(screen.getAllByText('Done').length).toBeGreaterThan(0)
+		expect(screen.getByText(AGE_TOKEN)).toBeInTheDocument()
+	})
+	// Mockup 1021–1022: the empty state names the filters that produced it and
+	// offers a single action that clears them.
+	it('renders the filter-derived empty state with a Clear all filters action', async () => {
+		const user = userEvent.setup()
+		const onClearFilters = vi.fn()
+		renderListView({
+			data: [],
+			emptyTitle: 'No bets waiting on you right now.',
+			hasActiveFilters: true,
+			onClearFilters,
+		})
+
+		expect(screen.getByText('No bets waiting on you right now.')).toBeInTheDocument()
+		const clear = screen.getByRole('button', { name: 'Clear all filters' })
+		expect(clear).toBeVisible()
+		await user.click(clear)
+		expect(onClearFilters).toHaveBeenCalledOnce()
+	})
+
+	it('falls back to the create-your-first copy when no filter is applied', () => {
+		renderListView({ data: [], hasActiveFilters: false })
+		expect(screen.getByText('No objects found')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Clear all filters' })).toBeNull()
+	})
+
+	// A client-side narrowing (the Attention axis) can empty the loaded pages
+	// while matches remain unloaded — the empty state must keep paging alive
+	// rather than report "none" over a partial fetch.
+	it('keeps the infinite-scroll sentinel mounted while the rendered set is empty', () => {
+		observedNodes.length = 0
+		renderListView({
+			data: [],
+			hasActiveFilters: true,
+			emptyTitle: 'No bets waiting on you right now.',
+			hasNextPage: true,
+			fetchNextPage: vi.fn(),
+		})
+
+		expect(screen.getByText('No bets waiting on you right now.')).toBeInTheDocument()
+		expect(observedNodes.length).toBe(1)
+	})
+
+	// Regression: the populated and empty branches each render their OWN
+	// sentinel node, so when the rendered set narrows to zero (client-side
+	// Attention filtering) the observer must re-arm on the node that actually
+	// mounted. Without `isEmpty` in the effect's dep array the observer keeps
+	// watching the detached node and paging stalls for good. Rendering empty
+	// from the first commit cannot catch this — the transition is the bug.
+	it('re-arms the infinite-scroll observer when the rendered set narrows to empty', () => {
+		observedNodes.length = 0
+		// Stable identity: a fresh fetchNextPage each render would re-run the
+		// effect on its own and mask the missing dep.
+		const fetchNextPage = vi.fn()
+		const props = {
+			workspaceId: 'ws-1',
+			actors: [],
+			columnVisibility: {} as VisibilityState,
+			hasActiveFilters: true,
+			emptyTitle: 'No bets waiting on you right now.',
+			hasNextPage: true,
+			fetchNextPage,
+		}
+
+		const { rerender } = renderListView({
+			...props,
+			data: [buildObjectResponse({ id: 'o1' })],
+		})
+		expect(observedNodes.length).toBe(1)
+		expect(observedNodes[0]?.isConnected).toBe(true)
+
+		rerender(<StatefulListViewHarness {...props} data={[]} />)
+
+		expect(screen.getByText('No bets waiting on you right now.')).toBeInTheDocument()
+		// The effect re-ran on the transition rather than leaving the observer
+		// armed from the populated render.
+		expect(observedNodes.length).toBe(2)
+		// Whatever node it re-armed on is the sentinel that is actually live in
+		// the DOM — this is the guarantee that survives a markup change, even
+		// when React happens to reconcile the two branches onto one host node.
+		// Whatever node it re-armed on is the sentinel that is actually live in
+		// the DOM — the guarantee that survives a markup change, even when React
+		// happens to reconcile both branches onto a single host node.
+		expect(observedNodes[1]?.isConnected).toBe(true)
+	})
+
+	// Mockup 995: the group a row belongs to stays readable while its rows scroll.
+	it('pins the group header to the top of the scroller', () => {
+		renderListView({
+			data: [
+				buildObjectResponse({ id: 'o1', status: 'active' }),
+				buildObjectResponse({ id: 'o2', status: 'done' }),
+			],
+			grouping: ['status'],
+		})
+		const header = indexAt(groupHeaders(), 0).parentElement
+		expect(header).not.toBeNull()
+		expect(header?.className).toContain('sticky')
+		expect(header?.className).toContain('top-0')
+	})
+	// Mockup fixture 6655 (`nyOf`): rows blocking the user float to the top of
+	// the pool rather than getting a synthetic group of their own.
+	it('floats rows with a pending ask to the top of an ungrouped list', () => {
+		const asks = new Map([['o3', buildNotificationResponse({ objectId: 'o3', status: 'pending' })]])
+		renderListView({
+			data: [
+				buildObjectResponse({ id: 'o1', title: 'First' }),
+				buildObjectResponse({ id: 'o2', title: 'Second' }),
+				buildObjectResponse({ id: 'o3', title: 'Blocked on you' }),
+			],
+			asksByObjectId: asks,
+		})
+		const ids = Array.from(document.querySelectorAll('[data-obj-id]')).map((el) =>
+			el.getAttribute('data-obj-id'),
+		)
+		expect(ids).toEqual(['o3', 'o1', 'o2'])
+	})
+
+	it('leaves the order untouched when nothing is waiting on the user', () => {
+		renderListView({
+			data: [
+				buildObjectResponse({ id: 'o1', title: 'First' }),
+				buildObjectResponse({ id: 'o2', title: 'Second' }),
+			],
+			asksByObjectId: new Map(),
+		})
+		const ids = Array.from(document.querySelectorAll('[data-obj-id]')).map((el) =>
+			el.getAttribute('data-obj-id'),
+		)
+		expect(ids).toEqual(['o1', 'o2'])
 	})
 })

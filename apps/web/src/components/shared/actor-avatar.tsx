@@ -1,10 +1,14 @@
+import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useState } from 'react'
+import { queryKeys } from '@/lib/query-keys'
+import { useWorkspace } from '@/lib/workspace-context'
+import { QueryClientContext, useQuery } from '@tanstack/react-query'
+import { useContext, useState } from 'react'
 
 const AVATAR_PALETTE = [
 	'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
 	'bg-[var(--st-active-bg)] text-[var(--st-active-text)]',
-	'bg-[var(--st-signal-bg)] text-[var(--st-signal-text)]',
+	'bg-[var(--st-opportunity-bg)] text-[var(--st-opportunity-text)]',
 	'bg-[var(--st-clustered-bg)] text-[var(--st-clustered-text)]',
 	'bg-[var(--st-in_review-bg)] text-[var(--st-in_review-text)]',
 	'bg-[var(--st-validated-bg)] text-[var(--st-validated-text)]',
@@ -14,10 +18,37 @@ const AVATAR_PALETTE = [
 	'bg-[var(--st-proposed-bg)] text-[var(--st-proposed-text)]',
 ] as const
 
+// The same ten identities as solid plates: the status *text* token becomes the
+// fill and its tint becomes the glyph. v2 draws an agent's avatar this way
+// wherever the avatar is the row's anchor (mockup 2329's `avStrong` + reversed
+// foreground), and the pairing inverts correctly in dark mode because both
+// halves are tokens.
+const AVATAR_PALETTE_STRONG = [
+	'bg-[var(--st-in_progress-text)] text-[var(--st-in_progress-bg)]',
+	'bg-[var(--st-active-text)] text-[var(--st-active-bg)]',
+	'bg-[var(--st-opportunity-text)] text-[var(--st-opportunity-bg)]',
+	'bg-[var(--st-clustered-text)] text-[var(--st-clustered-bg)]',
+	'bg-[var(--st-in_review-text)] text-[var(--st-in_review-bg)]',
+	'bg-[var(--st-validated-text)] text-[var(--st-validated-bg)]',
+	'bg-[var(--st-qualified-text)] text-[var(--st-qualified-bg)]',
+	'bg-[var(--st-scored-text)] text-[var(--st-scored-bg)]',
+	'bg-[var(--st-processing-text)] text-[var(--st-processing-bg)]',
+	'bg-[var(--st-proposed-text)] text-[var(--st-proposed-bg)]',
+] as const
+
+/** Tint plate (the default everywhere) vs the solid plate v2 uses for a row anchor. */
+export type ActorAvatarTone = 'subtle' | 'strong'
+
+/** Strip everything that is not a letter or digit so a bracketed qualifier
+ *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. */
 export function getActorInitials(name: string): string {
 	const trimmed = (name ?? '').trim()
 	if (!trimmed) return '?'
-	const words = trimmed.split(/\s+/).filter(Boolean)
+	const words = trimmed
+		.split(/\s+/)
+		.map((word) => word.replace(/[^\p{L}\p{N}]/gu, ''))
+		.filter(Boolean)
+	if (words.length === 0) return '?'
 	if (words.length >= 2) {
 		const first = words[0]?.[0] ?? ''
 		const second = words[1]?.[0] ?? ''
@@ -38,21 +69,26 @@ function hashString(input: string): number {
 	return hash >>> 0
 }
 
-export function getActorAvatarPaletteClass(seed: string | undefined): string {
+export function getActorAvatarPaletteClass(
+	seed: string | undefined,
+	tone: ActorAvatarTone = 'subtle',
+): string {
 	const key = seed && seed.length > 0 ? seed : '?'
-	const idx = hashString(key) % AVATAR_PALETTE.length
-	return AVATAR_PALETTE[idx] ?? AVATAR_PALETTE[0]
+	const palette = tone === 'strong' ? AVATAR_PALETTE_STRONG : AVATAR_PALETTE
+	const idx = hashString(key) % palette.length
+	return palette[idx] ?? palette[0]
 }
 
-export function ActorAvatar({
-	name,
-	type: _type,
-	size = 'sm',
-	className,
-	onClick,
-	id,
-	imageUrl,
-}: {
+// The workspace the avatar sits in, or undefined outside one (isolated renders, stories).
+function useOptionalWorkspaceId(): string | undefined {
+	try {
+		return useWorkspace().workspaceId
+	} catch {
+		return undefined
+	}
+}
+
+type ActorAvatarProps = {
 	name: string
 	type: string
 	/** 20 / 28 / 38 / 52px. Overlapping avatar stacks size themselves with
@@ -62,7 +98,61 @@ export function ActorAvatar({
 	onClick?: () => void
 	id?: string
 	imageUrl?: string
-}) {
+	/** `strong` fills the plate with the identity colour and reverses the glyph. */
+	tone?: ActorAvatarTone
+	/** Composes a violet conic-gradient ring around the avatar, animating
+	 *  clockwise ~1.6s/rev; `prefers-reduced-motion: reduce` renders a static
+	 *  300° arc. Wired on the Objects list row to `object.active_session_state
+	 *  === 'running'` — the D2 delta of the v4 polish bet. `aria-label` names
+	 *  the container "Agent working on this object" so screen readers announce
+	 *  the state; the avatar itself keeps its existing name. */
+	working?: boolean
+}
+
+/**
+ * Draws the actor's picture when it has one. Callers that already hold an
+ * `avatar_url` pass it as `imageUrl`; every other call site that passes an
+ * `id` gets it from the workspace actors list, so lists, chats and the sidebar
+ * show pictures without each one threading the URL through. Outside a workspace
+ * or query provider (stories, isolated tests) it draws initials only.
+ */
+export function ActorAvatar(props: ActorAvatarProps) {
+	const queryClient = useContext(QueryClientContext)
+	const workspaceId = useOptionalWorkspaceId()
+	if (props.imageUrl === undefined && props.id && queryClient && workspaceId) {
+		return <ActorAvatarWithLookup {...props} id={props.id} workspaceId={workspaceId} />
+	}
+	return <ActorAvatarView {...props} />
+}
+
+// Same key and fetcher as useActors, so this shares the list every other surface loads.
+function useActorAvatarUrl(id: string, workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.actors.all(workspaceId),
+		queryFn: () => api.actors.list(workspaceId),
+		select: (actors) => actors.find((actor) => actor.id === id)?.avatar_url ?? undefined,
+	})
+}
+
+function ActorAvatarWithLookup({
+	workspaceId,
+	...props
+}: ActorAvatarProps & { id: string; workspaceId: string }) {
+	const { data: imageUrl } = useActorAvatarUrl(props.id, workspaceId)
+	return <ActorAvatarView {...props} imageUrl={imageUrl} />
+}
+
+function ActorAvatarView({
+	name,
+	type: _type,
+	size = 'sm',
+	className,
+	onClick,
+	id,
+	imageUrl,
+	tone = 'subtle',
+	working = false,
+}: ActorAvatarProps) {
 	// Track the specific url that failed so a caller swapping imageUrl resets the fallback
 	// automatically — without a useEffect that biome flags for missing dep semantics.
 	const [failedUrl, setFailedUrl] = useState<string | null>(null)
@@ -75,7 +165,7 @@ export function ActorAvatar({
 		xl: 'h-[52px] w-[52px] text-lg',
 	}[size]
 	const initials = getActorInitials(name)
-	const paletteClass = getActorAvatarPaletteClass(id ?? name)
+	const paletteClass = getActorAvatarPaletteClass(id ?? name, tone)
 	const showImage = Boolean(imageUrl) && !imageFailed
 
 	const baseClasses = cn(
@@ -104,25 +194,87 @@ export function ActorAvatar({
 
 	if (onClick) {
 		return (
-			<button
-				type="button"
-				onClick={onClick}
-				title={name}
-				aria-label={name}
-				className={cn(
-					baseClasses,
-					'cursor-pointer transition-opacity hover:opacity-80',
-					'after:absolute after:left-1/2 after:top-1/2 after:min-h-11 after:min-w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""]',
-				)}
-			>
-				{content}
-			</button>
+			<WorkingRing working={working}>
+				<button
+					type="button"
+					onClick={onClick}
+					title={name}
+					aria-label={name}
+					className={cn(
+						baseClasses,
+						'cursor-pointer transition-opacity hover:opacity-80',
+						// Anchored to the right edge so the 44px hit area only grows leftward: a
+						// centred one pokes past the button's right edge and counts as horizontal
+						// overflow on every ancestor scroller.
+						'after:absolute after:right-0 after:top-1/2 after:min-h-11 after:min-w-11 after:-translate-y-1/2 after:content-[""]',
+					)}
+				>
+					{content}
+				</button>
+			</WorkingRing>
 		)
 	}
 
 	return (
-		<span title={name} className={baseClasses}>
-			{content}
+		<WorkingRing working={working}>
+			<span title={name} className={baseClasses}>
+				{content}
+			</span>
+		</WorkingRing>
+	)
+}
+
+// Wraps the avatar in a fixed-thickness violet conic-gradient ring, animated
+// clockwise via CSS. Kept as an inline component so callers keep using
+// `<ActorAvatar working />` without threading the wrapper themselves.
+//
+// The ring lives at `.actor-avatar-working-ring` — the animation and reduced-
+// motion fallback are defined in `app.css` (a `@keyframes actor-avatar-ring`
+// and the paired `@media (prefers-reduced-motion: reduce)` override). Keeping
+// the visual definition in CSS keeps this component's markup readable and
+// lets `@theme` tokens (var(--violet)) flow into it without JS colour math.
+function WorkingRing({
+	working,
+	children,
+}: {
+	working: boolean
+	children: React.ReactNode
+}) {
+	if (!working) return <>{children}</>
+	return (
+		<span
+			aria-label="Agent working on this object"
+			className="actor-avatar-working-ring relative inline-flex shrink-0 items-center justify-center"
+		>
+			{children}
 		</span>
+	)
+}
+
+/**
+ * Lays an actor's picture over a plate the caller already draws (the sidebar
+ * account row keeps its own tile). Draws nothing until the picture is known, so
+ * the plate's letter shows through while it loads and when there is none.
+ * The plate needs `relative overflow-hidden`.
+ */
+export function ActorPictureOverlay({ id }: { id: string }) {
+	const queryClient = useContext(QueryClientContext)
+	const workspaceId = useOptionalWorkspaceId()
+	if (!queryClient || !workspaceId) return null
+	return <ActorPictureOverlayWithLookup id={id} workspaceId={workspaceId} />
+}
+
+function ActorPictureOverlayWithLookup({ id, workspaceId }: { id: string; workspaceId: string }) {
+	const { data: imageUrl } = useActorAvatarUrl(id, workspaceId)
+	const [failedUrl, setFailedUrl] = useState<string | null>(null)
+	if (!imageUrl || failedUrl === imageUrl) return null
+	return (
+		<img
+			src={imageUrl}
+			alt=""
+			className="absolute inset-0 h-full w-full object-cover"
+			onError={() => setFailedUrl(imageUrl)}
+			draggable={false}
+		/>
 	)
 }

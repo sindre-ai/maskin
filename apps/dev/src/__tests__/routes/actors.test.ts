@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { hashApiKey } from '@maskin/auth'
 import { PLATFORM_MCP_PRESET, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
+import { PlanCapExceededError } from '../../lib/llm-routing'
+import { heartbeatCronExpression } from '../../services/default-heartbeat'
 import { DEFAULT_AGENT_IDS } from '../../services/workspace-bootstrap'
 import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
-import { createSessionTestApp, createTestApp } from '../setup'
+import { createMockAgentStorage, createSessionTestApp, createTestApp } from '../setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 
@@ -24,67 +27,261 @@ describe('Actors Routes', () => {
 			expect(body.type).toBe('human')
 		})
 
-		it('creates an agent actor and returns 201', async () => {
-			const actor = buildActor({ type: 'agent' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+		it('stores only the hash of the primary key it returns', async () => {
+			const actor = buildActor()
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insert = [actor]
 
 			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/actors',
-					buildCreateActorBody({
-						type: 'agent',
-						system_prompt: 'You are a test agent',
-						llm_provider: 'anthropic',
-					}),
-				),
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ auto_create_workspace: false })),
 			)
 
 			expect(res.status).toBe(201)
 			const body = await res.json()
-			expect(body.type).toBe('agent')
+			expect(body.api_key).toMatch(/^ank_/)
+			// inserts: [actor, api key]
+			expect(calls.inserts[0]).not.toHaveProperty('apiKey')
+			expect(calls.inserts[1]).toMatchObject({
+				actorId: actor.id,
+				kind: 'primary',
+				keyHash: hashApiKey(body.api_key),
+			})
+			expect(JSON.stringify(calls.inserts)).not.toContain(body.api_key)
 		})
 
-		it('defaults the Maskin MCP into tools when creating an agent without tools', async () => {
-			const actor = buildActor({ type: 'agent' })
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+		it('never returns passwordHash (or any undeclared column) on signup', async () => {
+			const actor = buildActor({ passwordHash: 'argon2id$secret-hash', metadata: { internal: 1 } })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insert = [actor]
 
-			const res = await app.request(
-				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'agent' })),
-			)
+			const res = await app.request(jsonRequest('POST', '/api/actors', buildCreateActorBody()))
 
 			expect(res.status).toBe(201)
-			const inserted = calls.inserts[0] as { tools?: { mcpServers: Record<string, unknown> } }
-			expect(inserted.tools?.mcpServers.maskin).toEqual(PLATFORM_MCP_PRESET)
+			const text = await res.text()
+			const body = JSON.parse(text)
+			expect(body.passwordHash).toBeUndefined()
+			expect(body.password_hash).toBeUndefined()
+			expect(body.apiKey).toBeUndefined()
+			expect(body.metadata).toBeUndefined()
+			expect(text).not.toContain('argon2id$secret-hash')
+			expect(body.api_key).toMatch(/^ank_/)
 		})
 
-		it('preserves a caller-provided maskin MCP entry over the default', async () => {
-			const actor = buildActor({ type: 'agent' })
-			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.insert = [actor]
-			const custom = { type: 'http' as const, url: 'https://custom/mcp', headers: {} }
+		describe('creating an agent', () => {
+			const CALLER_ID = '00000000-0000-0000-0000-0000000000c1'
+			const WORKSPACE_ID = '00000000-0000-0000-0000-0000000000a1'
+			const bearer = { Authorization: 'Bearer ank_testcaller' }
+
+			function createAgentRequest(
+				overrides: Record<string, unknown> = {},
+				headers: Record<string, string> | undefined = bearer,
+			) {
+				return jsonRequest(
+					'POST',
+					'/api/actors',
+					buildCreateActorBody({ type: 'agent', workspace_id: WORKSPACE_ID, ...overrides }),
+					headers,
+				)
+			}
+
+			// Select order in the handler: the API key lookup, the caller's membership
+			// of workspace_id, then (only when tools/llm_config are sent) the caller's
+			// role.
+			function callerIsMember(
+				mockResults: Record<string, unknown[]>,
+				callerType = 'human',
+				role?: 'owner' | 'admin' | 'member',
+			) {
+				mockResults.selectQueue = [
+					[{ id: CALLER_ID, type: callerType }],
+					[{ actorId: CALLER_ID, role: 'member' }],
+					...(role ? [[{ role, type: callerType }]] : []),
+				]
+			}
+
+			it('creates an agent for a member caller, born as a member of the workspace', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults)
+
+				const res = await app.request(createAgentRequest({ system_prompt: 'You are a test agent' }))
+
+				expect(res.status).toBe(201)
+				const body = await res.json()
+				expect(body.type).toBe('agent')
+				expect(body.workspace_id).toBe(WORKSPACE_ID)
+				// inserts: [actor, api key, workspace member, workspace_member event]
+				expect(calls.inserts[0]).toMatchObject({ type: 'agent', createdBy: CALLER_ID })
+				expect(calls.inserts[1]).toMatchObject({ actorId: actor.id, kind: 'primary' })
+				expect(calls.inserts[2]).toMatchObject({
+					workspaceId: WORKSPACE_ID,
+					actorId: actor.id,
+					role: 'member',
+				})
+			})
+
+			it('gives the new agent a daily Heartbeat trigger, written in the same transaction', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults)
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(201)
+				// inserts: [actor, api key, workspace member, workspace_member event, Heartbeat trigger, trigger event]
+				expect(calls.inserts[4]).toMatchObject({
+					workspaceId: WORKSPACE_ID,
+					name: 'Heartbeat',
+					type: 'cron',
+					targetActorId: actor.id,
+					enabled: true,
+					config: { expression: heartbeatCronExpression(actor.id) },
+				})
+				expect(calls.inserts[5]).toMatchObject({
+					entityType: 'trigger',
+					action: 'created',
+					workspaceId: WORKSPACE_ID,
+				})
+			})
+
+			it('lets an agent caller create an agent', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults, 'agent')
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(201)
+				expect(calls.inserts[0]).toMatchObject({ createdBy: CALLER_ID })
+				expect(calls.inserts[2]).toMatchObject({ role: 'member' })
+			})
+
+			it('defaults the Maskin MCP into tools when creating an agent without tools', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults)
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(201)
+				const inserted = calls.inserts[0] as { tools?: { mcpServers: Record<string, unknown> } }
+				expect(inserted.tools?.mcpServers.maskin).toEqual(PLATFORM_MCP_PRESET)
+			})
+
+			it('preserves a caller-provided maskin MCP entry for a human admin', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.insert = [actor]
+				callerIsMember(mockResults, 'human', 'admin')
+				const custom = { type: 'http' as const, url: 'https://custom/mcp', headers: {} }
+
+				const res = await app.request(
+					createAgentRequest({ tools: { mcpServers: { maskin: custom } } }),
+				)
+
+				expect(res.status).toBe(201)
+				const inserted = calls.inserts[0] as {
+					tools?: { mcpServers: { maskin: { url: string } } }
+				}
+				expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
+			})
+
+			it('returns 401 and writes nothing without an Authorization header', async () => {
+				const { app, calls } = createTestApp(actorsRoutes, '/api/actors')
+
+				const res = await app.request(createAgentRequest({}, undefined))
+
+				expect(res.status).toBe(401)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 401 and writes nothing for an unknown API key', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[]]
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(401)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 404 and writes nothing when the caller is not a member of workspace_id', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[{ id: CALLER_ID, type: 'human' }], []]
+
+				const res = await app.request(createAgentRequest())
+
+				expect(res.status).toBe(404)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 400 when an agent names no workspace and does not ask for its own', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[{ id: CALLER_ID, type: 'human' }]]
+
+				const res = await app.request(createAgentRequest({ workspace_id: undefined }))
+
+				expect(res.status).toBe(400)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 400 when workspace_id is sent together with auto_create_workspace', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[{ id: CALLER_ID, type: 'human' }]]
+
+				const res = await app.request(createAgentRequest({ auto_create_workspace: true }))
+
+				expect(res.status).toBe(400)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it.each([
+				['tools', { tools: { mcpServers: {} } }],
+				['llm_config', { llm_config: { model: 'fake-model' } }],
+			])('returns 403 and writes nothing when a human member sends %s', async (_name, extra) => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				callerIsMember(mockResults, 'human', 'member')
+
+				const res = await app.request(createAgentRequest(extra))
+
+				expect(res.status).toBe(403)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 403 and writes nothing when an agent caller with the admin role sends tools', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				callerIsMember(mockResults, 'agent', 'admin')
+
+				const res = await app.request(createAgentRequest({ tools: { mcpServers: {} } }))
+
+				expect(res.status).toBe(403)
+				expect(calls.inserts).toHaveLength(0)
+			})
+		})
+
+		it('rejects workspace_id on a human signup', async () => {
+			const { app, calls } = createTestApp(actorsRoutes, '/api/actors')
 
 			const res = await app.request(
 				jsonRequest(
 					'POST',
 					'/api/actors',
 					buildCreateActorBody({
-						type: 'agent',
-						tools: { mcpServers: { maskin: custom } },
+						type: 'human',
+						workspace_id: '00000000-0000-0000-0000-0000000000a1',
 					}),
 				),
 			)
 
-			expect(res.status).toBe(201)
-			const inserted = calls.inserts[0] as {
-				tools?: { mcpServers: { maskin: { url: string } } }
-			}
-			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
+			expect(res.status).toBe(400)
+			expect(calls.inserts).toHaveLength(0)
 		})
 
-		it('seeds Workspace Coach with a generated apiKey when auto-creating a workspace', async () => {
+		it('seeds Workspace Coach without a stored key when auto-creating a workspace', async () => {
 			const actor = buildActor({ type: 'human' })
 			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
@@ -96,10 +293,11 @@ describe('Actors Routes', () => {
 			// satisfies a naive status assertion, so the queue length is what
 			// actually keeps this test honest.
 			mockResults.insertQueue = [
-				[actor], // human actor insert (already has apiKey via generateApiKey)
+				[actor], // human actor insert
+				[{}], // human primary api_keys insert
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[coach], // workspace_coach actor insert — must carry apiKey
+				[coach], // workspace_coach actor insert
 				[{}], // workspace_coach workspaceMembers insert
 				...DEFAULT_AGENT_IDS.slice(1).flatMap((agentId) => [
 					[buildActor({ type: 'agent', name: agentId, isSystem: false })],
@@ -120,15 +318,12 @@ describe('Actors Routes', () => {
 			}
 			expect(body.workspace_id).toBeDefined()
 			expect(body.workspace_provisioning_failed).toBeUndefined()
-			// inserts: [actor, workspace, owner-member, coach, coach-member]
-			const coachInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
+			// inserts: [actor, api key, workspace, owner-member, coach, coach-member]
+			const coachInsert = calls.inserts[4] as { apiKey?: string; isSystem?: boolean }
 			expect(coachInsert.isSystem).toBe(true)
-			expect(coachInsert.apiKey).toBeDefined()
-			expect(coachInsert.apiKey).toMatch(/^ank_/)
-
-			// And it must NOT be the same key as the creator's key
-			const creatorInsert = calls.inserts[0] as { apiKey?: string }
-			expect(coachInsert.apiKey).not.toBe(creatorInsert.apiKey)
+			// Seeded agents get a key per session launch, never a stored one.
+			expect(coachInsert).not.toHaveProperty('apiKey')
+			expect(calls.inserts[1]).toMatchObject({ actorId: actor.id, kind: 'primary' })
 		})
 
 		it('does not default tools when creating a human actor', async () => {
@@ -406,7 +601,12 @@ describe('Actors Routes', () => {
 			const actor = buildActor()
 			const skill = { id: randomUUID(), name: 'PDF Extraction' }
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.selectQueue = [[actor], [skill]]
+			mockResults.selectQueue = [
+				[{ workspaceId: randomUUID() }],
+				[{ actorId: actor.id }],
+				[actor],
+				[skill],
+			]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
 
@@ -418,7 +618,12 @@ describe('Actors Routes', () => {
 		it('returns an empty skills array when no skills are attached', async () => {
 			const actor = buildActor()
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.selectQueue = [[actor], []]
+			mockResults.selectQueue = [
+				[{ workspaceId: randomUUID() }],
+				[{ actorId: actor.id }],
+				[actor],
+				[],
+			]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
 
@@ -430,7 +635,12 @@ describe('Actors Routes', () => {
 		it('omits role when no X-Workspace-Id header is provided', async () => {
 			const actor = buildActor()
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.selectQueue = [[actor], []]
+			mockResults.selectQueue = [
+				[{ workspaceId: randomUUID() }],
+				[{ actorId: actor.id }],
+				[actor],
+				[],
+			]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
 
@@ -443,7 +653,13 @@ describe('Actors Routes', () => {
 			const wsId = randomUUID()
 			const actor = buildActor()
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.selectQueue = [[actor], [], [{ role: 'admin' }]]
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // caller is a member of the header workspace
+				[{ actorId: actor.id }], // target is a member of the header workspace
+				[actor],
+				[],
+				[{ role: 'admin' }],
+			]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
 
@@ -456,7 +672,13 @@ describe('Actors Routes', () => {
 			const wsId = randomUUID()
 			const actor = buildActor()
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.selectQueue = [[actor], [], []]
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }],
+				[{ actorId: actor.id }],
+				[actor],
+				[],
+				[],
+			]
 
 			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
 
@@ -464,9 +686,230 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.role).toBeNull()
 		})
+
+		it('returns 404 when the caller shares no workspace with the actor', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			// Caller belongs to workspace A; the actor has no membership in A.
+			mockResults.selectQueue = [[{ workspaceId: randomUUID() }], []]
+			mockResults.select = []
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the caller belongs to no workspace', async () => {
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.select = []
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 when the actor is not a member of the X-Workspace-Id workspace', async () => {
+			const wsId = randomUUID()
+			const actor = buildActor({ type: 'agent' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }], []]
+			mockResults.select = [actor]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 200 when the caller reads their own actor without a shared workspace', async () => {
+			const actor = buildActor({ type: 'human' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', actor.id)
+			mockResults.select = [actor]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+		})
 	})
 
 	describe('PATCH /api/actors/:id', () => {
+		it('returns 404 when an agent actor shares no workspace with the caller', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			// actor type lookup, caller's workspaces, target membership in them (none)
+			mockResults.selectQueue = [[{ type: 'agent' }], [{ workspaceId: randomUUID() }], []]
+			mockResults.update = [agent]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { name: 'Renamed' }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 404 when the agent is not a member of the X-Workspace-Id workspace', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [[{ type: 'agent' }], [{ actorId: 'caller-id' }], []]
+			mockResults.update = [agent]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/actors/${agent.id}`,
+					{ name: 'Renamed' },
+					{ 'X-Workspace-Id': '00000000-0000-0000-0000-000000000001' },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 200 when a workspace member updates an agent in the same workspace', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const updated = { ...agent, name: 'Renamed' }
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+			mockResults.selectQueue = [
+				[{ type: 'agent' }],
+				[{ workspaceId: '00000000-0000-0000-0000-000000000001' }],
+				[{ actorId: agent.id }],
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/actors/${agent.id}`, { name: 'Renamed' }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		describe('tools and llm_config writes on another actor', () => {
+			const sharedWs = '00000000-0000-0000-0000-000000000001'
+			const otherWs = '00000000-0000-0000-0000-000000000002'
+			const toolsBody = {
+				tools: {
+					mcpServers: { fake: { type: 'http' as const, url: 'https://example.invalid/mcp' } },
+				},
+			}
+			const llmBody = { llm_config: { model: 'fake-model' } }
+
+			it.each([
+				['tools', toolsBody],
+				['llm_config', llmBody],
+			])(
+				'returns 403 and leaves the row alone when a non-admin member changes %s',
+				async (_n, body) => {
+					const agent = buildActor({ type: 'agent' })
+					const { app, mockResults, calls } = createTestApp(
+						actorsRoutes,
+						'/api/actors',
+						'caller-id',
+					)
+					mockResults.selectQueue = [
+						[{ type: 'agent' }],
+						[{ workspaceId: sharedWs }], // caller's workspaces
+						[{ actorId: agent.id }], // target shares one
+						[], // caller holds no owner/admin role anywhere
+					]
+					mockResults.update = [agent]
+
+					const res = await app.request(jsonRequest('PATCH', `/api/actors/${agent.id}`, body))
+
+					expect(res.status).toBe(403)
+					expect(calls.updates).toHaveLength(0)
+				},
+			)
+
+			it('returns 403 when the caller is admin only in a workspace the target is not in', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ workspaceId: sharedWs }, { workspaceId: otherWs }],
+					[{ actorId: agent.id }], // shared membership exists in sharedWs
+					[{ workspaceId: otherWs }], // but the caller is admin only in otherWs
+					[], // target is not in otherWs
+				]
+				mockResults.update = [agent]
+
+				const res = await app.request(jsonRequest('PATCH', `/api/actors/${agent.id}`, toolsBody))
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 when the header workspace is the one the caller is not admin in', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ actorId: 'caller-id' }], // caller is a member of the header workspace
+					[{ actorId: agent.id }], // target too
+					[], // but holds only the member role there
+				]
+				mockResults.update = [agent]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/actors/${agent.id}`, toolsBody, {
+						'X-Workspace-Id': sharedWs,
+					}),
+				)
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 200 when a workspace admin changes tools of an agent in that workspace', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'admin-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ workspaceId: sharedWs }],
+					[{ actorId: agent.id }],
+					[{ workspaceId: sharedWs }], // caller is owner or admin there
+					[{ actorId: agent.id }], // target is in it
+				]
+				mockResults.update = [{ ...agent, tools: toolsBody.tools }]
+
+				const res = await app.request(jsonRequest('PATCH', `/api/actors/${agent.id}`, toolsBody))
+
+				expect(res.status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
+			})
+
+			it('returns 200 when the actor changes its own tools without any membership lookup', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', agent.id)
+				mockResults.selectQueue = [[{ type: 'agent' }]]
+				mockResults.update = [{ ...agent, tools: toolsBody.tools }]
+
+				const res = await app.request(jsonRequest('PATCH', `/api/actors/${agent.id}`, toolsBody))
+
+				expect(res.status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
+			})
+
+			it('returns 200 when a plain member changes only the system prompt of an agent', async () => {
+				const agent = buildActor({ type: 'agent' })
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', 'caller-id')
+				mockResults.selectQueue = [
+					[{ type: 'agent' }],
+					[{ workspaceId: sharedWs }],
+					[{ actorId: agent.id }],
+				]
+				mockResults.update = [{ ...agent, systemPrompt: 'New prompt' }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/actors/${agent.id}`, { system_prompt: 'New prompt' }),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
+			})
+		})
+
 		it('returns 200 when actor updated', async () => {
 			const actor = buildActor()
 			const updated = { ...actor, name: 'Updated Name' }
@@ -535,27 +978,50 @@ describe('Actors Routes', () => {
 	})
 
 	describe('POST /api/actors/:id/api-keys', () => {
-		it('returns 200 with new API key', async () => {
-			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.update = [{ id: actor.id }]
+		const selfId = '00000000-0000-0000-0000-000000000001'
+		const otherId = '00000000-0000-0000-0000-000000000002'
 
-			const res = await app.request(jsonRequest('POST', `/api/actors/${actor.id}/api-keys`))
+		it('returns 200 with a new API key when the caller rotates its own key', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			// First update is the actor touch (returning its id), second is the key revoke.
+			mockResults.updateQueue = [[{ id: selfId }], []]
+
+			const res = await app.request(jsonRequest('POST', `/api/actors/${selfId}/api-keys`))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.api_key).toBeDefined()
 			expect(body.api_key).toMatch(/^ank_/)
+			expect(calls.updates).toHaveLength(2)
+			expect(calls.updates[0]).not.toHaveProperty('apiKey')
+			expect(calls.updates[1]).toHaveProperty('revokedAt')
+			expect(calls.inserts).toHaveLength(1)
+			expect(calls.inserts[0]).toMatchObject({
+				actorId: selfId,
+				kind: 'primary',
+				keyHash: hashApiKey(body.api_key),
+			})
 		})
 
-		it('returns 404 when actor not found', async () => {
-			const { app } = createTestApp(actorsRoutes, '/api/actors')
+		it('returns 404 and mints no key when the actor row is gone', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			mockResults.update = []
 
-			const res = await app.request(
-				jsonRequest('POST', '/api/actors/00000000-0000-0000-0000-000000000099/api-keys'),
-			)
+			const res = await app.request(jsonRequest('POST', `/api/actors/${selfId}/api-keys`))
 
 			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('returns 403 with no key and writes nothing when the id is another actor', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			mockResults.update = [{ id: otherId }]
+
+			const res = await app.request(jsonRequest('POST', `/api/actors/${otherId}/api-keys`))
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.api_key).toBeUndefined()
+			expect(calls.updates).toHaveLength(0)
 		})
 	})
 
@@ -640,7 +1106,14 @@ describe('Actors Routes', () => {
 
 		it('returns 200 when agent actor deleted successfully', async () => {
 			const agentActor = buildActor({ type: 'agent' })
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			const agentStorage = createMockAgentStorage()
+			const { app, mockResults } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				agentStorage,
+			)
 			// isWorkspaceMember (requester), actor lookup, isWorkspaceMember (target)
 			mockResults.selectQueue = [
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
@@ -656,6 +1129,103 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.deleted).toBe(true)
+			expect(agentStorage.deleteAllAgentFiles).toHaveBeenCalledWith(agentActor.id, wsId)
+		})
+
+		it('returns 500 and does not delete the agent when its storage files cannot be removed', async () => {
+			const agentActor = buildActor({ type: 'agent' })
+			const agentStorage = createMockAgentStorage({
+				deleteAllAgentFiles: vi.fn().mockRejectedValue(new Error('s3 down')),
+			})
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				agentStorage,
+			)
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agentActor],
+				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.deleted).toBeUndefined()
+			expect(body.error.message).toContain('agent not deleted')
+			// No deleted event was recorded, so the failure is not reported as success.
+			expect(
+				calls.inserts.find((v) => (v as { action?: string }).action === 'deleted'),
+			).toBeUndefined()
+		})
+
+		it('records only identity fields in the deleted event, never tools, llm_config or credentials', async () => {
+			const agentActor = buildActor({
+				type: 'agent',
+				name: 'Doomed Agent',
+				apiKey: 'fake-api-key-for-test',
+				systemPrompt: 'fake system prompt for test',
+				tools: {
+					mcpServers: {
+						fake: {
+							command: 'fake-cmd',
+							env: { FAKE_TOKEN: 'fake-env-secret-for-test' },
+							headers: { Authorization: 'fake-header-secret-for-test' },
+						},
+					},
+				},
+				llmConfig: { api_key: 'fake-llm-key-for-test', model: 'fake-model' },
+				memory: { notes: 'fake memory for test' },
+			})
+			const { app, mockResults, calls } = createTestApp(
+				actorsRoutes,
+				'/api/actors',
+				'test-actor-id',
+				'human',
+				createMockAgentStorage(),
+			)
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agentActor],
+				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
+				[], // actorSessions in transaction
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const event = calls.inserts.find((v) => (v as { action?: string }).action === 'deleted') as {
+				entityType: string
+				entityId: string
+				data: unknown
+			}
+			expect(event).toBeDefined()
+			expect(event.entityType).toBe('agent')
+			expect(event.entityId).toBe(agentActor.id)
+			expect(event.data).toEqual({
+				id: agentActor.id,
+				type: 'agent',
+				name: 'Doomed Agent',
+				is_system: false,
+			})
+			const stored = JSON.stringify(event.data)
+			for (const fake of [
+				'fake-api-key-for-test',
+				'fake system prompt for test',
+				'fake-env-secret-for-test',
+				'fake-header-secret-for-test',
+				'fake-llm-key-for-test',
+				'fake memory for test',
+			]) {
+				expect(stored).not.toContain(fake)
+			}
 		})
 
 		it('returns 404 when requesting actor is not a workspace member', async () => {
@@ -710,6 +1280,8 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
 				[systemActor],
 				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })], // GET: caller's workspaces
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })], // GET: target shares one
 				[systemActor],
 			]
 
@@ -787,6 +1359,41 @@ describe('Actors Routes', () => {
 			expect(body.llm_provider).toBe(WORKSPACE_COACH_DEFAULT.llmProvider)
 			expect(body.llm_config).toEqual(WORKSPACE_COACH_DEFAULT.llmConfig)
 			expect(body.tools).toEqual(WORKSPACE_COACH_DEFAULT.tools)
+		})
+
+		it('records only identity fields in the reset event, never tools, llm_config or memory', async () => {
+			const systemActor = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
+			const resetActor = {
+				...systemActor,
+				tools: { mcpServers: { fake: { env: { FAKE_TOKEN: 'fake-env-secret-for-test' } } } },
+				llm_config: { api_key: 'fake-llm-key-for-test' },
+				memory: { notes: 'fake memory for test' },
+			}
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[systemActor],
+				[buildWorkspaceMember({ actorId: systemActor.id, workspaceId: wsId })],
+			]
+			mockResults.update = [resetActor]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${systemActor.id}/reset`, undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const event = calls.inserts.find((v) => (v as { action?: string }).action === 'reset') as {
+				data: unknown
+			}
+			expect(event).toBeDefined()
+			expect(event.data).toEqual({
+				id: systemActor.id,
+				type: 'agent',
+				name: 'Workspace Coach',
+				is_system: true,
+			})
 		})
 
 		it('returns 403 when the actor is not a system actor', async () => {
@@ -1083,6 +1690,39 @@ describe('Actors Routes', () => {
 	describe('POST /api/actors/:id/run', () => {
 		const wsId = randomUUID()
 
+		it('propagates a plan-cap rejection instead of flattening it to 400', async () => {
+			// Regression: the handler's catch turned every createSession failure into
+			// `400 BAD_REQUEST` with a bare message, discarding the PLAN_CAP_EXCEEDED
+			// code and plan/used/cap context. The client could then only toast the raw
+			// string instead of the typed upgrade CTA. The error must escape the
+			// handler so app-factory's onError can emit the structured 402 (that
+			// mapping is covered in error-handling.test.ts).
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live session
+				[], // no paused session
+				[{ id: agent.id }], // startSession: the agent is a workspace member
+			]
+			sessionManager.createSession.mockRejectedValueOnce(
+				new PlanCapExceededError({
+					plan: 'trial',
+					used: 600,
+					cap: 500,
+					periodEnd: null,
+				}),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).not.toBe(400)
+		})
+
 		it('starts a fresh session when no paused or running session exists', async () => {
 			const agent = buildActor({ type: 'agent', agentState: 'idle' })
 			const updated = { ...agent, agentState: 'running', agentStateUpdatedAt: new Date() }
@@ -1093,8 +1733,12 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[], // no live session
 				[], // no paused session
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			mockResults.update = [updated]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-1',
+			})
 
 			const res = await app.request(
 				jsonRequest(
@@ -1129,8 +1773,12 @@ describe('Actors Routes', () => {
 				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
 				[],
 				[],
+				[{ id: agent.id }], // startSession: the agent is a workspace member
 			]
 			mockResults.update = [updated]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-1',
+			})
 
 			const res = await app.request(
 				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),

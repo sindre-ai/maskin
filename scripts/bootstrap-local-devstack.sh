@@ -15,6 +15,11 @@
 # from snapshot.debian.org's content-addressed archive instead, which never
 # prunes — see the DEB_* hash tables below.
 #
+# The cluster is created UTF8 with the C locale (initdb --encoding=UTF8
+# --locale=C), matching production and independent of the caller's LANG. An
+# existing SQL_ASCII devstack is not re-encoded: the script stops and tells
+# you to recreate it.
+#
 # Safe to re-run: every step is skipped if its output already exists.
 set -e
 set -o pipefail
@@ -117,7 +122,7 @@ export LD_LIBRARY_PATH="$PG_VENDOR_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [ ! -d "$PG_DATA" ]; then
 	echo "bootstrap-local-devstack: initializing Postgres data dir..."
-	initdb -D "$PG_DATA" -U "$PG_USER" --auth=trust >"$LOG_DIR/initdb.log" 2>&1
+	initdb -D "$PG_DATA" -U "$PG_USER" --auth=trust --encoding=UTF8 --locale=C >"$LOG_DIR/initdb.log" 2>&1
 fi
 
 if ! pg_ctl -D "$PG_DATA" status >/dev/null 2>&1; then
@@ -139,6 +144,18 @@ createdb_err="$(createdb -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DB" 2>&1)
 		exit 1
 	fi
 }
+
+# initdb only runs for a missing data dir, so an older SQL_ASCII devstack is not
+# re-encoded by the flags above. Stop rather than delete someone's data.
+# pg_dump reads the encoding from CREATE DATABASE because psql links libreadline,
+# which minimal sandboxes lack and this script does not vendor.
+cluster_encoding="$(pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" --create --schema-only "$PG_DB" |
+	sed -n "s/^CREATE DATABASE .* ENCODING = '\([^']*\)'.*/\1/p")"
+if [ "$cluster_encoding" != "UTF8" ]; then
+	echo "bootstrap-local-devstack: cluster at $PG_DATA is $cluster_encoding, expected UTF8." >&2
+	echo "This devstack predates the encoding fix. Recreate it: rm -rf '$PG_DATA' and re-run the script." >&2
+	exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # SeaweedFS
@@ -169,7 +186,46 @@ s3_http_code() {
 	echo "$code"
 }
 
+# --- SeaweedFS master port ---------------------------------------------------
+# weed's master listens on the master port and, by default, on that port + 10000
+# (gRPC): both must be free. 9333 is also the sandbox browser proxy's fixed port
+# (docker/agent-base/agent-run.sh), so a busy 9333 is the normal case in agent
+# sandboxes, not an error.
+maskin_port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+maskin_master_port_busy() { maskin_port_busy "$1" || maskin_port_busy "$(($1 + 10000))"; }
+
+# Best effort: name the process listening on port $1. Linux /proc only, own
+# processes only; prints nothing when it cannot tell.
+maskin_port_holder() {
+	local hex inode d pid
+	hex="$(printf '%04X' "$1")"
+	inode="$(awk -v h=":$hex" '$4=="0A" && $2 ~ h"$" {print $10; exit}' /proc/net/tcp /proc/net/tcp6 2>/dev/null)"
+	[ -n "$inode" ] && [ "$inode" != 0 ] || return 0
+	for d in /proc/[0-9]*/fd/*; do
+		[ "$(readlink "$d" 2>/dev/null)" = "socket:[$inode]" ] || continue
+		pid="${d#/proc/}"
+		pid="${pid%%/*}"
+		printf 'pid %s: %s\n' "$pid" "$(tr '\0' ' ' </proc/"$pid"/cmdline | cut -c1-80)"
+		return 0
+	done
+}
+
 if [ "$(s3_http_code)" = "000" ]; then
+	master_wanted="$S3_MASTER_PORT"
+	master_tries=0
+	while maskin_master_port_busy "$S3_MASTER_PORT"; do
+		master_tries=$((master_tries + 1))
+		if [ "$master_tries" -gt 20 ]; then
+			echo "bootstrap-local-devstack: no free SeaweedFS master port in $master_wanted-$((master_wanted + 20)) — set S3_MASTER_PORT to a free port" >&2
+			exit 1
+		fi
+		S3_MASTER_PORT=$((S3_MASTER_PORT + 1))
+	done
+	if [ "$S3_MASTER_PORT" != "$master_wanted" ]; then
+		master_holder="$(maskin_port_holder "$master_wanted")"
+		echo "bootstrap-local-devstack: SeaweedFS master port $master_wanted (or its gRPC port $((master_wanted + 10000))) is in use${master_holder:+ ($master_holder)}; using $S3_MASTER_PORT instead. Set S3_MASTER_PORT to pick one." >&2
+	fi
+
 	echo "bootstrap-local-devstack: starting SeaweedFS S3 on port $S3_PORT..."
 	mkdir -p "$WEED_DATA"
 	nohup "$WEED_DIR/weed" server \
@@ -189,8 +245,15 @@ if [ "$(s3_http_code)" = "000" ]; then
 		sleep 0.5
 	done
 	if [ "$(s3_http_code)" = "000" ]; then
-		echo "bootstrap-local-devstack: SeaweedFS did not become ready — see $LOG_DIR/seaweedfs.log" >&2
+		echo "bootstrap-local-devstack: SeaweedFS did not become ready (master port $S3_MASTER_PORT) — see $LOG_DIR/seaweedfs.log" >&2
+		tail -n 5 "$LOG_DIR/seaweedfs.log" >&2 || true
 		exit 1
+	fi
+	echo "$S3_MASTER_PORT" >"$MASKIN_DEVSTACK_DIR/weed.master.port"
+else
+	# weed is already up from an earlier run — report the master port it actually bound.
+	if [ -f "$MASKIN_DEVSTACK_DIR/weed.master.port" ]; then
+		S3_MASTER_PORT="$(cat "$MASKIN_DEVSTACK_DIR/weed.master.port")"
 	fi
 fi
 
@@ -208,6 +271,7 @@ export S3_BUCKET="agent-files"
 export S3_ACCESS_KEY="admin"
 export S3_SECRET_KEY="admin"
 export S3_REGION="us-east-1"
+export S3_MASTER_PORT="${S3_MASTER_PORT}"
 export PATH="${PG_HOME}/bin:\$PATH"
 export LD_LIBRARY_PATH="${PG_VENDOR_LIB}\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 EOF
@@ -215,4 +279,5 @@ EOF
 echo "bootstrap-local-devstack: ready."
 echo "  Postgres : $(pg_isready -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" 2>&1)"
 echo "  S3 (weed): http://127.0.0.1:${S3_PORT} (http $(s3_http_code))"
+echo "  S3 master: 127.0.0.1:${S3_MASTER_PORT}"
 echo "  Env vars : source $ENV_FILE"

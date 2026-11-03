@@ -1,6 +1,7 @@
+import { startOfDay } from '@/lib/conversation-groups'
+
 function formatDayLabel(date: Date): string {
 	const now = new Date()
-	const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 	const diffDays = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000)
 	if (diffDays === 0) return 'Today'
 	if (diffDays === 1) return 'Yesterday'
@@ -11,13 +12,17 @@ function formatDayLabel(date: Date): string {
 	})
 }
 
-export function MessageDivider({ date }: { date: string | null }) {
+/**
+ * The hairline rule with a label floating between the two halves — the v2
+ * shape for both a day boundary (`date`) and a system message (`label`,
+ * mockup line 628). One component so the two never drift apart.
+ */
+export function MessageDivider({ date, label }: { date?: string | null; label?: string }) {
+	const text = label ?? formatDayLabel(date ? new Date(date) : new Date())
 	return (
-		<div className="flex items-center gap-3 py-2">
+		<div className="flex items-center gap-2.5 py-2">
 			<div className="h-px flex-1 bg-border" />
-			<span className="shrink-0 text-xs font-medium text-muted-foreground">
-				{formatDayLabel(date ? new Date(date) : new Date())}
-			</span>
+			<span className="shrink-0 text-[10.5px] text-muted-foreground">{text}</span>
 			<div className="h-px flex-1 bg-border" />
 		</div>
 	)

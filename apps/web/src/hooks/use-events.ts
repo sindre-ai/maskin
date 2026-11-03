@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { trackCommentPosted } from '../lib/analytics'
+import { toast } from 'sonner'
+import { commentShape, trackCommentPosted } from '../lib/analytics'
 import { type CreateCommentInput, type EventResponse, type ObjectResponse, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -39,10 +40,9 @@ export function trackCommentPostedFor(
 		entity_type: type,
 		is_reply: data.parent_event_id !== undefined,
 		attachment_count: data.attachment_file_ids?.length ?? 0,
-		// Carried so the bet's `properties.content CONTAINS '\n'` PostHog query
-		// can count multi-line mobile comments. Both submit paths feed through
-		// here so the contract stays in one place.
-		content: data.content,
+		// Shape only, never the text. Both submit paths feed through here so the
+		// contract stays in one place.
+		...commentShape(data.content),
 		flow_id: flowId,
 	})
 }
@@ -55,17 +55,31 @@ export function useCreateComment(workspaceId: string, entityId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
 			trackCommentPostedFor(queryClient, entityId, variables, null)
 		},
+		// Without this a rejected POST is indistinguishable from nothing
+		// happening: the composer only resets `onSuccess`, so the comment stays
+		// in the box and the user re-clicks Send forever with no explanation.
+		onError: (err) => {
+			toast.error(err instanceof Error ? err.message : 'Could not post your comment')
+		},
 	})
 }
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 const OBJECT_ACTIONS = new Set(['created', 'updated', 'status_changed'])
+const FILE_ACTIONS = new Set(['created', 'updated'])
 
 export interface AffectedObject {
 	entityId: string
 	entityType: string
 	title: string | null
 	actions: string[]
+}
+
+export interface ProducedFile {
+	fileId: string
+	name: string | null
+	mimeType: string | null
+	sizeBytes: number | null
 }
 
 function deriveAffectedObjects(events: EventResponse[]): AffectedObject[] {
@@ -99,6 +113,39 @@ function deriveAffectedObjects(events: EventResponse[]): AffectedObject[] {
 	return Array.from(map.values())
 }
 
+// Derives the file half of "what a session produced" from the events feed —
+// file `created` / `updated` events during the session's time window. The
+// object half stays in `deriveAffectedObjects`; the two together are the shape
+// the S2 `<ProducedPane>` and the Session Sheet's `Produced` section both read.
+function deriveProducedFiles(events: EventResponse[]): ProducedFile[] {
+	const map = new Map<string, ProducedFile>()
+	for (const event of events) {
+		if (event.entityType !== 'file') continue
+		if (!FILE_ACTIONS.has(event.action)) continue
+		if (map.has(event.entityId)) continue
+		const data = (event.data ?? {}) as Record<string, unknown>
+		map.set(event.entityId, {
+			fileId: event.entityId,
+			name: (data.name as string | null) ?? null,
+			mimeType: (data.mimeType as string | null) ?? null,
+			sizeBytes: (data.sizeBytes as number | null) ?? null,
+		})
+	}
+	return Array.from(map.values())
+}
+
+/**
+ * Given a session's [startedAt, completedAt] window, returns everything it
+ * produced — objects (`affectedObjects` / `producedObjects` alias) plus files
+ * (`producedFiles`). One events fetch per session; the S2 `<ProducedPane>` on
+ * chat detail and the Session Sheet's `Produced` section both consume this
+ * same shape (task 5 acceptance criteria: "extended to include files … Reused
+ * across chat detail + session sheet — no duplicate fetch").
+ *
+ * The chat-detail pane's chat-level aggregate iterates sessions and lets
+ * TanStack Query de-dupe repeats via the `after/before` key, so a session sheet
+ * opened for a session already listed in the pane hits the cache.
+ */
 export function useSessionAffectedObjects(
 	startedAt: string | null,
 	completedAt: string | null,
@@ -109,20 +156,25 @@ export function useSessionAffectedObjects(
 		? {
 				after: startedAt,
 				...(completedAt ? { before: completedAt } : {}),
-				limit: '100',
 			}
 		: undefined
 
 	const query = useQuery({
 		queryKey: ['sessions', 'affected-objects', startedAt, completedAt],
-		queryFn: () => api.events.history(workspaceId, filters),
+		queryFn: () => api.events.historyUpTo(workspaceId, filters ?? {}, 200),
 		enabled: enabled && !!startedAt,
 	})
 
 	const affectedObjects = query.data ? deriveAffectedObjects(query.data) : []
+	const producedFiles = query.data ? deriveProducedFiles(query.data) : []
 
 	return {
 		...query,
 		affectedObjects,
+		// `producedObjects` is the S2 alias — same array as `affectedObjects`,
+		// but names the concept the pane copy uses ("Objects · <n>") rather
+		// than the older "objects affected" phrasing.
+		producedObjects: affectedObjects,
+		producedFiles,
 	}
 }

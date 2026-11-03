@@ -110,6 +110,45 @@ And the `INTEGRATION_MCP_PRESETS` entry is:
 | `oauth2_custom` | Non-standard auth (GitHub Apps, providers with JWT signing) | Export `CustomAuthHandler` in `auth.ts` |
 | `api_key` | API key-based integrations | Just the config with `headerName` and `envKeyName` |
 
+## Requesting a second (user) token alongside the bot token
+
+Some provider capabilities are unreachable with an app/bot token at all. Slack's
+`search.messages` is the canonical case: `search:read.*` exists **only** as a user
+scope, so no amount of bot scope grants it. The pattern, implemented in
+`providers/slack/`:
+
+1. **Request both in one exchange.** Add the user scopes via `extraAuthParams`
+   (`user_scope` for Slack) — `OAuth2Handler.createAuthorizationUrl` applies that
+   record verbatim, so no handler change is needed.
+2. **Keep the bot token in `credentials.accessToken`.** Stash the user token under
+   a separate key (`userAccessToken`) from `parseTokenResponse`. `StoredCredentials`
+   has an index signature and the blob is encrypted whole, so this needs **no
+   migration**. Critically, it keeps every existing `xoxb-`-style guard correct.
+3. **Never let the user token reach a write path.** It carries the installing
+   human's identity and visibility; writing with it attributes agent actions to
+   that person. Assert the token type at the write boundary, not just at the call
+   sites — see `assertBotToken()` in `providers/slack/mcp-server.ts`.
+4. **Register user-token tools conditionally.** If the stored credential has no
+   user token (an install predating the grant), omit those tools rather than
+   registering ones that always fail.
+5. **Reconnect replaces the credentials blob wholesale** (`routes/integrations.ts`,
+   the `existingSameInstall` branch). The user token can never be merged in from a
+   previous blob — it must arrive in the same exchange, so the user scopes belong
+   in the permanent config, not behind a conditional.
+
+### Adding a scope to an existing provider
+
+Tokens never gain scopes retroactively. Every existing install keeps a valid token
+that simply cannot do the new thing, and nothing fails until someone tries it.
+
+- `GET /api/integrations` returns `missingScopes` / `needsReconnect` per row via
+  `lib/integrations/scope-drift.ts`, and the integrations settings page renders a
+  Reconnect action from it. Adding a scope automatically lights that up — you do
+  not need to write migration code, but you **do** need to tell existing users.
+- Map the provider's `missing_scope` error to text that names reconnecting, so an
+  agent hitting it mid-run reports something actionable instead of concluding the
+  platform is broken.
+
 ## Provider Quirks
 
 Handle provider-specific behavior through these escape hatches:
@@ -141,3 +180,21 @@ When adding a new provider:
 - If custom auth: test `getInstallUrl()`, `handleCallback()`, `getAccessToken()`
 - If custom normalizer: test event normalization with sample payloads
 - Test location: `apps/dev/src/__tests__/lib/integrations/providers/{provider}.test.ts`
+
+## Native app return target
+
+`POST /api/integrations/:provider/connect` (generic OAuth2 / GitHub) and `POST /api/integrations/linkedin-unipile/connect`
+accept an optional `native_return_url`. It must equal, byte for byte, an entry of `NATIVE_OAUTH_RETURN_URLS`
+(`packages/shared/src/schemas/native-oauth-return.ts`); anything else is a 400. It is sealed into the OAuth `state`
+(generic) or the pending credentials blob (LinkedIn), and the callback ends by redirecting to it with
+`status` / `provider` / `workspace_id` / `integration_id` / `reason` — never a token. Without the field the web
+flow is unchanged. Generic providers return a `/native-launch` URL as `install_url` so the state-binding cookie is
+set in the browser that finishes the flow (a URLSession cookie jar is not that browser).
+
+A new `auth.type: 'oauth2'` provider gets native connect with no backend change: the connect route and callback are
+shared. `api_key` and `manual` providers have no browser round trip and end with `reason=unsupported`. If a provider
+needs a step after the token exchange (GitHub installation selection, Google Meet's people-id fetch, the LinkedIn
+wizard), add an `if (native) return nativeEnd({ status: 'error', reason: ... })` branch to every failure path of that
+step in `routes/integrations.ts`; otherwise a native client is left on a bare JSON error. The Apple app also needs a
+connect button for the provider. Only Slack, GitHub and LinkedIn have been verified native; the others are untested.
+A second native app needs its return URL added to `NATIVE_OAUTH_RETURN_URLS`.

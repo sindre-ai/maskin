@@ -1,8 +1,13 @@
-import { RelativeTime } from '@/components/shared/relative-time'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { readEventStatusTransition } from '@/components/triggers/trigger-form'
+import { Switch } from '@/components/ui/switch'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { TriggerResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { describeCronExpression } from '@/lib/cron'
 import { Link } from '@tanstack/react-router'
-import { Bell, Clock, Zap } from 'lucide-react'
+import { Bell, ChevronRight, Clock, Zap } from 'lucide-react'
 
 export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'>): string {
 	const config = trigger.config ?? {}
@@ -10,8 +15,9 @@ export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'
 		const entity = String(config.entity_type ?? 'object')
 		const action = String(config.action ?? 'modified')
 		if (action === 'status_changed') {
-			const from = config.from_status ? String(config.from_status) : 'any'
-			const to = config.to_status ? String(config.to_status) : 'any'
+			const { fromStatus, toStatus } = readEventStatusTransition(config)
+			const from = fromStatus === '__any__' ? 'any' : fromStatus
+			const to = toStatus === '__any__' ? 'any' : toStatus
 			return `When ${entity} changes from ${from} to ${to}`
 		}
 		return `When ${entity} is ${action}`
@@ -29,55 +35,112 @@ export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'
 	return trigger.type
 }
 
-const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
+export const TRIGGER_TYPE_ICON: Record<string, typeof Zap> = {
 	event: Zap,
 	cron: Clock,
 	reminder: Bell,
+}
+
+// The 34px glyph tile (mockup 1547) — one tint per trigger kind, always a
+// semantic pair so both modes stay legible.
+const TRIGGER_TYPE_TILE: Record<string, string> = {
+	event: 'bg-brand-subtle text-brand-subtle-foreground',
+	cron: 'bg-secondary text-secondary-foreground',
+	reminder: 'bg-muted text-muted-foreground',
 }
 
 export function TriggerRow({
 	trigger,
 	workspaceId,
 	agentName,
+	agentId,
+	agentType = 'agent',
+	onToggleEnabled,
+	isToggling,
+	v4Polish = false,
 }: {
 	trigger: TriggerResponse
 	workspaceId: string
 	agentName: string
+	agentId?: string
+	agentType?: string
+	/** Wire to flip the trigger on/off inline. Omitted (e.g. read-only surfaces)
+	 *  hides the switch rather than rendering a dead control. */
+	onToggleEnabled?: (next: boolean) => void
+	isToggling?: boolean
+	/** v4 row parity: state label sized to match the LoopRow state pill and no
+	 *  trailing chevron, so the right rail reads as `state label + toggle`.
+	 *  The loops page opts in; other surfaces keep the original row. */
+	v4Polish?: boolean
 }) {
+	const canWrite = useCanWrite()
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
 	const description = describeTrigger(trigger)
 
 	return (
-		<Link
-			to="/$workspaceId/triggers/$triggerId"
-			params={{ workspaceId, triggerId: trigger.id }}
-			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
-		>
-			<div className="flex flex-col items-center gap-1">
-				<span
-					className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
+		// The row is a link *and* carries an inline switch. Nesting a button in an
+		// anchor is invalid and would navigate on toggle, so the link is a full-row
+		// overlay underneath pointer-transparent content, and only the switch opts
+		// pointer events back in.
+		<div className="group relative flex items-center gap-3.5 rounded-xl border border-border px-4 py-3.5 transition-colors duration-150 hover:border-border-strong">
+			<Link
+				to="/$workspaceId/triggers/$triggerId"
+				params={{ workspaceId, triggerId: trigger.id }}
+				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			>
+				<span className="sr-only">Open {trigger.name}</span>
+			</Link>
+
+			<span
+				aria-hidden="true"
+				className={cn(
+					'pointer-events-none relative grid size-[34px] shrink-0 place-items-center rounded-[10px]',
+					TRIGGER_TYPE_TILE[trigger.type] ?? TRIGGER_TYPE_TILE.event,
+				)}
+			>
+				<Icon size={16} />
+			</span>
+
+			<div className="pointer-events-none relative min-w-0 flex-1 leading-[1.4]">
+				<p className="truncate text-[13px] font-bold text-foreground">{trigger.name}</p>
+				<p className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{description}</p>
+			</div>
+
+			<div className="pointer-events-none relative hidden shrink-0 items-center gap-1.5 md:flex">
+				<ActorAvatar id={agentId} name={agentName} type={agentType} />
+				<span className="text-[11.5px] text-muted-foreground">{agentName}</span>
+			</div>
+
+			<span
+				className={cn(
+					'pointer-events-none relative shrink-0 text-right font-semibold',
+					v4Polish ? 'text-xs' : 'w-6 text-[11px]',
+					trigger.enabled ? 'text-success' : 'text-muted-foreground',
+				)}
+			>
+				{trigger.enabled ? 'On' : 'Off'}
+			</span>
+
+			{onToggleEnabled && (
+				<span className="relative shrink-0">
+					<ViewerTooltip>
+						<Switch
+							checked={trigger.enabled}
+							disabled={isToggling || !canWrite}
+							onCheckedChange={(next) => onToggleEnabled(next)}
+							aria-label={`${trigger.enabled ? 'Disable' : 'Enable'} ${trigger.name}`}
+						/>
+					</ViewerTooltip>
+				</span>
+			)}
+
+			{!v4Polish && (
+				<ChevronRight
+					size={15}
+					aria-hidden="true"
+					className="pointer-events-none relative shrink-0 text-muted-foreground"
 				/>
-			</div>
-			<Icon size={15} className="shrink-0 text-muted-foreground" />
-			<div className="flex-1 min-w-0">
-				<div className="flex items-center gap-2">
-					<p className="text-sm font-medium text-foreground truncate">{trigger.name}</p>
-					{!trigger.enabled && (
-						<span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-							Disabled
-						</span>
-					)}
-				</div>
-				<p className="text-xs text-muted-foreground truncate">{description}</p>
-				<p className="text-xs text-muted-foreground/60 mt-0.5">
-					Agent: {agentName}
-					{trigger.updatedAt && (
-						<>
-							{' · '}Updated <RelativeTime date={trigger.updatedAt} />
-						</>
-					)}
-				</p>
-			</div>
-		</Link>
+			)}
+		</div>
 	)
 }

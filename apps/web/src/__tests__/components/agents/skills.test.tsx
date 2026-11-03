@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { buildSkillListItem } from '../../factories'
 import { TestWrapper } from '../../setup'
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -95,7 +97,12 @@ describe('Skills', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Delete skill' }))
 		await user.click(screen.getByRole('button', { name: 'Delete' }))
-		expect(mockDeleteMutate).toHaveBeenCalledWith('deploy')
+		expect(mockDeleteMutate).toHaveBeenCalledWith(
+			'deploy',
+			expect.objectContaining({
+				onError: expect.any(Function),
+			}),
+		)
 	})
 
 	it('cancels delete and returns to normal state', async () => {

@@ -9,6 +9,7 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 
 import {
 	approximatePromptTokens,
+	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
 } from '../../../lib/analytics/agent-session-events'
 
@@ -59,7 +60,25 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 				agent_name: 'Bug Triage',
 				system_prompt_chars: 1200,
 				system_prompt_tokens: 300,
+				source_session_id: null,
 			},
+		)
+	})
+
+	it('carries source_session_id when the session was spawned by another session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-child',
+			agentId: 'agent-2',
+			agentName: 'Sentinel',
+			systemPrompt: 'ok',
+			sourceSessionId: 'sess-parent',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-2',
+			expect.objectContaining({ source_session_id: 'sess-parent' }),
 		)
 	})
 
@@ -91,5 +110,92 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 				systemPrompt: 'abc',
 			}),
 		).resolves.toBeUndefined()
+	})
+
+	it('forwards trigger_type and trigger_id for a cron-dispatched session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-4',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'abc',
+			triggerType: 'cron',
+			triggerId: 'trig-1',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-1',
+			expect.objectContaining({ trigger_type: 'cron', trigger_id: 'trig-1' }),
+		)
+	})
+
+	it('forwards trigger_type and trigger_id for an event-dispatched session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-5',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'abc',
+			triggerType: 'event',
+			triggerId: 'trig-2',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-1',
+			expect.objectContaining({ trigger_type: 'event', trigger_id: 'trig-2' }),
+		)
+	})
+
+	it('leaves trigger provenance absent for a comment-fallback session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-6',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'abc',
+			triggerSource: 'comment_fallback',
+			sourceCommentEventId: 42,
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.trigger_source).toBe('comment_fallback')
+		expect(props.trigger_type).toBeUndefined()
+		expect(props.trigger_id).toBeUndefined()
+	})
+})
+
+describe('trackAgentSessionCompletedWithSkills', () => {
+	it('carries duration_ms next to the outcome on the dev-backend emission', async () => {
+		await trackAgentSessionCompletedWithSkills({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			agentId: 'agent-1',
+			outcome: 'completed',
+			durationMs: 42_000,
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_completed',
+			'agent-1',
+			expect.objectContaining({
+				outcome: 'completed',
+				duration_ms: 42_000,
+				emitted_from: 'dev_backend',
+			}),
+		)
+	})
+
+	it('leaves duration_ms absent when the session has no start time', async () => {
+		await trackAgentSessionCompletedWithSkills({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			agentId: 'agent-1',
+			outcome: 'failed',
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0][2]
+		expect(props.duration_ms).toBeUndefined()
 	})
 })

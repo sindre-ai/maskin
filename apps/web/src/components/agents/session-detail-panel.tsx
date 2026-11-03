@@ -1,12 +1,18 @@
 import { AgentOutput } from '@/components/shared/agent-output'
 import { ObjectReference } from '@/components/shared/object-reference'
+import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useSessionAffectedObjects } from '@/hooks/use-events'
 import { useCreateSession, useSessionLogs } from '@/hooks/use-sessions'
 import { trackEvent } from '@/lib/analytics'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatSize } from '@/lib/file-utils'
 import { formatDurationBetween } from '@/lib/format-duration'
-import { Link } from '@tanstack/react-router'
+import { toastSessionCreateError } from '@/lib/session-errors'
+import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
+import { Link, useNavigate } from '@tanstack/react-router'
 import {
 	CheckCircle2,
 	ChevronDown,
@@ -64,16 +70,15 @@ const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
 	openrouter: 'OpenRouter',
 	'claude-code': 'Claude Code',
+	maskin: 'Maskin',
 }
 
 // Reason codes that show the recovery row (credit depletion + temporary quota limits).
-// Matches the codes emitted by credit-classifier.ts.
+// Matches the codes emitted by credit-classifier.ts. The codes in RECOVERY_BY_CODE
+// get their own card and are not listed here.
 const CREDIT_REASON_CODES = new Set([
 	'billing_error',
-	'credit_balance_low',
 	'insufficient_credits',
-	'session_limit',
-	'weekly_limit',
 	'opus_limit',
 	'max_plan_rate_limit',
 	'server_rate_limit',
@@ -82,17 +87,103 @@ const CREDIT_REASON_CODES = new Set([
 
 // Codes that require topping up credits (subset of CREDIT_REASON_CODES).
 // max_plan_rate_limit is excluded — it's a temporary rate limit, not credit depletion.
-const TOPUP_REASON_CODES = new Set([
-	'billing_error',
-	'credit_balance_low',
-	'insufficient_credits',
-	'session_limit',
-	'weekly_limit',
-	'opus_limit',
-])
+const TOPUP_REASON_CODES = new Set(['billing_error', 'insufficient_credits', 'opus_limit'])
 
-// Codes where the agent couldn't authenticate — recovery is connecting credentials.
-const AUTH_REASON_CODES = new Set(['not_logged_in'])
+// Where on the Keys page a recovery button lands (ids set in settings/keys.tsx).
+type KeysSection = 'claude-subscriptions' | 'llm-api-keys'
+
+interface RecoveryEntry {
+	// Shown to workspaces with the Keys page, who can fix it themselves.
+	title: string
+	sentence: string
+	button: string
+	section: KeysSection
+	// credit_balance_low also offers the Anthropic plans page.
+	topUp?: boolean
+	// Shown to workspaces without the Keys page, where Maskin's own credentials failed.
+	ours: { title: string; sentence: string }
+}
+
+const PAUSED_OUR_SIDE = 'Agents are paused on our side'
+
+const LOGIN_EXPIRED: RecoveryEntry = {
+	title: 'Your Claude login expired',
+	sentence: 'It could not be renewed. Reconnect it, then restart this session.',
+	button: 'Reconnect Claude',
+	section: 'claude-subscriptions',
+	ours: {
+		title: PAUSED_OUR_SIDE,
+		sentence:
+			'The Claude login Maskin uses expired. You do not need to do anything. Restart this session once it is back.',
+	},
+}
+
+const LIMIT_OURS = {
+	title: 'Agents are paused until the limit resets',
+	sentence:
+		'Maskin hit its Claude usage limit. You do not need to do anything. Restart this session after the reset.',
+}
+
+// Replaces the stored message for these codes, so sessions that ended before the
+// copy changed read the same as new ones.
+const RECOVERY_BY_CODE: Record<string, RecoveryEntry> = {
+	oauth_expired: LOGIN_EXPIRED,
+	oauth_revoked: LOGIN_EXPIRED,
+	not_logged_in: {
+		title: 'No Claude login is connected',
+		sentence: 'Connect a Claude subscription so agents can run, then restart this session.',
+		button: 'Connect Claude',
+		section: 'claude-subscriptions',
+		ours: {
+			title: PAUSED_OUR_SIDE,
+			sentence:
+				'Maskin could not sign in to Claude for this agent. You do not need to do anything. Restart this session in a few minutes.',
+		},
+	},
+	invalid_api_key: {
+		title: 'Your API key was rejected',
+		sentence:
+			'Anthropic did not accept the key saved for this workspace. Replace it, then restart this session.',
+		button: 'Replace API key',
+		section: 'llm-api-keys',
+		ours: {
+			title: PAUSED_OUR_SIDE,
+			sentence:
+				'The key Maskin uses was rejected. You do not need to do anything. Restart this session once it is fixed.',
+		},
+	},
+	session_limit: {
+		title: 'Your Claude subscription hit its session limit',
+		sentence: 'Restart after the reset, or add a backup subscription so agents keep running.',
+		button: 'Add a backup subscription',
+		section: 'claude-subscriptions',
+		ours: LIMIT_OURS,
+	},
+	weekly_limit: {
+		title: 'Your Claude subscription hit its weekly limit',
+		sentence: 'Restart after the reset, or add a backup subscription so agents keep running.',
+		button: 'Add a backup subscription',
+		section: 'claude-subscriptions',
+		ours: LIMIT_OURS,
+	},
+	credit_balance_low: {
+		title: 'Your API key is out of credit',
+		sentence:
+			'Top up the credit on your Anthropic account, or switch to another key. Then restart this session.',
+		button: 'Change API key',
+		section: 'llm-api-keys',
+		topUp: true,
+		ours: {
+			title: PAUSED_OUR_SIDE,
+			sentence:
+				'Maskin is out of Claude credit for now. You do not need to do anything. Restart this session in a few minutes.',
+		},
+	},
+}
+
+// The session was deliberately stopped by the plan-budget watchdog, not a
+// provider failure — recovery is buying usage credits or upgrading.
+const BUDGET_REASON_CODES = new Set(['plan_cap_exceeded'])
 
 export function FailureCard({
 	failureReason,
@@ -102,17 +193,31 @@ export function FailureCard({
 	const topUpUrl = TOP_UP_URLS[failureReason.provider]
 	const isCredit = CREDIT_REASON_CODES.has(failureReason.reason_code)
 	const isTopUp = TOPUP_REASON_CODES.has(failureReason.reason_code)
-	const isAuth = AUTH_REASON_CODES.has(failureReason.reason_code)
+	const isBudget = BUDGET_REASON_CODES.has(failureReason.reason_code)
 	const isOpenRouter = failureReason.provider === 'openrouter'
 	const providerLabel =
 		PROVIDER_LABELS[failureReason.provider] ??
 		failureReason.provider.charAt(0).toUpperCase() + failureReason.provider.slice(1)
+	const hasKeysPage = useIsEnterpriseWorkspace()
+	// not_logged_in from Maskin's own pre-flight keeps its stored message: it also
+	// covers a network blip and an unreadable saved key, which need different words.
+	const isPreflightLogin =
+		failureReason.reason_code === 'not_logged_in' && failureReason.provider === 'maskin'
+	const recovery = isPreflightLogin ? undefined : RECOVERY_BY_CODE[failureReason.reason_code]
+	const copy = recovery ? (hasKeysPage ? recovery : recovery.ours) : undefined
 
 	return (
 		<div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-3 space-y-2">
-			<p className="text-sm font-bold text-warning">
-				{providerLabel} — {failureReason.human_message}
-			</p>
+			{copy ? (
+				<>
+					<p className="text-sm font-bold text-warning">{copy.title}</p>
+					<p className="text-sm text-foreground">{copy.sentence}</p>
+				</>
+			) : (
+				<p className="text-sm font-bold text-warning">
+					{providerLabel} — {failureReason.human_message}
+				</p>
+			)}
 			<div className="flex flex-wrap items-center gap-1.5">
 				<span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded-md bg-warning/10 text-warning border border-warning/20">
 					{failureReason.provider}
@@ -154,11 +259,47 @@ export function FailureCard({
 					</span>
 				</div>
 			)}
-			{isAuth && (
+			{recovery && hasKeysPage && (
 				<div className="flex flex-wrap items-center gap-2">
 					<Button size="sm" asChild>
-						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
-							Connect Claude subscription
+						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }} hash={recovery.section}>
+							{recovery.button}
+						</Link>
+					</Button>
+					{recovery.topUp && (
+						<Button size="sm" variant="outline" asChild>
+							<a href={TOP_UP_URLS.anthropic} target="_blank" rel="noreferrer">
+								Top up on Anthropic
+								<ExternalLink size={12} className="ml-1" />
+							</a>
+						</Button>
+					)}
+				</div>
+			)}
+			{isPreflightLogin && (
+				<div className="flex flex-wrap items-center gap-2">
+					<Button size="sm" asChild>
+						{hasKeysPage ? (
+							<Link
+								to="/$workspaceId/settings/keys"
+								params={{ workspaceId }}
+								hash="claude-subscriptions"
+							>
+								Connect Claude
+							</Link>
+						) : (
+							<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
+								View plan and usage
+							</Link>
+						)}
+					</Button>
+				</div>
+			)}
+			{isBudget && (
+				<div className="flex flex-wrap items-center gap-2">
+					<Button size="sm" asChild>
+						<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
+							Go to Billing
 						</Link>
 					</Button>
 				</div>
@@ -192,6 +333,10 @@ interface SessionDetailPanelProps {
 }
 
 function SessionStatusBadge({ status }: { status: string }) {
+	// Bucketing matches AgentSessionsSection.deriveState so the pill on the agent
+	// page and the pill in this detail sheet render the same label for the same
+	// session — a queued session that reads Running upstairs must not read as
+	// something else in the log sidebar.
 	const config: Record<string, { icon: React.ElementType; label: string; className: string }> = {
 		completed: {
 			icon: CheckCircle2,
@@ -215,18 +360,33 @@ function SessionStatusBadge({ status }: { status: string }) {
 		},
 		starting: {
 			icon: Spinner,
-			label: 'Starting',
+			label: 'Running',
 			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		pending: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		queued: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		snapshotting: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		waiting_for_input: {
+			icon: Clock,
+			label: 'Waiting',
+			className: 'bg-muted text-muted-foreground',
 		},
 		paused: {
 			icon: Clock,
 			label: 'Paused',
 			className: 'bg-status-paused-bg text-status-paused-text',
-		},
-		snapshotting: {
-			icon: Clock,
-			label: 'Snapshotting',
-			className: 'bg-status-processing-bg text-status-processing-text',
 		},
 		idle: {
 			icon: PauseCircle,
@@ -271,7 +431,7 @@ function ExpandableTitle({ text }: { text: string }) {
 			className="text-left w-full flex items-start gap-1.5 cursor-pointer group"
 			aria-expanded={expanded}
 		>
-			<span className="mt-0.5 shrink-0 text-text-muted group-hover:text-text-secondary">
+			<span className="mt-0.5 shrink-0 text-muted-foreground group-hover:text-muted-foreground">
 				{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 			</span>
 			<span className={cn('flex-1 min-w-0 break-words', !expanded && 'line-clamp-2')}>{text}</span>
@@ -307,33 +467,40 @@ function RawLogsView({ logs }: { logs: SessionLogResponse[] }) {
 
 type LogView = 'transcript' | 'raw'
 
-const RESTARTABLE_STATUSES = new Set(['failed', 'timeout', 'completed'])
+const RESTARTABLE_STATUSES = new Set(['failed', 'timeout', 'completed', 'user_stopped'])
 
 function RestartSessionButton({
 	session,
 	workspaceId,
 }: { session: SessionResponse; workspaceId: string }) {
 	const createSession = useCreateSession(workspaceId)
+	const canWrite = useCanWrite()
+	const navigate = useNavigate()
 	return (
-		<button
-			type="button"
-			className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] inline-flex items-center"
-			disabled={createSession.isPending}
-			onClick={() => {
-				trackEvent('session_restart_clicked', {
-					source: 'session-detail-panel',
-					session_id: session.id,
-					actor_id: session.actorId,
-					prior_status: session.status,
-				})
-				createSession.mutate({
-					actor_id: session.actorId,
-					action_prompt: session.actionPrompt,
-				})
-			}}
-		>
-			{createSession.isPending ? 'Restarting…' : 'Restart'}
-		</button>
+		<ViewerTooltip>
+			<button
+				type="button"
+				className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] inline-flex items-center"
+				disabled={createSession.isPending || !canWrite}
+				onClick={() => {
+					trackEvent('session_restart_clicked', {
+						source: 'session-detail-panel',
+						session_id: session.id,
+						actor_id: session.actorId,
+						prior_status: session.status,
+					})
+					createSession.mutate(
+						{
+							actor_id: session.actorId,
+							action_prompt: session.actionPrompt,
+						},
+						{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
+					)
+				}}
+			>
+				{createSession.isPending ? 'Restarting…' : 'Restart'}
+			</button>
+		</ViewerTooltip>
 	)
 }
 
@@ -353,7 +520,11 @@ export function SessionDetailPanel({
 		open,
 		{ live: open && isLive },
 	)
-	const { affectedObjects, isLoading: objectsLoading } = useSessionAffectedObjects(
+	const {
+		producedObjects,
+		producedFiles,
+		isLoading: objectsLoading,
+	} = useSessionAffectedObjects(
 		session?.startedAt ?? null,
 		session?.completedAt ?? null,
 		workspaceId,
@@ -445,33 +616,80 @@ export function SessionDetailPanel({
 							</div>
 						)}
 
-						{/* Objects affected */}
+						{/* Produced — S2 rename (bet 34706e2f, task 5). Objects first,
+						    Files sub-group second; the Files heading is hidden
+						    entirely when its count is 0 so the panel never carries a
+						    dangling "Files · 0" line. */}
 						<div className="mt-6">
 							<h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mb-2">
 								<FileText size={13} />
-								Objects affected
-								{affectedObjects.length > 0 && (
-									<span className="opacity-60">({affectedObjects.length})</span>
+								Produced
+								{producedObjects.length + producedFiles.length > 0 && (
+									<span className="opacity-60">
+										({producedObjects.length + producedFiles.length})
+									</span>
 								)}
 							</h4>
 							{objectsLoading ? (
 								<div className="flex items-center justify-center py-4">
 									<Spinner />
 								</div>
-							) : affectedObjects.length === 0 ? (
+							) : producedObjects.length === 0 && producedFiles.length === 0 ? (
 								<p className="text-sm text-muted-foreground py-2 text-center">
-									No objects affected
+									Nothing produced yet
 								</p>
 							) : (
-								<div className="space-y-1">
-									{affectedObjects.map((obj) => (
-										<ObjectReference
-											key={obj.entityId}
-											objectId={obj.entityId}
-											workspaceId={workspaceId}
-											variant="block"
-										/>
-									))}
+								<div className="flex flex-col gap-3">
+									{producedObjects.length > 0 ? (
+										<section aria-label={`Objects · ${producedObjects.length}`}>
+											<h5 className="mb-1.5 text-[10.5px] font-mono uppercase tracking-[0.09em] text-muted-foreground">
+												Objects · {producedObjects.length}
+											</h5>
+											<div className="space-y-1">
+												{producedObjects.map((obj) => (
+													<ObjectReference
+														key={obj.entityId}
+														objectId={obj.entityId}
+														workspaceId={workspaceId}
+														variant="block"
+													/>
+												))}
+											</div>
+										</section>
+									) : null}
+									{producedFiles.length > 0 ? (
+										<section aria-label={`Files · ${producedFiles.length}`}>
+											<h5 className="mb-1.5 text-[10.5px] font-mono uppercase tracking-[0.09em] text-muted-foreground">
+												Files · {producedFiles.length}
+											</h5>
+											<ul className="flex flex-col gap-1">
+												{producedFiles.map((file) => (
+													<li key={file.fileId}>
+														<Link
+															to="/$workspaceId/files/$fileId"
+															params={{ workspaceId, fileId: file.fileId }}
+															className="flex items-center gap-2.5 rounded-md border border-border bg-surface-sunken px-2.5 py-2 text-[13px] transition-colors hover:border-[color:var(--border-hover)] hover:bg-background hover:shadow-xs"
+														>
+															<TypeBadge type="file" variant="tile" size="sm" />
+															<span className="flex min-w-0 flex-1 flex-col">
+																<span className="truncate font-medium text-foreground">
+																	{file.name ?? 'Untitled file'}
+																</span>
+																<span className="truncate text-[10.5px] font-mono text-muted-foreground">
+																	{[
+																		file.mimeType,
+																		file.sizeBytes != null ? formatSize(file.sizeBytes) : null,
+																	]
+																		.filter(Boolean)
+																		.join(' · ')}
+																</span>
+															</span>
+														</Link>
+													</li>
+												))}
+											</ul>
+										</section>
+									) : null}
 								</div>
 							)}
 						</div>

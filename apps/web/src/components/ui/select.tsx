@@ -10,21 +10,41 @@ const SelectGroup = SelectPrimitive.Group
 
 const SelectValue = SelectPrimitive.Value
 
+/**
+ * `default` is the h-8 bordered trigger every form uses. `chip` is the inline
+ * reading the v2 mockup draws on a document's meta line (1059–1094): a
+ * borderless, baseline-height chip that only takes a hairline on hover and
+ * while open, with a small caret. Both are trigger sizes on the primitive —
+ * screens pick one, they never restyle the trigger themselves.
+ */
+type SelectTriggerSize = 'default' | 'chip'
+
 const SelectTrigger = React.forwardRef<
 	React.ElementRef<typeof SelectPrimitive.Trigger>,
-	React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
->(({ className, children, ...props }, ref) => (
+	React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger> & { size?: SelectTriggerSize }
+>(({ className, children, size = 'default', ...props }, ref) => (
 	<SelectPrimitive.Trigger
 		ref={ref}
 		className={cn(
-			'flex h-8 w-fit items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1',
+			// `line-clamp-1` on the children is a default-size affordance: it makes
+			// a long picked value truncate. It sets `display:-webkit-box`, which
+			// would flatten a chip's inline-flex label, so the chip opts out.
+			'flex w-fit items-center justify-between rounded-md ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+			size === 'chip'
+				? 'gap-1.5 rounded-[7px] border border-transparent px-1.5 py-[3px] text-[11.5px] transition-colors hover:border-border hover:bg-muted/50 data-[state=open]:border-border-strong data-[state=open]:bg-muted/50'
+				: 'h-8 gap-2 border border-input bg-background px-3 py-1.5 text-xs [&>span]:line-clamp-1',
 			className,
 		)}
 		{...props}
 	>
 		{children}
 		<SelectPrimitive.Icon asChild>
-			<ChevronDown className="h-4 w-4 opacity-50" />
+			<ChevronDown
+				className={cn(
+					'opacity-50',
+					size === 'chip' ? 'size-3 shrink-0 text-border-strong opacity-100' : 'h-4 w-4',
+				)}
+			/>
 		</SelectPrimitive.Icon>
 	</SelectPrimitive.Trigger>
 ))

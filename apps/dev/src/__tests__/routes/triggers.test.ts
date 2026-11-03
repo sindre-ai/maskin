@@ -1,10 +1,29 @@
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildCreateTriggerBody, buildTrigger, buildWorkspaceMember } from '../factories'
-import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
+import { jsonDelete, jsonGet, jsonRequest, readMetadataSql } from '../helpers'
 import { createTestApp } from '../setup'
+
+const { runSlackTriggerSetupMock } = vi.hoisted(() => ({
+	runSlackTriggerSetupMock: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../services/slack-trigger-setup', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/slack-trigger-setup')>()
+	return {
+		...actual,
+		runSlackTriggerSetup: runSlackTriggerSetupMock,
+	}
+})
 
 const { default: triggersRoutes } = await import('../../routes/triggers')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
+const testerActorId = 'test-actor-id'
+const targetActorId = '00000000-0000-0000-0000-0000000000a1'
+
+beforeEach(() => {
+	runSlackTriggerSetupMock.mockClear()
+})
 
 describe('Triggers Routes', () => {
 	describe('POST /api/triggers', () => {
@@ -12,11 +31,16 @@ describe('Triggers Routes', () => {
 			const trigger = buildTrigger({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
 			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/triggers', buildCreateTriggerBody(), {
-					'x-workspace-id': wsId,
-				}),
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
 			)
 
 			expect(res.status).toBe(201)
@@ -41,6 +65,111 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(400)
 			const body = await res.json()
 			expect(body.error.code).toBe('VALIDATION_ERROR')
+		})
+
+		it.each(['llm_route', 'llm_oauth_slot'])(
+			'returns 400 naming %s when it is sent in config, and writes nothing',
+			async (field) => {
+				const { app, calls } = createTestApp(triggersRoutes, '/api/triggers')
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/triggers',
+						buildCreateTriggerBody({
+							type: 'cron',
+							config: { expression: '30 10 * * *', [field]: 'claude_oauth' },
+						}),
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.code).toBe('VALIDATION_ERROR')
+				expect(body.error.message).toContain(`config.${field}`)
+				expect(calls.inserts).toHaveLength(0)
+			},
+		)
+
+		it('fires runSlackTriggerSetup post-commit for a Slack event trigger with channel_ids', async () => {
+			const config = {
+				entity_type: 'slack.channel_message',
+				action: 'created',
+				conditions: [{ field: 'event.channel', operator: 'in', value: ['C1', 'C2'] }],
+			}
+			const trigger = buildTrigger({
+				workspaceId: wsId,
+				type: 'event',
+				name: 'Sales alerts',
+				config,
+			})
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({
+						type: 'event',
+						name: 'Sales alerts',
+						config,
+						target_actor_id: targetActorId,
+					}),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledTimes(1)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledWith(expect.anything(), {
+				triggerId: trigger.id,
+				workspaceId: wsId,
+				channelIds: ['C1', 'C2'],
+				triggerName: 'Sales alerts',
+				actorId: testerActorId,
+			})
+		})
+
+		it('does not fire the setup service for a non-Slack trigger', async () => {
+			const trigger = buildTrigger({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.insert = [trigger]
+			// The target agent is a member of the workspace.
+			mockResults.select = [{ id: targetActorId }]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			expect(runSlackTriggerSetupMock).not.toHaveBeenCalled()
+		})
+
+		it('returns 404 and writes nothing when the target agent is not a member of the workspace', async () => {
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			// The membership lookup finds no row for the target agent in this workspace.
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ target_actor_id: targetActorId }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.inserts).toHaveLength(0)
 		})
 	})
 
@@ -98,6 +227,20 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it('returns 404 and updates nothing when the new target agent is not a workspace member', async () => {
+			const trigger = buildTrigger()
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			// Trigger row, the caller's membership, then no membership row for the target.
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()], []]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { target_actor_id: targetActorId }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.updates).toHaveLength(0)
+		})
+
 		it('returns 404 when trigger not found', async () => {
 			const { app } = createTestApp(triggersRoutes, '/api/triggers')
 
@@ -109,6 +252,27 @@ describe('Triggers Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		it.each(['llm_route', 'llm_oauth_slot'])(
+			'returns 400 naming %s when it is sent in config, and updates nothing',
+			async (field) => {
+				const trigger = buildTrigger({ type: 'cron', config: { expression: '*/5 * * * *' } })
+				const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+				mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
+						config: { expression: '30 10 * * *', [field]: 'claude_oauth' },
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.code).toBe('VALIDATION_ERROR')
+				expect(body.error.message).toContain(`config.${field}`)
+				expect(calls.updates).toHaveLength(0)
+			},
+		)
 
 		it('returns 400 for invalid cron expression on cron trigger', async () => {
 			const trigger = buildTrigger({ type: 'cron', config: { expression: '*/5 * * * *' } })
@@ -124,6 +288,136 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(400)
 			const body = await res.json()
 			expect(body.error.code).toBe('VALIDATION_ERROR')
+		})
+
+		it('fires runSlackTriggerSetup post-commit when a Slack trigger is updated', async () => {
+			const config = {
+				entity_type: 'slack.channel_message',
+				action: 'created',
+				conditions: [{ field: 'event.channel', operator: 'in', value: ['CNEW'] }],
+			}
+			const trigger = buildTrigger({ workspaceId: wsId, type: 'event', name: 'Alerts', config })
+			const updated = { ...trigger, config }
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
+					type: 'event',
+					config,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledTimes(1)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledWith(expect.anything(), {
+				triggerId: trigger.id,
+				workspaceId: trigger.workspaceId,
+				channelIds: ['CNEW'],
+				triggerName: 'Alerts',
+				actorId: testerActorId,
+			})
+		})
+
+		// Removing the last channel must still reach the service: it owns the
+		// branch that clears stale `slack_setup` outcomes. Before this, the route
+		// short-circuited on an empty channel list and that branch was
+		// unreachable, so the form kept showing failures for channels the
+		// trigger no longer listened on.
+		it('fires runSlackTriggerSetup with an empty list when the last channel is removed', async () => {
+			const config = {
+				entity_type: 'slack.channel_message',
+				action: 'created',
+				conditions: [],
+			}
+			const trigger = buildTrigger({ workspaceId: wsId, type: 'event', name: 'Alerts' })
+			const updated = {
+				...trigger,
+				config,
+				metadata: { slack_setup: { channel_ids: ['COLD'], join_attempts: [] } },
+			}
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { type: 'event', config }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ triggerId: trigger.id, channelIds: [] }),
+			)
+		})
+
+		// The counterpart guard: an event trigger that never had `slack_setup`
+		// must not reach the service just because it has no channels, or every
+		// non-Slack event trigger would write metadata and an events row on
+		// every save.
+		it('does not fire runSlackTriggerSetup for an event trigger with no channels and no prior setup', async () => {
+			const config = { entity_type: 'object', action: 'created', conditions: [] }
+			const trigger = buildTrigger({ workspaceId: wsId, type: 'event', name: 'Objects' })
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [{ ...trigger, config, metadata: null }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { type: 'event', config }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(runSlackTriggerSetupMock).not.toHaveBeenCalled()
+		})
+
+		// PR D — the resume UX sends `clear_auto_paused: true` alongside the
+		// enabled-flip. AC requires the field is REMOVED (not just skipped) so
+		// the next `member_left_channel` pass captures a fresh
+		// `previous_enabled`; assert both the removal and that PR B's
+		// `slack_setup` sibling key survives the merge.
+		it('strips metadata.auto_paused on PATCH with clear_auto_paused=true; preserves sibling slack_setup', async () => {
+			const slackSetup = {
+				channel_ids: ['C1'],
+				join_attempts: [
+					{ channel_id: 'C1', status: 'joined', attempted_at: '2026-08-30T12:00:00Z' },
+				],
+				last_setup_at: '2026-08-30T12:00:00Z',
+			}
+			const trigger = buildTrigger({
+				enabled: false,
+				metadata: {
+					slack_setup: slackSetup,
+					auto_paused: {
+						reason: 'slack_member_left',
+						channel_id: 'CKICKED',
+						paused_at: '2026-08-30T14:00:00Z',
+						previous_enabled: true,
+					},
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [{ ...trigger, enabled: true, metadata: { slack_setup: slackSetup } }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
+					enabled: true,
+					clear_auto_paused: true,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const setArg = calls.updates[0] as Record<string, unknown>
+			expect(setArg.enabled).toBe(true)
+			// The removal is a single-statement `metadata - 'auto_paused'` rather
+			// than a spread of the row read before the transaction — that read is
+			// already stale by UPDATE time, so spreading it would clobber a
+			// `slack_setup` written concurrently by the setup service. Decode the
+			// expression to assert which key is dropped; that the sibling actually
+			// survives is a Postgres semantic, proven in
+			// `integration/slack-trigger-metadata.test.ts`.
+			expect(readMetadataSql(setArg.metadata)).toEqual({ key: 'auto_paused' })
 		})
 	})
 

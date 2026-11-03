@@ -1,6 +1,8 @@
 import type { Browser, Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { type TestAPI, createTestActor } from '../helpers/api.helper'
+import { TestAPI, createTestActor } from '../helpers/api.helper'
+import { sendFromComposer } from '../helpers/composer.helper'
+import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -28,9 +30,11 @@ async function signInAsActor(
 	return page
 }
 
-async function setUpConversation(api: TestAPI, workspaceId: string) {
+async function setUpConversation(api: TestAPI, workspaceId: string, apiKey: string) {
+	// A trial workspace allows a single human seat — this spec needs two.
+	await grantPlanHeadroom(apiKey, workspaceId)
 	const secondHuman = await createTestActor({ name: `E2E Chat Partner ${Date.now()}` })
-	await api.addWorkspaceMember(workspaceId, secondHuman.id)
+	await api.addHumanByInvite(workspaceId, secondHuman)
 	const agent = await api.createAgentActor(`E2E Chat Agent ${Date.now()}`)
 	await api.addWorkspaceMember(workspaceId, agent.id)
 
@@ -53,6 +57,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			const { conversation, secondHuman } = await setUpConversation(
 				account.api,
 				account.workspaceId,
+				account.apiKey,
 			)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
@@ -74,7 +79,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			const messageText = `Hello from the primary actor ${Date.now()}`
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill(messageText)
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			// Sender sees its own optimistic send immediately. Scoped to the
 			// thread's message list (not a bare page-wide text search) — the
@@ -101,7 +106,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		account,
 		browser,
 	}) => {
-		const { conversation, secondHuman } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
@@ -138,9 +147,75 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		await partnerPage.context().close()
 	})
 
+	test('mark as unread resets the read cursor server-side and the badge survives a reload', async ({
+		page,
+		account,
+		browser,
+	}) => {
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
+
+		// The primary actor posts while the partner is away, so the partner has
+		// something to read in the first place.
+		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
+			content: 'Anything to report?',
+		})
+
+		const partnerApi = new TestAPI(secondHuman.api_key)
+		const partnerPage = await signInAsActor(browser, secondHuman.api_key, {
+			id: secondHuman.id,
+			name: secondHuman.name,
+			type: secondHuman.type,
+			email: secondHuman.email,
+		})
+		await partnerPage.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		await expect(partnerPage.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
+			timeout: 10_000,
+		})
+
+		// Opening the thread advances the partner's own cursor past zero.
+		await expect
+			.poll(
+				async () =>
+					(await partnerApi.getConversation(conversation.id, account.workspaceId))
+						.last_read_message_id,
+				{ timeout: 15_000 },
+			)
+			.toBeGreaterThan(0)
+
+		await partnerPage.getByRole('button', { name: 'Mark as unread' }).click()
+		await expect(partnerPage.getByText('Marked as unread')).toBeVisible({ timeout: 10_000 })
+
+		// The reset is persisted, not just optimistic client state: the cursor
+		// reads back as null for the partner. This is the assertion the old
+		// GREATEST-clamped write could never satisfy.
+		await expect
+			.poll(
+				async () =>
+					(await partnerApi.getConversation(conversation.id, account.workspaceId))
+						.last_read_message_id,
+				{ timeout: 15_000 },
+			)
+			.toBeNull()
+
+		await partnerPage.goto(`/${account.workspaceId}/chats`)
+		await expect(
+			partnerPage.getByRole('link', { name: /E2E multi-party chat/ }).getByLabel(/unread/),
+		).toBeVisible({ timeout: 10_000 })
+
+		await partnerPage.context().close()
+	})
+
 	test('mobile back button returns to the conversation list', async ({ page, account }) => {
 		await page.setViewportSize({ width: 375, height: 812 })
-		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
@@ -157,7 +232,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		account,
 		browser,
 	}) => {
-		const { conversation, secondHuman } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
 			content: 'Visible in both themes',
 		})
@@ -194,6 +273,82 @@ test.describe('Chats — full-screen multi-party chat', () => {
 	})
 
 	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`edits an own message inline and shows the (edited) marker at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const { conversation } = await setUpConversation(
+				account.api,
+				account.workspaceId,
+				account.apiKey,
+			)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const composer = page.getByLabel('Message this conversation')
+			await composer.fill('Original wording with a typo')
+			await sendFromComposer(page, composer, vp.width)
+
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread.getByText('Original wording with a typo')).toBeVisible({
+				timeout: 10_000,
+			})
+
+			// The action renders only once the optimistic bubble reconciles with
+			// the persisted row (a real message id) — and must be reachable
+			// without hover, so plain toBeVisible is the touch-viewport check.
+			const editButton = page.getByRole('button', { name: 'Edit message' })
+			await expect(editButton).toBeVisible({ timeout: 10_000 })
+			await editButton.click()
+
+			// After entering edit mode the icon button unmounts, so the label
+			// uniquely addresses the inline textarea.
+			const editor = page.getByLabel('Edit message')
+			await expect(editor).toHaveValue('Original wording with a typo')
+			await editor.fill('Corrected wording, no typo')
+			await page.getByRole('button', { name: 'Save' }).click()
+
+			await expect(thread.getByText('Corrected wording, no typo')).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByText('(edited)')).toBeVisible({ timeout: 10_000 })
+
+			// The edit survives a reload — it was persisted, not just optimistic.
+			await page.reload()
+			await expect(thread.getByText('Corrected wording, no typo')).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByText('(edited)')).toBeVisible({ timeout: 10_000 })
+		})
+
+		test(`retries an agent response from an own message at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const { conversation } = await setUpConversation(
+				account.api,
+				account.workspaceId,
+				account.apiKey,
+			)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const composer = page.getByLabel('Message this conversation')
+			await composer.fill('Anyone there? Please respond')
+			await sendFromComposer(page, composer, vp.width)
+
+			const retryButton = page.getByRole('button', { name: 'Ask agents to respond again' })
+			await expect(retryButton).toBeVisible({ timeout: 10_000 })
+			await retryButton.click()
+
+			// The backend accepts the retry (202) and the UI confirms via toast.
+			await expect(page.getByText('Asked the agents to respond')).toBeVisible({
+				timeout: 10_000,
+			})
+		})
+	}
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`a chat started from the UI gets a placeholder title, not the agent's name, at ${vp.label}`, async ({
 			page,
 			account,
@@ -208,7 +363,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			)
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill('The deploy pipeline keeps failing on the migrate step')
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			await page.waitForURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15_000 })
 			const heading = page.getByRole('heading').first()

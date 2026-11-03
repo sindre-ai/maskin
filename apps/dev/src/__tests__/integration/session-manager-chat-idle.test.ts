@@ -1,0 +1,746 @@
+import {
+	events,
+	agentServers,
+	conversationPendingTurns,
+	conversations,
+	messages,
+	sessionLogs,
+	sessions,
+} from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
+import { asc, eq } from 'drizzle-orm'
+import { SessionManager } from '../../services/session-manager'
+import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
+import { db, getTestActorId, sql } from './global-setup'
+
+function stubStorage(): StorageProvider {
+	return {
+		put: async () => {},
+		get: async () => Buffer.from(''),
+		list: async () => [],
+		delete: async () => {},
+		exists: async () => false,
+		ensureBucket: async () => {},
+	}
+}
+
+async function insertAgentServer() {
+	const [row] = await db
+		.insert(agentServers)
+		.values({
+			url: 'https://chat-idle-under-test.maskin.test:3001',
+			secret: 'x'.repeat(32),
+			maxConcurrentSessions: 10,
+			status: 'active',
+		})
+		.returning()
+	if (!row) throw new Error('failed to insert agent server')
+	return row
+}
+
+async function insertConversation(workspaceId: string, createdBy: string) {
+	const [row] = await db
+		.insert(conversations)
+		.values({ workspaceId, title: 'Chat idle test', createdBy })
+		.returning()
+	if (!row) throw new Error('failed to insert conversation')
+	return row
+}
+
+async function runWatchdogWithStubbedFetch() {
+	const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+		return new Response(JSON.stringify({ ok: true }), {
+			status: 200,
+			headers: { 'content-type': 'application/json' },
+		})
+	})
+	const manager = new SessionManager(db, stubStorage())
+	try {
+		await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+	} finally {
+		fetchSpy.mockRestore()
+		await manager.stop()
+	}
+}
+
+describe('SessionManager conversation-turn drain + idle chat close (Integration)', () => {
+	let workspaceId: string
+	let actorId: string
+
+	beforeEach(async () => {
+		actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		workspaceId = ws.id
+		await sql`TRUNCATE agent_servers CASCADE`
+	})
+
+	describe('drainPendingConversationTurns()', () => {
+		it('delivers buffered turns in message order over the remote input endpoint and clears them', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-drain-test',
+			})
+			// Two buffered turns, inserted out of message order to prove ordering
+			// comes from messageId, not insertion order. The messageId FK is
+			// enforced, so create real message rows.
+			const [m1] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId, content: 'first' })
+				.returning()
+			const [m2] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId, content: 'second' })
+				.returning()
+			if (!m1 || !m2) throw new Error('failed to insert messages')
+			await db.insert(conversationPendingTurns).values({
+				conversationId: conversation.id,
+				actorId,
+				messageId: m2.id,
+				payload: { type: 'user', message: { role: 'user', content: 'turn two' } },
+			})
+			await db.insert(conversationPendingTurns).values({
+				conversationId: conversation.id,
+				actorId,
+				messageId: m1.id,
+				payload: { type: 'user', message: { role: 'user', content: 'turn one' } },
+			})
+
+			const inputCalls: Array<{ url: string; body: string }> = []
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+				inputCalls.push({ url: String(input), body: String(init?.body ?? '') })
+				return new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				})
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.drainPendingConversationTurns(session.id)
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			expect(inputCalls).toHaveLength(2)
+			expect(inputCalls[0]?.url).toBe(`${server.url}/sessions/${session.id}/input`)
+			expect(inputCalls[0]?.body).toContain('turn one')
+			expect(inputCalls[1]?.body).toContain('turn two')
+
+			// Claimed rows are gone — a second drain delivers nothing.
+			const remaining = await db
+				.select()
+				.from(conversationPendingTurns)
+				.where(eq(conversationPendingTurns.conversationId, conversation.id))
+			expect(remaining).toHaveLength(0)
+
+			// Each delivered turn is persisted to session_logs tagged with its
+			// message id, so the chat UI can anchor the turn to its message.
+			const logRows = await db
+				.select()
+				.from(sessionLogs)
+				.where(eq(sessionLogs.sessionId, session.id))
+				.orderBy(asc(sessionLogs.id))
+			const tagged = logRows.filter((r) => r.content.includes('maskin_message_id'))
+			expect(tagged).toHaveLength(2)
+			expect(JSON.parse(tagged[0]?.content ?? '{}').maskin_message_id).toBe(m1.id)
+			expect(JSON.parse(tagged[1]?.content ?? '{}').maskin_message_id).toBe(m2.id)
+		})
+
+		it('re-parks undelivered turns when remote delivery fails', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-repark-test',
+			})
+			const [m1] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId, content: 'transient turn' })
+				.returning()
+			if (!m1) throw new Error('failed to insert message')
+			await db.insert(conversationPendingTurns).values({
+				conversationId: conversation.id,
+				actorId,
+				messageId: m1.id,
+				payload: { type: 'user', message: { role: 'user', content: 'transient turn' } },
+			})
+
+			// The agent-server hiccups — delivery throws, but the session is still
+			// running, so the claimed row must go back for the next drain instead
+			// of vanishing.
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockImplementation(async () => new Response('boom', { status: 500 }))
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.drainPendingConversationTurns(session.id)
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			const remaining = await db
+				.select()
+				.from(conversationPendingTurns)
+				.where(eq(conversationPendingTurns.conversationId, conversation.id))
+			expect(remaining).toHaveLength(1)
+			expect(remaining[0]?.messageId).toBe(m1.id)
+		})
+
+		it('no-ops for a non-conversation session', async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: false,
+			})
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.drainPendingConversationTurns(session.id)
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+			expect(fetchSpy).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('watchdog idle chat close', () => {
+		it('completes a conversation session idle past the threshold and stops the remote sandbox', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const fortyMinAgo = new Date(Date.now() - 40 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-idle-test',
+				startedAt: fortyMinAgo,
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 35 * 60 * 1000),
+			})
+
+			const stopCalls: string[] = []
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+				stopCalls.push(String(input))
+				return new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				})
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect((row?.result as { summary?: string })?.summary).toContain('idle')
+			expect(row?.completedAt).not.toBeNull()
+
+			expect(stopCalls).toContain(`${server.url}/sessions/${session.id}/stop`)
+
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			const completed = eventRows.find((e) => e.action === 'session_completed')
+			expect(completed).toBeTruthy()
+			// settleSession's buildEventData records classification + source; the
+			// pre-settle recordEvent that wrote `reason: 'idle_conversation'` is
+			// gone with the migration (idle-watcher is the source that carried
+			// the same semantic).
+			expect((completed?.data as { classification?: string })?.classification).toBe(
+				'agent_completed',
+			)
+			expect((completed?.data as { source?: string })?.source).toBe('idle-watcher')
+
+			// SSE /logs/stream matches this prefix to emit its `done` event.
+			const logRows = await db
+				.select()
+				.from(sessionLogs)
+				.where(eq(sessionLogs.sessionId, session.id))
+			expect(logRows.some((r) => r.content.startsWith('Session completed'))).toBe(true)
+		})
+
+		describe('a chat whose turns all hit a credit error', () => {
+			const creditFailed = { final_output: { error_kind: 'permanent', credit_balance_low: true } }
+			const realReply = { final_output: { dedupe_key: 'real-turn' } }
+
+			/** Runs the watchdog over an idle chat holding the given agent messages; returns the session row. */
+			async function closeIdleChat(agentMessages: Array<Record<string, unknown> | null>) {
+				const server = await insertAgentServer()
+				const conversation = await insertConversation(workspaceId, actorId)
+				const human = await insertActor(db, { type: 'human' })
+				const session = await insertSession(db, workspaceId, actorId, actorId, {
+					status: 'running',
+					interactive: true,
+					conversationId: conversation.id,
+					agentServerId: server.id,
+					containerId: 'sandbox-credit-idle-test',
+					startedAt: new Date(Date.now() - 40 * 60 * 1000),
+					timeoutAt: null,
+				})
+				await insertSessionLog(db, session.id, {
+					content: 'last activity',
+					createdAt: new Date(Date.now() - 35 * 60 * 1000),
+				})
+				await db
+					.insert(messages)
+					.values({ conversationId: conversation.id, actorId: human?.id ?? '', content: 'hi' })
+				for (const metadata of agentMessages) {
+					await db.insert(messages).values({
+						conversationId: conversation.id,
+						actorId,
+						content: 'reply',
+						metadata,
+						sessionId: session.id,
+					})
+				}
+				await runWatchdogWithStubbedFetch()
+				const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+				return row
+			}
+
+			it('ends as failed with the credit reason', async () => {
+				const row = await closeIdleChat([creditFailed, creditFailed])
+
+				expect(row?.status).toBe('failed')
+				expect(
+					(row?.result as { failure_reason?: { reason_code?: string } } | null)?.failure_reason
+						?.reason_code,
+				).toBe('credit_balance_low')
+				const eventRows = await db
+					.select()
+					.from(events)
+					.where(eq(events.entityId, row?.id ?? ''))
+				const failed = eventRows.find((e) => e.action === 'session_failed')
+				expect((failed?.data as { classification?: string })?.classification).toBe(
+					'credit_exhaustion',
+				)
+				const logRows = await db
+					.select()
+					.from(sessionLogs)
+					.where(eq(sessionLogs.sessionId, row?.id ?? ''))
+				expect(logRows.some((r) => r.content.startsWith('Session failed'))).toBe(true)
+			})
+
+			it('still ends as completed when one turn did real work', async () => {
+				const row = await closeIdleChat([creditFailed, realReply])
+
+				expect(row?.status).toBe('completed')
+			})
+
+			it('still ends as completed when the agent replied without a tagged turn', async () => {
+				const row = await closeIdleChat([creditFailed, null])
+
+				expect(row?.status).toBe('completed')
+			})
+		})
+
+		it('leaves a recently-active conversation session running', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const fortyMinAgo = new Date(Date.now() - 40 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-active-test',
+				startedAt: fortyMinAgo,
+				timeoutAt: null,
+			})
+			// Active five minutes ago — well inside the idle threshold.
+			await insertSessionLog(db, session.id, {
+				content: 'recent activity',
+				createdAt: new Date(Date.now() - 5 * 60 * 1000),
+			})
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+				return new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				})
+			})
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+		})
+
+		it('closes a conversation session idle for 20 minutes (default window is 15)', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-idle-20m',
+				startedAt: new Date(Date.now() - 40 * 60 * 1000),
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 20 * 60 * 1000),
+			})
+
+			await runWatchdogWithStubbedFetch()
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+		})
+
+		it('leaves a conversation session idle for 10 minutes running', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-idle-10m',
+				startedAt: new Date(Date.now() - 40 * 60 * 1000),
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 10 * 60 * 1000),
+			})
+
+			await runWatchdogWithStubbedFetch()
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+		})
+
+		it('honours CHAT_IDLE_CLOSE_MINUTES', async () => {
+			vi.stubEnv('CHAT_IDLE_CLOSE_MINUTES', '5')
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-idle-env',
+				startedAt: new Date(Date.now() - 40 * 60 * 1000),
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 10 * 60 * 1000),
+			})
+
+			try {
+				await runWatchdogWithStubbedFetch()
+			} finally {
+				vi.unstubAllEnvs()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+		})
+	})
+
+	describe('getQueuedForCapacity()', () => {
+		it('counts workspace-queued and machine-waiting sessions, not running or finished ones', async () => {
+			const waitingSince = new Date(Date.now() - 5 * 60 * 1000)
+			await insertSession(db, workspaceId, actorId, actorId, { status: 'queued' })
+			await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'starting',
+				sessionState: 'waiting_for_machine',
+				stateEnteredAt: waitingSince,
+			})
+			await insertSession(db, workspaceId, actorId, actorId, { status: 'running' })
+			await insertSession(db, workspaceId, actorId, actorId, { status: 'completed' })
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				const queued = await manager.getQueuedForCapacity()
+				expect(queued.count).toBe(2)
+				expect(queued.oldestWaitMs).toBeGreaterThanOrEqual(5 * 60 * 1000)
+			} finally {
+				await manager.stop()
+			}
+		})
+
+		it('reports zero and no wait when nothing is queued', async () => {
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				expect(await manager.getQueuedForCapacity()).toEqual({ count: 0, oldestWaitMs: null })
+			} finally {
+				await manager.stop()
+			}
+		})
+	})
+
+	describe('watchdog idle chat close (edge cases)', () => {
+		it('leaves an idle-eligible session running when its newest message is unanswered', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const other = await insertActor(db, { type: 'human' })
+			const fortyMinAgo = new Date(Date.now() - 40 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-wedged-test',
+				startedAt: fortyMinAgo,
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 35 * 60 * 1000),
+			})
+			// Someone asked something and the agent never replied — the session is
+			// wedged mid-turn, not idle. The graceful close must not erase that;
+			// only the hard timeout reaper may end it, as `timeout`, so the chat
+			// UI can surface the interruption.
+			await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: other?.id ?? '', content: 'hello?' })
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+				return new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				})
+			})
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+		})
+
+		it('marks a hard-timeout conversation session with an unanswered trailing message as timeout', async () => {
+			const conversation = await insertConversation(workspaceId, actorId)
+			const other = await insertActor(db, { type: 'human' })
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+			})
+			await db.insert(messages).values({
+				conversationId: conversation.id,
+				actorId: other?.id ?? '',
+				content: 'still there?',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			// `timeout`, not `completed` — use-conversation-activity.ts keys its
+			// mid-turn interruption notice on this status.
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
+		})
+
+		it('closes an interactive conversation session hitting the hard timeout as completed, not timeout', async () => {
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				// Hard timeout already passed — the reaper (not the idle close)
+				// must pick it up. Recent log keeps the idle close out of the way.
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'still chatting',
+				createdAt: new Date(Date.now() - 2 * 60 * 1000),
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect((row?.result as { summary?: string })?.summary).toBeTruthy()
+			expect((row?.result as { error?: string })?.error).toBeUndefined()
+
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows.some((e) => e.action === 'session_completed')).toBe(true)
+			expect(eventRows.some((e) => e.action === 'session_timeout')).toBe(false)
+		})
+
+		it('still marks a non-conversation session hitting the hard timeout as timeout', async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: false,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
+			expect((row?.result as { error?: string })?.error).toBe('Session timed out')
+		})
+
+		it('preserves accumulated token/cost totals when a session times out after producing output', async () => {
+			// A CLI `result` envelope in the session's stdout log represents work
+			// the session did produce before the ceiling hit. When the reaper
+			// closes the row as `timeout`, those totals must land on the row so
+			// a productive timeout is distinguishable from a barren one — the
+			// bug this test pins is the reaper skipping accumulateSessionUsage.
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: false,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+				config: { llm_route: 'claude_oauth' },
+				modelName: 'claude-opus-4-7',
+			})
+			await insertSessionLog(db, session.id, {
+				stream: 'stdout',
+				content: `${JSON.stringify({
+					type: 'result',
+					total_cost_usd: 1.23,
+					duration_ms: 3_600_000,
+					usage: {
+						input_tokens: 12_000,
+						output_tokens: 3_400,
+						cache_creation_input_tokens: 500,
+						cache_read_input_tokens: 800,
+					},
+				})}\n`,
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
+			expect(row?.totalCostUsd).toBe('1.230000')
+			expect(row?.inputTokens).toBe(12_000)
+			expect(row?.outputTokens).toBe(3_400)
+			expect(row?.cacheCreationInputTokens).toBe(500)
+			expect(row?.cacheReadInputTokens).toBe(800)
+		})
+
+		it('records tokens from assistant messages and leaves cost null when a timeout has no result envelope', async () => {
+			// A non-interactive run killed at the ceiling never emits a `result`
+			// line, so the assistant messages are the only usage in the log. The
+			// same message id repeats once per content block and must count once.
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: false,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+				config: { llm_route: 'claude_oauth' },
+				modelName: 'claude-opus-4-7',
+			})
+			const assistant = (id: string, usage: Record<string, number>) =>
+				`${JSON.stringify({ type: 'assistant', message: { id, usage } })}\n`
+			for (const content of [
+				assistant('msg_1', { input_tokens: 1_000, output_tokens: 200 }),
+				assistant('msg_1', { input_tokens: 1_000, output_tokens: 250 }),
+				assistant('msg_2', {
+					input_tokens: 2_000,
+					output_tokens: 300,
+					cache_creation_input_tokens: 50,
+					cache_read_input_tokens: 400,
+				}),
+			]) {
+				await insertSessionLog(db, session.id, { stream: 'stdout', content })
+			}
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
+			expect(row?.inputTokens).toBe(3_000)
+			expect(row?.outputTokens).toBe(550)
+			expect(row?.cacheCreationInputTokens).toBe(50)
+			expect(row?.cacheReadInputTokens).toBe(400)
+			expect(row?.totalCostUsd).toBeNull()
+		})
+
+		it('leaves token/cost columns null when a session times out without producing output', async () => {
+			// A timeout with no `result` envelope is a genuinely barren timeout:
+			// the row must stay NULL, not be filled with silent zeros. This pins
+			// the second acceptance criterion — accumulateSessionUsage returns
+			// null when no usage was parsed, and nothing gets written.
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: false,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
+			expect(row?.totalCostUsd).toBeNull()
+			expect(row?.inputTokens).toBeNull()
+			expect(row?.outputTokens).toBeNull()
+		})
+	})
+})

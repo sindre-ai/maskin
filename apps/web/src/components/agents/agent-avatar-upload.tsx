@@ -18,7 +18,9 @@ function readAvatarUrl(agent: ActorResponse): string | undefined {
 	return typeof url === 'string' && url.length > 0 ? url : undefined
 }
 
-function isCurrentActorAdmin(members: { actorId: string; role?: string }[] | undefined): boolean {
+export function isCurrentActorAdmin(
+	members: { actorId: string; role?: string }[] | undefined,
+): boolean {
 	const actorId = getStoredActor()?.id
 	if (!actorId || !members) return false
 	const member = members.find((m) => m.actorId === actorId)
@@ -126,7 +128,7 @@ export function AgentAvatarUpload({
 					onClick={handlePick}
 					disabled={isUploading}
 					className={cn(
-						'inline-flex min-h-11 items-center gap-1.5 self-start rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-bg-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
+						'inline-flex min-h-11 items-center gap-1.5 self-start rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
 					)}
 					aria-label="Upload avatar image"
 				>

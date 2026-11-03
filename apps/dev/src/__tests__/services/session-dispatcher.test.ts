@@ -1,5 +1,6 @@
 import { agentServers, sessions } from '@maskin/db/schema'
 import { describe, expect, it, vi } from 'vitest'
+import { LlmCredentialsUnavailableError } from '../../lib/llm-routing'
 import {
 	AgentServerAuthError,
 	type AgentServerClient,
@@ -18,6 +19,7 @@ type SessionStub = {
 	agentServerId: string | null
 	containerId: string | null
 	startedAt: Date | null
+	sessionState?: string
 }
 
 function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
@@ -29,6 +31,19 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 	const select = (_columns?: Record<string, unknown>) => ({
 		from: (_table: unknown) => ({
 			where: (_predicate: unknown) => {
+				// stopOrphanedSandbox re-reads just the row's status.
+				if (_columns && Object.keys(_columns).join() === 'status') {
+					const rows = [...sessionsById.values()].map((r) => ({ status: r.status }))
+					return { limit: (n: number) => Promise.resolve(rows.slice(0, n)) }
+				}
+				// claimSlot re-reads the row's status and pin after a zero-row claim.
+				if (_columns && Object.keys(_columns).join() === 'status,agentServerId') {
+					const rows = [...sessionsById.values()].map((r) => ({
+						status: r.status,
+						agentServerId: r.agentServerId,
+					}))
+					return { limit: (n: number) => Promise.resolve(rows.slice(0, n)) }
+				}
 				const rows = servers
 					.filter((s) => (s.status as unknown as string) === 'active')
 					.map((s) => {
@@ -77,9 +92,13 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 								break
 							}
 						} else if (patch.status === 'running') {
-							// markDispatched: row was just claimed
-							if (row.agentServerId && row.status !== 'running') {
+							// markDispatched: row was just claimed and is still dispatchable
+							if (
+								row.agentServerId &&
+								(row.status === 'pending' || row.status === 'queued' || row.status === 'starting')
+							) {
 								row.status = 'running'
+								row.sessionState = patch.sessionState as string | undefined
 								row.containerId = (patch.containerId as string) ?? row.containerId
 								row.startedAt = new Date()
 								updated.push({ id: row.id })
@@ -118,13 +137,18 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 		},
 	})
 
-	return {
+	// claimSlot takes a per-server advisory lock (execute) inside a transaction.
+	// The fake is single-threaded, so the lock is a no-op and tx is the fake itself.
+	const fake = {
 		select,
 		update,
 		insert,
+		execute: () => Promise.resolve([]),
+		transaction: <T>(fn: (tx: unknown) => Promise<T>) => fn(fake),
 		_sessions: sessionsById,
 		_insertedEvents: insertedEvents,
 	}
+	return fake
 }
 
 function defaultStartReq(sessionId: string): StartSessionRequest {
@@ -329,6 +353,9 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(client.startSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's-1' }))
 		expect(sess.agentServerId).toBe(SERVER.id)
 		expect(sess.status).toBe('running')
+		// Regression guard: the reaper reads session_state, not status. A row
+		// that goes running without it is later failed as startup_stalled.
+		expect(sess.sessionState).toBe('running')
 		expect(sess.containerId).toBe('sb-s-1')
 		// Regression guard: without this event, live-activity surfaces (e.g.
 		// the chat typing indicator) never learn the session left 'pending'.
@@ -339,6 +366,96 @@ describe('SessionDispatcher.dispatch', () => {
 				entityId: 's-1',
 			}),
 		)
+	})
+
+	// Regression: markDispatched used to guard on status NOT IN (completed,
+	// failed), so it resurrected paused/snapshotting rows to running, and ignored a
+	// miss on a terminal row, leaving the freshly created sandbox with no owner.
+	it.each(['paused', 'snapshotting', 'waiting_for_input'])(
+		'does not resurrect a %s session to running',
+		async (status) => {
+			const sess: SessionStub = {
+				id: 's-1',
+				status: 'starting',
+				agentServerId: null,
+				containerId: null,
+				startedAt: null,
+			}
+			const startSession = vi.fn(async (_req: StartSessionRequest) => {
+				sess.status = status
+				return startResponse('s-1')
+			})
+			const stopSession = vi.fn()
+			const seedInteractiveTurn = vi.fn()
+			const db = fakeDb([SERVER], [sess])
+			const client = makeClient({ startSession, stopSession })
+			const dispatcher = new SessionDispatcher({
+				// biome-ignore lint/suspicious/noExplicitAny: fake DB
+				db: db as any,
+				buildStartRequest: async (id) => defaultStartReq(id),
+				clientFactory: () => client,
+				seedInteractiveTurn,
+			})
+
+			const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+			expect(result.kind).toBe('permanent_failure')
+			expect(sess.status).toBe(status)
+			expect(sess.containerId).toBeNull()
+			expect(db._insertedEvents).toHaveLength(0)
+			expect(seedInteractiveTurn).not.toHaveBeenCalled()
+			// Another worker may own this session id; stopping by id would kill its sandbox.
+			expect(stopSession).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each(['completed', 'failed', 'timeout', 'user_stopped'])(
+		'stops the orphaned sandbox when the session went %s while startSession was in flight',
+		async (status) => {
+			const sess: SessionStub = {
+				id: 's-1',
+				status: 'starting',
+				agentServerId: null,
+				containerId: null,
+				startedAt: null,
+			}
+			const startSession = vi.fn(async (_req: StartSessionRequest) => {
+				sess.status = status
+				return startResponse('s-1')
+			})
+			const stopSession = vi.fn(async () => ({ stopped: 'sandbox-stopped' as const }))
+			const { dispatcher, db } = setup([sess], { startSession, stopSession })
+
+			const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+			expect(result.kind).toBe('permanent_failure')
+			expect(sess.status).toBe(status)
+			expect(db._insertedEvents).toHaveLength(0)
+			expect(stopSession).toHaveBeenCalledWith('s-1', { reason: 'stop', source: 'dispatch-queue' })
+		},
+	)
+
+	it('still returns permanent_failure when stopping the orphaned sandbox throws', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn(async (_req: StartSessionRequest) => {
+			sess.status = 'completed'
+			return startResponse('s-1')
+		})
+		const stopSession = vi.fn(async () => {
+			throw new Error('agent-server unreachable')
+		})
+		const { dispatcher } = setup([sess], { startSession, stopSession })
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		expect(result.kind).toBe('permanent_failure')
+		expect(stopSession).toHaveBeenCalledTimes(1)
 	})
 
 	it('maps 401 to permanent_failure and releases the slot', async () => {
@@ -404,6 +521,65 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(result.kind).toBe('permanent_failure')
 		expect(startSession).not.toHaveBeenCalled()
 		// slot released
+		expect(sess.agentServerId).toBeNull()
+	})
+
+	// The dispatcher's permanent-vs-transient split is itself a classification
+	// decision, so the two branches below are where a regression would be both
+	// silent and directly on the incident path: getting it wrong either strands
+	// a recoverable session or tells a user to reconnect a working subscription.
+	it('fails a dead credential permanently, with the reason attached', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn()
+		const { dispatcher, buildStartRequest } = setup([sess], { startSession })
+		buildStartRequest.mockRejectedValueOnce(
+			new LlmCredentialsUnavailableError('the connected Claude subscription was rejected', false),
+		)
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		expect(result.kind).toBe('permanent_failure')
+		if (result.kind === 'permanent_failure') {
+			expect(result.failureReason?.reason_code).toBe('not_logged_in')
+			// The actionable half: this is the message that sends the user to
+			// Settings → Keys, and it must only appear for a credential we have
+			// actually seen rejected.
+			expect(result.failureReason?.human_message).toMatch(/Connect a Claude subscription/i)
+		}
+		expect(startSession).not.toHaveBeenCalled()
+		expect(sess.agentServerId).toBeNull()
+	})
+
+	it('keeps an unreachable credential check transient so the retry can recover it', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn()
+		const { dispatcher, buildStartRequest } = setup([sess], { startSession })
+		// What the 15s CLAUDE_CREDENTIAL_TIMEOUT_MS abort produces: we never
+		// learned anything about the credential, only that we could not ask.
+		buildStartRequest.mockRejectedValueOnce(
+			new LlmCredentialsUnavailableError(
+				'the Claude token endpoint could not be reached to refresh an expired token',
+				true,
+			),
+		)
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		// Transient, so the queue's backoff gets another attempt at it rather
+		// than closing the session out on our own network blip.
+		expect(result.kind).toBe('transient_failure')
 		expect(sess.agentServerId).toBeNull()
 	})
 
@@ -548,6 +724,8 @@ describe('SessionDispatcher.dispatch — sticky assignment', () => {
 			insert: (_table: unknown) => ({
 				values: (_row: Record<string, unknown>) => Promise.resolve(),
 			}),
+			execute: () => Promise.resolve([]),
+			transaction: <T>(fn: (tx: unknown) => Promise<T>) => fn(db),
 		}
 		const client = makeClient({
 			startSession: vi.fn(async (_req: StartSessionRequest) => startResponse('s-1')),

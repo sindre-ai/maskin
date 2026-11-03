@@ -25,29 +25,29 @@ function setEnv(vars: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
 beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
+// Every registered flag, off. Derived from FLAGS rather than hardcoded so a
+// flag being added or retired doesn't break these cases — the invariant under
+// test is "off unless the env turns it on", not the size of the registry.
+const ALL_OFF = Object.fromEntries(Object.values(FLAGS).map((id) => [id, false]))
+
 describe('GET /api/feature-flags', () => {
-	it('returns resolved booleans for the calling actor', async () => {
-		setEnv({ FF_TESTER_FEATURES: FLAGS.NEW_DESIGN, FF_TESTER_ACTOR_IDS: TESTER })
+	// Every registered flag resolves, and defaults off when no env is set.
+	it('resolves every registered flag as off when no env is set', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: true } })
+		expect(await res.json()).toEqual({ flags: ALL_OFF })
 	})
 
-	it('returns false for an actor who is not an tester', async () => {
-		setEnv({ FF_TESTER_FEATURES: FLAGS.NEW_DESIGN, FF_TESTER_ACTOR_IDS: TESTER })
-		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', NON_TESTER)
-
-		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
-	})
-
-	it('returns all-false when no feature flag env vars are set', async () => {
+	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
+		setEnv({ FF_TESTER_FEATURES: 'not-a-real-flag', FF_TESTER_ACTOR_IDS: TESTER })
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		expect(body.flags).toEqual(ALL_OFF)
+		expect('not-a-real-flag' in body.flags).toBe(false)
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {
@@ -61,7 +61,7 @@ describe('GET /api/feature-flags', () => {
 	// reach the browser.
 	it('never leaks actor uuids or raw config into the response body', async () => {
 		setEnv({
-			FF_TESTER_FEATURES: FLAGS.NEW_DESIGN,
+			FF_TESTER_FEATURES: 'some-flag',
 			FF_TESTER_ACTOR_IDS: `${TESTER},${NON_TESTER}`,
 		})
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)

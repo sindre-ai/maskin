@@ -22,11 +22,23 @@ export const columnMappingSchema = z.object({
 	skip: z.boolean().default(false),
 })
 
+/**
+ * The mapped field that identifies an existing object of the same type:
+ * `title`, or `metadata.<field>`. The metadata field name follows the same
+ * shape as `SAFE_METADATA_FIELD_NAME_RE`.
+ */
+export const IMPORT_MATCH_ON_RE = /^(title|metadata\.[a-zA-Z][a-zA-Z0-9_]*)$/
+
 export const typeMappingSchema = z.object({
 	objectType: z.string(),
 	columns: z.array(columnMappingSchema),
 	defaultStatus: z.string().optional(),
+	/** When set, rows whose value for this field matches an existing object are not re-created. */
+	matchOn: z.string().regex(IMPORT_MATCH_ON_RE).optional(),
 })
+
+/** What happens to a row that matches an existing object. Absent means `skip`. */
+export const importOnMatchSchema = z.enum(['skip', 'update'])
 
 export const relationshipMappingSchema = z.object({
 	sourceType: z.string(),
@@ -38,6 +50,7 @@ export const importMappingSchema = z.object({
 	typeMappings: z.array(typeMappingSchema).min(1),
 	relationships: z.array(relationshipMappingSchema).default([]),
 	csvOptions: csvOptionsSchema.optional(),
+	onMatch: importOnMatchSchema.optional(),
 })
 
 export const updateImportMappingSchema = z.object({
@@ -61,3 +74,4 @@ export type TypeMapping = z.infer<typeof typeMappingSchema>
 export type RelationshipMapping = z.infer<typeof relationshipMappingSchema>
 export type ImportMapping = z.infer<typeof importMappingSchema>
 export type CsvOptions = z.infer<typeof csvOptionsSchema>
+export type ImportOnMatch = z.infer<typeof importOnMatchSchema>

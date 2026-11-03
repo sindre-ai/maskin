@@ -1,7 +1,10 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import {
+	type AgentGrantAccess,
 	actors,
+	agentGrants,
+	apiKeys,
 	conversations,
 	notifications,
 	objects,
@@ -12,6 +15,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 
 let counter = 0
 function next() {
@@ -46,6 +50,7 @@ export function buildActor(overrides?: Record<string, unknown>) {
 
 export function buildWorkspace(overrides?: Record<string, unknown>) {
 	const n = next()
+	const createdBy = randomUUID()
 	return {
 		id: randomUUID(),
 		name: `Workspace ${n}`,
@@ -55,21 +60,29 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 				insight: 'Insight',
 				bet: 'Bet',
 				task: 'Task',
-				commitment: 'Commitment',
 				loop: 'Loop',
 			},
 			statuses: {
 				insight: ['new', 'processing', 'clustered', 'discarded'],
-				bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
+				bet: ['opportunity', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 				task: ['todo', 'in_progress', 'done', 'blocked'],
-				commitment: ['holding', 'at-risk', 'breached'],
 				loop: ['running', 'waiting', 'paused', 'archived'],
 			},
 			field_definitions: {},
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
 		},
 		onboardingEnabled: true,
-		createdBy: randomUUID(),
+		// Defaults to true here (unlike the real DB column default of false) so
+		// the many existing BYO-credential route tests that predate the
+		// enterpriseGranted gate don't all need an explicit override. Tests for the
+		// gate itself pass `{ enterpriseGranted: false }`. See PR #970.
+		enterpriseGranted: true,
+		// Defaults to the same actor as createdBy (matches the real
+		// POST /api/workspaces / POST /api/actors behavior — see
+		// insertWorkspace below) so plain buildWorkspace() output satisfies
+		// workspaceResponseSchema's required billingOwnerId out of the box.
+		billingOwnerId: createdBy,
+		createdBy,
 		createdAt: new Date(),
 		updatedAt: new Date(),
 		...overrides,
@@ -255,12 +268,27 @@ export function buildCreateTriggerBody(overrides?: Record<string, unknown>) {
 
 export function buildSession(overrides?: Record<string, unknown>) {
 	const n = next()
+	const status = (overrides?.status as string | undefined) ?? 'running'
+	// Mirror the migration 0076 back-fill so a test that only sets `status`
+	// still lands with a coherent `session_state`; the reaper (Commit 6)
+	// reads session_state, and a bare-status seed would silently escape
+	// every cutoff it should exercise.
+	const sessionStateFromStatus: Record<string, string> = {
+		pending: 'queued',
+		queued: 'queued',
+		starting: 'starting',
+		running: 'running',
+		snapshotting: 'running',
+	}
+	const derivedSessionState = sessionStateFromStatus[status] ?? 'done'
 	return {
 		id: randomUUID(),
 		workspaceId: randomUUID(),
 		actorId: randomUUID(),
 		triggerId: null,
-		status: 'running',
+		status,
+		sessionState: derivedSessionState,
+		stateEnteredAt: new Date(),
 		containerId: `container-${n}`,
 		actionPrompt: `Do something ${n}`,
 		config: {},
@@ -472,6 +500,8 @@ export function buildImport(overrides?: Record<string, unknown>) {
 		totalRows: 10,
 		processedRows: 0,
 		successCount: 0,
+		skippedCount: 0,
+		updatedCount: 0,
 		errorCount: 0,
 		mapping: {
 			typeMappings: [
@@ -511,10 +541,35 @@ export function buildCreateGraphBody(overrides?: Record<string, unknown>) {
 
 // ── Real DB Inserters (for integration tests) ──────────────────────────────
 
+/**
+ * Makes a plaintext key authenticate, the way a key minted by the app does: requests look keys up
+ * by hash in api_keys, so inserting the actor row alone (legacy actors.api_key) is not enough.
+ */
+export async function registerTestApiKey(
+	db: Database,
+	actorId: string,
+	apiKey: string | null | undefined,
+	kind: 'primary' | 'login' | 'login_ios' | 'session' = 'primary',
+) {
+	if (!apiKey?.startsWith('ank_')) return
+	await db
+		.insert(apiKeys)
+		.values({
+			actorId,
+			keyHash: createHash('sha256').update(apiKey).digest('hex'),
+			last4: apiKey.slice(-4),
+			kind,
+		})
+		.onConflictDoNothing()
+}
+
 export async function insertActor(db: Database, overrides?: Record<string, unknown>) {
 	const data = buildActor(overrides)
 	const rows = await db.insert(actors).values(data).returning()
-	return rows[0]
+	const actor = rows[0]
+	await registerTestApiKey(db, actor.id, actor.apiKey)
+	// buildActor always sets a key, so fixtures can use it as a Bearer token without a null check.
+	return { ...actor, apiKey: actor.apiKey as string }
 }
 
 export async function insertWorkspace(
@@ -522,7 +577,13 @@ export async function insertWorkspace(
 	actorId: string,
 	overrides?: Record<string, unknown>,
 ) {
-	const data = buildWorkspace({ createdBy: actorId, ...overrides })
+	// billingOwnerId defaults to the creating actor (matches the real
+	// POST /api/workspaces / POST /api/actors behavior) so every workspace
+	// this factory produces is internally consistent for the seat/ownership
+	// cap checks in apps/dev/src/lib/workspace-capacity.ts. Pass
+	// `billingOwnerId: null` (or another actor id) in overrides to test the
+	// unowned/reassigned cases explicitly.
+	const data = buildWorkspace({ createdBy: actorId, billingOwnerId: actorId, ...overrides })
 	const rows = await db.insert(workspaces).values(data).returning()
 	const ws = rows[0]
 	await db.insert(workspaceMembers).values({
@@ -533,6 +594,21 @@ export async function insertWorkspace(
 	return ws
 }
 
+/**
+ * Makes an actor a member of a workspace if it is not one already. Starting a
+ * session for an actor now requires membership (startSession fails closed), so
+ * the factories that name an agent for a workspace (trigger target, session
+ * actor, object driver) seed the membership a real workspace would have.
+ * Tests of the foreign-actor case insert the foreign actor without these
+ * factories, or into a different workspace.
+ */
+export async function ensureWorkspaceMember(db: Database, workspaceId: string, actorId: string) {
+	await db
+		.insert(workspaceMembers)
+		.values({ workspaceId, actorId, role: 'member' })
+		.onConflictDoNothing()
+}
+
 export async function insertObject(
 	db: Database,
 	workspaceId: string,
@@ -541,6 +617,7 @@ export async function insertObject(
 ) {
 	const data = buildObject({ workspaceId, createdBy: actorId, ...overrides })
 	const rows = await db.insert(objects).values(data).returning()
+	if (typeof data.driver === 'string') await ensureWorkspaceMember(db, workspaceId, data.driver)
 	return rows[0]
 }
 
@@ -595,6 +672,7 @@ export async function insertSession(
 ) {
 	const data = buildSession({ workspaceId, actorId, createdBy, ...overrides })
 	const rows = await db.insert(sessions).values(data).returning()
+	await ensureWorkspaceMember(db, workspaceId, actorId)
 	return rows[0]
 }
 
@@ -606,6 +684,37 @@ export async function insertSessionLog(
 	const { id: _id, ...data } = buildSessionLog({ sessionId, ...overrides })
 	const rows = await db.insert(sessionLogs).values(data).returning()
 	return rows[0]
+}
+
+/** Gives an agent access to an integration (a Keychain credential is read_write: on). */
+export async function insertAgentGrant(
+	db: Database,
+	grant: {
+		workspaceId: string
+		integrationId: string
+		actorId: string
+		access?: AgentGrantAccess
+		createdBy?: string
+	},
+) {
+	const rows = await db
+		.insert(agentGrants)
+		.values({ access: 'read_write', ...grant })
+		.onConflictDoUpdate({
+			target: [agentGrants.integrationId, agentGrants.actorId],
+			set: { access: grant.access ?? 'read_write' },
+		})
+		.returning()
+	return rows[0]
+}
+
+/** The actor ids holding a grant on an integration, sorted. */
+export async function grantedActorIds(db: Database, integrationId: string): Promise<string[]> {
+	const rows = await db
+		.select({ actorId: agentGrants.actorId })
+		.from(agentGrants)
+		.where(eq(agentGrants.integrationId, integrationId))
+	return rows.map((r) => r.actorId).sort()
 }
 
 export async function insertTrigger(
@@ -622,5 +731,35 @@ export async function insertTrigger(
 		...overrides,
 	})
 	const rows = await db.insert(triggers).values(data).returning()
+	await ensureWorkspaceMember(db, workspaceId, targetActorId)
 	return rows[0]
+}
+
+/**
+ * Puts an existing workspace on a plan tier by writing the row directly.
+ *
+ * The API is deliberately NOT the seam for this: `settings.billing` is owned
+ * by Stripe, and both POST /api/workspaces and PATCH /api/workspaces/:id
+ * reject a request carrying it with a 400 — accepting it would be a
+ * self-service entitlement bypass of the seat cap, the ownership cap and
+ * `hard_cap_usd_cents`. The seat and ownership checks read the tier back out
+ * of this same JSON via `resolvePlanTier`, so seeding it here still exercises
+ * the real cap arithmetic. Merges into existing settings rather than
+ * replacing them, so a workspace's seeded statuses/display names survive.
+ */
+export async function setWorkspacePlan(
+	db: Database,
+	workspaceId: string,
+	plan: 'trial' | 'pro' | 'team' | 'enterprise',
+): Promise<void> {
+	const [row] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+	const current = (row?.settings ?? {}) as Record<string, unknown>
+	const billing = (current.billing ?? {}) as Record<string, unknown>
+	await db
+		.update(workspaces)
+		.set({ settings: { ...current, billing: { ...billing, plan } } })
+		.where(eq(workspaces.id, workspaceId))
 }

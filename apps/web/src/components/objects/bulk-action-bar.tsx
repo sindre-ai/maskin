@@ -1,3 +1,4 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -15,6 +16,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	type BulkEditCommitAction,
 	type PlatformDevice,
@@ -40,6 +42,11 @@ export interface BulkActionBarProps {
 	ownerOptions?: BulkActionBarOwnerOption[]
 	onStatusChange?: (status: string) => void
 	onOwnerChange?: (actorId: string) => void
+	/** Rows the current view has loaded — the ceiling `Select all` fills to. */
+	totalCount?: number
+	onSelectAll?: () => void
+	/** Opens a new chat carrying the selected objects as references. */
+	onAskAgent?: () => void
 	onCopyLink?: () => void
 	onCopyTitle?: () => void
 	onCopyTitleAsLink?: () => void
@@ -72,23 +79,13 @@ export function resolvePlatformDevice(): PlatformDevice {
 	return 'desktop'
 }
 
-function usePrefersReducedMotion() {
-	const [reduced, setReduced] = React.useState(false)
-	React.useEffect(() => {
-		if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-		const mql = window.matchMedia('(prefers-reduced-motion: reduce)')
-		const onChange = () => setReduced(mql.matches)
-		onChange()
-		mql.addEventListener('change', onChange)
-		return () => mql.removeEventListener('change', onChange)
-	}, [])
-	return reduced
-}
-
 export function BulkActionBar({
 	selectedCount,
 	statusOptions = [],
 	ownerOptions = [],
+	totalCount = 0,
+	onSelectAll,
+	onAskAgent,
 	onStatusChange,
 	onOwnerChange,
 	onCopyLink,
@@ -102,7 +99,8 @@ export function BulkActionBar({
 	onClear,
 }: BulkActionBarProps) {
 	const visible = selectedCount > 0
-	const reducedMotion = usePrefersReducedMotion()
+	// Selecting is reading; everything this bar does to the selection is a write.
+	const canWrite = useCanWrite()
 	const [confirmOpen, setConfirmOpen] = React.useState(false)
 	// Bump these keys after each pick so the Selects remount and don't latch onto
 	// the last-chosen value — otherwise re-selecting the same status/owner on a
@@ -121,21 +119,57 @@ export function BulkActionBar({
 		[selectedCount],
 	)
 
+	// Mockup 5036–5039: with rows selected, `a` selects all and `e` archives.
+	// Both are bare letters, so they must never fire while the user is typing.
+	const canSelectAll = !!onSelectAll && totalCount > selectedCount
 	React.useEffect(() => {
 		if (!visible) return
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && !confirmOpen) onClear()
+			if (e.key === 'Escape' && !confirmOpen) {
+				onClear()
+				return
+			}
+			if (confirmOpen || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat) return
+			// Not necessarily an Element — a keydown dispatched at window/document
+			// targets a non-Element EventTarget, so narrow before touching DOM APIs.
+			const target = e.target instanceof HTMLElement ? e.target : null
+			if (
+				target?.isContentEditable ||
+				(target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+			) {
+				return
+			}
+			// The status and owner pickers live in this same bar. Radix renders their
+			// content as div/button — not INPUT/SELECT — and its typeahead does not stop
+			// propagation, so typing `e` to reach "evaluating" would otherwise land here
+			// as an unconfirmed bulk archive. Bail while any Radix popper is mounted.
+			if (
+				target?.closest(
+					'[data-radix-popper-content-wrapper],[role="menu"],[role="listbox"],[role="dialog"]',
+				) ||
+				document.querySelector('[data-radix-popper-content-wrapper]')
+			) {
+				return
+			}
+			if (e.key === 'a' && canSelectAll) {
+				e.preventDefault()
+				onSelectAll?.()
+				return
+			}
+			if (e.key === 'e' && onArchive && canWrite) {
+				e.preventDefault()
+				emitCommit('archive')
+				onArchive()
+			}
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [visible, confirmOpen, onClear])
+	}, [visible, confirmOpen, onClear, canSelectAll, onSelectAll, onArchive, emitCommit, canWrite])
 
 	// Close the confirm dialog automatically when the selection is cleared.
 	React.useEffect(() => {
 		if (!visible && confirmOpen) setConfirmOpen(false)
 	}, [visible, confirmOpen])
-
-	const transitionClass = reducedMotion ? '' : 'transition-all duration-200 ease-out'
 
 	const plural = selectedCount === 1 ? '' : 's'
 	const copyLinkLabel = `Copy link${plural}`
@@ -152,196 +186,239 @@ export function BulkActionBar({
 				className={cn(
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
-					'overflow-x-auto rounded-xl border border-border bg-popover px-3 py-2 shadow-lg',
-					transitionClass,
+					'rounded-xl border border-border bg-popover px-3 py-2 shadow-lg',
+					'transition-[transform,opacity] duration-200 ease-out',
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
 						: 'pointer-events-none opacity-0 translate-y-4',
 				)}
 			>
-				<span
-					className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-2 text-xs font-medium text-accent-foreground"
-					aria-label={`${selectedCount} selected`}
-				>
-					{selectedCount}
-				</span>
-				<span className="hidden text-sm text-text-secondary sm:inline">selected</span>
-
-				<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
-
-				{onStatusChange && statusOptions.length > 0 && (
-					<Select
-						key={`status-${statusKey}`}
-						onValueChange={(value) => {
-							emitCommit('status_change')
-							onStatusChange(value)
-							setStatusKey((k) => k + 1)
-						}}
+				<div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+					<span
+						className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-accent px-2 text-xs font-medium text-accent-foreground"
+						aria-label={`${selectedCount} selected`}
 					>
-						<SelectTrigger
-							aria-label="Set status"
-							className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+						{selectedCount}
+					</span>
+					<span className="hidden text-sm text-muted-foreground sm:inline">selected</span>
+
+					{canSelectAll && (
+						<button
+							type="button"
+							onClick={onSelectAll}
+							title="Select all (a)"
+							className="shrink-0 whitespace-nowrap text-xs font-semibold text-brand hover:underline"
 						>
-							<SelectValue placeholder="Status" />
-						</SelectTrigger>
-						<SelectContent>
-							{statusOptions.map((opt) => (
-								<SelectItem key={opt.value} value={opt.value}>
-									{opt.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				)}
+							Select all {totalCount}
+						</button>
+					)}
 
-				<Select
-					key={`owner-${ownerKey}`}
-					onValueChange={(value) => {
-						if (onOwnerChange) {
-							emitCommit('owner_change')
-							onOwnerChange(value)
-						}
-						setOwnerKey((k) => k + 1)
-					}}
-					disabled={ownerOptions.length === 0 || !onOwnerChange}
-				>
-					<SelectTrigger
-						aria-label="Set owner"
-						className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
-					>
-						<SelectValue placeholder="Owner" />
-					</SelectTrigger>
-					<SelectContent>
-						{ownerOptions.map((opt) => (
-							<SelectItem key={opt.id} value={opt.id}>
-								{opt.name}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+					<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
 
-				<div className="ml-auto flex shrink-0 items-center gap-1">
-					{onAnswerAsks && askCount > 0 && (
+					{onAskAgent && (
 						<Button
 							type="button"
 							variant="outline"
 							size="sm"
 							className="shrink-0"
-							onClick={onAnswerAsks}
-							aria-label={`Answer ${askCount} asks`}
+							onClick={onAskAgent}
+							title="Send these to a new chat as references"
 						>
 							<MessageSquare className="size-4" />
-							Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+							Ask an agent
 						</Button>
 					)}
-					{onCopyLink && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									type="button"
-									variant="outline"
-									size="icon"
-									className="size-8"
-									onClick={() => {
-										emitCommit('copy')
-										onCopyLink()
-									}}
-									aria-label={copyLinkLabel}
-								>
-									<Link className="size-4" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{copyLinkLabel}</TooltipContent>
-						</Tooltip>
+
+					{onAnswerAsks && askCount > 0 && (
+						<ViewerTooltip>
+							<Button
+								type="button"
+								size="sm"
+								className="shrink-0"
+								disabled={!canWrite}
+								onClick={onAnswerAsks}
+								aria-label={`Answer ${askCount} asks`}
+							>
+								Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+							</Button>
+						</ViewerTooltip>
 					)}
-					{onCopyTitle && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									type="button"
-									variant="outline"
-									size="icon"
-									className="size-8"
-									onClick={() => {
-										emitCommit('copy')
-										onCopyTitle()
-									}}
-									aria-label={copyTitleLabel}
+
+					{onStatusChange && statusOptions.length > 0 && (
+						<ViewerTooltip>
+							<Select
+								key={`status-${statusKey}`}
+								onValueChange={(value) => {
+									emitCommit('status_change')
+									onStatusChange(value)
+									setStatusKey((k) => k + 1)
+								}}
+								disabled={!canWrite}
+							>
+								<SelectTrigger
+									aria-label="Set status"
+									className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
 								>
-									<Type className="size-4" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{copyTitleLabel}</TooltipContent>
-						</Tooltip>
+									<SelectValue placeholder="Status" />
+								</SelectTrigger>
+								<SelectContent>
+									{statusOptions.map((opt) => (
+										<SelectItem key={opt.value} value={opt.value}>
+											{opt.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</ViewerTooltip>
 					)}
-					{onCopyTitleAsLink && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									type="button"
-									variant="outline"
-									size="icon"
-									className="size-8"
-									onClick={() => {
-										emitCommit('copy')
-										onCopyTitleAsLink()
-									}}
-									aria-label={copyTitleAsLinkLabel}
-								>
-									<Brackets className="size-4" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{`${copyTitleAsLinkLabel} (Markdown)`}</TooltipContent>
-						</Tooltip>
-					)}
-					{onOpenLinks && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<Button
-									type="button"
-									variant="outline"
-									size="icon"
-									className="size-8"
-									onClick={() => {
-										emitCommit('copy')
-										onOpenLinks()
-									}}
-									aria-label={openLinksLabel}
-								>
-									<ExternalLink className="size-4" />
-								</Button>
-							</TooltipTrigger>
-							<TooltipContent>{openLinksLabel}</TooltipContent>
-						</Tooltip>
-					)}
-					{onArchive && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="shrink-0"
-							onClick={() => {
-								emitCommit('archive')
-								onArchive()
+
+					<ViewerTooltip>
+						<Select
+							key={`owner-${ownerKey}`}
+							onValueChange={(value) => {
+								if (onOwnerChange) {
+									emitCommit('owner_change')
+									onOwnerChange(value)
+								}
+								setOwnerKey((k) => k + 1)
 							}}
-							aria-label="Archive selected"
+							disabled={ownerOptions.length === 0 || !onOwnerChange || !canWrite}
 						>
-							<Archive className="size-4" />
-							Archive
-						</Button>
+							<SelectTrigger
+								aria-label="Set driver"
+								className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
+							>
+								<SelectValue placeholder="Driver" />
+							</SelectTrigger>
+							<SelectContent>
+								{ownerOptions.map((opt) => (
+									<SelectItem key={opt.id} value={opt.id}>
+										{opt.name}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</ViewerTooltip>
+
+					<div className="ml-auto flex shrink-0 items-center gap-1">
+						{onCopyLink && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="outline"
+										size="icon"
+										className="size-8"
+										onClick={() => {
+											emitCommit('copy')
+											onCopyLink()
+										}}
+										aria-label={copyLinkLabel}
+									>
+										<Link className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{copyLinkLabel}</TooltipContent>
+							</Tooltip>
+						)}
+						{onCopyTitle && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="outline"
+										size="icon"
+										className="size-8"
+										onClick={() => {
+											emitCommit('copy')
+											onCopyTitle()
+										}}
+										aria-label={copyTitleLabel}
+									>
+										<Type className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{copyTitleLabel}</TooltipContent>
+							</Tooltip>
+						)}
+						{onCopyTitleAsLink && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="outline"
+										size="icon"
+										className="size-8"
+										onClick={() => {
+											emitCommit('copy')
+											onCopyTitleAsLink()
+										}}
+										aria-label={copyTitleAsLinkLabel}
+									>
+										<Brackets className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{`${copyTitleAsLinkLabel} (Markdown)`}</TooltipContent>
+							</Tooltip>
+						)}
+						{onOpenLinks && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="outline"
+										size="icon"
+										className="size-8"
+										onClick={() => {
+											emitCommit('copy')
+											onOpenLinks()
+										}}
+										aria-label={openLinksLabel}
+									>
+										<ExternalLink className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{openLinksLabel}</TooltipContent>
+							</Tooltip>
+						)}
+					</div>
+				</div>
+				<div className="flex shrink-0 items-center gap-1">
+					{onArchive && (
+						<ViewerTooltip>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+								disabled={!canWrite}
+								onClick={() => {
+									emitCommit('archive')
+									onArchive()
+								}}
+								aria-label="Archive selected"
+								title="Archive (e)"
+							>
+								<Archive className="size-4" />
+								Archive
+							</Button>
+						</ViewerTooltip>
 					)}
 					{onDelete && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-							onClick={() => setConfirmOpen(true)}
-							aria-label="Delete selected"
-						>
-							<Trash2 className="size-4" />
-							Delete
-						</Button>
+						<ViewerTooltip>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+								disabled={!canWrite}
+								onClick={() => setConfirmOpen(true)}
+								aria-label="Delete selected"
+							>
+								<Trash2 className="size-4" />
+								Delete
+							</Button>
+						</ViewerTooltip>
 					)}
 					<Button
 						type="button"

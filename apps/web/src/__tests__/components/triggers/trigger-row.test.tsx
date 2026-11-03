@@ -1,0 +1,159 @@
+import { TriggerRow, describeTrigger } from '@/components/triggers/trigger-row'
+import type { TriggerResponse } from '@/lib/api'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+
+const navigateSpy = vi.fn()
+
+vi.mock('@tanstack/react-router', () => ({
+	Link: ({
+		to,
+		params,
+		children,
+		...rest
+	}: {
+		to: string
+		params?: Record<string, string>
+		children: React.ReactNode
+		[key: string]: unknown
+	}) => {
+		let href = to
+		for (const [k, v] of Object.entries(params ?? {})) href = href.replace(`$${k}`, v)
+		return (
+			<a href={href} onClick={() => navigateSpy(href)} {...rest}>
+				{children}
+			</a>
+		)
+	},
+}))
+
+function buildTrigger(overrides: Partial<TriggerResponse> = {}): TriggerResponse {
+	return {
+		id: 't-1',
+		workspaceId: 'ws-1',
+		name: 'Nightly sweep',
+		type: 'cron',
+		targetActorId: 'actor-1',
+		config: { expression: '0 3 * * *' },
+		enabled: true,
+		createdAt: '2026-08-01T00:00:00.000Z',
+		updatedAt: '2026-08-04T00:00:00.000Z',
+		...overrides,
+	} as TriggerResponse
+}
+
+describe('TriggerRow', () => {
+	it('renders the glyph tile, plain-language description, agent and state label', () => {
+		render(<TriggerRow trigger={buildTrigger()} workspaceId="ws-1" agentName="Compass" />)
+
+		expect(screen.getByText('Nightly sweep')).toBeInTheDocument()
+		expect(screen.getByText(/^Runs /)).toBeInTheDocument()
+		expect(screen.getByText('Compass')).toBeInTheDocument()
+		expect(screen.getByText('On')).toBeInTheDocument()
+	})
+
+	it('reads "Off" for a disabled trigger', () => {
+		render(
+			<TriggerRow trigger={buildTrigger({ enabled: false })} workspaceId="ws-1" agentName="C" />,
+		)
+		expect(screen.getByText('Off')).toBeInTheDocument()
+	})
+
+	it('links the whole row to trigger detail', () => {
+		render(<TriggerRow trigger={buildTrigger()} workspaceId="ws-1" agentName="Compass" />)
+		expect(screen.getByRole('link', { name: /open nightly sweep/i })).toHaveAttribute(
+			'href',
+			'/ws-1/triggers/t-1',
+		)
+	})
+
+	it('fires onToggleEnabled from the inline switch without navigating', async () => {
+		const user = userEvent.setup()
+		const onToggleEnabled = vi.fn()
+		navigateSpy.mockClear()
+		render(
+			<TriggerRow
+				trigger={buildTrigger()}
+				workspaceId="ws-1"
+				agentName="Compass"
+				onToggleEnabled={onToggleEnabled}
+			/>,
+		)
+
+		await user.click(screen.getByRole('switch', { name: 'Disable Nightly sweep' }))
+
+		expect(onToggleEnabled).toHaveBeenCalledWith(false)
+		expect(navigateSpy).not.toHaveBeenCalled()
+	})
+
+	it('omits the switch entirely when there is nothing to wire it to', () => {
+		render(<TriggerRow trigger={buildTrigger()} workspaceId="ws-1" agentName="Compass" />)
+		expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+	})
+
+	it('renders the trailing chevron by default (flag off)', () => {
+		const { container } = render(
+			<TriggerRow trigger={buildTrigger()} workspaceId="ws-1" agentName="Compass" />,
+		)
+		// lucide-react writes lucide-chevron-right onto the icon <svg> — presence
+		// asserts the pre-v4 layout still ships as-is when the flag is off.
+		expect(container.querySelector('svg.lucide-chevron-right')).toBeTruthy()
+	})
+
+	it('drops the trailing chevron and grows the state label under v4 polish', () => {
+		const { container } = render(
+			<TriggerRow trigger={buildTrigger()} workspaceId="ws-1" agentName="Compass" v4Polish />,
+		)
+		// Chevron gone; state label matches the LoopRow state-pill size class.
+		expect(container.querySelector('svg.lucide-chevron-right')).toBeNull()
+		const label = screen.getByText('On')
+		expect(label.className).toContain('text-xs')
+		expect(label.className).not.toContain('text-[11px]')
+	})
+})
+
+describe('describeTrigger status_changed', () => {
+	// MCP writes `{ filter: { status } }` per the shared schema; the trigger
+	// row was falling through to "from any to any" for every agent-created
+	// trigger before the fix.
+	it('reads config.filter.status when set to a single status (MCP shape)', () => {
+		expect(
+			describeTrigger({
+				type: 'event',
+				config: {
+					entity_type: 'contact',
+					action: 'status_changed',
+					filter: { status: 'in_progress' },
+				},
+			}),
+		).toBe('When contact changes from any to in_progress')
+	})
+
+	it('reads config.filter.status when set to an array of statuses', () => {
+		expect(
+			describeTrigger({
+				type: 'event',
+				config: {
+					entity_type: 'contact',
+					action: 'status_changed',
+					filter: { status: ['in_progress', 'in_review'] },
+				},
+			}),
+		).toBe('When contact changes from any to in_progress or in_review')
+	})
+
+	it('still reads config.from_status / config.to_status when set (form shape)', () => {
+		expect(
+			describeTrigger({
+				type: 'event',
+				config: {
+					entity_type: 'contact',
+					action: 'status_changed',
+					from_status: 'new_lead',
+					to_status: 'in_conversation',
+				},
+			}),
+		).toBe('When contact changes from new_lead to in_conversation')
+	})
+})

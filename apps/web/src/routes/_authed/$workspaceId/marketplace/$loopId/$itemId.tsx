@@ -3,20 +3,22 @@ import { MarketplaceItemDetail } from '@/components/marketplace/marketplace-item
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoop } from '@/hooks/use-marketplace-loops'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace/$loopId/$itemId')({
-	component: MarketplaceItemDetailPage,
+	component: MarketplaceItemDetailRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function MarketplaceItemDetailPage() {
+function MarketplaceItemDetailRoute() {
 	const { loopId, itemId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading, isError } = useMarketplaceLoop(loopId)
+	useDocumentTitle(data?.loop.name)
 	const { data: installsData } = useInstalledLoops(workspaceId)
 	const { data: installedItemsData } = useInstalledMarketplaceItems(workspaceId)
 
@@ -58,16 +60,14 @@ function MarketplaceItemDetailPage() {
 
 	return (
 		<>
-			<PageHeader />
-			<div className="max-w-3xl mx-auto">
-				<MarketplaceItemDetail
-					workspaceId={workspaceId}
-					item={item}
-					parentLoop={data.loop}
-					install={install}
-					installedEntity={installedEntity}
-				/>
-			</div>
+			<PageHeader scrollLocked />
+			<MarketplaceItemDetail
+				workspaceId={workspaceId}
+				item={item}
+				parentLoop={data.loop}
+				install={install}
+				installedEntity={installedEntity}
+			/>
 		</>
 	)
 }

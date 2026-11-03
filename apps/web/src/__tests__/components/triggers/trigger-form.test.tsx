@@ -1,11 +1,17 @@
 import { TriggerForm } from '@/components/triggers/trigger-form'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildTriggerResponse, buildWorkspaceWithRole } from '../../factories'
 import { TestWrapper } from '../../setup'
 
+const { useAutoSave, useEntityEvents } = vi.hoisted(() => {
+	const useAutoSave = vi.fn()
+	const useEntityEvents = vi.fn()
+	return { useAutoSave, useEntityEvents }
+})
+
 vi.mock('@/hooks/use-auto-save', () => ({
-	useAutoSave: () => ({ showSaved: false }),
+	useAutoSave: (args: unknown) => useAutoSave(args),
 }))
 
 vi.mock('@/hooks/use-enabled-modules', () => ({
@@ -19,6 +25,33 @@ vi.mock('@/hooks/use-integrations', () => ({
 
 vi.mock('@/hooks/use-custom-extensions', () => ({
 	useCustomExtensions: () => [],
+}))
+
+vi.mock('@/hooks/use-sessions', () => ({
+	useWorkspaceSessions: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-events', () => ({
+	useEntityEvents: (...args: unknown[]) => useEntityEvents(...args),
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+	useNavigate: () => vi.fn(),
+	Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+}))
+
+// RECENT RUNS / CHANGES read the workspace event + session feeds; they have
+// their own coverage and would otherwise drag the whole query stack in here.
+vi.mock('@/components/triggers/trigger-history', () => ({
+	TriggerHistory: () => null,
+}))
+
+// The real Composer reaches for uploads and the slash picker; this form only
+// needs the language bar to exist and forward what was said.
+vi.mock('@/components/chat/chat', () => ({
+	Composer: ({ placeholder, textareaLabel }: { placeholder: string; textareaLabel?: string }) => (
+		<textarea aria-label={textareaLabel} placeholder={placeholder} />
+	),
 }))
 
 vi.mock('@maskin/module-sdk', () => ({
@@ -48,18 +81,146 @@ describe('TriggerForm', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
+		useAutoSave.mockReturnValue({ showSaved: false })
+		useEntityEvents.mockReturnValue({ data: [] })
 	})
 
-	it('renders trigger name input with placeholder', () => {
+	it('renders the trigger name as an in-place editable heading', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 		expect(screen.getByPlaceholderText('Trigger name')).toBeInTheDocument()
 	})
 
-	it('renders type buttons (event, cron, reminder)', () => {
+	it('renders type cards (event, cron, reminder) as focusable radios', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
-		expect(screen.getByRole('button', { name: /Event/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Schedule/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Reminder/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /Event/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /Schedule/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /Reminder/i })).toBeInTheDocument()
+	})
+
+	it('shows every trigger section as a v2 eyebrow label', () => {
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+		expect(screen.getByRole('heading', { name: 'TRIGGER TYPE' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'WHEN THIS HAPPENS' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'DO THIS' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'USING THIS AGENT' })).toBeInTheDocument()
+	})
+
+	it('renders the meta row with the type chip and the agent', () => {
+		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
+		// The type chip and the selected radio chip both read "Event".
+		expect(screen.getAllByText('Event').length).toBeGreaterThan(1)
+		expect(screen.getAllByText('Scout').length).toBeGreaterThan(0)
+		expect(screen.getByText(/not tied to a loop/)).toBeInTheDocument()
+	})
+
+	it('renders the config-driven sections only when their fields are present', () => {
+		const { rerender } = render(<TriggerForm {...defaultProps} isCreated />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.queryByRole('heading', { name: 'WHAT IT WRITES' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('heading', { name: 'IT STOPS FOR YOU WHEN' })).not.toBeInTheDocument()
+
+		rerender(
+			<TriggerForm
+				{...defaultProps}
+				isCreated
+				initialValues={buildTriggerResponse({
+					type: 'event',
+					config: {
+						entity_type: 'insight',
+						action: 'created',
+						skill: 'triage',
+						writes: [{ act: 'creates', type: 'insight', state: 'new' }],
+						stops_for_you: 'before anything is published',
+					},
+				})}
+			/>,
+		)
+		expect(screen.getByText('skill · triage')).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'WHAT IT WRITES' })).toBeInTheDocument()
+		expect(screen.getByText('before anything is published')).toBeInTheDocument()
+	})
+
+	it('pins a plain-language summary that re-renders live on config edits', async () => {
+		const user = userEvent.setup()
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		const summary = screen.getByText('What happens').closest('section')
+		expect(summary).not.toBeNull()
+
+		await user.click(screen.getByRole('radio', { name: /Reminder/i }))
+		const dateInput = document.querySelector('input[type="date"]')
+		expect(dateInput).not.toBeNull()
+		fireEvent.change(dateInput as HTMLInputElement, { target: { value: '2026-09-01' } })
+
+		await waitFor(() => {
+			expect(summary?.textContent).toContain('2026-09-01')
+		})
+	})
+
+	it('updates the section description text in place when the type changes', async () => {
+		const user = userEvent.setup()
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		expect(screen.getByText(/Fires when something happens/i)).toBeInTheDocument()
+
+		await user.click(screen.getByRole('radio', { name: /Schedule/i }))
+
+		expect(screen.getByText(/Fires on a recurring schedule/i)).toBeInTheDocument()
+		expect(screen.queryByText(/Fires when something happens/i)).not.toBeInTheDocument()
+	})
+
+	it('publishes autosave state upward so the header can render the Saved marker', () => {
+		const onSavedChange = vi.fn()
+		useAutoSave.mockReturnValue({ showSaved: true })
+		render(<TriggerForm {...defaultProps} isCreated onSavedChange={onSavedChange} />, {
+			wrapper: TestWrapper,
+		})
+		expect(onSavedChange).toHaveBeenCalledWith(true)
+	})
+
+	it('replaces the bottom save bar with the sticky language edit bar', () => {
+		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
+		expect(screen.queryByText('Editing — every change saves automatically')).not.toBeInTheDocument()
+		const caption = screen.getByText('Say what should change — it edits the trigger above')
+		expect(caption.parentElement?.parentElement?.className).toMatch(/sticky bottom-0/)
+	})
+
+	it('gives radios a 44px touch target on mobile and collapses to one column', async () => {
+		const user = userEvent.setup()
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		const eventRadio = screen.getByRole('radio', { name: /Event/i })
+		expect(eventRadio.closest('label')?.className).toMatch(/min-h-11/)
+
+		await user.click(screen.getByRole('radio', { name: /Reminder/i }))
+		const controls = document.querySelectorAll('input[type="date"], input[type="time"]')
+		for (const control of controls) {
+			expect((control as HTMLInputElement).className).toMatch(/min-h-11/)
+		}
+
+		const container = document.querySelector('input[type="date"]')?.parentElement
+		expect(container?.className).toMatch(/flex-col/)
+		expect(container?.className).toMatch(/sm:flex-row/)
+	})
+
+	it('type cards are keyboard-reachable and operable with Space', async () => {
+		const user = userEvent.setup()
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		const scheduleRadio = screen.getByRole('radio', { name: /Schedule/i })
+		scheduleRadio.focus()
+		expect(document.activeElement).toBe(scheduleRadio)
+
+		await user.keyboard(' ')
+
+		expect(screen.getByText(/Fires on a recurring schedule/i)).toBeInTheDocument()
+	})
+
+	it('announces the summary region to assistive tech via aria-live', () => {
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+		const summary = screen.getByText('What happens').closest('section')
+		expect(summary?.getAttribute('aria-live')).toBe('polite')
 	})
 
 	it('shows warning when agents array is empty', () => {
@@ -71,7 +232,7 @@ describe('TriggerForm', () => {
 
 	it('shows agent selector when agents provided', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
-		expect(screen.getByText('Scout')).toBeInTheDocument()
+		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Scout')
 	})
 
 	it('event type shows entity type and action selects', () => {
@@ -81,11 +242,53 @@ describe('TriggerForm', () => {
 		expect(screen.getByText('created')).toBeInTheDocument()
 	})
 
+	describe('commented action', () => {
+		const commentedTrigger = () =>
+			buildTriggerResponse({
+				name: 'Comment trigger',
+				type: 'event',
+				config: { entity_type: 'object', action: 'commented' },
+				targetActorId: 'agent-1',
+			})
+
+		it('shows "On comment posted" and lists every action for a saved commented trigger', async () => {
+			const user = userEvent.setup()
+			render(<TriggerForm {...defaultProps} initialValues={commentedTrigger()} isCreated />, {
+				wrapper: TestWrapper,
+			})
+
+			const select = screen.getByLabelText('Changes to')
+			expect(select).toHaveTextContent('On comment posted')
+
+			await user.click(select)
+			const options = screen.getAllByRole('option').map((o) => o.textContent)
+			expect(options).toEqual([
+				expect.stringContaining('created'),
+				expect.stringContaining('updated'),
+				expect.stringContaining('status_changed'),
+				expect.stringContaining('On comment posted'),
+			])
+		})
+
+		it('resets Subject to a real type when the author leaves commented', async () => {
+			const user = userEvent.setup()
+			render(<TriggerForm {...defaultProps} initialValues={commentedTrigger()} isCreated />, {
+				wrapper: TestWrapper,
+			})
+
+			await user.click(screen.getByLabelText('Changes to'))
+			await user.click(screen.getByRole('option', { name: /^updated/ }))
+
+			expect(screen.getByLabelText('Changes to')).toHaveTextContent('updated')
+			expect(screen.getByLabelText('Subject')).toHaveTextContent('Insights')
+		})
+	})
+
 	it('cron type shows frequency buttons', async () => {
 		const user = userEvent.setup()
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /Schedule/i }))
+		await user.click(screen.getByRole('radio', { name: /Schedule/i }))
 
 		expect(screen.getByRole('button', { name: 'Hourly' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Daily' })).toBeInTheDocument()
@@ -97,7 +300,7 @@ describe('TriggerForm', () => {
 		const user = userEvent.setup()
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /Reminder/i }))
+		await user.click(screen.getByRole('radio', { name: /Reminder/i }))
 
 		const dateInput = document.querySelector('input[type="date"]')
 		const timeInput = document.querySelector('input[type="time"]')
@@ -112,10 +315,19 @@ describe('TriggerForm', () => {
 		).toBeInTheDocument()
 	})
 
-	it('shows enabled/disabled toggle', () => {
-		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+	it('shows enabled/disabled toggle for created triggers and flips on click', async () => {
+		const user = userEvent.setup()
+		const onToggleEnabled = vi.fn()
+		render(<TriggerForm {...defaultProps} isCreated onToggleEnabled={onToggleEnabled} />, {
+			wrapper: TestWrapper,
+		})
+
 		expect(screen.getByText('Enabled')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Disable' })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Disable' }))
+
+		expect(onToggleEnabled).toHaveBeenCalledTimes(1)
+		expect(screen.getByText('Disabled')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument()
 	})
 
 	it('pre-fills form when initialValues provided', () => {
@@ -128,13 +340,110 @@ describe('TriggerForm', () => {
 			enabled: false,
 		})
 
-		render(<TriggerForm {...defaultProps} initialValues={trigger} />, {
+		render(<TriggerForm {...defaultProps} initialValues={trigger} isCreated />, {
 			wrapper: TestWrapper,
 		})
 
 		expect(screen.getByDisplayValue('My Trigger')).toBeInTheDocument()
 		expect(screen.getByDisplayValue('Do the thing')).toBeInTheDocument()
 		expect(screen.getByText('Disabled')).toBeInTheDocument()
+	})
+
+	it('reconciles the title to a rename that landed while the field was dirty', async () => {
+		const user = userEvent.setup()
+		const trigger = buildTriggerResponse({ name: 'Original name' })
+		const { rerender } = render(
+			<TriggerForm {...defaultProps} initialValues={trigger} isCreated />,
+			{ wrapper: TestWrapper },
+		)
+
+		// Both rename paths stay live by decision, so the field must never write
+		// a stale local name back over a rename the language bar already landed.
+		const title = screen.getByPlaceholderText('Trigger name')
+		await user.click(title)
+		await user.type(title, ' edited locally')
+		expect(screen.getByDisplayValue('Original name edited locally')).toBeInTheDocument()
+
+		rerender(
+			<TriggerForm
+				{...defaultProps}
+				initialValues={buildTriggerResponse({ name: 'Renamed by an agent' })}
+				isCreated
+			/>,
+		)
+
+		expect(screen.getByDisplayValue('Renamed by an agent')).toBeInTheDocument()
+	})
+
+	it('leaves the title alone while the saved name is unchanged', async () => {
+		const user = userEvent.setup()
+		const trigger = buildTriggerResponse({ name: 'Original name' })
+		const { rerender } = render(
+			<TriggerForm {...defaultProps} initialValues={trigger} isCreated />,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.type(screen.getByPlaceholderText('Trigger name'), ' edited locally')
+		// An unrelated re-render (any other field autosaving) must not reset it.
+		rerender(<TriggerForm {...defaultProps} initialValues={trigger} isCreated />)
+
+		expect(screen.getByDisplayValue('Original name edited locally')).toBeInTheDocument()
+	})
+
+	// Agents create triggers via MCP, which writes the destination status filter
+	// as `config.filter.status` — NOT `config.to_status`. Before the fix the
+	// summary + trigger row read only the form's `from_status`/`to_status`
+	// fields, so every agent-authored status_changed trigger rendered as
+	// "changes from any status to any status".
+	it('displays filter.status (MCP shape) as the "to" status in the summary', () => {
+		const workspaceWithStatuses = buildWorkspaceWithRole({
+			settings: { statuses: { insight: ['new', 'in_progress', 'done'] } },
+		})
+		const trigger = buildTriggerResponse({
+			type: 'event',
+			config: {
+				entity_type: 'insight',
+				action: 'status_changed',
+				filter: { status: 'in_progress' },
+			},
+			targetActorId: 'agent-2',
+		})
+
+		render(
+			<TriggerForm
+				{...defaultProps}
+				workspace={workspaceWithStatuses}
+				initialValues={trigger}
+				isCreated
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		// Summary text is the "What happens" plain-language read-back; also
+		// verify the target agent (agent-2 = Analyst) is picked, not agents[0].
+		expect(
+			screen.getByText(/changes from any status to in_progress.*"Analyst".*prompted/),
+		).toBeInTheDocument()
+	})
+
+	// A rendered snapshot cannot lock in the initialValues-arrives-late race
+	// on its own, so simulate it with a rerender: first mount with no
+	// initialValues (fresh, cache-miss), then rerender with the trigger loaded.
+	it('re-adopts targetActorId when initialValues arrives after the form mounted', () => {
+		const { rerender } = render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		// Zero state: no server row → useState fell back to agents[0] = Scout.
+		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Scout')
+
+		rerender(
+			<TriggerForm
+				{...defaultProps}
+				initialValues={buildTriggerResponse({ targetActorId: 'agent-2' })}
+				isCreated
+			/>,
+		)
+
+		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Analyst')
 	})
 
 	it('shows error message when error prop set', () => {
@@ -160,8 +469,9 @@ describe('TriggerForm', () => {
 		await user.click(comboboxes[1])
 		await user.click(screen.getByRole('option', { name: 'status_changed' }))
 
-		const transitionLabel = screen.getByText('Status transition')
-		const transitionRow = transitionLabel.parentElement?.querySelector('div')
+		const transitionRow = screen
+			.getByRole('heading', { name: 'STATUS TRANSITION' })
+			.parentElement?.querySelector('div')
 		expect(transitionRow?.className).toMatch(/flex-col/)
 		expect(transitionRow?.className).toMatch(/sm:flex-row/)
 	})
@@ -189,5 +499,61 @@ describe('TriggerForm', () => {
 				target_actor_id: 'agent-1',
 			}),
 		)
+	})
+
+	it('offers ADDITIONAL CONDITIONS on any event trigger, even with no field definitions', async () => {
+		const user = userEvent.setup()
+		// `workspace.settings` is empty, so this entity type has no field
+		// definitions — the same shape every integration-sourced type has.
+		render(
+			<TriggerForm
+				{...defaultProps}
+				isCreated
+				initialValues={buildTriggerResponse({
+					type: 'event',
+					config: { entity_type: 'insight', action: 'created' },
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(screen.getByRole('heading', { name: 'ADDITIONAL CONDITIONS' })).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: /add condition/i }))
+		const field = screen.getByRole('textbox', { name: 'Condition field' })
+		expect(field).toBeInTheDocument()
+
+		await user.type(field, 'action')
+		expect(field).toHaveValue('action')
+	})
+
+	it("keeps the suggestion chips when the only event is the trigger's own creation", () => {
+		const trigger = buildTriggerResponse()
+		// `POST /api/triggers` writes this event, so every trigger has one from
+		// birth — it is not something the operator changed.
+		useEntityEvents.mockReturnValue({
+			data: [{ id: 1, entityId: trigger.id, action: 'created', actorId: 'a-1', createdAt: null }],
+		})
+		render(<TriggerForm {...defaultProps} isCreated initialValues={trigger} />, {
+			wrapper: TestWrapper,
+		})
+
+		expect(screen.getByRole('button', { name: 'Run it weekly instead' })).toBeInTheDocument()
+	})
+
+	it('drops the suggestion chips once the trigger has a CHANGES transcript', () => {
+		const trigger = buildTriggerResponse()
+		const { rerender } = render(
+			<TriggerForm {...defaultProps} isCreated initialValues={trigger} />,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByRole('button', { name: 'Run it weekly instead' })).toBeInTheDocument()
+
+		useEntityEvents.mockReturnValue({
+			data: [{ id: 1, entityId: trigger.id, action: 'updated', actorId: 'a-1', createdAt: null }],
+		})
+		rerender(<TriggerForm {...defaultProps} isCreated initialValues={trigger} />)
+
+		expect(screen.queryByRole('button', { name: 'Run it weekly instead' })).not.toBeInTheDocument()
 	})
 })

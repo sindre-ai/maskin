@@ -19,6 +19,19 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=maskin-agent-server
 
+# journald applies RateLimitIntervalSec=30s / RateLimitBurst=10000 per service
+# by default and DROPS messages past the burst, leaving only a "Suppressed N
+# messages" note. Guest microVM console output (source='msb-exec', see
+# src/lib/guest-log-stream.ts) is rate-bounded per session by the application
+# itself — 200 lines / 100 KB per 60s — but several busy sessions can still
+# cross journald's burst, and silently losing those lines is precisely the
+# failure that logging was added to end. The application-side cap is the real
+# bound; this just stops journald from imposing a second, invisible one.
+#
+# Scoped to this unit only — it does not change the system-wide default in
+# /etc/systemd/journald.conf.
+LogRateLimitIntervalSec=0
+
 # Run as root: agent-server shells out to `msb` and bind-mounts /agent into
 # microVMs. /dev/kvm and the libkrun-side privileges are most reliable when
 # the parent runs as root on a single-tenant Hetzner box.

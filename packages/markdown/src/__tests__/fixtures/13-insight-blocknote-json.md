@@ -1,0 +1,5 @@
+BlockNote (built on ProseMirror+Tiptap) now leads with an "AI-native" homepage and ships `@blocknote/xl-ai`: AI menu controller, formatting-toolbar button, slash-menu items, Vercel AI SDK transport, streaming tool provider (`aiDocumentFormats.html.getStreamToolsProvider`), and RAG hooks — competitive with Tiptap's AI Toolkit on features. But BlockNote's document model is a JSON block tree with typed blocks and inline content; Markdown is an import/export target, not the canonical representation. Round-trips are lossy for non-standard content.
+
+**Why it matters for Maskin:** The Rich Markdown editor bet's load-bearing assumption is `content: string (Markdown) is already canonical everywhere; zero schema changes`. Switching to BlockNote would require a schema migration and re-plumbing of every read surface. That's a different, much larger bet than the current one.
+
+Sources: https://www.blocknotejs.org/; https://www.blocknotejs.org/docs/features/ai/getting-started; https://www.blocknotejs.org/docs/features/ai/reference

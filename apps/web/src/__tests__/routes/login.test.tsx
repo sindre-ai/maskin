@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 const mockLogin = vi.fn()
+// What `Route.useSearch()` returns: the page's validated query string.
+let mockSearch: { redirect?: string } = {}
 
 vi.mock('@/hooks/use-auth', () => ({
 	useAuth: () => ({ login: mockLogin }),
@@ -12,7 +14,10 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: Record<string, unknown>) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => ({
+			...options,
+			useSearch: () => mockSearch,
+		}),
 	}
 })
 
@@ -23,6 +28,7 @@ const LoginPage = (Route as unknown as { component: React.FC }).component
 describe('LoginPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockSearch = {}
 	})
 
 	it('renders login form with email and password fields', () => {
@@ -63,10 +69,29 @@ describe('LoginPage', () => {
 		await user.type(screen.getByPlaceholderText('Your password'), 'secret123')
 		await user.click(screen.getByRole('button', { name: 'Sign in' }))
 		await waitFor(() => {
-			expect(mockLogin).toHaveBeenCalledWith({
-				email: 'test@example.com',
-				password: 'secret123',
-			})
+			expect(mockLogin).toHaveBeenCalledWith(
+				{
+					email: 'test@example.com',
+					password: 'secret123',
+				},
+				undefined,
+			)
+		})
+	})
+
+	it('hands login the page it should return to when one sent the person here', async () => {
+		mockLogin.mockResolvedValue(undefined)
+		mockSearch = { redirect: '/connect/skjald?state=abc' }
+		const user = userEvent.setup()
+		render(<LoginPage />)
+		await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
+		await user.type(screen.getByPlaceholderText('Your password'), 'secret123')
+		await user.click(screen.getByRole('button', { name: 'Sign in' }))
+		await waitFor(() => {
+			expect(mockLogin).toHaveBeenCalledWith(
+				{ email: 'test@example.com', password: 'secret123' },
+				'/connect/skjald?state=abc',
+			)
 		})
 	})
 

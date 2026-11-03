@@ -19,6 +19,14 @@ vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
 vi.mock('../../lib/integrations/providers/slack/mcp-server', () => ({
 	createSlackMcpServer: mockCreateSlackMcpServer,
 	isSlackBotToken: (token: unknown) => typeof token === 'string' && token.startsWith('xoxb-'),
+	// The route validates the stored user token's prefix too — a bot token in
+	// that slot would silently widen what `search.messages` runs as.
+	isSlackUserToken: (token: unknown) => typeof token === 'string' && token.startsWith('xoxp-'),
+}))
+
+// Access gating has its own tests; here the route only has to hand the gate to the factory.
+vi.mock('../../lib/integrations/tool-gate', () => ({
+	toolGateFor: vi.fn(async () => () => {}),
 }))
 
 vi.mock('../../lib/crypto', () => ({
@@ -191,6 +199,7 @@ describe('POST /api/integrations/slack/mcp', () => {
 				workspaceId: workspace.id,
 				actorId,
 			}),
+			expect.any(Function),
 		)
 		expect(mockConnect).toHaveBeenCalledTimes(1)
 		expect(mockHandleRequest).toHaveBeenCalledOnce()
@@ -218,6 +227,7 @@ describe('POST /api/integrations/slack/mcp', () => {
 
 		expect(mockCreateSlackMcpServer).toHaveBeenCalledWith(
 			expect.objectContaining({ agentLabel: '' }),
+			expect.any(Function),
 		)
 	})
 

@@ -36,6 +36,7 @@ describe('useSlackConversations', () => {
 				is_im: false,
 				is_mpim: false,
 				is_channel: true,
+				is_member: true,
 			},
 		])
 		const { result } = renderHook(() => useSlackConversations('int-1', 'ws-1'), {

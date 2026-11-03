@@ -13,9 +13,11 @@
 	},
 	"dependencies": {
 		"@hono/node-server": "^1.19.13",
+		"@maskin/shared": "workspace:*",
 		"@maskin/storage": "workspace:*",
 		"@sentry/node": "^10.70.0",
 		"hono": "^4.12.14",
+		"prom-client": "^15.1.3",
 		"zod": "^3.24.0"
 	},
 	"devDependencies": {

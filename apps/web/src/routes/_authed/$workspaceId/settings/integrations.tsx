@@ -1,6 +1,15 @@
+import { ProviderConnectRow } from '@/components/integrations/provider-connect-row'
+import { InstallGithubOrgSection } from '@/components/integrations/provider-dialogs'
+import {
+	ResendConnectDialog,
+	type ResendConnectPrefill,
+} from '@/components/integrations/resend/resend-connect-dialog'
+import { ToolsSection } from '@/components/integrations/tools-section'
+import { EditorBanner } from '@/components/shared/editor-banner'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
@@ -9,446 +18,341 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { useCanWrite } from '@/hooks/use-can-write'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
-	useCompleteIntegration,
-	useConnectIntegration,
-	useDisconnectIntegration,
+	useGithubPendingSelection,
 	useIntegrations,
 	useProviders,
+	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
-import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
+import type { IntegrationResponse, ResendDnsRecord } from '@/lib/api'
+import { safeReturnPath } from '@/lib/return-path'
+import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
-import { Check, Copy, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
 	component: IntegrationsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	// Set by the GitHub connect callback redirecting back here: `select_github`
+	// carries the pending row whose installation choices are awaiting a pick,
+	// `error` reports a failed handshake, and `return_to` is the chat the connect
+	// started from, so the page can send the user back once they have picked.
+	validateSearch: (search: Record<string, unknown>) => ({
+		select_github: typeof search.select_github === 'string' ? search.select_github : undefined,
+		error: typeof search.error === 'string' ? search.error : undefined,
+		return_to: typeof search.return_to === 'string' ? search.return_to : undefined,
+	}),
 })
+
+/** Plain copy for the error codes the connect callback redirects here with.
+ *  The raw code is never shown; anything not listed gets the generic line. */
+const CONNECT_ERROR_COPY: Record<string, string> = {
+	token_exchange_failed:
+		"We couldn't finish connecting. The provider didn't accept the sign-in, so nothing was connected. Try again.",
+	people_id_fetch_failed:
+		"We couldn't read your account details from Google, so nothing was connected. Try again.",
+	post_install_failed:
+		'The sign-in worked, but setting up the connection failed. Try connecting again.',
+}
+const GENERIC_CONNECT_ERROR = "Connecting didn't work. Try again."
 
 function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
+	// The backend registers google-drive unconditionally; only the connect entry
+	// point is hidden until `google-drive-integration-ui` is on.
+	const googleDriveVisible = useFeatureFlag('google-drive-integration-ui')
+	const visibleProviders = sortBy(
+		(providers ?? []).filter((p) => p.name !== 'google-drive' || googleDriveVisible),
+		(p) => p.displayName,
+		(p) => p.name,
+	)
+
+	// A GitHub connect where the user could reach several orgs' installations
+	// comes back here with the pending row id, for them to pick one.
+	const {
+		select_github: selectGithubId,
+		return_to: rawReturnTo,
+		error: errorCode,
+	} = Route.useSearch()
+	const returnTo = safeReturnPath(rawReturnTo, workspaceId)
+	const navigate = useNavigate({ from: Route.fullPath })
+	const closeGithubSelect = () =>
+		navigate({
+			search: (prev) => ({ ...prev, select_github: undefined, return_to: undefined }),
+			replace: true,
+		})
+	// A failed connect lands here with ?error=<code>. Keep the message in state and
+	// drop the param, so a refresh doesn't bring the alert back.
+	const [connectError, setConnectError] = useState<string | null>(null)
+	useEffect(() => {
+		if (!errorCode) return
+		setConnectError(CONNECT_ERROR_COPY[errorCode] ?? GENERIC_CONNECT_ERROR)
+		navigate({ search: (prev) => ({ ...prev, error: undefined }), replace: true })
+	}, [errorCode, navigate])
+	// The org is bound once picked; send the user on to the chat they started in.
+	const finishGithubSelect = () => {
+		if (returnTo) window.location.assign(returnTo)
+		else closeGithubSelect()
+	}
 
 	const isLoading = integrationsLoading || providersLoading
-	const [apiKeyProvider, setApiKeyProvider] = useState<ProviderInfo | null>(null)
-	const [apiKey, setApiKey] = useState('')
-	const [manualConnect, setManualConnect] = useState<{
-		provider: ProviderInfo
-		webhookUrl: string
-		integrationId: string
-	} | null>(null)
+	// Slice 2 resend dialog state — only the "Finish setup" affordance below
+	// needs it at page level; a fresh Resend connect is owned by its provider row. `open` alone opens fresh at Step 1; `prefill`
+	// (populated by the Resume affordance) opens straight into Step 3 with the
+	// row's config.resend rehydrated.
+	const [resendDialog, setResendDialog] = useState<{
+		open: boolean
+		prefill: ResendConnectPrefill | null
+	}>({ open: false, prefill: null })
 
-	// Group active integrations by provider — GitHub can have multiple installations,
-	// other providers currently have one.
+	// Group active integrations by provider — GitHub can have multiple
+	// installations (one per org) and LinkedIn multiple accounts (one per
+	// workspace member); other providers currently have one.
 	const activeByProvider = new Map<string, IntegrationResponse[]>()
+	// Rows that finished /connect but haven't posted the webhook signing secret
+	// yet. Skjald reaches this state on Cancel-at-secret today; Slice 2 adds a
+	// Resume affordance for the resend rows in this bucket.
+	const awaitingSecretByProvider = new Map<string, IntegrationResponse[]>()
 	for (const integration of integrations ?? []) {
-		if (integration.status !== 'active') continue
-		const existing = activeByProvider.get(integration.provider) ?? []
-		existing.push(integration)
-		activeByProvider.set(integration.provider, existing)
+		if (integration.status === 'active') {
+			const existing = activeByProvider.get(integration.provider) ?? []
+			existing.push(integration)
+			activeByProvider.set(integration.provider, existing)
+			continue
+		}
+		if (integration.status === 'awaiting_secret') {
+			// Gate hiding behind the flag lives at the render call site — surfacing
+			// every row here keeps the bucket tests honest.
+			const existing = awaitingSecretByProvider.get(integration.provider) ?? []
+			existing.push(integration)
+			awaitingSecretByProvider.set(integration.provider, existing)
+		}
 	}
+	const resendAwaitingSecret = awaitingSecretByProvider.get('resend') ?? []
 
 	return (
 		<div>
+			{connectError && (
+				<EditorBanner
+					tone="danger"
+					className="mb-3"
+					actions={
+						<Button size="sm" variant="ghost" onClick={() => setConnectError(null)}>
+							Dismiss
+						</Button>
+					}
+				>
+					{connectError}
+				</EditorBanner>
+			)}
 			{isLoading ? (
 				<ListSkeleton />
-			) : !providers?.length ? (
+			) : !visibleProviders.length ? (
 				<EmptyState
 					title="No providers available"
 					description="No integration providers are configured on the server"
 				/>
 			) : (
 				<div className="space-y-2">
-					{providers.map((provider) => {
-						const installations = activeByProvider.get(provider.name) ?? []
-						if (provider.name === 'github' && installations.length > 0) {
-							return (
-								<GroupedProviderRow
-									key={provider.name}
-									provider={provider}
-									installations={installations}
-									workspaceId={workspaceId}
-								/>
-							)
-						}
-						return (
-							<ProviderRow
-								key={provider.name}
-								provider={provider}
-								integration={installations[0]}
-								workspaceId={workspaceId}
-								onRequestApiKey={() => {
-									setApiKeyProvider(provider)
-									setApiKey('')
-								}}
-								onManualConnected={(webhookUrl, integrationId) =>
-									setManualConnect({ provider, webhookUrl, integrationId })
-								}
-							/>
-						)
-					})}
-				</div>
-			)}
-			<ApiKeyDialog
-				workspaceId={workspaceId}
-				provider={apiKeyProvider}
-				apiKey={apiKey}
-				onApiKeyChange={setApiKey}
-				onClose={() => {
-					setApiKeyProvider(null)
-					setApiKey('')
-				}}
-			/>
-			<SkjaldConnectDialog
-				workspaceId={workspaceId}
-				state={manualConnect}
-				onClose={() => setManualConnect(null)}
-			/>
-		</div>
-	)
-}
-
-function ProviderRow({
-	provider,
-	integration,
-	workspaceId,
-	onRequestApiKey,
-	onManualConnected,
-}: {
-	provider: ProviderInfo
-	integration?: IntegrationResponse
-	workspaceId: string
-	onRequestApiKey: () => void
-	onManualConnected: (webhookUrl: string, integrationId: string) => void
-}) {
-	const connect = useConnectIntegration(workspaceId)
-	const disconnect = useDisconnectIntegration(workspaceId)
-	const isConnected = !!integration
-	const handleConnect = () => {
-		if (provider.authType === 'api_key') {
-			onRequestApiKey()
-			return
-		}
-		if (provider.authType === 'manual') {
-			connect.mutate(
-				{ provider: provider.name },
-				{
-					onSuccess: (data) => {
-						if (data.webhook_url && data.integration_id) {
-							onManualConnected(data.webhook_url, data.integration_id)
-						}
-					},
-				},
-			)
-			return
-		}
-		connect.mutate({ provider: provider.name })
-	}
-
-	const connectedLabel = isConnected
-		? provider.externalIdDisplay === 'email' && integration.externalId
-			? `Connected as ${integration.externalId}`
-			: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
-		: provider.events.length > 0
-			? `${provider.events.length} event types available`
-			: 'Available to connect'
-
-	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
-			<div
-				className={`h-3 w-3 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-zinc-600'}`}
-			/>
-			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
-				<p className="text-xs text-muted-foreground truncate">{connectedLabel}</p>
-			</div>
-			{isConnected ? (
-				<Button
-					variant="ghost"
-					size="sm"
-					className="shrink-0 text-muted-foreground hover:text-error"
-					onClick={() => disconnect.mutate(integration.id)}
-					disabled={disconnect.isPending}
-				>
-					Disconnect
-				</Button>
-			) : (
-				<Button size="sm" className="shrink-0" onClick={handleConnect} disabled={connect.isPending}>
-					Connect
-				</Button>
-			)}
-		</div>
-	)
-}
-
-function GroupedProviderRow({
-	provider,
-	installations,
-	workspaceId,
-}: {
-	provider: ProviderInfo
-	installations: IntegrationResponse[]
-	workspaceId: string
-}) {
-	const connect = useConnectIntegration(workspaceId)
-	const disconnect = useDisconnectIntegration(workspaceId)
-	const [expanded, setExpanded] = useState(installations.length > 1)
-	const count = installations.length
-
-	return (
-		<div className="overflow-hidden rounded-lg border border-border bg-card">
-			<button
-				type="button"
-				onClick={() => setExpanded((v) => !v)}
-				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-bg-hover"
-			>
-				<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
-				<div className="flex-1 min-w-0">
-					<p className="text-sm font-medium text-foreground truncate">
-						{provider.displayName} · {count}
-					</p>
-					<p className="text-xs text-muted-foreground truncate">
-						{count} active installation{count === 1 ? '' : 's'}
-					</p>
-				</div>
-			</button>
-			{expanded && (
-				<div className="space-y-2 border-t border-border p-2">
-					{installations.map((installation) => (
-						<NestedInstallationRow
-							key={installation.id}
-							integration={installation}
-							onDisconnect={() => disconnect.mutate(installation.id)}
-							disconnecting={disconnect.isPending}
+					{visibleProviders.map((provider) => (
+						<ProviderConnectRow
+							key={provider.name}
+							provider={provider}
+							installations={activeByProvider.get(provider.name) ?? []}
+							workspaceId={workspaceId}
 						/>
 					))}
-					<Button
-						variant="outline"
-						size="sm"
-						className="w-full"
-						onClick={() => connect.mutate({ provider: provider.name })}
-						disabled={connect.isPending}
-					>
-						<Plus className="h-3.5 w-3.5 mr-1" />
-						Add another
-					</Button>
+					{resendAwaitingSecret.length > 0 && (
+						<ResendResumeSection
+							rows={resendAwaitingSecret}
+							onResume={(prefill) => setResendDialog({ open: true, prefill })}
+						/>
+					)}
 				</div>
 			)}
+			<ToolsSection workspaceId={workspaceId} />
+			<SelectGithubInstallationDialog
+				workspaceId={workspaceId}
+				integrationId={selectGithubId ?? null}
+				onClose={closeGithubSelect}
+				onSelected={finishGithubSelect}
+				returnTo={returnTo}
+			/>
+			<ResendConnectDialog
+				workspaceId={workspaceId}
+				open={resendDialog.open}
+				prefill={resendDialog.prefill}
+				onClose={() => setResendDialog({ open: false, prefill: null })}
+			/>
 		</div>
 	)
 }
 
-function ApiKeyDialog({
+/** Renders the row(s) whose resend row is stuck at `awaiting_secret` — usually
+ *  one, because a workspace has one resend row. Each carries a Finish setup
+ *  affordance that reopens the dialog directly at Step 3 with the row's
+ *  `config.resend` blob rehydrated. */
+function ResendResumeSection({
+	rows,
+	onResume,
+}: {
+	rows: IntegrationResponse[]
+	onResume: (prefill: ResendConnectPrefill) => void
+}) {
+	const canWrite = useCanWrite()
+	return (
+		<div className="space-y-2">
+			<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono pt-2">
+				CONNECTIONS AWAITING A SECRET
+			</p>
+			{rows.map((row) => {
+				const prefill = extractResendPrefill(row)
+				if (!prefill) return null
+				return (
+					<div
+						key={row.id}
+						className="flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4"
+					>
+						<div className="h-3 w-3 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+						<div className="flex-1 min-w-0">
+							<p className="text-sm font-medium text-foreground truncate">
+								Resend — {prefill.receiveSubdomain}
+							</p>
+							<p className="text-xs text-muted-foreground truncate">
+								Awaiting the whsec_… secret. Pick up where you left off in Step 3.
+							</p>
+						</div>
+						<ViewerTooltip>
+							<Button size="sm" disabled={!canWrite} onClick={() => onResume(prefill)}>
+								Finish setup
+							</Button>
+						</ViewerTooltip>
+					</div>
+				)
+			})}
+		</div>
+	)
+}
+
+/** Read the `config.resend` blob off an integration row and reshape it into
+ *  the prefill the dialog consumes. Returns null when the row is missing the
+ *  shape Task 2's connect handler writes — a defensive guard against a
+ *  half-migrated row from Slice 1 hand-connects. */
+function extractResendPrefill(row: IntegrationResponse): ResendConnectPrefill | null {
+	const resend = (row.config as { resend?: Record<string, unknown> } | undefined)?.resend
+	if (!resend) return null
+	const receiveSubdomain =
+		typeof resend.receive_subdomain === 'string' ? resend.receive_subdomain : ''
+	const webhookUrl = typeof resend.webhook_url === 'string' ? resend.webhook_url : ''
+	const dnsRecordsRaw = Array.isArray(resend.dns_records) ? resend.dns_records : []
+	const dnsRecords = dnsRecordsRaw.filter(
+		(r): r is ResendDnsRecord =>
+			typeof r === 'object' && r !== null && 'record' in r && 'status' in r,
+	)
+	const verificationStatus =
+		resend.verification_status === 'verified' || resend.verification_status === 'failed'
+			? resend.verification_status
+			: 'pending'
+	const capabilities =
+		typeof resend.capabilities === 'object' && resend.capabilities !== null
+			? (resend.capabilities as { sending?: string; receiving?: string })
+			: undefined
+	if (!webhookUrl || !receiveSubdomain) return null
+	return {
+		integrationId: row.id,
+		webhookUrl,
+		dnsRecords,
+		verificationStatus,
+		receiveSubdomain,
+		capabilities,
+	}
+}
+
+/** Finalizes a GitHub connect where the authorizing user could reach more than
+ *  one installation. The candidates come from GitHub's own answer to "which
+ *  installations can this user access", so anything listed here is already
+ *  authorized — picking one just says which org this workspace meant. */
+function SelectGithubInstallationDialog({
 	workspaceId,
-	provider,
-	apiKey,
-	onApiKeyChange,
+	integrationId,
 	onClose,
+	onSelected,
+	returnTo,
 }: {
 	workspaceId: string
-	provider: ProviderInfo | null
-	apiKey: string
-	onApiKeyChange: (value: string) => void
+	integrationId: string | null
 	onClose: () => void
+	/** Runs after an org is picked — navigates on to `returnTo` when there is one. */
+	onSelected: () => void
+	returnTo?: string
 }) {
-	const connect = useConnectIntegration(workspaceId)
-
-	const open = !!provider
-	const handleConnect = () => {
-		if (!provider) return
-		connect.mutate(
-			{ provider: provider.name, apiKey },
-			{
-				onSuccess: () => {
-					onClose()
-				},
-			},
-		)
-	}
+	const { data, isLoading } = useGithubPendingSelection(workspaceId, integrationId)
+	const select = useSelectGithubInstallation(workspaceId)
+	const canWrite = useCanWrite()
+	const options = data?.installations ?? []
 
 	return (
-		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+		<Dialog open={!!integrationId} onOpenChange={(next) => !next && onClose()}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Connect {provider?.displayName}</DialogTitle>
+					<DialogTitle>Choose a GitHub organization</DialogTitle>
 					<DialogDescription>
-						Enter your PostHog personal API key to store it for this workspace only.
+						You have access to the Maskin GitHub App in more than one organization. Pick the one
+						this workspace should use — nothing changes on GitHub.
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-2">
-					<Label htmlFor="posthog-api-key">API key</Label>
-					<Input
-						id="posthog-api-key"
-						type="password"
-						value={apiKey}
-						onChange={(e) => onApiKeyChange(e.target.value)}
-						placeholder="phx_..."
+				{isLoading ? (
+					<ListSkeleton />
+				) : options.length === 0 ? (
+					<EmptyState
+						title="Nothing to choose"
+						description="This connection attempt has already been completed or has expired"
 					/>
-				</div>
-				<div className="flex justify-end gap-2">
+				) : (
+					<div className="space-y-2">
+						{options.map((installation) => (
+							<div
+								key={installation.installationId}
+								className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3"
+							>
+								<div className="min-w-0 flex-1">
+									<p className="truncate text-sm font-medium text-foreground">
+										{installation.ownerLogin ?? `Installation ${installation.installationId}`}
+									</p>
+									<p className="truncate text-xs text-muted-foreground">
+										Installation {installation.installationId}
+									</p>
+								</div>
+								<Button
+									size="sm"
+									className="shrink-0"
+									onClick={() =>
+										integrationId &&
+										select.mutate(
+											{ integrationId, installationId: installation.installationId },
+											{ onSuccess: onSelected },
+										)
+									}
+									disabled={select.isPending || !canWrite}
+								>
+									Connect
+								</Button>
+							</div>
+						))}
+					</div>
+				)}
+				<InstallGithubOrgSection workspaceId={workspaceId} returnTo={returnTo} />
+				<div className="flex justify-end">
 					<Button variant="ghost" onClick={onClose}>
 						Cancel
 					</Button>
-					<Button onClick={handleConnect} disabled={!apiKey.trim() || connect.isPending}>
-						Connect
-					</Button>
 				</div>
 			</DialogContent>
 		</Dialog>
-	)
-}
-
-const SKJALD_SETUP_STEPS = [
-	'In Skjald, go to Settings → Webhooks → Add Webhook and paste the URL below.',
-	'Subscribe to the transcription.completed event.',
-	'Set payload mode to "Full content" so the transcript is included.',
-	'Copy the secret Skjald generates and paste it below to finish connecting.',
-]
-
-function SkjaldConnectDialog({
-	workspaceId,
-	state,
-	onClose,
-}: {
-	workspaceId: string
-	state: { provider: ProviderInfo; webhookUrl: string; integrationId: string } | null
-	onClose: () => void
-}) {
-	const complete = useCompleteIntegration(workspaceId)
-	const [step, setStep] = useState<1 | 2>(1)
-	const [secret, setSecret] = useState('')
-	const [copied, setCopied] = useState(false)
-
-	const open = !!state
-
-	const handleClose = () => {
-		onClose()
-		setStep(1)
-		setSecret('')
-		setCopied(false)
-	}
-
-	const handleCopy = () => {
-		if (!state) return
-		navigator.clipboard.writeText(state.webhookUrl)
-		setCopied(true)
-		setTimeout(() => setCopied(false), 2000)
-	}
-
-	const handleComplete = () => {
-		if (!state) return
-		complete.mutate(
-			{ id: state.integrationId, secret },
-			{
-				onSuccess: handleClose,
-			},
-		)
-	}
-
-	return (
-		<Dialog open={open} onOpenChange={(next) => !next && handleClose()}>
-			<DialogContent>
-				<DialogHeader>
-					<DialogTitle>Connect {state?.provider.displayName}</DialogTitle>
-					<DialogDescription>
-						{step === 1
-							? 'Set up a webhook in Skjald pointing at this URL.'
-							: 'Paste the secret Skjald generated to finish connecting.'}
-					</DialogDescription>
-				</DialogHeader>
-				{step === 1 ? (
-					<div className="space-y-3">
-						<div className="space-y-2">
-							<Label>Webhook URL</Label>
-							<div className="flex gap-2">
-								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-surface px-3 py-2 font-mono text-xs break-all select-all">
-									{state?.webhookUrl}
-								</div>
-								<Button variant="secondary" size="sm" className="shrink-0" onClick={handleCopy}>
-									{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-								</Button>
-							</div>
-						</div>
-						<ol className="list-decimal list-inside space-y-1.5 text-xs text-muted-foreground">
-							{SKJALD_SETUP_STEPS.map((instruction) => (
-								<li key={instruction}>{instruction}</li>
-							))}
-						</ol>
-						<div className="flex justify-end gap-2">
-							<Button variant="ghost" onClick={handleClose}>
-								Cancel
-							</Button>
-							<Button onClick={() => setStep(2)}>Next</Button>
-						</div>
-					</div>
-				) : (
-					<div className="space-y-3">
-						<div className="space-y-2">
-							<Label htmlFor="skjald-secret">Webhook secret</Label>
-							<Input
-								id="skjald-secret"
-								type="password"
-								value={secret}
-								onChange={(e) => setSecret(e.target.value)}
-								placeholder="Paste the secret from Skjald"
-							/>
-						</div>
-						<div className="flex justify-end gap-2">
-							<Button variant="ghost" onClick={() => setStep(1)}>
-								Back
-							</Button>
-							<Button onClick={handleComplete} disabled={!secret.trim() || complete.isPending}>
-								Connect
-							</Button>
-						</div>
-					</div>
-				)}
-			</DialogContent>
-		</Dialog>
-	)
-}
-
-function NestedInstallationRow({
-	integration,
-	onDisconnect,
-	disconnecting,
-}: {
-	integration: IntegrationResponse
-	onDisconnect: () => void
-	disconnecting: boolean
-}) {
-	const ownerLogin =
-		typeof integration.config.owner_login === 'string' ? integration.config.owner_login : undefined
-	const label =
-		ownerLogin ??
-		(integration.externalId ? `Installation ${integration.externalId}` : 'Installation')
-
-	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
-			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
-			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{label}</p>
-				{integration.externalId && (
-					<p className="text-xs text-muted-foreground truncate">
-						Installation {integration.externalId}
-					</p>
-				)}
-			</div>
-			<Button
-				variant="ghost"
-				size="sm"
-				className="shrink-0 text-muted-foreground hover:text-error"
-				onClick={onDisconnect}
-				disabled={disconnecting}
-			>
-				Disconnect
-			</Button>
-		</div>
 	)
 }

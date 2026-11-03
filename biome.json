@@ -32,7 +32,14 @@
 			"routeTree.gen.ts",
 			".claude",
 			".codex",
-			"maskin.io"
+			"maskin.io",
+			"apps/apple/.build",
+			"apps/apple/Maskin.xcodeproj",
+			"apps/apple/openapi.json",
+			"apps/apple/Sources/MaskinAPI/openapi.json",
+			"apps/apple/Sources/MaskinFeatures/Computer/Resources/novnc-bridge.js",
+			"**/*.xcassets",
+			"**/*.xcassets/**"
 		]
 	}
 }

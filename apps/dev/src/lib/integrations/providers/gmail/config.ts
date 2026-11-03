@@ -60,7 +60,47 @@ export const config: ProviderConfig = {
 		command: 'npx',
 		args: ['-y', 'mcp-remote', 'https://gmailmcp.googleapis.com/mcp/v1'],
 		envKey: 'GMAIL_TOKEN',
+		server: {
+			type: 'http',
+			url: 'https://gmailmcp.googleapis.com/mcp/v1',
+			headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
+		},
 	},
+
+	deliverables: [
+		{
+			kind: 'email',
+			label: 'Email',
+			sendTool: 'gmail_send_email',
+			// Mirrors the limits in ./send.ts, which enforces them at the Gmail call.
+			bodyMaxLength: 100_000,
+			fields: [
+				{
+					key: 'to',
+					label: 'To',
+					type: 'recipients',
+					required: true,
+					role: 'to',
+					address: 'email',
+				},
+				{ key: 'cc', label: 'Cc', type: 'recipients', role: 'cc', address: 'email' },
+				{
+					key: 'subject',
+					label: 'Subject',
+					type: 'text',
+					required: true,
+					maxLength: 998,
+					slot: 'subject',
+				},
+				// Workspace file ids, a list or comma separated: at most 5 files and 20 MB. The ids are
+				// part of the approval; the preview shows the file names (lib/email-attachments.ts).
+				{ key: 'attachment_file_ids', label: 'Attachments', type: 'text' },
+				// The message being answered, shown above the draft so it is read in context.
+				// Not sent and not part of the approval.
+				{ key: 'reply_to', label: 'In reply to', type: 'text', slot: 'context' },
+			],
+		},
+	],
 
 	externalIdDisplay: 'email',
 }

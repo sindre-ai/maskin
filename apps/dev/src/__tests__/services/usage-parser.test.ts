@@ -1,5 +1,26 @@
-import { describe, expect, it } from 'vitest'
-import { parseUsageFromLogChunks } from '../../services/usage-parser'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { getModelPricingMock, getServedModelPricingMock } = vi.hoisted(() => {
+	const getModelPricingMock = vi.fn()
+	// The served-host lookup shares the catalogue mock's answers; its own calls are asserted separately.
+	const getServedModelPricingMock = vi.fn((id: string, _providers: string[]) =>
+		getModelPricingMock(id),
+	)
+	return { getModelPricingMock, getServedModelPricingMock }
+})
+
+vi.mock('../../lib/openrouter-pricing', () => ({
+	getModelPricing: getModelPricingMock,
+	getServedModelPricing: getServedModelPricingMock,
+}))
+
+import {
+	parseAssistantUsageFromLogChunks,
+	parseUsageFromLogChunks,
+	resolveSessionCostUsd,
+	sumResultUsageFromLogChunks,
+} from '../../services/usage-parser'
+import type { SessionUsage } from '../../services/usage-parser'
 
 const RESULT_SUCCESS = JSON.stringify({
 	type: 'result',
@@ -94,5 +115,237 @@ describe('parseUsageFromLogChunks', () => {
 			cacheReadInputTokens: null,
 			durationMs: null,
 		})
+	})
+})
+
+describe('sumResultUsageFromLogChunks', () => {
+	const turn = (cost: number, usage: Record<string, number>, durationMs: number) =>
+		JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			duration_ms: durationMs,
+			total_cost_usd: cost,
+			usage,
+		})
+
+	it('adds tokens and duration across turns and takes the last running cost', () => {
+		const chunk = [
+			turn(0.1, { input_tokens: 10, output_tokens: 100, cache_read_input_tokens: 1000 }, 1000),
+			turn(0.3, { input_tokens: 20, output_tokens: 200, cache_creation_input_tokens: 50 }, 2000),
+			turn(0.6, { input_tokens: 30, output_tokens: 300, cache_read_input_tokens: 3000 }, 3000),
+		].join('\n')
+		expect(sumResultUsageFromLogChunks([`${chunk}\n`])).toEqual({
+			totalCostUsd: 0.6,
+			inputTokens: 60,
+			outputTokens: 600,
+			cacheCreationInputTokens: 50,
+			cacheReadInputTokens: 4000,
+			durationMs: 6000,
+		})
+	})
+
+	it('matches the last-line parse when there is a single turn', () => {
+		expect(sumResultUsageFromLogChunks([`${RESULT_WITH_CACHE}\n`])).toEqual(
+			parseUsageFromLogChunks([`${RESULT_WITH_CACHE}\n`]),
+		)
+	})
+
+	it('skips sub-agent results and non-result lines', () => {
+		const subAgent = JSON.stringify({
+			type: 'result',
+			parent_tool_use_id: 'toolu_1',
+			total_cost_usd: 9,
+			usage: { input_tokens: 999, output_tokens: 999 },
+		})
+		const chunk = `${subAgent}\n{"type":"assistant"}\nnot json\n${RESULT_SUCCESS}\n`
+		const result = sumResultUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(820)
+		expect(result?.outputTokens).toBe(120)
+		expect(result?.totalCostUsd).toBe(0.00091)
+	})
+
+	it('reassembles a result line split across chunks', () => {
+		const half = Math.floor(RESULT_SUCCESS.length / 2)
+		const result = sumResultUsageFromLogChunks([
+			RESULT_SUCCESS.slice(0, half),
+			`${RESULT_SUCCESS.slice(half)}\n`,
+		])
+		expect(result?.inputTokens).toBe(820)
+	})
+
+	it('keeps a field null when no turn reported it', () => {
+		const result = sumResultUsageFromLogChunks([`${RESULT_SUCCESS}\n`])
+		expect(result?.cacheCreationInputTokens).toBeNull()
+		expect(result?.cacheReadInputTokens).toBeNull()
+	})
+
+	it('returns null when there is no result envelope', () => {
+		expect(sumResultUsageFromLogChunks([])).toBeNull()
+		expect(sumResultUsageFromLogChunks(['{"type":"assistant"}\nplain output\n'])).toBeNull()
+	})
+})
+
+const assistantLine = (id: string, usage: Record<string, number>) =>
+	JSON.stringify({ type: 'assistant', message: { id, usage } })
+
+describe('parseAssistantUsageFromLogChunks', () => {
+	it('sums assistant usage with cost and duration left null', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 10, output_tokens: 5 })}\n${assistantLine('msg_2', { input_tokens: 20, output_tokens: 7, cache_read_input_tokens: 100 })}\n`
+		expect(parseAssistantUsageFromLogChunks([chunk])).toEqual({
+			totalCostUsd: null,
+			inputTokens: 30,
+			outputTokens: 12,
+			cacheCreationInputTokens: 0,
+			cacheReadInputTokens: 100,
+			durationMs: null,
+		})
+	})
+
+	it('counts a message id once when its usage repeats across content-block lines', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 10, output_tokens: 2 })}\n${assistantLine('msg_1', { input_tokens: 10, output_tokens: 9 })}\n`
+		const result = parseAssistantUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(10)
+		expect(result?.outputTokens).toBe(9)
+	})
+
+	it('restarts counting after the last result envelope', () => {
+		const chunk = `${assistantLine('msg_1', { input_tokens: 500, output_tokens: 500 })}\n${RESULT_SUCCESS}\n${assistantLine('msg_2', { input_tokens: 3, output_tokens: 4 })}\n`
+		const result = parseAssistantUsageFromLogChunks([chunk])
+		expect(result?.inputTokens).toBe(3)
+		expect(result?.outputTokens).toBe(4)
+	})
+
+	it('ignores sub-agent assistant lines and lines without a message id', () => {
+		const subAgent = JSON.stringify({
+			type: 'assistant',
+			parent_tool_use_id: 'toolu_1',
+			message: { id: 'msg_sub', usage: { input_tokens: 99, output_tokens: 99 } },
+		})
+		const noId = JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 1 } } })
+		expect(parseAssistantUsageFromLogChunks([`${subAgent}\n${noId}\n`])).toBeNull()
+	})
+
+	it('returns null when the log has no assistant usage', () => {
+		expect(parseAssistantUsageFromLogChunks([])).toBeNull()
+		expect(parseAssistantUsageFromLogChunks(['[INFO] starting...\n'])).toBeNull()
+	})
+})
+
+const DEEPSEEK_PRICING = {
+	prompt: 0.00000007,
+	completion: 0.00000014,
+	cacheRead: 0.000000014,
+	cacheWrite: 0,
+}
+
+const usage = (overrides: Partial<SessionUsage> = {}): SessionUsage => ({
+	totalCostUsd: 0.42,
+	inputTokens: null,
+	outputTokens: null,
+	cacheCreationInputTokens: null,
+	cacheReadInputTokens: null,
+	durationMs: null,
+	...overrides,
+})
+
+describe('resolveSessionCostUsd', () => {
+	beforeEach(() => {
+		getModelPricingMock.mockReset()
+		getServedModelPricingMock.mockClear()
+	})
+
+	it('passes the CLI-reported cost through untouched on the claude_oauth route', async () => {
+		const resolved = await resolveSessionCostUsd({
+			route: 'claude_oauth',
+			modelName: null,
+			usage: usage({ totalCostUsd: 0.42, inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(resolved).toBe(0.42)
+		expect(getModelPricingMock).not.toHaveBeenCalled()
+	})
+
+	it('prices a maskin_plan session from tokens at the model per-token rates', async () => {
+		getModelPricingMock.mockResolvedValue(DEEPSEEK_PRICING)
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: 'deepseek/deepseek-v4-flash',
+			usage: usage({
+				totalCostUsd: 0.42,
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadInputTokens: 10000,
+			}),
+		})
+		// 1000*7e-8 + 500*1.4e-7 + 10000*1.4e-8 = 0.00028, ignoring the CLI figure.
+		expect(resolved).toBeCloseTo(0.00028, 12)
+		// Priced from the hosts the request is pinned to, not the catalogue's cheapest host.
+		expect(getServedModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4-flash', [
+			'digitalocean',
+			'gmicloud',
+		])
+	})
+
+	it('prices a workspace_custom session from the table, and keeps the CLI figure when the model is unlisted', async () => {
+		getModelPricingMock.mockResolvedValueOnce(DEEPSEEK_PRICING)
+		const priced = await resolveSessionCostUsd({
+			route: 'workspace_custom',
+			modelName: 'deepseek/deepseek-v4.1-flash',
+			usage: usage({ totalCostUsd: 1.91, inputTokens: 1000, outputTokens: 500 }),
+		})
+		// 1000*7e-8 + 500*1.4e-7 = 0.00014, ignoring the CLI's $1.91.
+		expect(priced).toBeCloseTo(0.00014, 12)
+		expect(getModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4.1-flash')
+		// A BYO endpoint is not pinned to the funded hosts, so it keeps the catalogue price.
+		expect(getServedModelPricingMock).not.toHaveBeenCalled()
+
+		getModelPricingMock.mockResolvedValueOnce(null)
+		const unlisted = await resolveSessionCostUsd({
+			route: 'workspace_custom',
+			modelName: 'my-company/private-model',
+			usage: usage({ totalCostUsd: 0.5, inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(unlisted).toBe(0.5)
+	})
+
+	it('falls back to the legacy token rate on input+output when the model is unknown', async () => {
+		getModelPricingMock.mockResolvedValue(null)
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: 'absent/model',
+			usage: usage({ inputTokens: 1000, outputTokens: 500 }),
+		})
+		// 1500 tokens / 200_000 tokens-per-cent / 100 = 0.000075.
+		expect(resolved).toBeCloseTo(0.000075, 12)
+	})
+
+	it('falls back to the legacy token rate when no model name was recorded', async () => {
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: null,
+			usage: usage({ inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(resolved).toBeCloseTo(0.000075, 12)
+		expect(getModelPricingMock).not.toHaveBeenCalled()
+	})
+
+	it('bills cache-only usage rather than returning free when the model is unknown', async () => {
+		getModelPricingMock.mockResolvedValue(null)
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: 'absent/model',
+			usage: usage({ cacheReadInputTokens: 10000 }),
+		})
+		// 10000 / 200_000 / 100 = 0.0005.
+		expect(resolved).toBeCloseTo(0.0005, 12)
+	})
+
+	it('returns null when there are no tokens to price at all', async () => {
+		getModelPricingMock.mockResolvedValue(null)
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: 'absent/model',
+			usage: usage({ totalCostUsd: null }),
+		})
+		expect(resolved).toBeNull()
 	})
 })

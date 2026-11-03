@@ -7,6 +7,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useIsDesktopViewport, useIsMobile } from '@/hooks/use-mobile'
 import {
@@ -27,11 +28,13 @@ import { deriveSidebarViewport, trackEvent, trackSidebarToggle } from '@/lib/ana
 import type {
 	DisplaySettingsBody,
 	EventResponse,
+	GraphFileSummary,
 	MemberResponse,
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
 import { classifyBetStatus } from '@/lib/bet-status'
+import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -47,7 +50,6 @@ import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
-import { CommitmentCard } from './commitment-card'
 import { LinkedObjects } from './linked-objects'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
@@ -62,6 +64,10 @@ interface ObjectDocumentViewProps {
 	allRelationships?: RelationshipResponse[]
 	relationships?: { asSource: RelationshipResponse[]; asTarget: RelationshipResponse[] }
 	connectedObjects?: ObjectResponse[]
+	/** Files hydrated by the graph endpoint, keyed by the FE's `fileMap` in
+	 *  `LinkedObjectsView`. Slice 1 makes files first-class Related-tab
+	 *  endpoints — omit and file endpoints render as unresolvable. */
+	files?: GraphFileSummary[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
@@ -123,6 +129,7 @@ export function ObjectDocumentView({
 	allRelationships,
 	relationships,
 	connectedObjects,
+	files,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
@@ -139,6 +146,7 @@ export function ObjectDocumentView({
 	contentLoaded = true,
 	heroIdentityRef,
 }: ObjectDocumentViewProps) {
+	const canWrite = useCanWrite()
 	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
 	// Reset the local title draft when navigating to a different object — this
 	// component instance is reused across route param changes, so the useState
@@ -237,6 +245,7 @@ export function ObjectDocumentView({
 						onBlur={handleTitleBlur}
 						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 						placeholder="Untitled"
+						readOnly={!canWrite}
 						rows={1}
 						className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 						ref={(el) => {
@@ -260,16 +269,19 @@ export function ObjectDocumentView({
 						variant="banner"
 					/>
 				)}
-
-				{object.type === 'commitment' && (
-					<CommitmentCard object={object} workspaceId={workspaceId} />
-				)}
 			</div>
 
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
 			<div className="mb-8 xl:max-w-[75ch]">
 				{contentLoaded ? (
-					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
+					<MarkdownContent
+						content={object.content ?? ''}
+						onChange={handleContentChange}
+						editable
+						preserveSource
+						surface="description"
+						objectId={object.id}
+					/>
 				) : (
 					<p className="text-sm text-muted-foreground italic">
 						Content not included in this response.
@@ -287,6 +299,7 @@ export function ObjectDocumentView({
 						asSource={relationships.asSource}
 						asTarget={relationships.asTarget}
 						connectedObjects={connectedObjects}
+						files={files}
 					/>
 				</div>
 			)}
@@ -455,10 +468,14 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						type: prev.type,
 						status: prev.status,
 						driver: prev.driver,
-						sort: prev.sort ?? 'createdAt',
+						attention: prev.attention,
+						fresh: prev.fresh,
+						starred: prev.starred,
+						updated: isUpdatedBucket(prev.updated) ? prev.updated : undefined,
+						sort: prev.sort ?? 'updatedAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,
-						groupBy: prev.groupBy,
+						groupBy: prev.groupBy ?? 'none',
 						ids: prev.ids,
 						includeArchived: prev.includeArchived,
 					}),
@@ -702,6 +719,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					allRelationships={allRelationships}
 					relationships={relationships}
 					connectedObjects={graph?.connected_objects}
+					files={graph?.files}
 					events={events}
 					onUpdateTitle={handleUpdateTitle}
 					onUpdateContent={handleUpdateContent}
@@ -774,7 +792,7 @@ export function DeleteConfirmDialog({
 		</Dialog>
 	)
 }
-function StickyBetIdentity({
+export function StickyBetIdentity({
 	title,
 	status,
 	onScrollBack,

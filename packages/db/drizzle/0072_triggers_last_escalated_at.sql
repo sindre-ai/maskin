@@ -1,0 +1,23 @@
+-- D6b: add `last_escalated_at` to `triggers` so the escalation reconciler in
+-- `apps/dev/src/services/loop-escalation-reconciler.ts` can guard against
+-- double-posting an escalation comment for the same "wait spell".
+--
+-- The reconciler scans triggers where `escalates_to_actor_id`,
+-- `escalate_after_ms`, and `hands_off_to_actor_id` are all set, computes
+-- `waitingOnViewer` per hands-off actor from unread events on the loop's
+-- child objects (same predicate D3's AskBanner uses via
+-- `packages/shared/src/loops/waiting-on-viewer.ts`), and — if the wait has
+-- exceeded `escalate_after_ms` and no escalation has been posted for the
+-- current wait spell — posts one attention-4 comment tagging
+-- `escalates_to_actor_id`, then stamps this column.
+--
+-- Idempotency: on the next tick the reconciler skips any trigger where
+-- `last_escalated_at >= waitingSince` (the oldest unread event's timestamp
+-- for the hands-off actor). A new wait spell that starts after the last
+-- escalation re-arms escalation on its own — no cursor reset needed.
+--
+-- Nullable so existing rows read NULL (never escalated). `triggers` is not on
+-- the hot-tables list in `packages/db/MIGRATIONS.md`, so `ADD COLUMN` on a
+-- nullable timestamptz is metadata-only (no rewrite, no `CONCURRENTLY`).
+
+ALTER TABLE "triggers" ADD COLUMN "last_escalated_at" timestamp with time zone;

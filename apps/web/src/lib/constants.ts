@@ -1,12 +1,21 @@
-import { Lightbulb, type LucideIcon, SquareCheck, Target } from 'lucide-react'
+import {
+	Container,
+	FileText,
+	Lightbulb,
+	type LucideIcon,
+	MessageCircle,
+	SquareCheck,
+	Target,
+} from 'lucide-react'
 
 export const statusColors: Record<string, { bg: string; text: string }> = {
 	new: { bg: 'bg-status-new-bg', text: 'text-status-new-text' },
+	backlog: { bg: 'bg-status-backlog-bg', text: 'text-status-backlog-text' },
 	todo: { bg: 'bg-status-todo-bg', text: 'text-status-todo-text' },
 	processing: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	in_progress: { bg: 'bg-status-in_progress-bg', text: 'text-status-in_progress-text' },
 	active: { bg: 'bg-status-active-bg', text: 'text-status-active-text' },
-	signal: { bg: 'bg-status-signal-bg', text: 'text-status-signal-text' },
+	opportunity: { bg: 'bg-status-opportunity-bg', text: 'text-status-opportunity-text' },
 	proposed: { bg: 'bg-status-proposed-bg', text: 'text-status-proposed-text' },
 	clustered: { bg: 'bg-status-clustered-bg', text: 'text-status-clustered-text' },
 	done: { bg: 'bg-status-done-bg', text: 'text-status-done-text' },
@@ -58,12 +67,23 @@ export const typeIcons: Record<string, LucideIcon> = {
 	insight: Lightbulb,
 	bet: Target,
 	task: SquareCheck,
+	// S2 · provenance graph endpoints (bet 34706e2f). `session` uses
+	// `Container` to echo how sessions are visualised elsewhere in the app
+	// (session-manager spins up ephemeral containers); `conversation` uses
+	// `MessageCircle` for the chat surface; `file` uses `FileText` for the
+	// generic-document affordance.
+	file: FileText,
+	conversation: MessageCircle,
+	session: Container,
 }
 
 export const typeColors: Record<string, { bg: string; text: string }> = {
 	insight: { bg: 'bg-type-insight-bg', text: 'text-type-insight-text' },
 	bet: { bg: 'bg-type-bet-bg', text: 'text-type-bet-text' },
 	task: { bg: 'bg-type-task-bg', text: 'text-type-task-text' },
+	file: { bg: 'bg-type-file-bg', text: 'text-type-file-text' },
+	conversation: { bg: 'bg-type-conversation-bg', text: 'text-type-conversation-text' },
+	session: { bg: 'bg-type-session-bg', text: 'text-type-session-text' },
 }
 
 /** Fallback for extension-defined types not in the hardcoded maps */
@@ -78,6 +98,9 @@ export const TYPE_LABELS: Record<string, string> = {
 	insight: 'Insight',
 	bet: 'Bet',
 	task: 'Task',
+	file: 'File',
+	conversation: 'Chat',
+	session: 'Session',
 }
 
 export function typeLabel(type: string): string {
@@ -90,6 +113,7 @@ export function typeLabel(type: string): string {
 export const STATUS_LABELS: Record<string, string> = {
 	active: 'Active',
 	in_progress: 'In progress',
+	backlog: 'Backlog',
 	todo: 'To do',
 	define: 'Define',
 	in_review: 'In review',

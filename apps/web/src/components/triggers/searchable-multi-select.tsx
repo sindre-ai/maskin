@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/responsive-popover'
 import { cn } from '@/lib/cn'
 import { Check, ChevronDown, X } from 'lucide-react'
+import type * as React from 'react'
 import { useMemo, useState } from 'react'
 
 export interface MultiSelectItem {
@@ -24,6 +25,16 @@ interface SearchableMultiSelectProps {
 	emptyText?: string
 	loading?: boolean
 	disabled?: boolean
+	// Rendered next to each row in the popover — used by SlackFilters to show a
+	// per-channel "not a member" hint when the bot hasn't joined that channel yet.
+	trailing?: (item: MultiSelectItem) => React.ReactNode
+	// Rendered at the bottom of the popover, below the row list — used by
+	// SlackFilters to surface the >2000-channel truncation notice.
+	footer?: React.ReactNode
+	// Rendered inside each selected chip after the label, before the remove
+	// button — used by SlackFilters to attach a per-chip warning dot when the
+	// bot isn't a member of the picked channel.
+	renderSelected?: (item: MultiSelectItem) => React.ReactNode
 }
 
 export function SearchableMultiSelect({
@@ -34,6 +45,9 @@ export function SearchableMultiSelect({
 	emptyText = 'No options',
 	loading = false,
 	disabled = false,
+	trailing,
+	footer,
+	renderSelected,
 }: SearchableMultiSelectProps) {
 	const [open, setOpen] = useState(false)
 	const [search, setSearch] = useState('')
@@ -68,9 +82,10 @@ export function SearchableMultiSelect({
 						return (
 							<Badge key={id} variant="secondary" className="gap-1 pr-1">
 								<span>{item?.label ?? id}</span>
+								{item && renderSelected?.(item)}
 								<button
 									type="button"
-									className="rounded-sm hover:bg-bg-hover"
+									className="rounded-sm hover:bg-accent"
 									onClick={() => remove(id)}
 									aria-label={`Remove ${item?.label ?? id}`}
 								>
@@ -118,8 +133,8 @@ export function SearchableMultiSelect({
 										type="button"
 										onClick={() => toggle(item.id)}
 										className={cn(
-											'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-bg-hover',
-											selected && 'bg-bg-hover',
+											'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent',
+											selected && 'bg-accent',
 										)}
 									>
 										<div className="flex h-4 w-4 shrink-0 items-center justify-center">
@@ -129,11 +144,17 @@ export function SearchableMultiSelect({
 										{item.hint && (
 											<span className="shrink-0 text-xs text-muted-foreground">{item.hint}</span>
 										)}
+										{trailing?.(item)}
 									</button>
 								)
 							})
 						)}
 					</div>
+					{footer && (
+						<div className="border-t border-border px-2 py-1.5 text-xs text-muted-foreground">
+							{footer}
+						</div>
+					)}
 				</ResponsivePopoverContent>
 			</ResponsivePopover>
 		</div>

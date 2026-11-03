@@ -27,7 +27,7 @@ function fakeActor(over: Partial<ActorRow> = {}): ActorRow {
 		tools: { allowed: ['done'] },
 		memory: { jobs_done: 42 },
 		llmProvider: 'anthropic',
-		llmConfig: { model: 'claude-opus-4-7' },
+		llmConfig: { model: 'claude-sonnet-5-5' },
 		isSystem: false,
 		agentState: 'idle',
 		agentStateUpdatedAt: new Date('2026-01-01'),
@@ -86,9 +86,9 @@ describe('Team Ops & Retro Loop definition', () => {
 		expect(TEAM_OPS_LOOP.description.length).toBeGreaterThan(0)
 	})
 
-	it('ships two actors and thirteen triggers, no duplicates', () => {
+	it('ships two actors and twelve triggers, no duplicates', () => {
 		expect(TEAM_OPS_ACTOR_IDS.length).toBe(2)
-		expect(TEAM_OPS_TRIGGER_IDS.length).toBe(13)
+		expect(TEAM_OPS_TRIGGER_IDS.length).toBe(12)
 		expect(new Set(TEAM_OPS_ACTOR_IDS).size).toBe(TEAM_OPS_ACTOR_IDS.length)
 		expect(new Set(TEAM_OPS_TRIGGER_IDS).size).toBe(TEAM_OPS_TRIGGER_IDS.length)
 	})

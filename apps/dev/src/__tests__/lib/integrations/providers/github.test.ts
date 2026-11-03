@@ -2,11 +2,18 @@ import { generateKeyPairSync } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
 	DiscoveryError,
+	NoGithubInstallationsError,
+	UnauthorizedGithubInstallationError,
+	buildAppInstallUrl,
 	fetchInstallationOwnerLogin,
 	githubAuth,
 	mintInstallationTokenWithRecovery,
 } from '../../../../lib/integrations/providers/github/auth'
-import { config } from '../../../../lib/integrations/providers/github/config'
+import {
+	GITHUB_MCP_SERVER_SPEC,
+	GITHUB_MCP_SUPERVISED_SPEC,
+	config,
+} from '../../../../lib/integrations/providers/github/config'
 import { githubEventNormalizer } from '../../../../lib/integrations/providers/github/webhooks'
 
 // Generate an RSA key pair for testing JWT signing
@@ -50,35 +57,189 @@ describe('GitHub provider config', () => {
 
 	it('has MCP config', () => {
 		expect(config.mcp).toBeDefined()
-		expect(config.mcp?.command).toBe('npx')
+		expect(config.mcp?.command).toBe('github-mcp-server')
 		expect(config.mcp?.envKey).toBe('GITHUB_TOKEN')
+	})
+
+	it('guards the supervised spec so an image without the supervisor runs the plain binary', () => {
+		expect(GITHUB_MCP_SUPERVISED_SPEC.command).toBe('sh')
+		const [flag, script, argv0, ...serverArgs] = GITHUB_MCP_SUPERVISED_SPEC.args
+		expect(flag).toBe('-c')
+		expect(script).toBe(
+			'if [ -f /github-mcp-supervisor.cjs ]; then exec node /github-mcp-supervisor.cjs "$@"; fi; exec github-mcp-server "$@"',
+		)
+		expect(argv0).toBe('github-mcp-server')
+		// Both branches receive the unchanged server args through "$@".
+		expect(serverArgs).toEqual(GITHUB_MCP_SERVER_SPEC.args)
+		expect(GITHUB_MCP_SERVER_SPEC).toEqual({
+			command: 'github-mcp-server',
+			args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
+		})
 	})
 })
 
 describe('githubAuth', () => {
 	describe('getInstallUrl', () => {
-		it('returns GitHub App installation URL with state', () => {
-			const url = githubAuth.getInstallUrl('my-state')
+		const originalClientId = process.env.GITHUB_CLIENT_ID
+
+		beforeAll(() => {
+			process.env.GITHUB_CLIENT_ID = 'Iv1.testclientid'
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_CLIENT_ID = originalClientId
+		})
+
+		// `installations/new` dead-ends for an org that already has the App —
+		// GitHub swaps to the configure page and never calls our callback. The
+		// user-authorization endpoint always returns, which is what lets a second
+		// workspace connect an already-installed org.
+		it('points at user authorization, not the App install page', () => {
+			const url = githubAuth.getInstallUrl('my-state', 'https://app.test/api/cb')
+			expect(url).toContain('https://github.com/login/oauth/authorize')
+			expect(url).not.toContain('/installations/new')
+		})
+
+		it('includes client id, redirect uri and state', () => {
+			const url = new URL(githubAuth.getInstallUrl('my-state', 'https://app.test/api/cb'))
+			expect(url.searchParams.get('client_id')).toBe('Iv1.testclientid')
+			expect(url.searchParams.get('redirect_uri')).toBe('https://app.test/api/cb')
+			expect(url.searchParams.get('state')).toBe('my-state')
+		})
+
+		it('URL-encodes the state parameter', () => {
+			const raw = 'state with spaces&special=chars'
+			const url = new URL(githubAuth.getInstallUrl(raw, 'https://app.test/api/cb'))
+			expect(url.searchParams.get('state')).toBe(raw)
+		})
+	})
+
+	describe('buildAppInstallUrl', () => {
+		it('returns the App install page with the state preserved', () => {
+			const url = buildAppInstallUrl('my-state')
 			expect(url).toContain('https://github.com/apps/')
 			expect(url).toContain('/installations/new')
 			expect(url).toContain('state=my-state')
 		})
-
-		it('URL-encodes the state parameter', () => {
-			const url = githubAuth.getInstallUrl('state with spaces&special=chars')
-			expect(url).toContain(encodeURIComponent('state with spaces&special=chars'))
-		})
 	})
 
 	describe('handleCallback', () => {
-		it('extracts installation_id from params', async () => {
-			const result = await githubAuth.handleCallback({ installation_id: 'inst-42' })
-			expect(result).toEqual({ installation_id: 'inst-42' })
+		const originalFetch = globalThis.fetch
+		const originalClientId = process.env.GITHUB_CLIENT_ID
+		const originalSecret = process.env.GITHUB_CLIENT_SECRET
+
+		beforeAll(() => {
+			process.env.GITHUB_CLIENT_ID = 'Iv1.testclientid'
+			process.env.GITHUB_CLIENT_SECRET = 'test-client-secret'
 		})
 
-		it('throws when installation_id is missing', async () => {
-			await expect(githubAuth.handleCallback({})).rejects.toThrow(
-				'Missing installation_id in callback',
+		afterEach(() => {
+			globalThis.fetch = originalFetch
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_CLIENT_ID = originalClientId
+			process.env.GITHUB_CLIENT_SECRET = originalSecret
+		})
+
+		/** Stub the token exchange, then /user/installations. */
+		function stubGithub(installations: Array<{ id: number; login: string }>) {
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+				const url = String(input)
+				if (url.includes('login/oauth/access_token')) {
+					return new Response(JSON.stringify({ access_token: 'ghu_usertoken' }), { status: 200 })
+				}
+				if (url.includes('/user/installations')) {
+					return new Response(
+						JSON.stringify({
+							installations: installations.map((i) => ({ id: i.id, account: { login: i.login } })),
+						}),
+						{ status: 200 },
+					)
+				}
+				throw new Error(`Unexpected fetch: ${url}`)
+			}) as unknown as typeof fetch
+		}
+
+		// A fresh install names the installation directly. We honour it, but only
+		// after confirming the authenticated user can actually reach it.
+		it('uses the supplied installation_id once the user is shown to reach it', async () => {
+			stubGithub([
+				{ id: 146523409, login: 'sindre-ai' },
+				{ id: 154364583, login: 'vaerksted-ai' },
+			])
+			const result = await githubAuth.handleCallback(
+				{ code: 'abc', installation_id: '154364583' },
+				'https://app.test/api/cb',
+			)
+			expect(result).toEqual({ installation_id: '154364583' })
+		})
+
+		// The hole this closes: installation_id is a raw query param, and every
+		// downstream token mint uses the App's own JWT, which succeeds for any
+		// installation of the App. Trusting it would let anyone bind an org they
+		// have no GitHub access to by hand-writing this callback URL.
+		it('refuses an installation_id the authenticated user cannot reach', async () => {
+			stubGithub([{ id: 154364583, login: 'vaerksted-ai' }])
+			await expect(
+				githubAuth.handleCallback(
+					{ code: 'abc', installation_id: '146523409' },
+					'https://app.test/api/cb',
+				),
+			).rejects.toBeInstanceOf(UnauthorizedGithubInstallationError)
+		})
+
+		it('refuses a bare installation_id with no code to verify it against', async () => {
+			globalThis.fetch = vi.fn(async () => {
+				throw new Error('must not call GitHub without a code')
+			}) as unknown as typeof fetch
+			await expect(
+				githubAuth.handleCallback({ installation_id: '146523409' }, 'https://app.test/api/cb'),
+			).rejects.toThrow('Missing authorization code')
+		})
+
+		it('resolves the single installation a user can reach', async () => {
+			stubGithub([{ id: 146523409, login: 'sindre-ai' }])
+			const result = await githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb')
+			expect(result).toEqual({ installation_id: '146523409' })
+		})
+
+		it('returns the candidate list when the user can reach several', async () => {
+			stubGithub([
+				{ id: 146523409, login: 'sindre-ai' },
+				{ id: 154364583, login: 'vaerksted-ai' },
+			])
+			const result = await githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb')
+			expect(result.pending_installation_selection).toBe(true)
+			expect(result.installation_choices).toEqual([
+				{ installationId: '146523409', ownerLogin: 'sindre-ai' },
+				{ installationId: '154364583', ownerLogin: 'vaerksted-ai' },
+			])
+			// The user token is a means to an end — never persisted.
+			expect(result).not.toHaveProperty('accessToken')
+			expect(JSON.stringify(result)).not.toContain('ghu_usertoken')
+		})
+
+		it('signals no installations so the route can send the user to install', async () => {
+			stubGithub([])
+			await expect(
+				githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb'),
+			).rejects.toBeInstanceOf(NoGithubInstallationsError)
+		})
+
+		it('throws when GitHub rejects the code with HTTP 200', async () => {
+			globalThis.fetch = vi.fn(
+				async () =>
+					new Response(JSON.stringify({ error: 'bad_verification_code' }), { status: 200 }),
+			) as unknown as typeof fetch
+			await expect(
+				githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb'),
+			).rejects.toThrow('bad_verification_code')
+		})
+
+		it('throws when no code is present', async () => {
+			await expect(githubAuth.handleCallback({}, 'https://app.test/api/cb')).rejects.toThrow(
+				'Missing authorization code',
 			)
 		})
 	})
@@ -288,12 +449,12 @@ describe('githubAuth', () => {
 			globalThis.fetch = vi
 				.fn()
 				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
-				.mockResolvedValueOnce(makeResponse(200, { id: 8888 }))
+				.mockResolvedValueOnce(makeResponse(200, { id: 8888, account: { login: 'sindre-ai' } }))
 				.mockResolvedValueOnce(makeResponse(200, { token: 'ghs_recovered' }))
 
 			const result = await mintInstallationTokenWithRecovery(
 				{ installation_id: '42' },
-				{ repo: 'sindre-ai/maskin' },
+				{ repo: 'sindre-ai/maskin', expectedOwnerLogin: 'sindre-ai' },
 			)
 
 			expect(result).toEqual({
@@ -319,12 +480,65 @@ describe('githubAuth', () => {
 			globalThis.fetch = vi
 				.fn()
 				.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
-				.mockResolvedValueOnce(makeResponse(200, { id: 42 }))
+				.mockResolvedValueOnce(makeResponse(200, { id: 42, account: { login: 'sindre-ai' } }))
 
 			await expect(
-				mintInstallationTokenWithRecovery({ installation_id: '42' }, { repo: 'sindre-ai/maskin' }),
+				mintInstallationTokenWithRecovery(
+					{ installation_id: '42' },
+					{ repo: 'sindre-ai/maskin', expectedOwnerLogin: 'sindre-ai' },
+				),
 			).rejects.toThrow('Failed to get installation access token: 404')
 			expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+		})
+
+		describe('installation owner check on the recovered install', () => {
+			async function recoverWith(
+				discoveryBody: unknown,
+				expectedOwnerLogin: string | undefined,
+			): Promise<unknown> {
+				globalThis.fetch = vi
+					.fn()
+					.mockResolvedValueOnce(makeResponse(404, 'Not Found'))
+					.mockResolvedValueOnce(makeResponse(200, discoveryBody))
+					.mockResolvedValueOnce(makeResponse(200, { token: 'ghs_recovered' }))
+				return mintInstallationTokenWithRecovery(
+					{ installation_id: '42' },
+					{ repo: 'other-org/widget', expectedOwnerLogin },
+				)
+			}
+
+			it('refuses an install whose account differs from the expected owner, without minting', async () => {
+				await expect(
+					recoverWith({ id: 8888, account: { login: 'other-org' } }, 'sindre-ai'),
+				).rejects.toMatchObject({ name: 'DiscoveryError', status: 404, repo: 'other-org/widget' })
+				// Cached-id mint + discovery only: no mint against the discovered install.
+				expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+				expect(globalThis.fetch).not.toHaveBeenCalledWith(
+					'https://api.github.com/app/installations/8888/access_tokens',
+					expect.anything(),
+				)
+			})
+
+			it('accepts the install when the account matches, ignoring case', async () => {
+				await expect(
+					recoverWith({ id: 8888, account: { login: 'Sindre-AI' } }, 'sindre-ai'),
+				).resolves.toEqual({ token: 'ghs_recovered', installationId: '8888', recovered: true })
+			})
+
+			it('fails closed when the row has no owner_login', async () => {
+				await expect(
+					recoverWith({ id: 8888, account: { login: 'sindre-ai' } }, undefined),
+				).rejects.toMatchObject({ name: 'DiscoveryError', status: 404 })
+				expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+			})
+
+			it('fails closed when GitHub reports no account on the install', async () => {
+				await expect(recoverWith({ id: 8888 }, 'sindre-ai')).rejects.toMatchObject({
+					name: 'DiscoveryError',
+					status: 404,
+				})
+				expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+			})
 		})
 
 		it('throws a typed DiscoveryError carrying { status } when discovery 404s', async () => {

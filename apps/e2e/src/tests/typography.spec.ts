@@ -83,6 +83,28 @@ async function mockUnreadFeed(page: Page, workspaceId: string, items: UnreadFixt
 			body: JSON.stringify({ items }),
 		})
 	})
+	// The For you page reads the Chief of Staff's curated list, not the unread
+	// stream, so each fixture is also served as one item of that list.
+	await page.route('**/api/for-you*', async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback()
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				items: items.map((item, index) => ({
+					notification_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+					rank: index + 1,
+					headline: item.object.title,
+					rationale: null,
+					created_at: item.latest_activity_at,
+					entity_type: item.entity_type,
+					entity_id: item.entity_id,
+					session_id: null,
+					object: item.object,
+				})),
+			}),
+		})
+	})
 }
 
 /* ───── 1. Font-load URL integrity (AC-T2) ───── */
@@ -194,26 +216,24 @@ test.describe('Typography — object detail', () => {
 		expect(maxWidthPx as number).toBeLessThan(768)
 	})
 
-	test('title input uses font-semibold', async ({ page, account }) => {
+	test('object title renders at a bold weight', async ({ page, account }) => {
 		const obj = await createObjectWithContent(account.api, account.workspaceId)
 
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await waitForApp(page)
 
-		// The title still renders as an editable textarea (the object-detail
-		// static-shell rebuild referenced elsewhere in this spec file hasn't
-		// landed in this branch) — see object-document.tsx.
-		const fontWeight = await page.evaluate(() => {
-			const titleInput = document.querySelector<HTMLTextAreaElement>(
-				'textarea[placeholder="Untitled"]',
-			)
-			if (!titleInput) return null
-			return getComputedStyle(titleInput).getPropertyValue('font-weight')
-		})
+		// The v2 detail shell renders the title as a static <h1> in the hero
+		// identity row (object-detail-header.tsx), not an editable textarea.
+		const titleHeading = page.getByRole('heading', { level: 1 })
+		await expect(titleHeading).toBeVisible({ timeout: 10_000 })
 
-		// font-semibold = 600
-		expect(fontWeight).toBe('600')
+		const fontWeight = await titleHeading.evaluate((el) =>
+			getComputedStyle(el).getPropertyValue('font-weight'),
+		)
+
+		// font-semibold (600) or heavier — the shell ships font-bold (700).
+		expect(Number(fontWeight)).toBeGreaterThanOrEqual(600)
 	})
 
 	test('rendered font-family applies Schibsted Grotesk on object detail', async ({
@@ -422,15 +442,51 @@ test.describe('Typography — CLS budget', () => {
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`, { waitUntil: 'commit' })
 
-		const cls = await page.evaluate(() => {
-			return new Promise<number>((resolve) => {
+		// Each shift is recorded with the elements that moved. A bare cumulative
+		// number tells you the budget broke but not what broke it — and the shift
+		// sources are gone by the time the assertion fails, so they have to be
+		// captured here, in the page, as they arrive.
+		const { cls, shifts } = await page.evaluate(() => {
+			interface ShiftSource {
+				node?: Node | null
+				previousRect: DOMRectReadOnly
+				currentRect: DOMRectReadOnly
+			}
+			interface ShiftEntry extends PerformanceEntry {
+				value: number
+				hadRecentInput: boolean
+				sources?: ShiftSource[]
+			}
+
+			function describe(node: Node | null | undefined): string {
+				if (!(node instanceof Element)) return '(detached)'
+				const testId = node.getAttribute('data-testid')
+				const id = node.id ? `#${node.id}` : ''
+				const cls = node.className
+				const klass =
+					typeof cls === 'string' && cls ? `.${cls.trim().split(/\s+/).slice(0, 4).join('.')}` : ''
+				return `${node.tagName.toLowerCase()}${id}${testId ? `[data-testid=${testId}]` : ''}${klass}`
+			}
+
+			return new Promise<{ cls: number; shifts: string[] }>((resolve) => {
 				let cumulative = 0
+				const shifts: string[] = []
 				const observer = new PerformanceObserver((list) => {
-					for (const entry of list.getEntries()) {
+					for (const entry of list.getEntries() as ShiftEntry[]) {
 						// Only count entries without recent user input
-						if (!(entry as unknown as { hadRecentInput: boolean }).hadRecentInput) {
-							cumulative += (entry as unknown as { value: number }).value
-						}
+						if (entry.hadRecentInput) continue
+						cumulative += entry.value
+						const moved = (entry.sources ?? []).map(
+							(source) =>
+								`${describe(source.node)} ${Math.round(source.previousRect.y)}→${Math.round(
+									source.currentRect.y,
+								)}y`,
+						)
+						shifts.push(
+							`${entry.value.toFixed(4)} @${Math.round(entry.startTime)}ms: ${
+								moved.join(' | ') || '(no sources)'
+							}`,
+						)
 					}
 				})
 				observer.observe({ type: 'layout-shift', buffered: true })
@@ -438,12 +494,12 @@ test.describe('Typography — CLS budget', () => {
 				// Resolve after fonts have had time to swap in
 				setTimeout(() => {
 					observer.disconnect()
-					resolve(cumulative)
+					resolve({ cls: cumulative, shifts })
 				}, 3000)
 			})
 		})
 
-		expect(cls).toBeLessThan(0.05)
+		expect(cls, `layout shifts:\n${shifts.join('\n')}`).toBeLessThan(0.05)
 	})
 })
 

@@ -1,12 +1,12 @@
 {
 	"hooks": {
-		"PostToolUse": [
+		"PreToolUse": [
 			{
-				"matcher": ".*",
+				"matcher": "AskUserQuestion",
 				"hooks": [
 					{
 						"type": "command",
-						"command": "/agent-hooks/preview-ports-changed.sh"
+						"command": "/agent-hooks/ask-user-question.sh"
 					}
 				]
 			}

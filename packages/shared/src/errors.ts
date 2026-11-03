@@ -7,7 +7,21 @@ export const ApiErrorCode = {
 	RATE_LIMITED: 'RATE_LIMITED',
 	BAD_REQUEST: 'BAD_REQUEST',
 	INTERNAL_ERROR: 'INTERNAL_ERROR',
+	PLAN_CAP_EXCEEDED: 'PLAN_CAP_EXCEEDED',
 	AUTH_REVOKED: 'AUTH_REVOKED',
+	// Workspace-membership entitlement gates (distinct from PLAN_CAP_EXCEEDED,
+	// which is token-usage-specific and returns 402). These are
+	// authorization-style "not entitled to add more" failures and return 403,
+	// matching how enterpriseGranted gate failures are already surfaced. See
+	// apps/dev/src/lib/workspace-capacity.ts.
+	SEAT_CAP_EXCEEDED: 'SEAT_CAP_EXCEEDED',
+	OWNERSHIP_CAP_EXCEEDED: 'OWNERSHIP_CAP_EXCEEDED',
+	// A message body matched a high-confidence secret pattern (Keychain backstop).
+	RAW_SECRET_DETECTED: 'RAW_SECRET_DETECTED',
+	// Keychain: another active or pending-undo key in the workspace has the same env var slug.
+	NAME_TAKEN: 'NAME_TAKEN',
+	// Keychain: a credential name matched a high-confidence secret pattern.
+	NAME_LOOKS_LIKE_SECRET: 'NAME_LOOKS_LIKE_SECRET',
 } as const
 
 export type ApiErrorCode = (typeof ApiErrorCode)[keyof typeof ApiErrorCode]

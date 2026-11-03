@@ -26,6 +26,11 @@ interface LoopInstalledProps {
 		skills: number
 		integrations: number
 	}
+	// Which marketplace surface the install was started from. Absent means the
+	// catalogue card, which is the overwhelming majority; the loop detail page
+	// sends `'detail'`. Emitted as `'catalogue'` when absent so downstream
+	// queries can group on the property without a null branch.
+	source?: 'detail'
 }
 
 // Ordering here is the wire ordering downstream queries will see in
@@ -51,6 +56,7 @@ export async function trackLoopInstalled(p: LoopInstalledProps): Promise<void> {
 		actor_id: p.actorId,
 		component_type_count: componentTypes.length,
 		component_types: componentTypes,
+		source: p.source ?? 'catalogue',
 	})
 }
 

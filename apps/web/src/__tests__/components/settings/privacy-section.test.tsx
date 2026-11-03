@@ -7,7 +7,9 @@ import { TestWrapper } from '../../setup'
 const mockUpdateMutate = vi.fn()
 const mockWorkspace = { current: buildWorkspaceWithRole({ settings: {} }) }
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: mockWorkspace.current,
 		workspaceId: mockWorkspace.current.id,
@@ -17,14 +19,6 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: mockUpdateMutate, isPending: false }),
-}))
-
-vi.mock('@/hooks/use-custom-extensions', () => ({
-	useCustomExtensions: () => [],
-}))
-
-vi.mock('@/hooks/use-enabled-modules', () => ({
-	useEnabledModules: () => ['work'],
 }))
 
 vi.mock('@/lib/theme', () => ({
@@ -52,12 +46,21 @@ describe('Settings > General > Privacy & data', () => {
 	it('renders the privacy heading, both switches, and the disclosure copy', () => {
 		renderPage()
 
-		expect(screen.getByText('Privacy & data')).toBeInTheDocument()
-		expect(screen.getByText(/Product usage events are sent to PostHog/)).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'PRIVACY & DATA' })).toBeInTheDocument()
+		expect(screen.getByText(/Helps the Maskin team see how Maskin is used/)).toBeInTheDocument()
 		expect(
 			screen.getByRole('switch', { name: 'Share product usage with Maskin' }),
 		).toBeInTheDocument()
 		expect(screen.getByRole('switch', { name: 'Anonymize this workspace' })).toBeInTheDocument()
+	})
+
+	// General carries the two privacy switches plus the default-workspace switch —
+	// the extension toggles moved to their own rail section, so no other switch
+	// may render here.
+	it('renders no extension switches on General', () => {
+		renderPage()
+
+		expect(screen.getAllByRole('switch')).toHaveLength(3)
 	})
 
 	it('defaults share-usage on and anonymize off when settings.privacy is missing', () => {

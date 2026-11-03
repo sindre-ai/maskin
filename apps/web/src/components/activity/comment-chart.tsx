@@ -40,14 +40,18 @@ const fullNumber = new Intl.NumberFormat('en-US')
 const SUPPORTED_TYPES = new Set(['bar', 'line', 'area'])
 
 export function parseChartSpec(raw: string): ChartParseSuccess | ChartParseFailure {
+	const trimmed = (raw ?? '').trim()
+	if (trimmed.length === 0) {
+		return { ok: false, reason: 'the chart source is empty' }
+	}
 	let parsed: unknown
 	try {
-		parsed = JSON.parse(raw)
-	} catch (error) {
-		return {
-			ok: false,
-			reason: error instanceof Error ? error.message : 'invalid JSON',
-		}
+		parsed = JSON.parse(trimmed)
+	} catch {
+		// Never surface the raw JSON.parse message ("Unexpected EOF", "Unexpected
+		// token <" …) — it is meaningless to a reader and reads as a crash. The
+		// upstream cause is almost always a truncated or partial fenced block.
+		return { ok: false, reason: 'the chart data is incomplete or malformed' }
 	}
 	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
 		return { ok: false, reason: 'chart spec must be a JSON object' }

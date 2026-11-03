@@ -1,13 +1,19 @@
-import { usePageHeader } from '@/lib/page-header-context'
+import type { NewMenuPrimaryOverride } from '@/components/shared/new-menu'
+import { type PageHeaderCrumb, usePageHeader } from '@/lib/page-header-context'
 import { useEffect } from 'react'
 
 export function PageHeader({
 	title,
 	subtitle,
 	actions,
+	leadingActions,
+	titleTabs,
 	stickyIdentity,
+	crumb,
 	contentPush,
 	scrollLocked,
+	newMenuPrimaryOverride,
+	newMenuDisabled,
 }: {
 	// Rendered by the shared top nav as the screen's <h1>, not inline here —
 	// v2 has exactly one title per screen and it lives in the nav row.
@@ -15,7 +21,15 @@ export function PageHeader({
 	// Muted count or context that sits beside the title in the nav row.
 	subtitle?: string
 	actions?: React.ReactNode
+	// Like `actions`, but rendered before the workspace search rather than after it.
+	leadingActions?: React.ReactNode
+	// Controls that sit beside the <h1> in the nav row's left cluster instead
+	// of out by search and New — see PageHeaderContext.
+	titleTabs?: React.ReactNode
 	stickyIdentity?: React.ReactNode
+	// A detail screen's own `Parent › Name` crumb. Publishing one collapses the
+	// shared nav to the compact detail bar the mockup draws above the document.
+	crumb?: PageHeaderCrumb
 	// CSS width value the app shell should be pushed left by while this page
 	// is mounted — see PageHeaderContext.
 	contentPush?: string
@@ -23,9 +37,28 @@ export function PageHeader({
 	// scrolling itself, in favor of an internal scroll region it owns — see
 	// PageHeaderContext.
 	scrollLocked?: boolean
+	// Swaps the label/action on the primary half of the shared New split-button
+	// while the page is mounted. The chevron menu is left unchanged. Used by
+	// object detail to run the D4 "✎ Answer this ask" verb swap when a pending
+	// ask targets the reader.
+	newMenuPrimaryOverride?: NewMenuPrimaryOverride
+	// Dims both halves of the shared New split-button at 60% opacity while the
+	// page is mounted (D4 read-only rule).
+	newMenuDisabled?: boolean
 }) {
-	const { setTitle, setSubtitle, setActions, setStickyIdentity, setContentPush, setScrollLocked } =
-		usePageHeader()
+	const {
+		setTitle,
+		setSubtitle,
+		setActions,
+		setLeadingActions,
+		setTitleTabs,
+		setStickyIdentity,
+		setCrumb,
+		setContentPush,
+		setScrollLocked,
+		setNewMenuPrimaryOverride,
+		setNewMenuDisabled,
+	} = usePageHeader()
 
 	useEffect(() => {
 		setTitle(title)
@@ -43,9 +76,24 @@ export function PageHeader({
 	}, [actions, setActions])
 
 	useEffect(() => {
+		setLeadingActions(leadingActions ?? null)
+		return () => setLeadingActions(null)
+	}, [leadingActions, setLeadingActions])
+
+	useEffect(() => {
+		setTitleTabs(titleTabs ?? null)
+		return () => setTitleTabs(null)
+	}, [titleTabs, setTitleTabs])
+
+	useEffect(() => {
 		setStickyIdentity(stickyIdentity ?? null)
 		return () => setStickyIdentity(null)
 	}, [stickyIdentity, setStickyIdentity])
+
+	useEffect(() => {
+		setCrumb(crumb)
+		return () => setCrumb(undefined)
+	}, [crumb, setCrumb])
 
 	useEffect(() => {
 		setContentPush(contentPush)
@@ -56,6 +104,16 @@ export function PageHeader({
 		setScrollLocked(scrollLocked ?? false)
 		return () => setScrollLocked(false)
 	}, [scrollLocked, setScrollLocked])
+
+	useEffect(() => {
+		setNewMenuPrimaryOverride(newMenuPrimaryOverride)
+		return () => setNewMenuPrimaryOverride(undefined)
+	}, [newMenuPrimaryOverride, setNewMenuPrimaryOverride])
+
+	useEffect(() => {
+		setNewMenuDisabled(newMenuDisabled)
+		return () => setNewMenuDisabled(undefined)
+	}, [newMenuDisabled, setNewMenuDisabled])
 
 	// The title is published to the nav row above; nothing renders in the page body.
 	return null

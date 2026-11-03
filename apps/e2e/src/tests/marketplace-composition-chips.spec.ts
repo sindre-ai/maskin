@@ -67,6 +67,54 @@ test.describe('Marketplace composition chip row', () => {
 		await expect(agents.locator(CHIP_ROW)).toHaveCount(0)
 	})
 
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`no catalog card falls back to a raw item_type pill at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await page.goto(`/${account.workspaceId}/marketplace`)
+
+			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			await expect(loopsSection).toBeVisible({ timeout: 20000 })
+
+			// Mockup 2593: a loop card that has no bundle composition to show
+			// still carries a chip row, naming the kind it installs. Nothing in
+			// the catalog may render the lowercase enum value instead.
+			await expect(
+				page.getByRole('main').getByText(/^(actor|trigger|skill|integration)$/),
+			).toHaveCount(0)
+
+			// Where the kind chip row does render, it reads as a label and wraps
+			// inside its card rather than overflowing it. The cards re-render as the
+			// catalog loads, so read every row in one snapshot instead of locator by locator.
+			const readKindRows = () =>
+				page.locator('[data-testid="kind-chip-row"]').evaluateAll((els) =>
+					els.map((el) => ({
+						text: el.textContent ?? '',
+						shown: (el as HTMLElement).offsetParent !== null,
+						scroll: (el as HTMLElement).scrollWidth,
+						client: (el as HTMLElement).clientWidth,
+					})),
+				)
+			// The app holds an event stream open, so the network never goes idle; settle on two
+			// identical reads in a row instead.
+			let kindRows = await readKindRows()
+			for (let tries = 0; tries < 10; tries++) {
+				await page.waitForTimeout(500)
+				const next = await readKindRows()
+				const settled = JSON.stringify(next) === JSON.stringify(kindRows)
+				kindRows = next
+				if (settled) break
+			}
+			for (const row of kindRows) {
+				expect(row.shown).toBe(true)
+				expect(row.text).toMatch(/Agent|Trigger|Skill|Integration/)
+				expect(row.scroll).toBeLessThanOrEqual(row.client + 1)
+			}
+		})
+	}
+
 	test('hovering a composition chip surfaces the full component name in a tooltip', async ({
 		page,
 		account,

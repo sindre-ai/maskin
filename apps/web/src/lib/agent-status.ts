@@ -1,3 +1,5 @@
+import type { SessionStatsRow } from '@maskin/shared'
+
 export type AgentStatus = 'working' | 'idle' | 'failed'
 
 interface SessionLike {
@@ -55,6 +57,14 @@ export function deriveAgentStatus(
 	return 'idle'
 }
 
+/** Status for an agent with no session in the recent list, from its server-side stats. */
+export function deriveAgentStatusFromStats(stats: SessionStatsRow | undefined): AgentStatus {
+	if (!stats) return 'idle'
+	if (stats.active > 0) return 'working'
+	if (stats.latest_status === 'failed' || stats.latest_status === 'timeout') return 'failed'
+	return 'idle'
+}
+
 export function getLatestSession<T extends SessionLike>(
 	agentId: string,
 	sessionsByAgent: Map<string, T[]>,
@@ -66,4 +76,61 @@ export function getLatestSession<T extends SessionLike>(
 	if (active) return active
 
 	return sessions[0]
+}
+
+const COST_WINDOW_MS = 30 * 86_400_000
+
+export interface AgentSessionStats {
+	total: number
+	active: number
+	totalCostUsd: number
+	/** Cost of sessions settled (or, while still open, last active) in the last 30 days — same basis as /sessions/usage. */
+	last30dCostUsd: number
+}
+
+interface StatsSessionLike extends SessionLike {
+	completedAt: string | null
+	/** Stands in for `completedAt` while the session is open: its usage is saved turn by turn. */
+	updatedAt?: string | null
+	totalCostUsd?: string | number | null
+}
+
+export function summarizeAgentSessions(
+	sessions: StatsSessionLike[] | undefined,
+	now: number = Date.now(),
+): AgentSessionStats {
+	const stats: AgentSessionStats = { total: 0, active: 0, totalCostUsd: 0, last30dCostUsd: 0 }
+	for (const s of sessions ?? []) {
+		stats.total++
+		if (ACTIVE_STATUSES.has(s.status)) stats.active++
+		const cost = Number(s.totalCostUsd ?? 0)
+		if (!Number.isFinite(cost) || cost <= 0) continue
+		stats.totalCostUsd += cost
+		const settledAt = s.completedAt ?? s.updatedAt
+		const settled = settledAt ? new Date(settledAt).getTime() : Number.NaN
+		if (Number.isFinite(settled) && settled >= now - COST_WINDOW_MS) {
+			stats.last30dCostUsd += cost
+		}
+	}
+	return stats
+}
+
+export function statsToCounts(stats: SessionStatsRow | undefined): AgentSessionStats {
+	return {
+		total: stats?.total ?? 0,
+		active: stats?.active ?? 0,
+		totalCostUsd: stats?.total_cost_usd ?? 0,
+		last30dCostUsd: stats?.last_30d_cost_usd ?? 0,
+	}
+}
+
+/**
+ * Agent kind =the first line of the description (the one-line role label the
+ * actors list returns), fallback 'Agent'. The detail surface has the full
+ * system_prompt, but the index only ever sees list items, so kind derives
+ * from the field both surfaces carry.
+ */
+export function deriveAgentKind(agent: { description?: string | null }): string {
+	const role = agent.description?.split('\n')[0]?.trim()
+	return role || 'Agent'
 }

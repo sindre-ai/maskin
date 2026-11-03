@@ -10,7 +10,7 @@
 				"thinking": "User is asking about workspace state — I should call list_objects first."
 			}
 		],
-		"model": "claude-sonnet-4-5",
+		"model": "claude-sonnet-5-5",
 		"stop_reason": null,
 		"usage": { "input_tokens": 30, "output_tokens": 15 }
 	},

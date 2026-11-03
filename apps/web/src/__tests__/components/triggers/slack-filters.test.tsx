@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react'
-import { vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
 	api: {
@@ -119,6 +119,7 @@ describe('SlackFilters (rendering)', () => {
 				is_im: false,
 				is_mpim: false,
 				is_channel: true,
+				is_member: true,
 			},
 		])
 		vi.mocked(api.integrations.slackUsers).mockResolvedValue([
@@ -167,5 +168,50 @@ describe('SlackFilters (rendering)', () => {
 			</TestWrapper>,
 		)
 		expect(screen.getByText(/Connect Slack/i)).toBeInTheDocument()
+	})
+
+	it('renders a not-a-member warning on selected chips when is_member is false', async () => {
+		vi.mocked(api.integrations.slackConversations).mockResolvedValue([
+			{
+				id: 'C_MEMBER',
+				name: 'general',
+				is_private: false,
+				is_im: false,
+				is_mpim: false,
+				is_channel: true,
+				is_member: true,
+			},
+			{
+				id: 'C_STRAY',
+				name: 'stray',
+				is_private: false,
+				is_im: false,
+				is_mpim: false,
+				is_channel: true,
+				is_member: false,
+			},
+		])
+
+		render(
+			<TestWrapper>
+				<SlackFilters
+					entityType="slack.channel_message"
+					integrationId="int-1"
+					workspaceId="ws-1"
+					value={{ ...EMPTY_SLACK_FILTER_STATE, channelsInclude: ['C_MEMBER', 'C_STRAY'] }}
+					onChange={() => {}}
+				/>
+			</TestWrapper>,
+		)
+
+		// The picker resolves chip labels from the fetched conversation list.
+		// Wait for `useSlackConversations` to hydrate.
+		await waitFor(() => {
+			expect(screen.getAllByLabelText('Bot not a member of this channel').length).toBeGreaterThan(0)
+		})
+		// Only C_STRAY (is_member=false) triggers the warning dot; C_MEMBER is
+		// silent. Only the include picker has selections here (exclude is empty),
+		// so exactly one chip renders the dot.
+		expect(screen.getAllByLabelText('Bot not a member of this channel')).toHaveLength(1)
 	})
 })

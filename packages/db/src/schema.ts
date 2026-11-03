@@ -1,4 +1,11 @@
-import type { AgentState, FileAnnotation, SessionResult } from '@maskin/shared'
+import type {
+	AgentState,
+	WebhookConfig as ExtensionWebhookConfig,
+	FileAnnotation,
+	McpConfig,
+	SessionResult,
+	ToolGrants,
+} from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import {
 	type AnyPgColumn,
@@ -6,12 +13,14 @@ import {
 	bigserial,
 	boolean,
 	check,
+	date,
 	index,
 	integer,
 	jsonb,
 	numeric,
 	pgTable,
 	primaryKey,
+	smallint,
 	text,
 	timestamp,
 	unique,
@@ -26,7 +35,9 @@ export const actors = pgTable('actors', {
 	type: text('type').notNull(),
 	name: text('name').notNull(),
 	email: text('email').unique(),
-	apiKey: text('api_key').notNull().unique(),
+	// Legacy plaintext column. Nullable and no longer written (migration 0112); keys live
+	// hashed in api_keys. Emptied and dropped by the contract step.
+	apiKey: text('api_key').unique(),
 	passwordHash: text('password_hash'),
 	description: text('description'),
 	systemPrompt: text('system_prompt'),
@@ -41,6 +52,15 @@ export const actors = pgTable('actors', {
 	// install-provisioned rows carry { installed_loop_id, source_item_id }
 	// so the T5 version-push cron can find them. See marketplaceLoops comment.
 	metadata: jsonb('metadata'),
+	// The workspace this human prefers to land in. Nullable: NULL means "no
+	// preference". Only ever set for the actor itself, and only to a workspace it
+	// is a member of (enforced in PATCH /api/actors/:id). A stale value (membership
+	// removed later) is harmless: readers match it against the actor's current
+	// memberships. SET NULL when the workspace itself is deleted.
+	// biome-ignore lint/suspicious/noExplicitAny: workspaces is declared below this table
+	defaultWorkspaceId: uuid('default_workspace_id').references((): any => workspaces.id, {
+		onDelete: 'set null',
+	}),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -49,15 +69,30 @@ export const actors = pgTable('actors', {
 
 // ── Workspaces ──────────────────────────────────────────────────────────────
 
-export const workspaces = pgTable('workspaces', {
-	id: uuid('id').defaultRandom().primaryKey(),
-	name: text('name').notNull(),
-	settings: jsonb('settings').notNull().default({}),
-	onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
-	createdBy: uuid('created_by').references(() => actors.id),
-	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-})
+export const workspaces = pgTable(
+	'workspaces',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		name: text('name').notNull(),
+		settings: jsonb('settings').notNull().default({}),
+		onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
+		// Admin-only entitlement: workspaces default to the Maskin-provided LLM plan
+		// (trial → pro/team). Only workspaces explicitly flagged here may use
+		// BYO LLM credentials (Claude OAuth, custom_llm, llm_keys). See PR #970.
+		enterpriseGranted: boolean('enterprise_granted').notNull().default(false),
+		// Single accountable human payer for this workspace's plan. Distinct from
+		// workspaceMembers.role='owner' (access control; many allowed per
+		// workspace). Must always reference a CURRENT member of this workspace —
+		// enforced at the app layer, not a DB constraint. Only ever mutated via
+		// POST /api/workspaces/:id/transfer-ownership. Gates the per-actor
+		// workspace-ownership cap (see apps/dev/src/lib/workspace-capacity.ts).
+		billingOwnerId: uuid('billing_owner_id').references(() => actors.id),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+	},
+	(t) => [index('workspaces_billing_owner_idx').on(t.billingOwnerId)],
+)
 
 // ── Workspace Members ───────────────────────────────────────────────────────
 
@@ -75,6 +110,71 @@ export const workspaceMembers = pgTable(
 	},
 	(t) => [primaryKey({ columns: [t.workspaceId, t.actorId] })],
 )
+
+// ── Workspace Invitations ──────────────────────────────────────────────────
+// Email-based invites into a workspace. The admin flow inserts a pending row
+// and dispatches an email carrying an opaque token; the invitee redeems the
+// token to attach (existing actor) or sign up + attach (new actor). Only the
+// SHA-256 of the token lives here — the raw string only ever appears in the
+// email URL and the accept-request path parameter. See bet
+// 6fe44b48-3939-4c29-80cf-533b4976601c for the shape.
+
+export const workspaceInvitations = pgTable(
+	'workspace_invitations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// Case-preserving on storage so the members list can render the email
+		// exactly as the admin typed it; case-insensitive uniqueness for the
+		// pending-per-workspace-per-email guard is enforced by the partial
+		// unique index on `lower(email)` below.
+		email: text('email').notNull(),
+		// 'member' | 'viewer'. Owner is deliberately excluded from the invite
+		// flow — ownership is transferred via POST /api/workspaces/:id/transfer-ownership.
+		role: text('role').notNull(),
+		// SHA-256 (hex) of the opaque token from the invite URL. Defense in
+		// depth against DB dumps and query-log leaks: a leaked hash cannot be
+		// redeemed. Never store the raw token.
+		tokenHash: text('token_hash').notNull(),
+		invitedByActorId: uuid('invited_by_actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'restrict' }),
+		// 'pending' | 'accepted' | 'revoked' | 'expired'
+		status: text('status').notNull().default('pending'),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+		acceptedByActorId: uuid('accepted_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		revokedByActorId: uuid('revoked_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		// Free-form audit context, e.g. { email_mismatch: true } when an
+		// invitee accepted from a signed-in actor whose email differs from
+		// the invite email.
+		metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Token lookup on POST /api/invites/:token/accept.
+		index('workspace_invitations_token_hash_idx').on(t.tokenHash),
+		// "Does this workspace already have a pending invite for ada@example.com?"
+		// Case-insensitive via a functional index on lower(email); scoped to
+		// pending so a revoked/expired row does not block a re-invite.
+		uniqueIndex('workspace_invitations_pending_ws_email_uniq')
+			.on(t.workspaceId, sql`lower(${t.email})`)
+			.where(sql`status = 'pending'`),
+		// Drives GET /api/invites?workspaceId=… (members-list pending row shape).
+		index('workspace_invitations_workspace_status_idx').on(t.workspaceId, t.status),
+	],
+)
+
+export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect
+export type NewWorkspaceInvitation = typeof workspaceInvitations.$inferInsert
 
 // ── Objects ─────────────────────────────────────────────────────────────────
 
@@ -103,6 +203,17 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		// Serves list_objects sort=updatedAt, which orders and seeks on the UTC
+		// millisecond-truncated value. Built CONCURRENTLY in migration 0088.
+		index('objects_ws_updated_at_ms_idx').on(
+			t.workspaceId,
+			sql`date_trunc('milliseconds', ${t.updatedAt} AT TIME ZONE 'UTC')`,
+		),
+		// Session teardown clears objects by active_session_id. Built CONCURRENTLY
+		// in migration 0083.
+		index('objects_active_session_idx')
+			.on(t.activeSessionId)
+			.where(sql`${t.activeSessionId} IS NOT NULL`),
 	],
 )
 
@@ -117,6 +228,12 @@ export const relationships = pgTable(
 		targetType: text('target_type').notNull(),
 		targetId: uuid('target_id').notNull(),
 		type: text('type').notNull(),
+		// S2 · edge-level context the writer hook persists at CREATE time.
+		// Currently the spawning `messageId` on a `conversation → session`
+		// `spawned` edge (surfaces the deep-link into a chat at the exact
+		// message). Nullable and jsonb so future edge types can add their own
+		// shape without another migration. Added in migration 0074.
+		metadata: jsonb('metadata'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -124,9 +241,13 @@ export const relationships = pgTable(
 	},
 	(t) => [
 		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		// S2 · widened to admit `conversation` and `session` endpoint kinds so
+		// the writer hook can persist automatic provenance edges
+		// (conversation→session `spawned`, session→object|file `produced_by`).
+		// Applied via migration 0074.
 		check(
 			'relationships_source_target_type_kind',
-			sql`${t.sourceType} IN ('object', 'file') AND ${t.targetType} IN ('object', 'file')`,
+			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,
 		),
 	],
 )
@@ -152,10 +273,71 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+		// Session self-heal's "does this session already have its completion event?" probe,
+		// answered from the index alone. Built CONCURRENTLY in migration 0114.
+		index('events_session_entity_action_idx')
+			.on(t.entityId, t.action, t.workspaceId)
+			.where(sql`${t.entityType} = 'session'`),
+		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
+		index('events_ws_entity_commented_idx')
+			.on(t.workspaceId, t.entityId, t.id)
+			.where(sql`${t.action} = 'commented'`),
 	],
 )
 
 // ── Integrations ───────────────────────────────────────────────────────────
+
+/**
+ * The complete status vocabulary for an `integrations` row. Applied to the
+ * column via `$type<>()` below so a reader that filters on a literal outside
+ * this union is a compile error rather than a query that silently matches
+ * nothing — the failure mode that shipped a permanently-hidden LinkedIn
+ * billing line (a reader filtering `'connected'`, a writer writing `'active'`).
+ *
+ * `active` is the only value that means "credentials are live and usable";
+ * every reader fetching usable credentials must filter on
+ * `INTEGRATION_STATUS_ACTIVE` rather than re-spelling the literal.
+ */
+export type IntegrationStatus =
+	| 'active'
+	| 'pending'
+	| 'revoked'
+	| 'error'
+	| 'awaiting_secret'
+	/**
+	 * Written only by `buildIntegrationInsert` (loop provisioning): a row
+	 * installed from a snapshot, which by construction carries no credentials
+	 * and needs the user to re-run OAuth. Matches no credential reader, which
+	 * is the intent — it must never be mistaken for a live connection.
+	 */
+	| 'inactive'
+	/**
+	 * Keychain chat capture (see credentials.source = 'chat_capture'): vaulted and
+	 * readable through getCredential during the undo window, before the sweeper
+	 * flips it to 'active'. Written by the capture endpoint (a later Keychain PR).
+	 */
+	| 'pending_undo'
+	/** Keychain undo: the row survives for FK integrity and audit; credentials and dek_ciphertext are zeroised. */
+	| 'undone'
+
+/** The one status meaning "connected and usable". See `IntegrationStatus`. */
+export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
+
+export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
+
+export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
+
+/**
+ * What an agent may do with an integration. 'none' is an explicit no that beats a read default.
+ * Keychain credentials only ever use 'read_write' (on/off): no row is off.
+ */
+export type AgentGrantAccess = 'none' | 'read' | 'read_write'
+
+/**
+ * What an agent with no grant row gets. 'none' for Keychain credentials, 'read' for everything
+ * else unless a person picked 'read_write' (every agent may write) or 'none'.
+ */
+export type IntegrationDefaultAccess = 'read' | 'read_write' | 'none'
 
 export const integrations = pgTable(
 	'integrations',
@@ -165,12 +347,46 @@ export const integrations = pgTable(
 			.references(() => workspaces.id)
 			.notNull(),
 		provider: text('provider').notNull(),
-		status: text('status').notNull(),
+		status: text('status').$type<IntegrationStatus>().notNull(),
 		externalId: text('external_id'),
-		credentials: text('credentials').notNull(),
+		// NULL only on an undone row (Keychain undo zeroises it); see migration 0088.
+		credentials: text('credentials'),
 		config: jsonb('config').notNull().default({}),
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
+		// Nullable everywhere. Only providers in the actor-scoped allow-list
+		// declared in apps/dev/src/lib/integrations/lookup.ts populate this;
+		// every other provider keeps actor_id = NULL and stays workspace-scoped.
+		actorId: uuid('actor_id').references(() => actors.id),
+		// R11-A · Fan-out registration foundation. Populated only for
+		// `provider = 'linkedin-unipile'` rows — the value is
+		// `unipileClient.getProfile({ identifier: 'me' }).public_identifier`,
+		// resolved once at connect-time and used as the account half of the
+		// per-identity MCP instance slug `linkedin-{unipile_acc_slug}-{identity_slug}`.
+		// Phase 1 rows that predate R11 carry NULL until the next
+		// `account.reconnect` webhook or the admin refresh-identities call fills it.
+		unipileAccSlug: text('unipile_acc_slug'),
+		// Keychain columns. providerMode: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'.
+		providerMode: text('provider_mode')
+			.$type<IntegrationProviderMode>()
+			.notNull()
+			.default('registered'),
+		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
+		displayName: text('display_name'),
+		// What an agent with no agent_grants row may do: 'read' (default), 'read_write' or 'none'.
+		// Keychain credentials are always 'none': explicit grant only. See agent_grants.
+		defaultAgentAccess: text('default_agent_access')
+			.$type<IntegrationDefaultAccess>()
+			.notNull()
+			.default('read'),
+		// Master-key-wrapped per-credential DEK. NULL = legacy row, decrypted under
+		// INTEGRATION_ENCRYPTION_KEY and upgraded to envelope on its next write.
+		dekCiphertext: text('dek_ciphertext'),
+		source: text('source').$type<IntegrationSource>().notNull().default('admin_ui'),
+		originSessionId: uuid('origin_session_id').references((): AnyPgColumn => sessions.id, {
+			onDelete: 'set null',
+		}),
+		undoExpiresAt: timestamp('undo_expires_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -178,14 +394,167 @@ export const integrations = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
-		uniqueIndex('integrations_ws_provider_external_uniq')
-			.on(t.workspaceId, t.provider, t.externalId)
+		uniqueIndex('integrations_ws_actor_provider_external_uniq')
+			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
-		uniqueIndex('integrations_ws_provider_null_external_uniq')
-			.on(t.workspaceId, t.provider)
-			.where(sql`${t.externalId} IS NULL`),
+		// One per provider for registered and OAuth connections. A bring-your-own API key
+		// or login is a named credential, so a workspace may hold several for one provider
+		// (0089, 0093).
+		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
+			.on(t.workspaceId, t.actorId, t.provider)
+			.where(sql`${t.externalId} IS NULL AND ${t.providerMode} NOT IN ('byo_apikey', 'byo_login')`),
+		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
+		index('integrations_ws_mode_idx').on(t.workspaceId, t.providerMode),
+		index('integrations_undo_sweeper_idx')
+			.on(t.status, t.undoExpiresAt)
+			.where(sql`${t.status} = 'pending_undo'`),
+		check(
+			'integrations_byo_needs_display_name',
+			sql`${t.providerMode} = 'registered' OR ${t.displayName} IS NOT NULL`,
+		),
+		check(
+			'integrations_default_agent_access_enum',
+			sql`${t.defaultAgentAccess} IN ('read', 'read_write', 'none')`,
+		),
+		check(
+			'integrations_source_enum',
+			sql`${t.source} IN ('admin_ui', 'chat_capture', 'oauth_callback', 'registry_install')`,
+		),
+		check(
+			'integrations_credentials_null_only_when_undone',
+			sql`${t.credentials} IS NOT NULL OR ${t.status} = 'undone'`,
+		),
+		index('integrations_unipile_acc_slug_idx')
+			.on(t.unipileAccSlug)
+			.where(sql`${t.unipileAccSlug} IS NOT NULL`),
 	],
 )
+export type Integration = typeof integrations.$inferSelect
+
+/**
+ * Which agents may use an integration, and how. One row per (integration, agent);
+ * an agent with no row falls back to integrations.default_agent_access. Humans are
+ * not subject to grants. Resolution lives in apps/dev/src/lib/integrations/agent-access.ts.
+ */
+export const agentGrants = pgTable(
+	'agent_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		access: text('access').$type<AgentGrantAccess>().notNull(),
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('agent_grants_integration_actor_uniq').on(t.integrationId, t.actorId),
+		index('agent_grants_ws_actor_idx').on(t.workspaceId, t.actorId),
+		check('agent_grants_access_enum', sql`${t.access} IN ('none', 'read', 'read_write')`),
+	],
+)
+export type AgentGrant = typeof agentGrants.$inferSelect
+
+/**
+ * Access to a saved credential for one conversation ("Allow in this chat"). Reaches only
+ * sessions of this agent in this conversation; removed with the chat or the credential.
+ */
+export const agentChatGrants = pgTable(
+	'agent_chat_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('agent_chat_grants_uniq').on(t.integrationId, t.actorId, t.conversationId),
+		index('agent_chat_grants_actor_conv_idx').on(t.actorId, t.conversationId),
+	],
+)
+export type AgentChatGrant = typeof agentChatGrants.$inferSelect
+
+// ── Keychain ────────────────────────────────────────────────────────────────
+
+export type CredentialAccessAction =
+	| 'read'
+	| 'create'
+	| 'undone'
+	| 'rotated'
+	| 'sweeper_activated'
+	| 'scope_changed'
+
+/**
+ * Hash-chained audit log of credential use. Insert-only: the app role has no
+ * UPDATE or DELETE. prev_row_hash, row_hash, read_at and id are all assigned by
+ * the credential_access_log_insert() BEFORE INSERT trigger under a per-workspace
+ * lock, so a caller cannot set them (see migration 0087).
+ */
+export const credentialAccessLog = pgTable(
+	'credential_access_log',
+	{
+		id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// No FKs on integration_id and actor_id: the log is insert-only, so a reference
+		// would make the actor or integration undeletable (migration 0094).
+		integrationId: uuid('integration_id').notNull(),
+		actorId: uuid('actor_id').notNull(),
+		sessionId: uuid('session_id'),
+		loopId: uuid('loop_id'),
+		outboundTarget: text('outbound_target'),
+		action: text('action').$type<CredentialAccessAction>().notNull().default('read'),
+		source: text('source').notNull().default('unknown'),
+		requestId: text('request_id').notNull(),
+		readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+		detail: text('detail'),
+		prevRowHash: text('prev_row_hash').notNull().default(''),
+		rowHash: text('row_hash').notNull().default(''),
+	},
+	(t) => [
+		index('cal_ws_read_at_idx').on(t.workspaceId, t.readAt),
+		index('cal_integration_read_at_idx').on(t.integrationId, t.readAt),
+		index('cal_actor_read_at_idx').on(t.actorId, t.readAt),
+		index('cal_action_idx').on(t.workspaceId, t.action),
+	],
+)
+/**
+ * The audit-chain head, once per workspace per UTC day. Append-only: a trigger
+ * rejects UPDATE and DELETE (see migration 0092).
+ */
+export const credentialChainSnapshots = pgTable(
+	'credential_chain_snapshots',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		snapshotDate: date('snapshot_date').notNull(),
+		maxId: bigint('max_id', { mode: 'bigint' }).notNull(),
+		rowHash: text('row_hash').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.workspaceId, t.snapshotDate] })],
+)
+export type NewIntegration = typeof integrations.$inferInsert
 
 // ── Slack User Links ───────────────────────────────────────────────────────
 // Per-(Slack team, Slack user) routing into a Maskin actor + default
@@ -225,6 +594,20 @@ export const triggers = pgTable('triggers', {
 		.references(() => actors.id)
 		.notNull(),
 	enabled: boolean('enabled').notNull().default(true),
+	// Loops v4 vertical-story fields (D6a). All three nullable and dormant on
+	// this task — the reconciler (D6b) and the vertical-story renderer (D6c)
+	// wire them up in stacked follow-up PRs. `hands_off_to_actor_id` is kept
+	// explicit rather than derived from the next step's `target_actor_id` so
+	// the renderer treats HANDS OFF as a first-class row (Architect + Designer
+	// alignment 2026-09-03; SPEC Q2 Option A). `escalates_to_actor_id` +
+	// `escalate_after_ms` together define the fixed-shape escalation the D6b
+	// cron in trigger-runner scans for.
+	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
+	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
+	escalateAfterMs: integer('escalate_after_ms'),
+	// The last time an escalation comment was posted for this step. The
+	// escalation reconciler that wrote it has been removed; the column remains.
+	lastEscalatedAt: timestamp('last_escalated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),
 	createdBy: uuid('created_by')
@@ -264,19 +647,94 @@ export const sessions = pgTable(
 		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
 			onDelete: 'set null',
 		}),
+		// The thread a chat session answers in: the id of the thread's root message in
+		// the same conversation (same type as messages.thread_root_id). NULL = the main
+		// chat, which is every session today. No FK on purpose: a session row outlives
+		// the message and must not cascade with it. Added in migration 0119.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
+		// The session whose create_session / @mention call started this
+		// one: the sender a finished helper reports back to. Only ever set after the
+		// claimed session was checked to belong to the authenticated caller. NULL =
+		// no known sender. NOT source_session_id, which means "restore that session's
+		// workspace snapshot". No FK on purpose: the pointer must survive a purge of
+		// the sender's row. Index in migration 0090.
+		spawnedBySessionId: uuid('spawned_by_session_id'),
+		// One-shot claim taken by services/helper-return.ts before it posts the
+		// outcome. NULL = not returned yet. Migration 0089.
+		helperReturnedAt: timestamp('helper_returned_at', { withTimezone: true }),
+		// Handed-off strip anchors: the assistant message that triggered this
+		// sub-agent spawn, and the sessions this one is blocked behind. Both
+		// nullable — pre-migration rows read NULL ("no strip"). Written from the
+		// create_session path when the caller supplies a message id / blockers.
+		// ON DELETE SET NULL: the anchor is a pointer, not ownership — a deleted
+		// message must not delete the session, it just stops rendering a strip.
+		spawnedByMessageId: bigint('spawned_by_message_id', { mode: 'number' }).references(
+			(): AnyPgColumn => messages.id,
+			{ onDelete: 'set null' },
+		),
+		dependsOnSessionIds: uuid('depends_on_session_ids').array(),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
 		totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
-		inputTokens: integer('input_tokens'),
-		outputTokens: integer('output_tokens'),
-		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
-		cacheReadInputTokens: integer('cache_read_input_tokens'),
-		durationMs: integer('duration_ms'),
+		// OpenRouter model id that actually ran this session (e.g.
+		// `deepseek/deepseek-v4-flash`). Stamped at spawn on the maskin_plan
+		// route from `MASKIN_FALLBACK_MODEL`; null on every other route so
+		// `claude_oauth` and BYO paths keep pricing off Claude Code's own
+		// `total_cost_usd`. Load-bearing for the follow-on local cost resolver,
+		// which prices maskin_plan sessions from OpenRouter's pricing table
+		// keyed on this value.
+		modelName: text('model_name'),
+		// The object this session was started for — a bet, task, insight, or
+		// any first-class object. Threaded onto the `session_failed` event's
+		// `data.initiated_from` block so a failure card can link back to what
+		// the session was doing, and onto the PostHog `runtime_session_ended`
+		// event as `context_object_id` so Criterion 3 of the parent bet is
+		// measurable. The id column is nullable; NULL means
+		// "no originating object known" (direct API create, onboarding,
+		// notification response, cron trigger). FK uses ON DELETE SET NULL so
+		// deleting the object nulls the linkage rather than blocking the row.
+		// Partial index (WHERE NOT NULL) lives in migration 0078.
+		initiatedFromObjectId: uuid('initiated_from_object_id').references(
+			(): AnyPgColumn => objects.id,
+			{ onDelete: 'set null' },
+		),
+		// Deprecated: no longer written or read (the object's type is looked up
+		// from initiated_from_object_id). Kept so the column and this schema stay
+		// in step until a follow-up migration drops it.
+		initiatedFromObjectType: text('initiated_from_object_type'),
+		// bigint (mode 'number'): cumulative counters outgrow int4 on long-lived
+		// sessions (cache reads reached 2.1B). Drizzle maps them back to JS
+		// numbers, exact below 2^53. Widened in migration 0082.
+		inputTokens: bigint('input_tokens', { mode: 'number' }),
+		outputTokens: bigint('output_tokens', { mode: 'number' }),
+		cacheCreationInputTokens: bigint('cache_creation_input_tokens', { mode: 'number' }),
+		cacheReadInputTokens: bigint('cache_read_input_tokens', { mode: 'number' }),
+		durationMs: bigint('duration_ms', { mode: 'number' }),
+		// Usage watermark (migration 0113): the newest session_logs.id whose `result`
+		// envelope is already added into the usage columns above, and the CLI's cumulative
+		// cost at that point. Lets a per-turn write and every settle path add only the
+		// results not yet counted, so none of them double-counts.
+		usageCountedLogId: bigint('usage_counted_log_id', { mode: 'number' }),
+		usageCountedCliCost: numeric('usage_counted_cli_cost', { precision: 12, scale: 6 }),
 		currentActivity: text('current_activity'),
+		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
+		// `status` text because reaper + retry-scheduler need to tell
+		// waiting-on-machine apart from a genuine stall. Landed in migration
+		// 0076; readers/writers land in Commits 5, 6, 7.
+		sessionState: text('session_state')
+			.notNull()
+			.default('queued')
+			.$type<'queued' | 'waiting_for_machine' | 'starting' | 'running' | 'done'>(),
+		stateEnteredAt: timestamp('state_entered_at', { withTimezone: true }).notNull().defaultNow(),
+		retryAt: timestamp('retry_at', { withTimezone: true }),
+		retriedSessionId: uuid('retried_session_id').references((): AnyPgColumn => sessions.id),
+		retryOf: uuid('retry_of').references((): AnyPgColumn => sessions.id),
+		attemptNumber: integer('attempt_number').notNull().default(1),
+		driverHeartbeatAt: timestamp('driver_heartbeat_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -284,11 +742,30 @@ export const sessions = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
+		check(
+			'sessions_session_state_check',
+			sql`${t.sessionState} IN ('queued','waiting_for_machine','starting','running','done')`,
+		),
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
 		// Range-scan path for list_sessions(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// "Does this agent have another live session?" on every completion. Built
+		// CONCURRENTLY in migration 0087.
+		index('sessions_actor_status_idx').on(t.actorId, t.status),
+		// Helper → sender lookups. Built CONCURRENTLY in migration 0090.
+		index('sessions_spawned_by_session_id_idx')
+			.on(t.spawnedBySessionId)
+			.where(sql`${t.spawnedBySessionId} IS NOT NULL`),
+		// Reconciler self-heal window scan over a session's settled time. Built
+		// CONCURRENTLY in migration 0086.
+		index('sessions_settled_at_idx').on(sql`coalesce(${t.completedAt}, ${t.updatedAt})`),
+		// Period usage sum behind GET /api/billing/usage; maskin_plan sessions only.
+		// Built CONCURRENTLY in migration 0085.
+		index('sessions_ws_plan_usage_idx')
+			.on(t.workspaceId, t.createdAt)
+			.where(sql`${t.config}->>'llm_route' = 'maskin_plan'`),
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),
@@ -304,11 +781,15 @@ export const sessions = pgTable(
 			.where(sql`${t.conversationId} IS NOT NULL`),
 		// Authoritative concurrency guard, not just an optimization: at most one
 		// interactive session may be actively spawning/running for a given
-		// (conversation, agent) pair. Enforced at the DB layer because the
+		// (conversation, agent, thread). Enforced at the DB layer because the
 		// application-level lookup-then-insert in evaluateAndRespond has a race
 		// window between two near-simultaneous replies from the same agent.
-		uniqueIndex('sessions_conversation_actor_active_uniq')
-			.on(t.conversationId, t.actorId)
+		// COALESCE maps the main chat (NULL thread) to 0, which no message id takes,
+		// so two main-chat sessions still collide. Built CONCURRENTLY in migration 0120;
+		// it replaced the (conversation, agent) index sessions_conversation_actor_active_uniq,
+		// dropped in migration 0122.
+		uniqueIndex('sessions_conversation_actor_thread_active_uniq')
+			.on(t.conversationId, t.actorId, sql`(coalesce(${t.threadRootId}, 0))`)
 			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
 		// Backs the session-log retention sweep. Interactive sessions are excluded
 		// from the index entirely — their logs are never pruned, so a chat keeps
@@ -316,8 +797,124 @@ export const sessions = pgTable(
 		index('sessions_prune_candidates_idx')
 			.on(t.completedAt)
 			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
+		// Reaper's live-session scan (Commit 6): only the states the reaper
+		// cares about, so the index carries a tiny slice of the table.
+		index('sessions_session_state_state_entered_at_idx')
+			.on(t.sessionState, t.stateEnteredAt)
+			.where(sql`${t.sessionState} IN ('starting','running','waiting_for_machine')`),
+		// Retry-scheduler's 30s tick (Commit 7): excludes rows already retried,
+		// so each retry_at is picked at most once.
+		index('sessions_retry_at_idx')
+			.on(t.retryAt)
+			.where(sql`${t.retryAt} IS NOT NULL AND ${t.retriedSessionId} IS NULL`),
 	],
 )
+
+// ── API Keys ───────────────────────────────────────────────────────────────
+
+export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session'
+
+/**
+ * Hashed API keys. One actor holds many: a primary key (shown once at creation or rotation),
+ * one per web or iOS login, and one per agent session launch. key_hash is the hex SHA-256 of
+ * the full ank_ token, so a lookup is one indexed equality and a database leak yields no
+ * usable keys. A key authenticates while revoked_at is null and expires_at is null or future.
+ */
+export const apiKeys = pgTable(
+	'api_keys',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		keyHash: text('key_hash').notNull().unique(),
+		last4: text('last4').notNull(),
+		kind: text('kind').$type<ApiKeyKind>().notNull(),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('api_keys_actor_kind_idx').on(t.actorId, t.kind),
+		index('api_keys_session_idx').on(t.sessionId).where(sql`${t.sessionId} IS NOT NULL`),
+		check('api_keys_kind_enum', sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session')`),
+	],
+)
+export type ApiKey = typeof apiKeys.$inferSelect
+
+// ── Comment Responder Claims ───────────────────────────────────────────────
+// One responder session per (comment event, actor). The thread-reply spawn and the
+// CommentDispatcher fallback ladder both claim here before starting a session; the INSERT that
+// wins starts it, the other stands down. See migration 0115.
+export type CommentResponderClaimedBy = 'thread_reply' | 'comment_fallback'
+export const commentResponderClaims = pgTable(
+	'comment_responder_claims',
+	{
+		sourceCommentEventId: bigint('source_comment_event_id', { mode: 'number' })
+			.references(() => events.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		claimedBy: text('claimed_by').$type<CommentResponderClaimedBy>().notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({
+			name: 'comment_responder_claims_pk',
+			columns: [t.sourceCommentEventId, t.actorId],
+		}),
+		check(
+			'comment_responder_claims_claimed_by_enum',
+			sql`${t.claimedBy} IN ('thread_reply', 'comment_fallback')`,
+		),
+	],
+)
+
+// ── For You dismissals ─────────────────────────────────────────────────────
+//
+// One row per person and source comment: the person pressed Dismiss on the For You card
+// that comment raised. Dismissing is its own record because the read position moves on
+// every page open, so it cannot tell "I looked" from "I am done with this". Curated
+// cards carry a status on their notification row; this table is for decision cards,
+// which have no row of their own. Deleting the row is Undo.
+export const forYouDismissals = pgTable(
+	'for_you_dismissals',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		sourceCommentId: bigint('source_comment_id', { mode: 'number' })
+			.references(() => events.id, { onDelete: 'cascade' })
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ name: 'for_you_dismissals_pk', columns: [t.actorId, t.sourceCommentId] })],
+)
+
+// ── For You withdrawals ────────────────────────────────────────────────────
+//
+// One row per withdrawn decision card, keyed on the card's source comment. The agent that wrote
+// the comment, or the Chief of Staff, retires a card that is dead (a test card, a passed
+// deadline, a duplicate). Global: the card leaves every list that reads the For You loaders.
+// withdrawn_by is SET NULL, not cascade: removing the withdrawer must not bring the card back.
+// Deleting the row is the undo.
+export const forYouWithdrawals = pgTable('for_you_withdrawals', {
+	sourceCommentId: bigint('source_comment_id', { mode: 'number' })
+		.primaryKey()
+		.references(() => events.id, { onDelete: 'cascade' }),
+	workspaceId: uuid('workspace_id')
+		.references(() => workspaces.id, { onDelete: 'cascade' })
+		.notNull(),
+	withdrawnBy: uuid('withdrawn_by').references(() => actors.id, { onDelete: 'set null' }),
+	reason: text('reason').notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
 
 // ── Session Logs ───────────────────────────────────────────────────────────
 
@@ -367,11 +964,32 @@ export const conversations = pgTable(
 		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
 		// the same transaction as every message insert.
 		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		// What a group chat is about: an object (task/bet/insight) or an installed
+		// loop. Polymorphic, so no FK; the create route checks the target exists in
+		// the workspace. NULL for ordinary chats.
+		subjectType: text('subject_type'),
+		subjectId: uuid('subject_id'),
+		// Marks the one direct message (DM) between two actors: the two actor ids,
+		// lowest first, joined with ':' (directPairKey in services/direct-chat.ts).
+		// NULL for every topical chat, however many people are in it.
+		directPairKey: text('direct_pair_key'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		// One DM per pair of actors in a workspace.
+		uniqueIndex('conversations_direct_pair_uniq')
+			.on(t.workspaceId, t.directPairKey)
+			.where(sql`${t.directPairKey} IS NOT NULL`),
+		// One group chat per subject: asking for it again finds the existing one.
+		uniqueIndex('conversations_subject_uniq')
+			.on(t.workspaceId, t.subjectType, t.subjectId)
+			.where(sql`${t.subjectId} IS NOT NULL`),
+		check(
+			'conversations_subject_check',
+			sql`(${t.subjectType} IS NULL AND ${t.subjectId} IS NULL) OR (${t.subjectType} IN ('object', 'loop') AND ${t.subjectId} IS NOT NULL)`,
+		),
 		check(
 			'conversations_title_auto_state_check',
 			sql`${t.titleAutoState} IN ('none', 'initial', 'refined', 'manual')`,
@@ -448,14 +1066,40 @@ export const messages = pgTable(
 		metadata: jsonb('metadata'),
 		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// Set when the author edits the message; null for never-edited messages.
+		editedAt: timestamp('edited_at', { withTimezone: true }),
+		// Set on a reply inside a thread: the id of the thread's root message in the
+		// same conversation. Roots are never replies themselves (one level only), so
+		// this never chains. Cascades with the root.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }).references(
+			(): AnyPgColumn => messages.id,
+			{ onDelete: 'cascade' },
+		),
+		// A thread reply the author also posted to the main timeline ("also send to
+		// channel"). Only meaningful when thread_root_id is set.
+		threadAlsoInChannel: boolean('thread_also_in_channel').notNull().default(false),
 	},
 	(t) => [
 		index('messages_conversation_id_idx').on(t.conversationId, t.id),
+		index('messages_thread_root_idx')
+			.on(t.threadRootId, t.id)
+			.where(sql`${t.threadRootId} IS NOT NULL`),
 		index('messages_session_id_idx').on(t.sessionId),
+		// Chat id + trigram index for the chat message-text search (services/search.ts, deepHit).
+		// Migrations 0122 and 0123 (extensions), 0124 (this index, built CONCURRENTLY).
+		index('messages_conv_content_trgm_idx').using(
+			'gin',
+			t.conversationId,
+			t.content.op('gin_trgm_ops'),
+		),
 		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
 		// the Docker log stream replays a live session's ENTIRE log on first
 		// connect (`tail: 'all'`), so without this an apps/dev restart would
 		// re-post every past turn of every live chat. See migration 0061.
+		// A comment copied into an object's chat lands once, however often the copy runs.
+		uniqueIndex('messages_comment_event_uniq')
+			.on(t.conversationId, sql`((${t.metadata}->>'comment_event_id'))`)
+			.where(sql`(${t.metadata}->>'comment_event_id') IS NOT NULL`),
 		uniqueIndex('messages_final_output_dedupe_uniq')
 			.on(t.sessionId, sql`((${t.metadata}->'final_output'->>'dedupe_key'))`)
 			.where(sql`(${t.metadata}->'final_output'->>'dedupe_key') IS NOT NULL`),
@@ -465,6 +1109,82 @@ export const messages = pgTable(
 
 export type Message = typeof messages.$inferSelect
 export type NewMessage = typeof messages.$inferInsert
+
+// One emoji one actor put on one message. The primary key makes adding idempotent and lets
+// the same person use several different emoji on a message.
+export const messageReactions = pgTable(
+	'message_reactions',
+	{
+		messageId: bigint('message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		emoji: text('emoji').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.messageId, t.actorId, t.emoji] })],
+)
+
+// Per-actor read cursor for one thread. Advance-only (GREATEST on write), like
+// conversation_participants.last_read_message_id. A missing row means the actor
+// has not opened the thread; replies by others then all count as unread.
+export const messageThreadReads = pgTable(
+	'message_thread_reads',
+	{
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		rootMessageId: bigint('root_message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }).notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.actorId, t.rootMessageId] })],
+)
+
+// Chat turns waiting for an agent's interactive conversation session to
+// become writable. A message that arrives while the (conversation, agent)
+// session is still booting (pending/starting/queued) is buffered here by the
+// conversation responder instead of being dropped, and drained via
+// writeInput once the session's stdin attaches — see
+// SessionManager.drainPendingConversationTurns. Rows are claimed with
+// DELETE ... RETURNING so concurrent drains can't double-deliver.
+export const conversationPendingTurns = pgTable(
+	'conversation_pending_turns',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The agent the turn is addressed to (not the message's author).
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		messageId: bigint('message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The thread the turn belongs to, as sessions.thread_root_id; NULL = the main
+		// chat. A session drains only the turns of its own thread. Migration 0119.
+		threadRootId: bigint('thread_root_id', { mode: 'number' }),
+		// The exact stream-json user envelope to deliver via writeInput.
+		payload: jsonb('payload').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Idempotency: one buffered turn per (conversation, agent, message) —
+		// doubles as the (conversation, agent) drain-lookup index.
+		uniqueIndex('conversation_pending_turns_conv_actor_msg_uniq').on(
+			t.conversationId,
+			t.actorId,
+			t.messageId,
+		),
+	],
+)
+
+export type ConversationPendingTurn = typeof conversationPendingTurns.$inferSelect
 
 // ── Agent Files ────────────────────────────────────────────────────────────
 
@@ -546,6 +1266,97 @@ export const agentSkills = pgTable(
 export type AgentSkill = typeof agentSkills.$inferSelect
 export type NewAgentSkill = typeof agentSkills.$inferInsert
 
+// ── Voice Sessions ──────────────────────────────────────────────────────────
+//
+// One row per 1:1 voice call between a workspace human and a voice-enabled
+// agent. `status` moves pending → active → ended; the partial unique index
+// (`voice_sessions_active_per_human_uniq`) is the concurrency guard for "one
+// live call per human" and produces the 409 branch on POST /api/voice-sessions
+// without an application-level TOCTOU shim. The audio/token/cost columns are
+// populated by the session-end pipeline (Task 4); this table's writers here
+// only fill the routing + auth fields at mint.
+export const voiceSessions = pgTable('voice_sessions', {
+	id: uuid('id').defaultRandom().primaryKey(),
+	workspaceId: uuid('workspace_id')
+		.notNull()
+		.references(() => workspaces.id, { onDelete: 'cascade' }),
+	agentActorId: uuid('agent_actor_id')
+		.notNull()
+		.references(() => actors.id),
+	humanActorId: uuid('human_actor_id')
+		.notNull()
+		.references(() => actors.id),
+	conversationId: uuid('conversation_id').references(() => conversations.id, {
+		onDelete: 'set null',
+	}),
+	status: text('status').notNull(),
+	vendor: text('vendor').notNull().default('openai_realtime'),
+	vendorSessionId: text('vendor_session_id'),
+	model: text('model'),
+	transcriptStorageKey: text('transcript_storage_key'),
+	inputAudioSeconds: integer('input_audio_seconds'),
+	outputAudioSeconds: integer('output_audio_seconds'),
+	// Running totals written as the call goes (each completed turn, each tool
+	// call), so ending a call does not depend on server memory.
+	inputAudioMs: integer('input_audio_ms').notNull().default(0),
+	outputAudioMs: integer('output_audio_ms').notNull().default(0),
+	turnCount: integer('turn_count').notNull().default(0),
+	toolCallsCount: integer('tool_calls_count').notNull().default(0),
+	inputTokens: integer('input_tokens'),
+	outputTokens: integer('output_tokens'),
+	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
+	endedReason: text('ended_reason'),
+	startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+	endedAt: timestamp('ended_at', { withTimezone: true }),
+	timeoutAt: timestamp('timeout_at', { withTimezone: true }).notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type VoiceSession = typeof voiceSessions.$inferSelect
+export type NewVoiceSession = typeof voiceSessions.$inferInsert
+
+// ── Voice tool call log ─────────────────────────────────────────────────────
+//
+// One row per tool call the voice model made during a call: what it asked for
+// (redacted, size-capped), whether it worked, and the first part of what the
+// model was told back. An internal diagnostic log, not an entity: rows are never
+// edited, so there is no events row, and they are swept after 30 days
+// (services/voice-tool-call-log-cleaner.ts). Written best-effort; a missing row
+// never means the call failed.
+export const voiceToolCalls = pgTable(
+	'voice_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		voiceSessionId: uuid('voice_session_id')
+			.notNull()
+			.references(() => voiceSessions.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// The id the realtime model gave the call; ties a row to the transcript.
+		callId: text('call_id'),
+		startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+		toolName: text('tool_name').notNull(),
+		// Redacted and capped; see lib/voice-tool-call-redaction.ts.
+		argsSummary: jsonb('args_summary').$type<unknown>(),
+		success: boolean('success').notNull(),
+		errorCode: text('error_code'),
+		errorMessage: text('error_message'),
+		// Length of the tool's output before voice's cap, and whether the cap cut it.
+		outputChars: integer('output_chars').notNull(),
+		outputTruncated: boolean('output_truncated').notNull().default(false),
+		latencyMs: integer('latency_ms').notNull(),
+		outputPreview: text('output_preview'),
+	},
+	(t) => [
+		index('voice_tool_calls_session_started_idx').on(t.voiceSessionId, t.startedAt),
+		index('voice_tool_calls_started_at_idx').on(t.startedAt),
+	],
+)
+
+export type VoiceToolCall = typeof voiceToolCalls.$inferSelect
+export type NewVoiceToolCall = typeof voiceToolCalls.$inferInsert
+
 // ── Imports ───────────────────────────────────────────────────────────
 
 export const imports = pgTable(
@@ -565,6 +1376,9 @@ export const imports = pgTable(
 		processedRows: integer('processed_rows').notNull().default(0),
 		successCount: integer('success_count').notNull().default(0),
 		errorCount: integer('error_count').notNull().default(0),
+		// Rows that matched an existing object via the mapping's `matchOn` key
+		skippedCount: integer('skipped_count').notNull().default(0),
+		updatedCount: integer('updated_count').notNull().default(0),
 		mapping: jsonb('mapping'),
 		preview: jsonb('preview'),
 		errors: jsonb('errors'),
@@ -614,6 +1428,10 @@ export const mcpTelemetry = pgTable(
 		durationMs: integer('duration_ms'),
 		objectType: text('object_type'),
 		mutationKind: text('mutation_kind'),
+		// tool_call rows of the six list-family tools only: whether the call carried a
+		// cursor or offset. Null for every other row. `object_type` on those rows is the
+		// type the call listed (see listCallObjectType in @maskin/shared).
+		hasCursor: boolean('has_cursor'),
 		data: jsonb('data'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -690,6 +1508,42 @@ export const readState = pgTable(
 export type ReadState = typeof readState.$inferSelect
 export type NewReadState = typeof readState.$inferInsert
 
+// ── Star State ────────────────────────────────────────────────────────────
+//
+// Per-actor "starred" flag on a polymorphic (entity_type, entity_id) target.
+// Mirrors `read_state` in shape and reason: server-persisted per-caller state
+// so a toggle from one device shows up on the caller's other devices without
+// a client-only localStorage cache. Presence of the row means starred; unstar
+// is a row DELETE (see services/star-state.ts), no soft-flag or unstarred_at
+// column — boolean semantics match the payload's `is_starred_by_me` scalar.
+//
+// `entity_type = 'object'` at ship; `comment` / `session` are deliberately
+// left open in the schema so the same table backs future starrable entities
+// without a migration, but no code path writes them yet.
+
+export const starState = pgTable(
+	'star_state',
+	{
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		entityType: text('entity_type').notNull(),
+		entityId: uuid('entity_id').notNull(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		starredAt: timestamp('starred_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.entityType, t.entityId] }),
+		index('star_state_lookup_idx').on(t.workspaceId, t.actorId),
+		index('star_state_reverse_idx').on(t.entityType, t.entityId),
+	],
+)
+
+export type StarState = typeof starState.$inferSelect
+export type NewStarState = typeof starState.$inferInsert
+
 // ── Notifications ─────────────────────────────────────────────────────────
 
 export const notifications = pgTable(
@@ -735,8 +1589,18 @@ export const files = pgTable(
 		name: text('name').notNull(),
 		description: text('description'),
 		mimeType: text('mime_type').notNull(),
-		sizeBytes: integer('size_bytes').notNull(),
+		// bigint: files can exceed the 2 GiB an integer holds. mode 'number' is exact up to 2^53.
+		sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
 		storageKey: text('storage_key').notNull(),
+		// sha256 (lowercase hex) of the stored bytes. Set on every write; null
+		// only for rows that predate the column, which are hashed from storage
+		// on first read or first save. Echoed by clients as if_match.
+		contentHash: text('content_hash'),
+		// What the file is *for*, when that matters beyond its mime type. `'briefing'`
+		// marks an HTML page written to be read in For you; nothing else is surfaced
+		// there, so a loop's incidental output files stay out of the row. Null for
+		// ordinary files.
+		kind: text('kind'),
 		// Pinned review annotations (humans pin comments on rendered HTML files).
 		// Stored on the row so they round-trip with the file for every reader —
 		// UI and MCP get_file — without an extra S3 fetch.
@@ -750,11 +1614,137 @@ export const files = pgTable(
 	(t) => [
 		index('files_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('files_ws_name_idx').on(t.workspaceId, t.name),
+		index('files_ws_kind_created_at_idx').on(t.workspaceId, t.kind, t.createdAt),
 	],
 )
 
 export type File = typeof files.$inferSelect
 export type NewFile = typeof files.$inferInsert
+
+// ── File Uploads ────────────────────────────────────────────────────────────
+// An in-flight direct-to-storage upload of a large file. The browser PUTs parts
+// straight to S3 (multipart); this row remembers what the caller declared so
+// that completing the upload can check the stored object against it and only
+// then create the `files` row. `file_id` is the id the file will have.
+export const fileUploads = pgTable(
+	'file_uploads',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		fileId: uuid('file_id').notNull().unique(),
+		name: text('name').notNull(),
+		description: text('description'),
+		kind: text('kind'),
+		mimeType: text('mime_type').notNull(),
+		sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+		storageKey: text('storage_key').notNull(),
+		s3UploadId: text('s3_upload_id').notNull(),
+		partSize: integer('part_size').notNull(),
+		partCount: integer('part_count').notNull(),
+		// pending → completing → completed, or → aborted. Only pending uploads can be
+		// completed; completing means one request is stitching it right now.
+		status: text('status').notNull().default('pending'),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		// When a complete request took the upload. A completing row older than a
+		// complete can take belongs to a request that died.
+		claimedAt: timestamp('claimed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('file_uploads_ws_status_idx').on(t.workspaceId, t.status),
+		index('file_uploads_open_idx')
+			.on(t.expiresAt)
+			.where(sql`${t.status} IN ('pending', 'completing')`),
+		check(
+			'file_uploads_status_check',
+			sql`${t.status} IN ('pending', 'completing', 'completed', 'aborted')`,
+		),
+	],
+)
+
+export type FileUpload = typeof fileUploads.$inferSelect
+export type NewFileUpload = typeof fileUploads.$inferInsert
+
+// ── Extensions ──────────────────────────────────────────────────────────────
+// Workspace-owned custom (bring-your-own) integrations. One row can carry an
+// MCP server config, a webhook config, or both. The slug is the join key to
+// `integrations.provider = 'extension:{slug}'` (the encrypted signing secret /
+// API key) and `webhook_deliveries.provider = 'extension:{slug}'`, so it is
+// immutable after creation. `webhook_token` is the opaque URL segment of
+// POST /api/webhooks/x/:token and is globally unique because the route resolves
+// it before it knows the workspace. See drizzle/0092_extensions.sql.
+
+export const extensions = pgTable(
+	'extensions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		slug: text('slug').notNull(),
+		name: text('name').notNull(),
+		status: text('status').$type<'active' | 'disabled' | 'draft'>().notNull().default('draft'),
+		mcpConfig: jsonb('mcp_config').$type<McpConfig | null>(),
+		webhookConfig: jsonb('webhook_config').$type<ExtensionWebhookConfig | null>(),
+		webhookToken: text('webhook_token'),
+		toolGrants: jsonb('tool_grants').$type<ToolGrants>().notNull().default({}),
+		// Runtime-populated skip reason (e.g. tool cap exceeded) so the UI can
+		// show an inline warning without adding a status value.
+		mcpLastError: text('mcp_last_error'),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('extensions_workspace_slug_uniq').on(t.workspaceId, t.slug),
+		uniqueIndex('extensions_webhook_token_uniq')
+			.on(t.webhookToken)
+			.where(sql`${t.webhookToken} IS NOT NULL`),
+		index('extensions_workspace_status_idx').on(t.workspaceId, t.status),
+	],
+)
+export type Extension = typeof extensions.$inferSelect
+export type NewExtension = typeof extensions.$inferInsert
+
+// ── Blocked tool calls ──────────────────────────────────────────────────────
+// One row per tool call the guard wrapper refused on a custom extension. Rows
+// older than 30 days are dropped by BlockedToolCallsCleaner. session_id is
+// nullable and set null on session delete so the audit row outlives the
+// session. See drizzle/0093_blocked_tool_calls.sql.
+
+export const blockedToolCalls = pgTable(
+	'blocked_tool_calls',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		extensionId: uuid('extension_id')
+			.references(() => extensions.id, { onDelete: 'cascade' })
+			.notNull(),
+		agentId: uuid('agent_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		toolName: text('tool_name').notNull(),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		blockedAt: timestamp('blocked_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('blocked_tool_calls_ext_agent_idx').on(
+			t.extensionId,
+			t.agentId,
+			sql`${t.blockedAt} DESC`,
+		),
+		index('blocked_tool_calls_ws_time_idx').on(t.workspaceId, sql`${t.blockedAt} DESC`),
+	],
+)
+export type BlockedToolCall = typeof blockedToolCalls.$inferSelect
+export type NewBlockedToolCall = typeof blockedToolCalls.$inferInsert
 
 // ── Webhook Deliveries ──────────────────────────────────────────────────────
 // Idempotency ledger for inbound webhook deliveries. Each row claims a single
@@ -790,6 +1780,115 @@ export const webhookDeliveries = pgTable(
 	],
 )
 
+// ── Workspace Overage Usage (retired) ───────────────────────────────────────
+// Idempotency ledger for the old Stripe-metered overage billing mechanism —
+// once a pro/team workspace exceeded its hard cap, each new block of usage
+// claimed a row here before being reported to Stripe as a meter event.
+// Retired in favor of the prepaid usage-credits model (see
+// `workspaceCreditLedger` below); no longer written to. Kept, unmigrated, so
+// historical rows stay queryable for support/finance.
+
+export const workspaceOverageUsage = pgTable(
+	'workspace_overage_usage',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		// Unix seconds — matches `billing.period_start` so a ledger row is scoped
+		// to the exact Stripe billing period it was incurred in.
+		periodStart: integer('period_start').notNull(),
+		// 1-based index of the overage block within this period.
+		blockIndex: integer('block_index').notNull(),
+		// Cumulative maskin_plan overage tokens observed when this block was
+		// claimed — audit trail only, not used for billing math after the fact.
+		tokensAtBlock: integer('tokens_at_block').notNull(),
+		// Session whose completion crossed this block. Nullable because the
+		// reconciler's retries don't have a specific session in hand.
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		stripeMeterEventId: text('stripe_meter_event_id'),
+		// NULL = claimed but not yet confirmed billed (in flight, or orphaned by
+		// a crash — the reconciler retries these past a staleness threshold).
+		reportedAt: timestamp('reported_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('workspace_overage_usage_ws_period_block_uniq').on(
+			t.workspaceId,
+			t.periodStart,
+			t.blockIndex,
+		),
+		index('workspace_overage_usage_unreported_idx')
+			.on(t.reportedAt)
+			.where(sql`${t.reportedAt} IS NULL`),
+	],
+)
+
+// ── Workspace Credit Ledger ─────────────────────────────────────────────────
+// Append-only audit + idempotency ledger for the prepaid usage-credits
+// balance cached at `workspaces.settings.billing.credit_balance_cents`. Two
+// row kinds:
+//   'topup' — written inside the Stripe webhook's existing row-locked
+//     transaction (routes/stripe-webhook.ts) when a `mode: 'payment'`
+//     Checkout session completes. `stripeCheckoutSessionId` is the
+//     idempotency key (defense-in-depth on top of `webhookDeliveries` dedup).
+//   'debit' — written on `maskin_plan` session completion once a pro/team
+//     workspace over its hard cap has a spendable balance
+//     (lib/credit-billing.ts). `sessionId` is the idempotency key — a session
+//     can debit the balance at most once even if completion fires twice.
+// The balance itself lives on `workspaces.settings` (JSONB) for O(1) reads on
+// `GET /billing/usage`; this table exists so a double-fired debit/topup can't
+// double-apply, and so support can reconstruct what happened to a balance.
+
+export const workspaceCreditLedger = pgTable(
+	'workspace_credit_ledger',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		// 'topup' | 'debit'
+		type: text('type').notNull(),
+		// Signed cents: positive for topup, negative for debit.
+		amountCents: integer('amount_cents').notNull(),
+		// Balance snapshot immediately after this entry applied — audit only.
+		balanceAfterCents: integer('balance_after_cents').notNull(),
+		// Debit rows: how many cents of cumulative period overage this row
+		// accounts for, BEFORE clamping to the available balance. Deliberately
+		// distinct from `amountCents` (what was actually taken): a session that
+		// outspends the balance has its excess written off, so billing the next
+		// session off summed `amountCents` would re-charge those written-off
+		// cents after a top-up. `lib/credit-billing.ts` sums this over the
+		// period so each session is billed only its own slice. 0 on topup rows.
+		accountedOverageCents: integer('accounted_overage_cents').notNull().default(0),
+		// Idempotency key for 'topup' rows only.
+		stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+		// Idempotency key for 'debit' rows only. Nullable because topup rows
+		// have no session; `set null` on delete mirrors
+		// `workspaceOverageUsage.sessionId`.
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		// Debit rows: the session's own cumulative cost in USD cents when this
+		// debit was written. A session is billed on PAUSE as well as on
+		// completion, so `sessionId` alone is not the idempotency key — keying
+		// on it collapsed every segment after the first into a no-op and the
+		// post-resume spend was never charged. This value is monotonic in the
+		// quantity being billed, so it separates segments while still
+		// collapsing a retry of the same segment (unchanged cost -> same key).
+		// NULL on topup rows and on debits predating migration 0064.
+		sessionUsageCents: integer('session_usage_cents'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('workspace_credit_ledger_topup_uniq')
+			.on(t.stripeCheckoutSessionId)
+			.where(sql`${t.type} = 'topup' AND ${t.stripeCheckoutSessionId} IS NOT NULL`),
+		uniqueIndex('workspace_credit_ledger_debit_session_segment_uniq')
+			.on(t.sessionId, t.sessionUsageCents)
+			.where(sql`${t.type} = 'debit' AND ${t.sessionId} IS NOT NULL`),
+		index('workspace_credit_ledger_workspace_created_idx').on(t.workspaceId, t.createdAt),
+	],
+)
+
 // ── Idempotency Records ─────────────────────────────────────────────────────
 // Outbound-side idempotency ledger for the API's `Idempotency-Key` header.
 // Replaces the previous in-memory cache so that a session snapshot + replay
@@ -818,6 +1917,107 @@ export const idempotencyRecords = pgTable(
 	},
 	(t) => [index('idempotency_records_created_at_idx').on(t.createdAt)],
 )
+
+// ── LinkedIn Tool Calls (content-hash idempotency) ──────────────────────────
+// Dedup ledger for the LinkedIn (LinkedIn-backed) content/community tools whose
+// v2 endpoints — unlike the messaging surface — do NOT accept an
+// Idempotency-Key header. Two identical tool-call requests (same actor, same
+// tool, same canonical-JSON request body → same sha256 content hash) collide
+// on the primary key: the first request claims the row and hits LinkedIn; the
+// second loses the insert race and either replays the winner's stored response
+// or, if the winner is still in flight, refuses. Replay-on-hit guards a specific
+// failure mode: a caller that retries after a network blip would otherwise
+// publish the same post twice, comment on the same post twice, etc. The 24h
+// TTL matches the reasonable window for retry — longer would balloon the
+// table, shorter would let real duplicates slip through.
+//
+// `actor_id` is text, NOT uuid: keeping it identical to `idempotencyRecords`'
+// column type isn't the constraint here — the constraint is that the value
+// bound at INSERT time is the caller's actor id as it flows through the MCP
+// context, and text avoids coupling to whether that path is uuid-typed all
+// the way down. `tool` is the wire tool name (e.g. `linkedin_publish_post`).
+// `content_hash` is `sha256(canonical-json(request-body))` — see
+// `apps/dev/src/lib/integrations/providers/linkedin-unipile/operations.ts`
+// for the canonicalisation helper. `response` stores the normalised, tool-
+// facing response payload so a replay returns the exact bytes the first
+// caller received.
+//
+// `status` is what makes the primary key *serialise* callers rather than just
+// deduplicate their bookkeeping: the row is inserted BEFORE the LinkedIn call
+// (status 0, in flight) and flipped to 200 with the response afterwards. The
+// natural ordering — read, call, write — is check-then-act, and for these
+// tools losing that race means a duplicate public post. Same discipline as
+// `idempotencyRecords`, which this table is the header-less counterpart to.
+export const linkedinToolCalls = pgTable(
+	'linkedin_tool_calls',
+	{
+		actorId: text('actor_id').notNull(),
+		tool: text('tool').notNull(),
+		contentHash: text('content_hash').notNull(),
+		// 0 = in flight (claim held, response not yet stored), 200 = completed.
+		status: integer('status').notNull(),
+		response: jsonb('response').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.tool, t.contentHash] }),
+		index('linkedin_tool_calls_created_at_idx').on(t.createdAt),
+	],
+)
+
+// ── LinkedIn Actions (permanent action log) ─────────────────────────────────
+// One append-only row per call to any LinkedIn MCP tool, old and new. It is the
+// source for the server-side caps (rolling 24h counts under an advisory lock),
+// the per-person rules, and the outreach measurement join, so unlike
+// `linkedin_tool_calls` above (a 24h duplicate-send guard) it keeps rows 180
+// days. A row is inserted `pending` before the call and moved to its final
+// outcome after it.
+//
+// It carries NO content: no message or post text, no names, no file contents.
+// `target_provider_id` and `ref_id` are opaque provider ids; `data` holds only
+// credits_before / credits_after for InMail. `workspace_id` has no foreign key
+// on purpose (like webhook_deliveries): the log must outlive nothing it does not
+// own, and the workspace purge deletes it explicitly.
+//
+// The unique partial index makes "already withdrawn" / "already liked" a
+// database fact: only one `ok` row can exist per (account, tool, ref_id).
+export const linkedinActions = pgTable(
+	'linkedin_actions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id').notNull(),
+		// The connected account row (integrations.id). Caps key on this.
+		integrationId: uuid('integration_id').notNull(),
+		actorId: uuid('actor_id').notNull(),
+		tool: text('tool').notNull(),
+		// read | write | send
+		kind: text('kind').notNull(),
+		targetProviderId: text('target_provider_id'),
+		refId: text('ref_id'),
+		objectId: uuid('object_id'),
+		approvalId: text('approval_id'),
+		// pending | ok | noop | refused_cap | refused_rule | refused_flag | error
+		outcome: text('outcome').notNull(),
+		errorCode: text('error_code'),
+		data: jsonb('data'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('linkedin_actions_integration_tool_created_idx').on(t.integrationId, t.tool, t.createdAt),
+		index('linkedin_actions_workspace_target_created_idx').on(
+			t.workspaceId,
+			t.targetProviderId,
+			t.createdAt,
+		),
+		uniqueIndex('linkedin_actions_ok_ref_uniq')
+			.on(t.integrationId, t.tool, t.refId)
+			.where(sql`${t.outcome} = 'ok'`),
+		// The nightly purge deletes by age.
+		index('linkedin_actions_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type LinkedinAction = typeof linkedinActions.$inferSelect
 
 // ── User Display Settings ───────────────────────────────────────────────────
 //
@@ -1133,4 +2333,515 @@ export const orphanThreadDetections = pgTable(
 )
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
+
+// ── VAT / awaiting_vies ─────────────────────────────────────────────────────
+//
+// Rows written by the Stripe webhook (Task 2) when a Checkout Session
+// completes with a `tax_id.verification.status='pending'` — fulfilment is
+// HELD until Stripe fires `customer.tax_id.updated(verified)` and the row is
+// deleted, at which point credits/subscription land. Row lifecycle:
+//   • verified   → delete + fulfil
+//   • unverified → delete + refund (+ cancel subscription)
+//   • 24h timeout → delete + refund (+ cancel subscription)
+//
+// Architect fold-in: intentionally NO `status` column. Row existence IS the
+// held state and deletion IS the resolved state — adding a status column
+// would double-track a state already carried by row lifecycle and introduce
+// a "resolved but not deleted" failure mode.
+//
+// Researcher fold-in: `reminder_sent_at` is NOT a status column. It's a
+// one-way idempotency marker for the T+2h "still verifying" reminder email
+// (Task 3's sweep) that fires WHILE the row is still open. A row can be
+// reminder_sent_at IS NOT NULL and still open. Row deletion still means
+// resolved. Nullable rather than DEFAULT — the marker is genuinely absent
+// on a fresh row.
+export const awaitingVies = pgTable(
+	'awaiting_vies',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		// Stripe Checkout Session id — natural idempotency key for webhook
+		// replays of the same session.completed event.
+		sessionId: text('session_id').notNull().unique(),
+		// Stripe Customer id — Task 2 looks up rows by this on the tax_id.*
+		// event chain.
+		customerId: text('customer_id').notNull(),
+		// 'topup' | 'subscription' — controls the void path shape (refund on
+		// topup vs cancel-subscription + refund-first-invoice on subscription).
+		kind: text('kind').notNull(),
+		paymentIntentId: text('payment_intent_id'),
+		subscriptionId: text('subscription_id'),
+		currency: text('currency').notNull(),
+		amountTotal: integer('amount_total').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		reminderSentAt: timestamp('reminder_sent_at', { withTimezone: true }),
+		// FK to workspaces so a workspace deletion doesn't leave orphaned held
+		// rows behind — mirrors workspaceCreditLedger's shape.
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+	},
+	(t) => [
+		check('awaiting_vies_kind_check', sql`${t.kind} IN ('topup','subscription')`),
+		index('awaiting_vies_customer_idx').on(t.customerId),
+		index('awaiting_vies_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type AwaitingViesRow = typeof awaitingVies.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── File Comments ───────────────────────────────────────────────────────────
+// Threaded review comments pinned to positions on a file's rendered document.
+// Replaces the viewport-fraction `files.annotations` blob so pins can (a)
+// round-trip across resize / zoom and (b) group into batched review "rounds"
+// that write ONE rollup timeline event on the attaching object (see
+// routes/file-comments.ts) instead of one event per pin. Legacy pins on the
+// old blob are ported into rows on first read (see
+// lib/file-comments-migration.ts) with `selector='legacy'` as the idempotence
+// marker.
+
+export const fileComments = pgTable(
+	'file_comments',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fileId: uuid('file_id')
+			.notNull()
+			.references(() => files.id, { onDelete: 'cascade' }),
+		// Null when the file isn't paged (a single-page mockup / doc). Set to the
+		// 1-based page/slide index the pin was dropped on for a deck.
+		page: integer('page'),
+		// { x, y } floats in [0, 1] of the natural document dimensions — NOT
+		// viewport fractions. See spec §Coord math.
+		positionDoc: jsonb('position_doc').notNull().$type<{ x: number; y: number }>(),
+		// Kept from the pre-refactor annotation-overlay so a CSS-selector-based
+		// pin still round-trips. `'legacy'` is reserved as the migration marker.
+		selector: text('selector'),
+		// Text comments: the quoted passage plus a little context each side, so
+		// the editor can find it again by matching. Null for pin comments.
+		textAnchor: jsonb('text_anchor').$type<{ quote: string; prefix: string; suffix: string }>(),
+		authorId: uuid('author_id')
+			.notNull()
+			.references(() => actors.id),
+		body: text('body').notNull(),
+		// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
+		parentId: uuid('parent_id').references((): any => fileComments.id, { onDelete: 'cascade' }),
+		// Set on send; null while the comment is a draft. Every comment in a
+		// single sent round shares one uuid so the round endpoint's upsert makes
+		// retries idempotent.
+		roundId: uuid('round_id'),
+		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+		resolvedBy: uuid('resolved_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Panel reads: "all comments on this file", ordered by page then time.
+		index('file_comments_file_page_created_at_idx').on(t.fileId, t.page, t.createdAt),
+		// Round-scoped re-hydration (?round=<id> deep-links from the rollup event).
+		index('file_comments_round_id_idx')
+			.on(t.roundId)
+			.where(sql`${t.roundId} IS NOT NULL`),
+	],
+)
+
+export type FileComment = typeof fileComments.$inferSelect
+export type NewFileComment = typeof fileComments.$inferInsert
+
+// ── Google Meet — create_space idempotency ─────────────────────────────────
+// Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create
+// endpoint does NOT accept a client-side idempotency key (unlike GCal's
+// events.insert, which does via conferenceData.createRequest.requestId — the
+// create_meet_backed_event path uses Google-native replay and does not touch
+// this table). So `create_space` two identical calls (same workspace, same
+// idempotency_key) would otherwise provision two spaces and burn Meet quota.
+//
+// Default key derives to sha256(actor_id + purpose_normalised + YYYY-MM-DD)
+// so an agent that retries within a day gets the cached space back; callers
+// that need tighter or looser dedupe pass their own key.
+//
+// Composite unique index (workspace_id, idempotency_key) is what makes the
+// replay contract hold — a second insert with the same key races, loses on
+// the constraint, and the tool reads back the winner's space_name.
+export const googleMeetSpaceIdempotency = pgTable(
+	'google_meet_space_idempotency',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		idempotencyKey: text('idempotency_key').notNull(),
+		spaceName: text('space_name').notNull(),
+		meetingCode: text('meeting_code').notNull(),
+		meetingUri: text('meeting_uri').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('google_meet_space_idempotency_workspace_key_uniq').on(
+			t.workspaceId,
+			t.idempotencyKey,
+		),
+		index('google_meet_space_idempotency_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
+export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert
+
+// ── Device Tokens (APNs push) ───────────────────────────────────────────────
+//
+// One row per (APNs token, environment). The token is the identity: when a
+// device changes hands (sign-out / sign-in as someone else) re-registering the
+// same token by a different actor MOVES the row to that actor via
+// ON CONFLICT DO UPDATE — otherwise the previous user would keep receiving the
+// new user's pushes. Cascades with the actor.
+
+export const deviceTokens = pgTable(
+	'device_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		// 'ios' | 'macos' | 'watchos' | 'tvos' — validated by registerDeviceSchema.
+		platform: text('platform').notNull(),
+		apnsToken: text('apns_token').notNull(),
+		// 'sandbox' | 'production' — selects the APNs host.
+		environment: text('environment').notNull(),
+		appVersion: text('app_version'),
+		// SHA-256 (hex) of the secret the device generated and sent at registration. After sign-out the
+		// phone has no API key; POST /api/devices/unregister takes this secret as its credential. Null
+		// for rows registered by a client that does not send one: those cannot use that route.
+		unregisterSecretHash: text('unregister_secret_hash'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('device_tokens_apns_token_environment_uniq').on(t.apnsToken, t.environment),
+		index('device_tokens_actor_id_idx').on(t.actorId),
+	],
+)
+
+// ── Web Push subscriptions ──────────────────────────────────────────────────
+//
+// One row per browser push subscription (RFC 8030 / 8291). Kept apart from `device_tokens`,
+// whose APNs token is a hex string used as a URL path segment toward Apple; a browser
+// subscription is an opaque endpoint URL plus an encryption key pair. `endpoint` is unique so
+// re-subscribing from the same browser upserts, and a browser that changes hands moves to the
+// new actor. The p256dh/auth keys are per-subscription secrets: never logged, never returned
+// by the API. Cascades with the actor.
+
+export const webPushSubscriptions = pgTable(
+	'web_push_subscriptions',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		endpoint: text('endpoint').notNull(),
+		p256dh: text('p256dh').notNull(),
+		auth: text('auth').notNull(),
+		userAgent: text('user_agent'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('web_push_subscriptions_endpoint_uniq').on(t.endpoint),
+		index('web_push_subscriptions_actor_id_idx').on(t.actorId),
+	],
+)
+
+export type WebPushSubscription = typeof webPushSubscriptions.$inferSelect
+
+// ── Notification preferences ────────────────────────────────────────────────
+//
+// Per-actor push policy settings (quiet hours, categories, muted workspaces,
+// morning briefing). One row per actor; a missing row means all defaults.
+// quiet_hours_* are minutes from local midnight in `timezone` (null => UTC).
+
+export const notificationPreferences = pgTable(
+	'notification_preferences',
+	{
+		actorId: uuid('actor_id')
+			.primaryKey()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		timezone: text('timezone'),
+		quietHoursStart: smallint('quiet_hours_start'),
+		quietHoursEnd: smallint('quiet_hours_end'),
+		categories: jsonb('categories')
+			.$type<Record<string, boolean>>()
+			.notNull()
+			.default(sql`'{"needs_you":true,"conversation":true,"digest":true,"tips":true}'::jsonb`),
+		briefingEnabled: boolean('briefing_enabled').notNull().default(true),
+		briefingTime: smallint('briefing_time').notNull().default(510),
+		mutedWorkspaceIds: uuid('muted_workspace_ids').array().notNull().default(sql`'{}'::uuid[]`),
+		// Local date (in `timezone`) of the last daily briefing push; the scheduler claims a day
+		// with one conditional UPDATE, so it is sent once across restarts and replicas. Migration 0105.
+		briefingLastSentOn: date('briefing_last_sent_on', { mode: 'string' }),
+		// One-time lifecycle pushes already sent: { first_task, activation, reminder_at,
+		// 'reminded:<notification id>' } -> ISO timestamp. Migration 0105.
+		lifecycleSent: jsonb('lifecycle_sent')
+			.$type<Record<string, string>>()
+			.notNull()
+			.default(sql`'{}'::jsonb`),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'notification_preferences_quiet_start_chk',
+			sql`${t.quietHoursStart} IS NULL OR (${t.quietHoursStart} >= 0 AND ${t.quietHoursStart} <= 1439)`,
+		),
+		check(
+			'notification_preferences_quiet_end_chk',
+			sql`${t.quietHoursEnd} IS NULL OR (${t.quietHoursEnd} >= 0 AND ${t.quietHoursEnd} <= 1439)`,
+		),
+		check(
+			'notification_preferences_briefing_time_chk',
+			sql`${t.briefingTime} >= 0 AND ${t.briefingTime} <= 1439`,
+		),
+	],
+)
+
+export type NotificationPreferencesRow = typeof notificationPreferences.$inferSelect
+
+// ── Live Activity tokens ────────────────────────────────────────────────────
+//
+// ActivityKit push tokens. Two kinds share one table:
+//  - 'push_to_start': one per device (iOS 17.2+), lets the server START an activity while
+//    the app is not running. At most one row per device (it rotates, so it is upserted).
+//  - 'update': one per running activity, tied to a session. Used for update/end pushes.
+// The APNs environment is taken from the owning device row. Rows cascade with the device,
+// the actor and (update tokens only) the session.
+
+export const liveActivityTokens = pgTable(
+	'live_activity_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		deviceId: uuid('device_id')
+			.notNull()
+			.references(() => deviceTokens.id, { onDelete: 'cascade' }),
+		// 'push_to_start' | 'update' — validated by registerLiveActivityTokenSchema.
+		kind: text('kind').notNull(),
+		token: text('token').notNull(),
+		// Set for 'update' tokens only: the workspace of the aggregate "Agents working" activity
+		// the token belongs to (one activity per device and workspace).
+		workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'live_activity_tokens_kind_workspace_chk',
+			sql`(${t.kind} = 'push_to_start' AND ${t.workspaceId} IS NULL) OR (${t.kind} = 'update' AND ${t.workspaceId} IS NOT NULL)`,
+		),
+		uniqueIndex('live_activity_tokens_push_to_start_uniq')
+			.on(t.deviceId)
+			.where(sql`${t.kind} = 'push_to_start'`),
+		uniqueIndex('live_activity_tokens_update_uniq')
+			.on(t.deviceId, t.token)
+			.where(sql`${t.kind} = 'update'`),
+		index('live_activity_tokens_workspace_idx').on(t.workspaceId, t.actorId),
+		index('live_activity_tokens_actor_idx').on(t.actorId),
+	],
+)
+
+// The (actor, workspace) pairs the backend believes have an "Agents working" card outstanding.
+// `endPending`: the last agent stopped while no per-activity update token was registered, so the
+// end could not be addressed (ActivityKit ends a card only through that card's own token;
+// push-to-start tokens can only start). Flushed when the device registers the update token.
+export const liveActivityCards = pgTable(
+	'live_activity_cards',
+	{
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		endPending: boolean('end_pending').notNull().default(false),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.workspaceId] }),
+		index('live_activity_cards_workspace_idx').on(t.workspaceId),
+	],
+)
+
+export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
+export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
+
+export type DeviceToken = typeof deviceTokens.$inferSelect
+export type NewDeviceToken = typeof deviceTokens.$inferInsert
+
+// ── Trigger cooldowns (S1 of the trigger-engine fix bet) ────────────────────
+//
+// Persisted mirror of trigger-runner.ts's in-memory `triggerFailures` Map
+// (per-trigger exponential backoff) and `workspaceSuppressions` Map
+// (workspace-wide pause). Both existed only in memory before this migration,
+// so every server restart wiped them and freed cooling triggers to fire the
+// moment we deployed — bet #7 of the trigger-engine fix bet.
+//
+// Write path is unconditional (persist FIRST, then update the in-memory
+// cache) so rollback is safe. Read path (loadCooldowns / loadSuppressions at
+// boot) is gated per tech spec §7.1 so a workspace can opt out of the v2
+// deploy-safety net if it wants to.
+
+export const triggerCooldowns = pgTable(
+	'trigger_cooldowns',
+	{
+		triggerId: uuid('trigger_id')
+			.primaryKey()
+			.references(() => triggers.id, { onDelete: 'cascade' }),
+		count: integer('count').notNull().default(0),
+		lastFailedAt: timestamp('last_failed_at', { withTimezone: true }).notNull(),
+		backoffUntil: timestamp('backoff_until', { withTimezone: true }).notNull(),
+		reason: text('reason'),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('trigger_cooldowns_backoff_until_idx').on(t.backoffUntil)],
+)
+
+export type TriggerCooldown = typeof triggerCooldowns.$inferSelect
+export type NewTriggerCooldown = typeof triggerCooldowns.$inferInsert
+
+export const workspaceSuppressions = pgTable(
+	'workspace_suppressions',
+	{
+		workspaceId: uuid('workspace_id')
+			.primaryKey()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		suppressedUntil: timestamp('suppressed_until', { withTimezone: true }).notNull(),
+		reason: text('reason').notNull(),
+		metadata: jsonb('metadata'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('workspace_suppressions_until_idx').on(t.suppressedUntil)],
+)
+
+export type WorkspaceSuppressionRow = typeof workspaceSuppressions.$inferSelect
+export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInsert
+
+// ── Trigger dispatches (S2 of the trigger-engine fix bet) ───────────────────
+//
+// Idempotency guard for the dispatch path. Every trigger fire INSERTs the
+// (trigger_id, event_id) pair with ON CONFLICT DO NOTHING before calling
+// sessionManager.createSession(). If two trigger-runner instances (blue+green
+// during a rolling deploy, or a future horizontal scale-out) race on the
+// same event, exactly one INSERT claims — the loser's returning() is empty
+// and the dispatch is skipped.
+//
+// Ships unconditional (tech spec §3.4 + §7.3): the table exists to prevent the
+// double-fire window during a rolling deploy.
+//
+// session_id is diagnostic only. If the UPDATE that stamps it after
+// createSession() fails, the row still guards against double-fire — its
+// presence is the guarantee.
+
+export const triggerDispatches = pgTable(
+	'trigger_dispatches',
+	{
+		triggerId: uuid('trigger_id')
+			.notNull()
+			.references(() => triggers.id, { onDelete: 'cascade' }),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		dispatchedAt: timestamp('dispatched_at', { withTimezone: true }).notNull().defaultNow(),
+		sessionId: uuid('session_id'),
+	},
+	(t) => [
+		primaryKey({ columns: [t.triggerId, t.eventId] }),
+		index('trigger_dispatches_dispatched_at_idx').on(t.dispatchedAt),
+	],
+)
+
+export type TriggerDispatch = typeof triggerDispatches.$inferSelect
+export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert
+
+// ── Trigger event queue (S3 of the trigger-engine fix bet) ──────────────────
+//
+// Hold-and-replay store for events that used to be dropped: an event whose
+// trigger is in a backoff window, or whose workspace is suppressed, lands here
+// instead of vanishing, and replays when the window lifts (tech spec §4).
+//
+// trigger_id is nullable on purpose: a workspace-suppression drop is one row
+// per (workspace, event) at drop time and fans out to per-trigger dispatches
+// when the drain re-runs the matcher. event_snapshot carries the PgEvent so a
+// replay does not depend on anything else. replayed_at is set on drain; all
+// three indexes are partial on replayed_at IS NULL so they only ever cover
+// the pending backlog.
+//
+// The table ships unconditional (additive).
+
+export const triggerEventQueue = pgTable(
+	'trigger_event_queue',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'cascade' }),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		eventSnapshot: jsonb('event_snapshot').notNull(),
+		enqueuedAt: timestamp('enqueued_at', { withTimezone: true }).notNull().defaultNow(),
+		replayAfter: timestamp('replay_after', { withTimezone: true }).notNull(),
+		reason: text('reason').notNull(),
+		replayedAt: timestamp('replayed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('queue_pending_by_replay_after_idx')
+			.on(t.replayAfter)
+			.where(sql`${t.replayedAt} IS NULL`),
+		index('queue_pending_by_trigger_idx')
+			.on(t.triggerId, t.eventId)
+			.where(sql`${t.replayedAt} IS NULL AND ${t.triggerId} IS NOT NULL`),
+		index('queue_pending_by_workspace_idx')
+			.on(t.workspaceId, t.eventId)
+			.where(sql`${t.replayedAt} IS NULL`),
+	],
+)
+
+export type TriggerEventQueueRow = typeof triggerEventQueue.$inferSelect
+export type NewTriggerEventQueueRow = typeof triggerEventQueue.$inferInsert
+
+// A device (Apple TV) asking to be signed in by a person who is already signed in elsewhere:
+// the OAuth device-authorization pattern (RFC 8628). The device shows `user_code`; the person
+// types it into maskin.io/tv on a phone or laptop and approves; the device, polling with
+// `device_code`, then receives the actor's session exactly as `POST /api/auth/login` would give it.
+//
+// Both codes are stored only as SHA-256 hashes, so a database read cannot be replayed as a sign-in.
+// A row is single-use (`approved` -> `consumed` in one UPDATE) and short-lived (`expires_at`).
+export const deviceAuthCodes = pgTable(
+	'device_auth_codes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		deviceCodeHash: text('device_code_hash').notNull(),
+		userCodeHash: text('user_code_hash').notNull(),
+		// Which client is asking ('tvos'); the approver sees it so they know what they are signing in.
+		clientSource: text('client_source').notNull(),
+		deviceName: text('device_name'),
+		// pending -> approved -> consumed, or pending -> denied.
+		status: text('status').notNull().default('pending'),
+		// Who approved. Null until then.
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		approvedAt: timestamp('approved_at', { withTimezone: true }),
+		consumedAt: timestamp('consumed_at', { withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex('device_auth_codes_device_code_hash_uniq').on(t.deviceCodeHash),
+		uniqueIndex('device_auth_codes_user_code_hash_uniq').on(t.userCodeHash),
+		index('device_auth_codes_expires_at_idx').on(t.expiresAt),
+		check(
+			'device_auth_codes_status_check',
+			sql`${t.status} IN ('pending','approved','denied','consumed')`,
+		),
+	],
+)
+
+export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
+export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert

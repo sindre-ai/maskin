@@ -1,37 +1,39 @@
 import './lib/sentry'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import type { Server } from 'node:http'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
+import {
+	AGENT_PUSH_DIRECTORIES,
+	type AgentPushDirectory,
+	MODEL_NAME_RE,
+	type PushAgentFilesResponse,
+	type StopSessionOutcome,
+	buildSetModelRequest,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { Hono } from 'hono'
 import { stream } from 'hono/streaming'
 import { z } from 'zod'
 import { bearerAuth } from './lib/auth'
+import { resolveBuildInfo } from './lib/build-info'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
+import { startMetricsServer } from './lib/metrics'
 import { Sentry } from './lib/sentry'
+import { StallTracker } from './lib/stall-tracker'
 import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
 import {
-	type BrowserSidecar,
-	DEV_SERVER_HOST_PORT_RANGE_END,
-	DEV_SERVER_HOST_PORT_RANGE_START,
 	type MicrosandboxDeps,
-	type PreviewPortMapping,
 	type PullPolicy,
-	type SshRelay,
-	cleanupBrowserSidecar,
 	defaultRunner,
 	ensureAgentServerSshKey,
-	establishPreviewPortRelay,
 	launchSessionExec,
 	listSandboxNames,
-	provisionBrowserSidecar,
 	readMsbVersion,
 	removeSandbox,
-	resolvePreviewPortMappings,
 	spawnSession,
-	startSshRelay,
 	stopSandbox,
 	waitForCompletion,
 } from './services/microsandbox'
@@ -39,62 +41,123 @@ import {
 	deleteSessionDir,
 	pullSessionWorkspace,
 	pushSessionWorkspace,
+	stageSessionSkills,
 } from './services/session-workspace'
+import {
+	DESKTOP_PREFIX,
+	WorkspaceDesktopRegistry,
+	handleDesktopUpgrade,
+	isValidAgentId,
+	isValidWorkspaceId,
+} from './services/workspace-desktop'
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
-export const MAX_PREVIEW_GUEST_PORTS = 8
+// Skill-name whitelist mirroring `workspaceSkills.name`'s file-system safety
+// contract — reject anything with a slash, `..`, or a NUL byte before it
+// becomes a directory name under `<sessionDir>/skills/`. Same regex that
+// `pullWorkspaceSkillsForAgent`'s DB layer already enforces on write, applied
+// here so a poisoned manifest (e.g. via a stolen bearer token) can't escape
+// the mount and land bytes elsewhere on the host.
+const SKILL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+// Each entry lands at `<sessionDir>/skills/<name>/<relativePath>`. The
+// relative-path regex forbids leading slashes, `..` segments and NUL bytes
+// so a folder skill can't traverse out of its own directory. The full-file-
+// listing pattern is intentionally strict — an empty prefix means "at the
+// skill root" (i.e. `SKILL.md` — the common single-file case).
+const SKILL_RELATIVE_PATH_RE =
+	/^(?!\.\.?(?:\/|$))(?!.*\/\.\.?(?:\/|$))[A-Za-z0-9._][A-Za-z0-9._/-]*$/
+// Storage keys are opaque to agent-server; the storage provider validates
+// the actual key on `.get()`. But we still cap length and reject control
+// bytes here as a network-input sanity floor (`.claude/rules/input-validation.md`).
+const SKILL_STORAGE_KEY_RE = /^[\x20-\x7e]{1,1024}$/
 
-const SESSION_REQUEST_SCHEMA = z
-	.object({
-		sessionId: z
-			.string()
-			.regex(
-				/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/,
-				'sessionId must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
-			),
-		image: z.string().min(1),
-		env: z
-			.record(
-				z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'env key must be a valid shell identifier'),
-				z.string(),
-			)
-			.default({}),
-		memoryMib: z.number().int().positive().optional(),
-		cpus: z.number().int().positive().optional(),
-		// When true, provision a Chromium CDP sidecar microVM alongside the session
-		// and inject `BROWSER_CDP_URL` so `@playwright/mcp` can attach. Absent or
-		// false → no sidecar, no env var, no MCP entry.
-		browserRequired: z.boolean().optional(),
-		// Guest port(s) inside the session to publish on the msb bridge gateway
-		// (e.g. a Vite dev server on 5173), so the browser sidecar's Playwright can
-		// reach them. Only takes effect when browserRequired is also true — the
-		// forwarding exists to let the sidecar view the session's own dev server.
-		// Capped well below ephemeral port exhaustion range; a session only ever
-		// needs to forward a handful of local dev servers.
-		previewGuestPorts: z
-			.array(z.number().int().positive().max(65535))
-			.max(MAX_PREVIEW_GUEST_PORTS)
-			.optional(),
-		sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
-	})
-	.refine((data) => !data.previewGuestPorts || data.browserRequired === true, {
-		message: 'previewGuestPorts requires browserRequired to be true',
-		path: ['previewGuestPorts'],
-	})
+// Bounded to keep a poisoned/malformed manifest from ballooning the dispatch
+// payload beyond a few hundred KB. Real agents attach fewer than 20 skills;
+// the ceiling is generous enough that a legitimate change never hits it.
+const MAX_MANIFEST_SKILLS = 100
+const MAX_MANIFEST_FILES_PER_SKILL = 200
 
-// POST /sessions/:id/preview-ports body — a session's own guest-side port
-// watcher reports a port it just started listening on. Bounded to the exact
-// range the browser sidecar's standing allow@host:tcp grant covers (see
-// DEV_SERVER_HOST_PORT_RANGE in microsandbox.ts) — a port outside it could
-// never be relayed anyway, so reject it at the boundary instead of doing the
-// relay work first and failing later.
-const PREVIEW_PORT_REQUEST_SCHEMA = z.object({
-	guestPort: z
-		.number()
-		.int()
-		.min(DEV_SERVER_HOST_PORT_RANGE_START)
-		.max(DEV_SERVER_HOST_PORT_RANGE_END),
+const SESSION_SKILL_MANIFEST_ENTRY_SCHEMA = z.object({
+	name: z.string().regex(SKILL_NAME_RE, 'skill name must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+	files: z
+		.array(
+			z.object({
+				relativePath: z
+					.string()
+					.regex(SKILL_RELATIVE_PATH_RE, 'skill file relativePath must not traverse'),
+				storageKey: z.string().regex(SKILL_STORAGE_KEY_RE, 'storageKey out of range'),
+			}),
+		)
+		.min(1)
+		.max(MAX_MANIFEST_FILES_PER_SKILL),
+})
+
+const SESSION_REQUEST_SCHEMA = z.object({
+	sessionId: z
+		.string()
+		.regex(
+			/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/,
+			'sessionId must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
+		),
+	image: z.string().min(1),
+	env: z
+		.record(
+			z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'env key must be a valid shell identifier'),
+			z.string(),
+		)
+		.default({}),
+	memoryMib: z.number().int().positive().optional(),
+	cpus: z.number().int().positive().optional(),
+	sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
+	// Workspace skills the dispatcher resolved for this session's agent.
+	// Staged host-side into `<sessionDir>/skills/<name>/` after the S3
+	// snapshot restore and BEFORE `spawnSession` mounts `<sessionDir>` as
+	// `/agent` — the only mount that reaches the guest. Optional + `.default([])`
+	// so an older apps/dev that predates the field (or a session for an agent
+	// with no attached skills) is indistinguishable from an empty manifest
+	// and the host-side stager treats them the same.
+	skills: z.array(SESSION_SKILL_MANIFEST_ENTRY_SCHEMA).max(MAX_MANIFEST_SKILLS).default([]),
+})
+
+// POST /desktops/:workspaceId/:agentId/ports body. The relay port is never
+// part of the request: agent-server picks it from the computer's own block.
+const EXPOSE_PORT_REQUEST_SCHEMA = z.object({
+	session_id: z.string().regex(SESSION_ID_RE),
+	guest_port: z.number().int().min(1).max(65535),
+})
+
+// POST /sessions/:id/stop body — the settle-side reason/source pair so the
+// stop handler can log a legible provenance next to the FORCED_STOP_EXIT_CODE
+// seed. Mirrors `StopSessionRequest` in @maskin/shared; kept as a Zod schema
+// here so a malformed request is rejected at the boundary rather than
+// silently taking a poisoned string into the log line.
+const STOP_SESSION_REQUEST_SCHEMA = z.object({
+	reason: z.enum(['complete', 'fail', 'timeout', 'stop', 'pause']),
+	source: z.enum([
+		'sandbox-exit',
+		'reaper',
+		'reconciler',
+		'user-stop',
+		'timeout-watchdog',
+		'dispatch-queue',
+		'idle-watcher',
+	]),
+})
+
+// POST /sessions/:id/push-agent-files body — the shared constant is the only
+// legal input for `directories`; anything else is rejected so a poisoned
+// request cannot ask the handler to read from an unbounded relative path.
+// `keyPrefix` is derived by apps/dev via `agentStorageS3Prefix` and pinned to
+// the `agents/<uuid>/<uuid>` shape so the handler cannot be steered into
+// writing outside the agent-scoped tree.
+const PUSH_AGENT_FILES_KEY_PREFIX_RE =
+	/^agents\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+const PUSH_AGENT_FILES_REQUEST_SCHEMA = z.object({
+	directories: z.array(z.enum(AGENT_PUSH_DIRECTORIES)).min(1).max(AGENT_PUSH_DIRECTORIES.length),
+	keyPrefix: z
+		.string()
+		.regex(PUSH_AGENT_FILES_KEY_PREFIX_RE, 'keyPrefix must match agents/<id>/<id>'),
 })
 
 export type AppDeps = {
@@ -138,44 +201,21 @@ export type AppDeps = {
 	 */
 	readyState?: { ready: boolean }
 	/**
-	 * Shared with `main()`'s boot-time `reconcileOnBoot` pass for the same
-	 * reason as `sessionExitCodes`/`sessionLogRouters` above — a session that
-	 * survived a restart and still has a browser sidecar must be reattached
-	 * into the SAME map `POST /sessions/:id/preview-ports` reads from, or
-	 * that route 404s forever for it post-restart. Omitted → buildApp creates
-	 * its own fresh map (fine for any caller, e.g. tests, that never shares
-	 * it with a reconcile pass).
+	 * Feeds the `maskin_sessions_stalled` gauges (see lib/stall-tracker.ts).
+	 * Shared with `main()` for the same reason as the maps above: the metrics
+	 * registry lives out there, and reconcileOnBoot must register the sessions
+	 * it reattaches so they are counted as UNOBSERVED rather than silently
+	 * omitted. Omitted -> buildApp creates its own, which tests can ignore.
 	 */
-	sessionPreviewState?: SessionPreviewState
+	stallTracker?: StallTracker
+	/**
+	 * Workspace desktops (see services/workspace-desktop.ts). Shared with
+	 * `main()` for the boot-time reconcile pass and the WebSocket upgrade
+	 * handler, which lives on the raw http.Server rather than in Hono. Omitted
+	 * → the /desktops routes are not registered.
+	 */
+	desktops?: WorkspaceDesktopRegistry
 }
-
-/**
- * Per-session state for the dynamic preview-port relay feature — see
- * `sessionPreviewState`'s declaration below for the full rationale. Named as
- * a type (rather than left inline) so `AppDeps` and `ReconcileOnBootDeps`
- * can share the exact same shape instead of two structurally-equal but
- * independently-drifting inline object types.
- */
-export type SessionPreviewState = Map<
-	string,
-	{
-		browserSidecar: BrowserSidecar
-		previewRelays: SshRelay[]
-		/**
-		 * Coalesces concurrent `POST /sessions/:id/preview-ports` calls for the
-		 * SAME guestPort onto a single in-flight `establishPreviewPortRelay`
-		 * attempt. Without this, two requests that land before the first
-		 * resolves (a real scenario — the guest-side watcher polls every 2s,
-		 * well inside `establishPreviewPortRelay`'s multi-second worst case)
-		 * would each open their own relay onto the same guest port, wasting
-		 * two slots out of the fixed 3000-12000 range and breaking the
-		 * idempotency this route otherwise guarantees. Entries are removed as
-		 * soon as their attempt settles — this map holds only requests
-		 * currently in flight, never a durable cache.
-		 */
-		pendingRelays: Map<number, Promise<SshRelay | null>>
-	}
->
 
 // How long a session's stdout sits in this box's buffer before being POSTed
 // to apps/dev's /agent-server-reconcile ingest route. This is the DOMINANT
@@ -215,6 +255,53 @@ export function truncateLogLine(line: string, maxBytes: number = MAX_LOG_LINE_BY
 	const truncated = new TextDecoder('utf-8', { fatal: false }).decode(truncatedBytes)
 	const droppedBytes = bytes.length - maxBytes
 	return `${truncated}...[truncated ${droppedBytes} bytes]${hasTrailingNewline ? '\n' : ''}`
+}
+
+/**
+ * Fire-and-forget POST to apps/dev reporting the outcome of host-side skill
+ * staging for `sessionId`. Feeds the G1 signal set on the dev side —
+ * `skills_staged` for the count actually landed on disk, `session_skill_load_failed`
+ * for the per-skill failure list — without adding a hard dependency on
+ * apps/dev's availability at spawn time. A failed report is logged and
+ * dropped; the session boots regardless. Never throws (its caller wraps it
+ * in `.catch` but we defend in depth here too).
+ */
+export async function reportSkillStagingToBackend(
+	sessionId: string,
+	maskinBaseUrl: string,
+	agentServerSecret: string,
+	manifestSkills: number,
+	stagingResult: { staged: number; failures: { name: string; error: string }[] },
+	fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+	try {
+		const res = await fetchImpl(
+			`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/skill-staging`,
+			{
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${agentServerSecret}`,
+				},
+				body: JSON.stringify({
+					manifest_skills: manifestSkills,
+					staged: stagingResult.staged,
+					failures: stagingResult.failures,
+				}),
+			},
+		)
+		if (!res.ok) {
+			logger.warn('backend rejected skill-staging report', {
+				sessionId,
+				status: res.status,
+			})
+		}
+	} catch (err) {
+		logger.warn('failed to POST skill-staging report to backend', {
+			sessionId,
+			error: String(err),
+		})
+	}
 }
 
 // Delay before stopping a microVM after it signals completion. `msb stop` tears
@@ -281,8 +368,6 @@ async function monitorSession(
 	agentServerSecret?: string,
 	sessionLogRouters?: Map<string, (line: string) => void>,
 	sessionExitCodes?: Map<string, number>,
-	browserSidecar?: BrowserSidecar | null,
-	previewRelays?: SshRelay[],
 ): Promise<void> {
 	const run = msb.run ?? defaultRunner()
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -291,6 +376,10 @@ async function monitorSession(
 	// Best-effort — if the POST fails, sessions still complete.
 	let logBuffer: Array<{ stream: 'stdout' | 'stderr'; content: string }> = []
 	let flushTimer: NodeJS.Timeout | null = null
+	// Last few lines the agent wrote (agent-run.sh merges stderr into this
+	// stream), kept so a non-zero exit can leave a tail in the host log.
+	const RECENT_LINES_KEPT = 20
+	const recentLines: string[] = []
 
 	// 6 attempts with exponential backoff (2s, 4s, 8s, 16s, 16s — capped) give a
 	// worst-case retry window of ~46s. This is deliberately longer than the flat
@@ -419,7 +508,10 @@ async function monitorSession(
 	// deliver lines into this session's log buffer.
 	if (sessionLogRouters && maskinBaseUrl) {
 		sessionLogRouters.set(sessionId, (line: string) => {
-			logBuffer.push({ stream: 'stdout', content: truncateLogLine(line) })
+			const truncated = truncateLogLine(line)
+			recentLines.push(truncated)
+			if (recentLines.length > RECENT_LINES_KEPT) recentLines.shift()
+			logBuffer.push({ stream: 'stdout', content: truncated })
 			if (logBuffer.length >= LOG_FLUSH_MAX_LINES) {
 				void flushLogs()
 			} else {
@@ -439,16 +531,25 @@ async function monitorSession(
 	await flushLogs()
 
 	// Read the exit code recorded by the /complete endpoint, then clean up the entry.
-	let exitCode = sessionExitCodes?.get(sessionId) ?? 0
+	const exitCode = sessionExitCodes?.get(sessionId) ?? 0
 	sessionExitCodes?.delete(sessionId)
 
-	// Push workspace BEFORE reporting completion so a push failure can be reflected
-	// in the exit code. Reporting first would mark the session completed even when
-	// the workspace was lost, giving the user a silently incorrect starting state on
-	// the next session. pushSessionWorkspace already retries transient storage
-	// errors (e.g. S3 `SlowDown` throttling) internally — only a failure that
-	// survives those retries reaches this catch, so this only overrides a genuine
-	// agent success (exitCode 0) when the workspace is truly lost, not on a blip.
+	if (exitCode !== 0) {
+		logger.warn('session exited non-zero, last output lines follow', {
+			sessionId,
+			exitCode,
+			lastLines: recentLines,
+		})
+	}
+
+	// Push workspace BEFORE reporting completion so a lost workspace is already on
+	// the session's log when it settles. A lost save does NOT change the exit code:
+	// the agent's own result stands, so a run that finished cleanly stays completed
+	// instead of reading as failed (and being re-run) because storage throttled us.
+	// The loss is recorded as its own [system] log line plus the Sentry error below.
+	// pushSessionWorkspace already retries transient storage errors (e.g. S3
+	// `SlowDown` throttling) internally — only a failure that survives those
+	// retries reaches this catch.
 	if (storage) {
 		try {
 			const { archiveBytes } = await pushSessionWorkspace(storage, sessionId, sessionDir, {
@@ -460,7 +561,11 @@ async function monitorSession(
 				sessionId,
 				error: String(err),
 			})
-			if (exitCode === 0) exitCode = 1
+			logBuffer.push({
+				stream: 'stdout',
+				content: `[system] workspace lost: saving this session's workspace to storage failed after retries (${String(err)}). The run itself is unaffected; its files, memory and learnings were not stored.\n`,
+			})
+			await flushLogs()
 		}
 	}
 
@@ -550,14 +655,6 @@ async function monitorSession(
 	} catch (err) {
 		logger.warn('sandbox removal failed', { sessionId, error: String(err) })
 	}
-
-	// AC-T5: tear the sidecar down within 60s of session end so no orphaned
-	// Chromium VMs linger. `cleanupBrowserSidecar` is a no-op when no sidecar
-	// was provisioned (the common path).
-	if (browserSidecar) {
-		for (const relay of previewRelays ?? []) relay.stop()
-		await cleanupBrowserSidecar(browserSidecar, msb)
-	}
 }
 
 export function buildApp(deps: AppDeps): Hono {
@@ -578,37 +675,45 @@ export function buildApp(deps: AppDeps): Hono {
 		)
 		return c.json({ error: 'internal_error' }, 500)
 	})
-	const inputQueue = new InputQueue()
+	// Interactive-turn delivery is the one path where a silent failure looks
+	// exactly like a quiet conversation, so every state change is logged. Volume
+	// is a handful of lines per turn and nothing at all while idle.
+	const stallTracker =
+		deps.stallTracker ?? new StallTracker({ thresholdMs: deps.env.AGENT_SERVER_STALL_THRESHOLD_MS })
+	const inputQueue = new InputQueue((event, data) => {
+		logger.info(`input: ${event}`, data)
+		// `stream registered` is the ONLY place the guest's acked high-water mark
+		// is observable — it arrives as the `after` query param on every
+		// (re)connect and nothing else in this process sees it. A rising value
+		// here is the only proof a turn actually reached the CLI, which is
+		// exactly the split between the `undelivered` and `no_output` arms.
+		if (event === 'stream registered' && typeof data.ackedThrough === 'number') {
+			stallTracker.turnAcked(String(data.sessionId), data.ackedThrough)
+		}
+	})
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	// Injectable via deps so main()'s boot-time reconcile pass can reattach
 	// monitorSession for sandboxes that survived a restart (see AppDeps.sessionLogRouters).
 	const sessionLogRouters = deps.sessionLogRouters ?? new Map<string, (line: string) => void>()
+	/**
+	 * Highest output-line sequence stored per session, for /logs/batch.
+	 *
+	 * Deliberately not cleared when a session's router is removed: the guest may
+	 * still be retrying its final batches after the agent exited, and resetting
+	 * to 0 would ack from the start of a sequence space the guest has long since
+	 * moved past — the same stale-mark hazard the input side's epoch guards
+	 * against. Cleared with the rest of the session's state on completion.
+	 */
+	const sessionLogSeqs = new Map<string, number>()
 	// Receives exit codes from the /sessions/:id/complete and /sessions/:id/stop
 	// endpoints for monitorSession. Injectable via deps (see AppDeps.sessionExitCodes).
 	const sessionExitCodes = deps.sessionExitCodes ?? new Map<string, number>()
 
 	// The microVM can reach us at host.microsandbox.internal (written into the
 	// VM's /etc/hosts by microsandbox) on our own PORT — used both to bake
-	// AGENT_SERVER_URL/PREVIEW_URL into a session's boot-time env and to build
-	// the previewUrl POST /sessions/:id/preview-ports returns for a
-	// dynamically-relayed port.
+	// AGENT_SERVER_URL into a session's boot-time env.
 	const agentServerInternalHost =
 		deps.env.AGENT_SERVER_INTERNAL_HOST ?? 'host.microsandbox.internal'
-
-	// Tracks the live browser sidecar + preview relays for sessions that have
-	// one, keyed by session id. Populated in POST /sessions right after
-	// provisionBrowserSidecar succeeds, mutated by POST
-	// /sessions/:id/preview-ports as the guest reports new ports, and read by
-	// that same route to relay into an already-Running session without
-	// re-provisioning anything. The `previewRelays` array stored here is the
-	// SAME array reference passed to monitorSession, so relays pushed onto it
-	// after boot are cleaned up by monitorSession's existing teardown path
-	// with no further wiring — see the `relay.stop()` loops in monitorSession
-	// and its crash/spawn-failure handlers below. Injectable via deps so
-	// main()'s boot-time reconcile pass can reattach a restart-surviving
-	// session's sidecar into the same map this route reads from — see
-	// AppDeps.sessionPreviewState.
-	const sessionPreviewState: SessionPreviewState = deps.sessionPreviewState ?? new Map()
 
 	app.get('/health', async (c) => {
 		// `ok` must track msb liveness — a box whose `msb` is missing or broken
@@ -632,37 +737,178 @@ export function buildApp(deps: AppDeps): Hono {
 
 	// GET /sessions/:id/input/stream — VM polls here to receive newline-delimited
 	// JSON user turns for interactive sessions.
+	//
+	// `?after=<seq>` is the VM's high-water mark: the seq of the last turn it
+	// actually fed to the CLI. It acknowledges everything up to that point and
+	// asks for whatever followed. Turns are retained until acked, so a write
+	// that silently vanished into a half-open socket is redelivered here rather
+	// than lost (see InputQueue's class comment). A VM that has consumed
+	// nothing sends 0, or omits it entirely.
+	//
+	// Each line goes out wrapped as {"maskin_seq":N,"turn":<envelope>} so the
+	// VM can track what it consumed. input-stream.js unwraps it and writes only
+	// the inner envelope to the CLI's stdin, which must carry NDJSON turns and
+	// nothing else.
 	app.get('/sessions/:id/input/stream', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		const rawAfter = Number(c.req.query('after'))
+		const after = Number.isFinite(rawAfter) && rawAfter > 0 ? Math.floor(rawAfter) : 0
+		const epoch = c.req.query('epoch')
 		return stream(c, async (s) => {
 			let resolveStream!: () => void
 			const done = new Promise<void>((resolve) => {
 				resolveStream = resolve
 			})
-			const unregister = await inputQueue.registerStream(id, async (line) => {
+			const openedAt = Date.now()
+			let closeReason = 'handler returned'
+			const unregister = await inputQueue.registerStream(
+				id,
+				async (line, seq) => {
+					try {
+						await s.write(
+							`${JSON.stringify({
+								maskin_epoch: inputQueue.epoch,
+								maskin_seq: seq,
+								turn: line.trimEnd(),
+							})}\n`,
+						)
+						return true
+					} catch {
+						closeReason = 'turn write failed'
+						resolveStream()
+						return false
+					}
+				},
+				after,
+				epoch,
+			)
+			// Between turns this stream carries nothing for however long the
+			// human takes to reply — minutes-long silences that NAT/proxy
+			// idle-timeouts reap. A bare newline every 30s keeps the connection
+			// warm and, crucially, gives the VM something to miss: input-stream.js
+			// re-dials when no byte arrives for 90s (three missed heartbeats),
+			// which is how a silently blackholed connection gets noticed at all.
+			//
+			// It is NOT a delivery guarantee. A write into a half-open socket
+			// succeeds against the kernel buffer while nothing reaches the guest,
+			// so neither this heartbeat nor the turn writes above can confirm
+			// arrival — only the VM's `after` ack can. That is why turns survive
+			// a "successful" write.
+			const heartbeat = setInterval(async () => {
 				try {
-					await s.write(line)
-					return true
+					await s.write('\n')
 				} catch {
 					resolveStream()
-					return false
 				}
-			})
+			}, 30_000)
 			c.req.raw.signal.addEventListener('abort', () => {
+				closeReason = 'client aborted'
 				unregister()
 				resolveStream()
 			})
 			await done
+			clearInterval(heartbeat)
 			unregister()
+			// How long the guest held this connection, and why it ended. A guest
+			// that is re-dialling on its idle timer produces a steady series of
+			// ~90s connections; one that never appears again after its first is
+			// not re-dialling at all, which no other signal distinguishes.
+			logger.info('input: stream closed', {
+				sessionId: id,
+				reason: closeReason,
+				heldMs: Date.now() - openedAt,
+			})
 		})
 	})
 
-	// POST /sessions/:id/logs/ingest — agent-run.sh streams all agent output here
-	// over a single long-lived chunked POST (`curl -T -`). We read the request
-	// body as it arrives and push each newline-delimited line into the session's
-	// log buffer immediately, so monitorSession forwards them to the Maskin
-	// backend live (~2s batches) instead of all at once at session end.
+	// POST /sessions/:id/logs/batch — output-stream.js ships the agent's output
+	// here in bounded, acknowledged batches.
+	//
+	// This replaced a single long-lived chunked upload that could not survive
+	// microsandbox's egress proxy: when the proxy's guest-side leg died the
+	// upload never EOFed and never errored, so the guest blocked in a write
+	// forever and the agent's reply never left the VM. The user saw silence
+	// even though the agent had answered (wedges of 2026-08-21..24).
+	//
+	// `from` is the sequence of the first line in `lines`. The response carries
+	// the highest sequence stored, and the guest only forgets lines that come
+	// back acked — so a batch that vanishes into a half-open socket is simply
+	// resent. Retries are expected and must be idempotent: anything at or below
+	// what we have already stored is skipped rather than appended twice.
+	app.post('/sessions/:id/logs/batch', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+
+		let body: unknown
+		try {
+			body = await c.req.json()
+		} catch {
+			return c.json({ error: 'Invalid JSON' }, 400)
+		}
+		const from = Number((body as Record<string, unknown>)?.from)
+		const lines = (body as Record<string, unknown>)?.lines
+		if (!Number.isFinite(from) || from < 1 || !Array.isArray(lines)) {
+			return c.json({ error: 'Expected { from: number, lines: string[] }' }, 400)
+		}
+
+		const push = sessionLogRouters.get(id)
+
+		// No record of this session's sequence at all. That is the normal state
+		// after an agent-server restart, where the reconcile pass reattaches a
+		// live session whose guest is already at sequence N — and it is not a
+		// gap we can complain about, because we have stored nothing that a wrong
+		// answer here could discard. Adopt the guest's position. Refusing
+		// instead (the previous behaviour) left both sides stuck forever: the
+		// server acking 0, the guest already past it, neither able to move.
+		const known = sessionLogSeqs.has(id)
+		let stored = known ? (sessionLogSeqs.get(id) ?? 0) : from - 1
+
+		// The guest declares a resync when its buffer overflowed and it dropped
+		// the oldest lines. Those lines no longer exist anywhere, so waiting for
+		// them is waiting forever. Accept the new floor and record the hole in
+		// the transcript rather than leaving a silent discontinuity.
+		if (body && (body as Record<string, unknown>).resync === true && from > stored + 1) {
+			const droppedRaw = Number((body as Record<string, unknown>).dropped)
+			const droppedCount =
+				Number.isFinite(droppedRaw) && droppedRaw > 0 ? droppedRaw : from - stored - 1
+			logger.warn('output: guest resynced after dropping lines', {
+				sessionId: id,
+				storedThrough: stored,
+				resumingFrom: from,
+				dropped: droppedCount,
+			})
+			push?.(
+				`[system] output-stream: ${droppedCount} line(s) of agent output were dropped here — the agent-server was unreachable for long enough to overflow the guest's buffer`,
+			)
+			stored = from - 1
+		}
+
+		let ack = stored
+		for (let i = 0; i < lines.length; i++) {
+			const seq = from + i
+			// Already stored on an earlier attempt whose ack never made it back.
+			if (seq <= stored) continue
+			// A gap the guest has NOT declared means an earlier batch is still
+			// outstanding; acking past it would let the guest discard lines we
+			// never received. Stop and let it resend from where we actually are.
+			if (seq > ack + 1) break
+			const line = lines[i]
+			if (typeof line !== 'string') break
+			push?.(line)
+			// Agent output, and only agent output. /logs/ingest is deliberately not
+			// wired here — see StallTracker.outputObserved.
+			stallTracker.outputObserved(id, line)
+			ack = seq
+		}
+		sessionLogSeqs.set(id, ack)
+		return c.json({ ack })
+	})
+
+	// POST /sessions/:id/logs/ingest — legacy unacked path, still used by
+	// input-stream.js for its own one-shot diagnostic lines (which are cheap to
+	// lose and must never block on an ack). Agent output no longer flows here;
+	// see /logs/batch above.
 	app.post('/sessions/:id/logs/ingest', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
@@ -752,108 +998,146 @@ export function buildApp(deps: AppDeps): Hono {
 		return c.json({ ok: true })
 	})
 
-	// POST /sessions/:id/preview-ports — a session's own guest-side dev-server
-	// port watcher calls this the moment it sees a new LISTEN socket, so a
-	// relay into it can be opened on demand instead of requiring the caller to
-	// declare previewGuestPorts upfront in POST /sessions. Registered before
-	// requireBearer for the same reason as /complete and /logs/ingest above:
-	// the VM holds no AGENT_SERVER_SECRET, only the 122-bit session id +
-	// host-loopback reachability guard this.
-	app.post('/sessions/:id/preview-ports', async (c) => {
-		const { id } = c.req.param()
-		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
-
-		const state = sessionPreviewState.get(id)
-		if (!state) {
-			// No browser sidecar for this session (browserRequired wasn't set, or
-			// the sidecar failed to provision) — nothing to relay into.
-			return c.json({ error: 'no_browser_sidecar_for_session' }, 404)
-		}
-
-		let raw: unknown
-		try {
-			raw = await c.req.json()
-		} catch {
-			return c.json({ error: 'invalid_json' }, 400)
-		}
-		const parsed = PREVIEW_PORT_REQUEST_SCHEMA.safeParse(raw)
-		if (!parsed.success) {
-			return c.json({ error: 'invalid_request', details: parsed.error.flatten() }, 400)
-		}
-		const { guestPort } = parsed.data
-
-		// Idempotent — the watcher may re-report a port it already has a relay
-		// for (its own process restarting, a retried request, ...). Return the
-		// existing mapping instead of opening a second relay onto the same
-		// guest port.
-		const existing = state.previewRelays.find((relay) => relay.targetGuestPort === guestPort)
-		if (existing) {
-			return c.json({
-				guestPort,
-				previewUrl: `http://${agentServerInternalHost}:${existing.relayPort}`,
-			})
-		}
-
-		// The guest-side watcher reports every LISTEN socket it finds in range,
-		// not just intentional dev servers — cap how many distinct relays (and
-		// therefore host ssh-relay process pairs + shared host ports) a single
-		// session can claim, mirroring the upfront previewGuestPorts cap. Count
-		// in-flight attempts too (not just established relays) so concurrent
-		// requests for different new ports can't collectively slip past the cap
-		// before any of them lands in previewRelays. A re-request for a port
-		// that's already pending is exempt — it's coalescing onto existing work,
-		// not claiming a new slot.
-		if (
-			!state.pendingRelays.has(guestPort) &&
-			state.previewRelays.length + state.pendingRelays.size >= MAX_PREVIEW_GUEST_PORTS
-		) {
-			return c.json({ error: 'too_many_preview_ports' }, 429)
-		}
-
-		// Coalesce concurrent requests for the same port onto one in-flight
-		// attempt instead of racing two establishPreviewPortRelay calls — see
-		// SessionPreviewState.pendingRelays' doc comment for why this matters
-		// (the guest-side watcher's 2s poll loop makes the race a real,
-		// frequently-hit case, not a theoretical one).
-		let pending = state.pendingRelays.get(guestPort)
-		if (!pending) {
-			pending = establishPreviewPortRelay(
-				id,
-				guestPort,
-				deps.env.AGENT_SERVER_SSH_KEY_PATH,
-				deps.msb,
-			)
-			state.pendingRelays.set(guestPort, pending)
-			void pending.finally(() => state.pendingRelays.delete(guestPort))
-		}
-		const relay = await pending
-		if (!relay) {
-			logger.warn('dynamic preview port relay failed to establish', {
-				sessionId: id,
-				guestPort,
-			})
-			return c.json({ error: 'relay_failed' }, 502)
-		}
-		// A second/third caller that awaited the same `pending` promise above
-		// would otherwise push this exact relay onto previewRelays again.
-		if (!state.previewRelays.includes(relay)) {
-			state.previewRelays.push(relay)
-			logger.info('dynamic preview port relay established', {
-				sessionId: id,
-				guestPort,
-				relayPort: relay.relayPort,
-			})
-		}
-		return c.json(
-			{ guestPort, previewUrl: `http://${agentServerInternalHost}:${relay.relayPort}` },
-			201,
-		)
-	})
-
 	// All other /sessions routes require the shared bearer token.
 	const requireBearer = bearerAuth({ expectedSecret: deps.env.AGENT_SERVER_SECRET })
 	app.use('/sessions', requireBearer)
 	app.use('/sessions/*', requireBearer)
+
+	// Agent desktops — one long-lived noVNC desktop VM per agent (identified by
+	// workspace + agent), independent of any session. The WebSocket stream itself
+	// is served from the raw http.Server (see handleDesktopUpgrade); these are the
+	// control routes. apps/dev decides WHO may reach WHICH agent's desktop; this
+	// server only trusts the shared bearer.
+	const desktops = deps.desktops
+	if (desktops) {
+		app.use('/desktops/*', requireBearer)
+
+		const invalidIds = (workspaceId: string, agentId: string): string | null =>
+			!isValidWorkspaceId(workspaceId)
+				? 'Invalid workspace id'
+				: !isValidAgentId(agentId)
+					? 'Invalid agent id'
+					: null
+
+		// Which agents in a workspace have a computer, and whether it is asleep.
+		// Never includes the VNC passwords.
+		app.get('/desktops/:workspaceId', (c) => {
+			const { workspaceId } = c.req.param()
+			if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
+			return c.json({
+				desktops: desktops.listForWorkspace(workspaceId).map((d) => ({
+					agent_id: d.agentId,
+					status: d.status,
+				})),
+			})
+		})
+
+		// PUT is idempotent: returns the running desktop, provisioning (or waking) it if needed.
+		app.put('/desktops/:workspaceId/:agentId', async (c) => {
+			const { workspaceId, agentId } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
+			if (deps.drainState?.draining) return c.json({ error: 'draining' }, 503)
+			const desktop = await desktops.ensure(workspaceId, agentId)
+			if (!desktop) return c.json({ error: 'desktop_provision_failed' }, 502)
+			return c.json({ status: 'running', password: desktop.password })
+		})
+
+		app.get('/desktops/:workspaceId/:agentId', (c) => {
+			const { workspaceId, agentId } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
+			const desktop = desktops.get(workspaceId, agentId)
+			if (!desktop) return c.json({ error: 'not_found' }, 404)
+			// Reports `suspended` rather than waking it: a status poll must not undo
+			// the idle suspend. Opening the stream or PUT-ing the desktop wakes it.
+			return c.json({ status: desktop.status, password: desktop.password })
+		})
+
+		app.delete('/desktops/:workspaceId/:agentId', async (c) => {
+			const { workspaceId, agentId } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
+			const existed = await desktops.remove(workspaceId, agentId)
+			return c.json({ removed: existed })
+		})
+
+		// Dev servers in an agent's session sandbox, reachable from its computer.
+		// apps/dev has already checked the session is this agent's and runs on this
+		// server. The URL is what the computer's browser opens.
+		const portUrl = (relayPort: number): string => `http://${agentServerInternalHost}:${relayPort}`
+
+		app.post('/desktops/:workspaceId/:agentId/ports', async (c) => {
+			const { workspaceId, agentId } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
+			const parsed = EXPOSE_PORT_REQUEST_SCHEMA.safeParse(await c.req.json().catch(() => null))
+			if (!parsed.success) {
+				return c.json({ error: 'invalid_request', details: parsed.error.flatten() }, 400)
+			}
+			const { session_id: sessionId, guest_port: guestPort } = parsed.data
+			const result = await desktops.exposePort(workspaceId, agentId, sessionId, guestPort)
+			if (!result.ok) {
+				const status =
+					result.reason === 'no_desktop' ? 404 : result.reason === 'relay_failed' ? 502 : 409
+				return c.json({ error: result.reason, message: result.message }, status)
+			}
+			return c.json({
+				guest_port: result.port.guestPort,
+				relay_port: result.port.relayPort,
+				url: portUrl(result.port.relayPort),
+			})
+		})
+
+		app.get('/desktops/:workspaceId/:agentId/ports', (c) => {
+			const { workspaceId, agentId } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
+			return c.json({
+				ports: desktops.listPorts(workspaceId, agentId).map((p) => ({
+					guest_port: p.guestPort,
+					relay_port: p.relayPort,
+					session_id: p.sessionId,
+					url: portUrl(p.relayPort),
+				})),
+			})
+		})
+
+		app.delete('/desktops/:workspaceId/:agentId/ports/:relayPort', (c) => {
+			const { workspaceId, agentId, relayPort } = c.req.param()
+			const invalid = invalidIds(workspaceId, agentId)
+			if (invalid) return c.json({ error: invalid }, 400)
+			const port = Number(relayPort)
+			if (!Number.isInteger(port) || port < 1 || port > 65535) {
+				return c.json({ error: 'Invalid relay port' }, 400)
+			}
+			return c.json({ closed: desktops.closePort(workspaceId, agentId, port) })
+		})
+
+		// Agent control (screenshot / input / exec). The body is forwarded to the
+		// desktop's own desktopd, which re-validates it; apps/dev validates first.
+		for (const action of ['screenshot', 'input', 'exec'] as const) {
+			app.post(`/desktops/:workspaceId/:agentId/${action}`, async (c) => {
+				const { workspaceId, agentId } = c.req.param()
+				const invalid = invalidIds(workspaceId, agentId)
+				if (invalid) return c.json({ error: invalid }, 400)
+				const body = await c.req.json().catch(() => ({}))
+				try {
+					const result = await desktops.control(workspaceId, agentId, `/${action}`, body)
+					if (!result) return c.json({ error: 'not_found' }, 404)
+					return c.json(result.body as Record<string, unknown>, result.status as 200)
+				} catch (err) {
+					logger.warn('workspace desktop control failed', {
+						workspaceId,
+						agentId,
+						action,
+						error: String(err),
+					})
+					return c.json({ error: 'desktop_unreachable' }, 502)
+				}
+			})
+		}
+	}
 
 	app.post('/sessions', async (c) => {
 		// Reject new work once shutdown has begun — otherwise a session created
@@ -906,6 +1190,49 @@ export function buildApp(deps: AppDeps): Hono {
 				})
 				return c.json({ error: 'workspace_pull_failed' }, 502)
 			}
+
+			// Stage workspace skills into <sessionDir>/skills/<name>/ AFTER the
+			// snapshot restore + ensureSkeleton() and BEFORE spawnSession — the
+			// mount `<sessionDir>:/agent` only reaches the guest on entry, so a
+			// write after spawnSession would land host-side and never enter the
+			// VM. This is the fix for the Layer 1 provisioning gap: prior to
+			// this call, `/agent/skills/` was always empty for a fresh queue-
+			// dispatched session (see tech spec §2). Report the outcome back to
+			// apps/dev so `session_skill_load_failed` fires on a real failure
+			// (per tech spec §7) rather than the defect reproducing invisibly.
+			//
+			// Degraded-start: `stageSessionSkills` never throws; a per-skill
+			// failure is recorded and the session still boots, so an S3 blip
+			// on one skill does not take down the whole agent (see spec §6).
+			const stagingResult = await stageSessionSkills(deps.storage, sessionDir, body.skills ?? [])
+			logger.info('session skills staged', {
+				sessionId: body.sessionId,
+				manifestSkills: body.skills?.length ?? 0,
+				staged: stagingResult.staged,
+				failed: stagingResult.failures.length,
+			})
+			// Best-effort back-report to apps/dev. Fire-and-forget so a slow or
+			// unreachable Maskin backend never delays session spawn — an outage
+			// on the reporting side degrades to the same observable state as
+			// today (session boots, no G1 signal), rather than blocking dispatch.
+			if (
+				(body.skills?.length ?? 0) > 0 &&
+				deps.env.MASKIN_BASE_URL &&
+				deps.env.AGENT_SERVER_SECRET
+			) {
+				void reportSkillStagingToBackend(
+					body.sessionId,
+					deps.env.MASKIN_BASE_URL,
+					deps.env.AGENT_SERVER_SECRET,
+					body.skills?.length ?? 0,
+					stagingResult,
+				).catch((err) => {
+					logger.warn('Failed to report skill staging outcome to backend', {
+						sessionId: body.sessionId,
+						error: String(err),
+					})
+				})
+			}
 		}
 
 		// If the warmer has this image in libkrun's local cache we can skip the
@@ -916,119 +1243,35 @@ export function buildApp(deps: AppDeps): Hono {
 
 		// Inject AGENT_SERVER_URL so agent-run.sh can stream interactive input
 		// from this server (agentServerInternalHost is computed once above).
+		// TZ pins agent sessions to Copenhagen local time so injected currentDate
+		// and in-guest `date` calls agree; per-workspace TZ is a follow-on insight.
 		const sessionEnv: Record<string, string> = {
 			...body.env,
 			AGENT_SERVER_URL: `http://${agentServerInternalHost}:${deps.env.PORT}`,
+			TZ: 'Europe/Copenhagen',
 		}
 
-		// AC-T1/AC-T6: provision a Chromium CDP sidecar only when the flag is on.
-		// A failed sidecar must not take down the session — the agent falls back
-		// to an instrumentation-gap comment instead of fabricating a browser pass.
-		let browserSidecar: BrowserSidecar | null = null
-		let previewPortMappings: PreviewPortMapping[] = []
-		let previewForwardingFailed = false
-		// Released once the SSH relay(s) into these ports have actually been
-		// started (success or failure) further down — see the preview-relay
-		// block after spawnSession. Keeps the held probe sockets from leaking
-		// on every code path.
-		let releasePreviewPorts: () => void = () => {}
-		if (body.browserRequired === true) {
-			// Resolve preview relay ports up front, purely so PREVIEW_URL can be
-			// baked into the session's boot-time env below — the relay itself can
-			// only start once the session VM is Running, further down. The
-			// sidecar no longer needs these exact port numbers pre-baked into its
-			// own rules: it carries a standing allow@host:tcp:<DEV_SERVER_HOST_PORT_RANGE>
-			// grant that already covers wherever resolvePreviewPortMappings lands
-			// (see microsandbox.ts), so this step no longer has to happen before
-			// provisionBrowserSidecar.
-			if (body.previewGuestPorts && body.previewGuestPorts.length > 0) {
-				try {
-					const resolved = await resolvePreviewPortMappings(body.previewGuestPorts, deps.msb)
-					previewPortMappings = resolved.mappings
-					releasePreviewPorts = resolved.release
-				} catch (err) {
-					previewForwardingFailed = true
-					logger.warn('preview port resolution failed — continuing without preview forwarding', {
-						sessionId: body.sessionId,
-						error: String(err),
-						cause: err instanceof Error && err.cause !== undefined ? String(err.cause) : undefined,
-					})
-				}
-			}
-			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
-				image: deps.env.BROWSER_SIDECAR_IMAGE,
-			})
-			if (browserSidecar) {
-				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
-				const primaryPreviewMapping = previewPortMappings[0]
-				if (primaryPreviewMapping) {
-					sessionEnv.PREVIEW_URL = `http://${agentServerInternalHost}:${primaryPreviewMapping.relayPort}`
-				}
-				logger.info('browser sidecar attached to session', {
-					sessionId: body.sessionId,
-					sidecarName: browserSidecar.name,
-					cdpUrl: browserSidecar.cdpUrl,
-					previewUrl: sessionEnv.PREVIEW_URL,
-				})
-			} else {
-				if (previewPortMappings.length > 0) {
-					previewForwardingFailed = true
-				}
-				logger.warn('browser sidecar unavailable — session continues without browser', {
-					sessionId: body.sessionId,
-				})
-			}
-		}
-
-		const previewRelays: SshRelay[] = []
-		// Register before spawnSession so the state is already in place by the
-		// time the VM is up and its guest-side port watcher could plausibly
-		// reach POST /sessions/:id/preview-ports — see sessionPreviewState's
-		// doc comment above for why this array reference is also what
-		// monitorSession tears down at session end.
-		if (browserSidecar) {
-			sessionPreviewState.set(body.sessionId, {
-				browserSidecar,
-				previewRelays,
-				pendingRelays: new Map(),
-			})
-		}
 		try {
-			let result: Awaited<ReturnType<typeof spawnSession>>
-			try {
-				result = await spawnSession(
-					{
-						sessionId: body.sessionId,
-						image: body.image,
-						env: sessionEnv,
-						...(body.memoryMib !== undefined && { memoryMib: body.memoryMib }),
-						...(body.cpus !== undefined && { cpus: body.cpus }),
-						hostPort: deps.env.PORT,
-						...(deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST !== undefined && {
-							publicHost: deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST,
+			const result = await spawnSession(
+				{
+					sessionId: body.sessionId,
+					image: body.image,
+					env: sessionEnv,
+					...(body.memoryMib !== undefined && { memoryMib: body.memoryMib }),
+					...(body.cpus !== undefined && { cpus: body.cpus }),
+					hostPort: deps.env.PORT,
+					...(deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST !== undefined && {
+						publicHost: deps.env.MASKIN_AGENT_SERVER_PUBLIC_HOST,
+					}),
+					sessionDir,
+					pullPolicy,
+					...(deps.env.SESSION_MAX_DURATION !== '' &&
+						deps.env.SESSION_MAX_DURATION !== '0' && {
+							maxDuration: deps.env.SESSION_MAX_DURATION,
 						}),
-						sessionDir,
-						pullPolicy,
-						...(deps.env.SESSION_MAX_DURATION !== '' &&
-							deps.env.SESSION_MAX_DURATION !== '0' && {
-								maxDuration: deps.env.SESSION_MAX_DURATION,
-							}),
-						// Only opened when a sidecar was provisioned — keeps the default
-						// session firewall posture tight for the common path. allow@private
-						// grants reachability to the whole msb bridge, not just the
-						// sidecar's CDP port — see PRIVATE_NET_RULE in microsandbox.ts for
-						// why this is temporarily broader than the narrow allow@host:tcp
-						// grant it replaces.
-						...(browserSidecar !== null && { allowPrivateNet: true }),
-					},
-					deps.msb,
-				)
-			} catch (err) {
-				// spawnSession failed — no live VM to relay into, release the
-				// preview-port reservations now.
-				releasePreviewPorts()
-				throw err
-			}
+				},
+				deps.msb,
+			)
 			logger.info('session spawned', {
 				sessionId: body.sessionId,
 				image: body.image,
@@ -1037,41 +1280,6 @@ export function buildApp(deps: AppDeps): Hono {
 				envOverflowSpilled: result.envOverflowSpilled,
 				envSanitized: result.envSanitized,
 			})
-
-			// Session VM is now Running — actually open the SSH-relay tunnel(s) into
-			// its preview port(s); the sidecar's standing
-			// allow@host:tcp:<DEV_SERVER_HOST_PORT_RANGE> grant already covers these
-			// relayPort numbers, so nothing needs to be pre-baked into its rules. Must
-			// happen after spawnSession (the relay target must be a live VM); the
-			// pre-reserved port numbers are only released once this has run,
-			// whatever the outcome — see resolvePreviewPortMappings.
-			if (browserSidecar && previewPortMappings.length > 0) {
-				try {
-					for (const mapping of previewPortMappings) {
-						const relay = await startSshRelay(
-							body.sessionId,
-							mapping.guestPort,
-							deps.env.AGENT_SERVER_SSH_KEY_PATH,
-							deps.msb,
-							{ relayPort: mapping.relayPort },
-						)
-						if (relay) {
-							previewRelays.push(relay)
-						} else {
-							previewForwardingFailed = true
-							logger.warn('preview port ssh relay failed to establish', {
-								sessionId: body.sessionId,
-								guestPort: mapping.guestPort,
-								relayPort: mapping.relayPort,
-							})
-						}
-					}
-				} finally {
-					releasePreviewPorts()
-				}
-			} else {
-				releasePreviewPorts()
-			}
 
 			// Write exec trigger to the bind-mounted session dir. entrypoint.sh sleeps
 			// during create-time (no trigger); finding this file tells it to run the
@@ -1082,6 +1290,11 @@ export function buildApp(deps: AppDeps): Hono {
 			// push workspace to S3 → delete local dir → drain input queue.
 			// Register session in sessionLogRouters synchronously (before first await)
 			// so ingest calls from the forthcoming exec don't miss.
+			// Only interactive sessions take user turns, so only they can show the
+			// input-pending/output-absent asymmetry. INTERACTIVE=1 is set by
+			// apps/dev's session-manager and arrives in body.env.
+			stallTracker.trackSession(body.sessionId, { interactive: sessionEnv.INTERACTIVE === '1' })
+
 			void monitorSession(
 				body.sessionId,
 				sessionDir,
@@ -1091,29 +1304,19 @@ export function buildApp(deps: AppDeps): Hono {
 				deps.env.AGENT_SERVER_SECRET,
 				sessionLogRouters,
 				sessionExitCodes,
-				browserSidecar,
-				previewRelays,
 			)
 				.catch((err) => {
 					logger.error('monitorSession crashed unexpectedly', {
 						sessionId: body.sessionId,
 						error: String(err),
 					})
-					// monitorSession crashed before reaching its own cleanup tail — clean
-					// up here so the sidecar VM and preview relays aren't left orphaned.
-					for (const relay of previewRelays) relay.stop()
-					if (browserSidecar) {
-						void cleanupBrowserSidecar(browserSidecar, deps.msb).catch((cleanupErr) => {
-							logger.warn('browser sidecar cleanup after monitorSession crash failed', {
-								sessionId: body.sessionId,
-								error: String(cleanupErr),
-							})
-						})
-					}
 				})
 				.finally(() => {
 					inputQueue.drainSession(body.sessionId)
-					sessionPreviewState.delete(body.sessionId)
+					stallTracker.endSession(body.sessionId)
+					sessionLogSeqs.delete(body.sessionId)
+					// The sandbox is gone; so is anything an agent's computer tunnelled into.
+					desktops?.closeSessionRelays(body.sessionId)
 				})
 
 			// Launch msb exec in the background. entrypoint.sh finds the trigger and
@@ -1129,20 +1332,11 @@ export function buildApp(deps: AppDeps): Hono {
 					warm_hit: warmHit,
 					env_overflow_spilled: result.envOverflowSpilled,
 					env_sanitized: result.envSanitized,
-					...(sessionEnv.PREVIEW_URL !== undefined && { preview_url: sessionEnv.PREVIEW_URL }),
-					...(previewForwardingFailed && { preview_forwarding_failed: true }),
 				},
 				201,
 			)
 		} catch (err) {
 			logger.error('session spawn failed', { sessionId: body.sessionId, error: String(err) })
-			// Don't orphan the sidecar or any preview relays — spawnSession failed
-			// before monitorSession would have torn them down. Best-effort, idempotent.
-			for (const relay of previewRelays) relay.stop()
-			sessionPreviewState.delete(body.sessionId)
-			if (browserSidecar) {
-				await cleanupBrowserSidecar(browserSidecar, deps.msb).catch(() => {})
-			}
 			return c.json({ error: 'spawn_failed', message: String(err) }, 500)
 		}
 	})
@@ -1158,6 +1352,19 @@ export function buildApp(deps: AppDeps): Hono {
 		} catch {
 			return c.json({ error: 'Invalid JSON' }, 400)
 		}
+		// A model switch rides the same queue as user turns so it is delivered in
+		// order with them, but it is not a turn: nothing is pending on the CLI
+		// afterwards, so the stall tracker must not be told to expect output.
+		const requestedModel =
+			body && typeof body === 'object' ? (body as Record<string, unknown>).model : undefined
+		if (requestedModel !== undefined) {
+			if (typeof requestedModel !== 'string' || !MODEL_NAME_RE.test(requestedModel)) {
+				return c.json({ error: 'Invalid model field' }, 400)
+			}
+			const control = buildSetModelRequest(requestedModel, crypto.randomUUID())
+			await inputQueue.enqueue(id, `${JSON.stringify(control)}\n`)
+			return c.json({ ok: true })
+		}
 		if (
 			!body ||
 			typeof body !== 'object' ||
@@ -1169,23 +1376,25 @@ export function buildApp(deps: AppDeps): Hono {
 			type: 'user',
 			message: { role: 'user', content: (body as Record<string, unknown>).content as string },
 		}
-		await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
+		const seq = await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
+		stallTracker.turnEnqueued(id, seq)
 		return c.json({ ok: true })
 	})
 
-	// POST /sessions/:id/stop — apps/dev calls this to force-stop a session's
-	// sandbox (user-initiated stop). Bearer auth is inherited from the
-	// /sessions/* middleware. Idempotent, like the /complete handler's deferred
+	// POST /sessions/:id/stop — apps/dev's settleSession routes here for the
+	// remote sandbox teardown. Bearer auth is inherited from the /sessions/*
+	// middleware. Idempotent, like the /complete handler's deferred
 	// stopSandbox call above: stopping an already-stopped or absent sandbox is
-	// not an error. apps/dev treats this call as authoritative and marks the
-	// session terminal itself rather than waiting for monitorSession to report
-	// back — that watcher lives in this process's memory and would be gone
-	// after a redeploy, leaving the session stuck otherwise.
+	// not an error — the response's `stopped` outcome names which of the three
+	// non-error states applied (sandbox-stopped / sandbox-already-gone /
+	// sandbox-not-found).
 	app.post('/sessions/:id/stop', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
 		// Seed BEFORE stopping the sandbox, and regardless of whether the stop
-		// below succeeds — see FORCED_STOP_EXIT_CODE's comment.
+		// below succeeds — see FORCED_STOP_EXIT_CODE's comment. Load-bearing for
+		// /complete's exit-code recovery, so this line stays put and remains
+		// unconditional on body parsing.
 		sessionExitCodes.set(id, FORCED_STOP_EXIT_CODE)
 		// Self-cleaning: only deletes if nothing has consumed or overwritten the
 		// entry by then — see SESSION_EXIT_CODE_SENTINEL_TTL_MS's comment.
@@ -1194,27 +1403,146 @@ export function buildApp(deps: AppDeps): Hono {
 				sessionExitCodes.delete(id)
 			}
 		}, SESSION_EXIT_CODE_SENTINEL_TTL_MS).unref()
+
+		let raw: unknown
 		try {
-			await stopSandbox(id, deps.msb)
+			raw = await c.req.json()
+		} catch {
+			return c.json({ error: 'invalid_json' }, 400)
+		}
+		const parsed = STOP_SESSION_REQUEST_SCHEMA.safeParse(raw)
+		if (!parsed.success) {
+			return c.json({ error: 'invalid_request', details: parsed.error.flatten() }, 400)
+		}
+		const req = parsed.data
+
+		// Distinguish "the sandbox is present and we just stopped it" from
+		// "the sandbox was never there / already reaped" so settleSession can
+		// treat the absent case as a non-error for sources that expect it
+		// (sandbox-exit, agent-completed).
+		let sandboxNames: Set<string>
+		try {
+			sandboxNames = new Set(await listSandboxNames(deps.msb))
 		} catch (err) {
-			logger.warn('failed to stop sandbox on external stop request', {
+			logger.warn('failed to list sandboxes on external stop request', {
 				sessionId: id,
 				error: String(err),
 			})
+			// If we can't observe the sandbox list at all, treat the request as a
+			// best-effort stop attempt with the outcome unknown — fall through and
+			// let the stopSandbox call itself decide between stopped/already-gone.
+			sandboxNames = new Set([id])
 		}
-		return c.json({ ok: true })
+
+		let outcome: StopSessionOutcome
+		if (!sandboxNames.has(id)) {
+			outcome = 'sandbox-not-found'
+		} else {
+			try {
+				await stopSandbox(id, deps.msb)
+				outcome = 'sandbox-stopped'
+			} catch (err) {
+				logger.warn('failed to stop sandbox on external stop request', {
+					sessionId: id,
+					error: String(err),
+				})
+				outcome = 'sandbox-already-gone'
+			}
+		}
+
+		logger.info('sandbox stop handled', {
+			sessionId: id,
+			reason: req.reason,
+			source: req.source,
+			outcome,
+		})
+		return c.json({ stopped: outcome })
+	})
+
+	// POST /sessions/:id/push-agent-files — apps/dev's settleSession dispatches
+	// here to flush the guest-side `learnings/` and `memory/` directories back
+	// to S3 for a remote session. The dirs live under `<sessionDir>/{name}/` on
+	// the agent-server host (bind-mounted as `/agent/` inside the guest), so
+	// this handler reads directly from the host without ever touching msb.
+	// Missing dirs are tolerated — the response reports zero-file entries with
+	// no error, matching the settle-side contract that a startup-stalled
+	// session (which never wrote learnings) is not itself a push failure.
+	app.post('/sessions/:id/push-agent-files', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		if (!deps.storage) {
+			return c.json({ error: 'storage_unavailable' }, 503)
+		}
+
+		let raw: unknown
+		try {
+			raw = await c.req.json()
+		} catch {
+			return c.json({ error: 'invalid_json' }, 400)
+		}
+		const parsed = PUSH_AGENT_FILES_REQUEST_SCHEMA.safeParse(raw)
+		if (!parsed.success) {
+			return c.json({ error: 'invalid_request', details: parsed.error.flatten() }, 400)
+		}
+
+		const sessionDir = join(deps.env.AGENT_SESSION_ROOT, id)
+		const pushed: PushAgentFilesResponse['pushed'] = {}
+		const errors: PushAgentFilesResponse['errors'] = []
+		const keyPrefix = parsed.data.keyPrefix.replace(/\/$/, '')
+
+		for (const dir of parsed.data.directories as AgentPushDirectory[]) {
+			const localDir = join(sessionDir, dir)
+			try {
+				const dirStat = await stat(localDir).catch(() => null)
+				if (!dirStat?.isDirectory()) {
+					// A missing directory is a non-error — nothing was ever written.
+					pushed[dir] = { files: 0, bytes: 0 }
+					continue
+				}
+
+				let files = 0
+				let bytes = 0
+				for (const entry of await readdir(localDir)) {
+					const filePath = join(localDir, entry)
+					const fileStat = await stat(filePath).catch(() => null)
+					if (!fileStat?.isFile()) continue
+					const data = await readFile(filePath)
+					pushed[dir] = pushed[dir] ?? { files: 0, bytes: 0 }
+					// biome-ignore lint/style/noNonNullAssertion: initialised on the preceding line
+					pushed[dir]!.files += 1
+					// biome-ignore lint/style/noNonNullAssertion: initialised above
+					pushed[dir]!.bytes += data.length
+					files += 1
+					bytes += data.length
+					// Land under the workspace-scoped read prefix the concurrent
+					// bet's memory staging pulls from. `keyPrefix` came in as
+					// `agents/<ws>/<actor>` (validated by the request schema);
+					// tack on `/<dir>/<entry>` so the resulting object matches
+					// exactly what `agentStorage.pushAgentFiles`'s local path
+					// writes for a same-shape local session.
+					await deps.storage.put(`${keyPrefix}/${dir}/${entry}`, data)
+				}
+				logger.info('session agent files pushed', {
+					sessionId: id,
+					dir,
+					files,
+					bytes,
+				})
+			} catch (err) {
+				errors.push({ dir, message: err instanceof Error ? err.message : String(err) })
+				logger.warn('session agent files push failed for directory', {
+					sessionId: id,
+					dir,
+					error: String(err),
+				})
+			}
+		}
+
+		return c.json<PushAgentFilesResponse>({ pushed, errors })
 	})
 
 	return app
 }
-
-// Browser sidecar VMs (see provisionBrowserSidecar) never have their own DB
-// session row, so a bare `msb list` snapshot sent to /reconcile would always
-// report them as unclaimed — including one still attached to a live session —
-// and get force-removed. They're matched to their owning session's sandbox
-// name by this naming convention instead (see the reattach loop below) and
-// never sent to apps/dev at all.
-const BROWSER_SIDECAR_PREFIX = 'anko-browser-'
 
 /**
  * Reads the exit-code marker written by POST /sessions/:id/complete (see
@@ -1238,14 +1566,13 @@ export type ReconcileOnBootDeps = {
 	msb: MicrosandboxDeps
 	sessionLogRouters: Map<string, (line: string) => void>
 	sessionExitCodes: Map<string, number>
-	/**
-	 * Same map buildApp's `POST /sessions/:id/preview-ports` route reads from
-	 * — see AppDeps.sessionPreviewState. Omitted → a session reattached below
-	 * that has a browser sidecar never gets an entry, so that route 404s for
-	 * it for the rest of its lifetime post-restart.
-	 */
-	sessionPreviewState?: SessionPreviewState
 	fetchImpl?: typeof fetch
+	/**
+	 * Same tracker buildApp feeds — see AppDeps.stallTracker. Sessions
+	 * reattached here are registered as `reattached`, which counts them as
+	 * unobserved rather than healthy.
+	 */
+	stallTracker?: StallTracker
 }
 
 /**
@@ -1261,10 +1588,8 @@ export type ReconcileOnBootDeps = {
  * waiting for it, and the DB row would stall until the watchdog times it out
  * even though the work already finished.
  *
- * Also reattaches (or removes, if orphaned) each reattached session's browser
- * CDP sidecar VM by naming convention, and recovers a session's real exit
- * code plus re-issues its stop from the on-disk marker POST
- * /sessions/:id/complete writes, in case this process was killed/restarted
+ * Also recovers a session's real exit code plus re-issues its stop from the
+ * on-disk marker POST /sessions/:id/complete writes, in case this process was killed/restarted
  * before that handler's own deferred stopSandbox call ever fired.
  *
  * No-ops (with a log line) if AGENT_SERVER_ID or MASKIN_BASE_URL aren't
@@ -1288,12 +1613,10 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 		logger.error('reconcile-on-boot: msb list failed, skipping this pass', { error: String(err) })
 		return
 	}
-	// Owned by naming convention (see provisionBrowserSidecar) — matched against
-	// reattached sessions below and never reported to apps/dev.
-	const browserSidecarNames = new Set(
-		names.filter((name) => name.startsWith(BROWSER_SIDECAR_PREFIX)),
-	)
-	const claimableSandboxes = names.filter((name) => !browserSidecarNames.has(name))
+	// Workspace desktops have no session row either, and must NOT reach
+	// /reconcile — apps/dev would call them orphans and remove them. They are
+	// adopted separately in main(), before the listener starts.
+	const claimableSandboxes = names.filter((name) => !name.startsWith(DESKTOP_PREFIX))
 
 	let result: { marked_failed: string[]; orphan_sandboxes: string[] }
 	try {
@@ -1370,34 +1693,11 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			})
 		}
 
-		// Reattach the sidecar this session provisioned, if any, so its normal
-		// end-of-session cleanupBrowserSidecar call still fires instead of
-		// leaking the Chromium VM (see BROWSER_SIDECAR_PREFIX above). cdpUrl is
-		// irrelevant here — it was only ever needed to inject BROWSER_CDP_URL
-		// into the session VM at spawn time, and cleanupBrowserSidecar only
-		// reads `.name`.
-		const sidecarName = `${BROWSER_SIDECAR_PREFIX}${name.slice(0, 16)}`
-		const browserSidecar: BrowserSidecar | null = browserSidecarNames.has(sidecarName)
-			? { name: sidecarName, cdpUrl: '' }
-			: null
-		if (browserSidecar) browserSidecarNames.delete(sidecarName)
-
-		// Reattach into the SAME sessionPreviewState map POST
-		// /sessions/:id/preview-ports reads from — without this, a reattached
-		// session's guest-side port watcher (still polling from before the
-		// restart) gets a permanent 404 from that route, silently disabling
-		// dynamic preview relay for the rest of the session even though the
-		// sidecar itself is alive. Empty on reattach: any relay opened before
-		// the restart lived in the old process's memory only and is gone with
-		// it — the watcher will simply re-report the port and get a fresh relay.
-		const previewRelays: SshRelay[] = []
-		if (browserSidecar) {
-			deps.sessionPreviewState?.set(name, {
-				browserSidecar,
-				previewRelays,
-				pendingRelays: new Map(),
-			})
-		}
+		// Reattached, NOT healthy. This process has no turn history for it, so it
+		// is excluded from every stall arm and counted by
+		// maskin_sessions_unobserved instead — a stall that was firing before a
+		// restart must not read as resolved just because we forgot about it.
+		deps.stallTracker?.trackSession(name, { interactive: false, reattached: true })
 
 		void monitorSession(
 			name,
@@ -1408,36 +1708,16 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			env.AGENT_SERVER_SECRET,
 			deps.sessionLogRouters,
 			deps.sessionExitCodes,
-			browserSidecar,
-			previewRelays,
 		)
 			.catch((err) => {
 				logger.error('reconcile-on-boot: reattached monitorSession crashed', {
 					sessionId: name,
 					error: String(err),
 				})
-				for (const relay of previewRelays) relay.stop()
 			})
 			.finally(() => {
-				deps.sessionPreviewState?.delete(name)
+				deps.stallTracker?.endSession(name)
 			})
-	}
-
-	// Any browser sidecar left unmatched belongs to a session that's either an
-	// orphan itself or no longer exists at all (e.g. it crashed between
-	// provisioning the sidecar and finishing) — remove it directly since it
-	// never has its own DB row for apps/dev to reconcile.
-	if (browserSidecarNames.size > 0) {
-		await Promise.all(
-			Array.from(browserSidecarNames, (name) =>
-				removeSandbox(name, deps.msb).catch((err) => {
-					logger.warn('reconcile-on-boot: failed to remove orphan browser sidecar', {
-						name,
-						error: String(err),
-					})
-				}),
-			),
-		)
 	}
 }
 
@@ -1461,11 +1741,9 @@ async function main(): Promise<void> {
 	const storage = await buildStorage(env)
 	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN }
 
-	// Best-effort: a box that can't mint/authorize its relay keypair here still
-	// boots — browser-required sessions will simply fail sidecar/preview relay
-	// setup individually later (provisionBrowserSidecar / startSshRelay never
-	// throw past the session boundary), consistent with this file's philosophy
-	// of not crashing the whole box over an optional-capability failure.
+	// Best-effort: a box that can't mint/authorize its relay keypair still boots;
+	// exposing a port from a computer then fails (relay_failed) instead of the
+	// whole server refusing to start over an optional capability.
 	try {
 		await ensureAgentServerSshKey(env.AGENT_SERVER_SSH_KEY_PATH, msb)
 	} catch (err) {
@@ -1494,15 +1772,46 @@ async function main(): Promise<void> {
 	// Created here (rather than inside buildApp) so the boot-time reconcile
 	// pass below can reattach monitorSession into the same maps the HTTP
 	// handlers read from — see
-	// AppDeps.sessionLogRouters/sessionExitCodes/sessionPreviewState.
+	// AppDeps.sessionLogRouters/sessionExitCodes.
 	const sessionLogRouters = new Map<string, (line: string) => void>()
 	const sessionExitCodes = new Map<string, number>()
-	const sessionPreviewState: SessionPreviewState = new Map()
+	const stallTracker = new StallTracker({ thresholdMs: env.AGENT_SERVER_STALL_THRESHOLD_MS })
 	const drainState = { draining: false }
 	// Starts false so POST /sessions 503s until reconcileOnBoot below finishes —
 	// see AppDeps.readyState for why that gate has to be closed before any new
 	// session can be created on this box.
 	const readyState = { ready: false }
+	const desktops = new WorkspaceDesktopRegistry({
+		msb,
+		image: env.DESKTOP_IMAGE,
+		stateFile: join(env.AGENT_SESSION_ROOT, '.workspace-desktops.json'),
+		relay: {
+			portStart: env.DESKTOP_RELAY_PORT_START,
+			portEnd: env.DESKTOP_RELAY_PORT_END,
+			blockSize: env.DESKTOP_RELAY_BLOCK_SIZE,
+			sshKeyPath: env.AGENT_SERVER_SSH_KEY_PATH,
+		},
+		snapshots: env.DESKTOP_SNAPSHOTS
+			? {
+					dir: join(env.AGENT_SESSION_ROOT, '.workspace-desktop-snapshots'),
+					idleSuspendMs: env.DESKTOP_IDLE_MINUTES * 60_000,
+				}
+			: undefined,
+	})
+
+	// Adopt desktops that survived a restart BEFORE the listener accepts
+	// requests, so an early PUT can't race the adoption and try to re-create a
+	// desktop that already exists. Deliberately not part of reconcileOnBoot: that
+	// pass is skipped when AGENT_SERVER_ID/MASKIN_BASE_URL are unset, and
+	// desktops must be adopted either way.
+	try {
+		await desktops.reconcile(await listSandboxNames(msb))
+	} catch (err) {
+		logger.error('workspace desktop adoption failed, continuing without it', {
+			error: String(err),
+		})
+	}
+	desktops.startIdleSweep()
 
 	const app = buildApp({
 		env,
@@ -1511,13 +1820,39 @@ async function main(): Promise<void> {
 		warmer,
 		sessionLogRouters,
 		sessionExitCodes,
-		sessionPreviewState,
+		stallTracker,
 		drainState,
 		readyState,
+		desktops,
 	})
+
+	// Resolved once, logged once, and handed to the metrics registry. Logging it
+	// at boot means the "which commit" answer is also in Loki, so a box whose
+	// scrape is broken is still identifiable from its journal.
+	const buildInfo = resolveBuildInfo()
+	logger.info('agent-server build', buildInfo)
 
 	const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
 		logger.info('agent-server listening', { port })
+	})
+
+	// Hono has no WebSocket support here, so desktop streams are spliced at the
+	// raw http.Server level — see handleDesktopUpgrade.
+	;(server as Server).on('upgrade', (req, socket, head) => {
+		handleDesktopUpgrade(req, socket, head, { registry: desktops, secret: env.AGENT_SERVER_SECRET })
+	})
+
+	// Metrics listener — SEPARATE from the main one, and bound to LOOPBACK.
+	// Both of those decisions, and the reason a bind failure here must never be
+	// fatal, live in startMetricsServer / METRICS_HOSTNAME in lib/metrics.ts.
+	// METRICS_PORT=0 disables it entirely (local dev, or a box with no
+	// collector).
+	const metricsServer = startMetricsServer({
+		port: env.METRICS_PORT,
+		buildInfo,
+		stallTracker,
+		serve,
+		onError: (err) => Sentry.captureException(err),
 	})
 
 	// The HTTP listener above accepts connections immediately (health checks,
@@ -1532,7 +1867,7 @@ async function main(): Promise<void> {
 		msb,
 		sessionLogRouters,
 		sessionExitCodes,
-		sessionPreviewState,
+		stallTracker,
 	})
 		.catch((err) => {
 			logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })
@@ -1555,6 +1890,7 @@ async function main(): Promise<void> {
 				logger.error('image warmer shutdown failed', { error: String(err) })
 			})
 		}
+		metricsServer?.close()
 		server.close(() => process.exit(0))
 		// Hard-stop after 10s if the server doesn't close cleanly (libkrun hangs
 		// have shown up here in the past).

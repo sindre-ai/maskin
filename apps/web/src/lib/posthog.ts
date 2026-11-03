@@ -4,6 +4,21 @@ const DEFAULT_HOST = 'https://eu.i.posthog.com'
 
 let initialized = false
 
+// Every web event says where it came from and who acted. The web is only ever
+// used by a signed-in or signing-up person, so an event with no actor_type yet
+// (pageviews before the workspace mounts, sign-up events) is a human's. The
+// workspace mount registers the real actor_type, which wins.
+export function withSharedProperties<T extends { properties?: Record<string, unknown> }>(
+	event: T | null,
+): T | null {
+	if (!event) return event
+	const properties = event.properties ?? {}
+	return {
+		...event,
+		properties: { actor_type: 'human', ...properties, surface: 'web' },
+	} as T
+}
+
 export function initPosthog(): void {
 	if (initialized) return
 	const key = import.meta.env.VITE_POSTHOG_KEY
@@ -13,7 +28,12 @@ export function initPosthog(): void {
 			api_host: import.meta.env.VITE_POSTHOG_HOST ?? DEFAULT_HOST,
 			person_profiles: 'identified_only',
 			capture_pageview: true,
+			// Leave and web-vitals events were a share of the browser volume with
+			// no question behind them.
+			capture_pageleave: false,
+			capture_performance: false,
 			autocapture: false,
+			before_send: withSharedProperties,
 		})
 		initialized = true
 	} catch {
@@ -68,6 +88,22 @@ export function registerWorkspaceProperties(props: WorkspaceSuperProperties): vo
 	}
 }
 
+// Ties every event from this browser to one `workspace` group, so per-workspace
+// funnels and retention read off a single group instead of the workspace_id
+// super property. Only the id and created date go up: the workspace name is
+// never sent, so the anonymise setting needs no branch here. Call it after
+// setCapturingEnabled so an opted-out workspace sends nothing.
+export function setWorkspaceGroup(workspaceId: string, createdAt?: string | null): void {
+	if (!initialized) return
+	try {
+		const properties: Record<string, string> = { workspace_id: workspaceId }
+		if (createdAt) properties.created_at = createdAt
+		posthog.group('workspace', workspaceId, properties)
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
 // Mirrors the Privacy & data toggle. When users turn share-usage off we
 // route through PostHog's opt_out so the queued events never leave the
 // browser; turning it back on flushes the standard opt_in path.
@@ -98,16 +134,50 @@ export async function hashDistinctId(value: string): Promise<string> {
 		.join('')
 }
 
+export interface IdentifiedPerson {
+	name?: string | null
+	email?: string | null
+}
+
 // Identify the actor for analytics, applying the workspace's anonymise pref.
 // When anonymised, the distinct_id sent to PostHog is SHA-256(actor.id) so the
 // raw actor id never leaves the browser; the Synthesizer's joins still resolve
 // because they key off `actor_id` registered as a super property, not
-// `$distinct_id` (per the bet's property-contract decision).
-export async function identifyForWorkspace(actorId: string, anonymize: boolean): Promise<void> {
+// `$distinct_id` (per the bet's property-contract decision). The optional
+// `person` name/email become PostHog person properties so people show up as
+// themselves instead of an id — dropped when anonymised, for the same reason
+// the id is hashed.
+export async function identifyForWorkspace(
+	actorId: string,
+	anonymize: boolean,
+	person?: IdentifiedPerson,
+): Promise<void> {
 	if (!initialized) return
 	try {
 		const distinctId = anonymize ? await hashDistinctId(actorId) : actorId
-		posthog.identify(distinctId)
+		const properties: Record<string, string> = {}
+		if (!anonymize) {
+			if (person?.email) properties.email = person.email
+			if (person?.name) properties.name = person.name
+		}
+		// Only pass the second arg when there is something to set — keeps the
+		// single-arg call shape the existing identify specs assert on.
+		if (Object.keys(properties).length > 0) {
+			posthog.identify(distinctId, properties)
+		} else {
+			posthog.identify(distinctId)
+		}
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
+// Called on sign-out so the next person on this browser starts from a fresh
+// anonymous id instead of inheriting the previous user's identity.
+export function resetPosthogIdentity(): void {
+	if (!initialized) return
+	try {
+		posthog.reset()
 	} catch {
 		// Analytics must never break the UI.
 	}

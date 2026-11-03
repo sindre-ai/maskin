@@ -45,14 +45,39 @@ const claudeOAuthLegacySlotSchema = z
 		expiresAt: z.number(),
 		subscriptionType: z.string().optional(),
 		scopes: z.array(z.string()).optional(),
+		// User-authored label for the slot. Omitting it here did NOT strip it
+		// (the schema is strict, not stripping) — it failed the whole
+		// `workspaceSettingsSchema` parse for any workspace that had named a
+		// slot, which is how `billing` silently read back as undefined on the
+		// credit-checkout and plan-cap paths.
+		nickname: z.string().optional(),
+	})
+	.strict()
+
+// Slot ids are chain positions: `primary`, `backup`, then `slot_3`… — see
+// apps/dev/src/lib/claude-oauth-slots.ts, which owns the ordering.
+const claudeOAuthExtraSlotIdSchema = z.string().regex(/^slot_(?:[3-9]|10)$/)
+
+const claudeOAuthSlotFailureSchema = z
+	.object({
+		at: z.number().optional(),
+		reason: z.string().optional(),
 	})
 	.strict()
 
 const claudeOAuthFailoverStateSchema = z
 	.object({
+		// A slot id, no longer only the first two — a workspace can hold up to
+		// MAX_OAUTH_SLOTS subscriptions and any of them can be the active one.
+		active_slot: z.string(),
+		// Per-slot failure records keyed by slot id. The four `last_*` fields
+		// below are legacy mirrors of the primary/backup entries, still written
+		// so a rollback to a two-slot build reads the same state.
+		failures: z.record(claudeOAuthSlotFailureSchema).optional(),
 		last_primary_failure_at: z.number().optional(),
-		active_slot: z.enum(['primary', 'backup']),
 		last_classified_reason: z.string().optional(),
+		last_backup_failure_at: z.number().optional(),
+		last_backup_classified_reason: z.string().optional(),
 	})
 	.strict()
 
@@ -65,19 +90,28 @@ const claudeOAuthSlotStorageSchema = z
 	.object({
 		primary: claudeOAuthLegacySlotSchema.optional(),
 		backup: claudeOAuthLegacySlotSchema.optional(),
+		// Slots beyond the second. `primary`/`backup` stay top-level keys so
+		// existing rows need no migration and an older build still finds them.
+		extras: z.record(claudeOAuthExtraSlotIdSchema, claudeOAuthLegacySlotSchema).optional(),
 		failover: claudeOAuthFailoverStateSchema.optional(),
 	})
 	.strict()
-	.refine((v) => v.primary !== undefined || v.backup !== undefined || v.failover !== undefined, {
-		message: 'claude_oauth must define at least one of primary, backup, or failover',
-	})
+	.refine(
+		(v) =>
+			v.primary !== undefined ||
+			v.backup !== undefined ||
+			v.extras !== undefined ||
+			v.failover !== undefined,
+		{
+			message: 'claude_oauth must define at least one of primary, backup, extras, or failover',
+		},
+	)
 
 export const workspaceSettingsSchema = z.object({
 	display_names: z.record(z.string()).default({
 		insight: 'Insight',
 		bet: 'Bet',
 		task: 'Task',
-		commitment: 'Commitment',
 		loop: 'Loop',
 	}),
 	statuses: z.record(z.array(z.string())).default({
@@ -85,9 +119,8 @@ export const workspaceSettingsSchema = z.object({
 		// `archived` is a silent terminal — intentionally NOT in TERMINAL_BET_STATUSES
 		// (packages/shared/src/schemas/objects.ts) so archive doesn't fire retro or
 		// notification fan-out. Add other terminal states there, not archived.
-		bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
-		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
-		commitment: ['holding', 'at-risk', 'breached'],
+		bet: ['opportunity', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
+		task: ['backlog', 'todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		loop: [...LOOP_STATUSES],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({
@@ -98,8 +131,13 @@ export const workspaceSettingsSchema = z.object({
 		.array(z.string())
 		.default(['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']),
 	custom_extensions: z.record(customExtensionEntrySchema).default({}),
-	enabled_modules: z.array(z.string()).default(['work', 'crm', 'knowledge']),
-	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
+	// Extensions a brand-new workspace ships with. Existing workspace rows that
+	// predate an id being added here keep whatever they stored — this default
+	// only applies when settings are parsed at creation time (POST /workspaces,
+	// signup in routes/actors.ts). The runtime fallback for rows with no
+	// `enabled_modules` at all stays `['work']` (module-sdk `getEnabledModuleIds`).
+	enabled_modules: z.array(z.string()).default(['work', 'knowledge', 'crm']),
+	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(10),
 	// Chat sessions bypass max_concurrent_sessions entirely (a live human is
 	// waiting), but still need *some* aggregate ceiling so a workspace with
 	// many conversations can't spawn unbounded concurrent containers. Default
@@ -116,8 +154,8 @@ export const workspaceSettingsSchema = z.object({
 		.default({}),
 	// claude_oauth has two valid on-disk shapes — legacy single-slot (kept for
 	// back-compat per AC-T1 of the subscription-failover bet, no migration of
-	// existing rows) and the new primary/backup/failover shape introduced by
-	// T1. Resolver lives in apps/dev/src/lib/claude-oauth-slots.ts.
+	// existing rows) and the slot-chain shape (primary, backup, extras,
+	// failover). Resolver lives in apps/dev/src/lib/claude-oauth-slots.ts.
 	claude_oauth: z.union([claudeOAuthLegacySlotSchema, claudeOAuthSlotStorageSchema]).optional(),
 	// Privacy & data block surfaced in workspace Settings → General.
 	// `share_usage` toggles posthog opt-in capturing; `anonymize_workspace` swaps
@@ -143,6 +181,59 @@ export const workspaceSettingsSchema = z.object({
 			small_fast_model: z.string().nullable().optional(),
 		})
 		.optional(),
+	// Maskin-funded LLM subscription. When `plan` is `pro` or `team` the
+	// session routes through Maskin's OpenRouter account (Deepseek v4 Flash),
+	// and usage is attributed to the current billing period via
+	// `sessions.config.llm_route = 'maskin_plan'`. Mutually exclusive with
+	// `custom_llm` / Claude OAuth / workspace `llm_keys.anthropic` at the
+	// write layer; the router enforces the precedence at read time.
+	// `period_start`, `period_end`, and `hard_cap_usd_cents` are written by the
+	// Stripe webhook; `status` mirrors the Stripe subscription status string.
+	// `period_end` is the Stripe `current_period_end` — surfaced on the
+	// `PLAN_CAP_EXCEEDED` error so the frontend can show a reset ETA.
+	billing: z
+		.object({
+			plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
+			stripe_customer_id: z.string().nullable().optional(),
+			stripe_subscription_id: z.string().nullable().optional(),
+			period_start: z.number().nullable().optional(),
+			period_end: z.number().nullable().optional(),
+			// Included-usage cap for the period, in USD cents. Different agents
+			// can run different model tiers with different $/token ratios, so the
+			// cap (and the usage compared against it) is tracked in actual dollar
+			// cost rather than a token count — see lib/llm-routing.ts.
+			hard_cap_usd_cents: z.number().nullable().optional(),
+			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']).optional(),
+			// Prepaid usage-credits balance, in USD cents. Depletes as
+			// `maskin_plan` usage crosses the plan's included cap
+			// (lib/credit-billing.ts); topped up via
+			// `POST /billing/credits/checkout` + the Stripe webhook's
+			// `mode: 'payment'` branch. Persists across plan downgrades — it's
+			// the customer's money, not forfeited — but is only spendable while
+			// `canUseCreditBalance()` (pro/team + status active) is true.
+			credit_balance_cents: z.number().int().nonnegative().optional(),
+			// ── LinkedIn Identity add-on ($49/connected identity/month) ──
+			// Two shapes, because the add-on has to bill a workspace that may
+			// not have a plan subscription to hang an item on:
+			//   pro/team — an item on the plan subscription itself, so the
+			//     $49 lines lands on the same invoice as the plan. Only
+			//     `linkedin_addon_item_id` is set.
+			//   trial — its own single-line subscription created by its own
+			//     Checkout, since there is no plan subscription. BOTH ids are
+			//     set, and `linkedin_addon_subscription_id` is what tells the
+			//     Stripe webhook that an incoming subscription event is the
+			//     add-on's and must not be mistaken for a plan change.
+			// Quantity always equals the count of `active` linkedin-unipile
+			// integration rows on the workspace — see lib/linkedin-addon.ts.
+			linkedin_addon_subscription_id: z.string().nullable().optional(),
+			linkedin_addon_item_id: z.string().nullable().optional(),
+		})
+		.optional(),
+	// Voice v1 (bet 16bd0042). Absent means transcripts persist; only an explicit
+	// `persist_transcripts: false` opts the workspace out (no transcript rows,
+	// no audio blob). Deliberately no default so existing workspaces' stored
+	// settings are unchanged. Read by services/voice-transcript.ts.
+	voice: z.object({ persist_transcripts: z.boolean().optional() }).optional(),
 	// North Star onboarding prompt answer — stored when a user submits the
 	// "What's your product's North Star metric?" card on the For You page.
 	north_star_metric: z.string().optional(),
@@ -186,10 +277,27 @@ export const updateWorkspaceSchema = z.object({
 	settings: workspaceSettingsSchema.partial().optional(),
 })
 
-export const updateWorkspaceAdminSchema = z.object({
-	onboarding_enabled: z.boolean(),
-})
+export const updateWorkspaceAdminSchema = z
+	.object({
+		onboarding_enabled: z.boolean().optional(),
+		// Entitlement to BYO LLM credentials (Claude OAuth, custom_llm, llm_keys).
+		// Defaults to false for every workspace; only ops-flagged exceptions may
+		// bypass the Maskin-provided LLM plan. See PR #970.
+		enterprise_granted: z.boolean().optional(),
+	})
+	.refine((v) => v.onboarding_enabled !== undefined || v.enterprise_granted !== undefined, {
+		message: 'At least one of onboarding_enabled or enterprise_granted must be provided',
+	})
 
 export const workspaceParamsSchema = z.object({
 	id: z.string().uuid(),
+})
+
+// Body for POST /api/workspaces/:id/transfer-ownership. The new owner must
+// already be an existing HUMAN member of the workspace — transfer never
+// creates a new membership and never targets an agent. See
+// apps/dev/src/lib/workspace-capacity.ts for the ownership-cap semantics this
+// route enforces against the new owner.
+export const transferBillingOwnershipSchema = z.object({
+	new_owner_actor_id: z.string().uuid(),
 })

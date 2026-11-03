@@ -5,6 +5,7 @@ import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import {
+	ensureWorkspaceMember,
 	insertActor,
 	insertObject,
 	insertRelationship,
@@ -12,12 +13,13 @@ import {
 	insertTrigger,
 	insertWorkspace,
 } from '../factories'
-import { jsonGet } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId, sql } from './global-setup'
 
 // Load the routes lazily so vitest doesn't pull them in at module resolution
 // time (mirrors the pattern used in subscriptions.test.ts).
 const { default: loopsRoutes } = await import('../../routes/loops')
+const { default: objectsRoutes } = await import('../../routes/objects')
 
 type Env = {
 	Variables: {
@@ -71,6 +73,116 @@ describe('Loops read API integration', () => {
 		expect(body.loops).toEqual([])
 	})
 
+	it('returns metadata.tags as clean labels, and [] when a loop has none', async () => {
+		const tagged = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Outbound',
+			// Padded, duplicated (case-insensitively), empty and non-string entries are
+			// all tolerated: a hand-edited metadata blob must not 500 the list.
+			metadata: { tags: [' Sales ', 'EMEA', 'sales', '', 42, null, 'x'.repeat(60)] },
+		})
+		const plain = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'draft',
+			title: 'No tags',
+		})
+		const malformed = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'draft',
+			title: 'Tags not an array',
+			metadata: { tags: 'sales' },
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: Array<{ id: string; tags: string[] }> }
+		const byId = new Map(body.loops.map((l) => [l.id, l.tags]))
+		expect(byId.get(tagged.id)).toEqual(['Sales', 'EMEA', 'x'.repeat(40)])
+		expect(byId.get(plain.id)).toEqual([])
+		expect(byId.get(malformed.id)).toEqual([])
+	})
+
+	it('returns driverId on the list and on a single-loop read, null when no driver is set', async () => {
+		const driver = await insertActor(db)
+		const driven = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Has a driver',
+			driver: driver.id,
+		})
+		const undriven = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'draft',
+			title: 'No driver',
+			driver: null,
+		})
+
+		const app = makeApp(actorId)
+		const headers = { 'x-workspace-id': workspaceId }
+		const listRes = await app.request(jsonGet('/api/loops', headers))
+		expect(listRes.status).toBe(200)
+		const list = (await listRes.json()) as { loops: Array<{ id: string; driverId: string | null }> }
+		const byId = new Map(list.loops.map((l) => [l.id, l.driverId]))
+		expect(byId.get(driven.id)).toBe(driver.id)
+		expect(byId.get(undriven.id)).toBeNull()
+
+		for (const [loop, expected] of [
+			[driven, driver.id],
+			[undriven, null],
+		] as const) {
+			const res = await app.request(jsonGet(`/api/loops?id=${loop.id}`, headers))
+			expect(res.status).toBe(200)
+			const one = (await res.json()) as { loops: Array<{ driverId: string | null }> }
+			expect(one.loops).toHaveLength(1)
+			expect(one.loops[0]?.driverId).toBe(expected)
+		}
+	})
+
+	it('does not leak a driver from another workspace loop', async () => {
+		const otherActor = await insertActor(db)
+		const otherWs = await insertWorkspace(db, otherActor.id)
+		const foreign = await insertObject(db, otherWs.id, otherActor.id, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Foreign loop',
+			driver: otherActor.id,
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${foreign.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { loops: unknown[] }).loops).toEqual([])
+	})
+
+	it('returns tags set through the normal object update on the loop read', async () => {
+		const app = makeApp(actorId)
+		app.route('/api/objects', objectsRoutes)
+		const headers = { 'x-workspace-id': workspaceId }
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Retag me',
+		})
+
+		const patchRes = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/objects/${loop.id}`,
+				{ metadata: { tags: ['Sales', 'EMEA'] } },
+				headers,
+			),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const res = await app.request(jsonGet(`/api/loops?id=${loop.id}`, headers))
+		const body = (await res.json()) as { loops: Array<{ tags: string[] }> }
+		expect(body.loops[0]?.tags).toEqual(['Sales', 'EMEA'])
+	})
+
 	it('returns loops filtered by workspace with the T3 render shape', async () => {
 		// Foreign workspace with its own loop — a workspace filter regression
 		// would leak this into the primary workspace's response. Guarded by
@@ -111,6 +223,7 @@ describe('Loops read API integration', () => {
 				agentIds: string[]
 				triggerIds: string[]
 				waitingOnViewer: boolean
+				targets: unknown
 			}>
 		}
 		expect(body.loops).toHaveLength(1)
@@ -127,6 +240,62 @@ describe('Loops read API integration', () => {
 		expect(row.agentIds).toEqual([])
 		expect(row.triggerIds).toEqual([])
 		expect(row.waitingOnViewer).toBe(false)
+		// A loop with no metadata.targets reads as null on the response so the
+		// frontend renders no <TargetsAndOwners> section (bet D5).
+		expect(row.targets).toBeNull()
+	})
+
+	it('surfaces metadata.targets on the response, dropping malformed entries (bet D5)', async () => {
+		const ownerActorId = '11111111-1111-4111-8111-111111111111'
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Targets loop',
+			metadata: {
+				targets: [
+					{
+						label: 'Posts published',
+						source: 'posts published this month',
+						actual: 6,
+						target: 8,
+						ownerActorId,
+					},
+					{
+						label: 'LinkedIn impressions',
+						source: 'metric:linkedin.impressions',
+						actual: 4200,
+						target: 5000,
+					},
+					// Malformed row — missing `target` — silently dropped rather
+					// than 500-ing the endpoint. Same tolerance the rest of the
+					// route already gives hand-edited metadata.
+					{ label: 'broken', source: 'foo', actual: 1 },
+				],
+			},
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{
+				targets: Array<{
+					label: string
+					source: string
+					actual: number
+					target: number
+					ownerActorId?: string
+				}> | null
+			}>
+		}
+		const [row] = body.loops
+		expect(row).toBeDefined()
+		expect(row.targets).toHaveLength(2)
+		expect(row.targets?.[0]?.label).toBe('Posts published')
+		expect(row.targets?.[0]?.ownerActorId).toBe(ownerActorId)
+		expect(row.targets?.[1]?.source).toBe('metric:linkedin.impressions')
 	})
 
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
@@ -253,10 +422,15 @@ describe('Loops read API integration', () => {
 			title: 'No override loop',
 		})
 
+		// The clock starts at the in_loop edge, so the edge joins when the lead was
+		// created and the lead closes 5s later.
+		const joinedAt = new Date('2026-01-01T00:00:00.000Z')
 		const wonLead = await insertObject(db, workspaceId, actorId, {
 			type: 'lead',
 			status: 'won',
 			title: 'Acme',
+			createdAt: joinedAt,
+			updatedAt: new Date(joinedAt.getTime() + 5000),
 		})
 		const activeLead = await insertObject(db, workspaceId, actorId, {
 			type: 'lead',
@@ -278,6 +452,7 @@ describe('Loops read API integration', () => {
 				targetType: 'object',
 				targetId: target.id,
 				type: 'in_loop',
+				createdAt: joinedAt,
 			})
 		}
 		await insertRelationship(db, actorId, {
@@ -301,11 +476,90 @@ describe('Loops read API integration', () => {
 		const row = body.loops.find((l) => l.id === loop.id)
 		expect(row?.inProgressCount).toBe(1)
 		expect(row?.closedCount).toBe(1)
-		expect(row?.medianTimeToCloseMs).not.toBeNull()
+		expect(row?.medianTimeToCloseMs).toBe(5000)
 
 		const noOverrideRow = body.loops.find((l) => l.id === openLoop.id)
 		expect(noOverrideRow?.inProgressCount).toBe(1)
 		expect(noOverrideRow?.closedCount).toBe(0)
+	})
+
+	it('accepts closed_statuses through the HTTP write path so the counter can honor it end-to-end', async () => {
+		// Regression guard for the safeMetadataSchema tightening (commit
+		// 6d3af742, 2026-03-25) that made the whole write path reject
+		// `closed_statuses: { <type>: [<status>, ...] }` — the exact shape the
+		// reader in this file already parses. Every existing closed_statuses
+		// test in this file uses `insertObject` (direct DB), which bypasses
+		// the Zod validator and hides that the entire feature is
+		// dead-on-arrival via the API. This test intentionally goes through
+		// PATCH /api/objects/:id — the same path update_loop uses in
+		// packages/mcp/src/server.ts — so the write validator stays honest.
+
+		const app = new OpenAPIHono<Env>({
+			defaultHook: (result, c) => {
+				if (!result.success) {
+					return c.json(
+						createApiError(
+							'VALIDATION_ERROR',
+							'Request validation failed',
+							formatZodError(result.error),
+						),
+						400,
+					)
+				}
+				return undefined
+			},
+		})
+		app.use('*', async (c, next) => {
+			c.set('db', db)
+			c.set('actorId', actorId)
+			c.set('actorType', 'human')
+			await next()
+		})
+		app.route('/api/loops', loopsRoutes)
+		app.route('/api/objects', objectsRoutes)
+
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Content pipeline',
+		})
+		const liveContent = await insertObject(db, workspaceId, actorId, {
+			type: 'content',
+			status: 'live',
+			title: 'Shipped article',
+		})
+		const draftContent = await insertObject(db, workspaceId, actorId, {
+			type: 'content',
+			status: 'in_progress',
+			title: 'Still writing',
+		})
+		for (const target of [liveContent, draftContent]) {
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: target.id,
+				type: 'in_loop',
+			})
+		}
+
+		const patchRes = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/objects/${loop.id}`,
+				{ metadata: { closed_statuses: { content: ['live'] } } },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const listRes = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await listRes.json()) as {
+			loops: Array<{ id: string; inProgressCount: number; closedCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.closedCount).toBe(1)
+		expect(row?.inProgressCount).toBe(1)
 	})
 
 	it("closed_statuses can also override a built-in type's terminal set for one loop", async () => {
@@ -348,7 +602,7 @@ describe('Loops read API integration', () => {
 		expect(row?.closedCount).toBe(1)
 	})
 
-	it('computes medianTimeToCloseMs from closed children (updated_at − created_at), null when none are closed', async () => {
+	it('computes medianTimeToCloseMs from closed children (updated_at − the in_loop edge created_at), null when none are closed', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'learning',
@@ -394,6 +648,7 @@ describe('Loops read API integration', () => {
 				targetType: 'object',
 				targetId: target.id,
 				type: 'in_loop',
+				createdAt,
 			})
 		}
 
@@ -407,6 +662,569 @@ describe('Loops read API integration', () => {
 
 		const emptyRow = body.loops.find((l) => l.id === openLoop.id)
 		expect(emptyRow?.medianTimeToCloseMs).toBeNull()
+	})
+
+	it('still answers when a loop has more closed members than one events lookup batch', async () => {
+		// The close-time lookup reads `events` in batches of 200 ids. 450 closed
+		// members forces three batches, so this fails if batching drops, repeats or
+		// mis-orders a batch — and none of these members has an event, so each one
+		// must take the updated_at fallback (a constant 2s here).
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Many closed members',
+		})
+		const createdAt = new Date('2026-01-01T00:00:00.000Z')
+		const memberCount = 450
+		for (let i = 0; i < memberCount; i++) {
+			const member = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'done',
+				title: `Closed member ${i}`,
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 2000),
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: member.id,
+				type: 'in_loop',
+				createdAt,
+			})
+		}
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.closedCount).toBe(memberCount)
+		expect(row?.medianTimeToCloseMs).toBe(2000)
+	}, 60_000)
+
+	describe('metadata.closed_when', () => {
+		async function setup(loopMetadata: Record<string, unknown>) {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Candidate loop',
+				metadata: loopMetadata,
+			})
+			const link = (targetId: string, joinedAt?: Date) =>
+				insertRelationship(db, actorId, {
+					sourceType: 'object',
+					sourceId: loop.id,
+					targetType: 'object',
+					targetId,
+					type: 'in_loop',
+					...(joinedAt ? { createdAt: joinedAt } : {}),
+				})
+			const readRow = async () => {
+				const app = makeApp(actorId)
+				const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+				const body = (await res.json()) as {
+					loops: Array<{
+						id: string
+						inProgressCount: number
+						closedCount: number
+						medianTimeToCloseMs: number | null
+					}>
+				}
+				return body.loops.find((l) => l.id === loop.id)
+			}
+			return { loop, link, readRow }
+		}
+
+		const createdAt = new Date('2026-01-01T00:00:00.000Z')
+
+		it('counts a parked insight at the rule value as closed, a status-closed one too, and any other as open', async () => {
+			const { link, readRow } = await setup({
+				closed_statuses: { insight: ['discarded'] },
+				closed_when: { insight: ['loop_stage=live'] },
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const discarded = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'discarded',
+			})
+			const building = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'building' },
+			})
+			const noStage = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+			})
+			for (const o of [live, discarded, building, noStage]) await link(o.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(2)
+			expect(row?.inProgressCount).toBe(2)
+		})
+
+		it('counts an object closed by both its status and a rule once', async () => {
+			const { link, readRow } = await setup({
+				closed_statuses: { insight: ['discarded'] },
+				closed_when: { insight: ['loop_stage=live'] },
+			})
+			const both = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'discarded',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(both.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(1)
+			expect(row?.inProgressCount).toBe(0)
+		})
+
+		it('drops malformed rules instead of failing, and closes nothing when none are left', async () => {
+			const { link, readRow } = await setup({
+				closed_when: {
+					insight: ['loop_stage', '=live', 'loop_stage=', 'bad field=live', 42, null],
+					task: 'loop_stage=live',
+				},
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const liveTask = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(live.id)
+			await link(liveTask.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(0)
+			expect(row?.inProgressCount).toBe(2)
+		})
+
+		it('treats two rules on one field as either value, and ignores a rule for another type', async () => {
+			const { link, readRow } = await setup({
+				closed_when: { insight: ['loop_stage=live', 'loop_stage=retired'] },
+			})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			const retired = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'retired' },
+			})
+			const liveTask = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'in_progress',
+				metadata: { loop_stage: 'live' },
+			})
+			for (const o of [live, retired, liveTask]) await link(o.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(2)
+			expect(row?.inProgressCount).toBe(1)
+		})
+
+		it('leaves a loop without closed_when unchanged: a live-stage insight stays open', async () => {
+			const { link, readRow } = await setup({})
+			const live = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+			})
+			await link(live.id)
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(0)
+			expect(row?.inProgressCount).toBe(1)
+		})
+
+		it('measures time to close for a rule-closed member to the update event that set the stage', async () => {
+			const { link, readRow } = await setup({ closed_when: { insight: ['loop_stage=live'] } })
+			// updated_at is far later than the stage change: a later edit must not
+			// stretch the time to close.
+			const insight = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live', note: 'edited later' },
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 999_000),
+			})
+			await link(insight.id, createdAt)
+			await db.insert(events).values([
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'insight',
+					entityId: insight.id,
+					data: {
+						changes: [
+							{ field: 'metadata', old: { loop_stage: 'building' }, new: { loop_stage: 'live' } },
+						],
+					},
+					createdAt: new Date(createdAt.getTime() + 5000),
+				},
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'insight',
+					entityId: insight.id,
+					data: {
+						changes: [
+							{
+								field: 'metadata',
+								old: { loop_stage: 'live' },
+								new: { loop_stage: 'live', note: 'edited later' },
+							},
+						],
+					},
+					createdAt: new Date(createdAt.getTime() + 999_000),
+				},
+			])
+
+			const row = await readRow()
+			expect(row?.closedCount).toBe(1)
+			expect(row?.medianTimeToCloseMs).toBe(5000)
+		})
+
+		it('falls back to updated_at for time to close when no event shows the stage change', async () => {
+			const { link, readRow } = await setup({ closed_when: { insight: ['loop_stage=live'] } })
+			const insight = await insertObject(db, workspaceId, actorId, {
+				type: 'insight',
+				status: 'parked',
+				metadata: { loop_stage: 'live' },
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 7000),
+			})
+			await link(insight.id, createdAt)
+
+			const row = await readRow()
+			expect(row?.medianTimeToCloseMs).toBe(7000)
+		})
+	})
+
+	describe('closed members keep their in_loop edge and close time comes from the status event', () => {
+		const statusChange = (entityId: string, to: string, at: Date, from = 'in_progress') => ({
+			workspaceId,
+			actorId,
+			action: 'status_changed',
+			entityType: 'task',
+			entityId,
+			data: { changes: [{ field: 'status', old: from, new: to }] },
+			createdAt: at,
+		})
+
+		async function linkTask(loopId: string, overrides: Record<string, unknown>) {
+			const task = await insertObject(db, workspaceId, actorId, { type: 'task', ...overrides })
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loopId,
+				targetType: 'object',
+				targetId: task.id,
+				type: 'in_loop',
+				// The clock starts at the edge: join when the task was created.
+				...(overrides.createdAt ? { createdAt: overrides.createdAt } : {}),
+			})
+			return task
+		}
+
+		it('moving a member to a closed status through the API keeps its edge and counts it as closed', async () => {
+			const app = new OpenAPIHono<Env>()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', actorId)
+				c.set('actorType', 'human')
+				await next()
+			})
+			app.route('/api/loops', loopsRoutes)
+			app.route('/api/objects', objectsRoutes)
+
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Keeps links',
+			})
+			const task = await linkTask(loop.id, { status: 'in_progress', title: 'Closes' })
+
+			const patchRes = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/objects/${task.id}`,
+					{ status: 'done' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(patchRes.status).toBe(200)
+
+			const statusEvents = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, task.id), eq(events.action, 'status_changed')))
+			expect(statusEvents).toHaveLength(1)
+
+			const edges = await sql`
+				SELECT 1 FROM relationships
+				WHERE source_id = ${loop.id} AND target_id = ${task.id} AND type = 'in_loop'
+			`
+			expect(edges).toHaveLength(1)
+
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; inProgressCount: number }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.closedCount).toBe(1)
+			expect(row?.inProgressCount).toBe(0)
+		})
+
+		it('uses the first event into the closed set, not later edits to the member', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Event-based close time',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			const closedAt = new Date(createdAt.getTime() + 2000)
+			// updated_at is a day after the close, as if the closed item was edited later.
+			const task = await linkTask(loop.id, {
+				status: 'done',
+				title: 'Closed then edited',
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 86_400_000),
+			})
+			await db
+				.insert(events)
+				.values([
+					statusChange(task.id, 'in_progress', new Date(createdAt.getTime() + 500), 'todo'),
+					statusChange(task.id, 'done', closedAt),
+				])
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+			}
+			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(2000)
+		})
+
+		it('falls back to updated_at for a closed member with no status event', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'No events',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			await linkTask(loop.id, {
+				status: 'done',
+				title: 'Closed without an event',
+				createdAt,
+				updatedAt: new Date(createdAt.getTime() + 4000),
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+			}
+			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(4000)
+		})
+
+		it('measures time to close from when the member joined the loop, not from when the object was created', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Joins on day 1, converts on day 10',
+			})
+			const day = 86_400_000
+			const joinedAt = new Date('2026-01-01T00:00:00.000Z')
+			const closedAt = new Date(joinedAt.getTime() + 9 * day)
+			// The object itself is months older than its place in the loop, and is
+			// edited again long after it closed: neither may move the result.
+			const task = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'done',
+				title: 'Converts on day 10',
+				createdAt: new Date('2025-06-01T00:00:00.000Z'),
+				updatedAt: new Date(joinedAt.getTime() + 30 * day),
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: task.id,
+				type: 'in_loop',
+				createdAt: joinedAt,
+			})
+			await db.insert(events).values([
+				statusChange(task.id, 'done', closedAt),
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'task',
+					entityId: task.id,
+					data: { changes: [{ field: 'title', old: 'Converts', new: 'Converts on day 10' }] },
+					createdAt: new Date(joinedAt.getTime() + 30 * day),
+				},
+			])
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; medianTimeToCloseMs: number | null }>
+			}
+			expect(body.loops.find((l) => l.id === loop.id)?.medianTimeToCloseMs).toBe(9 * day)
+		})
+
+		it('leaves a member that was already closed when it joined out of the median, but still counts it as closed', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Closed before joining',
+			})
+			const day = 86_400_000
+			const joinedAt = new Date('2026-01-10T00:00:00.000Z')
+			const joinTask = async (title: string, closedAt: Date) => {
+				const task = await insertObject(db, workspaceId, actorId, {
+					type: 'task',
+					status: 'done',
+					title,
+					createdAt: new Date('2026-01-01T00:00:00.000Z'),
+				})
+				await insertRelationship(db, actorId, {
+					sourceType: 'object',
+					sourceId: loop.id,
+					targetType: 'object',
+					targetId: task.id,
+					type: 'in_loop',
+					createdAt: joinedAt,
+				})
+				await db.insert(events).values(statusChange(task.id, 'done', closedAt))
+			}
+			// Closed on day 1, nine days before it joined the loop, next to a normal member.
+			await joinTask('Closed before joining', new Date('2026-01-01T00:00:00.000Z'))
+			await joinTask('Closed two days after joining', new Date(joinedAt.getTime() + 2 * day))
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.medianTimeToCloseMs).toBe(2 * day)
+			expect(row?.closedCount).toBe(2)
+		})
+
+		it('counts each loop with its own closed statuses and ignores members of other loops', async () => {
+			const lenient = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Counts review as closed',
+				metadata: { closed_statuses: { task: ['done', 'in_review'] } },
+			})
+			const strict = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Default closed statuses',
+			})
+			// The same two statuses in both loops: only the override changes the split.
+			for (const loopId of [lenient.id, strict.id]) {
+				await linkTask(loopId, { status: 'done', title: 'Done' })
+				await linkTask(loopId, { status: 'in_review', title: 'In review' })
+				await linkTask(loopId, { status: 'in_progress', title: 'In progress' })
+			}
+
+			const app = makeApp(actorId)
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; inProgressCount: number }>
+			}
+			const split = (id: string) => {
+				const row = body.loops.find((l) => l.id === id)
+				return [row?.closedCount, row?.inProgressCount]
+			}
+			expect(split(lenient.id)).toEqual([2, 1])
+			expect(split(strict.id)).toEqual([1, 2])
+		})
+
+		it('reads status events with one batched query for many closed members', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Batched',
+			})
+			const createdAt = new Date('2026-01-01T00:00:00.000Z')
+			for (let i = 0; i < 5; i++) {
+				const task = await linkTask(loop.id, {
+					status: 'done',
+					title: `Closed ${i}`,
+					createdAt,
+					updatedAt: createdAt,
+				})
+				await db
+					.insert(events)
+					.values(statusChange(task.id, 'done', new Date(createdAt.getTime() + 1000 * (i + 1))))
+			}
+
+			// Count selects issued against the events table during one request.
+			let eventSelects = 0
+			const countingDb = new Proxy(db, {
+				get(target, prop) {
+					const value = Reflect.get(target, prop, target)
+					if (prop !== 'select' || typeof value !== 'function') {
+						return typeof value === 'function' ? value.bind(target) : value
+					}
+					return (...args: unknown[]) => {
+						const builder = value.apply(target, args)
+						return new Proxy(builder, {
+							get(b, bProp) {
+								const member = Reflect.get(b, bProp, b)
+								if (bProp === 'from') {
+									return (table: unknown) => {
+										if (table === events) eventSelects += 1
+										return member.call(b, table)
+									}
+								}
+								return typeof member === 'function' ? member.bind(b) : member
+							},
+						})
+					}
+				},
+			}) as Database
+
+			const app = new OpenAPIHono<Env>()
+			app.use('*', async (c, next) => {
+				c.set('db', countingDb)
+				c.set('actorId', actorId)
+				c.set('actorType', 'human')
+				await next()
+			})
+			app.route('/api/loops', loopsRoutes)
+
+			const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+			const body = (await res.json()) as {
+				loops: Array<{ id: string; closedCount: number; medianTimeToCloseMs: number | null }>
+			}
+			const row = body.loops.find((l) => l.id === loop.id)
+			expect(row?.closedCount).toBe(5)
+			expect(row?.medianTimeToCloseMs).toBe(3000)
+			expect(eventSelects).toBe(1)
+		})
 	})
 
 	it('ignores relationships of a different type when computing loop membership', async () => {
@@ -487,8 +1305,6 @@ describe('Loops read API integration', () => {
 	})
 
 	it('composes the `pill` field from lifecycle status + waiting_on_viewer', async () => {
-		const otherActor = await insertActor(db)
-
 		const draft = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'draft',
@@ -515,33 +1331,21 @@ describe('Loops read API integration', () => {
 			title: 'Paused loop',
 		})
 
-		// A live loop with unread activity on a member object — this is the only
-		// way to reach `waiting_on_you` now that there's no explicit `waiting`
-		// status; it overrides the autonomy-stage label for live statuses only.
+		// A live loop whose trigger has a session in `waiting_for_input` — the
+		// only way to reach `waiting_on_you` under the D3/Q3 unification (see
+		// the "waiting on you" comment in `routes/loops.ts`). Overrides the
+		// autonomy-stage label for live statuses only.
+		const agent = await insertActor(db, { name: 'Agent', type: 'agent' })
+		const waitingTrig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
 		const waiting = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'supervised',
 			title: 'Waiting loop',
+			metadata: { trigger_ids: [waitingTrig.id] },
 		})
-		const waitingChild = await insertObject(db, workspaceId, actorId, {
-			type: 'task',
-			status: 'in_review',
-			title: 'Needs a look',
-		})
-		await insertRelationship(db, actorId, {
-			sourceType: 'object',
-			sourceId: waiting.id,
-			targetType: 'object',
-			targetId: waitingChild.id,
-			type: 'in_loop',
-		})
-		await db.insert(events).values({
-			workspaceId,
-			actorId: otherActor.id,
-			action: 'status_changed',
-			entityType: 'task',
-			entityId: waitingChild.id,
-			data: { status: 'in_review' },
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: waitingTrig.id,
+			status: 'waiting_for_input',
 		})
 
 		const app = makeApp(actorId)
@@ -717,37 +1521,26 @@ describe('Loops read API integration', () => {
 		})
 	})
 
-	it('flips `waitingOnViewer` true on an unread status-change event on a child object, not just comments', async () => {
-		const otherActor = await insertActor(db)
-
+	it("flips `waitingOnViewer` true when a session on one of the loop's triggers is `waiting_for_input`", async () => {
+		// Q3 SPEC unification: the loops-list pill, the loops-list waitingCount,
+		// the loop-detail "Asks waiting" tile, and the D3 AskBanner all read the
+		// same predicate — a session on this loop's trigger in
+		// `status = 'waiting_for_input'`. Previously the loops-list pill was
+		// derived from unread events on child objects (a different signal), so
+		// the banner could fire while the tile still read 0. Asserted against
+		// real Postgres because the join spans `objects.metadata.trigger_ids`
+		// (JSONB) → triggers → sessions and a mocked db can't cover it.
+		const agent = await insertActor(db, { name: 'Agent', type: 'agent' })
+		const trig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'learning',
 			title: 'Needs attention',
+			metadata: { trigger_ids: [trig.id] },
 		})
-		const childTask = await insertObject(db, workspaceId, actorId, {
-			type: 'task',
-			status: 'in_review',
-			title: 'Agent-driven task',
-		})
-		await insertRelationship(db, actorId, {
-			sourceType: 'object',
-			sourceId: loop.id,
-			targetType: 'object',
-			targetId: childTask.id,
-			type: 'in_loop',
-		})
-
-		// A lifecycle event logged with entity_type set to the object's
-		// concrete type (mirrors how objects.ts logs `status_changed`/
-		// `updated` events) — not a comment, and not entity_type='object'.
-		await db.insert(events).values({
-			workspaceId,
-			actorId: otherActor.id,
-			action: 'status_changed',
-			entityType: 'task',
-			entityId: childTask.id,
-			data: { status: 'in_review' },
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trig.id,
+			status: 'waiting_for_input',
 		})
 
 		const app = makeApp(actorId)
@@ -759,82 +1552,260 @@ describe('Loops read API integration', () => {
 		expect(row?.waitingOnViewer).toBe(true)
 		expect(row?.pill).toBe('waiting_on_you')
 	})
-})
 
-describe('Loop → Commitment rename migration', () => {
-	it('renames any pre-existing `type=loop` row to `type=commitment` and mirrors the change in events', async () => {
-		const actorId = getTestActorId()
-		const ws = await insertWorkspace(db, actorId)
+	it("counts every session in `waiting_for_input` across the loop's triggers in `waitingCount`", async () => {
+		// Three separate waiting sessions across two of the loop's triggers,
+		// one completed session (must not count), one session on an unrelated
+		// trigger (must not count either). `waitingCount` should be 3.
+		const agent = await insertActor(db, { name: 'Agent', type: 'agent' })
+		const trigA = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const trigB = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const trigC = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const foreignTrig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Three open asks',
+			metadata: { trigger_ids: [trigA.id, trigB.id, trigC.id] },
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trigA.id,
+			status: 'waiting_for_input',
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trigA.id,
+			status: 'waiting_for_input',
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trigB.id,
+			status: 'waiting_for_input',
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trigC.id,
+			status: 'completed',
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: foreignTrig.id,
+			status: 'waiting_for_input',
+		})
 
-		// Bypass the normal insert path so we can plant a pre-rename row shape.
-		// Direct SQL keeps the test honest — this simulates an old workspace
-		// carrying the legacy `loop` type before the migration ran.
-		const [legacy] = await sql<
-			{ id: string }[]
-		>`INSERT INTO objects (workspace_id, type, title, status, created_by)
-			VALUES (${ws.id}, 'loop', 'Legacy standing commitment', 'holding', ${actorId})
-			RETURNING id`
-		await sql`INSERT INTO events (workspace_id, actor_id, action, entity_type, entity_id, data)
-			VALUES (${ws.id}, ${actorId}, 'created', 'loop', ${legacy.id}, '{}'::jsonb)`
-
-		// Re-run the migration in a transaction — the file is idempotent, and
-		// this hits the exact SQL every workspace runs on migrate.
-		await sql`
-			DO $$
-			DECLARE
-				renamed_objects int;
-				renamed_events int;
-			BEGIN
-				WITH updated AS (
-					UPDATE objects
-					SET type = 'commitment',
-						updated_at = now()
-					WHERE type = 'loop'
-					RETURNING id
-				)
-				SELECT count(*) INTO renamed_objects FROM updated;
-
-				WITH updated_events AS (
-					UPDATE events
-					SET entity_type = 'commitment'
-					WHERE entity_type = 'loop'
-					RETURNING id
-				)
-				SELECT count(*) INTO renamed_events FROM updated_events;
-			END $$;
-		`
-
-		const [obj] = await db.select().from(objects).where(eq(objects.id, legacy.id))
-		expect(obj.type).toBe('commitment')
-
-		const [eventCount] = await sql<
-			{ count: string }[]
-		>`SELECT count(*)::int AS count FROM events WHERE entity_type = 'commitment' AND entity_id = ${legacy.id}`
-		expect(Number(eventCount.count)).toBe(1)
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; waitingOnViewer: boolean; waitingCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.waitingOnViewer).toBe(true)
+		expect(row?.waitingCount).toBe(3)
 	})
 
-	it('is a no-op on the second run — reflects the idempotency contract in the migration comment', async () => {
-		const actorId = getTestActorId()
-		const ws = await insertWorkspace(db, actorId)
+	it('reports `waitingCount` 0 for a loop with no sessions in `waiting_for_input`', async () => {
+		const agent = await insertActor(db, { name: 'Agent', type: 'agent' })
+		const trig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'All caught up',
+			metadata: { trigger_ids: [trig.id] },
+		})
+		// A completed session on the loop's trigger must not count.
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trig.id,
+			status: 'completed',
+		})
 
-		// Insert a `commitment` row and confirm the migration statement leaves
-		// it alone (no loop rows exist post-run). Any drift would flip the row
-		// to a bad type.
-		await sql`INSERT INTO objects (workspace_id, type, title, status, created_by)
-			VALUES (${ws.id}, 'commitment', 'Already-migrated', 'holding', ${actorId})`
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; waitingOnViewer: boolean; waitingCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.waitingOnViewer).toBe(false)
+		expect(row?.waitingCount).toBe(0)
+	})
 
-		const before = await db
-			.select({ count: drizzleSql<number>`count(*)::int` })
-			.from(objects)
-			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'commitment')))
+	/**
+	 * D6c — `GET /api/loops/:id/steps` feeds the vertical-story renderer's
+	 * spine. Covers:
+	 *   (1) preserves `metadata.trigger_ids` ordering (spine, not set);
+	 *   (2) resolves the D6a hands-off + escalates actor names on each row;
+	 *   (3) sets `waitingOnViewer` + `pendingCount` from live sessions in
+	 *       `waiting_for_input` for that trigger;
+	 *   (4) empty array (no 404) for a loop with no triggers OR an unknown id
+	 *       — mirrors the tolerance of the sibling `/activity` endpoint.
+	 */
+	describe('GET /api/loops/:id/steps — vertical-story spine (D6c)', () => {
+		it('returns spine steps in metadata.trigger_ids order with D6a fields + resolved actor names', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			const quill = await insertActor(db, { name: 'Quill', type: 'agent' })
+			const sebk = await insertActor(db, { name: 'Sebk', type: 'human' })
+			const magnus = await insertActor(db, { name: 'Magnus', type: 'human' })
+			await ensureWorkspaceMember(db, workspaceId, sebk.id)
+			await ensureWorkspaceMember(db, workspaceId, magnus.id)
 
-		await sql`UPDATE objects SET type = 'commitment' WHERE type = 'loop'`
+			const trigA = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				name: 'Watch inbox',
+				type: 'cron',
+				config: { expression: '0 * * * *' },
+				actionPrompt: 'Scan the inbox',
+				handsOffToActorId: quill.id,
+				escalatesToActorId: sebk.id,
+				escalateAfterMs: 12 * 60 * 60 * 1000,
+			})
+			const trigB = await insertTrigger(db, workspaceId, actorId, quill.id, {
+				name: 'Draft reply',
+				type: 'event',
+				config: { entity_type: 'task', action: 'created' },
+				actionPrompt: 'Draft the reply',
+				handsOffToActorId: magnus.id,
+			})
 
-		const after = await db
-			.select({ count: drizzleSql<number>`count(*)::int` })
-			.from(objects)
-			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'commitment')))
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Reply loop',
+				content: 'The loop replies to inbound',
+				// Deliberately reversed order so the response order proves it
+				// preserves metadata.trigger_ids rather than trigger creation
+				// order.
+				metadata: { trigger_ids: [trigB.id, trigA.id] },
+			})
 
-		expect(after[0].count).toBe(before[0].count)
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				steps: Array<{
+					triggerId: string
+					triggerType: string | null
+					handsOffToActorId: string | null
+					handsOffToActor: { id: string; name: string | null } | null
+					escalatesToActorId: string | null
+					escalatesToActor: { id: string; name: string | null } | null
+					escalateAfterMs: number | null
+					waitingOnViewer: boolean
+					pendingCount: number
+				}>
+			}
+			expect(body.steps.map((s) => s.triggerId)).toEqual([trigB.id, trigA.id])
+			const stepA = body.steps.find((s) => s.triggerId === trigA.id)
+			expect(stepA?.triggerType).toBe('cron')
+			expect(stepA?.handsOffToActorId).toBe(quill.id)
+			expect(stepA?.handsOffToActor?.name).toBe('Quill')
+			expect(stepA?.escalatesToActorId).toBe(sebk.id)
+			expect(stepA?.escalatesToActor?.name).toBe('Sebk')
+			expect(stepA?.escalateAfterMs).toBe(12 * 60 * 60 * 1000)
+			expect(stepA?.waitingOnViewer).toBe(false)
+			expect(stepA?.pendingCount).toBe(0)
+
+			const stepB = body.steps.find((s) => s.triggerId === trigB.id)
+			expect(stepB?.handsOffToActor?.name).toBe('Magnus')
+			expect(stepB?.escalatesToActor).toBeNull()
+			expect(stepB?.escalatesToActorId).toBeNull()
+		})
+
+		it('returns no name or description for a step actor outside the loop workspace', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			// Exists in the actors table but is not a member of this workspace.
+			const outsider = await insertActor(db, {
+				name: 'Outsider',
+				type: 'agent',
+				description: 'Secret outsider description',
+			})
+			const trig = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				handsOffToActorId: outsider.id,
+				escalatesToActorId: outsider.id,
+			})
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Foreign actor loop',
+				metadata: { trigger_ids: [trig.id] },
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const raw = await res.text()
+			const body = JSON.parse(raw) as {
+				steps: Array<{
+					agent: { name: string | null } | null
+					handsOffToActor: unknown
+					escalatesToActor: unknown
+				}>
+			}
+			expect(body.steps).toHaveLength(1)
+			expect(body.steps[0].agent?.name).toBe('Relay')
+			expect(body.steps[0].handsOffToActor).toBeNull()
+			expect(body.steps[0].escalatesToActor).toBeNull()
+			expect(raw).not.toContain('Outsider')
+			expect(raw).not.toContain('Secret outsider description')
+		})
+
+		it('sets waitingOnViewer=true and pendingCount from sessions in waiting_for_input status', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			const trig = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				handsOffToActorId: relay.id,
+			})
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Waiting loop',
+				metadata: { trigger_ids: [trig.id] },
+			})
+			// Two sessions on this trigger currently waiting on the viewer,
+			// one completed (must not count).
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'waiting_for_input',
+			})
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'waiting_for_input',
+			})
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'completed',
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			const body = (await res.json()) as {
+				steps: Array<{ triggerId: string; waitingOnViewer: boolean; pendingCount: number }>
+			}
+			expect(body.steps).toHaveLength(1)
+			expect(body.steps[0].waitingOnViewer).toBe(true)
+			expect(body.steps[0].pendingCount).toBe(2)
+		})
+
+		it('returns an empty spine — not a 404 — for a loop with no triggers or an unknown id', async () => {
+			const emptyLoop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'draft',
+				title: 'No steps',
+				metadata: {},
+			})
+
+			const app = makeApp(actorId)
+
+			const emptyRes = await app.request(
+				jsonGet(`/api/loops/${emptyLoop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(emptyRes.status).toBe(200)
+			expect(((await emptyRes.json()) as { steps: unknown[] }).steps).toEqual([])
+
+			const unknownId = '00000000-0000-0000-0000-000000000000'
+			const unknownRes = await app.request(
+				jsonGet(`/api/loops/${unknownId}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(unknownRes.status).toBe(200)
+			expect(((await unknownRes.json()) as { steps: unknown[] }).steps).toEqual([])
+		})
 	})
 })

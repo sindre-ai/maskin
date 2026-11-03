@@ -1,12 +1,14 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -25,6 +27,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/objects/')(
 
 function ObjectsPage() {
 	const { workspace, workspaceId } = useWorkspace()
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 
 	const settings = workspace.settings as Record<string, unknown>
@@ -49,7 +52,7 @@ function ObjectsPage() {
 
 	const handleAdd = () => {
 		const trimmed = newName.trim()
-		if (!trimmed || currentFields.some((f) => f.name === trimmed)) return
+		if (!canWrite || !trimmed || currentFields.some((f) => f.name === trimmed)) return
 
 		const newField: FieldDefinition = {
 			name: trimmed,
@@ -80,21 +83,20 @@ function ObjectsPage() {
 
 	return (
 		<div>
-			{/* Properties section */}
-			<h2 className="text-sm font-medium text-foreground mb-4">Properties</h2>
+			<h2 className="eyebrow mb-3">Properties</h2>
 
 			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
-				<div className="-mx-1 overflow-x-auto px-1">
-					<div className="inline-flex rounded-md border border-border">
+				<div className="-ml-1 overflow-x-auto px-1">
+					<div className="inline-flex rounded-lg border border-border">
 						{objectTypes.map((type) => (
 							<button
 								key={type}
 								type="button"
 								className={cn(
-									'whitespace-nowrap px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-md last:rounded-r-md',
+									'whitespace-nowrap px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-lg last:rounded-r-lg',
 									activeType === type
-										? 'bg-primary text-primary-foreground'
-										: 'bg-background text-muted-foreground hover:bg-muted',
+										? 'bg-foreground text-background'
+										: 'bg-background text-muted-foreground hover:bg-secondary hover:text-foreground',
 								)}
 								onClick={() => setActiveType(type)}
 							>
@@ -104,20 +106,23 @@ function ObjectsPage() {
 					</div>
 				</div>
 				{!showAdd && (
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => setShowAdd(true)}
-						className="self-start shrink-0 sm:self-auto"
-					>
-						<Plus size={14} className="mr-1" />
-						Add property
-					</Button>
+					<ViewerTooltip className="inline-flex self-start shrink-0 sm:self-auto">
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={!canWrite}
+							onClick={() => setShowAdd(true)}
+							className="self-start shrink-0 sm:self-auto"
+						>
+							<Plus size={14} className="mr-1" />
+							Add property
+						</Button>
+					</ViewerTooltip>
 				)}
 			</div>
 
 			{showAdd && (
-				<div className="mb-4 rounded-lg border border-border bg-card p-4 space-y-3">
+				<div className="mb-4 rounded-xl border border-border bg-card p-4 shadow-sm space-y-3">
 					<Input
 						type="text"
 						value={newName}
@@ -150,7 +155,10 @@ function ObjectsPage() {
 						<Button type="button" variant="ghost" onClick={() => setShowAdd(false)}>
 							Cancel
 						</Button>
-						<Button onClick={handleAdd} disabled={!newName.trim() || updateWorkspace.isPending}>
+						<Button
+							onClick={handleAdd}
+							disabled={!newName.trim() || updateWorkspace.isPending || !canWrite}
+						>
 							Create
 						</Button>
 					</div>
@@ -170,7 +178,7 @@ function ObjectsPage() {
 							to="/$workspaceId/settings/objects/$propertyName"
 							params={{ workspaceId, propertyName: field.name }}
 							search={{ type: activeType }}
-							className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
+							className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md"
 						>
 							<div className="flex-1">
 								<p className="text-sm font-medium text-foreground">{field.name}</p>
@@ -199,6 +207,7 @@ function RelationshipTypesEditor({
 	workspace: import('@/lib/api').WorkspaceWithRole
 	workspaceId: string
 }) {
+	const canWrite = useCanWrite()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const [newType, setNewType] = useState('')
 
@@ -213,7 +222,7 @@ function RelationshipTypesEditor({
 
 	const handleAdd = () => {
 		const trimmed = newType.trim().toLowerCase().replace(/\s+/g, '_')
-		if (!trimmed || relationshipTypes.includes(trimmed)) return
+		if (!canWrite || !trimmed || relationshipTypes.includes(trimmed)) return
 		const updated = [...relationshipTypes, trimmed]
 		updateWorkspace.mutate({
 			settings: { ...settings, relationship_types: updated },
@@ -222,6 +231,7 @@ function RelationshipTypesEditor({
 	}
 
 	const handleRemove = (type: string) => {
+		if (!canWrite) return
 		const updated = relationshipTypes.filter((t) => t !== type)
 		updateWorkspace.mutate({
 			settings: { ...settings, relationship_types: updated },
@@ -230,19 +240,20 @@ function RelationshipTypesEditor({
 
 	return (
 		<div>
-			<Label className="mb-2 text-muted-foreground">Relationship types</Label>
+			<h2 className="eyebrow mb-3">Relationship types</h2>
 			<div className="flex flex-wrap gap-1.5 mb-2">
 				{relationshipTypes.map((type) => (
 					<span
 						key={type}
-						className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
+						className="inline-flex h-7 items-center gap-1 rounded-full border border-border bg-secondary px-3 text-xs text-foreground"
 					>
 						{type.replace(/_/g, ' ')}
 						<button
 							type="button"
-							className="text-muted-foreground hover:text-error ml-0.5"
+							className="text-muted-foreground hover:text-error ml-0.5 disabled:pointer-events-none disabled:opacity-50"
 							onClick={() => handleRemove(type)}
-							title={`Remove ${type}`}
+							disabled={!canWrite}
+							title={canWrite ? `Remove ${type}` : VIEWER_READ_ONLY_MESSAGE}
 						>
 							×
 						</button>
@@ -255,16 +266,19 @@ function RelationshipTypesEditor({
 					value={newType}
 					onChange={(e) => setNewType(e.target.value)}
 					onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-					placeholder="New relationship type"
+					placeholder={canWrite ? 'New relationship type' : VIEWER_READ_ONLY_MESSAGE}
+					disabled={!canWrite}
 					className="flex-1"
 				/>
-				<Button
-					variant="secondary"
-					onClick={handleAdd}
-					disabled={!newType.trim() || updateWorkspace.isPending}
-				>
-					Add
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="secondary"
+						onClick={handleAdd}
+						disabled={!newType.trim() || updateWorkspace.isPending || !canWrite}
+					>
+						Add
+					</Button>
+				</ViewerTooltip>
 			</div>
 		</div>
 	)

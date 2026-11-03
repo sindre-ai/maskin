@@ -1,4 +1,17 @@
+import { waitForInviteLink } from './mock-resend.helper'
+
 const BASE_URL = 'http://localhost:5173'
+
+/**
+ * The **AGENT_SERVER_SECRET** the E2E stack runs with.
+ *
+ * Single source of truth: **playwright.config.ts** injects it into the dev
+ * webServer's environment, and specs pass it to **postSessionLogs**. One
+ * constant means the two cannot drift — a mismatch would 401 the log-ingest
+ * call with no obvious cause, and the dev server 503s outright when the
+ * variable is unset.
+ */
+export const E2E_AGENT_SERVER_SECRET = 'e2e-agent-server-secret'
 
 interface CreateActorResponse {
 	id: string
@@ -14,6 +27,7 @@ interface ObjectResponse {
 	title: string
 	content: string | null
 	status: string
+	metadata: Record<string, unknown> | null
 	workspaceId: string
 	createdBy: string
 	createdAt: string
@@ -74,6 +88,7 @@ interface FileDetailResponse {
 	content: string
 	encoding: 'base64' | 'utf8'
 	url: string
+	contentHash?: string | null
 }
 
 interface RelationshipResponse {
@@ -118,6 +133,19 @@ interface MessageResponse {
 	metadata: Record<string, unknown> | null
 	sessionId: string | null
 	createdAt: string | null
+	threadRootId?: number | null
+	threadAlsoInChannel?: boolean
+	thread?: { replyCount: number; unreadCount: number } | null
+}
+
+interface SessionResponse {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	actionPrompt: string
+	spawnedByMessageId: number | null
+	createdAt: string | null
 }
 
 interface TriggerResponse {
@@ -132,6 +160,26 @@ interface TriggerResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+}
+
+interface SessionResponse {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	actionPrompt: string
+	config: Record<string, unknown> | null
+	conversationId: string | null
+	createdAt: string | null
+	updatedAt: string | null
+}
+
+interface SessionLogResponse {
+	id: number
+	sessionId: string
+	stream: string
+	content: string
+	createdAt: string | null
 }
 
 export class TestAPI {
@@ -162,9 +210,13 @@ export class TestAPI {
 		data: {
 			type: string
 			title: string
-			status?: string
+			// Required by `createObjectSchema` — omitting it is a 400, so the
+			// type mirrors the API rather than letting a spec find out at runtime.
+			status: string
 			content?: string
 			metadata?: Record<string, unknown>
+			/** The actor who owns it. */
+			driver?: string
 		},
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects`, {
@@ -181,6 +233,14 @@ export class TestAPI {
 			headers: this.headers(workspaceId),
 		})
 		if (!res.ok) throw new Error(`listObjects failed: ${res.status}`)
+		return res.json()
+	}
+
+	async getObject(id: string, workspaceId: string): Promise<ObjectResponse> {
+		const res = await fetch(`${this.baseURL}/api/objects/${id}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`getObject failed: ${res.status}`)
 		return res.json()
 	}
 
@@ -239,6 +299,11 @@ export class TestAPI {
 			content: string
 			parent_event_id?: number
 			metadata?: Record<string, unknown>
+			mentions?: string[]
+			// The structured ask (`commentDecisionSchema`). The API validates it and
+			// rejects a block that breaks any of its rules, so a spec that seeds a
+			// malformed one fails here rather than rendering nothing later.
+			decision?: Record<string, unknown>
 		},
 	): Promise<EventResponse> {
 		const res = await fetch(`${this.baseURL}/api/events`, {
@@ -292,6 +357,7 @@ export class TestAPI {
 	async updateActor(
 		id: string,
 		data: {
+			name?: string
 			system_prompt?: string | null
 			tools?: Record<string, unknown> | null
 			llm_provider?: string | null
@@ -347,6 +413,29 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async getFile(workspaceId: string, id: string): Promise<FileDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/files/${id}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`getFile failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** PATCH a file the way an agent's update_file does: no if_match unless given. */
+	async updateFile(
+		workspaceId: string,
+		id: string,
+		data: { content: string; encoding?: 'base64' | 'utf8'; if_match?: string },
+	): Promise<FileDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/files/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ encoding: 'utf8', ...data }),
+		})
+		if (!res.ok) throw new Error(`updateFile failed: ${res.status}`)
+		return res.json()
+	}
+
 	async createRelationship(
 		workspaceId: string,
 		data: {
@@ -366,13 +455,35 @@ export class TestAPI {
 		return res.json()
 	}
 
-	async createAgentActor(name: string): Promise<CreateActorResponse> {
+	/**
+	 * Creates an agent that is born a member of `workspaceId`. The server needs the
+	 * caller's key and the workspace on the create call. With no workspace given it
+	 * uses the account's first one (a signed-up test account has just its own).
+	 */
+	async createAgentActor(name: string, workspaceId?: string): Promise<CreateActorResponse> {
+		const targetWorkspaceId = workspaceId ?? (await this.listWorkspaces())[0]?.id
+		if (!targetWorkspaceId) throw new Error('createAgentActor failed: account has no workspace')
 		const res = await fetch(`${this.baseURL}/api/actors`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ type: 'agent', name }),
+			headers: this.headers(),
+			body: JSON.stringify({ type: 'agent', name, workspace_id: targetWorkspaceId }),
 		})
 		if (!res.ok) throw new Error(`createAgentActor failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** Adds a custom MCP server to the workspace. It reaches no agent until it is granted. */
+	async createCustomMcpServer(
+		workspaceId: string,
+		name: string,
+		server: Record<string, unknown>,
+	): Promise<{ id: string; name: string }> {
+		const res = await fetch(`${this.baseURL}/api/custom-mcp-servers`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ name, server }),
+		})
+		if (!res.ok) throw new Error(`createCustomMcpServer failed: ${res.status}`)
 		return res.json()
 	}
 
@@ -387,6 +498,41 @@ export class TestAPI {
 			body: JSON.stringify({ actor_id: actorId, role }),
 		})
 		if (!res.ok) throw new Error(`addWorkspaceMember failed: ${res.status}`)
+		return res.json()
+	}
+
+	/**
+	 * Makes an existing person a member the way a real one joins: the account
+	 * invites their email and they accept with their own key. A person can't be
+	 * added by id, only an agent the workspace created can.
+	 */
+	async addHumanByInvite(
+		workspaceId: string,
+		human: { email: string | null; api_key: string },
+	): Promise<void> {
+		if (!human.email) throw new Error('addHumanByInvite failed: actor has no email')
+		const create = await fetch(`${this.baseURL}/api/invites`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ workspaceId, email: human.email, role: 'member' }),
+		})
+		if (!create.ok) throw new Error(`addHumanByInvite failed to invite: ${create.status}`)
+		const token = new URL(await waitForInviteLink(human.email)).searchParams.get('token')
+		if (!token) throw new Error('addHumanByInvite failed: invite link has no token')
+		const accept = await fetch(`${this.baseURL}/api/invites/${token}/accept`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${human.api_key}` },
+		})
+		if (!accept.ok) throw new Error(`addHumanByInvite failed to accept: ${accept.status}`)
+	}
+
+	async listWorkspaceMembers(
+		workspaceId: string,
+	): Promise<Array<{ actorId: string; role: string; name: string; type: string }>> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${workspaceId}/members`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listWorkspaceMembers failed: ${res.status}`)
 		return res.json()
 	}
 
@@ -408,6 +554,22 @@ export class TestAPI {
 		})
 		if (!res.ok) throw new Error(`createTrigger failed: ${res.status}`)
 		return res.json()
+	}
+
+	async listTriggers(workspaceId: string): Promise<TriggerResponse[]> {
+		const res = await fetch(`${this.baseURL}/api/triggers`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listTriggers failed: ${res.status}`)
+		return res.json()
+	}
+
+	async deleteTrigger(id: string, workspaceId: string): Promise<void> {
+		const res = await fetch(`${this.baseURL}/api/triggers/${id}`, {
+			method: 'DELETE',
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`deleteTrigger failed: ${res.status}`)
 	}
 
 	async createConversation(
@@ -434,7 +596,12 @@ export class TestAPI {
 	async postConversationMessage(
 		id: string,
 		workspaceId: string,
-		data: { content: string; metadata?: Record<string, unknown> },
+		data: {
+			content: string
+			metadata?: Record<string, unknown>
+			thread_root_id?: number
+			also_in_channel?: boolean
+		},
 	): Promise<MessageResponse> {
 		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
 			method: 'POST',
@@ -442,6 +609,18 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`postConversationMessage failed: ${res.status}`)
+		return res.json()
+	}
+
+	/** Newest-first page of a conversation's messages, replies included (as the web client receives them). */
+	async listConversationMessages(
+		id: string,
+		workspaceId: string,
+	): Promise<{ messages: MessageResponse[]; has_more: boolean }> {
+		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listConversationMessages failed: ${res.status}`)
 		return res.json()
 	}
 
@@ -456,6 +635,93 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`updateConversationMe failed: ${res.status}`)
+		return res.json()
+	}
+
+	/**
+	 * Create a session row without starting a container (`auto_start: false`,
+	 * so it lands in `pending` and never tries to launch).
+	 *
+	 * The web E2E stack has no container runtime, so a genuinely running
+	 * session is impossible here. This seeds the DB row two other things need:
+	 * the log-ingest endpoint 410s for an unknown session id, and the SSE
+	 * stream authorises the request against the session's workspace. Specs then
+	 * present the row to the UI as `running` with a route mock.
+	 */
+	async createSession(
+		workspaceId: string,
+		data: {
+			actor_id: string
+			action_prompt: string
+			config?: Record<string, unknown>
+			conversation_id?: string
+			message_id?: number
+			auto_start?: boolean
+			spawned_by_message_id?: number
+		},
+	): Promise<SessionResponse> {
+		// conversation_id + message_id is shorthand for config.conversation, which
+		// anchors the session to a conversation turn.
+		const { conversation_id, message_id, ...rest } = data
+		const body =
+			conversation_id && message_id && !rest.config
+				? { ...rest, config: { conversation: { conversation_id, message_id } } }
+				: rest
+		const res = await fetch(`${this.baseURL}/api/sessions`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(body),
+		})
+		if (!res.ok) throw new Error(`createSession failed: ${res.status}`)
+		return res.json()
+	}
+
+	/**
+	 * POST a batch of log lines to the internal agent-server ingest endpoint.
+	 *
+	 * This is the path a remote agent-server uses in production, and the one
+	 * that emits on the in-process `log` bus the SSE stream reads. Using it —
+	 * rather than seeding `session_logs` directly — is what makes the
+	 * live-update spec exercise the real stream end to end.
+	 *
+	 * Needs the **AGENT_SERVER_SECRET** bearer, which the dev server reads from
+	 * its own environment (the route 503s when unset).
+	 */
+	async postSessionLogs(
+		sessionId: string,
+		logs: { stream: 'stdout' | 'stderr' | 'system'; content: string }[],
+		secret: string,
+	): Promise<{ accepted: number }> {
+		const res = await fetch(
+			`${this.baseURL}/api/internal/agent-servers/sessions/${sessionId}/logs`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+				body: JSON.stringify({ logs }),
+			},
+		)
+		if (!res.ok) throw new Error(`postSessionLogs failed: ${res.status}`)
+		return res.json()
+	}
+
+	/**
+	 * Read a session's persisted log history — the canonical transcript.
+	 *
+	 * The endpoint always returns rows in ascending id order regardless of
+	 * **order** / **before**, so this is the authoritative sequence to diff a
+	 * client-side transcript against: any duplicate or gap in the UI shows up
+	 * as a mismatch here.
+	 */
+	async getSessionLogs(
+		sessionId: string,
+		workspaceId: string,
+		params: { since?: string; before?: string; limit?: string; order?: 'asc' | 'desc' } = {},
+	): Promise<SessionLogResponse[]> {
+		const query = new URLSearchParams(params)
+		const res = await fetch(`${this.baseURL}/api/sessions/${sessionId}/logs?${query}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`getSessionLogs failed: ${res.status}`)
 		return res.json()
 	}
 }

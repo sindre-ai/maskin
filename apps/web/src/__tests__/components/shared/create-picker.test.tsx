@@ -52,7 +52,6 @@ Object.defineProperty(window, 'requestAnimationFrame', {
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { api } from '@/lib/api'
 import { setStoredActor } from '@/lib/auth'
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { type ModuleWebDefinition, clearWebModules, registerWebModule } from '@maskin/module-sdk'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -117,14 +116,7 @@ function renderWithWorkspace(
 	const Workspace = createWorkspaceWrapper({
 		settings: { ...DEFAULT_SETTINGS, ...(overrides.settings ?? {}) },
 	})
-	// These are v2-overlay assertions, so they render on the `new-design` side of
-	// the boundary — the e2e auth fixture seeds the same flag state.
-	const Wrapper = ({ children }: { children: React.ReactNode }) => (
-		<Workspace>
-			<NewDesignProvider value={true}>{children}</NewDesignProvider>
-		</Workspace>
-	)
-	return render(ui, { wrapper: Wrapper })
+	return render(ui, { wrapper: Workspace })
 }
 
 describe('CreatePicker', () => {
@@ -279,7 +271,7 @@ describe('CreatePicker', () => {
 		)
 	})
 
-	it('creates an agent, adds workspace membership, and navigates to the agent detail page', async () => {
+	it('creates an agent born in the workspace, with no add-member call, and navigates to it', async () => {
 		const user = userEvent.setup()
 		setStoredActor({ id: 'actor-me', name: 'Me', type: 'human', email: null })
 		vi.mocked(api.actors.create).mockResolvedValue({
@@ -293,17 +285,18 @@ describe('CreatePicker', () => {
 		await user.type(screen.getByLabelText(/title/i), 'Router')
 		await user.click(screen.getByRole('button', { name: /^create agent$/i }))
 		await waitFor(() => expect(api.actors.create).toHaveBeenCalled())
-		expect(vi.mocked(api.actors.create).mock.calls[0]?.[0]).toMatchObject({
+		const createBody = vi.mocked(api.actors.create).mock.calls[0]?.[0]
+		expect(createBody).toMatchObject({
 			type: 'agent',
 			name: 'Router',
+			workspace_id: expect.any(String),
 		})
-		await waitFor(() =>
-			expect(api.workspaces.members.add).toHaveBeenCalledWith(
-				expect.any(String),
-				expect.objectContaining({ actor_id: 'actor-77' }),
-			),
-		)
+		// Tools and llm_config need a human admin on the server, so the default
+		// create flow must not send them.
+		expect(createBody).not.toHaveProperty('tools')
+		expect(createBody).not.toHaveProperty('llm_config')
 		await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+		expect(api.workspaces.members.add).not.toHaveBeenCalled()
 		expect(navigateSpy).toHaveBeenCalledWith(
 			expect.objectContaining({
 				to: '/$workspaceId/agents/$agentId',

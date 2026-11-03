@@ -39,6 +39,15 @@ function log(level: LogLevel, msg: string, context?: Record<string, unknown>, op
 		}
 	} else {
 		console.log(output)
+		// info/warn also go to Sentry Logs so per-step timing lines are searchable
+		// (debug stays stdout-only; error already files an issue via captureMessage).
+		if (level === 'info' || level === 'warn') {
+			try {
+				Sentry.logger[level](msg, context)
+			} catch (sentryErr) {
+				console.error('[sentry] logger failed', sentryErr)
+			}
+		}
 		if (level === 'warn') {
 			try {
 				Sentry.addBreadcrumb({ category: 'log', level: 'warning', message: msg, data: context })

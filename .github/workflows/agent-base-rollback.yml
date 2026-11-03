@@ -1,0 +1,102 @@
+name: Roll back agent-base image
+
+# Manual only. Points the :latest tag of the agent-base image at an older sha-*
+# tag and restarts maskin-agent-server so new sessions launch on it. Runbook:
+# docs/runbooks/agent-base-image-rollback.md.
+#
+# Unlike the deploy workflow (agent-base-docker.yml), the restart here is NOT
+# continue-on-error: a rollback that did not restart is not a rollback.
+#
+# It does not touch the repo, so it never triggers agent-base-docker.yml. The
+# next merge to main that touches docker/agent-base/** builds a new :latest and
+# overwrites a rollback, so hold such merges while rolled back.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'sha tag to make :latest again, for example sha-0b6ea8c'
+        required: true
+        type: string
+      restart:
+        description: 'Restart maskin-agent-server after retagging'
+        required: true
+        type: boolean
+        default: true
+
+# Its own group, never the deploy workflow's: the deploy cancels in-progress
+# runs of its group, and that must not be able to cancel a rollback half way.
+concurrency:
+  group: agent-base-rollback
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TAG" | grep -Eq '^sha-[0-9a-f]{7,40}$'; then
+            echo "::error::tag must look like sha-0b6ea8c, got: $TAG"
+            exit 1
+          fi
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Retag
+        env:
+          IMAGE: ${{ vars.AGENT_BASE_IMAGE }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          digest() { docker buildx imagetools inspect "$1" | awk '/^Digest:/ {print $2; exit}'; }
+
+          before="$(digest "$IMAGE:latest")"
+          target="$(digest "$IMAGE:$TAG")"
+          if [ -z "$target" ]; then
+            echo "::error::$IMAGE:$TAG does not exist (pruned, or a typo). Tags kept are listed on Docker Hub."
+            exit 1
+          fi
+
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$TAG"
+
+          after="$(digest "$IMAGE:latest")"
+          if [ "$after" != "$target" ]; then
+            echo "::error::$IMAGE:latest is $after after retagging, expected $target"
+            exit 1
+          fi
+
+          {
+            echo "### agent-base rollback"
+            echo "- image: \`$IMAGE\`"
+            echo "- :latest was \`$before\`"
+            echo "- :latest is now \`$after\` (= \`$TAG\`)"
+            echo "- roll forward by running this workflow again with the newer sha tag"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restart agent-server so new sessions use it
+        if: ${{ inputs.restart }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.AGENT_SERVER_HOST }}
+          username: ${{ secrets.AGENT_SERVER_USER }}
+          key: ${{ secrets.AGENT_SERVER_SSH_KEY }}
+          script: |
+            set -e
+            systemctl restart maskin-agent-server
+            sleep 15
+            systemctl is-active maskin-agent-server
+            journalctl -u maskin-agent-server --since "-2min" --no-pager | grep -E "image warm|agent-server listening|reconcile-on-boot" || true

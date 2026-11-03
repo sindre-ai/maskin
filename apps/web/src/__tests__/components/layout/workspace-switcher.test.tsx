@@ -5,11 +5,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildWorkspaceWithRole } from '../../factories'
 
 const mockNavigate = vi.fn()
 const setOpenMobile = vi.fn()
+const toggleSidebar = vi.fn()
+let sidebarState: 'expanded' | 'collapsed' = 'expanded'
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => mockNavigate,
@@ -27,23 +29,41 @@ vi.mock('@/components/ui/sidebar', () => ({
 			{children}
 		</button>
 	),
-	useSidebar: () => ({ isMobile: false, setOpenMobile }),
+	useSidebar: () => ({
+		isMobile: false,
+		setOpenMobile,
+		state: sidebarState,
+		toggleSidebar,
+	}),
 }))
 
-const wsA = buildWorkspaceWithRole({ id: 'ws-a', name: 'Workspace Alpha' })
-const wsB = buildWorkspaceWithRole({ id: 'ws-b', name: 'Workspace Beta' })
+const wsA = buildWorkspaceWithRole({ id: 'ws-a', name: 'Workspace Alpha', memberCount: 9 })
+const wsB = buildWorkspaceWithRole({ id: 'ws-b', name: 'Workspace Beta', memberCount: 1 })
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspace: wsA, workspaceId: 'ws-a' }),
 }))
 
+const createWorkspace = vi.fn()
 vi.mock('@/hooks/use-workspaces', () => ({
 	useWorkspaces: vi.fn(),
+	useCreateWorkspace: () => ({
+		mutate: createWorkspace,
+		reset: vi.fn(),
+		isPending: false,
+		isError: false,
+	}),
 }))
 
 const trackOpened = vi.fn()
+const trackOpenAttempted = vi.fn()
+const trackDismissedImmediately = vi.fn()
 vi.mock('@/lib/analytics', () => ({
 	trackSidebarWorkspaceSwitcherOpened: (p: { workspaceId: string }) => trackOpened(p),
+	trackSidebarWorkspaceSwitcherOpenAttempted: (p: { workspaceId: string; pointerType: string }) =>
+		trackOpenAttempted(p),
+	trackSidebarWorkspaceSwitcherDismissedImmediately: (p: { workspaceId: string; openMs: number }) =>
+		trackDismissedImmediately(p),
 }))
 
 import { useWorkspaces } from '@/hooks/use-workspaces'
@@ -69,6 +89,10 @@ describe('WorkspaceSwitcher', () => {
 		mockNavigate.mockReset()
 		setOpenMobile.mockReset()
 		trackOpened.mockReset()
+		trackOpenAttempted.mockReset()
+		trackDismissedImmediately.mockReset()
+		toggleSidebar.mockReset()
+		sidebarState = 'expanded'
 	})
 
 	it('shows the current workspace name on the pill (AC-U1)', () => {
@@ -214,7 +238,7 @@ describe('WorkspaceSwitcher', () => {
 		expect(trackOpened).toHaveBeenCalledTimes(1)
 	})
 
-	it('shows the member role as a sub-line on each workspace row', async () => {
+	it('shows the member count as a sub-line on each workspace row', async () => {
 		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
 		const { Wrapper } = makeWrapper()
 		const user = userEvent.setup()
@@ -222,7 +246,21 @@ describe('WorkspaceSwitcher', () => {
 
 		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
 
-		expect(screen.getAllByText('admin')).toHaveLength(2)
+		expect(screen.getByText('9 members')).toBeInTheDocument()
+		// A workspace of one reads as "just you", never "1 members".
+		expect(screen.getByText('just you')).toBeInTheDocument()
+	})
+
+	it('opens the new-workspace dialog from the switcher', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+		await user.click(screen.getByRole('menuitem', { name: /New workspace/ }))
+
+		expect(await screen.findByRole('dialog')).toHaveTextContent('New workspace')
 	})
 
 	it('navigates to Workspace settings from the switcher footer entry', async () => {
@@ -237,6 +275,90 @@ describe('WorkspaceSwitcher', () => {
 		expect(mockNavigate).toHaveBeenCalledWith({
 			to: '/$workspaceId/settings',
 			params: { workspaceId: 'ws-a' },
+		})
+	})
+
+	it('expands the sidebar instead of opening the menu when collapsed to the rail', async () => {
+		// The rail is 60px wide — there is nowhere for the workspace list to
+		// render, so the tile is the expand affordance (mockup line 108).
+		sidebarState = 'collapsed'
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
+
+		expect(toggleSidebar).toHaveBeenCalledTimes(1)
+		expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+		expect(trackOpened).not.toHaveBeenCalled()
+	})
+
+	it('opens the menu, not the sidebar toggle, once expanded', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+
+		expect(await screen.findByRole('menu')).toBeInTheDocument()
+		expect(toggleSidebar).not.toHaveBeenCalled()
+	})
+
+	it('emits sidebar.workspace_switcher.open_attempted on pointerdown of the trigger', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+
+		expect(trackOpenAttempted).toHaveBeenCalledTimes(1)
+		expect(trackOpenAttempted).toHaveBeenCalledWith({
+			workspaceId: 'ws-a',
+			pointerType: 'mouse',
+		})
+	})
+
+	describe('dismissed_immediately', () => {
+		let now = 0
+
+		beforeEach(() => {
+			vi.spyOn(performance, 'now').mockImplementation(() => now)
+		})
+
+		afterEach(() => {
+			vi.restoreAllMocks()
+		})
+
+		it('emits when the menu closes within 200ms of opening', async () => {
+			mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+			const { Wrapper } = makeWrapper()
+			const user = userEvent.setup()
+			render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+			now = 1000
+			await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+			now = 1050
+			await user.keyboard('{Escape}')
+
+			expect(trackDismissedImmediately).toHaveBeenCalledTimes(1)
+			expect(trackDismissedImmediately).toHaveBeenCalledWith({ workspaceId: 'ws-a', openMs: 50 })
+		})
+
+		it('stays silent when the menu was open for 200ms or longer', async () => {
+			mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+			const { Wrapper } = makeWrapper()
+			const user = userEvent.setup()
+			render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+			now = 1000
+			await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+			now = 1500
+			await user.keyboard('{Escape}')
+
+			expect(trackDismissedImmediately).not.toHaveBeenCalled()
 		})
 	})
 

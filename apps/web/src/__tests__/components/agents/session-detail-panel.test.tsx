@@ -11,18 +11,54 @@ import { createWorkspaceWrapper } from '../../setup'
 
 const createSessionMutate = vi.fn()
 let createSessionIsPending = false
+const navigateMock = vi.fn()
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useSessionLogs: () => ({ data: [], isLoading: false }),
 	useCreateSession: () => ({ mutate: createSessionMutate, isPending: createSessionIsPending }),
 }))
 
+let mockProducedObjects: Array<{
+	entityId: string
+	entityType: string
+	title: string | null
+	actions: string[]
+}> = []
+let mockProducedFiles: Array<{
+	fileId: string
+	name: string | null
+	mimeType: string | null
+	sizeBytes: number | null
+}> = []
+
 vi.mock('@/hooks/use-events', () => ({
-	useSessionAffectedObjects: () => ({ affectedObjects: [], isLoading: false }),
+	useSessionAffectedObjects: () => ({
+		affectedObjects: mockProducedObjects,
+		producedObjects: mockProducedObjects,
+		producedFiles: mockProducedFiles,
+		isLoading: false,
+	}),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
-	Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+	Link: ({
+		children,
+		to,
+		params,
+		hash,
+	}: {
+		children: React.ReactNode
+		to?: string
+		params?: { workspaceId: string }
+		hash?: string
+	}) => (
+		<a
+			href={`${(to ?? '').replace('$workspaceId', params?.workspaceId ?? '')}${hash ? `#${hash}` : ''}`}
+		>
+			{children}
+		</a>
+	),
+	useNavigate: () => navigateMock,
 }))
 
 vi.mock('@/components/shared/relative-time', () => ({
@@ -50,6 +86,8 @@ function renderPanel(session: ReturnType<typeof buildSessionResponse>) {
 beforeEach(() => {
 	createSessionMutate.mockReset()
 	createSessionIsPending = false
+	mockProducedObjects = []
+	mockProducedFiles = []
 	vi.spyOn(console, 'info').mockImplementation(() => {})
 })
 
@@ -58,6 +96,15 @@ afterEach(() => {
 })
 
 describe('parseFailureReason', () => {
+	it('returns null for old sessions that only have error text', () => {
+		expect(
+			parseFailureReason({
+				exit_code: 1,
+				error: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+			}),
+		).toBeNull()
+	})
+
 	it('returns null for null result', () => {
 		expect(parseFailureReason(null)).toBeNull()
 	})
@@ -111,8 +158,9 @@ describe('parseFailureReason', () => {
 function renderCard(
 	failureReason: Parameters<typeof FailureCard>[0]['failureReason'],
 	workspaceId = 'ws-1',
+	{ keysPage = false }: { keysPage?: boolean } = {},
 ) {
-	const Wrapper = createWorkspaceWrapper()
+	const Wrapper = createWorkspaceWrapper({ enterprise: keysPage })
 	return render(
 		<Wrapper>
 			<FailureCard failureReason={failureReason} workspaceId={workspaceId} />
@@ -212,18 +260,127 @@ describe('FailureCard', () => {
 		expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
 	})
 
-	it('shows Connect Claude subscription button for not_logged_in', () => {
-		renderCard({
-			provider: 'anthropic',
-			reason_code: 'not_logged_in',
-			human_message: 'Claude credentials not connected — please import your Claude subscription',
+	describe('recovery link by reason code', () => {
+		const reason = (
+			reason_code: string,
+			provider = 'anthropic',
+		): Parameters<typeof FailureCard>[0]['failureReason'] => ({
+			provider,
+			reason_code,
+			human_message: 'Stored message from the server',
 			http_status: null,
 			reset_at: null,
-			verbatim_output: 'Not logged in',
+			verbatim_output: null,
 		})
-		expect(screen.getByText('Connect Claude subscription')).toBeInTheDocument()
-		expect(screen.queryByText('Wait')).not.toBeInTheDocument()
-		expect(screen.queryByRole('link', { name: /Top up/ })).not.toBeInTheDocument()
+
+		it.each([
+			['oauth_expired', 'Your Claude login expired', 'Reconnect Claude', '#claude-subscriptions'],
+			['oauth_revoked', 'Your Claude login expired', 'Reconnect Claude', '#claude-subscriptions'],
+			['not_logged_in', 'No Claude login is connected', 'Connect Claude', '#claude-subscriptions'],
+			['invalid_api_key', 'Your API key was rejected', 'Replace API key', '#llm-api-keys'],
+			[
+				'session_limit',
+				'Your Claude subscription hit its session limit',
+				'Add a backup subscription',
+				'#claude-subscriptions',
+			],
+			[
+				'weekly_limit',
+				'Your Claude subscription hit its weekly limit',
+				'Add a backup subscription',
+				'#claude-subscriptions',
+			],
+			['credit_balance_low', 'Your API key is out of credit', 'Change API key', '#llm-api-keys'],
+		])(
+			'%s with the Keys page: title and one button to the right section',
+			(code, title, button, hash) => {
+				renderCard(reason(code), 'ws-1', { keysPage: true })
+				expect(screen.getByText(title)).toBeInTheDocument()
+				expect(screen.getByRole('link', { name: button })).toHaveAttribute(
+					'href',
+					`/ws-1/settings/keys${hash}`,
+				)
+				expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+				expect(screen.queryByText('Switch to OpenRouter key')).not.toBeInTheDocument()
+				expect(screen.queryByText('Connect Claude subscription')).not.toBeInTheDocument()
+			},
+		)
+
+		it('credit_balance_low also offers Top up on Anthropic in a new tab', () => {
+			renderCard(reason('credit_balance_low'), 'ws-1', { keysPage: true })
+			const link = screen.getByRole('link', { name: /Top up on Anthropic/ })
+			expect(link).toHaveAttribute('href', 'https://console.anthropic.com/settings/plans')
+			expect(link).toHaveAttribute('target', '_blank')
+		})
+
+		it.each([
+			['oauth_expired', 'Agents are paused on our side', /Claude login Maskin uses expired/],
+			['oauth_revoked', 'Agents are paused on our side', /Claude login Maskin uses expired/],
+			['not_logged_in', 'Agents are paused on our side', /could not sign in to Claude/],
+			['invalid_api_key', 'Agents are paused on our side', /key Maskin uses was rejected/],
+			['credit_balance_low', 'Agents are paused on our side', /out of Claude credit/],
+			['session_limit', 'Agents are paused until the limit resets', /hit its Claude usage limit/],
+			['weekly_limit', 'Agents are paused until the limit resets', /hit its Claude usage limit/],
+		])('%s without the Keys page: on-our-side copy and no button', (code, title, sentence) => {
+			renderCard(reason(code))
+			expect(screen.getByText(title)).toBeInTheDocument()
+			expect(screen.getByText(sentence)).toBeInTheDocument()
+			expect(screen.getByText(/You do not need to do anything/)).toBeInTheDocument()
+			expect(screen.queryByRole('link')).not.toBeInTheDocument()
+			expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+		})
+
+		it('replaces the stored message for a mapped code', () => {
+			renderCard(reason('invalid_api_key'), 'ws-1', { keysPage: true })
+			expect(screen.queryByText(/Stored message from the server/)).not.toBeInTheDocument()
+		})
+
+		it('keeps the stored message for not_logged_in from the Maskin pre-flight and adds Connect Claude with the Keys page', () => {
+			renderCard(
+				{
+					...reason('not_logged_in', 'maskin'),
+					human_message: 'Could not reach the login service, try again in a few minutes.',
+				},
+				'ws-1',
+				{ keysPage: true },
+			)
+			expect(
+				screen.getByText('Maskin — Could not reach the login service, try again in a few minutes.'),
+			).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Connect Claude' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/keys#claude-subscriptions',
+			)
+		})
+
+		it('keeps the stored message for not_logged_in from the Maskin pre-flight and links to Billing without the Keys page', () => {
+			renderCard({
+				...reason('not_logged_in', 'maskin'),
+				human_message: 'No working LLM credentials are connected for this workspace.',
+			})
+			expect(
+				screen.getByText('Maskin — No working LLM credentials are connected for this workspace.'),
+			).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'View plan and usage' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/billing',
+			)
+			expect(screen.queryByText('Agents are paused on our side')).not.toBeInTheDocument()
+		})
+
+		it('plan_cap_exceeded Go to Billing opens the Billing page', () => {
+			renderCard(reason('plan_cap_exceeded', 'maskin'))
+			expect(screen.getByRole('link', { name: 'Go to Billing' })).toHaveAttribute(
+				'href',
+				'/ws-1/settings/billing',
+			)
+		})
+
+		it('a code with no entry keeps the stored message and no button', () => {
+			renderCard(reason('some_new_code'), 'ws-1', { keysPage: true })
+			expect(screen.getByText('Anthropic — Stored message from the server')).toBeInTheDocument()
+			expect(screen.queryByRole('link')).not.toBeInTheDocument()
+		})
 	})
 
 	it('shows only Wait chip for server_rate_limit (no Top up or Switch button)', () => {
@@ -428,7 +585,12 @@ describe('classifier codes -> FailureCard recovery row', () => {
 			if (!parsed) return
 			expect(parsed.reason_code).toBe(failureReason.reason_code)
 			renderCard(parsed)
-			expect(screen.getByText('Wait')).toBeInTheDocument()
+			// These three have their own recovery card (see 'recovery link by reason code').
+			if (['credit_balance_low', 'session_limit', 'weekly_limit'].includes(parsed.reason_code)) {
+				expect(screen.queryByText('Wait')).not.toBeInTheDocument()
+			} else {
+				expect(screen.getByText('Wait')).toBeInTheDocument()
+			}
 		},
 	)
 })
@@ -474,6 +636,25 @@ describe('SessionDetailPanel failure display', () => {
 	})
 })
 
+describe('SessionDetailPanel status badge', () => {
+	// The pill on the agent page (agent-sessions-section) buckets queued /
+	// pending / starting / snapshotting under a single 'Running' label. This
+	// sheet is the "session log sidebar" surface — its badge must show the same
+	// label for the same session, or the two surfaces disagree (bug ee2a0498).
+	it.each(['running', 'starting', 'pending', 'queued', 'snapshotting'])(
+		'labels %s status as Running',
+		(status) => {
+			renderPanel(buildSessionResponse({ status }))
+			expect(screen.getByText('Running')).toBeInTheDocument()
+		},
+	)
+
+	it('labels waiting_for_input as Waiting', () => {
+		renderPanel(buildSessionResponse({ status: 'waiting_for_input' }))
+		expect(screen.getByText('Waiting')).toBeInTheDocument()
+	})
+})
+
 describe('SessionDetailPanel Restart button', () => {
 	it.each(['failed', 'timeout', 'completed'])('renders Restart on terminal status %s', (status) => {
 		renderPanel(buildSessionResponse({ status }))
@@ -501,10 +682,13 @@ describe('SessionDetailPanel Restart button', () => {
 		await user.click(screen.getByRole('button', { name: 'Restart' }))
 
 		expect(createSessionMutate).toHaveBeenCalledTimes(1)
-		expect(createSessionMutate).toHaveBeenCalledWith({
-			actor_id: 'actor-xyz',
-			action_prompt: 'Re-run the agent',
-		})
+		expect(createSessionMutate).toHaveBeenCalledWith(
+			{
+				actor_id: 'actor-xyz',
+				action_prompt: 'Re-run the agent',
+			},
+			{ onError: expect.any(Function) },
+		)
 
 		const analyticsCalls = vi
 			.mocked(console.info)
@@ -530,5 +714,48 @@ describe('SessionDetailPanel Restart button', () => {
 
 		await user.click(button)
 		expect(createSessionMutate).not.toHaveBeenCalled()
+	})
+})
+
+// S2 · bet 34706e2f, task 5 — the Session Sheet's Objects affected section
+// is renamed to Produced, and grows a Files sub-group that hides entirely when
+// its count is zero. `<h5>Files · 0</h5>` never appears on a text-only session.
+describe('SessionDetailPanel Produced section', () => {
+	it('renders under the Produced heading (not "Objects affected")', () => {
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.getByRole('heading', { level: 4, name: /Produced/i })).toBeInTheDocument()
+		expect(screen.queryByText('Objects affected')).not.toBeInTheDocument()
+	})
+
+	it('shows the Objects sub-group when produced objects exist', () => {
+		mockProducedObjects = [
+			{ entityId: 'obj-a', entityType: 'bet', title: 'Bet A', actions: ['created'] },
+		]
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
+	})
+
+	it('renders the Files sub-group when files count > 0', () => {
+		mockProducedFiles = [
+			{ fileId: 'f-1', name: 'plan.md', mimeType: 'text/markdown', sizeBytes: 1234 },
+		]
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.getByText('Files · 1')).toBeInTheDocument()
+		expect(screen.getByText('plan.md')).toBeInTheDocument()
+	})
+
+	it('hides the Files sub-group entirely when files count = 0', () => {
+		mockProducedObjects = [
+			{ entityId: 'obj-b', entityType: 'task', title: 'Task B', actions: ['created'] },
+		]
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.queryByText(/Files · 0/)).not.toBeInTheDocument()
+		// Sanity — the Objects sub-group still renders alone.
+		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
+	})
+
+	it('shows a "Nothing produced yet" fallback when both counts are 0', () => {
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.getByText('Nothing produced yet')).toBeInTheDocument()
 	})
 })

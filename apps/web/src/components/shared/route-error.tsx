@@ -1,12 +1,23 @@
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
+import { pushFaroError } from '@/lib/faro'
 import { captureException } from '@/lib/sentry'
 import { useRouter } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
 
 // Compact variant is used inline in retry flows (see `QueryStateError`) — an
-// error that a refetch resolves inside this window never reaches Sentry.
+// error that a refetch resolves inside this window is never reported.
 const COMPACT_CAPTURE_DELAY_MS = 3000
+
+// React catches render errors before they reach window.onerror, so Faro's
+// ErrorsInstrumentation never sees them — an error boundary is the only place
+// this class of error can be reported from. Both SDKs are notified here for
+// the same reason they both run in main.tsx: the Faro-vs-Sentry comparison is
+// only meaningful if they see the same errors. See lib/faro.ts.
+function report(error: Error): void {
+	captureException(error)
+	pushFaroError(error)
+}
 
 export function RouteError({
 	error,
@@ -31,13 +42,13 @@ export function RouteError({
 
 		if (compact) {
 			const timer = window.setTimeout(() => {
-				captureException(error)
+				report(error)
 				capturedRef.current = error
 			}, COMPACT_CAPTURE_DELAY_MS)
 			return () => window.clearTimeout(timer)
 		}
 
-		captureException(error)
+		report(error)
 		capturedRef.current = error
 	}, [error, compact])
 

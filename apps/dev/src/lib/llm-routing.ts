@@ -1,9 +1,26 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
+import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
-import type { OAuthSlotKind } from './claude-oauth-slots'
+import {
+	API_KEY_CREDIT_MARK_WINDOW_MS,
+	checkApiKeyCreditMark,
+	clearStaleApiKeyCreditMark,
+} from './api-key-credit-mark'
+import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
+import {
+	type SubscriptionProbe,
+	type UnusableCredentialInfo,
+	isClaudeFailoverEnabled,
+	isTransientCredentialError,
+	resolveClaudeCredentialsWithFailover,
+} from './claude-failover'
+import { isClaudePlatformRefreshEnabled, readClaudeLaunchBufferMs } from './claude-oauth'
+import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
+import { isEnterprise } from './enterprise'
+import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
+import { SecretUnreadableError, openSecret } from './workspace-secrets'
 
 const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 	anthropic: 'claude-haiku-4-5-20251001',
@@ -12,27 +29,77 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 }
 
 /**
- * Tag persisted on `sessions.config.llm_route` so we can later attribute usage
- * (and enforce per-actor quotas) for sessions that ran on the system fallback.
+ * Every session on the Claude-subscription route runs this model at this
+ * effort, whatever the agent's own `llm_config.model` says. Other routes
+ * (custom endpoints, API keys) never receive these — `MASKIN_CLAUDE_EFFORT` is
+ * read by docker/agent-base/agent-run.sh and turned into `--effort`. The
+ * Maskin-funded route sets its own, lower effort (MASKIN_PLAN_EFFORT).
  */
-export const LLM_ROUTE_SYSTEM_FALLBACK = 'system_fallback'
+export const CLAUDE_SUBSCRIPTION_MODEL = 'claude-sonnet-5-5'
+export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
+
+/**
+ * Effort for the Maskin-funded DeepSeek route. With the CLI default, about 70%
+ * of a session's output was hidden reasoning (Claude: about 30%), one think
+ * ran 2m37s with nothing on screen. Effort alone does not fix that: DeepSeek
+ * maps low and medium to high, and the CLI still asks for adaptive thinking.
+ * MAX_THINKING_TOKENS=0 (set with this effort in the env below) drops the
+ * thinking field from the request, which is what stops the reasoning. Low
+ * effort stays as the secondary setting.
+ */
+export const MASKIN_PLAN_EFFORT = 'low'
+
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
 export const LLM_ROUTE_API_KEY = 'workspace_api_key'
 export const LLM_ROUTE_AGENT = 'agent_api_key'
+export const LLM_ROUTE_MASKIN_PLAN = 'maskin_plan'
 
 export type LlmRoute =
-	| typeof LLM_ROUTE_SYSTEM_FALLBACK
 	| typeof LLM_ROUTE_CUSTOM
 	| typeof LLM_ROUTE_OAUTH
 	| typeof LLM_ROUTE_API_KEY
 	| typeof LLM_ROUTE_AGENT
+	| typeof LLM_ROUTE_MASKIN_PLAN
+
+/**
+ * Workspaces on these plans are routed through Maskin's funded OR account.
+ * Trial is included so BYO-LLM-less users can try the product without their
+ * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_USD_CENTS`.
+ */
+const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
+
+/**
+ * True when Maskin funds this workspace's LLM usage. Every route that reaches
+ * for `MASKIN_FALLBACK_OPENROUTER_KEY` on a workspace's behalf must be gated
+ * on this — a `enterprise` workspace pays for its own credentials by definition,
+ * so silently spending Maskin's OpenRouter account for it is both a billing
+ * leak and a violation of the entitlement the customer bought.
+ */
+function isMaskinPlanRouted(billing: WorkspaceSettings['billing']): boolean {
+	return MASKIN_PLAN_ROUTED_PLANS.has(billing?.plan ?? 'trial')
+}
 
 export interface LlmRoutingResult {
 	route: LlmRoute
 	/** Env vars to merge into the container environment. */
 	envVars: Record<string, string>
 	oauthSlot?: OAuthSlotKind
+	/**
+	 * Access-token expiry (epoch ms) the container launched with. Set only when the
+	 * refresh token was withheld from it, so the settle path can tell a session
+	 * that outlived its token from a genuinely rejected credential.
+	 */
+	oauthExpiresAt?: number
+	/**
+	 * OpenRouter model id that will actually run this session. Populated on
+	 * the maskin_plan route (from `MASKIN_FALLBACK_MODEL`) so the caller can
+	 * stamp `sessions.model_name` at spawn; the follow-on local cost resolver
+	 * prices maskin_plan usage from OpenRouter's pricing table keyed on this
+	 * value. Undefined on every other route — Claude Code's own
+	 * `total_cost_usd` stays ground truth for `claude_oauth` and BYO paths.
+	 */
+	modelName?: string
 }
 
 export interface FallbackConfig {
@@ -40,7 +107,50 @@ export interface FallbackConfig {
 	baseUrl?: string
 	model?: string
 	smallModel?: string
-	dailyTokenLimit: number
+	/**
+	 * Lower-case substrings of model ids that cannot read images. Unset means
+	 * DEFAULT_TEXT_ONLY_MODEL_PATTERNS; an empty list turns image stripping off.
+	 */
+	textOnlyModels?: string[]
+	/**
+	 * Ask OpenRouter to route in-process chat calls to zero-data-retention
+	 * endpoints only. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
+	 */
+	zdr: boolean
+	/**
+	 * The only OpenRouter providers allowed to serve a funded request, sent as
+	 * provider.only. From MASKIN_FALLBACK_PROVIDER_ONLY (comma separated); unset
+	 * uses DEFAULT_ONLY_PROVIDERS, empty or "none" lifts the restriction.
+	 */
+	onlyProviders: string[]
+	/**
+	 * OpenRouter provider names that must never serve a funded request, sent as
+	 * provider.ignore. From MASKIN_FALLBACK_PROVIDER_IGNORE (comma separated).
+	 */
+	ignoreProviders: string[]
+	/**
+	 * Cancel and retry a funded streamed request whose first token takes longer
+	 * than this many milliseconds (strip-images-proxy.js, in the agent container).
+	 * From MASKIN_FALLBACK_TTFT_TIMEOUT_MS; unset uses DEFAULT_TTFT_TIMEOUT_MS,
+	 * 0 or "none" turns the guard off. Undefined here means off.
+	 */
+	ttftTimeoutMs?: number
+}
+
+/** The subset of OpenRouter's request-body "provider" object Maskin sends. */
+export interface ProviderPrefs {
+	zdr?: true
+	only?: string[]
+	ignore?: string[]
+}
+
+/** Undefined when no preference is configured, so callers send no "provider" at all. */
+export function buildProviderPrefs(fallback: FallbackConfig): ProviderPrefs | undefined {
+	const prefs: ProviderPrefs = {}
+	if (fallback.zdr) prefs.zdr = true
+	if (fallback.onlyProviders?.length) prefs.only = fallback.onlyProviders
+	if (fallback.ignoreProviders?.length) prefs.ignore = fallback.ignoreProviders
+	return Object.keys(prefs).length > 0 ? prefs : undefined
 }
 
 export interface AgentLlmConfig {
@@ -50,69 +160,349 @@ export interface AgentLlmConfig {
 }
 
 /**
- * Reads MASKIN_FALLBACK_* env vars once. The fallback is only "available" when
- * the operator has set MASKIN_FALLBACK_OPENROUTER_KEY — otherwise we skip the
- * fallback path and let the session fail with a clearer "no credentials" error
- * upstream.
+ * Model ids containing any of these (case-insensitive) get image blocks swapped
+ * for a text note by the strip-images proxy in the agent container. Hardcoded
+ * list, no capability table: a new text-only model is a code change.
+ * MASKIN_TEXT_ONLY_MODELS (comma separated) overrides it when set; empty or
+ * "none" is the kill switch that turns stripping off.
+ */
+export const DEFAULT_TEXT_ONLY_MODEL_PATTERNS = ['deepseek']
+
+/**
+ * OpenRouter providers (slugs, as OpenRouter spells them in provider.only) that
+ * may serve a funded request. Chosen on measured time to first token and tok/s:
+ * most other hosts of the fallback model were 10-30s to first token at 5-25
+ * tok/s. MASKIN_FALLBACK_PROVIDER_ONLY (comma separated) overrides it; empty or
+ * "none" lifts the restriction. A model neither host serves fails with a 404
+ * ("no endpoints found") instead of falling back to a slow host.
+ */
+export const DEFAULT_ONLY_PROVIDERS = ['digitalocean', 'gmicloud']
+
+/**
+ * A funded request that has produced no token after this long is cancelled and
+ * retried once, then sent to the other allowed provider (two tries there). The
+ * last try has no timeout, so a request that is slow everywhere is still served.
+ * Measured first tokens on the allowed providers:
+ * DigitalOcean 1-3s, GMICloud 3-4.5s (one 69s outlier in 20 large requests), so
+ * 8s leaves headroom for both and still catches the stalls.
+ */
+export const DEFAULT_TTFT_TIMEOUT_MS = 8000
+
+function readTtftTimeoutMs(env: NodeJS.ProcessEnv): number {
+	const raw = env.MASKIN_FALLBACK_TTFT_TIMEOUT_MS?.trim()
+	if (raw === undefined || raw === '') return DEFAULT_TTFT_TIMEOUT_MS
+	if (raw.toLowerCase() === 'none') return 0
+	const ms = Number(raw)
+	return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0
+}
+
+function readOnlyProviders(env: NodeJS.ProcessEnv): string[] {
+	const raw = env.MASKIN_FALLBACK_PROVIDER_ONLY
+	if (raw === undefined) return DEFAULT_ONLY_PROVIDERS
+	if (raw.trim().toLowerCase() === 'none') return []
+	return raw
+		.split(',')
+		.map((p) => p.trim())
+		.filter(Boolean)
+}
+
+function readTextOnlyModels(env: NodeJS.ProcessEnv): string[] {
+	const raw = env.MASKIN_TEXT_ONLY_MODELS
+	if (raw === undefined) return DEFAULT_TEXT_ONLY_MODEL_PATTERNS
+	if (raw.trim().toLowerCase() === 'none') return []
+	return raw
+		.split(',')
+		.map((p) => p.trim().toLowerCase())
+		.filter(Boolean)
+}
+
+/**
+ * Reads MASKIN_FALLBACK_* env vars that configure the operator's OpenRouter
+ * account used for the maskin_plan route. Only "available" when
+ * MASKIN_FALLBACK_OPENROUTER_KEY is set.
  */
 export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): FallbackConfig {
-	const rawLimit = Number(env.MASKIN_FALLBACK_DAILY_TOKEN_LIMIT)
-	const dailyTokenLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 550_000
 	return {
 		apiKey: env.MASKIN_FALLBACK_OPENROUTER_KEY?.trim() || undefined,
 		baseUrl: env.MASKIN_FALLBACK_BASE_URL?.trim() || 'https://openrouter.ai/api',
-		model: env.MASKIN_FALLBACK_MODEL?.trim() || 'deepseek/deepseek-v4-flash',
+		model: env.MASKIN_FALLBACK_MODEL?.trim() || 'deepseek/deepseek-v4.1-flash',
 		smallModel:
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
-			'deepseek/deepseek-v4-flash',
-		dailyTokenLimit,
+			'deepseek/deepseek-v4.1-flash',
+		textOnlyModels: readTextOnlyModels(env),
+		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
+		onlyProviders: readOnlyProviders(env),
+		ignoreProviders: (env.MASKIN_FALLBACK_PROVIDER_IGNORE ?? '')
+			.split(',')
+			.map((p) => p.trim())
+			.filter(Boolean),
+		ttftTimeoutMs: readTtftTimeoutMs(env),
 	}
 }
 
 /**
- * Sums input+output tokens across the actor's last-24h sessions that ran on
- * the system fallback route. Used to enforce MASKIN_FALLBACK_DAILY_TOKEN_LIMIT.
+ * Legacy blended token rate, in tokens per USD CENT, used only when a
+ * maskin_plan session's model can't be priced from OpenRouter's table (no
+ * model name recorded, an unpublished model, or the catalogue being
+ * unreachable). Real per-token cost is always preferred; this exists so a
+ * session whose model can't be resolved doesn't silently read as $0 of usage.
  *
- * `null` means "we couldn't measure" — caller should treat conservatively.
+ * Calibrated to the maskin_plan fallback model's scale rather than Anthropic's:
+ * `deepseek/deepseek-v4-flash` publishes $0.00000007/prompt token (≈142,857
+ * tokens/cent) and $0.00000014/completion token (≈71,428/cent). A conservative
+ * 200,000 tokens/cent for a prompt-heavy blend keeps the estimate from
+ * over-charging while staying the right order of magnitude — the previous
+ * 16,000/cent was an Anthropic-scale figure that over-billed maskin_plan
+ * sessions by roughly an order of magnitude.
  */
-export async function getActorFallbackTokenUsage24h(
-	db: Database,
-	actorId: string,
+export const LEGACY_TOKENS_PER_USD_CENT = 200_000
+
+/**
+ * Rounds a cents amount up to a whole cent after clearing IEEE754 dust.
+ *
+ * A bare `Math.ceil` on a float cents figure over-bills by a whole cent
+ * whenever the multiplication lands a hair ABOVE an exact integer, which it
+ * does for the most ordinary of prices: `10.05 * 100` is
+ * `1005.0000000000001` in IEEE754, so `Math.ceil` returns 1006 and charges a
+ * cent that was never spent. (`10.01` and `10.30` happen to land exactly, so
+ * the bug is invisible on most values — it is not a rounding preference, it
+ * is a defect that fires on an arbitrary subset of amounts.)
+ *
+ * Snapping to 6 decimal places first discards only that dust. Genuine
+ * sub-cent usage still rounds up as intended: the sole producer of fractional
+ * cents here is the token-rate fallback, whose smallest non-zero output is
+ * `1 / LEGACY_TOKENS_PER_USD_CENT` = 5e-6 cents — above the 1e-6 snapping
+ * threshold, though by a narrower margin than the pre-rename rate.
+ */
+export function ceilCents(cents: number): number {
+	return Math.ceil(Number(cents.toFixed(6)))
+}
+
+/**
+ * Sums actual dollar cost (in USD cents, rounded up) across the workspace's
+ * maskin_plan sessions since `periodStart` (or all-time when undefined — used
+ * for trial buckets that don't have a billing period yet). Prefers each
+ * session's own reported `total_cost_usd` (populated from the CLI's own
+ * reported cost, so it reflects whichever model actually ran) and falls back
+ * to a flat token-rate estimate only for sessions that never reported one.
+ * Tracking dollars instead of raw tokens is what lets different agents run
+ * different models — each with a different $/token ratio — without the cap
+ * silently over- or under-counting usage. The route filter is what makes
+ * paid + trial usage cheap to query, even as the sessions table grows.
+ */
+export async function getWorkspacePlanUsdCentsUsage(
+	// `Pick<…, 'select'>` (the `Queryable` shape from lib/workspace-capacity.ts)
+	// rather than `Database` so callers can pass a `tx`. credit-billing.ts must
+	// read this INSIDE its row-locked transaction — reading it outside would
+	// let a concurrent debit change the cumulative total between the read and
+	// the write.
+	db: Pick<Database, 'select'>,
+	workspaceId: string,
+	periodStartMs?: number,
 ): Promise<number> {
-	const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
+	const conds = [
+		eq(sessions.workspaceId, workspaceId),
+		// Inlined as a literal rather than a bind parameter: sessions_ws_plan_usage_idx
+		// is a partial index on this exact predicate. A per-execution plan can match a
+		// bound value, but a generic (cached) plan can only prove a match against a
+		// literal. LLM_ROUTE_MASKIN_PLAN is a code constant, never user input.
+		sql`${sessions.config}->>'llm_route' = ${sql.raw(`'${LLM_ROUTE_MASKIN_PLAN}'`)}`,
+	]
+	if (periodStartMs !== undefined) {
+		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))
+	}
 	const rows = await db
 		.select({
+			totalCostUsd: sessions.totalCostUsd,
 			inputTokens: sessions.inputTokens,
 			outputTokens: sessions.outputTokens,
 		})
 		.from(sessions)
-		.where(
-			and(
-				eq(sessions.actorId, actorId),
-				gte(sessions.createdAt, since),
-				sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_SYSTEM_FALLBACK}`,
-			),
-		)
+		.where(and(...conds))
 
-	let total = 0
+	let totalCents = 0
 	for (const row of rows) {
-		total += row.inputTokens ?? 0
-		total += row.outputTokens ?? 0
+		const reportedUsd = row.totalCostUsd !== null ? Number(row.totalCostUsd) : Number.NaN
+		if (Number.isFinite(reportedUsd) && reportedUsd > 0) {
+			totalCents += reportedUsd * 100
+			continue
+		}
+		const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
+		totalCents += tokens / LEGACY_TOKENS_PER_USD_CENT
 	}
-	return total
+	// Round once on the aggregate, not per-row, so small per-session fractions
+	// of a cent don't compound into meaningfully over-counted usage.
+	return ceilCents(totalCents)
 }
 
-export class FallbackQuotaExceededError extends Error {
-	constructor(
-		readonly used: number,
-		readonly limit: number,
-	) {
+export type MaskinPlan = 'trial' | 'pro' | 'team'
+
+interface PlanCapContext {
+	plan: MaskinPlan
+	/** USD cents. */
+	used: number
+	/** USD cents. */
+	cap: number
+	/**
+	 * Unix MILLISECONDS, not seconds. Stripe stores `current_period_end` in
+	 * seconds, but `checkPlanCap` converts it (and `effectivePeriodEnd` derives
+	 * its fallback in ms) before building this context, so consumers must use
+	 * the value as-is. Null when Stripe has written no period at all yet.
+	 */
+	periodEnd: number | null
+}
+
+/**
+ * Surfaces as HTTP 402 with `{ code: 'PLAN_CAP_EXCEEDED', plan, used, cap,
+ * period_end }`. `used`/`cap` are USD cents (dollar cost, not token counts —
+ * see `getWorkspacePlanUsdCentsUsage`). The frontend (Task dcfe3afe) reads
+ * `period_end` to render a reset ETA and a typed upgrade CTA.
+ */
+export class PlanCapExceededError extends Error {
+	readonly plan: MaskinPlan
+	readonly used: number
+	readonly cap: number
+	/** Unix MILLISECONDS (already converted from Stripe's seconds), or null. */
+	readonly periodEnd: number | null
+
+	constructor(ctx: PlanCapContext) {
 		super(
-			`Free fallback quota exceeded: ${used.toLocaleString()} of ${limit.toLocaleString()} tokens used in the last 24 hours. Add a Claude subscription, an Anthropic API key, or a custom model endpoint in workspace settings → keys.`,
+			`${ctx.plan} plan cap exceeded: $${(ctx.used / 100).toFixed(2)} of $${(ctx.cap / 100).toFixed(2)} used this period.`,
 		)
-		this.name = 'FallbackQuotaExceededError'
+		this.name = 'PlanCapExceededError'
+		this.plan = ctx.plan
+		this.used = ctx.used
+		this.cap = ctx.cap
+		this.periodEnd = ctx.periodEnd
 	}
+}
+
+/**
+ * Returns the configured cap (USD cents) for a maskin_plan workspace.
+ *
+ * Falls back to the plan's documented default when Stripe hasn't written
+ * `hard_cap_usd_cents` yet (delayed webhook, partial state after a webhook
+ * failure). This previously returned `null` — no cap at all — for pro/team in
+ * that window, so a paid workspace whose webhook was late could spend without
+ * bound on Maskin's OpenRouter account. Failing *closed* onto the plan's own
+ * published cap is the safe default: the customer keeps exactly the usage
+ * they paid for, and `routes/billing.ts` already showed them that same number
+ * via the shared resolver.
+ */
+function effectivePlanCap(plan: MaskinPlan, hardCapCents: number | undefined): number | null {
+	if (typeof hardCapCents === 'number' && hardCapCents >= 0) return hardCapCents
+	return resolvePlanCapCents(plan)
+}
+
+export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | null {
+	const billing = wsSettings.billing
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'enterprise'
+	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return null
+	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
+}
+
+function effectivePeriodEnd(
+	periodStartMs: number | undefined,
+	periodEndMs: number | undefined,
+): number | null {
+	if (typeof periodEndMs === 'number') return periodEndMs
+	if (typeof periodStartMs === 'number') return periodStartMs + DEFAULT_PERIOD_LENGTH_MS
+	return null
+}
+
+/** Spendable prepaid credit balance in cents, clamped to ≥0 defensively (writes are clamped too — see `lib/credit-billing.ts`). */
+export function creditBalanceCents(billing: WorkspaceSettings['billing']): number {
+	const raw = billing?.credit_balance_cents
+	return typeof raw === 'number' && raw > 0 ? Math.floor(raw) : 0
+}
+
+/**
+ * True once a workspace over its plan cap may keep running by drawing down
+ * its prepaid credit balance instead of being hard-blocked.
+ *
+ * Any maskin-plan-routed workspace qualifies, trial included: a balance only
+ * exists because somebody paid for it, and `routes/stripe-webhook.ts` credits
+ * a completed top-up unconditionally ("eligibility gates *spending* the
+ * balance later, not receiving money already paid for"). Refusing to spend a
+ * balance the workspace was allowed to buy is money taken for nothing, so the
+ * buy gate in `routes/billing.ts` and this spend gate must agree — they are
+ * deliberately the same predicate modulo the balance>0 check.
+ *
+ * `past_due`/`canceled` still hard-block, and that rationale is unchanged: a
+ * workspace that can't be billed for its base plan shouldn't draw down a
+ * balance either. `incomplete` is allowed because it is the state a fresh
+ * billing block is written in, which every trial workspace sits in.
+ *
+ * `stripe_customer_id` is deliberately NOT required. It used to stand in for
+ * "has a card on file", but the credit-top-up webhook path never wrote one,
+ * so it excluded exactly the workspaces that had just paid.
+ */
+export function canUseCreditBalance(
+	/** No longer consulted — every maskin-plan tier may spend a balance it was
+	 *  allowed to buy. Kept in the signature so the three call sites (and the
+	 *  session-manager pre-flight) don't all have to change shape for a gate
+	 *  that may well take the plan into account again. */
+	_plan: MaskinPlan,
+	billing: WorkspaceSettings['billing'],
+): boolean {
+	if (billing?.status === 'past_due' || billing?.status === 'canceled') return false
+	return creditBalanceCents(billing) > 0
+}
+
+/**
+ * Pre-flight check on the maskin_plan route. Called from `createSession` so the
+ * HTTP caller gets a 402 *before* a session row is created (the v1 contract
+ * with the over-cap banner). Also invoked at route-resolution time as
+ * defense-in-depth against background calls that skipped the pre-check.
+ *
+ * No-op when the workspace is not on a maskin-plan-routed plan or when no cap
+ * applies (e.g., paid plan pre-Stripe). Throws `PlanCapExceededError` when the
+ * cap is exceeded and no prepaid credit balance is available for this
+ * workspace (`canUseCreditBalance`) — otherwise lets the caller through;
+ * the balance is actually debited separately at session-completion time
+ * (`lib/credit-billing.ts`).
+ */
+export async function checkPlanCap(params: {
+	db: Database
+	workspaceId: string
+	wsSettings: WorkspaceSettings
+	/**
+	 * The workspace's enterprise status, which is exempt from the cap. Passed
+	 * in rather than re-derived: `isEnterprise()` needs the workspace row, and
+	 * both callers (`resolveLlmRoute`, `SessionManager.createSession`'s
+	 * pre-flight) have already loaded it. Re-reading here would put a second
+	 * lookup on the session-dispatch path and let the two disagree.
+	 */
+	enterprise: boolean
+}): Promise<void> {
+	const billing = params.wsSettings.billing
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'enterprise'
+	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
+	if (params.enterprise) return
+
+	const maskinPlan = plan as MaskinPlan
+	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
+	if (cap === null) return
+
+	// billing.period_start / period_end are Unix SECONDS (Stripe writes them
+	// straight from current_period_start/end). Convert to ms before passing to
+	// getWorkspacePlanUsdCentsUsage (which feeds new Date()) and effectivePeriodEnd.
+	const periodStartMs =
+		typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
+	const periodEndMs =
+		typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined
+
+	const used = await getWorkspacePlanUsdCentsUsage(params.db, params.workspaceId, periodStartMs)
+	if (used < cap) return
+	if (canUseCreditBalance(maskinPlan, billing)) return
+
+	throw new PlanCapExceededError({
+		plan: maskinPlan,
+		used,
+		cap,
+		periodEnd: effectivePeriodEnd(periodStartMs, periodEndMs),
+	})
 }
 
 /**
@@ -126,9 +516,12 @@ export class FallbackQuotaExceededError extends Error {
 function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<string, string> | null {
 	if (!custom?.enabled) return null
 	const baseUrl = custom.base_url?.trim()
-	const apiKey = custom.api_key?.trim()
+	const storedKey = custom.api_key?.trim()
 	const model = custom.model?.trim()
-	if (!baseUrl || !apiKey || !model) return null
+	if (!baseUrl || !storedKey || !model) return null
+	// Opened only once the config is complete, so a workspace that is not using
+	// this route never needs the encryption key. Throws SecretUnreadableError.
+	const apiKey = openSecret(storedKey, 'custom_llm.api_key').trim()
 	const smallModel = custom.small_fast_model?.trim() || model
 	return {
 		ANTHROPIC_BASE_URL: baseUrl,
@@ -142,122 +535,647 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 }
 
 /**
+ * Builds the env vars for the Maskin-funded OpenRouter route. Returns null
+ * when the workspace is not on a maskin-plan-routed plan or the operator
+ * hasn't configured the OR key.
+ */
+function buildMaskinPlanEnv(
+	billing: WorkspaceSettings['billing'],
+	fallback: FallbackConfig,
+	enterprise: boolean,
+): Record<string, string> | null {
+	// Enterprise is never Maskin-funded, whatever the stored plan says. The plan
+	// alone is not a safe gate: `plan: 'enterprise'` is only written once a BYO
+	// credential is connected (`billingAfterByoTransition`), and an absent
+	// billing block defaults to 'trial' — so an entitled workspace whose BYO
+	// credential is missing, expired or broken would otherwise land here and
+	// spend Maskin's OpenRouter key. It gets no credentials instead, which
+	// surfaces as a real error rather than a silent billing leak.
+	if (enterprise) return null
+	if (!isMaskinPlanRouted(billing)) return null
+	if (!fallback.apiKey) return null
+	const model = fallback.model ?? 'deepseek/deepseek-v4.1-flash'
+	const env: Record<string, string> = {
+		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
+		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
+		ANTHROPIC_API_KEY: '',
+		ANTHROPIC_MODEL: model,
+		ANTHROPIC_SMALL_FAST_MODEL: fallback.smallModel ?? model,
+		MASKIN_CLAUDE_EFFORT: MASKIN_PLAN_EFFORT,
+		MAX_THINKING_TOKENS: '0',
+		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
+		// does not run: the call dies with "search was cut off" and the turn ends
+		// with no visible output. Without it the model uses WebFetch or the browser.
+		MASKIN_DISABLE_WEB_SEARCH: '1',
+	}
+	// Decided on the main model only: the small-fast model can differ, and the
+	// proxy strips for the whole session either way.
+	const textOnly = fallback.textOnlyModels ?? DEFAULT_TEXT_ONLY_MODEL_PATTERNS
+	if (textOnly.some((pattern) => model.toLowerCase().includes(pattern))) {
+		env.MASKIN_STRIP_IMAGES = '1'
+	}
+	// The Claude CLI builds its own request body, so the agent-container proxy
+	// injects these into each /v1/messages call (strip-images-proxy.js). Only
+	// routing (allow and block lists) goes here: zdr stays chat-only, as it was
+	// before.
+	const { only, ignore } = buildProviderPrefs({ ...fallback, zdr: false }) ?? {}
+	if (only || ignore) {
+		env.MASKIN_PROVIDER_PREFS = JSON.stringify({ ...(only && { only }), ...(ignore && { ignore }) })
+	}
+	// The same proxy cancels and retries a request whose first token is slow.
+	if (fallback.ttftTimeoutMs && fallback.ttftTimeoutMs > 0) {
+		env.MASKIN_TTFT_TIMEOUT_MS = String(fallback.ttftTimeoutMs)
+	}
+	return env
+}
+
+/**
  * Resolves which LLM the session should use, in priority order:
  *
  *   1. Agent-level api_key (caller-injected override)
- *   2. Workspace custom_llm (BYO endpoint — OpenRouter, Ollama, vLLM, …)
- *   3. Workspace Claude OAuth (Pro/Max/Teams subscription)
+ *   2. Workspace Claude OAuth (Pro/Max/Teams subscription)
+ *   3. Workspace custom_llm (BYO endpoint — OpenRouter, Ollama, vLLM, …)
  *   4. Workspace anthropic api_key (`settings.llm_keys.anthropic`)
- *   5. System fallback (MASKIN_FALLBACK_OPENROUTER_KEY) with daily quota
+ *   5. Maskin plan (pro/team/trial) — Maskin's funded OR account, counts against cap
  *
- * Throws FallbackQuotaExceededError if route #5 is selected and the actor has
- * already burned through their 24h budget.
+ * BYO credentials (1-4) always take precedence over the Maskin-funded route so
+ * a connected Claude subscription or custom endpoint is never bypassed and never
+ * counts against the workspace's token cap. Returns null when no credentials are
+ * available (session fails to start rather than silently consuming Maskin tokens).
+ *
+ * Routes 1 (anthropic branch only), 2, 3, and 4 are all BYO credentials and are
+ * only reachable when `enterprise` is true — every workspace defaults to the
+ * Maskin plan, and only ops-flagged exception workspaces may bring their own
+ * Claude subscription / endpoint / key. See PR #970.
  *
  * Returns null if the agent uses a non-anthropic provider (e.g. OpenAI native);
- * caller continues to handle OPENAI_API_KEY injection itself.
+ * caller continues to handle OPENAI_API_KEY injection itself (also gated on
+ * `enterprise` — see session-manager.ts).
  *
- * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1, #3,
- * and #4 (the routes that don't already carry an explicit model of their
- * own). Routes #2 and #5 already source their model from workspace/operator
- * config and are left as-is.
+ * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1 and #4
+ * (the routes that don't already carry an explicit model of their own). When it
+ * is unset they get CLAUDE_SUBSCRIPTION_MODEL instead: the Claude CLI's own
+ * default is not Sonnet, and an API key bills per token. Route
+ * #2 (Claude subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL
+ * at CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
+ * workspace/operator config and are left as-is.
  */
+/**
+ * Is a Claude OAuth slot configured at all — i.e. does the slot that
+ * `resolveClaudeCredentialsWithFailover` would actually read hold data?
+ *
+ * Existence only, never liveness. The flag branch mirrors that function
+ * (claude-failover.ts): with failover ON the active slot is what counts, with
+ * it OFF `active_slot` is ignored and `primary` is read directly, so that
+ * turning the flag off as a kill-switch routes back to primary. Both the
+ * pre-flight and the post-hoc "the OAuth route produced nothing" check below
+ * go through here so the two can't drift apart.
+ */
+export function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
+	return isClaudeFailoverEnabled(env)
+		? Boolean(resolveActiveSlot(claudeOauth))
+		: Boolean(readSlots(claudeOauth).primary)
+}
+
 export async function resolveLlmRoute(params: {
 	db: Database
 	workspaceId: string
 	actorId: string
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
+	/** Workspace entitlement to BYO LLM credentials. Defaults false. */
+	enterprise: boolean
 	/**
 	 * Overrides the default `probeClaudeSubscription` probe used by the
-	 * failover path when `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Only tests
+	 * failover path. Only tests
 	 * need to pass this — production callers can omit it and
 	 * `resolveClaudeCredentialsWithFailover` falls back to the real
 	 * Anthropic Messages API probe.
 	 */
 	claudeProbe?: SubscriptionProbe
+	/**
+	 * Overrides `process.env` when reading the failover flag. Tests only —
+	 * production callers omit it.
+	 */
+	env?: NodeJS.ProcessEnv
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent, claudeProbe } = params
+	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe } = params
+
+	/** Set when route #2 failed; folded into the error when nothing else resolves. */
+	let oauthFailure: string | null = null
+	/**
+	 * Whether that failure is worth retrying. A workspace whose subscription is
+	 * revoked fails identically on every attempt; one whose token endpoint timed
+	 * out may well succeed on the next. The dispatcher keys its
+	 * permanent-vs-transient decision off this, so defaulting it wrong either
+	 * strands a recoverable session or burns five retries on a dead one.
+	 */
+	let oauthFailureTransient = false
+
+	/** Set when route #4's key was left out because it is marked out of credit. */
+	let apiKeyOutOfCredit = false
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
-	//    providers fall through to caller (matches existing behavior).
+	//    providers fall through to caller (matches existing behavior). The
+	//    anthropic branch is a BYO credential, so it's gated like routes 2-4.
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
-			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
-			if (agent.model) {
-				envVars.ANTHROPIC_MODEL = agent.model
+			if (enterprise) {
+				const envVars: Record<string, string> = {
+					ANTHROPIC_API_KEY: agent.apiKey,
+					ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+				}
+				return { route: LLM_ROUTE_AGENT, envVars }
 			}
-			return { route: LLM_ROUTE_AGENT, envVars }
+		} else {
+			// caller (session-manager) handles OPENAI_API_KEY etc.
+			return null
 		}
-		// caller (session-manager) handles OPENAI_API_KEY etc.
-		return null
 	}
 
-	// 2. Workspace custom_llm
-	const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
-	if (customEnv) {
-		return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
-	}
+	if (enterprise) {
+		// 2. Claude OAuth subscription — checked first among BYO routes so a
+		//    connected Pro/Max subscription is always preferred over custom endpoints
+		//    and never consumes maskin plan tokens. Primary→backup failover kicks in
+		//    unless MASKIN_CLAUDE_FAILOVER_ENABLED=false disables it — the flag
+		//    defaults to on and is a runtime kill-switch, not an opt-in.
+		try {
+			/** Set by the resolver when a configured slot yields nothing usable. */
+			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
+			// On (only when the env is the literal "true"): the platform refreshes at
+			// launch with a session-sized buffer and the container never sees the
+			// refresh token. Off (default): today's behaviour exactly (10 minute
+			// buffer, refresh token in the env).
+			const platformRefresh = isClaudePlatformRefreshEnabled(params.env)
+			const oauthResult = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId,
+				actorId,
+				probe: claudeProbe,
+				env: params.env,
+				bufferMs: platformRefresh ? { launchMs: readClaudeLaunchBufferMs(params.env) } : undefined,
+				onUnusable: (info) => {
+					unusableRef.current = info
+				},
+			})
+			if (oauthResult) {
+				const envVars: Record<string, string> = {
+					CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
+					...(platformRefresh
+						? {}
+						: { CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken }),
+					CLAUDE_OAUTH_EXPIRES_AT: String(oauthResult.tokens.expiresAt),
+				}
+				if (oauthResult.tokens.scopes) {
+					envVars.CLAUDE_OAUTH_SCOPES = JSON.stringify(oauthResult.tokens.scopes)
+				}
+				if (oauthResult.tokens.subscriptionType) {
+					envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
+				}
+				envVars.ANTHROPIC_MODEL = CLAUDE_SUBSCRIPTION_MODEL
+				envVars.MASKIN_CLAUDE_EFFORT = CLAUDE_SUBSCRIPTION_EFFORT
+				return {
+					route: LLM_ROUTE_OAUTH,
+					envVars,
+					oauthSlot: oauthResult.slot,
+					...(platformRefresh ? { oauthExpiresAt: oauthResult.tokens.expiresAt } : {}),
+				}
+			}
 
-	// 3. Claude OAuth subscription (with primary→backup failover when the
-	//    MASKIN_CLAUDE_FAILOVER_ENABLED flag is set; otherwise legacy
-	//    primary-only behaviour).
-	try {
-		const oauthResult = await resolveClaudeCredentialsWithFailover({
-			db,
-			workspaceId,
-			actorId,
-			probe: claudeProbe,
-		})
-		if (oauthResult) {
-			const envVars: Record<string, string> = {
-				CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
-				CLAUDE_OAUTH_REFRESH_TOKEN: oauthResult.tokens.refreshToken,
-				CLAUDE_OAUTH_EXPIRES_AT: String(oauthResult.tokens.expiresAt),
+			// `resolveClaudeCredentialsWithFailover` reports an unusable
+			// credential two ways: it throws, or it returns null (an expired
+			// token behind a transient refresh failure, a probe that classified
+			// as failover with no backup to fall to, a backup that failed its
+			// own probe). Only the throw used to be recorded — so a workspace
+			// with a connected-but-dead subscription and no other route fell
+			// through this whole ladder silently and launched a container with
+			// no ANTHROPIC_* env at all. That is the incident this file exists
+			// to prevent, reached by its most common real-world shape.
+			//
+			// Guarded on a slot actually being configured: a null from a
+			// workspace with no OAuth at all is simply "route not configured",
+			// which is not a failure and must keep falling through.
+			if (hasConfiguredOAuthSlot(wsSettings.claude_oauth, params.env)) {
+				oauthFailure =
+					unusableRef.current?.detail ??
+					'the connected Claude subscription did not yield a usable token (expired, revoked, or failed its health check)'
+				// Absent a report, assume permanent: every known null path that is
+				// actually transient calls onUnusable, so a silent null is an
+				// auth-class shape we would rather fail fast than retry blindly.
+				oauthFailureTransient = unusableRef.current?.transient ?? false
+				logger.warn('Claude OAuth route resolved to no usable token', {
+					workspaceId,
+					actorId,
+					transient: oauthFailureTransient,
+				})
 			}
-			if (oauthResult.tokens.scopes) {
-				envVars.CLAUDE_OAUTH_SCOPES = JSON.stringify(oauthResult.tokens.scopes)
+		} catch (err) {
+			// The next route still takes over — a workspace with a custom endpoint
+			// or an API key behind a dead subscription should keep working. But the
+			// reason is no longer swallowed: when NO route resolves, this is the
+			// only description of why, and losing it is what left session failures
+			// reading as a generic "stuck in starting state".
+			const message = err instanceof Error ? err.message : String(err)
+			// Same guard as the null branch above: a throw from a workspace with
+			// no OAuth configured at all (a DB error, a decrypt failure after a
+			// key rotation) is not "your subscription is dead" and must not be
+			// reported to the user as one.
+			if (hasConfiguredOAuthSlot(wsSettings.claude_oauth, params.env)) {
+				oauthFailure = message
+				oauthFailureTransient = isTransientCredentialError(err)
 			}
-			if (oauthResult.tokens.subscriptionType) {
-				envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
-			}
-			if (agent.model) {
-				envVars.ANTHROPIC_MODEL = agent.model
-			}
-			return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
+			logger.warn('Claude OAuth route unavailable — falling through to next route', {
+				workspaceId,
+				actorId,
+				error: message,
+			})
 		}
-	} catch {
-		// Swallow OAuth errors and let the next route take over — the warning
-		// is logged by the caller for parity with the previous behavior.
-	}
 
-	// 4. Workspace anthropic api key
-	const wsAnthropic = wsSettings.llm_keys?.anthropic
-	if (wsAnthropic) {
-		const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
-		if (agent.model) {
-			envVars.ANTHROPIC_MODEL = agent.model
+		// Routes 3 and 4 read stored secrets, which are sealed at rest. A value
+		// that cannot be opened ends the lookup here: carrying on to a later
+		// route would quietly run the session on credentials the workspace did
+		// not choose, on a different bill.
+		try {
+			// 3. Workspace custom_llm
+			const customEnv = buildCustomLlmEnv(wsSettings.custom_llm)
+			if (customEnv) {
+				return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
+			}
+
+			// 4. Workspace anthropic api key — left out while it is marked out of
+			//    credit (see api-key-credit-mark.ts), so a key with no credit does
+			//    not take every session the other routes passed over.
+			const storedAnthropic = wsSettings.llm_keys?.anthropic
+			if (storedAnthropic) {
+				const mark = checkApiKeyCreditMark(wsSettings, storedAnthropic)
+				if (mark.stale) {
+					void clearStaleApiKeyCreditMark({ db, workspaceId, mark: mark.stale })
+				}
+				if (mark.outOfCredit) {
+					apiKeyOutOfCredit = true
+					logger.warn('Workspace Anthropic API key skipped: marked out of credit', {
+						workspaceId,
+						actorId,
+					})
+				} else {
+					const envVars: Record<string, string> = {
+						ANTHROPIC_API_KEY: openSecret(storedAnthropic, 'llm_keys.anthropic'),
+						ANTHROPIC_MODEL: agent.model || CLAUDE_SUBSCRIPTION_MODEL,
+					}
+					return { route: LLM_ROUTE_API_KEY, envVars }
+				}
+			}
+		} catch (err) {
+			if (err instanceof SecretUnreadableError) throw unreadableKeyError(err)
+			throw err
 		}
-		return { route: LLM_ROUTE_API_KEY, envVars }
 	}
 
-	// 5. System fallback
-	const fallback = readFallbackConfig()
-	if (!fallback.apiKey) return null
-	const used = await getActorFallbackTokenUsage24h(db, actorId)
-	if (used >= fallback.dailyTokenLimit) {
-		throw new FallbackQuotaExceededError(used, fallback.dailyTokenLimit)
+	// 5. Maskin plan (pro/team/trial) — routed through Maskin's funded OR
+	//    account. Only reached when no BYO credentials are present so tokens are
+	//    never counted against the cap when the user has their own LLM configured.
+	//    The cap check here is defense-in-depth; the pre-flight in `createSession`
+	//    is what surfaces 402 to the user before a session row is created.
+	const fallback = readFallbackConfig(params.env)
+	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise)
+	if (maskinPlanEnv) {
+		await checkPlanCap({ db, workspaceId, wsSettings, enterprise })
+		return {
+			route: LLM_ROUTE_MASKIN_PLAN,
+			envVars: maskinPlanEnv,
+			modelName: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
+		}
 	}
-	return {
-		route: LLM_ROUTE_SYSTEM_FALLBACK,
-		envVars: {
-			ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
-			ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
-			ANTHROPIC_API_KEY: '',
-			ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4-flash',
-			ANTHROPIC_SMALL_FAST_MODEL:
-				fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
+
+	if (apiKeyOutOfCredit) {
+		// The key was the one route left and it has no credit. Failing here puts
+		// a clear reason on the session instead of launching it into the same
+		// "Credit balance is too low" on every turn.
+		throw new LlmCredentialsUnavailableError(
+			oauthFailure
+				? `${API_KEY_OUT_OF_CREDIT_DETAIL} Claude subscription: ${oauthFailure}`
+				: API_KEY_OUT_OF_CREDIT_DETAIL,
+			false,
+			{ apiKeyOutOfCredit: true },
+		)
+	}
+
+	if (oauthFailure) {
+		// Every route was tried and the only one that had credentials at all
+		// failed. Returning null here would launch a container with no
+		// ANTHROPIC_* env at all, which dies inside the sandbox with a message
+		// no one reads. Throw so the caller can put the real reason on the
+		// session row.
+		throw new LlmCredentialsUnavailableError(
+			`Claude subscription credentials could not be resolved and no other LLM route is configured: ${oauthFailure}`,
+			oauthFailureTransient,
+		)
+	}
+
+	return null
+}
+
+/**
+ * No usable LLM credential could be resolved for a session. Distinct from
+ * `resolveLlmRoute` returning `null` (which means "this caller handles the
+ * remaining non-anthropic providers itself"): this is terminal, and carries
+ * the reason the credential that *was* configured didn't work.
+ *
+ * Surfaces on the session row as `result.failure_reason.reason_code =
+ * 'not_logged_in'` so the UI and any agent reading `get_session` see why,
+ * rather than the zombie reaper's generic stall message.
+ */
+export class LlmCredentialsUnavailableError extends Error {
+	/** Operator-facing detail, persisted as `failure_reason.verbatim_output`. */
+	readonly detail: string
+
+	/**
+	 * True when the credential could not be CONFIRMED rather than shown to be
+	 * dead — our own 15s timeout, a 5xx from the token endpoint. The dispatcher
+	 * keeps retrying these instead of hard-failing the session, because telling
+	 * a user to reconnect a subscription that was never broken is worse than a
+	 * slow start, and the retry usually succeeds.
+	 */
+	readonly transient: boolean
+
+	/**
+	 * True when a key is saved for the workspace but cannot be read back (the
+	 * encryption key is missing or changed). The fix is to enter the key again,
+	 * not to connect a Claude subscription, so the user is told that.
+	 */
+	readonly storedKeyUnreadable: boolean
+
+	/** Name of the workspace that has no working credentials, so the message can say which one. */
+	readonly workspaceName: string | null
+
+	/**
+	 * True when the workspace has nothing configured at all (no subscription,
+	 * endpoint or key), as opposed to a credential that exists but was rejected.
+	 * Only this case has no retry worth making: nothing changes until someone
+	 * connects a credential, so the trigger runner pauses it for longer.
+	 */
+	readonly noCredentialsConfigured: boolean
+
+	/**
+	 * True when the workspace's own Anthropic key was left out because it just
+	 * failed with "Credit balance is too low" and nothing else could carry the
+	 * session. The fix is a top-up (or a Claude subscription), not entering the
+	 * key again.
+	 */
+	readonly apiKeyOutOfCredit: boolean
+
+	constructor(
+		detail: string,
+		transient = false,
+		options?: {
+			storedKeyUnreadable?: boolean
+			workspaceName?: string | null
+			noCredentialsConfigured?: boolean
+			apiKeyOutOfCredit?: boolean
 		},
+	) {
+		super(detail)
+		this.name = 'LlmCredentialsUnavailableError'
+		this.detail = detail
+		this.transient = transient
+		this.storedKeyUnreadable = options?.storedKeyUnreadable ?? false
+		this.workspaceName = options?.workspaceName?.trim() || null
+		this.noCredentialsConfigured = options?.noCredentialsConfigured ?? false
+		this.apiKeyOutOfCredit = options?.apiKeyOutOfCredit ?? false
 	}
+
+	/** What the user and any agent reading `get_session` see. */
+	static readonly humanMessage =
+		'This session could not start because no working LLM credentials are connected for this workspace. Connect a Claude subscription in Settings → Keys, then start a new session.'
+
+	/**
+	 * Shown when we could not reach Anthropic to check. Deliberately does NOT
+	 * tell the user to reconnect anything — the credential may be perfectly
+	 * fine, and sending them to Settings → Keys over a network blip is the
+	 * misdiagnosis this whole change exists to stop.
+	 */
+	static readonly transientHumanMessage =
+		'This session could not start because Maskin could not reach Anthropic to verify the credentials for this workspace. This is usually temporary — try starting the session again in a few minutes.'
+
+	/** Shown when a saved key exists but Maskin cannot read it back. */
+	static readonly unreadableKeyHumanMessage =
+		'This session could not start because the LLM key saved for this workspace cannot be read. Enter the key again in Settings → Keys, then start a new session.'
+
+	toFailureReason(): SessionResultFailureReason {
+		if (this.apiKeyOutOfCredit) {
+			return {
+				provider: 'anthropic',
+				reason_code: 'credit_balance_low',
+				human_message: API_KEY_OUT_OF_CREDIT_HUMAN_MESSAGE,
+				http_status: null,
+				reset_at: null,
+				verbatim_output: this.detail,
+			}
+		}
+		return {
+			provider: 'maskin',
+			reason_code: 'not_logged_in',
+			human_message: this.storedKeyUnreadable
+				? LlmCredentialsUnavailableError.unreadableKeyHumanMessage
+				: this.transient
+					? LlmCredentialsUnavailableError.transientHumanMessage
+					: this.workspaceName
+						? `This session could not start because no working LLM credentials are connected for the workspace "${this.workspaceName}". Connect a Claude subscription in that workspace's Settings → Keys, then start a new session.`
+						: LlmCredentialsUnavailableError.humanMessage,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: this.detail,
+		}
+	}
+}
+
+/**
+ * Wall-clock ceiling for the whole `resolveLlmRoute` call at session launch.
+ * The 15s fetch timeout (`CLAUDE_CREDENTIAL_TIMEOUT_MS`) only covers sockets;
+ * a stuck database step (pool wait, a held row lock on `workspaces`) is not
+ * bounded by it. Two network calls can legitimately take 15s each on the
+ * refresh + probe path, so 30s leaves a slow-but-working launch alone and still
+ * fails a hung one in seconds instead of waiting for the 10 minute reaper.
+ */
+export const CREDENTIAL_RESOLUTION_TIMEOUT_MS = 30_000
+
+/**
+ * Credential resolution did not return in time. A subclass so every existing
+ * `instanceof LlmCredentialsUnavailableError` launch-failure path (the local
+ * catch in `launchContainer`, the dispatcher's permanent failure) treats it
+ * the same way. Not transient on purpose: the dispatcher must fail the row now,
+ * not requeue it behind the same stuck step.
+ *
+ * It is not a verdict on the credentials, so `toFailureReason` does not say
+ * `not_logged_in` (which pauses a workspace's triggers for an hour) and does
+ * not tell the user to reconnect anything.
+ */
+export class CredentialResolutionTimeoutError extends LlmCredentialsUnavailableError {
+	readonly timeoutMs: number
+
+	constructor(timeoutMs: number = CREDENTIAL_RESOLUTION_TIMEOUT_MS) {
+		super(
+			`Credential resolution (resolveLlmRoute) did not finish within ${timeoutMs}ms; the launch was failed instead of waiting for the startup reaper.`,
+		)
+		this.name = 'CredentialResolutionTimeoutError'
+		this.timeoutMs = timeoutMs
+	}
+
+	override toFailureReason(): SessionResultFailureReason {
+		return {
+			provider: 'maskin',
+			reason_code: 'startup_stalled',
+			human_message: `This session could not start because looking up the LLM credentials for this workspace took longer than ${Math.round(this.timeoutMs / 1000)} seconds. Your credentials were not rejected. Start a new session; if it keeps happening, tell the Maskin team.`,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: this.detail,
+		}
+	}
+}
+
+/**
+ * Race `work` against a wall-clock timer. On expiry rejects with
+ * `CredentialResolutionTimeoutError`; the underlying promise cannot be
+ * cancelled, so it is left to settle on its own (its late result or rejection
+ * is swallowed here so it never becomes an unhandled rejection).
+ */
+export async function withCredentialResolutionTimeout<T>(
+	work: Promise<T>,
+	timeoutMs: number = CREDENTIAL_RESOLUTION_TIMEOUT_MS,
+): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const timeout = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new CredentialResolutionTimeoutError(timeoutMs)), timeoutMs)
+	})
+	work.catch(() => {})
+	try {
+		return await Promise.race([work, timeout])
+	} finally {
+		clearTimeout(timer)
+	}
+}
+
+/** Shown when the workspace's Anthropic key is the only route and it has no credit left. */
+const API_KEY_OUT_OF_CREDIT_HUMAN_MESSAGE =
+	"This session could not start because the workspace's Anthropic API key has run out of credit. Add credit to the key or connect a Claude subscription in Settings → Keys, then start a new session. The key is tried again after a short pause."
+
+/** Operator detail for the same case. */
+const API_KEY_OUT_OF_CREDIT_DETAIL = `The workspace Anthropic API key failed with "Credit balance is too low" in the last ${API_KEY_CREDIT_MARK_WINDOW_MS / 60_000} minutes and no other LLM route is configured, so it was left out.`
+
+/** The terminal error for a saved key that cannot be opened. Names the field, never the value. */
+export function unreadableKeyError(err: SecretUnreadableError): LlmCredentialsUnavailableError {
+	return new LlmCredentialsUnavailableError(
+		`The saved ${err.field} for this workspace cannot be decrypted (the encryption key is missing or has changed). Enter the key again to replace it.`,
+		false,
+		{ storedKeyUnreadable: true },
+	)
+}
+
+/**
+ * Offline pre-flight for the LLM routes, run BEFORE a session is marked
+ * `starting`.
+ *
+ * Deliberately makes no network call: it answers "is any route even
+ * configured for this workspace", not "is the credential live". That keeps it
+ * cheap enough to run on every launch, and it is the check that catches the
+ * failure mode where a workspace has nothing to route to — previously that
+ * session went to `starting`, got no env vars, and died in the sandbox (or,
+ * when credential resolution hung, never died at all).
+ *
+ * Liveness is still the probe's job inside `resolveLlmRoute`; that path is now
+ * bounded by CLAUDE_CREDENTIAL_TIMEOUT_MS and reports through
+ * `LlmCredentialsUnavailableError`.
+ *
+ * Returns `null` when at least one route is configured, or a description of
+ * what's missing when none is. Mirrors `resolveLlmRoute`'s priority order —
+ * if you add a route there, add it here.
+ */
+/**
+ * The one user-facing sentence for "this workspace has nothing to route to".
+ * Shared by every gap the pre-flight reports so the wording can't drift.
+ */
+const NO_CREDENTIALS_HUMAN_MESSAGE =
+	'This session could not start because the workspace has no LLM credentials connected. Connect a Claude subscription in Settings → Keys, then start a new session.'
+
+export function preflightLlmCredentials(params: {
+	wsSettings: WorkspaceSettings
+	agent: AgentLlmConfig
+	enterprise: boolean
+	env?: NodeJS.ProcessEnv
+}): { humanMessage: string; detail: string } | null {
+	const { wsSettings, agent, enterprise } = params
+
+	// 1. Agent-level override — mirrors resolveLlmRoute's route #1 INCLUDING its
+	//    early return. That function handles only the anthropic provider here;
+	//    for any other provider with an agent key it returns `null` immediately,
+	//    BEFORE routes 2-5. So the Maskin plan is unreachable for such an agent
+	//    and must not be counted as a route for it — checking step 5 anyway is
+	//    how an unentitled openai agent used to pass this gate and then launch
+	//    into a container with no LLM env at all.
+	//
+	//    Of the non-anthropic providers only openai is ever injected
+	//    (session-manager sets OPENAI_API_KEY, gated on `enterprise`).
+	//    `llmProvider` is free text, so anything else has no injection site and
+	//    therefore no route.
+	if (agent.apiKey && agent.provider !== 'anthropic') {
+		if (enterprise && agent.provider === 'openai') return null
+		return {
+			humanMessage: NO_CREDENTIALS_HUMAN_MESSAGE,
+			detail: enterprise
+				? `This agent is configured with a '${agent.provider ?? 'unknown'}' API key, which Maskin has no way to pass to the session. Use an Anthropic or OpenAI key, or connect a Claude subscription for the workspace.`
+				: 'This agent has its own API key, but the workspace is not entitled to bring its own LLM credentials.',
+		}
+	}
+
+	// Anthropic from here on. This branch deliberately does NOT early-return
+	// when the workspace is unentitled: resolveLlmRoute falls through to routes
+	// 2-5 in that case, so the Maskin plan can still carry the session.
+	if (agent.apiKey && enterprise) return null
+
+	if (enterprise) {
+		// 2. Claude OAuth. Which slot counts depends on the failover flag, and
+		//    it has to be read the same way `resolveClaudeCredentialsWithFailover`
+		//    reads it. With the flag OFF that function ignores `active_slot` and
+		//    goes straight to `primary` — deliberately, so disabling the flag as
+		//    an incident kill-switch forces routing back to primary. Checking
+		//    `active_slot` unconditionally here would refuse to launch a
+		//    workspace left on `active_slot: 'backup'` after the switch was
+		//    thrown, which is precisely the state the switch exists to recover.
+		if (hasConfiguredOAuthSlot(wsSettings.claude_oauth, params.env)) return null
+
+		// 3. Workspace custom_llm (same completeness bar as buildCustomLlmEnv).
+		const custom = wsSettings.custom_llm
+		if (
+			custom?.enabled &&
+			custom.base_url?.trim() &&
+			custom.api_key?.trim() &&
+			custom.model?.trim()
+		) {
+			return null
+		}
+
+		// 4. Workspace anthropic api key.
+		if (wsSettings.llm_keys?.anthropic) return null
+
+		// 4b. Workspace OpenAI key. Not part of resolveLlmRoute's ladder — it is
+		//     injected directly by session-manager after that call returns — but
+		//     it is a real route, so a workspace holding only this one must not
+		//     be refused a launch.
+		if (wsSettings.llm_keys?.openai) return null
+	}
+
+	// 5. Maskin plan.
+	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise) !== null)
+		return null
+
+	// The enterprise wording deliberately does not mention the stored plan: an
+	// enterprise workspace is never Maskin-funded, whatever its plan says, so
+	// "it is not on a Maskin-funded plan" would send whoever reads this failure
+	// off to check billing instead of connecting a credential.
+	const detail = enterprise
+		? 'No Claude subscription, custom LLM endpoint, or Anthropic/OpenAI API key is configured for this workspace. Enterprise workspaces bring their own LLM and are never routed onto the Maskin-funded plan, so there is no fallback to use.'
+		: 'This workspace is not on a Maskin-funded plan and is not entitled to bring its own LLM credentials.'
+	return { humanMessage: NO_CREDENTIALS_HUMAN_MESSAGE, detail }
 }
 
 export interface ChatCredentials {
@@ -265,6 +1183,13 @@ export interface ChatCredentials {
 	apiKey: string
 	baseUrl?: string
 	model: string
+	/**
+	 * OpenRouter provider preferences, sent as the request body's "provider"
+	 * object. Set only on the Maskin-funded fallback route: a customer's own
+	 * endpoint or key never gets Maskin's routing policy, and api.openai.com
+	 * can reject unknown body fields with a 400.
+	 */
+	providerPrefs?: ProviderPrefs
 }
 
 /**
@@ -295,8 +1220,15 @@ export interface ChatCredentials {
 export function resolveChatCredentials(params: {
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
+	/**
+	 * The workspace's BYO-LLM entitlement columns. Required, not optional —
+	 * `billing.plan` alone cannot answer "may this workspace spend Maskin's
+	 * key", so a caller that omitted it would silently reopen the leak this
+	 * gate exists to close. Both call sites already `select()` the full row.
+	 */
+	workspace: { enterpriseGranted: boolean | null; billingOwnerId: string | null }
 }): ChatCredentials | null {
-	const { wsSettings, agent } = params
+	const { wsSettings, agent, workspace } = params
 
 	if (agent.apiKey && agent.provider) {
 		const provider = agent.provider as ChatCredentials['provider']
@@ -309,28 +1241,59 @@ export function resolveChatCredentials(params: {
 		}
 	}
 
-	const custom = wsSettings.custom_llm
-	if (
-		custom?.enabled &&
-		custom.base_url?.trim() &&
-		custom.api_key?.trim() &&
-		custom.model?.trim()
-	) {
-		return {
-			provider: 'openai',
-			apiKey: custom.api_key.trim(),
-			baseUrl: custom.base_url.trim(),
-			model: custom.small_fast_model?.trim() || custom.model.trim(),
+	// Stored keys are sealed at rest. This path is a best-effort heuristic, so a
+	// key that cannot be opened is logged and reported as "unavailable" (null),
+	// never thrown: only resolveLlmRoute raises the credentials error.
+	try {
+		const custom = wsSettings.custom_llm
+		if (
+			custom?.enabled &&
+			custom.base_url?.trim() &&
+			custom.api_key?.trim() &&
+			custom.model?.trim()
+		) {
+			return {
+				provider: 'openai',
+				apiKey: openSecret(custom.api_key.trim(), 'custom_llm.api_key').trim(),
+				baseUrl: custom.base_url.trim(),
+				model: custom.small_fast_model?.trim() || custom.model.trim(),
+			}
 		}
+
+		const wsAnthropic = wsSettings.llm_keys?.anthropic
+		if (wsAnthropic) {
+			return {
+				provider: 'anthropic',
+				apiKey: openSecret(wsAnthropic, 'llm_keys.anthropic'),
+				model: DEFAULT_CHAT_MODEL.anthropic,
+			}
+		}
+	} catch (err) {
+		if (!(err instanceof SecretUnreadableError)) throw err
+		logger.warn('Saved LLM key cannot be decrypted; chat credentials unavailable', {
+			field: err.field,
+		})
+		return null
 	}
 
-	const wsAnthropic = wsSettings.llm_keys?.anthropic
-	if (wsAnthropic) {
-		return { provider: 'anthropic', apiKey: wsAnthropic, model: DEFAULT_CHAT_MODEL.anthropic }
-	}
-
+	// System fallback — Maskin's own funded OpenRouter account. Only workspaces
+	// whose plan Maskin funds may draw on it. A `enterprise` workspace brings its
+	// own credentials; if none of the routes above matched, it has none
+	// configured, and the correct answer is "no chat-callable credential"
+	// rather than quietly billing Maskin.
+	// Two independent reasons a workspace may not draw on Maskin's key, and
+	// both are needed. `billing.plan === 'enterprise'` is the *result* of
+	// connecting a BYO credential — but `billingAfterByoTransition()` leaves
+	// `billing` undefined when the workspace never had a billing block, so an
+	// entitled workspace can be BYO in every meaningful sense while its plan
+	// still reads as the `trial` default. `isEnterprise()` (the
+	// `enterprise_granted` column OR an enterprise billing owner) is what catches
+	// that case, and mirrors the `enterprise` param `resolveLlmRoute` takes.
+	if (!isMaskinPlanRouted(wsSettings.billing)) return null
+	if (isEnterprise(workspace)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
+	const providerPrefs = buildProviderPrefs(fallback)
 	return {
 		provider: 'openai',
 		apiKey: fallback.apiKey,
@@ -340,5 +1303,23 @@ export function resolveChatCredentials(params: {
 		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
 		baseUrl: 'https://openrouter.ai/api/v1',
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
+		...(providerPrefs && { providerPrefs }),
 	}
+}
+
+/**
+ * OpenAI Realtime (gpt-realtime) audio rates for Voice v1, in USD per second of
+ * audio. Anchors from the tech spec §Cost pipeline: $0.06/min in, $0.24/min
+ * out. Voice is billed to the operator's MASKIN_VOICE_OPENAI_API_KEY, not to a
+ * workspace route, so these sit beside the model pricing rather than in it.
+ */
+export const VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND = 0.001
+export const VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND = 0.004
+
+/** Dollar cost of one voice call, rounded to the 6 decimals voice_sessions.total_cost_usd stores. */
+export function computeVoiceCostUsd(inputAudioSeconds: number, outputAudioSeconds: number): number {
+	const usd =
+		inputAudioSeconds * VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND +
+		outputAudioSeconds * VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND
+	return Math.round(usd * 1e6) / 1e6
 }

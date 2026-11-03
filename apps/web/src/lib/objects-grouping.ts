@@ -4,6 +4,9 @@ import type { ActorListItem, ObjectResponse } from './api'
 export const NO_VALUE_GROUP = 'No value'
 
 const DATE_GROUP_RE = /^\d{4}-\d{2}-\d{2}$/
+/** Timestamp columns the Display panel offers as group axes. Their raw value is
+ *  an ISO instant, which would make every row its own group — bucket by day. */
+const DATE_GROUP_FIELDS = new Set(['createdAt', 'updatedAt'])
 const MONTHS = [
 	'January',
 	'February',
@@ -31,7 +34,19 @@ export function getObjectGroupValue(object: ObjectResponse, groupBy?: string): s
 		return value == null || value === '' ? NO_VALUE_GROUP : String(value)
 	}
 	const value = object[groupBy as keyof ObjectResponse]
-	return value == null || value === '' ? NO_VALUE_GROUP : String(value)
+	if (value == null || value === '') return NO_VALUE_GROUP
+	return DATE_GROUP_FIELDS.has(groupBy) ? toDayKey(String(value)) : String(value)
+}
+
+/** Local-time `YYYY-MM-DD` for an ISO timestamp — the day bucket a timestamp
+ *  group falls into. Unparseable values pass through so a malformed field
+ *  degrades to its own group rather than to `Invalid Date`. */
+function toDayKey(value: string): string {
+	const date = new Date(value)
+	if (Number.isNaN(date.getTime())) return value
+	const month = String(date.getMonth() + 1).padStart(2, '0')
+	const day = String(date.getDate()).padStart(2, '0')
+	return `${date.getFullYear()}-${month}-${day}`
 }
 
 function formatGroupDate(dateKey: string): string {

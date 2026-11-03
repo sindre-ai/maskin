@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- macOS names these differently from iOS (com.apple.developer.* prefix) and they are
+	     restricted: they require a provisioning profile, so only signed builds may carry them.
+	     Release uses this file; Debug uses none unless MASKIN_MACOS_ENTITLEMENTS is set. -->
+	<key>com.apple.developer.aps-environment</key>
+	<string>$(MASKIN_APS_ENVIRONMENT)</string>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:maskin.io</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)io.maskin.app</string>
+	</array>
+</dict>
+</plist>

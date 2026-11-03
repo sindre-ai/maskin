@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Browser
+Exec=chromium %U
+Icon=/usr/share/icons/maskin/browser.png
+StartupWMClass=chromium
+StartupNotify=true
+Categories=Network;WebBrowser;

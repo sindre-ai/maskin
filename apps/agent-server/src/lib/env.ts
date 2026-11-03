@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { DEFAULT_STALL_THRESHOLD_MS } from './stall-tracker'
 
 const envSchema = z.object({
 	PORT: z
@@ -25,6 +26,61 @@ const envSchema = z.object({
 	// didn't. Left unset, that pass just skips with a warning log — existing
 	// deployments without it still boot fine.
 	AGENT_SERVER_ID: z.string().uuid().optional(),
+	// Port for the LOOPBACK-ONLY metrics listener (GET /metrics, scraped by the
+	// Alloy agent running on the same host). Deliberately a second listener
+	// rather than a route on PORT: PORT is reachable from the public internet
+	// and from every session microVM, and /metrics is unauthenticated. 9464 is
+	// the Prometheus default for a Node exporter and collides with nothing on
+	// this box. Set to 0 to disable the metrics listener entirely.
+	METRICS_PORT: z
+		.string()
+		.optional()
+		.default('9464')
+		.transform((v) => {
+			// An EMPTY value is a mistake, not a request to disable. `.default()`
+			// only fires on undefined, so a bare `METRICS_PORT=` line in .env
+			// reaches here as '', and `Number('')` is 0 — which would otherwise
+			// pass the range check below and land on the disable sentinel. The
+			// endpoint would then never bind and never log, and the only symptom
+			// is `up == 0`, which README.md teaches you to diagnose as a port
+			// mismatch or a dead process. Disabling must be spelled out as '0'.
+			if (v.trim() === '') {
+				throw new Error('Invalid METRICS_PORT: empty (use 0 to disable the metrics listener)')
+			}
+			const n = Number(v)
+			if (!Number.isInteger(n) || n < 0 || n > 65535) {
+				throw new Error(`Invalid METRICS_PORT: ${v} (expected integer 0..65535)`)
+			}
+			return n
+		}),
+	// Host identity stamped onto maskin_build_info as `instance`. MUST match
+	// AGENT_SERVER_INSTANCE in Alloy's /etc/default/alloy — that shared value
+	// is what makes {instance="agent-1"} select the same box in LogQL and
+	// PromQL. Defaults to the machine hostname, exactly as alloy.alloy does.
+	AGENT_SERVER_INSTANCE: z.string().optional(),
+	// Deployment environment stamped onto maskin_build_info as `env`. Same
+	// matching requirement, same default ('production') as alloy.alloy.
+	DEPLOY_ENV: z.string().optional(),
+	// Silence threshold for the stalled-session detector, in ms (see
+	// lib/stall-tracker.ts). Env-tunable on purpose: the `no_output` arm's right
+	// value has to come from observed data, and we want to move it with a
+	// restart rather than a deploy. Default 300000 (5 min).
+	AGENT_SERVER_STALL_THRESHOLD_MS: z
+		.string()
+		.optional()
+		.default(String(DEFAULT_STALL_THRESHOLD_MS))
+		.transform((v) => {
+			const n = Number(v)
+			// Below the guest's 90s re-dial interval every healthy unacked window
+			// looks like a wedge, so the floor is not cosmetic — it is the point
+			// at which this alert becomes guaranteed noise.
+			if (!Number.isFinite(n) || n < 90_000) {
+				throw new Error(
+					`Invalid AGENT_SERVER_STALL_THRESHOLD_MS: ${v} (expected >= 90000, the guest re-dial interval)`,
+				)
+			}
+			return n
+		}),
 	MSB_BIN: z.string().optional().default('/root/.microsandbox/bin/msb'),
 	MASKIN_AGENT_SERVER_PUBLIC_HOST: z.string().optional(),
 	// Hostname the microVM uses to reach this agent-server over the host loopback.
@@ -58,15 +114,47 @@ const envSchema = z.object({
 	// Image to keep present in libkrun's host cache so session spawns can skip
 	// the network pull. Unset disables warming entirely.
 	WARM_POOL_IMAGE: z.string().optional(),
-	// Chromium sidecar image used for browser-enabled sessions. Set this to the
-	// same repository/tag published by the browser-sidecar Docker workflow.
-	BROWSER_SIDECAR_IMAGE: z.string().optional().default('browser-sidecar:latest'),
-	// Path to the persistent SSH keypair agent-server uses to open SSH-relay
-	// tunnels (`msb ssh serve` + `ssh -L`) into session/sidecar microVMs — the
-	// replacement for the old allow@private / bridge-gateway networking. The
-	// private key is generated on first boot if absent; the public half is
-	// (re-)registered with `msb ssh authorize` on every boot.
+	// Desktop image for per-workspace noVNC desktops (docker/desktop). Built and pushed
+	// by .github/workflows/desktop-docker.yml. Desktops are created with `--pull always`,
+	// so a new desktop picks up the newest `latest` without restarting the agent-server.
+	// Never default this to a bare name like `desktop:latest`: msb resolves it as
+	// docker.io/library/desktop, every provision then fails with "Not authorized".
+	DESKTOP_IMAGE: z.string().optional().default('magnusnoeddegaard/maskin-desktop:latest'),
+	// Suspend idle desktops to a full memory snapshot and restore them on demand,
+	// so windows, browser tabs and unsaved input come back exactly as left. Needs
+	// msb >= 0.7 (`msb snapshot create --full`); on older msb leave it off and a
+	// desktop is created and started the way it always was.
+	DESKTOP_SNAPSHOTS: z
+		.string()
+		.optional()
+		.default('0')
+		.transform((v) => v === '1' || v.toLowerCase() === 'true'),
+	// Minutes with no viewer and no agent call before a desktop is suspended.
+	// Only read when DESKTOP_SNAPSHOTS is on. 0 never suspends automatically.
+	DESKTOP_IDLE_MINUTES: z
+		.string()
+		.optional()
+		.default('10')
+		.transform((v) => {
+			const n = Number(v)
+			if (!Number.isInteger(n) || n < 0 || n > 1440) {
+				throw new Error(`Invalid DESKTOP_IDLE_MINUTES: ${v} (expected integer 0..1440)`)
+			}
+			return n
+		}),
+	// Path to the persistent SSH keypair agent-server uses to open the tunnels that
+	// let an agent's computer reach a dev server in its session sandbox
+	// (`msb ssh serve` + `ssh -L`). The private key is generated on first boot if
+	// absent; the public half is (re-)registered with `msb ssh authorize` on every boot.
 	AGENT_SERVER_SSH_KEY_PATH: z.string().optional().default('/root/.agent-server/ssh/relay_key'),
+	// Host-loopback ports reserved for those tunnels. Each computer is handed its
+	// own non-overlapping block of DESKTOP_RELAY_BLOCK_SIZE ports out of
+	// [DESKTOP_RELAY_PORT_START, DESKTOP_RELAY_PORT_END] when it is created, and its
+	// firewall allows only that block. Firewall rules can't be changed on a running
+	// VM, so the block size is the most ports one agent can expose at once.
+	DESKTOP_RELAY_PORT_START: z.coerce.number().int().min(1024).max(65535).optional().default(20000),
+	DESKTOP_RELAY_PORT_END: z.coerce.number().int().min(1024).max(65535).optional().default(21999),
+	DESKTOP_RELAY_BLOCK_SIZE: z.coerce.number().int().min(1).max(64).optional().default(8),
 	// Minutes between cache re-warms. 0 warms once at startup only (zero ongoing
 	// overhead); a positive value lets a moving `:latest` reach sessions without
 	// a restart. Bounded so a typo can't schedule a sub-second pull loop.

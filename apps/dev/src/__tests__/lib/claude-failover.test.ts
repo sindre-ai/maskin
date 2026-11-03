@@ -1,6 +1,9 @@
 import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Capture Sentry events instead of sending them.
+vi.mock('../../lib/sentry', () => ({ Sentry: { captureMessage: vi.fn() } }))
+
 vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn() },
 }))
@@ -33,13 +36,24 @@ import {
 	BACKUP_EXHAUSTED_ACTION,
 	FAILOVER_TRIGGERED_ACTION,
 	isClaudeFailoverEnabled,
+	isTransientCredentialError,
+	reportClaudeSessionAuthDeath,
 	resolveClaudeCredentialsWithFailover,
 } from '../../lib/claude-failover'
 import type { ClassifierInput } from '../../lib/claude-failure-classifier'
 import { headersFrom } from '../../lib/claude-failure-classifier'
-import type { EncryptedOAuthData } from '../../lib/claude-oauth'
+import {
+	CLAUDE_CREDENTIAL_TIMEOUT_MS,
+	type EncryptedOAuthData,
+	refreshSlotSingleFlight,
+} from '../../lib/claude-oauth'
 import { PRIMARY_RECOVERY_COOLDOWN_MS } from '../../lib/claude-oauth-recovery'
 import type { OAuthSlotStorage } from '../../lib/claude-oauth-slots'
+import { Sentry } from '../../lib/sentry'
+
+type MockDb = {
+	update: () => { set: (patch: Record<string, unknown>) => { where: () => Promise<void> } }
+}
 
 const WORKSPACE_ID = 'workspace-1'
 const ACTOR_ID = 'actor-1'
@@ -129,10 +143,13 @@ beforeEach(() => {
 	// `afterEach` pair mutates the single process-wide `process.env` object
 	// other test files share, and can clobber env vars another file's test
 	// set up concurrently.
-	vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', '')
+	// Failover defaults to on now — flipping the env explicitly for tests that
+	// want the legacy primary-only path. Empty would leave the default in place.
+	vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 	trackFailoverTriggeredMock.mockClear()
 	trackBackupExhaustedMock.mockClear()
 	trackRecoveredMock.mockClear()
+	vi.mocked(Sentry.captureMessage).mockClear()
 })
 
 afterEach(() => {
@@ -141,15 +158,19 @@ afterEach(() => {
 })
 
 describe('isClaudeFailoverEnabled', () => {
-	it('defaults to false', () => {
-		expect(isClaudeFailoverEnabled({})).toBe(false)
+	it('defaults to true when the env var is unset', () => {
+		expect(isClaudeFailoverEnabled({})).toBe(true)
 	})
-	it('true only for the literal "true"', () => {
-		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'TRUE' })).toBe(true)
+	it('is false only for the literal string "false"', () => {
+		// Missing env used to mean "off", which was exactly the failure mode
+		// this classifier is here to fix — a fresh preview or dev restart
+		// silently shipping with failover disabled. Kept as a runtime
+		// kill-switch, but the sense is inverted: opt out explicitly.
+		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' })).toBe(false)
+		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'FALSE' })).toBe(false)
 		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' })).toBe(true)
-		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: '1' })).toBe(false)
-		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'yes' })).toBe(false)
-		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: '' })).toBe(false)
+		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: '' })).toBe(true)
+		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: '0' })).toBe(true)
 	})
 })
 
@@ -173,7 +194,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				workspaceId: WORKSPACE_ID,
 				actorId: ACTOR_ID,
 				probe,
-				env: {},
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 			})
 
 			expect(result?.slot).toBe('primary')
@@ -207,7 +228,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				db,
 				workspaceId: WORKSPACE_ID,
 				actorId: ACTOR_ID,
-				env: {},
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 			})
 
 			expect(result?.slot).toBe('primary')
@@ -244,7 +265,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 					db,
 					workspaceId: WORKSPACE_ID,
 					actorId: ACTOR_ID,
-					env: {},
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 				})
 
 				expect(result).toBeNull()
@@ -273,7 +294,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 					db,
 					workspaceId: WORKSPACE_ID,
 					actorId: ACTOR_ID,
-					env: {},
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 				})
 
 				expect(result?.slot).toBe('primary')
@@ -301,7 +322,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 					db,
 					workspaceId: WORKSPACE_ID,
 					actorId: ACTOR_ID,
-					env: {},
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 				})
 
 				expect(result).toBeNull()
@@ -380,6 +401,9 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
 			expect(stored.failover).toEqual({
 				active_slot: 'backup',
+				// Per-slot record, plus the legacy primary/backup mirrors of it
+				// that a two-slot build would read after a rollback.
+				failures: { primary: { at: bucket, reason: 'auth_failed' } },
 				last_primary_failure_at: bucket,
 				last_classified_reason: 'auth_failed',
 			})
@@ -751,6 +775,241 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 		})
 	})
 
+	// CLAUDE_CREDENTIAL_TIMEOUT_MS bounds both the refresh and the probe. What
+	// matters is not that the abort happens but how it is CLASSIFIED: a timeout
+	// is our own socket giving up, and treating it as evidence against the
+	// credential would burn the backup slot — or hard-fail the session — on a
+	// network blip that says nothing about the subscription.
+	describe('credential call timeouts (CLAUDE_CREDENTIAL_TIMEOUT_MS)', () => {
+		it('treats a refresh timeout as transient and does not fail over to backup', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				// Expired, so the refresh must run and its timeout is reached.
+				primary: encryptedSlot({ expiresAt: Date.now() - 60_000 }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockRejectedValue(new DOMException('The operation timed out', 'TimeoutError')),
+			)
+
+			const unusable: { transient: boolean; detail: string }[] = []
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+				onUnusable: (info) => unusable.push(info),
+			})
+
+			// Unusable right now — the token really is expired and we could not
+			// refresh it — but reported as transient, and crucially WITHOUT
+			// flipping active_slot or spending the backup.
+			expect(result).toBeNull()
+			expect(unusable).toHaveLength(1)
+			expect(unusable[0].transient).toBe(true)
+			expect(eventInserts).toHaveLength(0)
+		})
+
+		it('reports an auth failure as permanent so it is not retried forever', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ expiresAt: Date.now() - 60_000 }),
+			}
+			const { db } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 401,
+					text: () => Promise.resolve('unauthorized'),
+				}),
+			)
+
+			const unusable: { transient: boolean; detail: string }[] = []
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				// Flag off: primary-only, no backup to fall to, so this is the
+				// shape that reaches llm-routing as a terminal failure.
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
+				onUnusable: (info) => unusable.push(info),
+			})
+
+			expect(result).toBeNull()
+			expect(unusable[0]?.transient).toBe(false)
+		})
+	})
+
+	// The refresh token is single-use on the token endpoint: whoever spends it
+	// second gets a 4xx that classifies as auth_failed. These tests drive the
+	// real helper (no mock of refreshSlotSingleFlight) against a stubbed token
+	// endpoint that behaves that way.
+	describe('single-flight refresh', () => {
+		/** Token endpoint that rotates the refresh token and rejects a replayed one. */
+		function rotatingTokenEndpoint() {
+			let current = 'refresh-1'
+			return vi.fn(async (_url: string, init: { body: string }) => {
+				const { refresh_token } = JSON.parse(init.body)
+				await new Promise((resolve) => setTimeout(resolve, 5))
+				if (refresh_token !== current) {
+					return { ok: false, status: 400, text: async () => 'invalid_grant' }
+				}
+				current = 'refresh-2'
+				return {
+					ok: true,
+					json: async () => ({
+						access_token: 'access-2',
+						refresh_token: 'refresh-2',
+						expires_in: 3600,
+					}),
+				}
+			})
+		}
+
+		const expiredPrimary = () =>
+			encryptedSlot({
+				encryptedAccessToken: 'access-1',
+				encryptedRefreshToken: 'refresh-1',
+				expiresAt: Date.now() - 60_000,
+			})
+
+		it('sends one POST to the token endpoint for two overlapping session starts', async () => {
+			const { db, eventInserts, getSettings } = createMockDb({
+				settings: { claude_oauth: { primary: expiredPrimary() } satisfies OAuthSlotStorage },
+			})
+			const fetchMock = rotatingTokenEndpoint()
+			vi.stubGlobal('fetch', fetchMock)
+			const probe = vi.fn(async () => null)
+
+			const start = () =>
+				resolveClaudeCredentialsWithFailover({
+					db,
+					workspaceId: WORKSPACE_ID,
+					actorId: ACTOR_ID,
+					probe,
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+				})
+			const [first, second] = await Promise.all([start(), start()])
+
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(first?.tokens.accessToken).toBe('access-2')
+			expect(second?.tokens.accessToken).toBe('access-2')
+			expect(second?.tokens.refreshToken).toBe('refresh-2')
+			expect(eventInserts).toHaveLength(0)
+			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
+			expect(stored.primary?.encryptedRefreshToken).toBe('refresh-2')
+		})
+
+		it('does not fail the slot when a 4xx follows another caller writing a fresher refresh token', async () => {
+			const { db, eventInserts } = createMockDb({
+				settings: { claude_oauth: { primary: expiredPrimary() } satisfies OAuthSlotStorage },
+			})
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => {
+					// Another process spends refresh-1 and persists its result while
+					// our POST is in flight, so ours is the replay the endpoint rejects.
+					await (db as unknown as MockDb)
+						.update()
+						.set({
+							settings: {
+								claude_oauth: {
+									primary: encryptedSlot({
+										encryptedAccessToken: 'access-2',
+										encryptedRefreshToken: 'refresh-2',
+									}),
+								},
+							},
+						})
+						.where()
+					return { ok: false, status: 400, text: async () => 'invalid_grant' }
+				}),
+			)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				probe: async () => null,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.tokens.accessToken).toBe('access-2')
+			expect(eventInserts).toHaveLength(0)
+		})
+
+		it('refreshes the chain head once and persists it when recovery overlaps another session start', async () => {
+			const lastFailure = 1_700_000_000_000
+			const { db, getSettings } = createMockDb({
+				settings: {
+					claude_oauth: {
+						primary: expiredPrimary(),
+						backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+						failover: { active_slot: 'backup', last_primary_failure_at: lastFailure },
+					} satisfies OAuthSlotStorage,
+				},
+			})
+			const fetchMock = rotatingTokenEndpoint()
+			vi.stubGlobal('fetch', fetchMock)
+			const now = lastFailure + PRIMARY_RECOVERY_COOLDOWN_MS + 1
+
+			const start = () =>
+				resolveClaudeCredentialsWithFailover({
+					db,
+					workspaceId: WORKSPACE_ID,
+					actorId: ACTOR_ID,
+					probe: async () => null,
+					now: () => now,
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+				})
+			const results = await Promise.all([start(), start()])
+
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(results.every((r) => r !== null)).toBe(true)
+			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
+			expect(stored.primary?.encryptedRefreshToken).toBe('refresh-2')
+		})
+
+		it('gives up waiting after CLAUDE_CREDENTIAL_TIMEOUT_MS and reports it as transient', async () => {
+			vi.useFakeTimers()
+			try {
+				const workspaceId = 'workspace-hung-refresh'
+				const { db } = createMockDb({
+					settings: { claude_oauth: { primary: expiredPrimary() } satisfies OAuthSlotStorage },
+				})
+				let releaseHungRefresh: (value: unknown) => void = () => {}
+				vi.stubGlobal(
+					'fetch',
+					vi.fn(
+						() =>
+							new Promise((resolve) => {
+								releaseHungRefresh = resolve
+							}),
+					),
+				)
+
+				const holder = refreshSlotSingleFlight(db, workspaceId, 'primary', expiredPrimary())
+				const waiter = refreshSlotSingleFlight(db, workspaceId, 'primary', expiredPrimary())
+				const waiterError = waiter.catch((err) => err)
+				await vi.advanceTimersByTimeAsync(CLAUDE_CREDENTIAL_TIMEOUT_MS)
+
+				const err = await waiterError
+				expect(err).toBeInstanceOf(Error)
+				expect((err as Error).message).toMatch(/Timed out waiting/)
+				expect(isTransientCredentialError(err)).toBe(true)
+
+				releaseHungRefresh({
+					ok: true,
+					json: async () => ({ access_token: 'access-2', expires_in: 3600 }),
+				})
+				await expect(holder).resolves.toMatchObject({ refreshed: true })
+			} finally {
+				vi.useRealTimers()
+			}
+		})
+	})
+
 	describe('refresh failures', () => {
 		it('classifies a 401 thrown by refresh as auth_failed and fails over', async () => {
 			const claudeOAuth: OAuthSlotStorage = {
@@ -815,6 +1074,42 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			expect(result?.slot).toBe('backup')
 			expect(eventInserts[0]).toMatchObject({
 				data: expect.objectContaining({ reason: 'auth_failed' }),
+			})
+		})
+
+		it('records one failure event per failed refresh without changing the failover', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ expiresAt: Date.now() - 60_000 }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			vi.stubGlobal(
+				'fetch',
+				vi
+					.fn()
+					.mockResolvedValueOnce({
+						ok: false,
+						status: 400,
+						text: () => Promise.resolve('{"error":"invalid_grant"}'),
+					})
+					.mockResolvedValueOnce({ ok: true, headers: new Headers() }),
+			)
+
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			})
+
+			expect(result?.slot).toBe('backup')
+			expect(Sentry.captureMessage).toHaveBeenCalledTimes(1)
+			expect(vi.mocked(Sentry.captureMessage).mock.calls[0]?.[1]?.extra).toMatchObject({
+				workspaceId: WORKSPACE_ID,
+				slot: 'primary',
+				caller: 'session_start',
+				httpStatus: 400,
+				errorType: 'invalid_grant',
 			})
 		})
 
@@ -978,5 +1273,58 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			})
 			expect(result).toBeNull()
 		})
+	})
+})
+
+describe('reportClaudeSessionAuthDeath', () => {
+	beforeEach(() => {
+		vi.mocked(Sentry.captureMessage).mockClear()
+	})
+
+	it('tags the event with the workspace and session ids', () => {
+		reportClaudeSessionAuthDeath({
+			sessionId: 'session-1',
+			workspaceId: 'workspace-1',
+			config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+		})
+		expect(Sentry.captureMessage).toHaveBeenCalledTimes(1)
+		const [title, options] = vi.mocked(Sentry.captureMessage).mock.calls[0] as [
+			string,
+			{ tags: Record<string, string>; fingerprint: string[] },
+		]
+		expect(title).toBe('Claude session died on a 401')
+		expect(options.tags).toEqual({
+			workspace_id: 'workspace-1',
+			session_id: 'session-1',
+			route: 'claude_oauth',
+			slot: 'primary',
+			refresh_withheld: 'false',
+		})
+		expect(options.fingerprint).toEqual(['claude-session-auth-death', 'claude_oauth', 'false'])
+	})
+
+	it('marks a session that was launched without a refresh token', () => {
+		reportClaudeSessionAuthDeath({
+			sessionId: 'session-1',
+			workspaceId: 'workspace-1',
+			config: { llm_route: 'claude_oauth', claude_oauth_expires_at: 1_700_000_000_000 },
+		})
+		const [, options] = vi.mocked(Sentry.captureMessage).mock.calls[0] as [
+			string,
+			{ tags: Record<string, string> },
+		]
+		expect(options.tags.refresh_withheld).toBe('true')
+		expect(options.tags.slot).toBe('none')
+	})
+
+	it('does not throw when the config is missing or Sentry fails', () => {
+		vi.mocked(Sentry.captureMessage).mockImplementationOnce(() => {
+			throw new Error('sentry down')
+		})
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+		expect(() =>
+			reportClaudeSessionAuthDeath({ sessionId: 's', workspaceId: 'w', config: null }),
+		).not.toThrow()
+		errorSpy.mockRestore()
 	})
 })

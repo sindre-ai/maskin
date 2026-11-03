@@ -35,7 +35,12 @@ vi.mock('@/hooks/use-duration', () => ({
 }))
 
 vi.mock('@/hooks/use-events', () => ({
-	useSessionAffectedObjects: () => ({ affectedObjects: [], isLoading: false }),
+	useSessionAffectedObjects: () => ({
+		affectedObjects: [],
+		producedObjects: [],
+		producedFiles: [],
+		isLoading: false,
+	}),
 }))
 
 function buildSession(overrides: Partial<SessionResponse>): SessionResponse {

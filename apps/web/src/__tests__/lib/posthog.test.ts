@@ -6,7 +6,10 @@ import {
 	initPosthog,
 	isPosthogReady,
 	registerWorkspaceProperties,
+	resetPosthogIdentity,
 	setCapturingEnabled,
+	setWorkspaceGroup,
+	withSharedProperties,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -149,6 +152,84 @@ describe('posthog helper', () => {
 		expect(idSpy).not.toHaveBeenCalledWith('actor-1')
 	})
 
+	it('identifyForWorkspace sends name and email as person properties when anonymise is off', async () => {
+		const idSpy = vi.spyOn(posthog, 'identify').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		await identifyForWorkspace('actor-1', false, { name: 'Magnus Hansen', email: 'm@example.com' })
+
+		expect(idSpy).toHaveBeenCalledWith('actor-1', { name: 'Magnus Hansen', email: 'm@example.com' })
+	})
+
+	it('identifyForWorkspace skips missing person fields', async () => {
+		const idSpy = vi.spyOn(posthog, 'identify').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		await identifyForWorkspace('actor-1', false, { name: 'Magnus Hansen', email: null })
+
+		expect(idSpy).toHaveBeenCalledWith('actor-1', { name: 'Magnus Hansen' })
+	})
+
+	it('identifyForWorkspace never sends name or email when anonymise is on', async () => {
+		const idSpy = vi.spyOn(posthog, 'identify').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		await identifyForWorkspace('actor-1', true, { name: 'Magnus Hansen', email: 'm@example.com' })
+		const expected = await hashDistinctId('actor-1')
+
+		expect(idSpy).toHaveBeenCalledTimes(1)
+		expect(idSpy).toHaveBeenCalledWith(expected)
+	})
+
+	it('resetPosthogIdentity is a no-op before init and resets after', () => {
+		const resetSpy = vi.spyOn(posthog, 'reset').mockImplementation((() => {}) as never)
+
+		resetPosthogIdentity()
+		expect(resetSpy).not.toHaveBeenCalled()
+
+		__setInitializedForTesting(true)
+		resetPosthogIdentity()
+		expect(resetSpy).toHaveBeenCalledTimes(1)
+	})
+
+	it('setWorkspaceGroup is a no-op before init', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+
+		setWorkspaceGroup('ws-1', '2026-10-01T00:00:00.000Z')
+
+		expect(groupSpy).not.toHaveBeenCalled()
+	})
+
+	it('setWorkspaceGroup sets a workspace group with the id and created date, and no name', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		setWorkspaceGroup('ws-1', '2026-10-01T00:00:00.000Z')
+
+		expect(groupSpy).toHaveBeenCalledWith('workspace', 'ws-1', {
+			workspace_id: 'ws-1',
+			created_at: '2026-10-01T00:00:00.000Z',
+		})
+	})
+
+	it('setWorkspaceGroup leaves the created date out when the workspace has none', () => {
+		const groupSpy = vi.spyOn(posthog, 'group').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		setWorkspaceGroup('ws-1', null)
+
+		expect(groupSpy).toHaveBeenCalledWith('workspace', 'ws-1', { workspace_id: 'ws-1' })
+	})
+
+	it('setWorkspaceGroup swallows posthog errors', () => {
+		vi.spyOn(posthog, 'group').mockImplementation(() => {
+			throw new Error('boom')
+		})
+		__setInitializedForTesting(true)
+
+		expect(() => setWorkspaceGroup('ws-1')).not.toThrow()
+	})
+
 	it('identifyForWorkspace swallows posthog errors', async () => {
 		vi.spyOn(posthog, 'identify').mockImplementation(() => {
 			throw new Error('boom')
@@ -172,7 +253,10 @@ describe('posthog helper', () => {
 				api_host: 'https://eu.i.posthog.com',
 				person_profiles: 'identified_only',
 				capture_pageview: true,
+				capture_pageleave: false,
+				capture_performance: false,
 				autocapture: false,
+				before_send: withSharedProperties,
 			})
 			expect(isPosthogReady()).toBe(true)
 		})
@@ -208,5 +292,23 @@ describe('posthog helper', () => {
 			expect(() => initPosthog()).not.toThrow()
 			expect(isPosthogReady()).toBe(false)
 		})
+	})
+})
+
+describe('withSharedProperties', () => {
+	it('adds surface web and defaults actor_type to human', () => {
+		expect(withSharedProperties({ event: 'x', properties: { a: 1 } })).toEqual({
+			event: 'x',
+			properties: { a: 1, actor_type: 'human', surface: 'web' },
+		})
+	})
+
+	it('keeps an actor_type that is already registered', () => {
+		const out = withSharedProperties({ event: 'x', properties: { actor_type: 'agent' } })
+		expect(out?.properties).toMatchObject({ actor_type: 'agent', surface: 'web' })
+	})
+
+	it('passes a dropped event through', () => {
+		expect(withSharedProperties(null)).toBeNull()
 	})
 })

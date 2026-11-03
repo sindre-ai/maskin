@@ -102,9 +102,67 @@ export interface McpConfig {
 	 * opts into per agent.
 	 */
 	autoInject?: boolean
-	/** MCP server spec injected when autoInject=true. */
+	/**
+	 * The canonical MCP server spec for this provider — the exact JSON that
+	 * belongs under an agent's `tools.mcpServers.<provider>`.
+	 *
+	 * Required for every provider that declares `mcp`, **independently of
+	 * `autoInject`**. `autoInject` only decides whether session-manager attaches
+	 * it automatically; the spec itself must always be stated, because
+	 * `GET /api/integrations/providers` serves it as the discovery answer to
+	 * "what do I write to give an agent this integration's tools?".
+	 *
+	 * Without it an opt-in provider is invisible to every non-browser client:
+	 * the OAuth handshake completes, the token env var is injected, and the
+	 * agent still gets zero tools with nothing to explain why. `command`/`args`
+	 * above are NOT a substitute — nothing reads them at runtime.
+	 *
+	 * The single exemption is `github`, whose server entries are named per
+	 * installation with literal tokens, so no one spec describes them; see the
+	 * comment in providers/github/config.ts. The route test enumerating which
+	 * providers carry a `server` is what holds that line.
+	 */
 	server?: McpServerSpec
+	/**
+	 * How an agent's `tools.mcpServers.<key>` entry for this provider is
+	 * recognised. Omit for the common case: one shared entry that is exactly
+	 * `server`. A provider that declares `mcp` must carry either `server` or a
+	 * non-shared `entry` — a contract test fails otherwise, because an entry
+	 * nothing can recognise is an entry that disconnect leaves behind on every
+	 * agent.
+	 */
+	entry?: McpEntryDeclaration
 }
+
+/** The fields of an `integrations` row that an entry declaration reads. */
+export interface McpEntryOwner {
+	config: unknown
+	unipileAccSlug: string | null
+}
+
+/**
+ * Where a provider's entries sit on an agent, stated as data beside the rest
+ * of the provider config rather than in a second list (integrations-mcp.md,
+ * "Explicitly rejected").
+ *
+ * - `shared`: one entry for the whole provider. It outlives any single
+ *   connection, so it is only removed when no other active integration of the
+ *   provider still needs it.
+ * - `per-identity`: one entry per credential identity, served by this API at
+ *   `{urlPath}/{instanceSlug}` (LinkedIn). `slugPrefix` is the part of the slug
+ *   one credential owns, null when it never enumerated an identity.
+ * - `per-installation`: one stdio entry per installation (GitHub), recognised
+ *   by the env var it reads its token from. `envKey` is that variable's name,
+ *   null when the row names no owner.
+ */
+export type McpEntryDeclaration =
+	| { kind: 'shared' }
+	| {
+			kind: 'per-identity'
+			urlPath: string
+			slugPrefix: (owner: McpEntryOwner) => string | null
+	  }
+	| { kind: 'per-installation'; envKey: (owner: McpEntryOwner) => string | null }
 
 // ── Events ─────────────────────────────────────────────────────────────────
 
@@ -129,6 +187,79 @@ export interface EventMapping {
 	}
 }
 
+// ── Deliverables ───────────────────────────────────────────────────────────
+
+/**
+ * One field an object of a deliverable kind carries in `metadata`.
+ * `recipients` is a comma separated list of "Name <address>" or bare addresses;
+ * `text` is a single line. The body is never a field: it is the object's content.
+ * A `text` field with no `slot` shows as a labelled detail line ("Posting as", "Channel").
+ */
+export interface DeliverableField {
+	key: string
+	label: string
+	type: 'recipients' | 'text'
+	required?: boolean
+	/** Longest accepted value, in characters. */
+	maxLength?: number
+	/** Which side of the message a `recipients` field is. Defaults to `to`. */
+	role?: 'to' | 'cc'
+	/** For `recipients`: each entry must be an email address. Others (a LinkedIn profile) are not checked. */
+	address?: 'email'
+	/**
+	 * Which part of the preview a `text` field fills: the `subject`, or the `context` (what
+	 * the draft answers, shown above the text and never sent). `hidden` keeps a field the
+	 * send tool needs (a conversation id) off the card. A `text` field with no slot is a
+	 * detail line.
+	 */
+	slot?: 'subject' | 'context' | 'hidden'
+	/** Not required to send, but worth a warning on the card when empty. */
+	recommended?: boolean
+}
+
+/**
+ * A second way for an object to be of a deliverable kind, for objects an agent already
+ * writes without `metadata.kind`: every pair must match the object's `metadata`.
+ * A sales task filed with `channel: "linkedin_dm"` and a LinkedIn post filed with
+ * `content_type: "linkedin_post"` are not given a kind.
+ */
+export interface DeliverableMatch {
+	key: string
+	value: string
+}
+
+/**
+ * Where the text that goes out sits inside the object's content, for content that carries
+ * more than the message (a header of account, voice and angle above the post). The
+ * preview shows only what lies between the `start` line and the `end` line.
+ */
+export interface DeliverableBodyBlock {
+	start: string
+	end?: string
+}
+
+/**
+ * Something an agent can draft for a person to review and an integration can deliver
+ * (an email, a LinkedIn message, a Slack post). Declared next to the provider's other
+ * config so the preview a person sees, the validation an agent is held to and the send
+ * tool all derive from one place. An object opts in with `metadata.kind = <kind>`.
+ */
+export interface DeliverableKind {
+	/** The value of `metadata.kind`. Unique across providers: "email", "linkedin_message". */
+	kind: string
+	/** Shown above the text: "Email". */
+	label: string
+	fields: DeliverableField[]
+	/** Also treat an object as this kind when all of these pairs match its metadata. An explicit `metadata.kind` always wins. */
+	alsoMatches?: DeliverableMatch[]
+	/** Read the message from a block of the content instead of all of it. */
+	bodyBlock?: DeliverableBodyBlock
+	/** Longest body the channel takes, in characters. */
+	bodyMaxLength?: number
+	/** Name of the MCP tool that delivers it. Named in the preview's warnings and in agent docs. */
+	sendTool: string
+}
+
 // ── Provider config ────────────────────────────────────────────────────────
 
 export interface ProviderConfig {
@@ -143,6 +274,8 @@ export interface ProviderConfig {
 		mapping?: EventMapping
 	}
 	mcp?: McpConfig
+	/** What agents can draft for review through this provider. See {@link DeliverableKind}. */
+	deliverables?: DeliverableKind[]
 	/** How to display externalId in the integrations UI. 'email' → "Connected as <id>", 'installation' (default) → "Connected · Installation <id>" */
 	externalIdDisplay?: 'email' | 'installation'
 }
@@ -152,6 +285,8 @@ export interface ProviderConfig {
 export interface StoredCredentials {
 	accessToken?: string
 	refreshToken?: string
+	/** OAuth client id, for providers whose client is registered per-install (RFC 7591). */
+	clientId?: string
 	/** Unix timestamp in milliseconds */
 	expiresAt?: number
 	scope?: string
@@ -159,10 +294,49 @@ export interface StoredCredentials {
 	[key: string]: unknown
 }
 
+/**
+ * Write-back channel handed to {@link CustomAuthHandler.getAccessToken} so a
+ * handler that performs a stateful refresh (rotating `refresh_token`, moving
+ * `expires_at`) can persist the result. Handlers that mint a stateless token on
+ * every call (GitHub App installation tokens) simply ignore it.
+ */
+export interface CustomAuthContext {
+	integrationId: string
+	/** Encrypt + store the updated credentials and write the audit event. */
+	persistCredentials(credentials: StoredCredentials): Promise<void>
+}
+
 export interface CustomAuthHandler {
-	getInstallUrl(state: string): string
-	handleCallback(params: Record<string, string>): Promise<StoredCredentials>
-	getAccessToken(credentials: StoredCredentials): Promise<string>
+	/**
+	 * Build the provider's authorize/install URL.
+	 *
+	 * `redirectUri` is the callback URL the route derived for this request (via
+	 * `resolvePublicOrigin`) — handlers that must send a redirect URI to the
+	 * provider MUST use it rather than re-deriving one, so every provider agrees
+	 * on the origin the callback is actually served from. Handlers whose provider
+	 * has the redirect URI pre-registered (GitHub App) can ignore it.
+	 */
+	getInstallUrl(state: string, redirectUri: string): string | Promise<string>
+	/**
+	 * Exchange the provider's callback for credentials.
+	 *
+	 * `redirectUri` is the same value the route passed to `getInstallUrl`, handed
+	 * back so a handler can echo it at token exchange (OAuth2 requires it to
+	 * match byte-for-byte) without stashing it in the `state` envelope. Handlers
+	 * that do not need it can ignore it.
+	 */
+	handleCallback(params: Record<string, string>, redirectUri: string): Promise<StoredCredentials>
+	/**
+	 * Mint or return a usable access token.
+	 *
+	 * `ctx` is always supplied by {@link TokenManager}. It is required rather than
+	 * optional so a handler performing a *stateful* refresh cannot silently drop
+	 * the rotated `refresh_token` via an optional-chained persist call — that
+	 * failure strands the integration permanently and logs nothing. Handlers that
+	 * mint a stateless token per call (GitHub App installation tokens) may
+	 * declare fewer parameters and ignore it.
+	 */
+	getAccessToken(credentials: StoredCredentials, ctx: CustomAuthContext): Promise<string>
 }
 
 export type CustomEventNormalizer = (
@@ -205,6 +379,15 @@ export interface ResolvedProvider {
 	 * Return null to opt out of dedup for this delivery.
 	 */
 	extractDeliveryId?: (payload: unknown, headers: Record<string, string>) => string | null
+	/**
+	 * Resolve the installationId used to match an integrations row, when the
+	 * webhook payload only carries an indirect identifier (e.g. Google Meet
+	 * delivers events tied to a People-id, but rows are keyed by host email).
+	 * Runs after normalizeEvent + before the integrations WHERE lookup. Return
+	 * null to skip this delivery. Providers whose normalizer already emits the
+	 * matching external_id do not need this hook.
+	 */
+	resolveInstallationId?: (ctx: ResolveInstallationIdContext) => Promise<string | null>
 	/**
 	 * Run provider-specific work immediately after OAuth credentials are stored and the
 	 * integration is activated (e.g. Gmail's users.watch call). Failures should be logged
@@ -259,4 +442,54 @@ export interface PreDisconnectContext {
 	integrationId: string
 	workspaceId: string
 	credentials: StoredCredentials
+	/**
+	 * The provider-issued stable id for this credential — `integrations.external_id`
+	 * (e.g. Unipile's `acc_01m2abxf…` for `linkedin-unipile`, Slack's `team_id`,
+	 * GitHub's installation id). Passed through so provider `preDisconnect` hooks
+	 * can call remote delete-account endpoints keyed on the id the provider owns,
+	 * without re-selecting the integration row. `null` when the row landed as
+	 * `pending` and never enumerated an external id.
+	 */
+	externalId: string | null
+}
+
+export interface ResolveInstallationIdContext {
+	db: unknown
+	provider: string
+	normalized: NormalizedEvent
+	payload: unknown
+	headers: Record<string, string>
+}
+
+// ── Keychain: credentials returned by getCredential ────────────────────────
+
+export interface HeaderMintContext {
+	/** URL being called; an adapter may scope the headers it mints to it. */
+	outboundTarget: string
+	/** For adapter-side audit. */
+	requestId: string
+	/** An adapter may issue shorter-lived tokens. */
+	ttlHint?: number
+}
+
+/**
+ * Slot for Layer 1.6 external secret managers (1Password, Vault, AWS Secrets
+ * Manager). Nothing implements it yet. An adapter is selected per credential by
+ * integrations.metadata.adapterKind, so adding one changes no caller.
+ */
+export interface HeaderMintAdapter {
+	readonly kind: `external:${string}`
+	mint(integrationId: string, ctx: HeaderMintContext): Promise<Record<string, string>>
+}
+
+export interface DecryptedCredential {
+	id: string
+	workspaceId: string
+	provider: string
+	providerMode: 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
+	source: 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
+	/** The decrypted stored value. Env injection reads this; HTTP callers use getHeaders. */
+	value: string
+	credentialSource: 'vault' | `external:${string}`
+	getHeaders(ctx: HeaderMintContext): Promise<Record<string, string>>
 }

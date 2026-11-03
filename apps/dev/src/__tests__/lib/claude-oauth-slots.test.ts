@@ -64,8 +64,11 @@ describe('readFailoverState', () => {
 			},
 		}
 
+		// The legacy `last_*` mirrors normalise into the per-slot `failures`
+		// record, and are echoed back so a two-slot-era reader still works.
 		expect(readFailoverState(storage)).toEqual({
 			active_slot: 'backup',
+			failures: { primary: { at: 1_700_000_500_000, reason: 'oauth_token_expired' } },
 			last_primary_failure_at: 1_700_000_500_000,
 			last_classified_reason: 'oauth_token_expired',
 		})
@@ -109,10 +112,14 @@ describe('resolveActiveSlot', () => {
 		expect(resolveActiveSlot(storage)).toEqual({ slot: 'backup', data: storage.backup })
 	})
 
-	it('returns undefined when the active slot has no data — backup-only row with default primary state', () => {
+	it('resolves a backup-only row to the backup — the head of what is configured', () => {
+		// With no `failover` recorded, the active slot defaults to the head of
+		// the chain rather than to the literal `primary` key. A workspace whose
+		// only credential sits in `backup` (primary disconnected, say) is
+		// serviceable, and reading it as "nothing configured" orphaned it.
 		const storage: OAuthSlotStorage = { backup: slot('b') }
 
-		expect(resolveActiveSlot(storage)).toBeUndefined()
+		expect(resolveActiveSlot(storage)).toEqual({ slot: 'backup', data: storage.backup })
 	})
 
 	it('returns undefined for unset or empty rows', () => {
@@ -169,6 +176,7 @@ describe('writeFailoverState', () => {
 		expect(result.backup).toEqual(storage.backup)
 		expect(result.failover).toEqual({
 			active_slot: 'backup',
+			failures: { primary: { at: 1_700_001_000_000, reason: 'quota_exhausted' } },
 			last_primary_failure_at: 1_700_001_000_000,
 			last_classified_reason: 'quota_exhausted',
 		})

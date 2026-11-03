@@ -22,7 +22,11 @@ export interface ConversationListFilters {
 	unread_only?: boolean
 }
 
-export function useConversationsInfinite(workspaceId: string, filters?: ConversationListFilters) {
+export function useConversationsInfinite(
+	workspaceId: string,
+	filters?: ConversationListFilters,
+	options?: { enabled?: boolean },
+) {
 	return useInfiniteQuery({
 		queryKey: queryKeys.conversations.listInfinite(workspaceId, filters as Record<string, unknown>),
 		queryFn: ({ pageParam }) => {
@@ -43,7 +47,7 @@ export function useConversationsInfinite(workspaceId: string, filters?: Conversa
 		initialPageParam: 0,
 		getNextPageParam: (lastPage, allPages) =>
 			lastPage.has_more ? allPages.length * CONVERSATIONS_PAGE_SIZE : undefined,
-		enabled: !!workspaceId,
+		enabled: !!workspaceId && (options?.enabled ?? true),
 	})
 }
 
@@ -102,6 +106,11 @@ export function useUpdateConversationMe(workspaceId: string) {
 			const snapshots = queryClient.getQueriesData<InfiniteData<ConversationListResponse>>({
 				queryKey: queryKeys.conversations.listInfinitePrefix(workspaceId),
 			})
+			// A `mark_unread` reset deliberately leaves the row's unread state
+			// alone — the count is server-computed, and forcing it to a guess would
+			// be wrong until the server re-reads it. Only a genuine read-marker
+			// advance (`last_read_message_id`) gets the optimistic `unread_count: 0`.
+			// `onSettled` reconciles the true count via invalidation either way.
 			for (const [key, cache] of snapshots) {
 				if (!cache) continue
 				queryClient.setQueryData<InfiniteData<ConversationListResponse>>(key, {

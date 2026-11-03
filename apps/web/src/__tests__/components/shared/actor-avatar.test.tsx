@@ -3,9 +3,18 @@ import {
 	getActorAvatarPaletteClass,
 	getActorInitials,
 } from '@/components/shared/actor-avatar'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildActorListItem } from '../../factories'
+import { createWorkspaceWrapper } from '../../setup'
+
+const { listActors } = vi.hoisted(() => ({ listActors: vi.fn() }))
+
+vi.mock('@/lib/api', async (importOriginal) => {
+	const original = await importOriginal<typeof import('@/lib/api')>()
+	return { ...original, api: { ...original.api, actors: { list: listActors } } }
+})
 
 describe('getActorInitials', () => {
 	it('returns first char of first two words for multi-word names', () => {
@@ -31,6 +40,18 @@ describe('getActorInitials', () => {
 
 	it('uppercases lowercase input', () => {
 		expect(getActorInitials('alice bob')).toBe('AB')
+	})
+
+	it('skips punctuation so a bracketed qualifier does not leak into the initials', () => {
+		expect(getActorInitials('Linker (Sigrid)')).toBe('LS')
+	})
+
+	it('ignores a token that is punctuation only', () => {
+		expect(getActorInitials('John - Doe')).toBe('JD')
+	})
+
+	it('returns ? when the name is punctuation only', () => {
+		expect(getActorInitials('---')).toBe('?')
 	})
 })
 
@@ -112,6 +133,18 @@ describe('ActorAvatar', () => {
 		expect(el.className).toMatch(/after:min-w-11/)
 	})
 
+	it('anchors the tap target to the right edge so it extends left only', () => {
+		render(<ActorAvatar name="Alice" type="human" onClick={() => {}} />)
+		const el = screen.getByTitle('Alice')
+		expect(el.className).toMatch(/after:right-0/)
+		// Vertical centring stays; the horizontal centring (left-1/2 + x-translate) is gone,
+		// because a centred 44px box overflows the button's right edge.
+		expect(el.className).toMatch(/after:top-1\/2/)
+		expect(el.className).toMatch(/after:-translate-y-1\/2/)
+		expect(el.className).not.toMatch(/after:left-1\/2/)
+		expect(el.className).not.toMatch(/after:-translate-x-1\/2/)
+	})
+
 	it('renders an img when imageUrl is set', () => {
 		const { container } = render(
 			<ActorAvatar name="Alice" type="human" imageUrl="https://example.com/a.png" />,
@@ -137,5 +170,71 @@ describe('ActorAvatar', () => {
 		// underneath the img so first paint has no logo→initials flicker.
 		render(<ActorAvatar name="Alice" type="human" imageUrl="https://example.com/a.png" />)
 		expect(screen.getByText('AL')).toBeInTheDocument()
+	})
+
+	describe('working ring (D2)', () => {
+		it('renders no wrapper span when `working` is unset', () => {
+			const { container } = render(<ActorAvatar name="Alice" type="human" />)
+			expect(container.querySelector('.actor-avatar-working-ring')).toBeNull()
+		})
+
+		it('wraps the avatar in a `.actor-avatar-working-ring` span when working', () => {
+			const { container } = render(<ActorAvatar name="Alice" type="human" working />)
+			const ring = container.querySelector('.actor-avatar-working-ring')
+			expect(ring).not.toBeNull()
+			// The avatar itself keeps its own name; only the wrapper announces
+			// the working state — the SPEC's split between "avatar keeps its
+			// existing name" and container "aria-label='Agent working…'".
+			expect(ring?.getAttribute('aria-label')).toBe('Agent working on this object')
+			expect(screen.getByTitle('Alice')).toBeInTheDocument()
+		})
+
+		it('wraps the button variant too so a clickable avatar can still show the ring', () => {
+			const { container } = render(
+				<ActorAvatar name="Alice" type="human" onClick={() => {}} working />,
+			)
+			const ring = container.querySelector('.actor-avatar-working-ring')
+			expect(ring).not.toBeNull()
+			expect(ring?.querySelector('button')).not.toBeNull()
+		})
+	})
+})
+
+describe('ActorAvatar picture lookup', () => {
+	beforeEach(() => {
+		listActors.mockReset()
+	})
+
+	it('draws the picture from the workspace actors list when only an id is given', async () => {
+		listActors.mockResolvedValue([
+			buildActorListItem({ id: 'a-1', name: 'Alice', avatar_url: '/api/actors/a-1/avatar?v=3' }),
+		])
+		const { container } = render(<ActorAvatar name="Alice" type="human" id="a-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+		expect(container.querySelector('img')?.getAttribute('src')).toBe('/api/actors/a-1/avatar?v=3')
+	})
+
+	it('keeps initials for an actor without a picture', async () => {
+		listActors.mockResolvedValue([
+			buildActorListItem({ id: 'a-1', name: 'Alice', avatar_url: null }),
+		])
+		const { container } = render(<ActorAvatar name="Alice" type="human" id="a-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await waitFor(() => expect(listActors).toHaveBeenCalled())
+		expect(container.querySelector('img')).toBeNull()
+		expect(screen.getByText('AL')).toBeInTheDocument()
+	})
+
+	it('does not look anything up when the caller passes imageUrl', () => {
+		render(
+			<ActorAvatar name="Alice" type="human" id="a-1" imageUrl="https://example.com/a.png" />,
+			{
+				wrapper: createWorkspaceWrapper(),
+			},
+		)
+		expect(listActors).not.toHaveBeenCalled()
 	})
 })

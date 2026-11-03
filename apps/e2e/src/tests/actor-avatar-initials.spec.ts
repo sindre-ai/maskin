@@ -1,13 +1,16 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Covers ActorAvatar (T1 of Per-agent avatars in Maskin):
 // 2-letter initials + deterministic per-actor background color.
 // Renders on every ship-gate viewport since the primitive is used
-// across desktop, iPad, and mobile surfaces. The object-detail shell
-// (T1 of the Object detail rebuild) renders the acting actor's avatar
-// in the comment-composer header; the comment-author slot returns with
-// the activity timeline (T2), at which point this spec re-scopes there.
+// across desktop, iPad, and mobile surfaces. T2 landed the activity
+// timeline, so this spec now scopes to the comment-author slot as planned:
+// the v2 composer header carries no avatar, and the only other one inside
+// `main` sits in the properties drawer — which is a closed Sheet below 768,
+// so scoping there would pass on iPad and fail on mobile for layout reasons
+// rather than avatar ones.
 
 function initialsFor(name: string): string {
 	const words = name.trim().split(/\s+/).filter(Boolean)
@@ -20,7 +23,7 @@ function initialsFor(name: string): string {
 
 test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`renders initials in the composer-header avatar slot at ${viewport.label}`, async ({
+		test(`renders initials in the comment-author avatar slot at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -29,15 +32,30 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			const bet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Bet for actor-avatar initials',
-				status: 'signal',
+				status: 'opportunity',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			// The object title is an editable <textarea> (object-document.tsx), never
-			// a heading — wait on its value to know the object has loaded.
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue('Bet for actor-avatar initials', {
+			// The object title is a static <h1> on the v2 detail shell — wait on it
+			// to know the object has loaded.
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Bet for actor-avatar initials' }),
+			).toBeVisible({
 				timeout: 20000,
 			})
+
+			// Post a comment so the timeline renders an authored row — that row's
+			// ActorAvatar is the slot under test, and it exists at every viewport.
+			const composer = page.getByPlaceholder(
+				viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions',
+			)
+			await composer.fill('Avatar slot check')
+			await page.getByRole('button', { name: 'Send comment' }).click()
+			// The composer clearing is the signal the post landed. Asserting on the
+			// comment's text instead would be ambiguous: the composer overlays a
+			// mirror div on its textarea, so the string matches twice while the
+			// draft is still in the field.
+			await expect(composer).toHaveValue('', { timeout: 10000 })
 
 			// AC: initials render in the avatar slot with the account name.
 			const actorName = await page.evaluate(() => {
@@ -46,9 +64,10 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 				return parsed.name ?? ''
 			})
 			const expected = initialsFor(actorName)
-			// The T1 shell renders the avatar in the comment-composer header:
 			// `main` excludes the sidebar workspace switcher (whose avatar also
 			// carries a `title` starting with the account-derived workspace name).
+			// The comment row sits in the reader column, ahead of the properties
+			// drawer, so `.first()` is the comment author rather than a subscriber.
 			// ActorAvatar renders as a rounded-full <span> with `title={name}`;
 			// scoping to `.rounded-full` picks only the palette-backed element.
 			const avatar = page.locator('main .rounded-full[title^="E2E "]').first()
@@ -62,15 +81,61 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			expect(firstColor).not.toBe('rgba(0, 0, 0, 0)')
 
 			await page.reload()
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue('Bet for actor-avatar initials', {
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Bet for actor-avatar initials' }),
+			).toBeVisible({
 				timeout: 20000,
 			})
-			const secondColor = await page
-				.locator('main .rounded-full[title^="E2E "]')
-				.first()
-				.evaluate((el) => getComputedStyle(el).backgroundColor)
+			// The comment persists, so its avatar returns with the timeline — but
+			// the timeline loads after the heading, so wait for it before reading
+			// the computed colour.
+			const avatarAfterReload = page.locator('main .rounded-full[title^="E2E "]').first()
+			await expect(avatarAfterReload).toBeVisible({ timeout: 10000 })
+			const secondColor = await avatarAfterReload.evaluate(
+				(el) => getComputedStyle(el).backgroundColor,
+			)
 
 			expect(secondColor).toBe(firstColor)
+		})
+	}
+})
+
+// Regression for the post-ship defect: an agent named "Linker (Sigrid)" rendered
+// initials "L(" because the initial was taken from the raw word rather than its
+// first letter/digit. The punctuation-only trailing word must be skipped.
+test.describe('ActorAvatar — punctuated agent names skip punctuation', () => {
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`renders LS for "Linker (Sigrid)" at ${viewport.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const agentName = `Linker (Sigrid) ${Date.now()}`
+			const agent = await account.api.createAgentActor(agentName)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+
+			const bet = await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Bet for punctuated initials',
+				status: 'opportunity',
+			})
+
+			// Author the comment as the punctuated agent so its avatar renders in
+			// the timeline. The agent's own key posts as the agent.
+			const agentApi = new TestAPI(agent.api_key)
+			await agentApi.createComment(account.workspaceId, {
+				entity_id: bet.id,
+				content: 'Authored by the punctuated agent',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Bet for punctuated initials' }),
+			).toBeVisible({ timeout: 20000 })
+
+			// The punctuated word's own first character is "(" — the bug. The
+			// correct initials are L + S, letters only.
+			const avatar = page.locator(`main .rounded-full[title="${agentName}"]`).first()
+			await expect(avatar).toBeVisible({ timeout: 10000 })
+			await expect(avatar).toHaveText('LS')
 		})
 	}
 })

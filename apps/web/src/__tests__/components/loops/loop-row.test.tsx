@@ -1,7 +1,7 @@
 import { LoopRow } from '@/components/loops/loop-row'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', () => ({
 	Link: ({
@@ -39,12 +39,16 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		pill: 'learning',
 		entryCondition: null,
 		closeCondition: null,
+		tags: [],
+		driverId: null,
 		inProgressCount: 6,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
 		agentIds: [],
 		triggerIds: [],
 		waitingOnViewer: false,
+		waitingCount: 0,
+		targets: null,
 		createdAt: null,
 		updatedAt: null,
 		...overrides,
@@ -65,17 +69,26 @@ function buildActor(overrides: Partial<ActorListItem> = {}): ActorListItem {
 }
 
 describe('LoopRow', () => {
-	it('renders the autonomy-stage pill, name, content, and stats', () => {
+	it('renders the state dot, name, one-line outcome, and stage label', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
-		expect(screen.getByText('Learning')).toBeInTheDocument()
+		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Learning')
 		expect(
 			screen.getByText('Every customer who gives feedback hears back within 30 days'),
 		).toBeInTheDocument()
-		expect(screen.getByText('6 in progress')).toBeInTheDocument()
-		expect(screen.getByText(/128 closed/)).toBeInTheDocument()
-		expect(screen.getByText(/11d median/)).toBeInTheDocument()
+		// v2 row: the outcome is truncated to one line, not clamped to two.
+		expect(
+			screen.getByText('Every customer who gives feedback hears back within 30 days').className,
+		).toMatch(/truncate/)
+	})
+
+	it('renders the green busy line only when agents on the loop are live', () => {
+		const { rerender } = render(<LoopRow loop={buildLoop()} actors={[]} />)
+		expect(screen.queryByText(/busy now/)).not.toBeInTheDocument()
+
+		rerender(<LoopRow loop={buildLoop()} actors={[]} busyAgentCount={2} />)
+		expect(screen.getByText('2 busy now')).toBeInTheDocument()
 	})
 
 	it('renders "Waiting on you" pill when the loop is waiting', () => {
@@ -102,17 +115,12 @@ describe('LoopRow', () => {
 		expect(screen.getByText('Paused — not running')).toBeInTheDocument()
 	})
 
-	it('renders "Waiting on you" in last activity when waiting on the viewer', () => {
+	it('renders "Waiting on you" as last activity when waiting on the viewer', () => {
 		render(<LoopRow loop={buildLoop({ pill: 'waiting_on_you', inProgressCount: 0 })} actors={[]} />)
 
-		// Appears twice: once as the pill badge, once as the last-activity line.
-		expect(screen.getAllByText('Waiting on you')).toHaveLength(2)
-	})
-
-	it('renders the draft label in last activity when the loop is a draft', () => {
-		render(<LoopRow loop={buildLoop({ pill: 'draft' })} actors={[]} />)
-
-		expect(screen.getByText('Draft — not live yet')).toBeInTheDocument()
+		// The stage pill carries the same words, so assert on the one that isn't it.
+		const matches = screen.getAllByText('Waiting on you')
+		expect(matches.some((el) => el.getAttribute('data-testid') !== 'loop-pill')).toBe(true)
 	})
 
 	it("renders the first agent's avatar next to the last-activity line", () => {
@@ -156,16 +164,58 @@ describe('LoopRow', () => {
 		expect(screen.getByText('Untitled loop')).toBeInTheDocument()
 	})
 
-	it('omits the median suffix when median is null', () => {
-		render(<LoopRow loop={buildLoop({ medianTimeToCloseMs: null })} actors={[]} />)
-
-		expect(screen.queryByText(/median/)).not.toBeInTheDocument()
-	})
-
 	it('links to the dedicated loop detail route, not the generic object page', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)
 
 		const link = screen.getByRole('link')
 		expect(link).toHaveAttribute('href', '/ws-1/loops/loop-1')
+	})
+
+	describe('NO CREDITS pill', () => {
+		it('renders the NO CREDITS overlay alongside PAUSED when the composite flag is on', () => {
+			render(<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} showNoCreditsPill />)
+
+			// The PAUSED state label stays; NO CREDITS sits next to it.
+			expect(screen.getByTestId('loop-pill')).toHaveTextContent('Paused')
+			const overlay = screen.getByTestId('loop-pill-no-credits')
+			expect(overlay).toBeInTheDocument()
+			// The visible desktop copy is verbatim per SPEC; NO CR. is present but sm:hidden.
+			expect(overlay.textContent).toContain('NO CREDITS')
+			expect(overlay.textContent).toContain('NO CR.')
+			// A11y — full state name announced regardless of viewport.
+			expect(overlay).toHaveAttribute('aria-label', 'Paused — no credits')
+		})
+
+		it('does not render the overlay when the composite flag is off', () => {
+			render(<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} />)
+
+			expect(screen.queryByTestId('loop-pill-no-credits')).not.toBeInTheDocument()
+		})
+
+		it('does not render the overlay on a non-paused row even when the flag is on', () => {
+			render(<LoopRow loop={buildLoop({ pill: 'learning' })} actors={[]} showNoCreditsPill />)
+
+			expect(screen.queryByTestId('loop-pill-no-credits')).not.toBeInTheDocument()
+		})
+
+		it('fires onNoCreditsClick and swallows the row navigation on click', () => {
+			const onClick = vi.fn()
+			render(
+				<LoopRow
+					loop={buildLoop({ pill: 'paused' })}
+					actors={[]}
+					showNoCreditsPill
+					onNoCreditsClick={onClick}
+				/>,
+			)
+
+			const overlay = screen.getByTestId('loop-pill-no-credits')
+			// Click should not propagate to the row Link — clicks bubble through
+			// synthetic events, so this catches a missing stopPropagation.
+			const clickEvent = fireEvent.click(overlay)
+			expect(onClick).toHaveBeenCalledTimes(1)
+			// fireEvent returns whether the default was allowed — false = preventDefault fired.
+			expect(clickEvent).toBe(false)
+		})
 	})
 })

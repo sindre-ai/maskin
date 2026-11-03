@@ -1,0 +1,27 @@
+-- Adds the in-flight claim marker to the LinkedIn content-hash dedup ledger.
+--
+-- 0067 created this table with a check-then-act dedup: SELECT the prior row,
+-- run the Unipile call, then INSERT ... ON CONFLICT DO NOTHING. Two concurrent
+-- identical tool calls both miss the SELECT and both publish to the customer's
+-- LinkedIn feed; the loser's row is silently discarded by the ON CONFLICT, so
+-- the response replayed for the next 24h can belong to a different real post.
+-- A duplicate public post is user-visible and not retractable by us.
+--
+-- `status` makes the row a *claim* rather than a receipt, so the primary key
+-- serialises the callers instead of merely deduplicating their bookkeeping:
+-- the INSERT happens before the Unipile call, the winner flips the row to 200
+-- afterwards, and a loser either replays the stored response or refuses. This
+-- mirrors `idempotency_records`, which has always worked this way — see
+-- `withIdempotency` in
+-- `apps/dev/src/lib/integrations/providers/linkedin-unipile/operations.ts`.
+--
+--   0   = in flight (claim held, no response stored yet)
+--   200 = completed (response is the tool-facing payload to replay)
+--
+-- Existing rows are all completed receipts written by the old code path, so
+-- backfilling them to 200 preserves their replay behaviour exactly. The column
+-- is added separately rather than by editing 0067 because migrations are
+-- tracked by filename with no content hash (see packages/db/src/migrate.ts) —
+-- an in-place edit would silently skip any database that already ran 0067.
+ALTER TABLE "linkedin_tool_calls"
+	ADD COLUMN IF NOT EXISTS "status" integer NOT NULL DEFAULT 200;

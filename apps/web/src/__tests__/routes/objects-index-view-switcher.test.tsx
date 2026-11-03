@@ -59,7 +59,8 @@ vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [{ label: 'Tasks', value: 'task' }],
 	getAllWebModules: () => [],
 }))
-vi.mock('@/hooks/use-objects', () => ({
+vi.mock('@/hooks/use-objects', async () => ({
+	...(await import('./objects-facets-mock')).facetHookMocks,
 	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
@@ -191,16 +192,18 @@ vi.mock('@/lib/query-keys', () => ({
 		relationships: {
 			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
+		bets: { all: () => ['bets'] },
+		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		notifications: {
-			list: (workspaceId: string, filters?: unknown) => [
+			all: (workspaceId: string) => ['notifications', workspaceId],
+			list: (workspaceId: string, filters?: Record<string, unknown>) => [
 				'notifications',
 				workspaceId,
 				'list',
 				filters,
 			],
+			detail: (id: string) => ['notifications', 'detail', id],
 		},
-		bets: { all: () => ['bets'] },
-		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [
 				'user-display-settings',
@@ -215,7 +218,8 @@ vi.mock('@/lib/query-keys', () => ({
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
 const RouteOptions = Route as unknown as { component: React.FC }
-const ObjectsPage = RouteOptions.component
+const ObjectsPageComponent = RouteOptions.component
+const ObjectsPage = ObjectsPageComponent
 
 function renderRoute() {
 	return render(<ObjectsPage />)

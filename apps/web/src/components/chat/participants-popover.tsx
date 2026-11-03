@@ -1,10 +1,12 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import {
 	ResponsivePopover,
 	ResponsivePopoverContent,
 	ResponsivePopoverTrigger,
 } from '@/components/ui/responsive-popover'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useAddConversationParticipants,
 	useRemoveConversationParticipant,
@@ -14,8 +16,9 @@ import type { ConversationParticipantResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
-import { UserMinus } from 'lucide-react'
+import { Link2, UserMinus } from 'lucide-react'
 import { type ReactNode, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 interface ParticipantsPopoverProps {
 	workspaceId: string
@@ -39,14 +42,33 @@ export function ParticipantsPopover({
 	const addParticipants = useAddConversationParticipants(conversationId, workspaceId)
 	const removeParticipant = useRemoveConversationParticipant(conversationId, workspaceId)
 	const navigate = useNavigate()
+	// Adding and removing people are writes, a viewer's own exit included.
+	const canWrite = useCanWrite()
 	const currentActor = getStoredActor()
 
 	const participantIds = useMemo(() => new Set(participants.map((p) => p.actorId)), [participants])
+	const roleByActorId = useMemo(() => {
+		const map = new Map<string, string>()
+		for (const m of members ?? []) map.set(m.actorId, m.role)
+		return map
+	}, [members])
+
+	// Sub-line under each name (mockup 585/595). The agent "outcome" line the
+	// mockup shows has no field on the actor contract, so agents get the bare
+	// word — see the Chats plan's open question #3.
+	const subLineFor = (actorId: string, actorType: string): string => {
+		if (actorId === currentActor?.id) {
+			return createdBy === currentActor?.id ? 'You · owner of this chat' : 'You'
+		}
+		if (actorType === 'agent') return 'Agent'
+		const role = roleByActorId.get(actorId)
+		return role ? `Person · ${role}` : 'Person'
+	}
 
 	const candidates = useMemo(() => {
 		const byId = new Map<string, { id: string; name: string; type: string }>()
 		for (const m of members ?? []) {
-			if (!participantIds.has(m.actorId))
+			if (m.type !== 'system' && !participantIds.has(m.actorId))
 				byId.set(m.actorId, { id: m.actorId, name: m.name, type: m.type })
 		}
 		for (const a of actors ?? []) {
@@ -73,52 +95,72 @@ export function ParticipantsPopover({
 		})
 	}
 
+	const handleCopyLink = async () => {
+		try {
+			await navigator.clipboard.writeText(window.location.href)
+			toast.success('Link copied')
+		} catch {
+			toast.error('Could not copy link')
+		}
+	}
+
 	return (
 		<ResponsivePopover open={open} onOpenChange={setOpen}>
 			<ResponsivePopoverTrigger asChild>{children}</ResponsivePopoverTrigger>
 			<ResponsivePopoverContent
-				align="end"
-				className="w-80 p-0"
+				align="start"
+				className="w-[292px] p-0"
 				accessibleTitle="Manage participants"
 			>
-				<div className="flex max-h-96 flex-col">
-					<div className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-						In this chat
-					</div>
+				<div className="flex max-h-[70vh] flex-col overflow-y-auto">
+					<div className="eyebrow px-3 pt-3 pb-1">In this chat</div>
 					<ul className="flex flex-col gap-0.5 px-1 pb-2">
 						{participants.map((p) => {
 							// Mirrors the backend rule: a participant may leave themself,
 							// and the conversation creator may remove anyone else.
 							const canRemove = p.actorId === currentActor?.id || createdBy === currentActor?.id
 							return (
-								<li key={p.actorId} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm">
-									<ActorAvatar id={p.actorId} name={p.actorName} type={p.actorType} size="sm" />
-									<span className="min-w-0 flex-1 truncate">{p.actorName}</span>
+								<li key={p.actorId} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
+									<ActorAvatar id={p.actorId} name={p.actorName} type={p.actorType} size="md" />
+									<span className="min-w-0 flex-1">
+										<span className="block truncate text-[12.5px] font-semibold">
+											{p.actorName}
+										</span>
+										<span className="block truncate text-[10.5px] text-muted-foreground">
+											{subLineFor(p.actorId, p.actorType)}
+										</span>
+									</span>
 									{canRemove ? (
-										<button
-											type="button"
-											onClick={() => handleRemove(p.actorId)}
-											aria-label={`Remove ${p.actorName}`}
-											className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-										>
-											<UserMinus size={13} aria-hidden />
-										</button>
+										<ViewerTooltip>
+											<button
+												type="button"
+												onClick={() => handleRemove(p.actorId)}
+												disabled={!canWrite}
+												aria-label={`Remove ${p.actorName}`}
+												className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:hover:bg-transparent"
+											>
+												<UserMinus size={13} aria-hidden />
+											</button>
+										</ViewerTooltip>
 									) : null}
 								</li>
 							)
 						})}
 					</ul>
-					<div className="border-t border-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+					<div className="eyebrow border-t border-border px-3 pt-2 pb-1">
 						Add someone — person or agent
 					</div>
-					<Command shouldFilter={false} className="flex min-h-0 flex-1 flex-col">
-						<Command.Input
-							value={query}
-							onValueChange={setQuery}
-							placeholder="Search people and agents…"
-							autoFocus
-							className="mx-2 mb-1 rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
-						/>
+					<Command shouldFilter={false} className="flex min-h-0 flex-col">
+						<ViewerTooltip className="flex flex-col">
+							<Command.Input
+								value={query}
+								onValueChange={setQuery}
+								placeholder="Search people and agents…"
+								autoFocus
+								disabled={!canWrite}
+								className="mx-2 mb-1 rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
+							/>
+						</ViewerTooltip>
 						<Command.List className="max-h-48 overflow-auto px-1 pb-2">
 							{candidates.length === 0 ? (
 								<div className="px-2 py-3 text-sm text-muted-foreground">No matches.</div>
@@ -128,15 +170,39 @@ export function ParticipantsPopover({
 										key={c.id}
 										value={c.id}
 										onSelect={() => handleAdd(c.id)}
-										className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+										disabled={!canWrite}
+										className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 data-[disabled=true]:opacity-50 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
 									>
-										<ActorAvatar id={c.id} name={c.name} type={c.type} size="sm" />
-										<span className="min-w-0 flex-1 truncate">{c.name}</span>
+										<ActorAvatar id={c.id} name={c.name} type={c.type} size="md" />
+										<span className="min-w-0 flex-1">
+											<span className="block truncate text-[12.5px] font-semibold">{c.name}</span>
+											<span className="block truncate text-[10.5px] text-muted-foreground">
+												{subLineFor(c.id, c.type)}
+											</span>
+										</span>
 									</Command.Item>
 								))
 							)}
 						</Command.List>
 					</Command>
+					<div className="border-t border-border px-1 pt-1.5">
+						<button
+							type="button"
+							onClick={() => void handleCopyLink()}
+							className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-foreground hover:bg-accent"
+						>
+							<Link2 size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+							Copy link to this chat
+						</button>
+						{/* No "invite by email" row: there is no invite endpoint, so the
+						    only thing it could do is hand the URL to a mail client — and a
+						    recipient outside the workspace cannot open that link. Offering
+						    it promises access the backend does not grant. Restore this once
+						    a real invite flow exists. */}
+						<p className="px-2.5 pt-1 pb-2.5 text-[10.5px] leading-relaxed text-muted-foreground">
+							People see the whole thread. Agents you add start working from it.
+						</p>
+					</div>
 				</div>
 			</ResponsivePopoverContent>
 		</ResponsivePopover>

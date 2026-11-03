@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { HUMAN_MESSAGE_STYLE_SHORT } from '../prompts'
+import { commentDecisionSchema } from './comment-decision'
 import { safeMetadataSchema } from './primitives'
 
 export const eventQuerySchema = z.object({
@@ -13,7 +15,7 @@ export const eventQuerySchema = z.object({
 	offset: z.coerce.number().int().min(0).default(0),
 })
 
-export const COMMENT_MAX_LENGTH = 2000
+export const COMMENT_MAX_LENGTH = 50000
 export const COMMENT_MAX_ATTACHMENTS = 10
 
 export const createCommentSchema = z.object({
@@ -26,7 +28,7 @@ export const createCommentSchema = z.object({
 			`Comment must be ${COMMENT_MAX_LENGTH} characters or fewer. Split long messages into multiple comments or replies.`,
 		)
 		.describe(
-			`Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link \`[title](link)\` — never paste partial UUIDs. Hard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced \`\`\`chart block whose body is a JSON spec — \`{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }\`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.`,
+			`${HUMAN_MESSAGE_STYLE_SHORT} Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link \`[title](link)\` — never paste partial UUIDs. Hard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced \`\`\`chart block whose body is a JSON spec — \`{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }\`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.`,
 		),
 	mentions: z
 		.array(z.string().uuid())
@@ -53,8 +55,9 @@ export const createCommentSchema = z.object({
 	metadata: safeMetadataSchema
 		.optional()
 		.describe(
-			'To prompt the human for a structured decision, pass { chips: ["Option A", "Option B", "Skip"] } — up to 5 string options, each up to 20 characters. The UI renders them as quick-reply buttons the human can tap, with a free-text fallback. Their reply is threaded under this comment. To surface a live task checklist, pass { tasks: ["<task-uuid>", ...] } — each row renders as a checkbox (checked iff the task\'s status is done/completed/succeeded), a link to the task, and its driver avatar, and updates automatically when the referenced task changes.',
+			'To surface a live task checklist, pass { tasks: ["<task-uuid>", ...] } — each row renders as a checkbox (checked iff the task\'s status is done/completed/succeeded), a link to the task, and its driver avatar, and updates automatically when the referenced task changes. This field does not carry options for the human to pick from: asking for a call is what `decision` is for, and it is the only way to do it.',
 		),
+	decision: commentDecisionSchema.optional(),
 	attention: z
 		.number()
 		.int()

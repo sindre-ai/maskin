@@ -1,9 +1,11 @@
 import {
+	commentShape,
 	deriveEntryAgentRole,
 	deriveSidebarViewport,
 	trackAgentCreated,
-	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
+	trackAppActive,
+	trackAskBannerDecideClicked,
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
@@ -11,14 +13,15 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackFileViewerCommentResolved,
+	trackFileViewerPageNavigated,
+	trackFileViewerPinPlaced,
+	trackFileViewerRoundSent,
+	trackFileViewerZoomUsed,
 	trackForyouCardAction,
-	trackForyouCardMarkedRead,
-	trackForyouCardMarkedUnread,
 	trackForyouCardShown,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
-	trackNorthStarPromptImpression,
-	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackObjectUpdated,
@@ -26,14 +29,15 @@ import {
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
 	trackScrollToTop,
-	trackSidebarAgentActivityExpanded,
+	trackSearchFilterChanged,
 	trackSidebarToggle,
+	trackSidebarWorkspaceSwitcherDismissedImmediately,
+	trackSidebarWorkspaceSwitcherOpenAttempted,
 	trackSidebarWorkspaceSwitcherOpened,
 	trackSindreMessageReceived,
 	trackSindreMessageSent,
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
-	trackTriggerFired,
 	trackTriggerUpdated,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
@@ -55,9 +59,8 @@ describe('trackEvent', () => {
 	it('always forwards to posthog.capture — even before posthog is initialised', () => {
 		// Regression guard: prior versions silently dropped events when the
 		// module-local `initialized` flag was false, which is exactly how the
-		// north_star_prompt_impression / _response events were being lost in prod
-		// (see task Instrument north_star_prompt_* on the For You onboarding
-		// prompt bet). posthog-js is safe to call before init; do it anyway.
+		// For You onboarding prompt's ship-metric events were lost in prod.
+		// posthog-js is safe to call before init; do it anyway.
 		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
 
 		trackEvent('objects_control_changed', { source: 'objects-page', control: 'status_filter' })
@@ -165,30 +168,18 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenCalledWith('bet_archived', expect.objectContaining({ source: 'web' }))
 	})
 
-	it('agent_session_* events use entity_type=session and carry outcome on completion', () => {
+	it('agent_session_started uses entity_type=session', () => {
 		const capture = captureSpy()
 
 		trackAgentSessionStarted({ entity_id: 'sess-1', entity_type: 'session' })
-		trackAgentSessionCompleted({
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'failed',
-			flow_id: 'evt-77',
-		})
 
-		expect(capture).toHaveBeenNthCalledWith(
-			1,
+		expect(capture).toHaveBeenCalledWith(
 			'agent_session_started',
 			expect.objectContaining({ entity_id: 'sess-1', entity_type: 'session' }),
 		)
-		expect(capture).toHaveBeenNthCalledWith(
-			2,
-			'agent_session_completed',
-			expect.objectContaining({ outcome: 'failed', flow_id: 'evt-77' }),
-		)
 	})
 
-	it('chat_session_started carries the entry point + entry_agent_role for the CoS bet', () => {
+	it('chat_session_started carries the entry point + entry_agent_role + participant_count', () => {
 		const capture = captureSpy()
 
 		trackChatSessionStarted({
@@ -196,18 +187,21 @@ describe('v1 taxonomy helpers', () => {
 			entity_type: 'session',
 			entry_point: 'sindre_session',
 			entry_agent_role: 'chief-of-staff',
+			participant_count: 1,
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-8',
 			entity_type: 'session',
 			entry_point: 'agent_one_shot',
 			entry_agent_role: 'workspace-coach',
+			participant_count: 3,
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-9',
 			entity_type: 'session',
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+			participant_count: 2,
 		})
 
 		expect(capture).toHaveBeenNthCalledWith(1, 'chat_session_started', {
@@ -217,6 +211,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: 'chief-of-staff',
+			participant_count: 1,
 		})
 		expect(capture).toHaveBeenNthCalledWith(2, 'chat_session_started', {
 			entity_id: 'sess-8',
@@ -225,6 +220,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'agent_one_shot',
 			entry_agent_role: 'workspace-coach',
+			participant_count: 3,
 		})
 		expect(capture).toHaveBeenNthCalledWith(3, 'chat_session_started', {
 			entity_id: 'sess-9',
@@ -233,6 +229,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+			participant_count: 2,
 		})
 	})
 
@@ -251,13 +248,13 @@ describe('v1 taxonomy helpers', () => {
 
 		trackSindreMessageReceived({
 			session_id: 'sess-42',
-			model: 'claude-opus-4-7',
+			model: 'claude-sonnet-5-5',
 			tokens: 128,
 		})
 
 		expect(capture).toHaveBeenCalledWith('sindre_message_received', {
 			session_id: 'sess-42',
-			model: 'claude-opus-4-7',
+			model: 'claude-sonnet-5-5',
 			tokens: 128,
 		})
 	})
@@ -303,7 +300,7 @@ describe('v1 taxonomy helpers', () => {
 		expect(deriveEntryAgentRole(undefined)).toBeNull()
 	})
 
-	it('comment_posted captures is_reply, attachment_count, and content', () => {
+	it('comment_posted captures is_reply, attachment_count, is_multiline and length_bucket, never the text', () => {
 		const capture = captureSpy()
 
 		trackCommentPosted({
@@ -311,32 +308,87 @@ describe('v1 taxonomy helpers', () => {
 			entity_type: 'task',
 			is_reply: true,
 			attachment_count: 2,
-			content: 'first line\nsecond line',
+			...commentShape('first line\nsecond line'),
 			flow_id: 'draft-99',
 		})
 
-		expect(capture).toHaveBeenCalledWith(
-			'comment_posted',
-			expect.objectContaining({
-				entity_id: 'task-1',
-				entity_type: 'task',
-				is_reply: true,
-				attachment_count: 2,
-				content: 'first line\nsecond line',
-				flow_id: 'draft-99',
-			}),
-		)
+		expect(capture).toHaveBeenCalledWith('comment_posted', {
+			entity_id: 'task-1',
+			entity_type: 'task',
+			source: 'web',
+			is_reply: true,
+			attachment_count: 2,
+			is_multiline: true,
+			length_bucket: '1-50',
+			flow_id: 'draft-99',
+		})
 	})
 
-	it('trigger_fired forces source=trigger', () => {
+	it('commentShape buckets the length and flags a line break, ignoring surrounding whitespace', () => {
+		expect(commentShape('one line')).toEqual({ is_multiline: false, length_bucket: '1-50' })
+		expect(commentShape('a\nb')).toEqual({ is_multiline: true, length_bucket: '1-50' })
+		expect(commentShape('line\n')).toEqual({ is_multiline: false, length_bucket: '1-50' })
+		expect(commentShape('x'.repeat(51)).length_bucket).toBe('51-200')
+		expect(commentShape('x'.repeat(201)).length_bucket).toBe('201-1000')
+		expect(commentShape('x'.repeat(1001)).length_bucket).toBe('1000+')
+	})
+
+	it('search_filter_changed never sends the participant value (an actor id)', () => {
 		const capture = captureSpy()
 
-		trackTriggerFired({ entity_id: 'trg-1', entity_type: 'trigger' })
+		trackSearchFilterChanged({
+			surface: 'search_view',
+			dimension: 'participant',
+			action: 'add',
+			value: 'actor-uuid-1',
+			kind: 'chip',
+			via: 'click',
+		})
+		trackSearchFilterChanged({
+			surface: 'search_view',
+			dimension: 'status',
+			action: 'add',
+			value: 'in_progress',
+			kind: 'chip',
+			via: 'click',
+		})
 
-		expect(capture).toHaveBeenCalledWith(
-			'trigger_fired',
-			expect.objectContaining({ source: 'trigger', entity_type: 'trigger' }),
-		)
+		const [participant, status] = capture.mock.calls.map((c) => c[1] as Record<string, unknown>)
+		expect(participant.dimension).toBe('participant')
+		expect(participant.value).toBeUndefined()
+		expect(JSON.stringify(participant)).not.toContain('actor-uuid-1')
+		expect(status.value).toBe('in_progress')
+	})
+
+	it('app_active sends once per UTC day for the browser, then again the next day', () => {
+		const capture = captureSpy()
+
+		expect(trackAppActive(new Date('2026-11-02T08:00:00Z'))).toBe(true)
+		expect(trackAppActive(new Date('2026-11-02T23:59:00Z'))).toBe(false)
+		expect(trackAppActive(new Date('2026-11-03T00:01:00Z'))).toBe(true)
+
+		expect(capture).toHaveBeenCalledTimes(2)
+		expect(capture).toHaveBeenNthCalledWith(1, 'app_active', { utc_day: '2026-11-02' })
+	})
+
+	it('app_active skips a day already stored by an earlier page load', () => {
+		const capture = captureSpy()
+		localStorage.setItem('maskin-app-active-day', '2026-11-04')
+
+		expect(trackAppActive(new Date('2026-11-04T10:00:00Z'))).toBe(false)
+		expect(capture).not.toHaveBeenCalled()
+	})
+
+	it('app_active still sends once when storage is unavailable', () => {
+		const capture = captureSpy()
+		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('SecurityError')
+		})
+		const now = new Date('2026-11-05T10:00:00Z')
+
+		expect(trackAppActive(now)).toBe(true)
+		expect(trackAppActive(now)).toBe(false)
+		expect(capture).toHaveBeenCalledTimes(1)
 	})
 
 	it('relationship_created records the edge type as a custom prop', () => {
@@ -457,6 +509,17 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
+	it('ask_banner_decide_clicked carries {loopId, pendingCount} for the loops-v4-polish falsification metric', () => {
+		const capture = captureSpy()
+
+		trackAskBannerDecideClicked({ loopId: 'loop-42', pendingCount: 3 })
+
+		expect(capture).toHaveBeenCalledWith('ask_banner_decide_clicked', {
+			loopId: 'loop-42',
+			pendingCount: 3,
+		})
+	})
+
 	it('object_attached_file carries file_id and parent entity type', () => {
 		const capture = captureSpy()
 
@@ -483,13 +546,11 @@ describe('v1 taxonomy helpers', () => {
 		trackMiniAppFileViewed({
 			entity_id: 'file-1',
 			entity_type: 'file',
-			file_name: 'curriculum.html',
 		})
 
 		expect(capture).toHaveBeenCalledWith('mini_app_file_viewed', {
 			entity_id: 'file-1',
 			entity_type: 'file',
-			file_name: 'curriculum.html',
 			source: 'web',
 			flow_id: null,
 		})
@@ -498,12 +559,11 @@ describe('v1 taxonomy helpers', () => {
 	it('mini_app_file_viewed defaults source to web and flow_id to null when omitted', () => {
 		const capture = captureSpy()
 
-		trackMiniAppFileViewed({ entity_id: 'file-2', entity_type: 'file', file_name: 'hub.html' })
+		trackMiniAppFileViewed({ entity_id: 'file-2', entity_type: 'file' })
 
 		expect(capture).toHaveBeenCalledWith('mini_app_file_viewed', {
 			entity_id: 'file-2',
 			entity_type: 'file',
-			file_name: 'hub.html',
 			source: 'web',
 			flow_id: null,
 		})
@@ -519,13 +579,25 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
-	it('sidebar.agent_activity.expanded carries the workspaceId', () => {
+	it('sidebar.workspace_switcher.open_attempted carries the workspaceId and pointerType', () => {
 		const capture = captureSpy()
 
-		trackSidebarAgentActivityExpanded({ workspaceId: 'ws-42' })
+		trackSidebarWorkspaceSwitcherOpenAttempted({ workspaceId: 'ws-42', pointerType: 'touch' })
 
-		expect(capture).toHaveBeenCalledWith('sidebar.agent_activity.expanded', {
+		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.open_attempted', {
 			workspaceId: 'ws-42',
+			pointerType: 'touch',
+		})
+	})
+
+	it('sidebar.workspace_switcher.dismissed_immediately carries the workspaceId and openMs', () => {
+		const capture = captureSpy()
+
+		trackSidebarWorkspaceSwitcherDismissedImmediately({ workspaceId: 'ws-42', openMs: 12 })
+
+		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.dismissed_immediately', {
+			workspaceId: 'ws-42',
+			openMs: 12,
 		})
 	})
 
@@ -576,36 +648,6 @@ describe('v1 taxonomy helpers', () => {
 			item_key: 'marketplace',
 			source: 'footer',
 		})
-	})
-
-	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
-		const capture = captureSpy()
-
-		trackNorthStarPromptImpression({ workspace_id: 'ws-42' })
-
-		expect(capture).toHaveBeenCalledWith(
-			'north_star_prompt_impression',
-			{ workspace_id: 'ws-42' },
-			{ send_instantly: true },
-		)
-	})
-
-	it('north_star_prompt_response fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
-		// send_instantly is load-bearing: without it, posthog-js batches events
-		// for ~3s. The response event fires right before the card unmounts and
-		// users typically tab away immediately, so the batched event never
-		// reaches PostHog — that's why the event name was missing from the
-		// project taxonomy after PR #1003. The impression event uses the same
-		// flag for parity so the ratio isn't biased by asymmetric delivery.
-		const capture = captureSpy()
-
-		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
-
-		expect(capture).toHaveBeenCalledWith(
-			'north_star_prompt_response',
-			{ workspace_id: 'ws-42' },
-			{ send_instantly: true },
-		)
 	})
 
 	it('scroll_to_top carries entity_id/entity_type/object_subtype so the correlation join runs without aliasing', () => {
@@ -678,70 +720,6 @@ describe('v1 taxonomy helpers', () => {
 			source: 'system',
 			expanded: false,
 			objectType: null,
-		})
-	})
-
-	describe('foryou_card_marked_read / _unread', () => {
-		const originalInnerWidth = window.innerWidth
-
-		function setInnerWidth(value: number) {
-			Object.defineProperty(window, 'innerWidth', { value, configurable: true, writable: true })
-		}
-
-		afterEach(() => {
-			setInnerWidth(originalInnerWidth)
-		})
-
-		it('foryou_card_marked_read carries entity_type/entity_id/via, and mobile=true at ≤768px', () => {
-			const capture = captureSpy()
-			setInnerWidth(375)
-
-			trackForyouCardMarkedRead({ entity_type: 'bet', entity_id: 'bet-1' })
-
-			expect(capture).toHaveBeenCalledWith('foryou_card_marked_read', {
-				entity_type: 'bet',
-				entity_id: 'bet-1',
-				mobile: true,
-				via: 'swipe',
-			})
-		})
-
-		it('foryou_card_marked_read reports mobile=false above 768px', () => {
-			const capture = captureSpy()
-			setInnerWidth(1024)
-
-			trackForyouCardMarkedRead({ entity_type: 'insight', entity_id: 'ins-2' })
-
-			expect(capture).toHaveBeenCalledWith(
-				'foryou_card_marked_read',
-				expect.objectContaining({ mobile: false, via: 'swipe' }),
-			)
-		})
-
-		it('foryou_card_marked_read includes 768px in the mobile bucket (DoD boundary)', () => {
-			const capture = captureSpy()
-			setInnerWidth(768)
-
-			trackForyouCardMarkedRead({ entity_type: 'bet', entity_id: 'bet-3' })
-
-			expect(capture).toHaveBeenCalledWith(
-				'foryou_card_marked_read',
-				expect.objectContaining({ mobile: true }),
-			)
-		})
-
-		it('foryou_card_marked_unread mirrors _read with the same property shape', () => {
-			const capture = captureSpy()
-			setInnerWidth(375)
-
-			trackForyouCardMarkedUnread({ entity_type: 'task', entity_id: 'task-9' })
-
-			expect(capture).toHaveBeenCalledWith('foryou_card_marked_unread', {
-				entity_type: 'task',
-				entity_id: 'task-9',
-				mobile: true,
-				via: 'swipe',
-			})
 		})
 	})
 
@@ -857,6 +835,117 @@ describe('trackChatImageUpload', () => {
 		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
 			platform: 'web',
 			outcome: 'success',
+		})
+	})
+})
+
+describe('file_viewer events', () => {
+	function captureSpy() {
+		__setInitializedForTesting(true)
+		return vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+	}
+
+	// The `source` enum on comment_posted was extended to include 'file_viewer'
+	// so the "≥40% comment-after-view within 24h" success criterion can attribute
+	// review-viewer comments correctly. Without this the source lands as `web`
+	// and the numerator on that funnel is unmeasurable.
+	it('comment_posted accepts source="file_viewer" (enum extension)', () => {
+		const capture = captureSpy()
+
+		trackCommentPosted({
+			entity_id: 'file-1',
+			entity_type: 'file',
+			is_reply: false,
+			attachment_count: 0,
+			...commentShape('centered logo drifts on scroll'),
+			source: 'file_viewer',
+		})
+
+		expect(capture).toHaveBeenCalledWith(
+			'comment_posted',
+			expect.objectContaining({
+				entity_id: 'file-1',
+				entity_type: 'file',
+				source: 'file_viewer',
+			}),
+		)
+	})
+
+	it('file_viewer_zoom_used carries mode, zoom_level, file_id', () => {
+		const capture = captureSpy()
+
+		trackFileViewerZoomUsed({ file_id: 'file-1', mode: 'fit', zoom_level: 0.85 })
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_zoom_used', {
+			file_id: 'file-1',
+			mode: 'fit',
+			zoom_level: 0.85,
+		})
+	})
+
+	it('file_viewer_page_navigated carries to_page, from_page, file_id, total_pages', () => {
+		const capture = captureSpy()
+
+		trackFileViewerPageNavigated({
+			file_id: 'file-1',
+			from_page: 3,
+			to_page: 4,
+			total_pages: 12,
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_page_navigated', {
+			file_id: 'file-1',
+			from_page: 3,
+			to_page: 4,
+			total_pages: 12,
+		})
+	})
+
+	it('file_viewer_pin_placed carries file_id, page, variant', () => {
+		const capture = captureSpy()
+
+		trackFileViewerPinPlaced({ file_id: 'file-1', page: 2, variant: 'deck' })
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_pin_placed', {
+			file_id: 'file-1',
+			page: 2,
+			variant: 'deck',
+		})
+	})
+
+	it('file_viewer_round_sent carries file_id, comment_count, attaching_object_id, driver_id, round_id', () => {
+		const capture = captureSpy()
+
+		trackFileViewerRoundSent({
+			file_id: 'file-1',
+			comment_count: 5,
+			attaching_object_id: 'bet-42',
+			driver_id: 'actor-99',
+			round_id: 'round-abc',
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_round_sent', {
+			file_id: 'file-1',
+			comment_count: 5,
+			attaching_object_id: 'bet-42',
+			driver_id: 'actor-99',
+			round_id: 'round-abc',
+		})
+	})
+
+	it('file_viewer_comment_resolved carries file_id, comment_id, resolved_by', () => {
+		const capture = captureSpy()
+
+		trackFileViewerCommentResolved({
+			file_id: 'file-1',
+			comment_id: 'cmt-1',
+			resolved_by: 'actor-99',
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_comment_resolved', {
+			file_id: 'file-1',
+			comment_id: 'cmt-1',
+			resolved_by: 'actor-99',
 		})
 	})
 })

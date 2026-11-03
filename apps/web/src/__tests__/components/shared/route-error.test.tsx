@@ -1,4 +1,5 @@
 import { RouteError } from '@/components/shared/route-error'
+import * as faroLib from '@/lib/faro'
 import * as sentryLib from '@/lib/sentry'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -14,10 +15,16 @@ vi.mock('@/lib/sentry', () => ({
 	captureException: vi.fn(),
 }))
 
+vi.mock('@/lib/faro', () => ({
+	pushFaroError: vi.fn(),
+}))
+
 const mockCaptureException = vi.mocked(sentryLib.captureException)
+const mockPushFaroError = vi.mocked(faroLib.pushFaroError)
 
 afterEach(() => {
 	mockCaptureException.mockClear()
+	mockPushFaroError.mockClear()
 	mockInvalidate.mockClear()
 })
 
@@ -45,6 +52,18 @@ describe('RouteError', () => {
 		render(<RouteError error={error} />)
 		expect(mockCaptureException).toHaveBeenCalledOnce()
 		expect(mockCaptureException).toHaveBeenCalledWith(error)
+	})
+
+	// React catches render errors before window.onerror, so Faro's
+	// ErrorsInstrumentation cannot see them — this boundary is the only place
+	// they can be reported from. Without it, Sentry would see a whole error
+	// class that Faro does not, and the parallel-run comparison would be
+	// measuring the wiring rather than the SDKs.
+	it('reports the error to Faro on mount, so both SDKs see the same errors', () => {
+		const error = new Error('test failure')
+		render(<RouteError error={error} />)
+		expect(mockPushFaroError).toHaveBeenCalledOnce()
+		expect(mockPushFaroError).toHaveBeenCalledWith(error)
 	})
 
 	it('calls onRetry when provided instead of router.invalidate', async () => {
@@ -83,6 +102,9 @@ describe('RouteError', () => {
 		expect(mockCaptureException).toHaveBeenCalledTimes(2)
 		expect(mockCaptureException).toHaveBeenNthCalledWith(1, first)
 		expect(mockCaptureException).toHaveBeenNthCalledWith(2, second)
+		expect(mockPushFaroError).toHaveBeenCalledTimes(2)
+		expect(mockPushFaroError).toHaveBeenNthCalledWith(1, first)
+		expect(mockPushFaroError).toHaveBeenNthCalledWith(2, second)
 	})
 
 	describe('compact variant', () => {
@@ -115,6 +137,8 @@ describe('RouteError', () => {
 				})
 				expect(mockCaptureException).toHaveBeenCalledOnce()
 				expect(mockCaptureException).toHaveBeenCalledWith(error)
+				expect(mockPushFaroError).toHaveBeenCalledOnce()
+				expect(mockPushFaroError).toHaveBeenCalledWith(error)
 			} finally {
 				vi.useRealTimers()
 			}

@@ -51,6 +51,23 @@ describe('cronConfigSchema', () => {
 	})
 })
 
+describe('cronConfigSchema skip_when_idle', () => {
+	it('accepts the opt-in flag and keeps it', () => {
+		const result = cronConfigSchema.parse({ expression: '0 9 * * *', skip_when_idle: true })
+		expect(result.skip_when_idle).toBe(true)
+	})
+
+	it('leaves the flag unset when absent', () => {
+		expect(cronConfigSchema.parse({ expression: '0 9 * * *' }).skip_when_idle).toBeUndefined()
+	})
+
+	it('rejects a non-boolean flag', () => {
+		expect(() =>
+			cronConfigSchema.parse({ expression: '0 9 * * *', skip_when_idle: 'yes' }),
+		).toThrow()
+	})
+})
+
 describe('cronScopeSchema', () => {
 	it('accepts entity_type alone', () => {
 		const result = cronScopeSchema.parse({ entity_type: 'knowledge' })

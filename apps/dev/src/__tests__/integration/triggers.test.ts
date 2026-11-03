@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { events, sessions, triggers } from '@maskin/db/schema'
+import { events, objects, sessions, triggers, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
-import { eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import {
@@ -32,6 +33,9 @@ describe('Triggers Integration', () => {
 		workspaceId = ws.id
 		const agent = await insertActor(db, { type: 'agent', name: 'Test Agent' })
 		targetActorId = agent.id
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId, actorId: targetActorId, role: 'member' })
 	})
 
 	describe('CRUD lifecycle', () => {
@@ -103,6 +107,117 @@ describe('Triggers Integration', () => {
 			const [updatedSession] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 			expect(updatedSession).toBeDefined()
 			expect(updatedSession.triggerId).toBeNull()
+		})
+	})
+
+	describe('delete cascades to loop metadata.trigger_ids', () => {
+		it('prunes the deleted trigger id from every loop that references it in the workspace, atomically', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const actorId = getTestActorId()
+
+			// Two triggers in this workspace, plus a foreign-workspace trigger
+			// to prove workspace scoping (the delete must not touch a foreign
+			// workspace's loops even if they happen to hold a colliding id).
+			const doomed = await insertTrigger(db, workspaceId, actorId, targetActorId)
+			const survivor = await insertTrigger(db, workspaceId, actorId, targetActorId)
+
+			// Loop A: references both triggers plus an already-orphaned id.
+			const loopA = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'running',
+				title: 'Loop A',
+				metadata: { trigger_ids: [doomed.id, survivor.id, 'stale-orphan-id'] },
+			})
+
+			// Loop B: references only the doomed trigger. After prune its
+			// trigger_ids should be an empty array (not null / not missing).
+			const loopB = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'running',
+				title: 'Loop B',
+				metadata: { trigger_ids: [doomed.id] },
+			})
+
+			// Loop C: doesn't reference the doomed trigger. Must not be
+			// updated at all (no updated_at bump, no event).
+			const loopC = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'running',
+				title: 'Loop C',
+				metadata: { trigger_ids: [survivor.id] },
+			})
+			const loopCBefore = loopC.updatedAt
+
+			// Foreign-workspace loop with a *literally identical* trigger-id
+			// string in its metadata (colliding uuid). Cascade must scope by
+			// workspace_id and leave this alone.
+			const foreignActor = await insertActor(db)
+			const foreignWs = await insertWorkspace(db, foreignActor.id)
+			const foreignLoop = await insertObject(db, foreignWs.id, foreignActor.id, {
+				type: 'loop',
+				status: 'running',
+				title: 'Foreign Loop',
+				metadata: { trigger_ids: [doomed.id] },
+			})
+
+			const deleteRes = await app.request(
+				jsonRequest('DELETE', `/api/triggers/${doomed.id}`, undefined, headers),
+			)
+			expect(deleteRes.status).toBe(200)
+
+			// Trigger row is gone.
+			const remaining = await db.select().from(triggers).where(eq(triggers.id, doomed.id))
+			expect(remaining).toHaveLength(0)
+
+			// Loop A: pruned, other ids preserved in order.
+			const [refetchedA] = await db.select().from(objects).where(eq(objects.id, loopA.id))
+			expect((refetchedA.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([
+				survivor.id,
+				'stale-orphan-id',
+			])
+
+			// Loop B: pruned to empty array (not null, not missing).
+			const [refetchedB] = await db.select().from(objects).where(eq(objects.id, loopB.id))
+			expect((refetchedB.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([])
+
+			// Loop C: untouched.
+			const [refetchedC] = await db.select().from(objects).where(eq(objects.id, loopC.id))
+			expect((refetchedC.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([survivor.id])
+			expect(refetchedC.updatedAt.getTime()).toBe(loopCBefore.getTime())
+
+			// Foreign-workspace loop: untouched (workspace scoping).
+			const [refetchedForeign] = await db
+				.select()
+				.from(objects)
+				.where(eq(objects.id, foreignLoop.id))
+			expect((refetchedForeign.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([
+				doomed.id,
+			])
+
+			// An `updated` event fires per affected loop so SSE consumers
+			// invalidate their loop caches — one for A and one for B, none
+			// for C or the foreign loop.
+			const cascadeEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityType, 'object'),
+						eq(events.action, 'updated'),
+					),
+				)
+				.orderBy(desc(events.createdAt))
+			const cascadeTargets = new Set(
+				cascadeEvents
+					.filter((e) => {
+						const d = e.data as { cascade?: string; trigger_id?: string } | null
+						return d?.cascade === 'trigger_deleted' && d.trigger_id === doomed.id
+					})
+					.map((e) => e.entityId),
+			)
+			expect(cascadeTargets).toEqual(new Set([loopA.id, loopB.id]))
 		})
 	})
 
@@ -225,6 +340,46 @@ describe('Triggers Integration', () => {
 			expect(created.config.from_status).toBe('todo')
 			expect(created.config.to_status).toBe('in_progress')
 		})
+
+		// The trigger detail page renders WHAT IT WRITES / IT STOPS FOR YOU WHEN /
+		// the skill chip straight off `config`. Zod strips unknown keys, so if
+		// these fields are not declared on the event config schema they are
+		// dropped on write and the sections can never render.
+		it('round-trips the reader-only writes / stops_for_you / skill config fields', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const createRes = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({
+						target_actor_id: targetActorId,
+						config: {
+							entity_type: 'insight',
+							action: 'created',
+							writes: [{ act: 'Creates', type: 'task', state: 'todo' }],
+							stops_for_you: 'before anything is published',
+							skill: 'weekly-digest',
+						},
+					}),
+					headers,
+				),
+			)
+
+			expect(createRes.status).toBe(201)
+			const created = await createRes.json()
+			expect(created.config.stops_for_you).toBe('before anything is published')
+			expect(created.config.skill).toBe('weekly-digest')
+			expect(created.config.writes).toEqual([{ act: 'Creates', type: 'task', state: 'todo' }])
+
+			// And survives the read path, not just the create response.
+			const listRes = await app.request(jsonGet('/api/triggers', headers))
+			expect(listRes.status).toBe(200)
+			const list = await listRes.json()
+			const fetched = list.find((t: { id: string }) => t.id === created.id)
+			expect(fetched.config.stops_for_you).toBe('before anything is published')
+		})
 	})
 
 	// Loop steps are event triggers, and loops can flow objects of ANY
@@ -264,9 +419,9 @@ describe('Triggers Integration', () => {
 
 			const bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
 			const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
-			const runner = new TriggerRunner(db, bridge, {
-				createSession,
-			} as unknown as SessionManager)
+			const sessionManager = { createSession } as unknown as SessionManager
+			configureSessionLifecycle({ db, sessionManager })
+			const runner = new TriggerRunner(db, bridge, sessionManager)
 			await runner.start()
 			try {
 				bridge.emit('event', {

@@ -1,7 +1,7 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Covers T3 of the Marketplace polish bet: the inline "N in the marketplace"
+// Covers T3 of the Marketplace polish bet: the inline "N in the catalog"
 // count beside the Marketplace title. N is the loop count from the same
 // hook that feeds the grid, so the value the user sees must equal the "All"
 // filter count rendered from that same payload.
@@ -31,9 +31,9 @@ test.describe('Marketplace loop count', () => {
 
 			const count = page.locator(`${COUNT}:visible`).first()
 			await expect(count).toBeVisible({ timeout: 20000 })
-			await expect(count).toHaveText(/^\d+ in the marketplace$/)
+			await expect(count).toHaveText(/^\d+ in the catalog$/)
 
-			const allTrigger = page.getByRole('button', { name: /^All\s+\d+$/ }).first()
+			const allTrigger = page.getByRole('button', { name: /^All \(\d+\)$/ }).first()
 			await expect(allTrigger).toBeVisible()
 
 			// Same-source check: the Type chip row's "All N" renders from the same
@@ -55,7 +55,7 @@ test.describe('Marketplace loop count', () => {
 					document.querySelectorAll('[data-testid="marketplace-count"]'),
 				).find(isVisible)
 				const allButton = Array.from(document.querySelectorAll('button')).find(
-					(b) => isVisible(b) && /^All\s+\d+$/.test(b.textContent?.trim() ?? ''),
+					(b) => isVisible(b) && /^All\s*\d+$/.test(b.textContent?.trim() ?? ''),
 				)
 				return {
 					marketplaceSize: Number((countEl?.textContent ?? '').match(/^(\d+)/)?.[1]),

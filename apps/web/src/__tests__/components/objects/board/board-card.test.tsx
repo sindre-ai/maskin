@@ -2,6 +2,7 @@ import { BoardCard } from '@/components/objects/board/board-card'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildActorListItem, buildObjectResponse } from '../../../factories'
+import { createWorkspaceWrapper } from '../../../setup'
 
 const navigateSpy = vi.fn()
 
@@ -52,7 +53,7 @@ beforeEach(() => {
 })
 
 describe('BoardCard', () => {
-	it('renders the title, status, type, owner, and updated timestamp', () => {
+	it('renders the title, status, type, driver, and updated timestamp', () => {
 		const actors = [buildActorListItem({ id: 'actor-7', name: 'Magnus' })]
 		const obj = buildObjectResponse({
 			id: 'obj-1',
@@ -102,10 +103,10 @@ describe('BoardCard', () => {
 				columns={[
 					{ id: 'title', label: 'Title', canHide: false },
 					{ id: 'status', label: 'Status', canHide: true },
-					{ id: 'owner', label: 'Owner', canHide: true },
+					{ id: 'driver', label: 'Driver', canHide: true },
 					{ id: 'metadata.priority', label: 'priority', canHide: true },
 				]}
-				columnVisibility={{ owner: false }}
+				columnVisibility={{ driver: false }}
 			/>,
 		)
 
@@ -134,5 +135,93 @@ describe('BoardCard', () => {
 		render(<BoardCard object={obj} workspaceId="ws-xyz" />)
 		await user.click(screen.getByTestId('board-card'))
 		expect(navigateSpy).toHaveBeenCalledWith('/ws-xyz/objects/obj-abc')
+	})
+
+	describe('advance affordance', () => {
+		// The card body is a `<Link>` (`<a>`), so a `<button>` inside it is
+		// invalid HTML — React 19 logs `<button> cannot be a descendant of <a>`
+		// on every render, spamming the console on the Board view. The advance
+		// affordance renders as `<span role="button">` for that reason.
+		it('renders the advance affordance without nesting a <button> inside the link', () => {
+			const onAdvance = vi.fn()
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={onAdvance}
+					advanceLabel="Move to In Progress"
+				/>,
+			)
+			const advance = screen.getByRole('button', { name: 'Move to In Progress' })
+			expect(advance.tagName).toBe('SPAN')
+			expect(screen.getByTestId('board-card').querySelector('button')).toBeNull()
+		})
+
+		it('invokes onAdvance on click without navigating the card link', async () => {
+			const user = userEvent.setup()
+			const onAdvance = vi.fn()
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={onAdvance}
+					advanceLabel="Move to In Progress"
+				/>,
+			)
+			await user.click(screen.getByRole('button', { name: 'Move to In Progress' }))
+			expect(onAdvance).toHaveBeenCalledTimes(1)
+			expect(navigateSpy).not.toHaveBeenCalled()
+		})
+
+		it('invokes onAdvance on Enter and Space so keyboard users can reach it', async () => {
+			const user = userEvent.setup()
+			const onAdvance = vi.fn()
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={onAdvance}
+					advanceLabel="Move to In Progress"
+				/>,
+			)
+			const advance = screen.getByRole('button', { name: 'Move to In Progress' })
+			advance.focus()
+			await user.keyboard('{Enter}')
+			await user.keyboard(' ')
+			expect(onAdvance).toHaveBeenCalledTimes(2)
+			expect(navigateSpy).not.toHaveBeenCalled()
+		})
+
+		it('viewer: the advance affordance is off and does not advance', async () => {
+			const user = userEvent.setup()
+			const onAdvance = vi.fn()
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={onAdvance}
+					advanceLabel="Advance"
+				/>,
+				{ wrapper: createWorkspaceWrapper({ role: 'viewer' }) },
+			)
+			const advance = screen.getByRole('button', { name: 'Advance' })
+			expect(advance).toHaveAttribute('aria-disabled', 'true')
+			await user.click(advance)
+			advance.focus()
+			await user.keyboard('{Enter}')
+			expect(onAdvance).not.toHaveBeenCalled()
+		})
+
+		it('is reachable in the tab order', () => {
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={() => {}}
+					advanceLabel="Advance"
+				/>,
+			)
+			expect(screen.getByRole('button', { name: 'Advance' })).toHaveAttribute('tabindex', '0')
+		})
 	})
 })

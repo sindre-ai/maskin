@@ -1,16 +1,20 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// AC-U5: the bet detail page leads with hypothesis + activity timeline; properties
-// and files live in a right sidebar — an overlay Sheet below 768px (closed by
-// default), and an inline docked panel at 768px+ (collapsed rail @768, expanded
-// @1024 by default — see breakpointDefaultOpen in object-document.tsx). This spec
-// drives the toggle at 375/768/1024 to confirm the sidebar opens per viewport and
-// the Properties + Files sections are reachable.
+// The rebuilt object-detail shell keeps the properties drawer, but moves it
+// behind an explicit toggle on the page bar: the document itself reads as
+// title + body + activity, and the drawer rests closed until asked for. This
+// spec pins that resting shape — the body carries the hypothesis on its own,
+// and no drawer overlay is mounted before the toggle is used. The drawer's own
+// behaviour (sections, chord, persistence) lives in
+// object-detail-properties.spec.ts.
 
-test.describe('Bet detail — properties drawer', () => {
+test.describe('Bet detail — document reads without the properties drawer', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`hypothesis + drawer toggle work at ${viewport.label}`, async ({ page, account }) => {
+		test(`body carries the hypothesis and the drawer rests closed at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 
 			const bet = await account.api.createObject(account.workspaceId, {
@@ -22,9 +26,8 @@ test.describe('Bet detail — properties drawer', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			// Title lives in a textarea (object-document.tsx). Wait for it to hydrate
-			// before probing the drawer.
-			await expect(page.locator('textarea').first()).toHaveValue('Drawer parity bet', {
+			// The title is a static <h1> on the rebuilt surface.
+			await expect(page.getByRole('heading', { level: 1, name: 'Drawer parity bet' })).toBeVisible({
 				timeout: 10000,
 			})
 
@@ -33,38 +36,12 @@ test.describe('Bet detail — properties drawer', () => {
 				page.getByText('Hypothesis: operators read state from description + timeline alone.'),
 			).toBeVisible()
 
-			// The sidebar's own collapse toggle also has an accessible name
-			// containing "Properties" ("Expand/Collapse properties"), so this must
-			// be an exact match to avoid a strict-mode violation.
+			// The toggle is present on every ship-gate viewport, and the drawer it
+			// governs is closed on first paint — no overlay dialog is mounted.
 			const toggle = page.getByRole('button', { name: 'Properties', exact: true })
-
-			if (viewport.width < 768) {
-				// Below 768px the sidebar renders as an overlay Sheet — closed by
-				// default, opened via the header toggle, closed via Escape.
-				await expect(page.getByRole('dialog')).toHaveCount(0)
-
-				await toggle.click()
-
-				const drawer = page.getByRole('dialog')
-				await expect(drawer).toBeVisible()
-				await expect(drawer.getByText('Properties', { exact: true })).toBeVisible()
-				await expect(drawer.getByText(/Files \(/)).toBeVisible()
-
-				await page.keyboard.press('Escape')
-				await expect(page.getByRole('dialog')).toHaveCount(0)
-			} else {
-				// At 768px+ the sidebar docks inline and is never a modal dialog —
-				// open it via the toggle if the breakpoint default left it collapsed.
-				await expect(page.getByRole('dialog')).toHaveCount(0)
-
-				if ((await toggle.getAttribute('aria-expanded')) === 'false') {
-					await toggle.click()
-				}
-				await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-				await expect(page.getByText('Properties', { exact: true })).toBeVisible()
-				await expect(page.getByRole('heading', { name: /^Files \(/ })).toBeVisible()
-				await expect(page.getByRole('dialog')).toHaveCount(0)
-			}
+			await expect(toggle).toBeVisible()
+			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+			await expect(page.getByRole('dialog')).toHaveCount(0)
 		})
 	}
 })

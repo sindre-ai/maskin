@@ -13,7 +13,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar'
 import { isHiddenRouteId } from '@/lib/nav-view-keys'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
+import { Link, useMatches, useNavigate, useRouter } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Fragment } from 'react'
 
@@ -49,8 +49,12 @@ const routeConfig: Record<string, RouteConfig> = {
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
+	// "Keys", not "Billing": v2 moved billing to its own route below, and this
+	// static map has no flag access, so a shared label would leave two routes
+	// claiming the same crumb. Under the pre-v2 nav this page is still labelled
+	// "Billing" in the sidebar — the crumb names the page's contents instead.
 	'/_authed/$workspaceId/settings/keys': {
-		label: 'LLM',
+		label: 'Keys',
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/members': {
@@ -133,7 +137,17 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  */
 export function Header() {
 	const matches = useMatches()
-	const { title, subtitle, actions, stickyIdentity } = usePageHeader()
+	const {
+		title,
+		subtitle,
+		actions,
+		leadingActions,
+		titleTabs,
+		stickyIdentity,
+		crumb,
+		newMenuPrimaryOverride,
+		newMenuDisabled,
+	} = usePageHeader()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const router = useRouter()
@@ -158,8 +172,10 @@ export function Header() {
 			crumbs.unshift({ label: parentConfig.label, path: parentPath })
 			parentId = parentConfig.parent
 		}
-		// Add current page
-		crumbs.push({ label: leafConfig.label, path: leafMatch.pathname })
+		// Add current page. Prefer the page's own published title over the static
+		// route label so a detail crumb reads the record's name ("SEO content")
+		// rather than the generic route name ("Loop Details").
+		crumbs.push({ label: title ?? leafConfig.label, path: leafMatch.pathname })
 	}
 
 	// Object-detail pages drop the "Create an object" section from the New
@@ -169,8 +185,41 @@ export function Header() {
 	const isDetail = crumbs.length > 1
 	const headingText = title ?? leafConfig?.label
 
+	// A page that publishes its own crumb gets the mockup's compact detail bar
+	// (1033–1039): `Parent › Name` at 12px and the page's own actions, with no
+	// search, split New button or back arrow competing for the row.
+	if (crumb) {
+		return (
+			<header className="flex flex-none flex-wrap items-center gap-2 border-b border-border px-[clamp(16px,3vw,36px)] pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px]">
+				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
+				<Link
+					to={crumb.parentTo}
+					params={crumb.parentParams}
+					className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+				>
+					{crumb.parentLabel}
+				</Link>
+				<span aria-hidden="true" className="shrink-0 text-xs text-border-strong">
+					›
+				</span>
+				<span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
+					{crumb.label}
+				</span>
+				{actions}
+				{/* The same split New button every screen carries, last in the row
+				    (mockup 925–946 puts it at `order:10`). */}
+				<NewMenu
+					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					primaryKind={leafConfig?.primary ?? 'chat'}
+					primaryOverride={newMenuPrimaryOverride}
+					disabled={newMenuDisabled}
+				/>
+			</header>
+		)
+	}
+
 	return (
-		<header className="flex min-h-11 flex-none flex-wrap items-center gap-2 gap-y-1.5 border-b border-border px-[clamp(16px,4vw,44px)] py-1.5">
+		<header className="flex min-h-11 flex-none flex-wrap items-center gap-2 gap-y-1.5 border-b border-border px-[clamp(16px,4vw,44px)] pt-[calc(env(safe-area-inset-top)+0.375rem)] pb-1.5">
 			<SidebarTrigger className="md:hidden -ml-1 h-[30px] w-[30px] shrink-0" />
 			{isDetail && (
 				<Button
@@ -211,28 +260,45 @@ export function Header() {
 					</Breadcrumb>
 				</div>
 			) : headingText ? (
-				<div className="flex min-w-0 items-baseline gap-2">
+				/* `flex-1` (basis 0), not the default `basis:auto`: flex line-breaking
+				   decides wrapping from each item's max-content hypothetical size, so a
+				   title block sized to its content pushed the New button onto a second
+				   line at 375px — `truncate` alone could not prevent that, because
+				   shrinking only happens after an item has been placed on a line.
+				   Zero-basis lets the title give up width first and keeps the nav on
+				   one line. */
+				<div className="flex min-w-0 flex-1 items-baseline gap-2">
 					<h1 className="truncate text-[clamp(17px,2vw,20px)] font-bold tracking-[-0.02em] text-foreground">
 						{headingText}
 					</h1>
 					{subtitle && (
-						<span className="whitespace-nowrap text-[11.5px] text-muted-foreground">
-							{subtitle}
-						</span>
+						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
 					)}
 				</div>
 			) : null}
 
-			<span className="ml-auto" />
+			{/* Beside the title, before the right-hand cluster — the Objects type
+			    tabs live in the left cluster (mockup 148–152), not out with search
+			    and New. */}
+			{titleTabs}
 
-			<NavSearch />
-			{actions}
-			<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
-			<NewMenu
-				onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
-				hideObjectSection={isObjectDetail}
-				primaryKind={leafConfig?.primary ?? 'chat'}
-			/>
+			{/* `ml-auto` lives on the group, not on a spacer span: an auto margin
+			    absorbs free space before flex-grow does, so a spacer would starve the
+			    zero-basis title above. It still right-aligns the controls when no
+			    heading or breadcrumb renders. */}
+			<div className="ml-auto flex shrink-0 items-center gap-2">
+				{leadingActions}
+				<NavSearch />
+				{actions}
+				<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
+				<NewMenu
+					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					hideObjectSection={isObjectDetail}
+					primaryKind={leafConfig?.primary ?? 'chat'}
+					primaryOverride={newMenuPrimaryOverride}
+					disabled={newMenuDisabled}
+				/>
+			</div>
 		</header>
 	)
 }

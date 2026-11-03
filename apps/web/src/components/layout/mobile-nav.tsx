@@ -1,8 +1,10 @@
+import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { trackNavItemClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
-import { CORE_NAV_ITEMS, OBJECTS_NAV_ITEM, useHasObjectsNavItem } from '@/lib/nav-items'
 import { useWorkspace } from '@/lib/workspace-context'
+import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
+import { Layers, MessageSquare, RefreshCw, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 
 // On mobile (≤767px) the sidebar becomes an off-canvas sheet, so the fixed bottom
@@ -10,22 +12,42 @@ import { useMemo } from 'react'
 // stable analytics identifiers so `nav_item_clicked` stays comparable across
 // surfaces. Static bar (no entrance animation) makes it trivially safe under
 // prefers-reduced-motion.
-//
-// Agents is deliberately not here — it is reached through the working-agents
-// card and agent-name links, and a bottom bar promoting it would reinstate
-// exactly the entry the sidebar drops. Unlike the sidebar (which appends
-// Objects last), the bottom bar puts it right after For You — the mockup's
-// bottom-bar ordering promotes Objects above Chats/Loops on mobile.
+const FOR_YOU_ROUTE = '/$workspaceId' as const
+
+interface MobileNavItem {
+	key: string
+	label: string
+	to: string
+	icon: typeof Zap
+	exact?: boolean
+}
+
+// Mirrors the v2 sidebar inventory (mockup navDefs). Agents is deliberately not
+// here — it is reached through the working-agents card and agent-name links, and
+// a bottom bar promoting it would reinstate exactly the entry the sidebar drops.
+const baseItems: MobileNavItem[] = [
+	{ key: 'for-you', label: 'For you', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
+	{ key: 'chats', label: 'Chats', to: '/$workspaceId/chats', icon: MessageSquare },
+	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
+]
+
 export function MobileNav() {
 	const { workspaceId } = useWorkspace()
-	const hasObjectTypes = useHasObjectsNavItem()
+	const enabledModules = useEnabledModules()
 	const matchRoute = useMatchRoute()
 
 	const items = useMemo(() => {
-		if (!hasObjectTypes) return CORE_NAV_ITEMS
-		const [forYou, ...rest] = CORE_NAV_ITEMS
-		return [forYou, OBJECTS_NAV_ITEM, ...rest]
-	}, [hasObjectTypes])
+		const hasObjectTypes = getEnabledObjectTypeTabs(enabledModules).length > 0
+		if (!hasObjectTypes) return baseItems
+		const objectsItem: MobileNavItem = {
+			key: 'objects',
+			label: 'Objects',
+			to: '/$workspaceId/objects',
+			icon: Layers,
+		}
+		const [forYou, ...rest] = baseItems
+		return [forYou, objectsItem, ...rest]
+	}, [enabledModules])
 
 	return (
 		<nav

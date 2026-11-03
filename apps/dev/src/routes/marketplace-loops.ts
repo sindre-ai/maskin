@@ -29,9 +29,10 @@ import {
 } from '@maskin/db/schema'
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type MarketplaceItemType,
@@ -494,6 +495,7 @@ const uninstallItemResponseSchema = z.object({
 const uninstallItemRoute = createRoute({
 	method: 'delete',
 	path: '/items/{id}/uninstall',
+	'x-viewer-policy': 'writer',
 	tags: ['Marketplace'],
 	summary: 'Remove an individually-installed marketplace item from a workspace',
 	request: {
@@ -526,7 +528,7 @@ app.openapi(uninstallItemRoute, (async (c) => {
 	const { id: itemId } = c.req.valid('param')
 	const { workspaceId, keepProvisionedItems } = c.req.valid('json')
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the workspace'), 403)
 	}
 
@@ -753,7 +755,7 @@ app.openapi(uninstallItemRoute, (async (c) => {
 			}
 		}
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: 'deleted',
@@ -812,6 +814,7 @@ const installItemResponseSchema = z.object({
 const installItemRoute = createRoute({
 	method: 'post',
 	path: '/items/{id}/install',
+	'x-viewer-policy': 'writer',
 	tags: ['Marketplace'],
 	summary: 'Install a single marketplace item into a workspace',
 	request: {
@@ -852,7 +855,7 @@ app.openapi(installItemRoute, (async (c) => {
 	const { id: itemId } = c.req.valid('param')
 	const { workspaceId } = c.req.valid('json')
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the target workspace'), 403)
 	}
 
@@ -900,7 +903,7 @@ app.openapi(installItemRoute, (async (c) => {
 					.returning({ id: actors.id, name: actors.name })
 				if (!a) throw new Error('Actor insert returned no row')
 				await tx.insert(workspaceMembers).values({ workspaceId, actorId: a.id, role: 'member' })
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',
@@ -964,7 +967,7 @@ app.openapi(installItemRoute, (async (c) => {
 					.values(buildTriggerInsert(workspaceId, rewrittenSnapshot, triggerMeta, actorId))
 					.returning({ id: triggers.id, name: triggers.name })
 				if (!t) throw new Error('Trigger insert returned no row')
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',
@@ -1016,7 +1019,7 @@ app.openapi(installItemRoute, (async (c) => {
 					skillId,
 					(snapshot.content as string) ?? '',
 				)
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',
@@ -1053,7 +1056,7 @@ app.openapi(installItemRoute, (async (c) => {
 					.values(buildIntegrationInsert(workspaceId, snapshot, meta, actorId))
 					.returning({ id: integrations.id })
 				if (!i) throw new Error('Integration insert returned no row')
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',

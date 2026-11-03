@@ -1,11 +1,12 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, imports, workspaces } from '@maskin/db/schema'
+import { imports, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { type CsvOptions, importMappingSchema, importQuerySchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -15,7 +16,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceMember } from '../lib/workspace-auth'
 import {
 	detectCsvOptions,
 	executeImport,
@@ -27,6 +28,8 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 		storageProvider: StorageProvider
 	}
@@ -63,6 +66,7 @@ function findImport(db: Database, id: string, workspaceId: string) {
 const createImportRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Upload a file and create an import job with auto-mapped fields',
 	request: {
@@ -102,6 +106,7 @@ app.openapi(createImportRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	// Fetch workspace for settings
 	const [workspace] = await db
@@ -218,7 +223,7 @@ app.openapi(createImportRoute, async (c) => {
 	}
 
 	// Log event
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'created',
@@ -235,6 +240,7 @@ app.openapi(createImportRoute, async (c) => {
 const updateMappingRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/mapping',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Update the field mapping for an import job',
 	request: {
@@ -272,6 +278,7 @@ app.openapi(updateMappingRoute, async (c) => {
 	const db = c.get('db')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 	const { mapping } = c.req.valid('json')
 
@@ -394,12 +401,17 @@ function runImportInBackground(opts: {
 		)
 
 		const totalErrors = result.errorCount + result.relationshipErrorCount
-		const finalStatus = result.successCount > 0 ? 'completed' : 'failed'
+		// A re-import where every row matched an existing object creates nothing
+		// and is still a success.
+		const handledRows = result.successCount + result.skippedCount + result.updatedCount
+		const finalStatus = handledRows > 0 ? 'completed' : 'failed'
 		await db
 			.update(imports)
 			.set({
 				status: finalStatus,
 				successCount: result.successCount,
+				skippedCount: result.skippedCount,
+				updatedCount: result.updatedCount,
 				errorCount: totalErrors,
 				errors: result.errors.length > 0 ? result.errors : null,
 				processedRows: parsed.rows.length,
@@ -408,7 +420,7 @@ function runImportInBackground(opts: {
 			})
 			.where(eq(imports.id, importId))
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: finalStatus === 'completed' ? 'import_completed' : 'import_failed',
@@ -416,6 +428,8 @@ function runImportInBackground(opts: {
 			entityId: importId,
 			data: {
 				successCount: result.successCount,
+				skippedCount: result.skippedCount,
+				updatedCount: result.updatedCount,
 				errorCount: totalErrors,
 				relationshipCount: result.relationshipCount,
 			},
@@ -425,6 +439,8 @@ function runImportInBackground(opts: {
 			importId,
 			status: finalStatus,
 			successCount: result.successCount,
+			skippedCount: result.skippedCount,
+			updatedCount: result.updatedCount,
 			errorCount: result.errorCount,
 			relationshipCount: result.relationshipCount,
 			relationshipErrorCount: result.relationshipErrorCount,
@@ -454,6 +470,7 @@ function runImportInBackground(opts: {
 const confirmImportRoute = createRoute({
 	method: 'post',
 	path: '/{id}/confirm',
+	'x-viewer-policy': 'writer',
 	tags: ['Imports'],
 	summary: 'Confirm and execute the import, creating objects in batches',
 	request: {
@@ -485,6 +502,7 @@ app.openapi(confirmImportRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const storage = c.get('storageProvider')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
 
 	// Fetch import record (needed for 404 and mapping check)
@@ -562,7 +580,7 @@ app.openapi(confirmImportRoute, async (c) => {
 	}
 
 	// Log event
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'import_started',
@@ -666,6 +684,8 @@ app.openapi(listImportsRoute, async (c) => {
 			totalRows: imports.totalRows,
 			processedRows: imports.processedRows,
 			successCount: imports.successCount,
+			skippedCount: imports.skippedCount,
+			updatedCount: imports.updatedCount,
 			errorCount: imports.errorCount,
 			source: imports.source,
 			createdBy: imports.createdBy,

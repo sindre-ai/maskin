@@ -1,114 +1,128 @@
 # Known Pitfalls Registry
 
-A living registry of bugs that have been fixed before and should be checked for in new code. Before submitting a PR, review this list for any patterns that match your changes.
+A living registry of bugs that have been fixed before and should be checked for in new code. Before submitting a PR, scan the **Check when** lines below for any that match your changes. If one does, **read its full entry** (linked) before writing the code — each holds the fix pattern and the history.
 
-## PG NOTIFY Payload Size (8KB Limit)
+The full entries live in `docs/pitfalls/` and are deliberately not loaded into every session; this index is.
 
-- **What**: `pg_notify()` silently fails — it rolls back the triggering INSERT — if the payload exceeds 8KB. There is no warning or error; the row simply doesn't get inserted.
-- **When to check**: Any time you write or modify a DB trigger that uses `pg_notify()`.
-- **Fix pattern**: Truncate or omit large fields (especially `content`, `description`, or any free-text column) before including them in the notification payload. See migration `0006_notify_drop_data.sql` for the established pattern.
-- **History**: Originally fixed for the `events` table in migration `0006_notify_drop_data.sql`. Re-introduced for `session_logs` in PR #224 (migration `0008_session_logs_notify.sql`), which added `left(NEW.content, 7000)` to stay under the limit. That PR's line of history is not an ancestor of the current `main` — the codebase was later restructured onto the in-process `EventEmitter` approach for session-log SSE (`session-manager.ts`'s `emit('log', ...)`), but the `session_logs_notify` trigger was never dropped from the live database, so it kept running in production, orphaned. Its character-based truncation (not byte-based) still let multi-byte UTF-8 content push the payload over 8KB, silently dropping `session_logs` inserts (Sentry `MASKIN-DEV-5` / `MASKIN-AGENT-SERVER-1`, 2026-08-11/12). Fixed by dropping the trigger entirely in `0052_drop_orphaned_session_logs_notify.sql`, since nothing in the current codebase listens on the `session_logs` NOTIFY channel — only `'events'` is consumed (`packages/realtime/src/notify.ts`). **Takeaway: if a feature that owns a DB trigger is replaced, the trigger must be dropped in an explicit migration — a code-only rewrite (e.g. a history restructure or squash) won't remove it from a live database.**
+### PG NOTIFY Payload Size (8KB Limit)
+**Check when:** Any time you write or modify a DB trigger that uses `pg_notify()`.
+[Full entry](../../docs/pitfalls/pg-notify-payload-size.md)
 
-## Shell Injection via String Interpolation
+### Shell Injection via String Interpolation
+**Check when:** Any time you construct shell commands from variables — `export` statements, `exec()` calls, `spawn()` with `shell: true`, or template literals that become shell input.
+[Full entry](../../docs/pitfalls/shell-injection.md)
 
-- **What**: Interpolating untrusted strings into shell commands allows command injection. An attacker-controlled value in an `export` statement, `exec()` call, or template literal that becomes shell input can execute arbitrary commands.
-- **When to check**: Any time you construct shell commands from variables — `export` statements, `exec()` calls, `spawn()` with `shell: true`, or template literals that become shell input.
-- **Fix pattern**: Validate input against a strict allowlist regex before interpolation. For env var keys, use `[A-Za-z_][A-Za-z0-9_]*`. Prefer parameterized APIs (e.g., `spawn(cmd, args)` without `shell: true`) over string interpolation. See `.claude/rules/input-validation.md` for the full checklist.
-- **History**: Shell injection via env var key interpolation in `buildEnvExports()`, fixed in PR #230.
+### Numeric Parameter Parsing (NaN Propagation)
+**Check when:** Any HTTP query parameter, path parameter, or config value parsed as a number.
+[Full entry](../../docs/pitfalls/numeric-param-nan.md)
 
-## Numeric Parameter Parsing (NaN Propagation)
+### `accent` Token Used Without Its Foreground Pair (Invisible in Light Mode)
+**Check when:** Any time you use `text-accent` or `bg-accent` as a standalone visible colour — text buttons, dots, rails, badge backgrounds with no `text-accent-foreground` child.
+[Full entry](../../docs/pitfalls/accent-token-foreground.md)
 
-- **What**: `Number()` returns `NaN` for non-numeric strings, and `NaN` propagates silently through arithmetic. When passed to a SQL query, it produces unexpected results or errors without any validation failure at the parsing step.
-- **When to check**: Any HTTP query parameter, path parameter, or config value parsed as a number.
-- **Fix pattern**: Always check `Number.isFinite()` after parsing and fall back to a sensible default. Also validate range (e.g., no negative values for pagination `limit` or `offset`). See `.claude/rules/input-validation.md` for the safe parsing pattern.
-- **History**: `NaN` propagation to SQL query in `GET /sessions` route, fixed in PR #235.
+### Drizzle Column Objects in a Correlated `sql` Subquery Render Unqualified
+**Check when:** Any correlated scalar subquery written inside a Drizzle `` sql`` `` template — especially a per-row `COUNT`/`SUM` that references both the outer and inner tables (load counters, capacity checks, "active children" tallies).
+[Full entry](../../docs/pitfalls/drizzle-correlated-subquery.md)
 
-## `accent` Token Used Without Its Foreground Pair (Invisible in Light Mode)
+### Missing Events Audit Log on Entity Mutations
+**Check when:** Any time you write a `db.update()` or `db.insert()` against a first-class entity table (`integrations`, `sessions`, `objects`, `triggers`, `workspaces`, `actors`).
+[Full entry](../../docs/pitfalls/missing-events-audit-log.md)
 
-`--accent` is a near-white background token in light mode. Using it as a standalone visible color (text, dot, or rail) produces near-invisible output on white surfaces.
+### GitHub MCP Server Env Key Must Be `GITHUB_PERSONAL_ACCESS_TOKEN`, Not `GITHUB_TOKEN`
+**Check when:** Any time you add or edit a `github` MCP server entry — an `env: { <KEY>: '${...}' }` block whose `args` include `@modelcontextprotocol/server-github` — in an agent template, seed data, or the frontend "Add GitHub" quick-add.
+[Full entry](../../docs/pitfalls/github-mcp-env-key.md)
 
-**Variant A — `text-accent` as a text color**
-- **What**: Text rendered with `text-accent` is nearly invisible in light mode.
-- **When to check**: Any time you add a styled text button or inline action element.
-- **Fix pattern**: Use `text-muted-foreground hover:text-foreground` for inline action buttons.
-- **History**: Introduced on Restart/Retry buttons in PR #503, fixed on `bet/session-restart`.
+### New Workspace Package Missing from `apps/dev/Dockerfile` COPY List
+**Check when:** Any time you add a new package directory under `packages/` (i.e., add an entry that will match the `./packages/*` pnpm filter).
+[Full entry](../../docs/pitfalls/dockerfile-package-copy.md)
 
-**Variant B — `bg-accent` on a text-free indicator (dot, rail, badge background)**
-- **What**: `bg-accent` on a small shape (unread dot, gutter rail, status indicator) with no accompanying text looks correct in dark mode but is near-invisible in light mode. Unlike a labelled pill, there is no `text-accent-foreground` child to catch the problem.
-- **When to check**: Any time you add a purely visual indicator — a dot, a stripe, a pill background, a left-border rail — that carries no text content.
-- **Fix pattern**: Use `bg-primary` for indicators that must be visually prominent in both modes. Reserve `bg-accent` for backgrounds that are always paired with `text-accent-foreground` (e.g. the "Needs you" pill: `bg-accent text-accent-foreground`).
-- **History**: Introduced on unread dot and decision-point gutter rail in PR #622, fixed in the review commit on `bet/timeline-ux`.
+### Runtime File Reads Relative to `import.meta.url` Break Under esbuild Bundling
+**Check when:** Any time you add `readFileSync`/`readdirSync` (or similar) using a path derived from `import.meta.url` or `__dirname` in code that lives under `apps/dev/src/` (or any other app built with `build.mjs`'s single-file esbuild bundle).
+[Full entry](../../docs/pitfalls/import-meta-url-esbuild.md)
 
-## Drizzle Column Objects in a Correlated `sql` Subquery Render Unqualified
+### Agent Sandbox Sessions Can't Run `docker-compose` — Use `pnpm dev:no-docker`
+**Check when:** Any time an agent session needs a live Postgres + S3-compatible stack for local verification (integration tests per `.claude/rules/verification.md`, manual UI checks, E2E specs) and `pnpm dev`/`pnpm dev:win` fails because Docker isn't available.
+[Full entry](../../docs/pitfalls/sandbox-no-docker.md)
 
-- **What**: Embedding Drizzle column objects (e.g. `${sessions.agentServerId}`, `${agentServers.id}`) inside a raw `` sql`` `` template that builds a **correlated subquery** renders them **without a table qualifier** — `WHERE agent_server_id = id` instead of `WHERE sessions.agent_server_id = agent_servers.id`. When the inner table also has a column of that bare name (here `sessions.id`), Postgres silently binds it to the *inner* table, so the correlation is never true and the aggregate (`COUNT(*)`, `SUM`, …) is always `0`/empty. No error is raised — the query just returns wrong numbers.
-- **When to check**: Any correlated scalar subquery written inside a Drizzle `` sql`` `` template — especially a per-row `COUNT`/`SUM` that references both the outer and inner tables (load counters, capacity checks, "active children" tallies). Unit tests that mock `db.select` will NOT catch this; only a real-Postgres (integration) test does.
-- **Fix pattern**: Write the correlated columns as **literal, table-qualified SQL** inside the template — `` sql`... WHERE sessions.agent_server_id = agent_servers.id ...` `` — instead of interpolating Drizzle column objects. Or use a `LEFT JOIN LATERAL` with explicit aliases (the shape documented in migration `0036_sessions_agent_server_id.sql`). Cover it with an integration test against a real DB, not a mocked one — see `apps/dev/src/__tests__/integration/session-dispatcher.test.ts`.
-- **History**: `SessionDispatcher.pickLeastLoadedServer()` in PR #714 — the active-session load count rendered `WHERE agent_server_id = id`, so every agent-server read as load 0: capacity (`active >= max`) was never enforced and least-loaded routing collapsed to the lowest server id, defeating the bet's horizontal scaling. Caught by a real-Postgres dispatch test, not the mocked unit tests.
+### Integration Test `global-setup.ts` Leaks a Connection Pool Per Test File (`sorry, too many clients already`)
+**Check when:** Any time you add a second/independent DB client (or anything wrapping one, like `createDb()`) inside a Vitest `setupFiles` module — especially one with `beforeAll`/`afterAll` lifecycle hooks that are easy to assume run "once for the whole suite" when they actually run per test file.
+[Full entry](../../docs/pitfalls/integration-test-pool-leak.md)
 
-## Missing Events Audit Log on Entity Mutations
+### Interactive Sessions Dispatched to a Remote Agent-Server Never Received Their First Turn
+**Check when:** Any time a workflow has both a local (Docker/in-process) implementation and a remote (HTTP-dispatched) implementation of the same session/job lifecycle — especially a step that's easy to think of as "part of container startup" (like seeding a process's stdin) rather than a first-class, independently-dispatched action.
+[Full entry](../../docs/pitfalls/remote-interactive-first-turn.md)
 
-- **What**: The CLAUDE.md rule states "Events logged on every mutation (create/update/delete) for audit + real-time." Omitting the `events` insert is a silent failure — the mutation succeeds, no error is raised, but the audit trail is broken and SSE-based real-time invalidation never fires for that change.
-- **When to check**: Any time you write a `db.update()` or `db.insert()` against a first-class entity table (`integrations`, `sessions`, `objects`, `triggers`, `workspaces`, `actors`). Also check any helper or service method that wraps a mutation (e.g. `markRevoked`, `updateStatus`) — these are easy to miss because the mutation is one level removed from the route handler.
-- **Fix pattern**: Every mutation must be followed by a `db.insert(events).values({ workspaceId, actorId, action: 'created'|'updated'|'deleted', entityType, entityId, data: {...changed fields} })`. For service-layer methods that don't have direct access to `actorId`, query the entity row first to get `createdBy` and `workspaceId`, then insert the event. See `TokenManager.markRevoked()` in `apps/dev/src/lib/integrations/oauth/token-manager.ts` for the established pattern.
-- **History**: `TokenManager.markRevoked()` in PR #879 updated `integrations.status` to `'revoked'` without inserting an events row, silently breaking the audit trail and real-time feed for revocation events. Fixed in the post-review commit on `task/t2-token-manager`.
+### The Remote Completion Path Skipped Classification and Failover Entirely
+**Check when:** Any time you add a step to `handleCompletion()`, and any time a lifecycle has both a local (Docker/in-process) and a remote (HTTP-dispatched) implementation.
+[Full entry](../../docs/pitfalls/remote-completion-path.md)
 
-## GitHub MCP Server Env Key Must Be `GITHUB_PERSONAL_ACCESS_TOKEN`, Not `GITHUB_TOKEN`
+### Verifying Against Stale State — `dist/` Output and Uncommitted Files
+**Check when:** After editing anything under `packages/` whose consumers are tested from `apps/`; before claiming a pushed branch is green; and any time you are verifying while part of the tree is intentionally uncommitted (parallel agents, split PRs, work owned by another session).
+[Full entry](../../docs/pitfalls/stale-dist-uncommitted.md)
 
-- **What**: `@modelcontextprotocol/server-github` reads its auth token exclusively from the `GITHUB_PERSONAL_ACCESS_TOKEN` env var. Passing the token under the key `GITHUB_TOKEN` in an MCP server's `env` object is silently ignored — no error, the subprocess just makes unauthenticated requests, which surface later as 403 / rate-limit-shaped errors on every GitHub tool call (read, review, merge). This is distinct from the *container-level* env var also named `GITHUB_TOKEN` (set by `session-manager.ts` and consumed by `envsubst`/the `gh` CLI) — that one is fine to keep as `GITHUB_TOKEN`. The bug is specifically the **object key** inside `env: { ... }` on a `@modelcontextprotocol/server-github` MCP server entry — that key is what gets handed to the subprocess as an environment variable name.
-- **When to check**: Any time you add or edit a `github` MCP server entry — an `env: { <KEY>: '${...}' }` block whose `args` include `@modelcontextprotocol/server-github` — in an agent template, seed data, or the frontend "Add GitHub" quick-add.
-- **Fix pattern**: The env object key must be `GITHUB_PERSONAL_ACCESS_TOKEN`. The value (the `${GITHUB_TOKEN}` / `${GITHUB_TOKEN_<OWNER>}` placeholder, or the literal token) is unaffected — only the key changes. See `packages/shared/src/templates/development-agents.ts` (`githubTool`/`githubPlusMaskinTools`), `apps/web/src/components/agents/mcp-servers.tsx` (`handleAddGithub`), and `apps/dev/src/services/session-manager.ts` (auto-injected per-org `github-<owner>` MCP entries) for the corrected pattern.
-- **History**: All four GitHub-identity MCP servers (`github`, `github_approver`, `github-sindre-ai`, `github-vaerksted-ai`) used by the Code Reviewer agent were misconfigured with `GITHUB_TOKEN` as the env key, blocking auto-merge on every PR until the live agent configs were corrected. Root-caused and fixed in code across `packages/db/src/seed.ts`, `packages/shared/src/templates/development-agents.ts`, `apps/web/src/components/agents/mcp-servers.tsx`, and `apps/dev/src/services/session-manager.ts` so new agents and new GitHub integrations don't reintroduce it.
+### A "Healthy" Collector Component That Silently Matches Nothing
+**Check when:** Any change to an Alloy config, or a first install on a new host.
+[Full entry](../../docs/pitfalls/alloy-silent-empty.md)
 
-## New Workspace Package Missing from `apps/dev/Dockerfile` COPY List
+### A Grafana Alert Rule That Imports Cleanly and Then Says Nothing Useful
+**Check when:** Any time you add or edit a file under `observability/*/alerts/`, or any Grafana alert rule defined as YAML rather than in the UI.
+[Full entry](../../docs/pitfalls/grafana-alert-rules.md)
 
-- **What**: `apps/dev/Dockerfile` copies each workspace package's `package.json` individually (one `COPY packages/<name>/package.json packages/<name>/package.json` line per package) *before* `RUN pnpm install --frozen-lockfile`, so Docker can cache the install layer. If a new package under `packages/` is added but its `package.json` COPY line is not added to this list, `pnpm install` never sees that package and never installs its dependencies. The later `COPY packages/ packages/` still copies the package's source, so the build proceeds into `pnpm --filter='./packages/*' build` and fails with `tsc` errors like `error TS2307: Cannot find module '<dep>'` for every dependency of the new package — plus a telling `WARN Local package.json exists, but node_modules missing, did you mean to install?`. This is a 100%-reproducible build failure on every subsequent commit to `main` until fixed — not a flaky or code-specific bug — because it breaks at the Docker layer-caching step, unrelated to what the commit itself changes.
-- **When to check**: Any time you add a new package directory under `packages/` (i.e., add an entry that will match the `./packages/*` pnpm filter). Before merging, confirm `apps/dev/Dockerfile` has a `COPY packages/<name>/package.json packages/<name>/package.json` line for it, alongside the other `packages/*/package.json` COPY lines (currently before line ~14, immediately above `RUN pnpm install --frozen-lockfile`).
-- **Fix pattern**: Add the missing `COPY packages/<name>/package.json packages/<name>/package.json` line to `apps/dev/Dockerfile`, grouped with the other package `COPY` lines, before the `pnpm install --frozen-lockfile` step.
-- **History**: First occurred for `packages/risk-classifier`, fixed in commit `8e1c2d96` ("Fix prod Docker build: missing risk-classifier package.json COPY"). Recurred for `packages/markdown`, introduced in commit `9590e08f` (2026-07-19) and left every subsequent deploy to `main` failing in Coolify for over two weeks (production served stale code from before that commit) until diagnosed and fixed on 2026-08-04.
+### A Frontend Observability SDK That Is Tree-Shaken Out of the Production Bundle
+**Check when:** Any time you add or rely on a `VITE_`-gated SDK, and *specifically* whenever you add a `VITE_` var.
+[Full entry](../../docs/pitfalls/faro-tree-shaken.md)
 
-## Runtime File Reads Relative to `import.meta.url` Break Under esbuild Bundling
+### A Build Plugin Whose Transitive Dep Outranks the Builder's Node Version
+**Check when:** Any time you add a plugin to `vite.config.ts` (or any build config).
+[Full entry](../../docs/pitfalls/vite-plugin-node-engines.md)
 
-- **What**: `apps/dev/build.mjs` bundles the entire app into a single flat `dist/index.js` with esbuild (`bundle: true`). Code that computes a data-file path as `dirname(fileURLToPath(import.meta.url)) + '/some-dir'` — expecting the compiled file to still sit next to a checked-in folder — breaks silently at build time (no type error, no lint error, the build succeeds) because after bundling `import.meta.url` resolves to `dist/index.js`, not the source file's original location. The directory it looks for (e.g. `dist/data/`) never gets created by the build or the Dockerfile, so the first read throws `ENOENT` at runtime. Because the file is read at **module top-level** (not inside a function), the crash happens at import time — before the server even starts listening — so it takes down the whole process on boot.
-- **When to check**: Any time you add `readFileSync`/`readdirSync` (or similar) using a path derived from `import.meta.url` or `__dirname` in code that lives under `apps/dev/src/` (or any other app built with `build.mjs`'s single-file esbuild bundle). This pattern is invisible in local dev (`pnpm dev` runs `tsx watch src/index.ts` unbundled, where the compiled-file-relative path is still correct) and invisible in CI's e2e/unit tests (they also run via `tsx`, never the built `dist/index.js`) — it only surfaces after a real deploy of the bundled artifact.
-- **Fix pattern**: Prefer a static `import` of the data file (e.g. `import data from './data/foo.json'`, `resolveJsonModule` is already on in the root `tsconfig.json`) so esbuild inlines the content into the bundle at build time — this removes the runtime filesystem dependency entirely and can't break under bundling. If the data can't be a static import (e.g. it's not JSON, or it's genuinely meant to be swapped without a rebuild), copy it into `dist/` explicitly as a `build.mjs` post-build step and read it from a path derived the same way, or read it from `process.cwd()`-relative repo paths instead of `import.meta.url`. CI's `integration-tests` job now boots the actual `apps/dev/dist/index.js` bundle and polls `/api/health` before running tests (see `.github/workflows/ci.yml`, step "Smoke test — boot the built server") — this catches import-time crashes like this one before merge, since it's the only CI job that runs the real bundled artifact instead of `tsx`.
-- **History**: `apps/dev/src/lib/marketplace-loops/loop-data.ts` read `dev-actors.json`/`dev-triggers.json`/`dev-skills.json` this way; introduced in PR #1163 ("Rebuild catalog packages from live Development workspace data"), crashed every production boot with `ENOENT: .../dist/data/dev-actors.json` until fixed by switching to static JSON imports (2026-08-05).
+### An MCP Tool Whose Two Response Channels Carry Different Payloads
+**Check when:** Any time you add or edit a tool in `packages/mcp/src/server.ts` that returns both `content` and `structuredContent`, and any time you add a `heroCard` (or other presentation projection) to a tool's response.
+[Full entry](../../docs/pitfalls/mcp-dual-channel-payload.md)
 
-## Agent Sandbox Sessions Can't Run `docker-compose` — Use `pnpm dev:no-docker`
+### A Successful Turn Whose "Reply" Is the Model Narrating Tool Calls It Never Made
+**Check when:** Any code path that takes model-authored text and puts it in front of a human without a schema between them — the interactive chat finalizer, comment bodies, PR descriptions, anything posted from a `result` envelope.
+[Full entry](../../docs/pitfalls/pseudo-tool-call-reply.md)
 
-- **What**: Agent sessions working on this repo run inside an ephemeral sandbox (a microsandbox/`msb` microVM, per `apps/agent-server/src/services/microsandbox.ts`) with no `docker.sock`, no `DOCKER_HOST`, and no privileged mode — `docker-compose up` (which `pnpm dev` / `pnpm dev:win` depend on for Postgres + SeaweedFS) always fails inside that sandbox. There is no error suggesting a fix; it just fails the way any missing-Docker environment would, and CI is the only place local E2E/integration specs are known to run for a PR authored from inside such a session.
-- **When to check**: Any time an agent session needs a live Postgres + S3-compatible stack for local verification (integration tests per `.claude/rules/verification.md`, manual UI checks, E2E specs) and `pnpm dev`/`pnpm dev:win` fails because Docker isn't available.
-- **Fix pattern**: Run `pnpm dev:no-docker` instead. It calls `scripts/bootstrap-local-devstack.sh`, which vendors a portable Postgres 16 build and the SeaweedFS `weed` binary and runs both as plain unprivileged processes — no Docker, no `apt-get`, no root. (Postgres's own binary dynamically links `libxml2`, which pulls in ICU; the script vendors those three `.so` files the same way, from `snapshot.debian.org`'s permanent content-addressed archive, so nothing is installed system-wide.) Everything is cached under `$MASKIN_DEVSTACK_DIR` (default `~/.cache/maskin-devstack`) and the whole thing is idempotent — safe to re-run. Call `bash scripts/bootstrap-local-devstack.sh` directly if you only need the DB/S3 up (e.g. for `pnpm test:integration`) without the full dev server.
-- **History**: Diagnosed on `bet/foryou-brief-feed` (2026-08-13) when a PR's own description noted local E2E "could not be run in this sandbox" — traced to `container-manager.ts` creating session containers with `NetworkMode: 'bridge'` and no Docker socket bind. `scripts/bootstrap-local-devstack.sh` / `scripts/dev-no-docker.sh` added instead of granting sessions a Docker socket (larger attack surface) or baking Postgres/SeaweedFS into `docker/agent-base`'s image (forces every session to carry the weight even when it never touches the DB).
+### An OAuth Scope Requested in Code but Not Declared in the Provider's App Manifest
+**Check when:** Any time you add, rename or remove an entry in a provider config's `scopes` array or `extraAuthParams.user_scope`.
+[Full entry](../../docs/pitfalls/oauth-scope-manifest.md)
 
-## Integration Test `global-setup.ts` Leaks a Connection Pool Per Test File (`sorry, too many clients already`)
+### A Provider Route That Exists in the API but Not for the Provider You Called It With (501)
+**Check when:** Any time you add or edit a Unipile v2 call in `providers/linkedin-unipile/unipile-client.ts`, and any time you copy a path from a Unipile reference page — check whether an inbox-scoped or otherwise provider-scoped variant of that endpoint exists, and prefer it for LinkedIn.
+[Full entry](../../docs/pitfalls/unipile-501-route.md)
 
-- **What**: `apps/dev/src/__tests__/integration/global-setup.ts` is registered as a Vitest `setupFiles` entry, so its top-level `beforeAll`/`afterAll` hooks run fresh **for every test file**, not once globally. `beforeAll` creates two independent `postgres.js` clients — `sql = postgres(url)` and `db = createDb(url)` (which internally makes its *own* separate `postgres()` client with its own connection pool, default `max: 10`) — but `afterAll` only ever called `sql.end()`. `db`'s underlying client was never closed, so every test file permanently leaked up to 10 real Postgres connections that were never returned. With enough integration test files, the cumulative leak eventually exceeds Postgres's `max_connections` (100 by default), and whichever files happen to run last fail with `PostgresError: sorry, too many clients already` — a pre-existing latent bug that only becomes visible once the test file count crosses the threshold.
-- **When to check**: Any time you add a second/independent DB client (or anything wrapping one, like `createDb()`) inside a Vitest `setupFiles` module — especially one with `beforeAll`/`afterAll` lifecycle hooks that are easy to assume run "once for the whole suite" when they actually run per test file.
-- **Fix pattern**: Every `postgres()` client opened in `beforeAll` must be closed in `afterAll`. If a helper like `createDb()` wraps its own client, close it via drizzle-orm's `db.$client.end()` rather than assuming an outer `sql.end()` covers it. Simplest long-term fix is to avoid a second independent client altogether (build `db` from the same `sql` instance via `drizzle(sql, { schema })`) so a single `.end()` closes everything.
-- **History**: Latent since the integration test harness was introduced; number of integration test files grew from ~40 to 57 in PR #1183 ("Replace sidebar agent chat with full-screen multi-human, multi-agent chat"), tipping the accumulated per-file leak over `max_connections=100` for the first time and reproducibly failing `auth-middleware.test.ts` and `knowledge-events.test.ts` (whichever files ran last) in CI on 2026-08-16. Fixed by closing `db.$client` alongside `sql` in `global-setup.ts`'s `afterAll`.
+### A Field Written to `workspaces.settings` but Not Modelled in the Strict Settings Schema
+**Check when:** Any time you persist a new key into `workspaces.settings` — including a new field inside an existing sub-object like `claude_oauth`, `billing`, or `custom_llm`, and including one written by a route that (correctly) bypasses `PATCH /api/workspaces`.
+[Full entry](../../docs/pitfalls/workspace-settings-strict-schema.md)
 
-## Interactive Sessions Dispatched to a Remote Agent-Server Never Received Their First Turn
+### A Non-Token Field on a Record That Some Writer Rebuilds From Scratch
+**Check when:** Any time you add a field to a record that is persisted as one blob, and any time you write such a blob from a function whose job is only one of the fields.
+[Full entry](../../docs/pitfalls/blob-field-rebuilt-by-writer.md)
 
-- **What**: `session-manager.ts`'s local-Docker path (`launchContainer()`) attaches stdin and then calls `writeInput()` to seed an interactive session's `actionPrompt` as the CLI's first turn — interactive sessions get no `ACTION_PROMPT` env var, so without this the CLI process has nothing to respond to. `SessionDispatcher.dispatch()` (`session-dispatcher.ts`), the parallel production path that routes a session to a remote `agent_servers` row over HTTPS instead of a local container, had no equivalent step: it POSTed `/sessions` to spawn the sandbox and marked the row `running`, but never called `writeInput`/`sendInput`. On the remote path, `agent-run.sh`'s interactive branch pipes `claude`'s stdin from a long-poll GET (`/sessions/:id/input/stream`) fed by an in-memory queue that only apps/dev's `writeInput()` (`POST /sessions/:id/input`) ever pushes into — so the VM booted cleanly (credentials configured, MCP servers set up) and then the `claude -p --input-format stream-json` process blocked forever reading stdin that nothing ever wrote to. No error anywhere: the session sat in `running` with zero logs until the 2-hour timeout backstop fired.
-- **When to check**: Any time a workflow has both a local (Docker/in-process) implementation and a remote (HTTP-dispatched) implementation of the same session/job lifecycle — especially a step that's easy to think of as "part of container startup" (like seeding a process's stdin) rather than a first-class, independently-dispatched action. If local-dev testing passes but the same session type hangs specifically on the remote/msb path, suspect a step present in one launch path and missing in the other, not the transport layer.
-- **Fix pattern**: Added an optional `seedInteractiveTurn` dependency to `SessionDispatcherDeps`, called right after `markDispatched` succeeds in `dispatch()` — non-fatal (try/catch, logs and continues) so a seed failure doesn't undo an already-live sandbox or release its capacity slot. Wired in `index.ts` to a small closure that re-checks `session.interactive` and non-empty `actionPrompt` (mirroring `launchContainer`'s guard) and calls `sessionManager.writeInput()`, which already branches correctly between the remote (`AgentServerClient.sendInput`) and local (`containers.write`) delivery mechanisms based on `session.agentServerId`.
-- **History**: Diagnosed 2026-08-17 after two live sessions in the Development workspace (`8710fc88…`, `3f3726b1…`) hung identically — VM logs (`msb logs <id> --source all --debug` on the Finland box) showed a clean boot through `[system] GitHub credential helper configured for github.com` and then total silence. Traced through `agent-run.sh`'s interactive branch → agent-server's `InputQueue`/`POST /sessions/:id/input` → `session-manager.ts writeInput()` → confirmed `SessionDispatcher.dispatch()` was the only launch path missing the seed-turn call. Fixed in `session-dispatcher.ts` + `index.ts`, with new coverage in `session-dispatcher.test.ts` (`seeds the initial interactive turn after a successful dispatch`, `still reports dispatched when seedInteractiveTurn throws`).
+### Auto-Inject MCP Registered but Never Reaches a Session (Token Resolution Short-Circuit)
+**Check when:** Any time you add a new provider with `mcp.autoInject: true`, and any time you edit `SessionManager.buildLaunchSpec`'s active-integrations loop.
+[Full entry](../../docs/pitfalls/autoinject-mcp-token-short-circuit.md)
 
-## Verifying Against Stale State — `dist/` Output and Uncommitted Files
+### A Re-Entrancy Flag With No Timeout Turns One Hung Await Into a Global Outage
+**Check when:** Any in-process worker loop (`setInterval` + a `running`/`busy` flag, a single-flight mutex, a serial job runner) whose body awaits I/O — DB, HTTP, S3.
+[Full entry](../../docs/pitfalls/reentrancy-flag-no-timeout.md)
 
-- **What**: A check can pass for a reason that will not exist for anyone else. Two shapes of this have bitten:
-  - **Stale `dist/`.** `packages/module-sdk/package.json` maps `exports["."].types` to `./src/index.ts` but `exports["."].default` to `./dist/index.js`. So `tsc` reads fresh **source** while Vitest resolves the built **output**. Any test that exercises real module-sdk behaviour runs against whatever was last built. Two shapes, and the quiet one is the more dangerous:
-    - **Looks stubbed, reaches through**: `vi.mock('@maskin/module-sdk', async (importOriginal) => ({ ...(await importOriginal()) }))`. `apps/web/src/__tests__/components/extensions/extensions-manager.test.tsx` is currently the only one — the mock makes it read as stubbed when it is not.
-    - **Simply unmocked**: a test that imports module-sdk and never mocks it resolves `dist/` with nothing to signal that it has. Currently `components/shared/create-picker.test.tsx` and `hooks/use-available-object-types.test.ts`. Grep for importers that lack a `vi.mock('@maskin/module-sdk'` rather than assuming the mocked ones are the risk. After changing module-sdk, that test fails (or passes) for reasons unrelated to the change until `pnpm --filter @maskin/module-sdk build`. CI is unaffected because turbo builds before test.
-  - **Uncommitted dependencies.** Running `tsc` in a working tree that holds uncommitted files verifies the *tree*, not the *commit*. Confirming that one app directory matches HEAD is not sufficient — the missing piece can be in a `packages/` dependency you are deliberately holding back, and the check will resolve against it silently.
-- **When to check**: After editing anything under `packages/` whose consumers are tested from `apps/`; before claiming a pushed branch is green; and any time you are verifying while part of the tree is intentionally uncommitted (parallel agents, split PRs, work owned by another session).
-- **Fix pattern**: Verify against the artefact you are making a claim about. For a commit or branch, check out a clean copy (or `git show <ref>:<path>`) rather than trusting the working tree. For anything crossing a package boundary, build first — `pnpm --filter <pkg> build` — or run `pnpm type-check` at the root, which builds dependencies in order. State plainly what you actually ran.
-- **History**: `bet/frontend-v2-master` was pushed at `8d6fc0ee` reported as type-clean, but failed `TS2724` on a clean checkout: `extensions-manager.tsx` imported `mergeModuleDefaultSettings` while the export lived in an uncommitted `packages/module-sdk` change (landed separately as PR #1400). The `tsc` run that "passed" had resolved against that uncommitted file. Within the same hour a second session reported `extensions-manager.test.tsx` failing *with* the fix applied — that was a stale `dist/`, not a code fault. Same class of error, once via a working tree and once via a build artefact.
+### A Per-Session Lifecycle Signal Driving Something That Is Really Per-Turn
+**Check when:** Any feature that shows progress or presence for an agent and is driven by `events` rows with `entity_type: 'session'`, or by `sessions.status`.
+[Full entry](../../docs/pitfalls/per-session-vs-per-turn-signal.md)
+
+### A Bare `return` in a Shell Function Under `set -e` Aborts the Whole Script Silently
+**Check when:** Any new or edited function in `docker/agent-base/*.sh`, or any `set -e` script, with an early exit for an optional feature (`[ … ] || return`) or an `&&` list as its last statement.
+[Full entry](../../docs/pitfalls/shell-bare-return-set-e.md)
+
+### A Per-Provider Cleanup That Matches Every Credential of a Multi-Identity Provider
+**Check when:** Any cleanup, sync or reconciliation that matches agent config (`actors.tools.mcpServers`) by URL or name, for a provider whose `identityFanout` is `per-identity` or `per-installation` (LinkedIn today; GitHub's per-installation entries are the next candidate).
+[Full entry](../../docs/pitfalls/per-provider-cleanup-multi-identity.md)
 
 ## Adding New Entries
 
-This file should be updated whenever a new recurring bug pattern is identified. Each entry must include:
+Add the full entry as `docs/pitfalls/<slug>.md` and a matching index block above (title, one-sentence **Check when**, link). Keep the index line to one sentence — detail belongs in the full entry. Each full entry must include:
 
 1. **What** — describe the bug and why it is dangerous (silent failure, security risk, data corruption, etc.)
 2. **When to check** — the specific trigger that should prompt you to look for this pattern

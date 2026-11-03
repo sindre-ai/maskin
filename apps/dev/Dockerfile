@@ -13,6 +13,7 @@ COPY packages/mcp/package.json packages/mcp/package.json
 COPY packages/module-sdk/package.json packages/module-sdk/package.json
 COPY packages/risk-classifier/package.json packages/risk-classifier/package.json
 COPY packages/markdown/package.json packages/markdown/package.json
+COPY packages/email/package.json packages/email/package.json
 COPY extensions/crm/package.json extensions/crm/package.json
 COPY extensions/knowledge/package.json extensions/knowledge/package.json
 COPY extensions/notetaker/package.json extensions/notetaker/package.json
@@ -57,15 +58,62 @@ ARG VITE_POSTHOG_KEY=""
 ARG VITE_POSTHOG_HOST=""
 ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
 ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
+# Grafana Faro. VITE_FARO_URL carries the app key and is public by design (it
+# ships in the bundle, like a Sentry DSN). VITE_MASKIN_COMMIT_SHA becomes the
+# app version, which is what distinguishes one release from another in Grafana.
+# It is supplied by docker-compose.prod.yml from Coolify's SOURCE_COMMIT; left
+# empty the bundle reports version "unknown". (What ties a stack trace to its
+# uploaded source map is a different thing entirely — the bundle id the rollup
+# plugin stamps under a global keyed by appName. See apps/web/vite.config.ts.)
+ARG VITE_FARO_URL=""
+ARG VITE_FARO_APP_KEY=""
+ARG VITE_MASKIN_COMMIT_SHA=""
+# Coolify's Dockerfile build pack passes SOURCE_COMMIT itself, so no variable has
+# to be set by hand: an explicit VITE_MASKIN_COMMIT_SHA still wins, otherwise the
+# commit Coolify is building is used.
+ARG SOURCE_COMMIT=""
+ENV VITE_FARO_URL=$VITE_FARO_URL
+ENV VITE_FARO_APP_KEY=$VITE_FARO_APP_KEY
+ENV VITE_MASKIN_COMMIT_SHA=${VITE_MASKIN_COMMIT_SHA:-$SOURCE_COMMIT}
+# Source-map upload. FARO_API_KEY is a real secret (Grafana Cloud access policy
+# token with sourcemaps:write) and is build-time only — it is never VITE_-
+# prefixed, so it cannot reach the bundle. When any of these four is unset the
+# vite config skips the uploader *and* emits no .map files at all, so an
+# unconfigured build never leaves readable maps in the statically-served dist/.
+ARG FARO_SOURCEMAP_ENDPOINT=""
+ARG FARO_APP_ID=""
+ARG FARO_STACK_ID=""
+ARG FARO_API_KEY=""
+# These four are NOT promoted to ENV, unlike the VITE_ ones above: an ENV
+# persists into the final image and into `docker history`, and FARO_API_KEY is
+# a secret. They are injected onto the build RUN line below instead, so they
+# exist only for the duration of that command. (The ARG values are still
+# visible in `docker history` on the build host — if that matters, switch to
+# `RUN --mount=type=secret`.)
+# NOTE: VITE_SENTRY_DSN is deliberately absent here — see the PR description.
+# The Sentry SPA build has never received a DSN at image build time, so the
+# frontend half of Sentry has been inert in production. Fixing that is a
+# separate change; it is called out so the Faro comparison is not read as
+# Faro-vs-Sentry when Sentry was never reporting from the browser.
 
 COPY apps/web/ apps/web/
 RUN --mount=type=cache,id=turbo,target=/app/.turbo \
+	FARO_SOURCEMAP_ENDPOINT=$FARO_SOURCEMAP_ENDPOINT \
+	FARO_APP_ID=$FARO_APP_ID \
+	FARO_STACK_ID=$FARO_STACK_ID \
+	FARO_API_KEY=$FARO_API_KEY \
 	NODE_OPTIONS=--max-old-space-size=1536 pnpm exec turbo run build --filter=@maskin/web
 
 COPY docker/agent-base/ docker/agent-base/
-COPY docker/browser-sidecar/ docker/browser-sidecar/
 
 ENV NODE_ENV=production
 ENV STATIC_DIR=/app/apps/web/dist
 EXPOSE 3000
-CMD ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+# Coolify's rolling update (Dockerfile build pack) keeps the old container
+# serving until this reports healthy. start-period covers migrate + seed + boot.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=6 \
+	CMD node -e "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+# `exec` so node replaces sh as PID 1 and receives SIGTERM directly; otherwise
+# the graceful shutdown in apps/dev/src/index.ts never runs and docker SIGKILLs
+# after the stop timeout.
+CMD ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && exec node apps/dev/dist/index.js"]

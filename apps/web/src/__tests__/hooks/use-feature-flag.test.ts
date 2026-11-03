@@ -33,8 +33,8 @@ describe('useFeatureFlag', () => {
 	})
 
 	it('returns true once the flag resolves true from the server', async () => {
-		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'new-design': true } })
-		const { result } = renderHook(() => useFeatureFlag('new-design'), { wrapper: TestWrapper })
+		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'sample-flag': true } })
+		const { result } = renderHook(() => useFeatureFlag('sample-flag'), { wrapper: TestWrapper })
 
 		await act(async () => {
 			await loadFeatureFlags()
@@ -44,14 +44,14 @@ describe('useFeatureFlag', () => {
 	})
 
 	it('re-renders when a background revalidation flips the value', async () => {
-		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'new-design': true } })
-		const { result } = renderHook(() => useFeatureFlag('new-design'), { wrapper: TestWrapper })
+		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'sample-flag': true } })
+		const { result } = renderHook(() => useFeatureFlag('sample-flag'), { wrapper: TestWrapper })
 		await act(async () => {
 			await loadFeatureFlags()
 		})
 		expect(result.current).toBe(true)
 
-		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'new-design': false } })
+		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'sample-flag': false } })
 		await act(async () => {
 			await loadFeatureFlags()
 		})
@@ -60,20 +60,20 @@ describe('useFeatureFlag', () => {
 	})
 
 	it('lets the test-only localStorage override win over the server value', async () => {
-		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'new-design': false } })
+		vi.mocked(api.featureFlags.get).mockResolvedValue({ flags: { 'sample-flag': false } })
 		await act(async () => {
 			await loadFeatureFlags()
 		})
-		localStorage.setItem('ff:new-design', 'on')
+		localStorage.setItem('ff:sample-flag', 'on')
 
-		const { result } = renderHook(() => useFeatureFlag('new-design'), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useFeatureFlag('sample-flag'), { wrapper: TestWrapper })
 		expect(result.current).toBe(true)
 	})
 
 	it('stays false when the endpoint fails, and does not throw', async () => {
 		localStorage.setItem(STORAGE_KEY, JSON.stringify({}))
 		vi.mocked(api.featureFlags.get).mockRejectedValue(new Error('500'))
-		const { result } = renderHook(() => useFeatureFlag('new-design'), { wrapper: TestWrapper })
+		const { result } = renderHook(() => useFeatureFlag('sample-flag'), { wrapper: TestWrapper })
 
 		await act(async () => {
 			await loadFeatureFlags()

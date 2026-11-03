@@ -1,18 +1,32 @@
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
+	SelectLabel,
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useCanWrite } from '@/hooks/use-can-write'
 import type { MemberResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { getStatusColor, statusLabel } from '@/lib/constants'
 import { User } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
+import { ViewerTooltip } from '../shared/viewer-tooltip'
+
+/** `default` is the plain form trigger. `chip` is the document's meta-line
+ *  reading (mockup 1058–1094): a `• Status <value>` pill and an
+ *  `[avatar] Driver <Name>` pill. `row` is the properties drawer's reading
+ *  (1352–1396): the value fills its column and only takes a hairline on hover
+ *  or while open, so the drawer reads as a list of values rather than a form. */
+export type PropertySelectVariant = 'default' | 'chip' | 'row'
 
 export function StatusSelect({
 	current,
 	options,
 	onChange,
+	variant = 'default',
 	// Opt-in flag: only the hero copy carries the anchor. The sticky nav's chip
 	// smooth-scrolls to the hero and focuses this trigger — a menu copy would
 	// steal that focus target and break the "click chip → land on hero" path.
@@ -21,21 +35,58 @@ export function StatusSelect({
 	current: string
 	options: string[]
 	onChange: (status: string) => void
+	variant?: PropertySelectVariant
 	heroAnchor?: boolean
 }) {
+	const isChip = variant === 'chip'
+	const isRow = variant === 'row'
+	const dot = getStatusColor(current)
+	const canWrite = useCanWrite()
 	return (
-		<Select value={current} onValueChange={onChange}>
-			<SelectTrigger data-hero-status-trigger={heroAnchor ? '' : undefined}>
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				{options.map((status) => (
-					<SelectItem key={status} value={status}>
-						{status.replace(/_/g, ' ')}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
+		<ViewerTooltip>
+			<Select value={current} onValueChange={onChange} disabled={!canWrite}>
+				<SelectTrigger
+					size={isChip || isRow ? 'chip' : 'default'}
+					// The status pill mirrors the driver pill beside it (mockup
+					// 1060–1066): a dot in the status's colour, the word "Status", then
+					// the value — so the meta line reads as one row of like controls.
+					className={cn(
+						isChip && 'gap-1.5 rounded-[7px] px-2 py-[3px]',
+						isRow && 'w-full justify-between rounded-lg px-[7px] py-1 text-[12.5px]',
+					)}
+					data-hero-status-trigger={heroAnchor ? '' : undefined}
+					title={isChip ? 'Change status' : undefined}
+				>
+					{isRow ? (
+						<span className={cn('min-w-0 truncate font-semibold', dot.text)}>
+							{statusLabel(current)}
+						</span>
+					) : isChip ? (
+						<span className="inline-flex items-center gap-1.5">
+							<span className={cn('shrink-0', dot.text)}>
+								<span aria-hidden="true" className="block size-[7px] rounded-full bg-current" />
+							</span>
+							<span className="text-muted-foreground">Status</span>
+							<span className="font-semibold capitalize text-secondary-foreground">
+								{current.replace(/_/g, ' ')}
+							</span>
+						</span>
+					) : (
+						<SelectValue />
+					)}
+				</SelectTrigger>
+				<SelectContent>
+					<SelectGroup>
+						<SelectLabel className="eyebrow">Set status</SelectLabel>
+						{options.map((status) => (
+							<SelectItem key={status} value={status}>
+								{status.replace(/_/g, ' ')}
+							</SelectItem>
+						))}
+					</SelectGroup>
+				</SelectContent>
+			</Select>
+		</ViewerTooltip>
 	)
 }
 
@@ -45,6 +96,7 @@ export function OwnerSelect({
 	members,
 	currentOwnerId,
 	onChange,
+	variant = 'default',
 	// Sidebar usage already renders a "driver" label to the left of the
 	// trigger (CorePropertyRow) — repeating the icon + "Driver:" text there
 	// just pushes the trigger wide enough to force horizontal scroll.
@@ -53,51 +105,97 @@ export function OwnerSelect({
 	members: MemberResponse[]
 	currentOwnerId: string | null
 	onChange: (owner: string | null) => void
+	variant?: PropertySelectVariant
 	compact?: boolean
 }) {
 	const current = members.find((m) => m.actorId === currentOwnerId)
+	// Integrations are system actors and never pick work up, so they are not
+	// offered as a driver. A driver that is already a system actor stays in the
+	// list so the select can still show it as the current value.
+	const choices = members.filter((m) => m.type !== 'system' || m.actorId === currentOwnerId)
+	const isChip = variant === 'chip'
+	const isRow = variant === 'row'
 
 	const handleChange = (value: string) => {
 		onChange(value === UNASSIGNED_OWNER ? null : value)
 	}
 
+	const canWrite = useCanWrite()
+
 	return (
-		<Select value={currentOwnerId ?? UNASSIGNED_OWNER} onValueChange={handleChange}>
-			<SelectTrigger>
-				<SelectValue>
-					{current ? (
-						<span className="inline-flex items-center gap-1.5">
-							{!compact && current.type !== 'agent' && (
-								<User className="size-3 text-amber-600 shrink-0" />
-							)}
-							{!compact && <span className="text-muted-foreground text-[11px]">Driver:</span>}
-							<ActorAvatar name={current.name} type={current.type} size="sm" />
-							{current.name}
-						</span>
-					) : currentOwnerId ? (
-						<span className="italic text-muted-foreground">
-							Unknown ({currentOwnerId.slice(0, 8)})
-						</span>
-					) : (
-						<span className="text-muted-foreground">
-							{compact ? 'Unassigned' : 'Driver: Unassigned'}
-						</span>
+		<ViewerTooltip>
+			<Select
+				value={currentOwnerId ?? UNASSIGNED_OWNER}
+				onValueChange={handleChange}
+				disabled={!canWrite}
+			>
+				<SelectTrigger
+					size={isChip || isRow ? 'chip' : 'default'}
+					className={cn(
+						isChip && 'gap-1.5 pl-1.5 pr-2',
+						isRow && 'w-full justify-between rounded-lg px-[7px] py-1 text-[12.5px]',
 					)}
-				</SelectValue>
-			</SelectTrigger>
-			<SelectContent>
-				<SelectItem value={UNASSIGNED_OWNER}>
-					<span className="text-muted-foreground">Unassigned</span>
-				</SelectItem>
-				{members.map((m) => (
-					<SelectItem key={m.actorId} value={m.actorId}>
-						<span className="inline-flex items-center gap-1.5">
-							<ActorAvatar name={m.name} type={m.type} size="sm" />
-							{m.name}
-						</span>
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
+					title={isChip ? 'Change who drives this' : undefined}
+				>
+					<SelectValue>
+						{current ? (
+							<span className="inline-flex items-center gap-1.5">
+								{!compact && !isChip && current.type !== 'agent' && (
+									<User className="size-3 text-amber-600 shrink-0" />
+								)}
+								<ActorAvatar
+									name={current.name}
+									type={current.type}
+									size="sm"
+									className={cn(
+										isChip && 'size-[15px] text-[8px]',
+										isRow && 'size-[17px] text-[8.5px]',
+									)}
+								/>
+								{!compact && (
+									<span className="text-muted-foreground">{isChip ? 'Driver' : 'Driver:'}</span>
+								)}
+								<span
+									className={cn(
+										(isChip || isRow) && 'min-w-0 truncate font-semibold text-secondary-foreground',
+									)}
+								>
+									{current.name}
+								</span>
+							</span>
+						) : currentOwnerId ? (
+							<span className="italic text-muted-foreground">
+								Unknown ({currentOwnerId.slice(0, 8)})
+							</span>
+						) : isChip ? (
+							<span className="inline-flex items-center gap-1.5">
+								<span className="text-muted-foreground">Driver</span>
+								<span className="font-semibold text-secondary-foreground">Unassigned</span>
+							</span>
+						) : (
+							<span className="text-muted-foreground">
+								{compact ? 'Unassigned' : 'Driver: Unassigned'}
+							</span>
+						)}
+					</SelectValue>
+				</SelectTrigger>
+				<SelectContent>
+					<SelectGroup>
+						<SelectLabel className="eyebrow">Who drives this</SelectLabel>
+						<SelectItem value={UNASSIGNED_OWNER}>
+							<span className="text-muted-foreground">Unassigned</span>
+						</SelectItem>
+						{choices.map((m) => (
+							<SelectItem key={m.actorId} value={m.actorId}>
+								<span className="inline-flex items-center gap-1.5">
+									<ActorAvatar name={m.name} type={m.type} size="sm" />
+									{m.name}
+								</span>
+							</SelectItem>
+						))}
+					</SelectGroup>
+				</SelectContent>
+			</Select>
+		</ViewerTooltip>
 	)
 }

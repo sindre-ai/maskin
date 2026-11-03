@@ -5,14 +5,19 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './app.css'
 import { initBackNavTracker } from './lib/back-nav-tracker'
+import { initFaro, setFaroView } from './lib/faro'
 import { consumeMagicLink } from './lib/magic-link'
 import { initPosthog } from './lib/posthog'
 import { queryClient } from './lib/query'
 import { initSentry } from './lib/sentry'
+import { initStaleBuildReload } from './lib/stale-build-reload'
 import { ThemeProvider } from './lib/theme'
 import { routeTree } from './routeTree.gen'
 
 initSentry()
+// Faro runs alongside Sentry, not instead of it — see lib/faro.ts. Init both
+// before anything else so a crash during boot is still reported.
+initFaro()
 // Consume any #key=... fragment before the router mounts so the auth guard sees the key.
 consumeMagicLink()
 initPosthog()
@@ -21,11 +26,24 @@ initPosthog()
 // by a browser back to the list would fire popstate before the objects route
 // module ran, and the back-nav landing would go uncounted.
 initBackNavTracker()
+// A tab left open across a deploy asks for renamed files; reload once instead
+// of showing an error (e.g. the agent desktop viewer).
+initStaleBuildReload()
 
 const router = createRouter({
 	routeTree,
 	context: { queryClient },
 	defaultPreloadStaleTime: 0,
+})
+
+// Name the screen in Faro so an error reports the route it happened on.
+// `@grafana/faro-react` only instruments react-router, so this is wired from
+// TanStack Router's own subscription. The leaf match's `routeId` is the route
+// *template* (`/_authed/$workspaceId/objects/$objectId`), so no ids and no
+// free text leave the browser.
+router.subscribe('onResolved', () => {
+	const routeId = router.state.matches.at(-1)?.routeId
+	if (routeId) setFaroView(routeId)
 })
 
 declare module '@tanstack/react-router' {

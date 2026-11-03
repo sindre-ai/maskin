@@ -2,6 +2,7 @@ import { AgentOutput } from '@/components/shared/agent-output'
 import type { SessionLogResponse } from '@/lib/api'
 import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
+import { formatToolName } from '@/lib/tool-name'
 import { ChevronDown, ChevronRight, Settings, User, Wrench } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
@@ -156,6 +157,17 @@ export function segmentActivityByMessage(logs: SessionLogResponse[]): {
 			// A tagged user turn starts a new segment — the boundary itself
 			// isn't rendered as a step since the triggering message is already
 			// shown as the actual chat bubble right above the dropdown.
+			// A backend turn replay, not a new message from the human. It reopens
+			// the SAME turn, so it must not start a segment — and it retracts the
+			// failed `result` recorded above, because that envelope is being
+			// retried and will never become a chat message. Leaving it recorded
+			// renders the raw API error as the agent's answer, and shifts the
+			// ordinal pairing in useConversationActivity by one for every later
+			// turn in the session.
+			if (event.kind === 'user' && event.isRetry) {
+				if (cursor.current) cursor.current.result = undefined
+				return
+			}
 			if (event.kind === 'user' && event.conversationMessageId !== undefined) {
 				cursor.current = {
 					conversationMessageId: event.conversationMessageId,
@@ -202,14 +214,16 @@ function isConversationReplyTool(name: string): boolean {
 	return name === 'post_conversation_message' || name.endsWith('__post_conversation_message')
 }
 
-function describeEvent(event: ChatEvent): string | null {
+export function describeEvent(event: ChatEvent): string | null {
 	switch (event.kind) {
 		case 'text':
-			return truncate(event.text.replace(/\s+/g, ' ').trim(), 80) || null
+			return truncate(stripInlineMarkdown(event.text).replace(/\s+/g, ' ').trim(), 80) || null
 		case 'tool_use':
-			return isConversationReplyTool(event.name) ? CONVERSATION_REPLY_LABEL : `Using ${event.name}`
+			return isConversationReplyTool(event.name)
+				? CONVERSATION_REPLY_LABEL
+				: formatToolName(event.name)
 		case 'thinking':
-			return event.redacted ? 'Thinking (redacted)…' : 'Thinking…'
+			return 'Thinking…'
 		case 'user':
 			return 'The user sent a message'
 		case 'result':
@@ -220,6 +234,21 @@ function describeEvent(event: ChatEvent): string | null {
 		case 'debug':
 			return null
 	}
+}
+
+/**
+ * The preview is a single plain-text line, so markdown markers would show up as
+ * literal stars and backticks. Strips them before the line is truncated, so a
+ * cut can't leave half a pair behind.
+ */
+function stripInlineMarkdown(text: string): string {
+	return text
+		.replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+\.)\s+/gm, '')
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+		.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2')
+		.replace(/\*(?=\S)([^*\n]*?\S)\*/g, '$1')
+		.replace(/\b_(?=\S)([^_\n]*?\S)_\b/g, '$1')
+		.replace(/`([^`\n]+)`/g, '$1')
 }
 
 function truncate(text: string, max: number): string {
@@ -281,7 +310,7 @@ function EventBlock({ event }: { event: ChatEvent }) {
 
 function SystemLine({ text }: { text: string }) {
 	return (
-		<div className="text-[11px] font-mono text-text-muted italic whitespace-pre-wrap break-words">
+		<div className="text-[11px] font-mono text-muted-foreground italic whitespace-pre-wrap break-words">
 			{text}
 		</div>
 	)
@@ -289,7 +318,7 @@ function SystemLine({ text }: { text: string }) {
 
 function PlainStdoutLine({ text }: { text: string }) {
 	return (
-		<div className="text-[11px] font-mono text-text-muted whitespace-pre-wrap break-words">
+		<div className="text-[11px] font-mono text-muted-foreground whitespace-pre-wrap break-words">
 			{text}
 		</div>
 	)
@@ -301,7 +330,7 @@ function StderrLine({ text }: { text: string }) {
 
 function SystemEventLine({ subtype }: { subtype: string }) {
 	return (
-		<div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+		<div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
 			<Settings size={12} />
 			<span>
 				system <span className="font-mono">{subtype}</span>
@@ -329,26 +358,26 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 	const [open, setOpen] = useState(false)
 	const preview = describeToolInput(input)
 	return (
-		<div className="rounded-md border border-border bg-bg text-xs">
+		<div className="rounded-md border border-border bg-muted text-xs">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full items-center gap-1.5 px-2 py-1.5 min-w-0 text-left text-text-secondary hover:bg-bg-hover cursor-pointer"
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 min-w-0 text-left text-muted-foreground hover:bg-accent cursor-pointer"
 				aria-expanded={open}
 			>
 				{open ? (
-					<ChevronDown size={14} className="shrink-0 text-text-muted" />
+					<ChevronDown size={14} className="shrink-0 text-muted-foreground" />
 				) : (
-					<ChevronRight size={14} className="shrink-0 text-text-muted" />
+					<ChevronRight size={14} className="shrink-0 text-muted-foreground" />
 				)}
-				<Wrench size={12} className="shrink-0 text-text-muted" />
-				<span className="font-mono text-text shrink-0">{name}</span>
+				<Wrench size={12} className="shrink-0 text-muted-foreground" />
+				<span className="font-mono text-foreground shrink-0">{formatToolName(name)}</span>
 				{preview && !open && (
-					<span className="truncate font-mono text-text-muted min-w-0 flex-1">{preview}</span>
+					<span className="truncate font-mono text-muted-foreground min-w-0 flex-1">{preview}</span>
 				)}
 			</button>
 			{open && (
-				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-text-secondary text-xs whitespace-pre-wrap break-words">
+				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-muted-foreground text-xs whitespace-pre-wrap break-words">
 					{formatToolInput(input)}
 				</pre>
 			)}
@@ -358,27 +387,27 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 
 function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean }) {
 	const [open, setOpen] = useState(false)
-	const label = redacted ? 'Thinking (redacted)' : 'Thinking'
+	const label = 'Thinking'
 	const body = redacted
 		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text
 	return (
-		<div className="rounded-md border border-border bg-bg text-xs">
+		<div className="rounded-md border border-border bg-muted text-xs">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-text-secondary italic hover:bg-bg-hover cursor-pointer"
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-muted-foreground italic hover:bg-accent cursor-pointer"
 				aria-expanded={open}
 			>
 				{open ? (
-					<ChevronDown size={14} className="shrink-0 not-italic text-text-muted" />
+					<ChevronDown size={14} className="shrink-0 not-italic text-muted-foreground" />
 				) : (
-					<ChevronRight size={14} className="shrink-0 not-italic text-text-muted" />
+					<ChevronRight size={14} className="shrink-0 not-italic text-muted-foreground" />
 				)}
-				<span className="text-text-muted">{label}</span>
+				<span className="text-muted-foreground">{label}</span>
 			</button>
 			{open && (
-				<div className="whitespace-pre-wrap border-t border-border px-3 py-2 text-text-muted italic">
+				<div className="whitespace-pre-wrap border-t border-border px-3 py-2 text-muted-foreground italic">
 					{body}
 				</div>
 			)}

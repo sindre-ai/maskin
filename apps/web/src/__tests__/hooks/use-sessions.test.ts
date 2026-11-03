@@ -1,28 +1,42 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/api', () => ({
+vi.mock('@/lib/api', async (importOriginal) => ({
+	// Keep the real ApiError: the hook checks for a viewer refusal with instanceof.
+	...(await importOriginal<typeof import('@/lib/api')>()),
 	api: {
 		sessions: {
 			get: vi.fn(),
 			list: vi.fn(),
 			logs: vi.fn(),
 			create: vi.fn(),
+			stop: vi.fn(),
+			stats: vi.fn(),
 		},
+	},
+}))
+
+vi.mock('sonner', () => ({
+	toast: {
+		error: vi.fn(),
 	},
 }))
 
 import {
 	useActiveSessionsForActor,
+	useActiveSessionsForConversation,
 	useActorSessionsInfinite,
 	useCreateSession,
 	useMentionSessionsForObject,
 	useSession,
 	useSessionErrorLog,
+	useStopSession,
+	useWorkspaceSessionStats,
 	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
+import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -99,7 +113,7 @@ describe('useSession', () => {
 })
 
 describe('useWorkspaceSessions', () => {
-	it('fetches sessions for workspace', async () => {
+	it('fetches a single 100-row page by default', async () => {
 		const mockSessions = [buildSession({ id: 'session-1' }), buildSession({ id: 'session-2' })]
 		vi.mocked(api.sessions.list).mockResolvedValue(mockSessions)
 
@@ -109,7 +123,11 @@ describe('useWorkspaceSessions', () => {
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(mockSessions)
-		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, { limit: '100' })
+		expect(api.sessions.list).toHaveBeenCalledTimes(1)
+		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			verbose: 'true',
+			limit: '100',
+		})
 	})
 
 	it('exposes error when API rejects', async () => {
@@ -121,6 +139,33 @@ describe('useWorkspaceSessions', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Server error')
+	})
+})
+
+describe('useWorkspaceSessionStats', () => {
+	it('fetches the per-agent stats in one request, however large the history is', async () => {
+		const stats = [
+			{
+				actor_id: 'actor-1',
+				total: 59_500,
+				active: 2,
+				total_cost_usd: 1234.5,
+				last_30d_cost_usd: 99.25,
+				latest_status: 'completed',
+				latest_session_at: '2026-10-29T07:00:00.000Z',
+			},
+		]
+		vi.mocked(api.sessions.stats).mockResolvedValue(stats)
+
+		const { result } = renderHook(() => useWorkspaceSessionStats(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toEqual(stats)
+		expect(api.sessions.stats).toHaveBeenCalledTimes(1)
+		expect(api.sessions.stats).toHaveBeenCalledWith(workspaceId)
+		expect(api.sessions.list).not.toHaveBeenCalled()
 	})
 })
 
@@ -154,6 +199,35 @@ describe('useCreateSession', () => {
 	})
 })
 
+describe('useStopSession', () => {
+	it('calls api.sessions.stop and does not toast on success', async () => {
+		vi.mocked(api.sessions.stop).mockResolvedValue(
+			buildSession({ id: 'session-1', status: 'failed' }),
+		)
+
+		const { result } = renderHook(() => useStopSession(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate('session-1')
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.sessions.stop).toHaveBeenCalledWith('session-1', workspaceId)
+		expect(toast.error).not.toHaveBeenCalled()
+	})
+
+	it('toasts an error when the stop fails instead of failing silently', async () => {
+		vi.mocked(api.sessions.stop).mockRejectedValue(new Error('agent-server request failed'))
+
+		const { result } = renderHook(() => useStopSession(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate('session-1')
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(toast.error).toHaveBeenCalledWith('Failed to stop session')
+	})
+})
+
 describe('useActiveSessionsForActor', () => {
 	it('fetches active sessions for actor', async () => {
 		const mockSessions = [buildSession({ id: 'session-1', status: 'running' })]
@@ -166,6 +240,7 @@ describe('useActiveSessionsForActor', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(mockSessions)
 		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			verbose: 'true',
 			actor_id: 'actor-1',
 			status: 'running',
 		})
@@ -204,6 +279,7 @@ describe('useMentionSessionsForObject', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(sessions)
 		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			verbose: 'true',
 			mention_object_id: 'object-1',
 			limit: '100',
 		})
@@ -283,6 +359,7 @@ describe('useActorSessionsInfinite', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data?.pages.flat()).toEqual(mockSessions)
 		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			verbose: 'true',
 			actor_id: 'actor-1',
 			limit: '5',
 			offset: '0',
@@ -313,6 +390,7 @@ describe('useActorSessionsInfinite', () => {
 
 		await waitFor(() => expect(result.current.data?.pages.flat()).toHaveLength(10))
 		expect(api.sessions.list).toHaveBeenLastCalledWith(workspaceId, {
+			verbose: 'true',
 			actor_id: 'actor-1',
 			limit: '5',
 			offset: '5',
@@ -350,5 +428,44 @@ describe('useActorSessionsInfinite', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Server error')
+	})
+})
+
+describe('useActiveSessionsForConversation polling', () => {
+	beforeEach(() => {
+		vi.useFakeTimers()
+		vi.mocked(api.sessions.list).mockReset()
+	})
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	async function mount(sessions: SessionResponse[]) {
+		vi.mocked(api.sessions.list).mockResolvedValue(sessions)
+		renderHook(() => useActiveSessionsForConversation(workspaceId, 'conv-1'), {
+			wrapper: TestWrapper,
+		})
+		await vi.advanceTimersByTimeAsync(0)
+		return vi.mocked(api.sessions.list)
+	}
+
+	it('polls every few seconds while a session in the conversation is live', async () => {
+		const list = await mount([buildSession({ id: 's1', status: 'running' })])
+		expect(list).toHaveBeenCalledTimes(1)
+
+		await vi.advanceTimersByTimeAsync(5_000)
+		expect(list).toHaveBeenCalledTimes(2)
+		await vi.advanceTimersByTimeAsync(5_000)
+		expect(list).toHaveBeenCalledTimes(3)
+	})
+
+	it('falls back to a slow floor when no session in the conversation is live', async () => {
+		const list = await mount([buildSession({ id: 's1', status: 'completed' })])
+		expect(list).toHaveBeenCalledTimes(1)
+
+		await vi.advanceTimersByTimeAsync(20_000)
+		expect(list).toHaveBeenCalledTimes(1)
+		await vi.advanceTimersByTimeAsync(10_000)
+		expect(list).toHaveBeenCalledTimes(2)
 	})
 })

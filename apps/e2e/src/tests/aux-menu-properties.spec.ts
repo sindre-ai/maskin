@@ -25,7 +25,7 @@ test.describe('AuxiliaryActionMenu — no duplicated properties on bet detail', 
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue(bet.title ?? '', {
+			await expect(page.getByRole('heading', { level: 1, name: bet.title ?? '' })).toBeVisible({
 				timeout: 10_000,
 			})
 
@@ -51,21 +51,21 @@ test.describe('AuxiliaryActionMenu — no duplicated properties on bet detail', 
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue(bet.title ?? '', {
+			await expect(page.getByRole('heading', { level: 1, name: bet.title ?? '' })).toBeVisible({
 				timeout: 10_000,
 			})
 
 			// The single home for Status/Driver editing, on every viewport — this is
 			// what justifies dropping them from the ⋯ menu.
 			//
-			// Scoped to the header and exact: the fixture builds the workspace name
-			// out of the test title (auth.fixture.ts), so the switcher's aria-label
-			// contains the word "Properties" on this very test — and a non-exact
-			// name match is a case-insensitive substring, which also catches the
-			// sidebar's own "Expand properties" / "File properties" buttons.
-			await expect(
-				page.locator('header').getByRole('button', { name: 'Properties', exact: true }),
-			).toBeVisible()
+			// Exact: the fixture builds the workspace name out of the test title
+			// (auth.fixture.ts), so the switcher's aria-label contains the word
+			// "Properties" on this very test — and a non-exact name match is a
+			// case-insensitive substring, which also catches the sidebar's own
+			// "Expand properties" / "File properties" buttons. The toggle lives on
+			// the detail page bar (ObjectDetailHeader), not the shared <header>
+			// nav row, so the locator is page-scoped.
+			await expect(page.getByRole('button', { name: 'Properties', exact: true })).toBeVisible()
 		})
 	}
 })

@@ -22,11 +22,9 @@ function headerNewTrigger(page: Page) {
 	return page.locator('header').getByRole('button', { name: 'More ways to start' })
 }
 
-// Scopes to the open dropdown's content — the E2E fixture derives the test
-// actor's display name from the test title (`E2E ${testInfo.title}...`), so
-// an unscoped `page.getByText('Create an object')` can spuriously match the
-// actor/workspace name in the sidebar on tests whose title contains that
-// phrase (e.g. this file's own "hides ... Create an object ..." test).
+// Scopes to the open dropdown's content so an unscoped
+// `page.getByText('Create an object')` can't match similar copy elsewhere on
+// the page.
 function newMenu(page: Page) {
 	return page.getByRole('menu')
 }
@@ -120,33 +118,37 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /find a past conversation/i }).click()
 
-		// v2's palette rewrote its own prompt (components/command-palette.tsx).
-		await expect(page.getByPlaceholder('Run a command or jump to…')).toBeVisible()
+		await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
 	})
 
-	test('hides "Create an object" but keeps the menu on an object-detail page', async ({
+	// v2 gives the object page the same split New button as every other screen
+	// (mockup 925–946), so its menu offers the same sections. The pre-v2
+	// contract that hid "Create an object" here is superseded — see
+	// sticky-nav-bet.spec.ts, which pins the same behaviour from the other side.
+	// The pre-v2 branch still hides it: `Header` only passes
+	// `hideObjectSection` on the non-crumb path, which is the branch the
+	// legacy object document renders through.
+	test('keeps "Create an object" and the rest of the menu on an object-detail page', async ({
 		page,
 		account,
 	}) => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Header New menu object-detail check',
-			status: 'signal',
+			status: 'opportunity',
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		// The object title is an editable <textarea> (object-document.tsx), never a
-		// heading — wait on its value to know the object has loaded.
-		await expect(page.getByPlaceholder('Untitled')).toHaveValue(
-			'Header New menu object-detail check',
-			{ timeout: 10000 },
-		)
+		// The object title is a static <h1> on the v2 detail shell — wait on it
+		// to know the object has loaded.
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Header New menu object-detail check' }),
+		).toBeVisible({ timeout: 10000 })
 
 		await expect(headerNewTrigger(page)).toBeVisible()
 		await headerNewTrigger(page).click()
 
 		await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
-		await expect(newMenu(page).getByText('Create an object')).toHaveCount(0)
-		await expect(page.getByRole('menuitem', { name: /^new task/i })).toHaveCount(0)
+		await expect(newMenu(page).getByText('Create an object')).toHaveCount(1)
 	})
 })
