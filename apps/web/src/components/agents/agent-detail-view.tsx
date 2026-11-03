@@ -18,7 +18,7 @@ import { useAgentPause, useAgentRun, useDeleteActor } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
-import type { ActorResponse } from '@/lib/api'
+import { type ActorResponse, ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
@@ -66,7 +66,10 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 				)
 			}
 			onPause={() =>
-				pause.mutate(agent.id, { onError: () => toast.error(`Couldn't disable ${agent.name}`) })
+				pause.mutate(agent.id, {
+					onError: (err) =>
+						toast.error(err instanceof ApiError ? err.message : `Couldn't disable ${agent.name}`),
+				})
 			}
 			isRunPending={run.isPending}
 			isPausePending={pause.isPending}

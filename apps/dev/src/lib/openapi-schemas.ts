@@ -363,6 +363,8 @@ export const sessionResponseSchema = z.object({
 	result: jsonbField,
 	snapshotPath: z.string().nullable(),
 	currentActivity: z.string().nullable(),
+	// Set when the session runs on an agent server, which cannot pause it.
+	agentServerId: z.string().uuid().nullable().optional(),
 	startedAt: z.string().nullable(),
 	completedAt: z.string().nullable(),
 	timeoutAt: z.string().nullable(),
