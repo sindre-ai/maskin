@@ -46,6 +46,8 @@ export interface MarkdownRendererProps {
 	onMentionClick?: (actor: MentionActor) => void
 	/** Ids the author tagged; those mentions draw as the brand chip. See MentionedText. */
 	taggedActorIds?: string[]
+	/** The viewer, so a tag of themselves draws amber. See MentionedText. */
+	selfActorId?: string | null
 	/**
 	 * When true, fenced blocks are handed to `renderCodeBlock`. Defaults to
 	 * false so read paths that don't opt in stay on the plain `<pre>` path.
@@ -97,8 +99,9 @@ function wrapWithMentions(
 	actors: MentionActor[],
 	onMentionClick?: (actor: MentionActor) => void,
 	taggedActorIds?: string[],
+	selfActorId?: string | null,
 ): ReactNode {
-	const mentionProps = { actors, onMentionClick, taggedActorIds }
+	const mentionProps = { actors, onMentionClick, taggedActorIds, selfActorId }
 	if (typeof children === 'string') {
 		return <MentionedText content={children} {...mentionProps} />
 	}
@@ -141,6 +144,7 @@ export function MarkdownRenderer({
 	mentionActors,
 	onMentionClick,
 	taggedActorIds,
+	selfActorId,
 	renderVisuals = false,
 	renderCodeBlock,
 	renderImage,
@@ -222,7 +226,7 @@ export function MarkdownRenderer({
 
 		const wrap = (children: ReactNode) =>
 			mentionActors
-				? wrapWithMentions(children, mentionActors, onMentionClick, taggedActorIds)
+				? wrapWithMentions(children, mentionActors, onMentionClick, taggedActorIds, selfActorId)
 				: children
 		const overrides = getComponentOverrides?.({ wrap })
 		if (!mentionActors) return { code, img, pre, table, a: link(), ...overrides }
@@ -246,6 +250,7 @@ export function MarkdownRenderer({
 		mentionActors,
 		onMentionClick,
 		taggedActorIds,
+		selfActorId,
 		renderVisuals,
 		renderCodeBlock,
 		renderImage,

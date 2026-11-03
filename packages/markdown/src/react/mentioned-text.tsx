@@ -20,6 +20,8 @@ interface MentionedTextProps {
 	 * @name keeps `mentionClassName`, so text with no stored ids is unchanged.
 	 */
 	taggedActorIds?: string[]
+	/** The viewer. A tagged mention of them draws amber, as a tag of yourself does in chat. */
+	selfActorId?: string | null
 }
 
 const DEFAULT_MENTION_CLASS =
@@ -28,6 +30,9 @@ const DEFAULT_MENTION_CLASS =
 // The chat tag chip (design spec: bg-brand/10, text-brand, semibold, rounded-md, 4px side padding).
 const TAGGED_MENTION_CLASS =
 	'inline-flex items-center rounded-md px-1 font-semibold bg-brand/10 text-brand'
+
+const SELF_TAGGED_MENTION_CLASS =
+	'inline-flex items-center rounded-md px-1 font-semibold bg-warning/10 text-warning'
 
 const CLICKABLE_MENTION_CLASS = 'cursor-pointer hover:opacity-80 transition-opacity'
 
@@ -42,6 +47,7 @@ export function MentionedText({
 	mentionClassName = DEFAULT_MENTION_CLASS,
 	onMentionClick,
 	taggedActorIds,
+	selfActorId,
 }: MentionedTextProps) {
 	const sortedNames = useMemo(
 		() =>
@@ -100,8 +106,12 @@ export function MentionedText({
 		<>
 			{parts.map((p): ReactNode => {
 				if (p.type === 'mention') {
-					const className =
-						p.actor && taggedIds.has(p.actor.id) ? TAGGED_MENTION_CLASS : mentionClassName
+					const tagged = p.actor !== undefined && taggedIds.has(p.actor.id)
+					const className = !tagged
+						? mentionClassName
+						: p.actor?.id === selfActorId
+							? SELF_TAGGED_MENTION_CLASS
+							: TAGGED_MENTION_CLASS
 					if (onMentionClick && p.actor) {
 						const actor = p.actor
 						return (

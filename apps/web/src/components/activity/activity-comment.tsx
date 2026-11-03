@@ -5,6 +5,7 @@ import { useActor, useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { hasDecision, legacyChipsOf } from '@/lib/comment-decision'
 import { Link, useNavigate } from '@tanstack/react-router'
@@ -239,6 +240,7 @@ function CommentRow({
 						mentionActors={actors}
 						onMentionClick={handleMentionClick}
 						taggedActorIds={taggedActorIds}
+						selfActorId={getStoredActor()?.id}
 						size="sm"
 						className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
 						renderVisuals
