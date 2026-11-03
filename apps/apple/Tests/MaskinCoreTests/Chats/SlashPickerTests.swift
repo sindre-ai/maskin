@@ -32,6 +32,7 @@ struct SlashPickerTests {
 	}
 
 	@Test("picking replaces the typed query with the link")
+	@MainActor
 	func pick() {
 		let model = ChatComposerModel(uploader: nil, selfActorID: "me")
 		model.text = "see /pri"

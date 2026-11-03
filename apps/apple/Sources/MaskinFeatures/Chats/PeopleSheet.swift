@@ -237,7 +237,7 @@ struct PeopleSheet: View {
 		if person.kind == .agent, let state = chat.agentStates[person.id], state != .unknown {
 			return state == .running ? "Working now" : "Idle"
 		}
-		PersonRoleLabel.label(
+		return PersonRoleLabel.label(
 			for: person, memberRole: memberRoles[person.id],
 			agentSummary: chat.workspaceActors.first { $0.id == person.id }?.summary)
 	}

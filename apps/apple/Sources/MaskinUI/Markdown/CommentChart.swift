@@ -52,7 +52,7 @@ public struct CommentChartSpec: Equatable, Sendable {
 			default: continue
 			}
 			for name in series {
-				if let n = row[name] as? NSNumber, !(row[name] is Bool) {
+				if let n = row[name] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
 					points.append(Point(label: label, series: name, value: n.doubleValue))
 				}
 			}

@@ -18,7 +18,7 @@ struct AppLockView: View {
 
 	/// "Use Face ID to open Værksted." With no biometry it asks for the passcode; with no workspace
 	/// name it opens "Maskin".
-	static func subtitle(_ biometry: String?, _ workspace: String?) -> String {
+	nonisolated static func subtitle(_ biometry: String?, _ workspace: String?) -> String {
 		let target = workspace?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "Maskin"
 		return biometry.map { "Use \($0) to open \(target)." } ?? "Enter your passcode to open \(target)."
 	}

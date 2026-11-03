@@ -66,7 +66,7 @@ final class DeviceApprovalStore {
 	}
 
 	/// "bcdf2345" and "BCDF-2345" both become "BCDF-2345"; at most eight characters are kept.
-	static func normalize(_ raw: String) -> String {
+	nonisolated static func normalize(_ raw: String) -> String {
 		let chars = raw.uppercased().filter { $0.isLetter || $0.isNumber }.prefix(8)
 		guard chars.count > 4 else { return String(chars) }
 		return "\(chars.prefix(4))-\(chars.dropFirst(4))"

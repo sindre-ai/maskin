@@ -75,6 +75,66 @@ emit()
 const colorsCss = read('colors.css')
 const colorsLight = light(colorsCss)
 const colorsDark = dark(colorsCss)
+
+// v3 palette (design handoff "Maskin iOS v3"): blue-ink neutrals, cobalt signal, black primary
+// buttons. Native-only: the shared token CSS stays v2 until the web adopts v3. Each entry is
+// [light, dark]; a token not listed keeps its CSS value.
+const v3 = {
+	'--surface': ['#fbfcfe', '#0f1215'],
+	'--surface-muted': ['#f4f7fb', '#14181c'],
+	'--surface-alt': ['#edf1f8', '#181c21'],
+	'--surface-hover': ['#e7ecf5', '#1e2328'],
+	'--surface-hover-2': ['#e1e7f0', '#262b31'],
+	'--surface-strong': ['#27324a', '#d5d9de'],
+	'--rule': ['#e1e7f0', '#262b31'],
+	'--rule-2': ['#edf1f8', '#1c2025'],
+	'--rule-strong': ['#c9d1df', '#3a424c'],
+	'--rule-input': ['#e1e7f0', '#262b31'],
+	'--ink': ['#0e1422', '#e9ecef'],
+	'--ink-2': ['#27324a', '#d5d9de'],
+	'--ink-3': ['#3c4656', '#b4bac2'],
+	'--ink-4': ['#566178', '#8a929b'],
+	'--ink-5': ['#9aa4b8', '#6b737c'],
+	'--ink-placeholder': ['#9aa4b8', '#4a525b'],
+	'--patina-50': ['#eef3ff', '#eef3ff'],
+	'--patina-100': ['#e1eaff', '#e1eaff'],
+	'--patina-200': ['#c3d4ff', '#c3d4ff'],
+	'--patina-300': ['#93b0ff', '#93b0ff'],
+	'--patina-400': ['#5b86ff', '#5b86ff'],
+	'--patina-500': ['#1f4fe0', '#1f4fe0'],
+	'--patina-600': ['#1a43c2', '#1a43c2'],
+	'--patina-700': ['#15379f', '#15379f'],
+	'--patina-800': ['#112c7d', '#112c7d'],
+	'--patina-900': ['#0c1f5a', '#0c1f5a'],
+	'--sig': ['#1f4fe0', '#5b86ff'],
+	'--sig-hi': ['#7fa0ff', '#7fa0ff'],
+	'--sig-ink': ['#1f4fe0', '#7fa0ff'],
+	'--sig-tint': ['#e1eaff', '#1b2744'],
+	'--accent': ['#0e1422', '#e9ecef'],
+	'--accent-strong': ['#0e1422', '#e9ecef'],
+	'--accent-deep': ['#0e1422', '#e9ecef'],
+	'--accent-tint': ['#e1eaff', '#1b2744'],
+	'--accent-tint-2': ['#e1eaff', '#1b2744'],
+	'--accent-tint-3': ['#e1eaff', '#1b2744'],
+	'--accent-fg-strong': ['#1f4fe0', '#7fa0ff'],
+	'--accent-fg-quiet': ['#1f4fe0', '#5b86ff'],
+	'--accent-fg-quieter': ['#7fa0ff', '#7fa0ff'],
+	'--accent-fg-quietest': ['#7fa0ff', '#7fa0ff'],
+	'--accent-fg-quietest-2': ['#c3d4ff', '#1f4fe0'],
+	'--badge-fg': ['#0c1f5a', '#05102b'],
+	'--av-fg': ['#0c1f5a', '#c3d4ff'],
+	'--st-fg': ['#0c1f5a', '#eef3ff'],
+	'--st-lab': ['#15379f', '#c3d4ff'],
+	'--warning': ['#9a5a0a', '#e0a33a'],
+	'--warning-tint': ['#fbf1dc', '#2a2112'],
+	'--danger': ['#c23a3a', '#ff7a7a'],
+	'--danger-strong': ['#a82e2e', '#ff9a9a'],
+}
+for (const [name, [l, d]] of Object.entries(v3)) {
+	if (!colorsLight.has(name)) throw new Error(`v3 override for unknown token ${name}`)
+	colorsLight.set(name, l)
+	colorsDark.set(name, d)
+}
 emit('/// Semantic colors. Names mirror the CSS custom properties (`--ink-2` → `ink2`).')
 emit('/// Each adapts to the system appearance; the dark values come from the token')
 emit("/// file's `html.dark` swap, and a token with no dark override is the same in both.")
