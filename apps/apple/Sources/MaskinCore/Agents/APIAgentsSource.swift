@@ -176,7 +176,9 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 		}
 		// A new agent is only visible here once it is a workspace member. A conflict means it
 		// already is.
-		let added = try await IdempotencyKey.bind(idempotencyKey) {
+		// Its own key: the server keeps one ledger row per key, so reusing the actor's key would
+		// overwrite that row, and a retry after a lost response would create a second agent.
+		let added = try await IdempotencyKey.bind("\(idempotencyKey)-member") {
 			try await client.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members(
 				.init(
 					path: .init(id: workspaceID), body: .json(.init(actor_id: id, role: .member))))
