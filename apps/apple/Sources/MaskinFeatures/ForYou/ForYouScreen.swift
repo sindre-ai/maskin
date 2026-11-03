@@ -139,6 +139,8 @@ struct ForYouFeedView: View {
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
+	/// "Take every suggested option?" is asking for confirmation.
+	@State private var confirmTakeSuggested = false
 
 	private let readableWidth: CGFloat = 680
 	/// Compact width reads as a 680 pt column; the wide feed uses the full width (4-iPad.md).
@@ -233,6 +235,13 @@ struct ForYouFeedView: View {
 			Text(chief?.notice ?? "")
 		}
 		.undoToast(undoOffer)
+		.confirmationDialog(
+			"Take every suggested option?", isPresented: $confirmTakeSuggested, titleVisibility: .visible
+		) {
+			Button("Take \(store.suggestedOptionCount) suggested") { takeSuggested() }
+		} message: {
+			Text("Each answer is posted as your reply. You can undo them one by one.")
+		}
 	}
 
 	/// Briefing cards: 128 wide on compact, 204 on iPad, 150 when the sidebar takes room (4-iPad.md).
@@ -341,8 +350,9 @@ struct ForYouFeedView: View {
 			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 		case .loaded:
 			let open = entries.filter { $0.bucket != .done }
-			// The primary group is the feed itself: the design shows no header above it. Related
-			// approvals are folded into one card inside it.
+			// "Needs you N" with its ⋯ menu heads the primary group (v3). Related approvals are
+			// folded into one card inside it.
+			needsHeader
 			needsRows(store.needsItems)
 			if open.isEmpty {
 				CaughtUp(
@@ -367,6 +377,29 @@ struct ForYouFeedView: View {
 			laterSection
 			handledSection(entries.filter { $0.bucket == .done })
 		}
+	}
+
+	/// "Needs you 5" with the ⋯ menu: take every suggested option, dismiss all updates.
+	@ViewBuilder private var needsHeader: some View {
+		let count = store.needsCount
+		if count > 0 {
+			SectionHeader(
+				title: "Needs you", count: count,
+				menu: [
+					store.suggestedOptionCount > 0
+						? ("Take every suggested option", { confirmTakeSuggested = true }) : nil,
+					store.entries.contains { $0.bucket == .fyi }
+						? ("Dismiss all updates", { store.dismissAllFYIs() }) : nil,
+				].compactMap { $0 }
+			)
+			.modifier(ReadableRow(width: rowWidth, inset: rowInset))
+		}
+	}
+
+	private func takeSuggested() {
+		MaskinHaptics.play(.success)
+		let batch = withAnimation(MaskinMotion.standard) { store.takeSuggestedOptions() }
+		offerUndo(batch.summary) { withAnimation(MaskinMotion.standard) { store.undo(batch) } }
 	}
 
 	private func groups(of entries: [FeedEntry]) -> [(bucket: FeedBucket, entries: [FeedEntry])] {
@@ -624,6 +657,8 @@ private struct SectionHeader: View {
 	/// What the count reads as ("2 drafts"); the bare number when nil.
 	var countText: String?
 	var action: (title: String, run: () -> Void)?
+	/// A ⋯ menu at the trailing edge (Needs you): bulk actions on the group.
+	var menu: [(title: String, run: () -> Void)] = []
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s3) {
@@ -642,8 +677,22 @@ private struct SectionHeader: View {
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 					.frame(minHeight: MaskinSpace.touchMin)
 			}
+			if !menu.isEmpty {
+				Menu {
+					ForEach(Array(menu.enumerated()), id: \.offset) { _, item in
+						Button(item.title, action: item.run)
+					}
+				} label: {
+					Image(systemName: "ellipsis")
+						.maskinSymbol(MaskinFontSize.t16, weight: .semibold)
+						.foregroundStyle(MaskinColor.ink)
+						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin, alignment: .trailing)
+						.contentShape(Rectangle())
+				}
+				.accessibilityLabel("More for \(title)")
+			}
 		}
-		.accessibilityElement(children: .combine)
+		.accessibilityElement(children: .contain)
 		.accessibilityAddTraits(.isHeader)
 	}
 }

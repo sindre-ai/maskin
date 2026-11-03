@@ -93,7 +93,7 @@ struct ConversationListView: View {
 					}
 					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				} header: {
-					TeamSectionHeader(label: "Pinned", count: nil)
+					TeamSectionHeader(label: "Pinned", count: layout.tiles.count)
 				}
 			}
 			ForEach(layout.sections) { section in
@@ -159,14 +159,14 @@ struct ConversationListView: View {
 			}
 		}
 		#if os(iOS)
-		.listStyle(.insetGrouped)
-		.listSectionSpacing(MaskinSpace.s11 + MaskinSpace.s1)
+		// v3: edge-to-edge rows with hairlines on the page, not cards in an inset group.
+		.listStyle(.plain)
 		#else
 		.listStyle(.inset)
 		#endif
 		.scrollContentBackground(.hidden)
 		.ambientBackground()
-		.teamSearch(text: $search)
+		// v3 has no search field on Chats: Search is its own tab. `teamSearch` stays for callers that want it.
 		// A search looks through every archived chat, so the pages past the first are fetched.
 		.task(id: !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
 			if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await store.loadMoreArchived() }
@@ -197,7 +197,7 @@ struct ConversationListView: View {
 				Task { for id in target.conversationIDs { await store.delete(id) } }
 			}
 		} message: { _ in
-			Text("It disappears from Team. This can't be undone.")
+			Text("It disappears from your chats. This can't be undone.")
 		}
 	}
 
@@ -431,7 +431,7 @@ struct ConversationListView: View {
 			if store.conversations.isEmpty { LoadingSkeleton(rows: 4).padding(MaskinSpace.s9) }
 		case .failed(let reason):
 			EmptyState(
-				symbol: "wifi.exclamationmark", title: "Couldn't load Team", message: Self.failureMessage(reason)) {
+				symbol: "wifi.exclamationmark", title: "Couldn't load chats", message: Self.failureMessage(reason)) {
 				Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
 			}
 		case .loaded:
@@ -479,9 +479,9 @@ struct ChatsDisplaySheet: View {
 }
 
 extension View {
-	/// The list row look every Team row shares: card fill, hairline, 12 x 16 padding.
+	/// The list row look every Team row shares: edge to edge, hairline, 12 x 16 padding.
 	fileprivate func rowChrome() -> some View {
-		listRowBackground(MaskinSurface.card)
+		listRowBackground(Color.clear)
 			.listRowSeparatorTint(MaskinSurface.separator)
 			.listRowInsets(
 				EdgeInsets(
@@ -497,7 +497,7 @@ extension View {
 	}
 }
 
-/// A section header in the Team list: a mono label, its count and an optional action.
+/// A section header in the Team list: a sentence-case label, its count and an optional action (v3).
 struct TeamSectionHeader<Trailing: View>: View {
 	let label: String
 	let count: Int?
@@ -506,12 +506,21 @@ struct TeamSectionHeader<Trailing: View>: View {
 
 	var body: some View {
 		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-			MonoLabel(label, color: MaskinColor.ink5, size: .section)
-			if let count { MonoLabel("\(count)", color: countColor, size: .section) }
+			Text(label)
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink3)
+			if let count {
+				Text("\(count)")
+					.maskinText(.subhead)
+					.monospacedDigit()
+					.foregroundStyle(countColor)
+			}
 			Spacer(minLength: 0)
 			trailing
 		}
 		.textCase(nil)
+		.padding(.horizontal, MaskinSpace.s9)
+		.padding(.top, MaskinSpace.s6)
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 	}

@@ -31,6 +31,11 @@ public struct SettingsScreen: View {
 	/// behind it.
 	public init(environment: AppEnvironment) { self.init(environment: environment, initialRoute: nil) }
 
+	/// Settings opened onto Sign in a device with a code from `maskin://connect?code=`.
+	public init(environment: AppEnvironment, deviceCode: String) {
+		self.init(environment: environment, initialRoute: .deviceCode(deviceCode))
+	}
+
 	init(environment: AppEnvironment, initialRoute: SettingsRoute?) {
 		self.environment = environment
 		_path = State(initialValue: initialRoute.map { [$0] } ?? [])
@@ -49,6 +54,10 @@ public struct SettingsScreen: View {
 						SettingsRow(
 							symbol: "person.crop.circle", title: "Your profile",
 							detail: environment.auth.session?.name)
+					}
+					NavigationLink(value: SettingsRoute.workspaces) {
+						SettingsRow(
+							symbol: "square.stack", title: "Workspaces", detail: services.workspace?.name)
 					}
 				}
 				if services.workspaceId != nil {
@@ -113,14 +122,14 @@ public struct SettingsScreen: View {
 				}
 				if let appLock, appLock.availability != .unavailable || appLock.isEnabled {
 					Section {
-						Toggle(isOn: appLockBinding(appLock)) {
-							SettingsRow(symbol: "lock", title: "App lock")
+						NavigationLink(value: SettingsRoute.appLock) {
+							SettingsRow(
+								symbol: "lock", title: "App lock", detail: appLock.isEnabled ? "On" : "Off")
 						}
-						.disabled(appLock.isAuthenticating)
 					} header: {
 						Text("Security")
 					} footer: {
-						Text(Self.appLockFooter(appLock.availability))
+						Text(Self.appLockFooter(appLock.availability, delay: appLock.delay))
 					}
 				}
 				Section("About") {
@@ -200,6 +209,12 @@ public struct SettingsScreen: View {
 				case .objectTypes:
 					ObjectTypesView(store: services.schemaStore(), extensions: services.extensionsStore())
 				case .deviceSignIn: DeviceSignInView(store: services.deviceSignInStore())
+				case .deviceCode(let code):
+					DeviceSignInView(store: services.deviceSignInStore(), initialCode: code)
+				case .workspaces:
+					WorkspacesPage(workspaces: environment.workspaces, creator: services.workspaceStore())
+				case .appLock:
+					if let appLock { AppLockSettingsPage(lock: appLock) }
 				case .autonomy:
 					AutonomyView(
 						store: AutonomyStore(
@@ -240,19 +255,13 @@ public struct SettingsScreen: View {
 		await counts?.load()
 	}
 
-	private func appLockBinding(_ lock: AppLockController) -> Binding<Bool> {
-		Binding(
-			get: { lock.isEnabled },
-			set: { on in Task { await lock.setEnabled(on) } })
-	}
-
-	static func appLockFooter(_ availability: AppLockAvailability) -> String {
+	static func appLockFooter(_ availability: AppLockAvailability, delay: AppLockDelay = .default) -> String {
 		let how: String
 		switch availability {
 		case .biometric(let name): how = "Unlock with \(name) or your device passcode."
 		case .passcodeOnly, .unavailable: how = "Unlock with your device passcode."
 		}
-		return "\(how) Maskin locks when you open it, and after \(Int(AppLockController.gracePeriod)) seconds in the background."
+		return "\(how) Maskin locks when you open it, and \(delay == .immediately ? "as soon as you leave it" : "after \(delay.label) in the background")."
 	}
 
 	static var versionString: String {

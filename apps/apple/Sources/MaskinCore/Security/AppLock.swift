@@ -31,6 +31,33 @@ public protocol AppLockAuthenticating: Sendable {
 public protocol AppLockStoring: Sendable {
 	func loadEnabled() -> Bool
 	func saveEnabled(_ enabled: Bool)
+	/// How long in the background before it asks again; nil means the default.
+	func loadDelay() -> AppLockDelay?
+	func saveDelay(_ delay: AppLockDelay)
+}
+
+extension AppLockStoring {
+	public func loadDelay() -> AppLockDelay? { nil }
+	public func saveDelay(_ delay: AppLockDelay) {}
+}
+
+/// How long the app may sit in the background before it asks again.
+public enum AppLockDelay: Double, CaseIterable, Sendable {
+	case immediately = 0
+	case thirtySeconds = 30
+	case oneMinute = 60
+	case fiveMinutes = 300
+
+	public static let `default`: AppLockDelay = .thirtySeconds
+
+	public var label: String {
+		switch self {
+		case .immediately: "Immediately"
+		case .thirtySeconds: "30 seconds"
+		case .oneMinute: "1 minute"
+		case .fiveMinutes: "5 minutes"
+		}
+	}
 }
 
 public struct UserDefaultsAppLockStorage: AppLockStoring, @unchecked Sendable {
@@ -41,6 +68,11 @@ public struct UserDefaultsAppLockStorage: AppLockStoring, @unchecked Sendable {
 
 	public func loadEnabled() -> Bool { defaults.bool(forKey: key) }
 	public func saveEnabled(_ enabled: Bool) { defaults.set(enabled, forKey: key) }
+	public func loadDelay() -> AppLockDelay? {
+		defaults.object(forKey: "app-lock.delay") == nil
+			? nil : AppLockDelay(rawValue: defaults.double(forKey: "app-lock.delay"))
+	}
+	public func saveDelay(_ delay: AppLockDelay) { defaults.set(delay.rawValue, forKey: "app-lock.delay") }
 }
 
 public final class InMemoryAppLockStorage: AppLockStoring, @unchecked Sendable {
@@ -55,7 +87,10 @@ public final class InMemoryAppLockStorage: AppLockStoring, @unchecked Sendable {
 @MainActor @Observable
 public final class AppLockController {
 	/// How long the app may sit in the background before it asks again.
-	public static let gracePeriod: TimeInterval = 30
+	public static let gracePeriod: TimeInterval = AppLockDelay.default.rawValue
+
+	/// The chosen delay; persisted per device.
+	public private(set) var delay: AppLockDelay
 
 	public private(set) var isEnabled: Bool
 	public private(set) var isLocked: Bool
@@ -81,12 +116,25 @@ public final class AppLockController {
 		self.authenticator = authenticator
 		self.now = now
 		let enabled = storage.loadEnabled()
+		delay = storage.loadDelay() ?? .default
 		isEnabled = enabled
 		// Cold launch: locked whenever the lock is on.
 		isLocked = enabled
 	}
 
 	public var availability: AppLockAvailability { authenticator.availability }
+
+	/// "Face ID", "Touch ID" or "Optic ID" for the lock screen's copy; nil with only a passcode.
+	public var biometryName: String? {
+		if case .biometric(let name) = availability { return name }
+		return nil
+	}
+
+	/// "Face ID", "Touch ID" or "Optic ID" for the lock screen's copy; nil with only a passcode.
+	public var biometryName: String? {
+		if case .biometric(let name) = availability { return name }
+		return nil
+	}
 
 	/// Content must be covered: locked, or about to be snapshotted by the system.
 	public var shouldCoverContent: Bool { isEnabled && hasSession && (isLocked || isInactive) }
@@ -116,13 +164,23 @@ public final class AppLockController {
 		return isEnabled
 	}
 
+	public func setDelay(_ new: AppLockDelay) {
+		delay = new
+		storage.saveDelay(new)
+	}
+
+	/// Locks right now (the Settings button). Does nothing while the lock is off.
+	public func lockNow() {
+		if isEnabled, hasSession { isLocked = true }
+	}
+
 	public enum ScenePhase: Sendable { case active, inactive, background }
 
 	public func scenePhaseChanged(_ phase: ScenePhase) {
 		switch phase {
 		case .active:
 			isInactive = false
-			if isEnabled, !isLocked, let at = backgroundedAt, now().timeIntervalSince(at) >= Self.gracePeriod {
+			if isEnabled, !isLocked, let at = backgroundedAt, now().timeIntervalSince(at) >= delay.rawValue {
 				isLocked = true
 			}
 			backgroundedAt = nil

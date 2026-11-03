@@ -102,7 +102,7 @@ private struct ChatsContainer: View {
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
 					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
 					displayToggle: { showDisplay = true },
-					hidesAvatar: true, newAlwaysVisible: true))
+					newAlwaysVisible: true))
 			.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store) }
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)

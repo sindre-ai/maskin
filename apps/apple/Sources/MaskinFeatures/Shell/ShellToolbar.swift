@@ -14,7 +14,7 @@ import SwiftUI
 ///                 Toggle("Show done", isOn: $showDone)
 ///             }))
 ///
-/// Order in the pill is Display, Live, the avatar, then New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
+/// Order in the pill is Live, Display, the avatar, then New at the very right; search is a collapsed icon at the very left, all inside ONE glass capsule (a single
 /// `ToolbarItemGroup`). The per-tab sets are `ShellTab.barItems`. While the content is scrolled New folds away (Live, Display and the
 /// avatar stay). Search is never a bar item: it is the trailing search tab.
 public struct ShellActions {
@@ -111,6 +111,16 @@ private struct ShellToolbarModifier: ViewModifier {
 				// edge to edge.
 				ToolbarItemGroup(placement: .primaryAction) {
 					Group {
+					// Live leads the pill, then Display, then the avatar (v3).
+					if actions.live {
+						Button {
+							liveMeeting.present(.dailyBriefing)
+						} label: {
+							ShellInkCircle(
+								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel)
+						}
+						.buttonStyle(.plain)
+					}
 					if let display = actions.display {
 						Menu {
 							display.content
@@ -132,16 +142,6 @@ private struct ShellToolbarModifier: ViewModifier {
 									Circle().fill(actions.displayActive ? MaskinColor.sigTint : Color.clear))
 						}
 						.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
-					}
-					// Live sits before the avatar, which stays last (as in the v6 bar).
-					if actions.live {
-						Button {
-							liveMeeting.present(.dailyBriefing)
-						} label: {
-							ShellInkCircle(
-								symbol: "waveform", label: LiveMeetingRequest.dailyBriefing.buttonLabel)
-						}
-						.buttonStyle(.plain)
 					}
 					if showsAvatar, !actions.hidesAvatar {
 						Button {

@@ -42,6 +42,9 @@ public final class ObjectsStore {
 	/// loaded; while it is on the list keeps paging until the starred ones surface.
 	public var starredOnly = false
 	public private(set) var searchText = ""
+	/// The chips under the tabs (Starred, New last 7 days, Working now). The API has no filter for
+	/// them, so they narrow the rows loaded so far. Not remembered across launches.
+	public var quickFilters: Set<ObjectsQuickFilter> = []
 	/// Kept for callers that only know about grouping; persisted through `display`.
 	public var grouping: ObjectsGrouping {
 		get { display.groupBy }
@@ -166,6 +169,7 @@ public final class ObjectsStore {
 		var visible = needsYouOnly && typeFilter == nil && effectiveScope == .needsYou ? known : objects
 		if starredOnly { visible = visible.filter(\.isStarred) }
 		if needsYouOnly { visible = visible.filter(needsYou) }
+		for filter in quickFilters { visible = visible.filter { filter.matches($0, now: Date()) } }
 		return visible
 	}
 
@@ -264,6 +268,7 @@ public final class ObjectsStore {
 		typeFilter = nil
 		statusFilter = nil
 		starredOnly = false
+		quickFilters = []
 		searchText = ""
 		actionError = nil
 		hydratedFromCache = false
@@ -893,5 +898,31 @@ public final class ObjectsStore {
 
 	static func message(_ error: Error) -> String {
 		(error as? ObjectsError)?.message ?? error.localizedDescription
+	}
+}
+
+/// A chip under the Items tabs. Each is a plain test on a row, so it works on what is loaded.
+public enum ObjectsQuickFilter: String, CaseIterable, Identifiable, Sendable {
+	case starred, newThisWeek, working
+
+	public var id: String { rawValue }
+
+	public var label: String {
+		switch self {
+		case .starred: "Starred"
+		case .newThisWeek: "New last 7 days"
+		case .working: "Working now"
+		}
+	}
+
+	public var symbol: String? { self == .starred ? "star.fill" : nil }
+
+	public func matches(_ object: WorkObject, now: Date) -> Bool {
+		switch self {
+		case .starred: object.isStarred
+		case .newThisWeek:
+			object.createdAt.map { now.timeIntervalSince($0) <= 7 * 24 * 3600 && $0 <= now } ?? false
+		case .working: object.hasActiveSession
+		}
 	}
 }

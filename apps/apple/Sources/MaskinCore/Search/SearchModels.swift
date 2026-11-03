@@ -12,10 +12,10 @@ public enum SearchGroup: String, Sendable, Equatable, Hashable, CaseIterable {
 
 	public var title: String {
 		switch self {
-		case .team: "Team"
+		case .team: "Chats"
 		case .agents: "Agents"
 		case .flows: "Flows"
-		case .objects: "Objects"
+		case .objects: "Items"
 		case .files: "Files"
 		}
 	}
@@ -31,13 +31,13 @@ public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Id
 	public var id: String { rawValue }
 
 	/// The chips the search tab offers, in order.
-	public static let chips: [SearchScope] = [.all, .team, .objects, .flows, .agents, .files]
+	public static let chips: [SearchScope] = [.all, .objects, .team, .flows, .files]
 
 	public var title: String {
 		switch self {
 		case .all: "All"
-		case .team: "Team"
-		case .objects: "Objects"
+		case .team: "Chats"
+		case .objects: "Items"
 		case .flows: "Flows"
 		case .agents: "Agents"
 		case .files: "Files"
