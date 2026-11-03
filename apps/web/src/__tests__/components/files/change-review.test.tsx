@@ -94,6 +94,10 @@ beforeEach(() => {
 	vi.mocked(trackChangeReviewOpened).mockClear()
 })
 
+// The agent name is bold, so the line is split across elements: match on the paragraph's full text.
+const bannerLine = (text: string) => (_: string, el: Element | null) =>
+	el?.tagName === 'P' && el.textContent === text
+
 describe('ChangeReviewLayer', () => {
 	it('shows only the editor when no proposal is open', async () => {
 		mount([])
@@ -105,7 +109,7 @@ describe('ChangeReviewLayer', () => {
 	it('shows the banner above the editor with the agent and the change count', async () => {
 		mount([proposal()])
 		expect(
-			await screen.findByText('Copywriter proposed 1 change to this text.'),
+			await screen.findByText(bannerLine('Copywriter proposed 1 change to this text.')),
 		).toBeInTheDocument()
 		expect(screen.getByText('editor')).toBeInTheDocument()
 	})
@@ -119,7 +123,7 @@ describe('ChangeReviewLayer', () => {
 			]),
 		])
 		expect(
-			await screen.findByText('Copywriter proposed 2 changes to this text.'),
+			await screen.findByText(bannerLine('Copywriter proposed 2 changes to this text.')),
 		).toBeInTheDocument()
 	})
 

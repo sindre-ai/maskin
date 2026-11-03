@@ -117,4 +117,32 @@ describe('wordDiff', () => {
 		expect(wordDiff('a b', 'a b')).toEqual([{ type: 'same', text: 'a b' }])
 		expect(wordDiff('', 'new words')).toEqual([{ type: 'ins', text: 'new words' }])
 	})
+
+	it('keeps a full stop after a word out of the change when words are added before it', () => {
+		expect(wordDiff('Ramp to 100%.', 'Ramp to 100% over three weeks.')).toEqual([
+			{ type: 'same', text: 'Ramp to 100%' },
+			{ type: 'ins', text: ' over three weeks' },
+			{ type: 'same', text: '.' },
+		])
+	})
+
+	it('shows a comma and new clause as one insert when the old text ended in a full stop', () => {
+		expect(
+			wordDiff(
+				'If it drops, we pause the risk.',
+				'If it drops, we pause the risk, and above 5% loss we stop the ramp.',
+			),
+		).toEqual([
+			{ type: 'same', text: 'If it drops, we pause the risk' },
+			{ type: 'ins', text: ', and above 5% loss we stop the ramp' },
+			{ type: 'same', text: '.' },
+		])
+	})
+
+	it('does not split a full stop inside a word or number', () => {
+		expect(wordDiff('Version 3.5 ships', 'Version 3.5 ships soon')).toEqual([
+			{ type: 'same', text: 'Version 3.5 ships' },
+			{ type: 'ins', text: ' soon' },
+		])
+	})
 })

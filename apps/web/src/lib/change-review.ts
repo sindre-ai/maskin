@@ -152,10 +152,15 @@ export function buildReviewItems(fileText: string, changes: ReviewChangeInput[])
 	return items
 }
 
-/** Word level diff. Whitespace stays attached to the words around it. */
+// A token is a word with the whitespace before it. Punctuation that ends a word
+// (. , ; : ! ?) is a token of its own, so "100%." and "100% over three weeks."
+// share "100%" and the final "." instead of counting as different words.
+const TOKEN = /\s*(?:[^\s.,;:!?]\S*?(?=[.,;:!?]+(?:\s|$))|[.,;:!?]+(?=\s|$)|\S+)|\s+/g
+
+/** Word level diff. Whitespace stays attached to the word after it. */
 export function wordDiff(before: string, after: string): DiffPart[] {
-	const a = before.match(/\S+\s*|\s+/g) ?? []
-	const b = after.match(/\S+\s*|\s+/g) ?? []
+	const a = before.match(TOKEN) ?? []
+	const b = after.match(TOKEN) ?? []
 	const key = (t: string) => t.trim()
 	const n = a.length
 	const m = b.length

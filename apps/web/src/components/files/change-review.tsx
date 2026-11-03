@@ -16,7 +16,7 @@ import { getStoredActor } from '@/lib/auth'
 import { ChangeAppliedContext } from '@/lib/change-applied-context'
 import { type ReviewItem, buildReviewItems, wordDiff } from '@/lib/change-review'
 import { cn } from '@/lib/cn'
-import { X } from 'lucide-react'
+import { CircleAlert, X } from 'lucide-react'
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -34,7 +34,7 @@ const BUTTON_TOUCH = 'max-sm:h-10'
 function DiffText({ before, after }: { before: string; after: string }) {
 	const parts = useMemo(() => wordDiff(before, after), [before, after])
 	return (
-		<p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
+		<p className="whitespace-pre-wrap break-words text-[15px] leading-[1.7] text-foreground">
 			{parts.map((part, i) => {
 				const key = `${part.type}-${i}`
 				if (part.type === 'del')
@@ -97,29 +97,32 @@ function ChangeCard({
 		<section
 			aria-label={`Change ${number}`}
 			className={cn(
-				'rounded-xl border border-brand/30 bg-card p-4 shadow-xs transition-opacity duration-180',
+				'overflow-hidden rounded-xl border bg-card shadow-xs transition-opacity duration-180',
+				stale ? 'border-border' : 'border-brand/30',
 				leaving && 'opacity-0',
 			)}
 		>
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0">
-					<h3 className="text-sm font-semibold text-foreground">Change {number}</h3>
-					{change.reason && <p className="mt-0.5 text-xs text-muted-foreground">{change.reason}</p>}
-				</div>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					disabled={busy || stale}
-					className={BUTTON_TOUCH}
-					onClick={() => setEditing((v) => !v)}
-				>
-					{editing ? 'Done' : 'Edit'}
-				</Button>
+			<div className="flex items-center gap-3 border-b border-border-subtle bg-surface-sunken px-3.5 py-2 text-xs">
+				<h3 className="shrink-0 font-bold text-foreground">Change {number}</h3>
+				{change.reason && (
+					<p className="min-w-0 flex-1 truncate text-muted-foreground">{change.reason}</p>
+				)}
+				{!stale && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						disabled={busy}
+						className={cn('-my-1 ml-auto h-7 shrink-0 px-2 text-xs', BUTTON_TOUCH)}
+						onClick={() => setEditing((v) => !v)}
+					>
+						{editing ? 'Done' : 'Edit'}
+					</Button>
+				)}
 			</div>
 
-			<div className="mt-3">
-				{editing ? (
+			<div className="px-[18px] py-4">
+				{editing && !stale ? (
 					<Textarea
 						autoResize
 						aria-label={`Edit change ${number}`}
@@ -135,7 +138,7 @@ function ChangeCard({
 						}}
 					/>
 				) : stale ? (
-					<p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+					<p className="whitespace-pre-wrap break-words text-[15px] leading-[1.7] text-muted-foreground">
 						{change.newText}
 					</p>
 				) : (
@@ -146,13 +149,14 @@ function ChangeCard({
 			{failed && !stale && (
 				<p
 					role="alert"
-					className="mt-3 rounded-md bg-status-failed-bg px-3 py-2 text-sm text-status-failed-text"
+					className="mx-3.5 mb-3 flex items-start gap-2 rounded-lg bg-status-failed-bg px-3 py-2 text-xs text-status-failed-text"
 				>
+					<CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
 					Couldn't apply this change. Try again.
 				</p>
 			)}
 
-			<div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+			<div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle px-3.5 py-2.5">
 				{stale ? (
 					<p role="alert" className="text-xs text-warning max-sm:w-full">
 						The text this change applies to has been edited since.
@@ -421,7 +425,7 @@ export function ChangeReviewView({
 
 	return (
 		<div
-			className="space-y-3"
+			className="flex flex-col gap-[18px]"
 			onKeyDown={(e) => {
 				if (e.key === 'Escape') onClose()
 			}}
@@ -429,15 +433,19 @@ export function ChangeReviewView({
 			{items.map((item) => {
 				if (item.kind === 'context')
 					return (
-						<p key={item.key} className="px-1 text-sm leading-relaxed text-muted-foreground">
+						<p key={item.key} className="px-1 text-[13px] leading-[1.6] text-muted-foreground">
 							{item.text}
 						</p>
 					)
 				if (item.kind === 'gap')
 					return (
-						<p key={item.key} className="px-1 text-xs text-muted-foreground">
-							{item.count} unchanged {item.count === 1 ? 'block' : 'blocks'}
-						</p>
+						<div key={item.key} className="flex items-center gap-3 text-xs text-muted-foreground">
+							<span aria-hidden="true" className="h-px flex-1 bg-border-subtle" />
+							<span>
+								{item.count} unchanged {item.count === 1 ? 'block' : 'blocks'}
+							</span>
+							<span aria-hidden="true" className="h-px flex-1 bg-border-subtle" />
+						</div>
 					)
 				const change = byId.get(item.changeId)
 				if (!change) return null
@@ -498,8 +506,9 @@ function ProposalBanner({
 					type={proposal.author.type}
 					id={proposal.author.id}
 				/>
-				<p className="text-sm text-foreground">
-					{proposal.author.name} proposed {count} {count === 1 ? 'change' : 'changes'} to this text.
+				<p className="text-[13px] text-foreground">
+					<span className="font-bold">{proposal.author.name}</span> proposed {count}{' '}
+					{count === 1 ? 'change' : 'changes'} to this text.
 				</p>
 			</div>
 			<Button type="button" size="sm" aria-pressed={reviewing} onClick={onToggle}>
