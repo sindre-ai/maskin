@@ -120,6 +120,10 @@ export function TagInput({
 	const [empty, setEmpty] = useState(() => initialIsEmpty(initialSegments))
 	const [trigger, setTrigger] = useState<Trigger | null>(null)
 	const [highlightIndex, setHighlightIndex] = useState(0)
+	// The picker's own layer closes itself on Esc before this input sees the key, so by the time
+	// the keydown arrives `trigger` is already null. This remembers, for the rest of that event,
+	// that the picker was closed: that Esc belongs to the picker, not to the parent.
+	const pickerJustClosed = useRef(false)
 
 	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
 	const pool = useMemo<MentionPickerActor[]>(
@@ -345,6 +349,11 @@ export function TagInput({
 	const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
 		// An Enter that confirms an IME candidate is not ours, nor the parent's.
 		if (e.nativeEvent.isComposing || e.key === 'Process') return
+		if (e.key === 'Escape' && pickerJustClosed.current) {
+			e.preventDefault()
+			e.stopPropagation()
+			return
+		}
 		if (trigger) {
 			const result = reduceMentionPickerKey(
 				{ key: e.key },
@@ -424,7 +433,12 @@ export function TagInput({
 			<MentionPicker
 				open={open}
 				onOpenChange={(next) => {
-					if (!next) setTrigger(null)
+					if (next) return
+					setTrigger(null)
+					pickerJustClosed.current = true
+					setTimeout(() => {
+						pickerJustClosed.current = false
+					}, 0)
 				}}
 				actors={pool}
 				conversationParticipantIds={conversationParticipantIds ?? []}
