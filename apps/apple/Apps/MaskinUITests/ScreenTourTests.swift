@@ -42,9 +42,20 @@ final class ScreenTourTests: XCTestCase {
 	}
 
 	private func back() {
-		let nav = app.navigationBars.buttons.firstMatch
-		if nav.exists, nav.isHittable { nav.tap() } else { app.swipeRight() }
-		sleep(1)
+		let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
+		from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+		sleep(2)
+	}
+
+	/// Opens a maskin:// link in the running app (iOS 17+).
+	private func link(_ path: String, _ name: String) {
+		app.terminate()
+		app.launch()
+		_ = app.tabBars.buttons["For you"].waitForExistence(timeout: 30)
+		sleep(3)
+		XCUIDevice.shared.system.open(URL(string: "maskin://00000000-0000-4000-8000-000000000001\(path)")!)
+		sleep(7)
+		shot(name)
 	}
 
 	private func close() {
@@ -116,6 +127,11 @@ final class ScreenTourTests: XCTestCase {
 				}
 			}
 		}
+		link("/agents", "12-agents")
+		link("/agents/00000000-0000-4000-8000-000000000003", "13-agent-detail")
+		link("/objects/00000000-0000-4000-8000-000000000101", "14-item-bet")
+		link("/objects/00000000-0000-4000-8000-000000000102", "15-item-task")
+		link("/objects/00000000-0000-4000-8000-000000000100", "16-item-insight")
 		try "skipped: \(skipped.joined(separator: ", "))\n".write(toFile: "\(dir)/skipped.txt", atomically: true, encoding: .utf8)
 	}
 }
