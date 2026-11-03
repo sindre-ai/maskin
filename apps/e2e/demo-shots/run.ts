@@ -4,7 +4,8 @@
 //   pnpm --filter @maskin/e2e demo:shots approval-card    one shot by name
 //   pnpm --filter @maskin/e2e demo:shots --no-upload      keep the PNGs local only
 //
-// Needs DEMO_EMAIL and DEMO_PASSWORD (the Maskin Demo account), and MASKIN_API_KEY unless
+// Needs the Maskin Demo login (the Keychain secrets "Maskin Demo email" and "Maskin Demo
+// password"; DEMO_EMAIL and DEMO_PASSWORD override them), and MASKIN_API_KEY unless
 // --no-upload is given. PNGs land in demo-shots/out/ and are uploaded to the main workspace.
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
