@@ -16,7 +16,7 @@ import { readSessionStdoutChunks, resolveSessionCostUsd } from './usage-parser'
 
 /**
  * Starts deep_research runs (spec r5.1 section 3). A run is one session of the
- * workspace's research agent, which carries the deep-research skill, pinned to
+ * workspace's research agent, which carries the deep-research-subagents skill, pinned to
  * the workspace's custom model endpoint. The run row is created first and a
  * background watcher fills it from the session when it ends; the caller polls
  * GET /api/research/:id. The report is the last result message in the session
@@ -288,7 +288,7 @@ export function budgetFlagUsd(capCents: number): number {
 /** What the research agent is asked. The skill carries the method; this carries the question. */
 function buildResearchPrompt(p: StartResearchParams): string {
 	return [
-		'Use the deep-research skill to answer the question below.',
+		'Use the deep-research-subagents skill to answer the question below.',
 		`Effort: ${p.effort}.`,
 		`Question: ${p.question}`,
 		p.context ? `Context: ${p.context}` : null,

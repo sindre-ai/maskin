@@ -278,7 +278,7 @@ describe('deep_research routes (Integration)', () => {
 			callerKind: 'internal',
 			config: { pin_llm_route: 'workspace_custom', research_run_id: id },
 		})
-		expect(input.actionPrompt).toContain('deep-research skill')
+		expect(input.actionPrompt).toContain('deep-research-subagents skill')
 		expect(input.actionPrompt).toContain(question.question)
 	})
 
