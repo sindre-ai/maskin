@@ -71,10 +71,11 @@ test.describe('Object detail — v2 surface', () => {
 				await expect(page.getByRole('button', { name: new RegExp(`^${label} \\(`) })).toBeVisible()
 			}
 
-			// One-row composer with the mockup's placeholder and no hint line. The
-			// phone gets the short form so the bar stays one line at 375px.
+			// One-row composer and no hint line. The placeholder inside it is the mockup's
+			// on desktop and the short form on the phone so the bar stays one line at 375px.
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 			await expect(
-				page.getByPlaceholder(vp.width >= 768 ? 'Comment — / commands, @ mentions' : 'Comment…'),
+				page.getByText(vp.width >= 768 ? 'Comment — / commands, @ mentions' : 'Comment…'),
 			).toBeVisible()
 			await expect(page.getByText(/is listening$/)).toHaveCount(0)
 
@@ -176,7 +177,7 @@ test.describe('Object detail — v2 surface', () => {
 		const chip = page.getByRole('button', { name: /Remove reference to Referenced task/ })
 		await expect(chip).toBeVisible()
 
-		await page.getByPlaceholder(/^Comment/).fill('Linking the task.')
+		await page.getByRole('textbox', { name: 'Comment' }).fill('Linking the task.')
 		await page.getByRole('button', { name: /send comment/i }).click()
 
 		await expect(chip).toHaveCount(0)
@@ -240,7 +241,7 @@ test.describe('Object detail — v2 surface', () => {
 			await expect(bar.getByRole('link', { name: 'Objects' })).toBeVisible()
 			await expect(bar.getByRole('button', { name: 'Properties', exact: true })).toBeVisible()
 			await expect(page.locator('[data-hero-status-trigger]')).toBeVisible()
-			await expect(page.getByPlaceholder('Comment — / commands, @ mentions')).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 		})
 	}
 })

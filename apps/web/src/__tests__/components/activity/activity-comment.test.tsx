@@ -3,6 +3,10 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse } from '../../factories'
 
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
+}))
+
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({
 		data: { id: 'actor-1', name: 'Alice', type: 'human', email: null },
@@ -103,6 +107,49 @@ describe('ActivityComment', () => {
 		})
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 		expect(screen.getByText('@Bob')).toBeInTheDocument()
+	})
+
+	it('draws a name tagged through the picker as the brand chip', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'cc @Bob on the storage call', mentions: ['actor-2'] },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const chip = screen.getByText('@Bob')
+		expect(chip).toHaveClass('bg-brand/10', 'text-brand', 'font-semibold')
+	})
+
+	it('draws a tag of yourself amber, like a tag of yourself in chat', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'cc @Alice on the storage call', mentions: ['actor-1'] },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const chip = screen.getAllByText('@Alice')[0]
+		expect(chip).toHaveClass('bg-warning/10', 'text-warning', 'font-semibold')
+		expect(chip).not.toHaveClass('bg-brand/10')
+	})
+
+	it('leaves a name with no stored id in the existing highlight', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'cc @Bob on the storage call', mentions: ['actor-3'] },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const chip = screen.getByText('@Bob')
+		expect(chip).toHaveClass('bg-primary/10', 'text-primary')
+		expect(chip).not.toHaveClass('bg-brand/10')
+	})
+
+	it('leaves an old comment with no stored ids in the existing highlight', () => {
+		const event = buildEventResponse({
+			action: 'commented',
+			data: { content: 'cc @Bob on the storage call' },
+		})
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+		const chip = screen.getByText('@Bob')
+		expect(chip).toHaveClass('bg-primary/10', 'text-primary')
+		expect(chip).not.toHaveClass('bg-brand/10')
 	})
 
 	it('highlights multi-word @mentions in full', () => {
@@ -217,9 +264,7 @@ describe('ActivityComment', () => {
 		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
 
 		await user.click(screen.getByRole('button', { name: 'Reply' }))
-		expect(
-			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
-		).toBeGreaterThanOrEqual(1)
+		expect(screen.getAllByRole('textbox', { name: 'Comment' }).length).toBeGreaterThanOrEqual(1)
 	})
 
 	it('renders markdown formatting in comment bodies', () => {
@@ -322,9 +367,7 @@ describe('ActivityComment', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Reply' }))
 
-		expect(
-			screen.getAllByPlaceholderText('Write a comment... Use @ to mention an agent').length,
-		).toBeGreaterThanOrEqual(1)
+		expect(screen.getAllByRole('textbox', { name: 'Comment' }).length).toBeGreaterThanOrEqual(1)
 	})
 	it('renders a long bubble comment in full, formatted, with no Show more toggle', () => {
 		const tail = 'the very last words of a long comment'

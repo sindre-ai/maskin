@@ -2,6 +2,8 @@ import { CommentInput } from '@/components/activity/comment-input'
 import { COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ComponentProps } from 'react'
+import { TestWrapper } from '../../setup'
 
 const mockMutate = vi.fn()
 const mockGetStoredActor = vi.fn()
@@ -20,6 +22,10 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => mockUseActors(),
 }))
 
+vi.mock('@/hooks/use-conversations', () => ({
+	useConversationsInfinite: () => ({ data: undefined }),
+}))
+
 // The reference picker is stubbed down to the one thing the composer cares
 // about: a button that hands back a picked object.
 vi.mock('@/components/chat/slash-picker', () => ({
@@ -30,18 +36,26 @@ vi.mock('@/components/chat/slash-picker', () => ({
 		open: boolean
 		onSelect: (result: {
 			kind: string
-			ref: { id: string; title: string; type: string }
+			ref: { id: string; title?: string; name?: string; type?: string }
 		}) => void
 	}) =>
 		open ? (
-			<button
-				type="button"
-				onClick={() =>
-					onSelect({ kind: 'object', ref: { id: 'obj-9', title: 'Retry window', type: 'bet' } })
-				}
-			>
-				pick-object
-			</button>
+			<>
+				<button
+					type="button"
+					onClick={() =>
+						onSelect({ kind: 'object', ref: { id: 'obj-9', title: 'Retry window', type: 'bet' } })
+					}
+				>
+					pick-object
+				</button>
+				<button
+					type="button"
+					onClick={() => onSelect({ kind: 'agent', ref: { id: 'actor-2', name: 'Bob' } })}
+				>
+					pick-agent
+				</button>
+			</>
 		) : null,
 }))
 
@@ -65,8 +79,54 @@ vi.mock('@/lib/pending-comments-context', () => ({
 	}),
 }))
 
+const BOB = { id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }
+const CAROL = { id: 'actor-3', name: 'Carol', type: 'agent', email: null, isSystem: false }
+
+function renderInput(props: Partial<ComponentProps<typeof CommentInput>> = {}) {
+	return render(<CommentInput workspaceId="ws-1" objectId="obj-1" {...props} />, {
+		wrapper: TestWrapper,
+	})
+}
+
+const box = () => screen.getByRole('textbox', { name: 'Comment' })
+const chips = () => Array.from(box().querySelectorAll('[data-tag-id]'))
+
+/** Puts the caret at `offset` in `node`. */
+function caretIn(node: Node, offset: number) {
+	const range = document.createRange()
+	range.setStart(node, offset)
+	range.collapse(true)
+	const sel = document.getSelection()
+	sel?.removeAllRanges()
+	sel?.addRange(range)
+}
+
+/** Types `text` at the end of the box the way a keystroke would: edit the DOM, then input. */
+function typeText(text: string) {
+	const root = box()
+	const last = root.lastChild
+	let node: Text
+	if (last && last.nodeType === 3) {
+		node = last as Text
+		node.data += text
+	} else {
+		node = document.createTextNode(text)
+		root.appendChild(node)
+	}
+	caretIn(node, node.data.length)
+	fireEvent.input(root)
+}
+
+/** Types "@query", waits for the picker and picks the first row with Enter. */
+async function pickTag(query: string, name: RegExp) {
+	typeText(`@${query}`)
+	await screen.findByRole('option', { name })
+	fireEvent.keyDown(box(), { key: 'Enter' })
+}
+
 describe('CommentInput', () => {
 	beforeEach(() => {
+		document.getSelection()?.removeAllRanges()
 		mockMutate.mockClear()
 		mockIsPending = false
 		mockGetStoredActor.mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human' })
@@ -78,7 +138,7 @@ describe('CommentInput', () => {
 
 	it("offers the + menu's three real affordances and the composer hint", async () => {
 		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 
 		expect(screen.getByText('Enter to send · @ to mention · + to attach')).toBeInTheDocument()
 
@@ -93,16 +153,13 @@ describe('CommentInput', () => {
 
 	it('posts picked objects as metadata.refs alongside the comment body', async () => {
 		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 
 		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
 		await user.click(await screen.findByText('Reference an object'))
 		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
 
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'See this one',
-		)
+		typeText('See this one')
 		await user.click(screen.getByRole('button', { name: /send/i }))
 
 		expect(mockMutate).toHaveBeenCalledWith(
@@ -118,7 +175,7 @@ describe('CommentInput', () => {
 	// would be a guaranteed 400 — the composer must not offer to send one.
 	it('keeps send disabled, and posts nothing, when only a reference is attached', async () => {
 		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 
 		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
 		await user.click(await screen.findByText('Reference an object'))
@@ -136,12 +193,9 @@ describe('CommentInput', () => {
 			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
 		]
 		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'Chart attached — which way?',
-		)
+		typeText('Chart attached — which way?')
 		await user.click(screen.getByRole('button', { name: /send/i }))
 
 		// The queued path carries the same shape as the direct one, and the
@@ -149,6 +203,29 @@ describe('CommentInput', () => {
 		expect(mockDraftSubmit).toHaveBeenCalledWith({
 			content: 'Chart attached — which way?',
 			mentions: [],
+			metadata: undefined,
+		})
+		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
+	// A tag has to survive the trip through the attachment queue, which builds
+	// its own request later. Both paths read the same id list.
+	it('delivers a picked tag through the attachment queue', async () => {
+		mockUseActors.mockReturnValue({ data: [BOB] })
+		mockDraftFiles = [
+			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
+		]
+		const user = userEvent.setup()
+		renderInput()
+
+		typeText('cc ')
+		await pickTag('bo', /Bob/)
+		typeText('on the chart')
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockDraftSubmit).toHaveBeenCalledWith({
+			content: 'cc @Bob on the chart',
+			mentions: ['actor-2'],
 			metadata: undefined,
 		})
 		expect(mockMutate).not.toHaveBeenCalled()
@@ -165,12 +242,9 @@ describe('CommentInput', () => {
 		]
 		mockDraftSubmit.mockReturnValue('no-attachments')
 		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'Still worth saying',
-		)
+		typeText('Still worth saying')
 		await user.click(screen.getByRole('button', { name: /send/i }))
 
 		expect(mockDraftSubmit).toHaveBeenCalled()
@@ -182,12 +256,9 @@ describe('CommentInput', () => {
 
 	it('sends no metadata when no decision is attached', async () => {
 		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'Just a comment',
-		)
+		typeText('Just a comment')
 		await user.click(screen.getByRole('button', { name: /send/i }))
 
 		expect(mockMutate).toHaveBeenCalledWith(
@@ -197,49 +268,38 @@ describe('CommentInput', () => {
 	})
 
 	it('renders no mic when the browser cannot record audio', () => {
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 		expect(screen.queryByRole('button', { name: /dictate/i })).not.toBeInTheDocument()
 	})
 
 	it('returns null when no stored actor', () => {
 		mockGetStoredActor.mockReturnValue(null)
-		const { container } = render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-		expect(container.firstChild).toBeNull()
+		const { container } = renderInput()
+		expect(container).toBeEmptyDOMElement()
 	})
 
-	it('renders textarea and send button', () => {
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-		expect(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-		).toBeInTheDocument()
+	it('renders the comment box and send button', () => {
+		renderInput()
+		expect(box()).toBeInTheDocument()
+		expect(screen.getByText('Write a comment... Use @ to mention an agent')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument()
 	})
 
 	it('disables send when content is empty', () => {
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 		expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
 	})
 
-	it('enables send when content has text', async () => {
-		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'Hello',
-		)
+	it('enables send when content has text', () => {
+		renderInput()
+		typeText('Hello')
 		expect(screen.getByRole('button', { name: /send/i })).not.toBeDisabled()
 	})
 
-	it('disables send when isPending', async () => {
-		const user = userEvent.setup()
+	it('disables send when isPending', () => {
 		mockIsPending = true
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'Hello',
-		)
+		renderInput()
+		typeText('Hello')
 		expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
 	})
 
@@ -247,22 +307,18 @@ describe('CommentInput', () => {
 	// went straight through. Since the composer keeps its text until the POST
 	// succeeds, a slow round trip looks like a keypress that did nothing, and
 	// the impatient second Enter posted the same comment twice.
-	it('does NOT submit on Enter while a post is in flight', async () => {
-		const user = userEvent.setup()
+	it('does NOT submit on Enter while a post is in flight', () => {
 		mockIsPending = true
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-
-		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
-		await user.type(textarea, 'Impatient user{Enter}')
+		renderInput()
+		typeText('Impatient user')
+		fireEvent.keyDown(box(), { key: 'Enter' })
 		expect(mockMutate).not.toHaveBeenCalled()
 	})
 
-	it('submits on Enter key', async () => {
-		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-
-		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
-		await user.type(textarea, 'Test comment{Enter}')
+	it('submits on Enter key', () => {
+		renderInput()
+		typeText('Test comment')
+		fireEvent.keyDown(box(), { key: 'Enter' })
 		expect(mockMutate).toHaveBeenCalled()
 		expect(mockMutate.mock.calls[0][0]).toMatchObject({
 			entity_id: 'obj-1',
@@ -270,7 +326,14 @@ describe('CommentInput', () => {
 		})
 	})
 
-	it('does NOT submit on Enter when the primary pointer is coarse (iOS/mobile)', async () => {
+	it('does NOT submit on Shift+Enter', () => {
+		renderInput()
+		typeText('Test comment')
+		fireEvent.keyDown(box(), { key: 'Enter', shiftKey: true })
+		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
+	it('does NOT submit on Enter when the primary pointer is coarse (iOS/mobile)', () => {
 		const originalMatchMedia = window.matchMedia
 		window.matchMedia = ((query: string) =>
 			({
@@ -285,16 +348,13 @@ describe('CommentInput', () => {
 			}) as unknown as MediaQueryList) as typeof window.matchMedia
 
 		try {
-			const user = userEvent.setup()
-			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+			renderInput()
+			typeText('Line one')
+			// The key is left alone, so the browser makes its new line.
+			const notPrevented = fireEvent.keyDown(box(), { key: 'Enter' })
 
-			const textarea = screen.getByPlaceholderText(
-				'Write a comment... Use @ to mention an agent',
-			) as HTMLTextAreaElement
-			await user.type(textarea, 'Line one{Enter}Line two')
-
+			expect(notPrevented).toBe(true)
 			expect(mockMutate).not.toHaveBeenCalled()
-			expect(textarea.value).toBe('Line one\nLine two')
 		} finally {
 			window.matchMedia = originalMatchMedia
 		}
@@ -317,10 +377,10 @@ describe('CommentInput', () => {
 		Object.defineProperty(window, 'innerWidth', { writable: true, value: 500 })
 
 		try {
-			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-			expect(screen.getByPlaceholderText('Write a comment...')).toBeInTheDocument()
+			renderInput()
+			expect(screen.getByText('Write a comment...')).toBeInTheDocument()
 			expect(
-				screen.queryByPlaceholderText('Write a comment... Use @ to mention an agent'),
+				screen.queryByText('Write a comment... Use @ to mention an agent'),
 			).not.toBeInTheDocument()
 		} finally {
 			window.matchMedia = originalMatchMedia
@@ -328,106 +388,143 @@ describe('CommentInput', () => {
 		}
 	})
 
-	it('hides system actors from the @mention dropdown', async () => {
-		const user = userEvent.setup()
+	it('hides system actors from the @mention picker', async () => {
 		mockUseActors.mockReturnValue({
-			data: [
-				{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false },
-				{ id: 'actor-3', name: 'Workspace Coach', type: 'agent', email: null, isSystem: true },
-			],
+			data: [BOB, { ...CAROL, name: 'Workspace Coach', isSystem: true }],
 		})
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		renderInput()
 
-		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
-		await user.type(textarea, '@')
+		typeText('@')
 
-		expect(screen.getByText('Bob')).toBeInTheDocument()
-		expect(screen.queryByText('Workspace Coach')).not.toBeInTheDocument()
+		expect(await screen.findByRole('option', { name: /Bob/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /Workspace Coach/ })).not.toBeInTheDocument()
 	})
 
-	it('opens the @mention dropdown below the input by default', async () => {
-		const user = userEvent.setup()
-		mockUseActors.mockReturnValue({
-			data: [{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }],
+	describe('tags', () => {
+		beforeEach(() => {
+			mockUseActors.mockReturnValue({ data: [BOB, CAROL] })
 		})
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'@',
-		)
+		it('sends the picked tag inside the sentence together with its id', async () => {
+			const user = userEvent.setup()
+			renderInput()
 
-		const dropdown = screen.getByText('Bob').closest('div[class*="absolute"]')
-		expect(dropdown).toHaveClass('mt-1')
-		expect(dropdown).not.toHaveClass('bottom-full')
-	})
+			typeText('cc ')
+			await pickTag('bo', /Bob/)
+			expect(chips()).toHaveLength(1)
+			expect(chips()[0]).toHaveAttribute('data-tag-id', 'actor-2')
+			typeText('on the storage call')
+			await user.click(screen.getByRole('button', { name: /send/i }))
 
-	it('opens the @mention dropdown above the input when mentionDropdownPlacement="above"', async () => {
-		const user = userEvent.setup()
-		mockUseActors.mockReturnValue({
-			data: [{ id: 'actor-2', name: 'Bob', type: 'agent', email: null, isSystem: false }],
+			expect(mockMutate).toHaveBeenCalledWith(
+				expect.objectContaining({
+					content: 'cc @Bob on the storage call',
+					mentions: ['actor-2'],
+				}),
+				expect.any(Object),
+			)
 		})
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" mentionDropdownPlacement="above" />)
 
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'@',
-		)
+		it('sends no id for an @name that was typed and never picked', async () => {
+			const user = userEvent.setup()
+			renderInput()
 
-		const dropdown = screen.getByText('Bob').closest('div[class*="absolute"]')
-		expect(dropdown).toHaveClass('bottom-full', 'mb-1')
-		expect(dropdown).not.toHaveClass('mt-1')
-	})
+			typeText('hello @Bob ')
+			await user.click(screen.getByRole('button', { name: /send/i }))
 
-	it('renders an inline highlight chip for typed @mentions', async () => {
-		const user = userEvent.setup()
-		mockUseActors.mockReturnValue({
-			data: [
-				{
-					id: 'actor-2',
-					name: 'Senior Developer',
-					type: 'agent',
-					email: null,
-					isSystem: false,
-				},
-			],
+			expect(mockMutate).toHaveBeenCalledWith(
+				expect.objectContaining({ content: 'hello @Bob' }),
+				expect.any(Object),
+			)
+			expect(mockMutate.mock.calls[0][0].mentions).toBeUndefined()
 		})
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
-		await user.type(textarea, 'hi @Senior Developer ')
+		it('drops the id when Backspace removes the chip', async () => {
+			const user = userEvent.setup()
+			renderInput()
 
-		const chip = screen.getByText('@Senior Developer')
-		expect(chip).toBeInTheDocument()
-		expect(chip.tagName).toBe('SPAN')
+			await pickTag('bo', /Bob/)
+			// The caret sits after the single space that follows the chip; step back over it.
+			caretIn(chips()[0]?.nextSibling as Text, 0)
+			fireEvent.keyDown(box(), { key: 'Backspace' })
+			expect(chips()).toHaveLength(0)
+
+			typeText('anyway')
+			await user.click(screen.getByRole('button', { name: /send/i }))
+
+			expect(mockMutate.mock.calls[0][0].mentions).toBeUndefined()
+		})
+
+		it('opens the picker from the Mention an agent menu entry', async () => {
+			const user = userEvent.setup()
+			renderInput()
+
+			await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+			await user.click(await screen.findByText('Mention an agent'))
+
+			expect(await screen.findByRole('option', { name: /Bob/ })).toBeInTheDocument()
+			expect(box()).toHaveTextContent('@')
+		})
+
+		it('turns an agent picked from the + menu into a chip', async () => {
+			const user = userEvent.setup()
+			renderInput()
+
+			await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+			await user.click(await screen.findByText('Reference an object'))
+			await user.click(await screen.findByRole('button', { name: 'pick-agent' }))
+			typeText('please look')
+			await user.click(screen.getByRole('button', { name: /send/i }))
+
+			expect(mockMutate).toHaveBeenCalledWith(
+				expect.objectContaining({ content: '@Bob please look', mentions: ['actor-2'] }),
+				expect.any(Object),
+			)
+		})
+
+		it('leaves the box empty after a send', async () => {
+			const user = userEvent.setup()
+			mockMutate.mockImplementationOnce((_input, options) => options.onSuccess())
+			renderInput()
+
+			await pickTag('bo', /Bob/)
+			typeText('hi')
+			await user.click(screen.getByRole('button', { name: /send/i }))
+
+			expect(box().textContent).toBe('')
+			expect(chips()).toHaveLength(0)
+			expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
+		})
+
+		it('focuses from the ref a caller passes in', () => {
+			const ref = { current: null as { focus: () => void } | null }
+			renderInput({ focusRef: ref as never })
+
+			ref.current?.focus()
+
+			expect(box()).toHaveFocus()
+		})
 	})
 
 	describe('character limit', () => {
 		const COUNTER_THRESHOLD = Math.ceil(COMMENT_MAX_LENGTH * 0.9)
 
-		// fireEvent.change is much faster than userEvent.type for thousands of
-		// characters and wraps the update in act() automatically.
-		function setValue(text: string) {
-			const ta = screen.getByPlaceholderText(
-				'Write a comment... Use @ to mention an agent',
-			) as HTMLTextAreaElement
-			fireEvent.change(ta, { target: { value: text } })
-			return ta
+		function setBoxText(text: string) {
+			const root = box()
+			root.textContent = text
+			fireEvent.input(root)
+			return root
 		}
 
-		it('hides the counter for short comments', async () => {
-			const user = userEvent.setup()
-			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-			await user.type(
-				screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-				'hi',
-			)
+		it('hides the counter for short comments', () => {
+			renderInput()
+			typeText('hi')
 			expect(screen.queryByText(new RegExp(`/\\s*${COMMENT_MAX_LENGTH}$`))).not.toBeInTheDocument()
 		})
 
 		it('shows the counter once content reaches 90% of the limit', () => {
-			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-			setValue('x'.repeat(COUNTER_THRESHOLD))
+			renderInput()
+			setBoxText('x'.repeat(COUNTER_THRESHOLD))
 
 			expect(
 				screen.getByText(new RegExp(`^${COUNTER_THRESHOLD}\\s*/\\s*${COMMENT_MAX_LENGTH}$`)),
@@ -436,36 +533,32 @@ describe('CommentInput', () => {
 		})
 
 		it('disables submit, sets aria-invalid, and tints the counter when over the limit', () => {
-			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-			const ta = setValue('x'.repeat(COMMENT_MAX_LENGTH + 5))
+			renderInput()
+			const root = setBoxText('x'.repeat(COMMENT_MAX_LENGTH + 5))
 
 			const counter = screen.getByText(
 				new RegExp(`^${COMMENT_MAX_LENGTH + 5}\\s*/\\s*${COMMENT_MAX_LENGTH}$`),
 			)
 			expect(counter).toBeInTheDocument()
 			expect(counter.className).toContain('text-error')
-			expect(ta).toHaveAttribute('aria-invalid', 'true')
+			expect(root).toHaveAttribute('aria-invalid', 'true')
 			expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
 		})
 
-		it('does not submit when Enter is pressed over the limit', async () => {
-			const user = userEvent.setup()
-			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-			const ta = setValue('x'.repeat(COMMENT_MAX_LENGTH + 1))
-			ta.focus()
-			await user.keyboard('{Enter}')
+		it('does not submit when Enter is pressed over the limit', () => {
+			renderInput()
+			setBoxText('x'.repeat(COMMENT_MAX_LENGTH + 1))
+			fireEvent.keyDown(box(), { key: 'Enter' })
 			expect(mockMutate).not.toHaveBeenCalled()
 		})
 
 		// Regression: raw length and trimmed length must agree on whether to block
 		// submit, otherwise trailing whitespace at the boundary lets Enter sneak
 		// through while the UI shows the input as over the limit.
-		it('does not submit when raw length is over the limit but trimmed length is not', async () => {
-			const user = userEvent.setup()
-			render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-			const ta = setValue(`${'x'.repeat(COMMENT_MAX_LENGTH)}  `)
-			ta.focus()
-			await user.keyboard('{Enter}')
+		it('does not submit when raw length is over the limit but trimmed length is not', () => {
+			renderInput()
+			setBoxText(`${'x'.repeat(COMMENT_MAX_LENGTH)}  `)
+			fireEvent.keyDown(box(), { key: 'Enter' })
 			expect(mockMutate).not.toHaveBeenCalled()
 		})
 	})
