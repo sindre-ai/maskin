@@ -21,6 +21,7 @@ import { type LinkedCardsOptions, MarkdownContent } from '@/components/shared/ma
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
+import { CopyButton } from '@/components/ui/copy-button'
 import { useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -324,6 +325,7 @@ export function LinkedObjectCard({
 					) : null}
 					{preview ? (
 						<div aria-live="polite" className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+							<CopyButton text={shown} label ariaLabel="Copy the text" />
 							{delivery === 'sent' ? (
 								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 									<Check size={13} aria-hidden />
@@ -349,7 +351,8 @@ export function LinkedObjectCard({
 							)}
 						</div>
 					) : canAct && nextStatus ? (
-						<div className="flex items-center justify-end px-3 pb-3 pt-1">
+						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
+							<CopyButton text={shown} label ariaLabel="Copy the text" />
 							<Button
 								type="button"
 								size="sm"
@@ -361,7 +364,9 @@ export function LinkedObjectCard({
 							</Button>
 						</div>
 					) : (
-						<div className="pb-3" />
+						<div className="flex items-center justify-end px-3 pb-3 pt-1">
+							<CopyButton text={shown} label ariaLabel="Copy the text" />
+						</div>
 					)}
 				</>
 			) : null}

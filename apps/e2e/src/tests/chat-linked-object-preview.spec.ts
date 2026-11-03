@@ -89,6 +89,7 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 			})
 			await expect(thread.getByText(NOTE)).toBeVisible()
 			await expect(thread.getByRole('link', { name: 'Open' })).toBeVisible()
+			await expect(thread.getByRole('button', { name: 'Copy the text' })).toBeVisible()
 			await expect(thread.getByRole('button', { name: /Approve/ })).toHaveCount(0)
 
 			for (const colorScheme of ['light', 'dark'] as const) {

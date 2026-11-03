@@ -700,6 +700,15 @@ describe('LinkedCardOrLink', () => {
 		expect(screen.queryByRole('button', { name: /Approve/ })).not.toBeInTheDocument()
 	})
 
+	it('copies the text of a task from the card', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined)
+		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+		useObject.mockReturnValue({ data: objectRow(), isLoading: false })
+		renderObject()
+		await userEvent.click(screen.getByRole('button', { name: 'Copy the text' }))
+		expect(writeText).toHaveBeenCalledWith('Hej Catja, tillykke med fusionen.')
+	})
+
 	it('says Unassigned, and leaves out the text row and Working now, when there is nothing to show', () => {
 		useObject.mockReturnValue({
 			data: objectRow({ content: null, driver: null, active_session_state: null }),
