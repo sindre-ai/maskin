@@ -41,12 +41,11 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const portrait = getPortraitStatus(agent, deriveAgentStatus(agent.id, sessionsByAgent))
 
 	const handleDelete = useCallback(() => {
-		deleteActor.mutate(agent.id, {
-			onSuccess: () => {
-				navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
-			},
-		})
-	}, [agent.id, deleteActor, navigate, workspaceId])
+		// The delete runs on in the background (toast in useDeleteActor), so leave now.
+		setConfirmDelete(false)
+		deleteActor.mutate({ id: agent.id, name: agent.name })
+		navigate({ to: '/$workspaceId/agents', params: { workspaceId } })
+	}, [agent.id, agent.name, deleteActor, navigate, workspaceId])
 
 	// The detail bar's one agent-level control is the enable/disable switch
 	// (mockup 2313: `adPaused ? "Enable agent" : "Disable agent"`), bordered and

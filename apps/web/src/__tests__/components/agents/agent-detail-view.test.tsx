@@ -79,10 +79,10 @@ describe('AgentDetailView delete action', () => {
 		await user.click(screen.getByRole('button', { name: 'Confirm' }))
 
 		expect(deleteMutate).toHaveBeenCalledTimes(1)
-		expect(deleteMutate.mock.calls[0][0]).toBe('agent-2')
+		expect(deleteMutate.mock.calls[0][0]).toEqual({ id: 'agent-2', name: 'Planner' })
 	})
 
-	it('navigates back to the agents index once the delete resolves', async () => {
+	it('closes the confirm and navigates to the agents index right away, without waiting for the delete', async () => {
 		const user = userEvent.setup()
 		const workspaceId = '11111111-1111-4111-8111-111111111111'
 		const agent = buildActorResponse({ id: 'agent-3', type: 'agent', name: 'Planner' })
@@ -93,13 +93,13 @@ describe('AgentDetailView delete action', () => {
 		await user.click(screen.getByRole('button', { name: 'Delete agent' }))
 		await user.click(screen.getByRole('button', { name: 'Confirm' }))
 
+		// deleteMutate never calls back, so this navigation is not tied to onSuccess.
 		expect(deleteMutate).toHaveBeenCalledTimes(1)
-		const options = deleteMutate.mock.calls[0][1]
-		options.onSuccess?.()
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: '/$workspaceId/agents',
 			params: { workspaceId },
 		})
+		expect(screen.queryByText('Delete this agent?')).toBeNull()
 	})
 
 	it('cancels back to the trash icon without firing the mutation', async () => {
