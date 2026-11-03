@@ -19,6 +19,8 @@ public struct MainShell: View {
 	@State private var badges = ShellBadges()
 	@State private var liveCalls = LiveCallCenter()
 	@State private var pictures = ActorPicturesStore()
+	/// The offline banner's View: what is waiting to send.
+	@State private var showQueue = false
 	@Environment(\.scenePhase) private var scenePhase
 
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
@@ -86,11 +88,19 @@ public struct MainShell: View {
 			"Can't start the call", isPresented: Binding(get: { liveCalls.problem != nil }, set: { if !$0 { liveCalls.problem = nil } }),
 			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
+		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
 		.safeAreaInset(edge: .top, spacing: 0) {
-			OfflineBanner(isVisible: !runtime.isOnline, message: offlineMessage) {
-				Task {
-					runtime.syncCoordinator?.requestRefresh(reason: "retry")
-					await runtime.forYou.store.refresh()
+			OfflineBanner(
+				isVisible: !runtime.isOnline, message: offlineMessage, symbol: "icloud.slash",
+				actionTitle: queuedCount > 0 ? "View" : "Retry"
+			) {
+				if queuedCount > 0 {
+					showQueue = true
+				} else {
+					Task {
+						runtime.syncCoordinator?.requestRefresh(reason: "retry")
+						await runtime.forYou.store.refresh()
+					}
 				}
 			}
 				.padding(.horizontal, MaskinSpace.s8)
@@ -113,7 +123,7 @@ public struct MainShell: View {
 				}
 			}
 		}
-		.sheet(item: $runtime.presentation) { presentation in
+		.sheet(item: $runtime.presentation, onDismiss: { runtime.deviceCode = nil }) { presentation in
 			PresentationContent(
 				presentation: presentation, environment: environment, runtime: runtime)
 		}
@@ -123,12 +133,18 @@ public struct MainShell: View {
 			message: { Text(runtime.rejectionMessage ?? "") })
 	}
 
-	/// "Can't reach Maskin. Showing what we had at 08:14. Decisions queue offline."
+	private var queue: OutboxQueue {
+		OutboxQueue(outboxes: [runtime.forYou.outbox, ChatsRuntime.shared(environment: environment).outbox])
+	}
+
+	/// Writes (decisions, messages) still waiting for the connection, across For you and Chats.
+	private var queuedCount: Int { queue.entries.count }
+
+	/// "Offline. 3 waiting to send." With nothing queued: "Can't reach Maskin. Showing what we had at 08:14."
 	private var offlineMessage: String {
-		var text = "Can\u{2019}t reach Maskin. " + OfflineCopy.message(since: runtime.forYou.store.freshness.updatedAt)
-		let queued = runtime.forYou.outbox.pendingCount
-		if queued > 0 { text += " \(queued) waiting to send." }
-		return text
+		let queued = queuedCount
+		if queued > 0 { return "Offline. \(queued) waiting to send." }
+		return "Can\u{2019}t reach Maskin. " + OfflineCopy.message(since: runtime.forYou.store.freshness.updatedAt)
 	}
 
 	private var rejectionBinding: Binding<Bool> {
@@ -253,7 +269,8 @@ private struct PresentationContent: View {
 		case .agents:
 			AgentsScreen(environment: environment)
 		case .settings:
-			SettingsScreen(environment: environment)
+			SettingsScreen(environment: environment, connectCode: runtime.deviceCode)
+				.id(runtime.deviceCode)
 				.environment(runtime)
 		}
 	}

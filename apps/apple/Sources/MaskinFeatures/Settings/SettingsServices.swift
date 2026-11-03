@@ -7,7 +7,9 @@ enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
 	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 	case workspaces, members, integrations, billing, keys, triggers, extensions, claudeImport
-	case deviceSignIn, appLock
+	case deviceSignIn, appLock, autonomy
+	/// `maskin://connect?code=`: Sign in a device with the code already typed.
+	case deviceCode(String)
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -138,8 +140,8 @@ struct SettingsServices {
 
 	func extensionsStore() -> ExtensionsStore { ExtensionsStore(api: HTTPExtensionsSource(http: http)) }
 
-	func deviceApprovalStore() -> DeviceApprovalStore {
-		DeviceApprovalStore(api: HTTPDeviceApprovalSource(http: http))
+	func deviceApprovalStore(initialCode: String? = nil) -> DeviceApprovalStore {
+		DeviceApprovalStore(api: HTTPDeviceApprovalSource(http: http), initialCode: initialCode)
 	}
 
 	func claudeConnectionStore() -> ClaudeConnectionStore {

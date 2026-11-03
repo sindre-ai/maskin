@@ -120,6 +120,16 @@ public final class LoopsStore {
 	/// This is the number on the header pill.
 	public var needYouCount: Int { loops.filter { $0.status.isLive && needsYou($0) }.count }
 
+	/// The line under the title: "2 of 4 flows need you." then the names of those that do.
+	/// Nil when no running flow needs the viewer.
+	public var needsYouSummary: (lead: String, names: String)? {
+		let needing = loops.filter { $0.status.isLive && needsYou($0) }
+		guard !needing.isEmpty else { return nil }
+		let live = loops.filter { $0.status.isLive }.count
+		let lead = "\(needing.count) of \(live) \(live == 1 ? "flow needs" : "flows need") you."
+		return (lead, needing.map(\.displayName).sorted { $0.localizedStandardCompare($1) == .orderedAscending }.joined(separator: ", "))
+	}
+
 	/// How many cards get a latest update: the most recently touched flows that are not drafts.
 	public static let latestUpdateBound = 10
 

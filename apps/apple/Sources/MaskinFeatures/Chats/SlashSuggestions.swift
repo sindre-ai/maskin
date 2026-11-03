@@ -43,8 +43,10 @@ struct SlashSuggestions: View {
 			action()
 		} label: {
 			HStack(spacing: MaskinSpace.s6) {
-				Image(systemName: symbol).foregroundStyle(MaskinColor.ink3)
-					.frame(width: MaskinSpace.s13).accessibilityHidden(true)
+				Image(systemName: symbol).foregroundStyle(MaskinColor.ink2)
+					.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+					.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous))
+					.accessibilityHidden(true)
 				VStack(alignment: .leading, spacing: 0) {
 					Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink).lineLimit(1)
 					Text(subtitle).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)

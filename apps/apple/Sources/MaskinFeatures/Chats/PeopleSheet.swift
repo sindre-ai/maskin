@@ -195,9 +195,12 @@ struct PeopleSheet: View {
 			}
 			Spacer(minLength: 0)
 			if !isSelf {
-				Button("Remove") { removeTarget = person }
-					.maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-					.buttonStyle(.borderless)
+				Button { removeTarget = person } label: {
+					Text("Remove").maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.danger)
+						.padding(.horizontal, MaskinSpace.s7).padding(.vertical, MaskinSpace.s3)
+						.background(MaskinSurface.fill, in: Capsule())
+				}
+				.buttonStyle(.borderless)
 			}
 		}
 		.accessibilityElement(children: .contain)
@@ -213,12 +216,16 @@ struct PeopleSheet: View {
 		} label: {
 			HStack(spacing: MaskinSpace.s7) {
 				Image(systemName: symbol).foregroundStyle(MaskinColor.ink2)
-					.frame(width: MaskinSpace.s14 + MaskinSpace.s3).accessibilityHidden(true)
+					.frame(width: MaskinSpace.s14 + MaskinSpace.s2, height: MaskinSpace.s14 + MaskinSpace.s2)
+					.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous))
+					.accessibilityHidden(true)
 				VStack(alignment: .leading, spacing: 0) {
 					Text(title).maskinText(.body).foregroundStyle(MaskinColor.ink)
 					Text(detail).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
 				}
 				Spacer(minLength: 0)
+				Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(MaskinColor.ink5)
+					.accessibilityHidden(true)
 			}
 		}
 	}

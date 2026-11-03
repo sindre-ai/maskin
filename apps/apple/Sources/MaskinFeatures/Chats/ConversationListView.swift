@@ -197,7 +197,7 @@ struct ConversationListView: View {
 				Task { for id in target.conversationIDs { await store.delete(id) } }
 			}
 		} message: { _ in
-			Text("It disappears from Team. This can't be undone.")
+			Text("It disappears from your chats. This can't be undone.")
 		}
 	}
 
@@ -419,7 +419,7 @@ struct ConversationListView: View {
 			if store.conversations.isEmpty { LoadingSkeleton(rows: 4).padding(MaskinSpace.s9) }
 		case .failed(let reason):
 			EmptyState(
-				symbol: "wifi.exclamationmark", title: "Couldn't load Team", message: Self.failureMessage(reason)) {
+				symbol: "wifi.exclamationmark", title: "Couldn't load chats", message: Self.failureMessage(reason)) {
 				Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
 			}
 		case .loaded:

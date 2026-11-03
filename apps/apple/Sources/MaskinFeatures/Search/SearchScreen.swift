@@ -19,15 +19,21 @@ private enum SearchRoute: Hashable {
 public struct SearchScreen: View {
 	private let environment: AppEnvironment
 	private let open: ((SearchResult) -> Void)?
+	private let onNewItem: ((String) -> Void)?
 
-	public init(environment: AppEnvironment, open: ((SearchResult) -> Void)? = nil) {
+	/// `onNewItem` starts a new item with the typed words as its title; without it the quick
+	/// search's Create list has no New item row.
+	public init(
+		environment: AppEnvironment, open: ((SearchResult) -> Void)? = nil, onNewItem: ((String) -> Void)? = nil
+	) {
 		self.environment = environment
 		self.open = open
+		self.onNewItem = onNewItem
 	}
 
 	public var body: some View {
 		// Keyed on person and workspace so a switch rebuilds the store, its caches and recents.
-		SearchScreenContent(environment: environment, open: open)
+		SearchScreenContent(environment: environment, open: open, onNewItem: onNewItem)
 			.id("\(environment.auth.session?.actorId ?? "")/\(environment.workspaceId ?? "")")
 	}
 }
@@ -38,8 +44,10 @@ private struct SearchScreenContent: View {
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	private let environment: AppEnvironment
 	private let open: ((SearchResult) -> Void)?
+	private let onNewItem: ((String) -> Void)?
 
-	init(environment: AppEnvironment, open: ((SearchResult) -> Void)? = nil) {
+	init(environment: AppEnvironment, open: ((SearchResult) -> Void)? = nil, onNewItem: ((String) -> Void)? = nil) {
+		self.onNewItem = onNewItem
 		let remote = APISearchRemote(
 			client: environment.client, credentials: environment.auth.credentialsProvider)
 		let auth = environment.auth
@@ -55,7 +63,7 @@ private struct SearchScreenContent: View {
 		NavigationStack(path: $path) {
 			SearchContentView(
 				store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
-				onAskChiefOfStaff: askChiefOfStaff, onCreate: create, onSelect: select
+				onAskChiefOfStaff: askChiefOfStaff, onCreate: create, createKinds: onNewItem == nil ? [.flow, .chat] : [.item, .flow, .chat], onSelect: select
 			)
 				.shellToolbar(environment: environment, title: "Search")
 				.searchable(
@@ -97,6 +105,7 @@ private struct SearchScreenContent: View {
 	/// A new chat, or a flow set up with the Chief of Staff, starting from what was typed.
 	private func create(_ kind: SearchCreate, _ query: String) {
 		switch kind {
+		case .item: onNewItem?(query)
 		case .chat: runtime?.requestNewConversation()
 		case .flow: runtime?.buildInChat("I'd like a new flow about “\(query)”. ")
 		}

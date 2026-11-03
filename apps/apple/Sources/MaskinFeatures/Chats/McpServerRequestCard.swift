@@ -13,6 +13,8 @@ struct McpServerRequestCard: View {
 	/// The agent that asked: the one the server is given to.
 	let agentID: String
 	let messageCreatedAt: Date?
+	/// Who asked, for the "Asked for by" line.
+	var agentName: String?
 	/// The card's own message id, so the answer can be recorded against it.
 	let messageID: Int?
 	/// How the card was already answered (read from the chat), so it says so after a reload.
@@ -35,11 +37,12 @@ struct McpServerRequestCard: View {
 	@State private var stillRunning = false
 
 	init(
-		request: McpServerRequest, agentID: String, messageCreatedAt: Date?, messageID: Int?,
+		request: McpServerRequest, agentID: String, agentName: String? = nil, messageCreatedAt: Date?, messageID: Int?,
 		answered: ChatCardAnswer.Outcome?, onReply: @escaping (String, ChatSendMetadata) -> Void
 	) {
 		self.request = request
 		self.agentID = agentID
+		self.agentName = agentName
 		self.messageCreatedAt = messageCreatedAt
 		self.messageID = messageID
 		self.answered = answered
@@ -50,11 +53,10 @@ struct McpServerRequestCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			if let line = settledLine {
-				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-					Image(systemName: "puzzlepiece.extension").foregroundStyle(MaskinColor.ink4).accessibilityHidden(true)
-					Text(line).maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-				}
-				.accessibilityElement(children: .combine)
+				RequestCardDeclined(
+					symbol: "puzzlepiece.extension", text: line,
+					onAskAgain: declined && addedName == nil && !request.replyToSession
+						? { onReply(request.askAgainText, ChatSendMetadata()) } : nil)
 				if stillRunning {
 					Text("The agent is still running without it. Stop it from the chat, then send a message to start it again with the server.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
@@ -96,8 +98,11 @@ struct McpServerRequestCard: View {
 
 	@ViewBuilder
 	private var form: some View {
-		RequestCardTitle(title: "Add the \(request.name) tool server?", subtitle: request.hint)
-		VStack(alignment: .leading, spacing: 0) {
+		RequestCardTitle(
+			title: "Add the \(request.name) tool server?",
+			subtitle: [agentName.map { "Asked for by \($0)." }, request.hint].compactMap { $0 }.joined(separator: " "),
+			symbol: "puzzlepiece.extension")
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 			if let commandLine = request.commandLine {
 				RequestCardRow(label: "Runs inside the agent", value: commandLine, monospaced: true)
 			}

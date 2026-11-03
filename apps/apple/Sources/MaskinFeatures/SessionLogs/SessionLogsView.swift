@@ -10,10 +10,17 @@ struct SessionLogsView: View {
 	/// on the loading skeleton, never started) whenever the agent page above refreshes.
 	@State private var store: SessionLogsStore
 	let session: AgentSession
+	/// Stops the session. Nil hides the Stop action (the session isn't the viewer's to stop, or a preview).
+	var onStop: (() async -> Void)?
+	@State private var confirmStop = false
 
-	init(sessionID: String, api: any SessionLogsAPI, session: AgentSession) {
+	init(
+		sessionID: String, api: any SessionLogsAPI, session: AgentSession,
+		onStop: (() async -> Void)? = nil
+	) {
 		_store = State(initialValue: SessionLogsStore(sessionID: sessionID, api: api))
 		self.session = session
+		self.onStop = onStop
 	}
 
 	var body: some View {
@@ -37,6 +44,18 @@ struct SessionLogsView: View {
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
+		.toolbar {
+			if let onStop, session.isStoppable {
+				ToolbarItem(placement: .primaryAction) {
+					Button("Stop", role: .destructive) { confirmStop = true }
+				}
+			}
+		}
+		.confirmationDialog("Stop this session?", isPresented: $confirmStop, titleVisibility: .visible) {
+			Button("Stop session", role: .destructive) { Task { await onStop?() } }
+		} message: {
+			Text("The agent stops what it's doing now. Work in progress may be lost.")
+		}
 		.task { await store.start(live: session.isActive) }
 		.task(id: session.isActive) { await store.setLive(session.isActive) }
 		.onDisappear { store.stop() }

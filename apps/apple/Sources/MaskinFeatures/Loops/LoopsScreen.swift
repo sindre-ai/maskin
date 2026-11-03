@@ -122,7 +122,9 @@ private struct LoopsContainer: View {
 		// Flows carry no tags, so there is no filter bar: the one Display item is the sort.
 		.shellToolbar(
 			environment: environment, title: "Flows",
-			actions: ShellActions(display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }))
+			actions: ShellActions(
+				new: { buildLoopInChat() }, newLabel: "New flow",
+				display: ShellDisplayMenu { FlowsDisplayMenu(store: loops) }))
 	}
 
 	@ViewBuilder

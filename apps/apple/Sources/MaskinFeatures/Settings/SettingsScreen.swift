@@ -18,6 +18,7 @@ public struct SettingsScreen: View {
 	/// token is unregistered and this account's queued writes are discarded.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	private let environment: AppEnvironment
+	private let connectCode: String?
 	@State private var services: SettingsServices
 	@State private var confirmSignOut = false
 	@State private var path: [SettingsRoute]
@@ -28,7 +29,16 @@ public struct SettingsScreen: View {
 	/// behind it.
 	public init(environment: AppEnvironment) { self.init(environment: environment, initialRoute: nil) }
 
-	init(environment: AppEnvironment, initialRoute: SettingsRoute?) {
+	/// Opens on "Sign in a device" with the code from `maskin://connect?code=` already filled in;
+	/// without a code it is the plain Settings hub.
+	public init(environment: AppEnvironment, connectCode: String?) {
+		self.init(
+			environment: environment, initialRoute: connectCode == nil ? nil : .deviceSignIn,
+			connectCode: connectCode)
+	}
+
+	init(environment: AppEnvironment, initialRoute: SettingsRoute?, connectCode: String? = nil) {
+		self.connectCode = connectCode
 		self.environment = environment
 		_path = State(initialValue: initialRoute.map { [$0] } ?? [])
 		_services = State(initialValue: SettingsServices(environment: environment))
@@ -74,6 +84,9 @@ public struct SettingsScreen: View {
 						}
 						NavigationLink(value: SettingsRoute.integrations) {
 							SettingsRow(symbol: "link", title: "Integrations")
+						}
+						NavigationLink(value: SettingsRoute.autonomy) {
+							SettingsRow(symbol: "slider.horizontal.3", title: "Autonomy and guardrails")
 						}
 						NavigationLink(value: SettingsRoute.skills) {
 							SettingsRow(symbol: "wand.and.stars", title: "Skills")
@@ -190,8 +203,19 @@ public struct SettingsScreen: View {
 						canManage: services.role.canManage)
 				case .deviceSignIn:
 					DeviceSignInPage(
-						store: services.deviceApprovalStore(), account: environment.auth.session?.email,
+						store: services.deviceApprovalStore(initialCode: connectCode), account: environment.auth.session?.email,
 						workspaceName: services.workspace?.name)
+				case .autonomy:
+					if let workspaceID = services.workspaceId {
+						AutonomyView(
+							store: AutonomyStore(
+								workspaceID: workspaceID, actorID: services.actorId,
+								storage: UserDefaultsAutonomyStorage()))
+					}
+				case .deviceCode(let code):
+					DeviceSignInPage(
+						store: services.deviceApprovalStore(initialCode: code),
+						account: environment.auth.session?.email, workspaceName: services.workspace?.name)
 				case .appLock:
 					if let appLock { AppLockSettingsPage(lock: appLock) }
 				case .deleteAccount:
@@ -221,13 +245,13 @@ public struct SettingsScreen: View {
 			set: { on in Task { await lock.setEnabled(on) } })
 	}
 
-	static func appLockFooter(_ availability: AppLockAvailability) -> String {
+	static func appLockFooter(_ availability: AppLockAvailability, delay: AppLockDelay = .default) -> String {
 		let how: String
 		switch availability {
 		case .biometric(let name): how = "Unlock with \(name) or your device passcode."
 		case .passcodeOnly, .unavailable: how = "Unlock with your device passcode."
 		}
-		return "\(how) Maskin locks when you open it, and after \(Int(AppLockController.gracePeriod)) seconds in the background."
+		return "\(how) Maskin locks when you open it, and \(delay == .immediately ? "as soon as you leave it" : "after \(delay.label) in the background")."
 	}
 
 	static var versionString: String {

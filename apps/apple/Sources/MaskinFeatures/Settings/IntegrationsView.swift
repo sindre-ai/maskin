@@ -12,6 +12,8 @@ struct IntegrationsView: View {
 	@State private var store: IntegrationsStore
 	@State private var actionTarget: ConnectedIntegration?
 	@State private var pendingDisconnect: ConnectedIntegration?
+	@State private var showGitHub = false
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	let webSetupURL: URL?
 
 	init(store: IntegrationsStore, webSetupURL: URL?) {
@@ -44,6 +46,15 @@ struct IntegrationsView: View {
 					? "Connecting signs you in with the provider. When you come back, this list refreshes."
 					: "Only owners and admins can connect or disconnect an integration.")
 		}
+		.navigationDestination(isPresented: $showGitHub) {
+			if let runtime {
+				let services = SettingsServices(environment: runtime.environment)
+				GitHubIntegrationPage(
+					store: GitHubAccessStore(
+						api: HTTPGitHubAccessSource(http: services.http), canManage: store.canManage),
+					integrations: store, members: services.membersStore())
+			}
+		}
 		.task { await store.load() }
 		.refreshable { await store.load() }
 		// Returning from the browser: pick up whatever the web flow just connected.
@@ -55,6 +66,9 @@ struct IntegrationsView: View {
 			isPresented: Binding(get: { actionTarget != nil }, set: { if !$0 { actionTarget = nil } }),
 			titleVisibility: .visible, presenting: actionTarget
 		) { integration in
+			if integration.provider == "github", runtime != nil {
+				Button("Installations and agent access") { showGitHub = true }
+			}
 			if store.canManage, store.supportsNativeConnect(integration.provider),
 				integration.state != .connected
 			{

@@ -104,6 +104,15 @@ struct ActivityEntryView: View {
 				item: entry.item, name: store.authorName(for: entry.item), isAgent: store.isAgent(entry.item),
 				mentionable: Array(store.directory.actors.values), references: store.references(for: entry.item),
 				files: store.attachments(for: entry.item), openObject: onOpenObject,
+				tasks: entry.item.taskIds.map { id in (id: id, state: store.taskStates[id] ?? nil) },
+				decision: entry.item.decision,
+				decisionAnswer: entry.item.decision?.answer(in: entry.replies.compactMap { reply in
+					if case .comment(let text) = reply.item.kind { return text } else { return nil }
+				}),
+				onAnswer: { label in
+					guard let parent = entry.item.eventId else { return }
+					Task { await store.postComment(label, parentEventId: parent) }
+				},
 				retry: { Task { await store.retryComment(entry.item.id) } },
 				discard: { store.discardComment(entry.item.id) },
 				time: entry.timeLabel)
@@ -184,6 +193,12 @@ struct TimelineRow: View {
 	/// Files attached to the comment, as cards under it.
 	var files: [FileSummary] = []
 	var openObject: ((String) -> Void)?
+	/// Tasks the comment lists; `state` is nil while loading or when the task is gone.
+	var tasks: [(id: String, state: ObjectDetailStore.TaskState?)] = []
+	var decision: CommentDecision?
+	/// The option already taken, by a reply.
+	var decisionAnswer: String?
+	var onAnswer: (String) -> Void = { _ in }
 	var retry: () -> Void = {}
 	var discard: () -> Void = {}
 	/// Clock time, only when the comment is from today.
@@ -210,6 +225,8 @@ struct TimelineRow: View {
 					}
 					.frame(minHeight: MaskinSpace.s11)
 					bubble(text)
+					if !tasks.isEmpty { CommentTaskList(tasks: tasks, open: openObject) }
+					if let decision { CommentDecisionCard(decision: decision, answer: decisionAnswer, onAnswer: onAnswer) }
 					if !files.isEmpty {
 						ChipFlow { ForEach(files) { AttachedFileChip(file: $0) } }
 					}

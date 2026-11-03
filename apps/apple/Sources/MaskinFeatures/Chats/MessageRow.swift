@@ -506,8 +506,8 @@ struct MessageRow: View {
 			}
 			if let access = IntegrationAccessRequest(message: message) {
 				IntegrationAccessCard(
-					request: access, agentID: message.actorID, messageID: message.serverID, answered: cardOutcome,
-					onReply: onKeychainReply)
+					request: access, agentID: message.actorID, agentName: message.actorName, messageID: message.serverID,
+					answered: cardOutcome, onReply: onKeychainReply)
 			}
 			if let computer = ComputerRequest(message: message) {
 				ComputerRequestCard(
@@ -521,7 +521,7 @@ struct MessageRow: View {
 			}
 			if let server = McpServerRequest(message: message) {
 				McpServerRequestCard(
-					request: server, agentID: message.actorID, messageCreatedAt: message.createdAt,
+					request: server, agentID: message.actorID, agentName: message.actorName, messageCreatedAt: message.createdAt,
 					messageID: message.serverID,
 					answered: cardOutcome, onReply: onKeychainReply)
 			}

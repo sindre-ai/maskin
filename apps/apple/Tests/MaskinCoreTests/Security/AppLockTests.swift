@@ -133,3 +133,23 @@ struct AppLockTests {
 		#expect(lock.biometryName == nil)
 	}
 }
+
+@MainActor
+@Suite("AppLock delay")
+struct AppLockDelayTests {
+	@Test("lock now locks an enabled lock and does nothing when off")
+	func lockNow() async {
+		let off = AppLockController(storage: InMemoryAppLockStorage(enabled: false), authenticator: StubLockAuth())
+		off.lockNow()
+		#expect(!off.isLocked)
+		let on = AppLockController(storage: InMemoryAppLockStorage(enabled: true), authenticator: StubLockAuth())
+		await on.unlock()
+		on.lockNow()
+		#expect(on.isLocked)
+	}
+}
+
+private struct StubLockAuth: AppLockAuthenticating {
+	var availability: AppLockAvailability { .passcodeOnly }
+	func authenticate(reason: String) async -> AppLockResult { .success }
+}

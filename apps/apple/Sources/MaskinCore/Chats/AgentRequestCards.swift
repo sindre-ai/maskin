@@ -73,6 +73,9 @@ public struct IntegrationAccessRequest: Equatable, Sendable {
 		self.replyToSession = raw["reply_to_session"]?.boolValue == true
 	}
 
+	/// A normal chat message that asks the agent to put the request again after a decline.
+	public var askAgainText: String { "Please ask me again about \(displayName). I've changed my mind." }
+
 	/// What the person says back after an Allow, worded as the web does. `changed` is false when the
 	/// agent already had it. In a chat the agent is also asked for one short line, so the person
 	/// sees it has the access; a helper just carries on.

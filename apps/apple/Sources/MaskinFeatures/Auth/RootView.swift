@@ -92,7 +92,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		.task(id: firstUseActorId) {
 			welcomeChatId = firstUseActorId == nil ? nil : await welcomeConversationId?()
 		}
-		.handlesDeepLinks(runtime.router, intercept: { invites.open($0) }) { runtime.present($0) }
+		.handlesDeepLinks(
+			runtime.router, intercept: { invites.open($0) }, connect: { runtime.presentDeviceSignIn(code: $0) }
+		) { runtime.present($0) }
 		.onChange(of: auth.session?.actorId, initial: true) { _, id in
 			if id == nil { invites.signedOut() } else { invites.resume(isSignedIn: true) }
 		}

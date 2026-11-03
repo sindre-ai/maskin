@@ -14,10 +14,23 @@ struct SearchNeedsYou: Identifiable, Equatable {
 
 /// What the Create rows under the results can start.
 enum SearchCreate: CaseIterable {
-	case chat, flow
+	case item, flow, chat
 
-	var title: String { self == .chat ? "New chat" : "New flow" }
-	var symbol: String { self == .chat ? "bubble.left" : "arrow.triangle.2.circlepath" }
+	var title: String {
+		switch self {
+		case .item: "New item"
+		case .flow: "New flow"
+		case .chat: "New chat"
+		}
+	}
+
+	var symbol: String {
+		switch self {
+		case .item: "square.stack.3d.up"
+		case .flow: "arrow.triangle.2.circlepath"
+		case .chat: "bubble.left"
+		}
+	}
 }
 
 /// The search tab's content for a given store state, in a scroll view.
@@ -28,13 +41,14 @@ struct SearchContentView: View {
 	var onAskChiefOfStaff: (String) -> Void = { _ in }
 	/// The Create rows under the results; nil hides that row.
 	var onCreate: (SearchCreate, String) -> Void = { _, _ in }
+	var createKinds: [SearchCreate] = [.flow, .chat]
 	let onSelect: (SearchResult) -> Void
 
 	var body: some View {
 		ScrollView {
 			SearchContentBody(
 				store: store, onSelect: onSelect, showsChips: true, needsYou: needsYou,
-				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff, onCreate: onCreate)
+				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff, onCreate: onCreate, createKinds: createKinds)
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s5)
 				.frame(maxWidth: 760)
@@ -55,6 +69,8 @@ struct SearchContentBody: View {
 	var onOpenNeedsYou: (String) -> Void = { _ in }
 	var onAskChiefOfStaff: (String) -> Void = { _ in }
 	var onCreate: ((SearchCreate, String) -> Void)?
+	/// The Create rows to offer; New item only when the shell can start one.
+	var createKinds: [SearchCreate] = [.flow, .chat]
 
 	private var typed: String { store.query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -126,12 +142,12 @@ struct SearchContentBody: View {
 		.buttonStyle(.maskinPressed)
 	}
 
-	/// New chat and New flow, carrying what was typed, under the results.
+	/// New item, New flow and New chat, carrying what was typed, under the results.
 	private var createSection: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 			MonoLabel("Create").accessibilityAddTraits(.isHeader)
 			card {
-				ForEach(Array(SearchCreate.allCases.enumerated()), id: \.element) { index, create in
+				ForEach(Array(createKinds.enumerated()), id: \.element) { index, create in
 					if index > 0 { Divider() }
 					Button { onCreate?(create, typed) } label: {
 						Label(create.title, systemImage: create.symbol)

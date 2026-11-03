@@ -13,6 +13,7 @@ struct ChatExportSheet: View {
 	let link: URL?
 	@Environment(\.dismiss) private var dismiss
 	@State private var copied = false
+	@State private var pdf: URL?
 
 	var body: some View {
 		NavigationStack {
@@ -23,6 +24,11 @@ struct ChatExportSheet: View {
 					) {
 						row("doc.plaintext", "Markdown", "Messages, cards and transcripts")
 					}
+					#if os(iOS)
+					if let pdf {
+						ShareLink(item: pdf) { row("doc.richtext", "PDF", "Formatted for reading") }
+					}
+					#endif
 					if let link {
 						Button {
 							Clipboard.copy(link.absoluteString)
@@ -36,6 +42,17 @@ struct ChatExportSheet: View {
 					Text(summary)
 				}
 			}
+			#if os(iOS)
+			.task {
+				let lines = messages.filter { $0.kind != "system" && !$0.content.isEmpty }.map {
+					ChatMessageLine(
+						header: [$0.actorName, $0.createdAt?.formatted(date: .abbreviated, time: .shortened)]
+							.compactMap { $0 }.joined(separator: " · "),
+						text: $0.content)
+				}
+				pdf = ChatPDF.render(title: title, messages: lines)
+			}
+			#endif
 			.navigationTitle("Export chat")
 			#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)

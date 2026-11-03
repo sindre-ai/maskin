@@ -9,9 +9,9 @@ extension View {
 	/// preview. A leftover query is cleared when the field closes.
 	func teamSearch(text: Binding<String>) -> some View {
 		#if os(iOS)
-			searchable(text: text, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search Team")
+			searchable(text: text, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search chats")
 		#else
-			searchable(text: text, prompt: "Search Team")
+			searchable(text: text, prompt: "Search chats")
 		#endif
 	}
 }

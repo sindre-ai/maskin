@@ -45,6 +45,9 @@ struct LoopsListView: View {
 				if let notice = store.notice {
 					FormError(notice).onTapGesture { store.notice = nil }
 				}
+				if search.isEmpty, !store.needsYouOnly, let summary = store.needsYouSummary {
+					FlowsSummaryLine(lead: summary.lead, names: summary.names)
+				}
 				if search.isEmpty, store.needYouCount > 0 {
 					FlowsNeedsYouPill(count: store.needYouCount, isOn: store.needsYouOnly) {
 						withAnimation(MaskinMotion.quick) { store.needsYouOnly.toggle() }
@@ -80,6 +83,12 @@ struct LoopsListView: View {
 				FormError(notice)
 					.listRowBackground(Color.clear)
 					.onTapGesture { store.notice = nil }
+			}
+			if search.isEmpty, !store.needsYouOnly, let summary = store.needsYouSummary {
+				FlowsSummaryLine(lead: summary.lead, names: summary.names)
+					.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s3, trailing: MaskinSpace.s9))
+					.listRowSeparator(.hidden)
+					.listRowBackground(Color.clear)
 			}
 			if search.isEmpty, store.needYouCount > 0 {
 				FlowsNeedsYouPill(count: store.needYouCount, isOn: store.needsYouOnly) {
@@ -192,5 +201,20 @@ struct FlowsNeedsYouPill: View {
 		.accessibilityLabel(isOn ? "Showing \(count) flows that need you" : "\(count) flows need you")
 		.accessibilityHint(isOn ? "Shows all flows" : "Shows only the flows that need you")
 		.accessibilityAddTraits(isOn ? .isSelected : [])
+	}
+}
+
+/// "**2 of 4 flows need you.** Product Delivery, SEO Content" under the title (handoff 12).
+struct FlowsSummaryLine: View {
+	let lead: String
+	let names: String
+
+	var body: some View {
+		(Text(lead).fontWeight(.bold).foregroundStyle(MaskinColor.ink)
+			+ Text(" " + names).foregroundStyle(MaskinColor.ink4))
+			.font(MaskinTypeface.sans(MaskinFontSize.t17, relativeTo: .body))
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.fixedSize(horizontal: false, vertical: true)
+			.accessibilityElement(children: .combine)
 	}
 }

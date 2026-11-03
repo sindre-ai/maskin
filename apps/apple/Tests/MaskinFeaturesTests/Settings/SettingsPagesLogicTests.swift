@@ -55,3 +55,23 @@ struct SettingsPagesLogicTests {
 		#expect(c?.backups == 0)
 	}
 }
+
+@Suite("GitHub installations")
+struct GitHubInstallationTests {
+	@Test("installations parse owner, scope drift and grants; other providers are ignored")
+	func parse() {
+		let json: [[String: Any]] = [
+			["id": "i1", "provider": "github", "status": "active", "config": ["owner_login": "sindre-ai"],
+			 "grantedScopes": ["repo"], "missingScopes": ["workflow"], "defaultAgentAccess": "read",
+			 "agentGrants": [["actorId": "a1", "access": "read_write"]]],
+			["id": "i2", "provider": "slack", "status": "active"],
+		]
+		let list = GitHubInstallation.parse(json)
+		#expect(list.count == 1)
+		#expect(list[0].owner == "sindre-ai")
+		#expect(list[0].needsReconnect)
+		#expect(list[0].access(for: "a1").level == .readWrite)
+		#expect(list[0].access(for: "a2").isDefault)
+		#expect(list[0].access(for: "a2").level == .read)
+	}
+}

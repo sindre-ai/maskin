@@ -89,16 +89,10 @@ struct KeychainRequestCard: View {
 
 	@ViewBuilder
 	private var form: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-			Text(titleIsName ? name.trimmingCharacters(in: .whitespaces) : (isLogin ? "Add a login to your Keychain" : "Add a key to your Keychain"))
-				.maskinText(.headline).foregroundStyle(MaskinColor.ink)
-			Text(
-				(request.hint.map { $0 + " " } ?? "")
-					+ "Goes to your encrypted vault. The agent never sees it."
-			)
-			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-			.fixedSize(horizontal: false, vertical: true)
-		}
+		RequestCardTitle(
+			title: titleIsName ? name.trimmingCharacters(in: .whitespaces) : (isLogin ? "Add a login to your Keychain" : "Add a key to your Keychain"),
+			subtitle: (request.hint.map { $0 + " " } ?? "") + "Goes to your encrypted vault. The agent never sees it.",
+			symbol: "lock")
 		// The name is the card's title when the agent suggested a valid one; otherwise it is a field.
 		if !titleIsName {
 			field("Name") {

@@ -113,6 +113,7 @@ struct ObjectsListView: View {
 				Task { await store.setScope(scope) }
 			}
 			.padding(.top, MaskinSpace.s5)
+			ObjectQuickFilterChips(store: store).padding(.top, MaskinSpace.s3)
 			if store.statusFilter != nil {
 				filterChips.padding(.top, MaskinSpace.s5)
 			}
@@ -300,13 +301,14 @@ struct ObjectsListView: View {
 				symbol: "star", title: "No favourites yet",
 				message: "Tap the star on any object to keep it here, on every device.")
 		default:
-			if store.isFiltered || store.display.needsYouOnly {
+			if store.isFiltered || store.display.needsYouOnly || !store.quickFilters.isEmpty {
 				EmptyState(
 					symbol: "magnifyingglass",
 					title: store.searchText.isEmpty ? "Nothing in this status" : "Nothing matches \u{201C}\(store.searchText.trimmingCharacters(in: .whitespaces))\u{201D}",
 					message: "Nothing fits these filters. Try a different type or status, or clear the filter."
 				) {
 					Button("Clear filter") {
+						store.quickFilters = []
 						store.setNeedsYouOnly(false)
 						Task {
 							await store.setStatus(nil)

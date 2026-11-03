@@ -111,7 +111,7 @@ struct TriggerDetailPage: View {
 					id: "then", title: store.agentName,
 					subtitle: store.trigger.actionPrompt.isEmpty ? nil : store.trigger.actionPrompt)
 			])
-			PageGroupLabel(text: "Last 3 runs")
+			PageGroupLabel(text: "Recent runs")
 			if store.runs.isEmpty {
 				PageStatus(text: "No runs yet.")
 			} else {

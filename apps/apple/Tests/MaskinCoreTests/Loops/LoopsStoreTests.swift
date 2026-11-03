@@ -337,6 +337,17 @@ struct FlowsNeedsYouTests {
 		#expect(s.waitingCount == 6)
 	}
 
+	@Test("the summary sentence counts running flows and names those that need you")
+	func summary() async {
+		let s = await store([
+			loopRow("a", status: .supervised, waiting: 3), loopRow("b", status: .learning),
+			loopRow("d", status: .paused, waiting: 2),
+		])
+		#expect(s.needsYouSummary?.lead == "1 of 2 flows need you.")
+		let none = await store([loopRow("c", status: .learning)])
+		#expect(none.needsYouSummary == nil)
+	}
+
 	@Test("the filter narrows the list to flows that need you and lifts cleanly")
 	func filter() async {
 		let s = await store([

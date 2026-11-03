@@ -453,6 +453,15 @@ public final class AppRuntime {
 		}
 	}
 
+	/// The code from `maskin://connect?code=`, while Settings is open on the approve page for it.
+	public var deviceCode: String?
+
+	/// Opens Settings on "Sign in a device" with the code already typed in.
+	public func presentDeviceSignIn(code: String) {
+		deviceCode = code
+		presentation = .settings
+	}
+
 	/// For You and the shell's own surfaces open objects through here.
 	public func openObject(_ id: String) {
 		presentation = .object(id)

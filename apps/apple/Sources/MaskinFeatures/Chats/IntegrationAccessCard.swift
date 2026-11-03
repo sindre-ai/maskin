@@ -11,6 +11,8 @@ import SwiftUI
 struct IntegrationAccessCard: View {
 	let request: IntegrationAccessRequest
 	let agentID: String
+	/// Who asked, for the "For {agent}" line.
+	var agentName: String?
 	/// The card's own message id, so a decline can be recorded against it.
 	let messageID: Int?
 	var answered: ChatCardAnswer.Outcome?
@@ -38,14 +40,17 @@ struct IntegrationAccessCard: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			if let line = settledLine {
-				RequestCardSettled(symbol: "key.fill", text: line)
+				RequestCardDeclined(
+					symbol: "key.fill", text: line,
+					onAskAgain: declined && !allowedNow && state != .allowed && !request.replyToSession
+						? { onReply(request.askAgainText, ChatSendMetadata()) } : nil)
 				if stillRunning {
 					Text("The agent is still running with its old access. Stop it from the chat, then send a message to start it again.")
 						.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 				}
 			} else {
-				RequestCardTitle(title: "Allow \(request.displayName)?", subtitle: subtitle)
-				VStack(spacing: 0) {
+				RequestCardTitle(title: "Allow \(request.displayName)?", subtitle: subtitle, symbol: "key")
+				VStack(spacing: MaskinSpace.s3) {
 					accessRow
 					RequestCardRow(label: "Lasts", value: "Until you remove it")
 				}
@@ -61,25 +66,25 @@ struct IntegrationAccessCard: View {
 	}
 
 	private var subtitle: String {
-		(request.reason.map { $0 + " " } ?? "") + "For this agent. Remove it any time in Settings → Integrations."
+		(request.reason.map { $0 + " " } ?? "") + "For \(agentName ?? "this agent"). Remove it any time in Settings → Integrations."
 	}
 
-	/// What the agent gets. When it asked for read and write, the person can lower that to Read.
+	/// What the agent gets. When it asked for read and write, Read and Read and write sit side by
+	/// side so the person can lower it before Allow.
 	@ViewBuilder
 	private var accessRow: some View {
-		let current = level ?? request.level
-		RequestCardRow(
-			label: "Access", value: current == .readWrite ? "Read and write" : "Read"
-		) {
-			if request.level == .readWrite {
-				Button(current == .readWrite ? "Lower to Read" : "Read and write") {
-					level = current == .readWrite ? .read : .readWrite
-				}
-				.maskinText(.subhead).fontWeight(.semibold)
-				.foregroundStyle(MaskinColor.sigInk)
-				.buttonStyle(.maskinPressed)
-				.disabled(busy)
+		if request.level == .readWrite {
+			Picker(
+				"Access",
+				selection: Binding(get: { level ?? request.level }, set: { level = $0 })
+			) {
+				Text("Read").tag(IntegrationAccessRequest.Level.read)
+				Text("Read and write").tag(IntegrationAccessRequest.Level.readWrite)
 			}
+			.pickerStyle(.segmented)
+			.disabled(busy)
+		} else {
+			RequestCardRow(label: "Access", value: "Read")
 		}
 	}
 
@@ -87,7 +92,7 @@ struct IntegrationAccessCard: View {
 		if allowedNow || state == .allowed {
 			return "Allowed \(request.displayName) for this agent. It stays until you remove it."
 		}
-		if declined { return "Declined \(request.displayName)." }
+		if declined { return "Declined \(request.displayName) for \(agentName ?? "this agent")." }
 		if state == .gone { return "\(request.displayName) is no longer connected." }
 		return nil
 	}
