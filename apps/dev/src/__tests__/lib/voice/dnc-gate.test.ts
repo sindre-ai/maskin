@@ -291,39 +291,21 @@ describe('runDncGate', () => {
 			expect(r.check).toBe('ad_protection')
 			expect(r.reason).toContain(text)
 		})
-		it('runs after the company type check and before the headcount check', async () => {
+		it('runs after the company type check', async () => {
 			expect(
 				await refusal(clean({ company_type: undefined, cvr_ad_protection: true })),
 			).toMatchObject({ check: 'company_type' })
-			expect(await refusal(clean({ cvr_ad_protection: true, headcount: 1 }))).toMatchObject({
+			expect(await refusal(clean({ cvr_ad_protection: true }))).toMatchObject({
 				check: 'ad_protection',
 			})
 		})
 	})
 
-	describe('check 4a: headcount band (3 to 250)', () => {
-		it.each([3, 12, 250])('passes a headcount of %s', async (headcount) => {
-			expect(await runDncGate(clean({ headcount }), deps())).toEqual({ pass: true })
-		})
-		it.each([0, 1, 2, 251, 1000])(
-			'refuses a headcount of %s and names the band',
+	describe('headcount', () => {
+		it.each([undefined, 1, 1000])(
+			'does not gate on headcount: a contact with headcount %s passes',
 			async (headcount) => {
-				const r = await refusal(clean({ headcount }))
-				expect(r.check).toBe('headcount')
-				expect(r.reason).toContain(`${headcount}`)
-				expect(r.reason).toContain('3 to 250')
-			},
-		)
-		it('refuses a missing headcount', async () => {
-			const r = await refusal(clean({ headcount: undefined }))
-			expect(r.check).toBe('headcount')
-			expect(r.reason).toContain('missing')
-		})
-		it.each(['12', '10-19', Number.NaN, [12]])(
-			'refuses a headcount that is not a number (%j)',
-			async (headcount) => {
-				const r = await refusal(clean({ headcount }))
-				expect(r.check).toBe('headcount')
+				expect(await runDncGate(clean({ headcount }), deps())).toEqual({ pass: true })
 			},
 		)
 	})

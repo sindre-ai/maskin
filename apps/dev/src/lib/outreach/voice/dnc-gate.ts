@@ -120,10 +120,6 @@ function companyTypeReason(m: Record<string, unknown>): string | null {
 	return `contact company type "${found}" is not ApS or A/S (metadata.company_type must be aps or as)`
 }
 
-/** Staff band the SMB pilot dials, inclusive (Sebastian, 3 Nov 2026: core 3 to 15, ceiling 250). */
-export const DIALABLE_HEADCOUNT_MIN = 3
-export const DIALABLE_HEADCOUNT_MAX = 250
-
 /**
  * metadata.cvr_ad_protection must be the boolean false: the company and unit are not flagged
  * "reklamebeskyttet" in CVR. Missing, true or any other value is refused (fail closed).
@@ -139,21 +135,6 @@ function adProtectionReason(m: Record<string, unknown>): string | null {
 	return 'contact CVR advertising protection is not a boolean (metadata.cvr_ad_protection must be false)'
 }
 
-/** metadata.headcount must be a number inside the SMB band. A string or a missing value is refused. */
-function headcountReason(m: Record<string, unknown>): string | null {
-	const v = m.headcount
-	if (v === undefined || v === null) {
-		return 'contact has no headcount (metadata.headcount is missing)'
-	}
-	if (typeof v !== 'number' || !Number.isFinite(v)) {
-		return 'contact headcount is not a number (metadata.headcount must be a number)'
-	}
-	if (v < DIALABLE_HEADCOUNT_MIN || v > DIALABLE_HEADCOUNT_MAX) {
-		return `contact headcount ${v} is outside ${DIALABLE_HEADCOUNT_MIN} to ${DIALABLE_HEADCOUNT_MAX} staff`
-	}
-	return null
-}
-
 export type DncCheck =
 	| 'hold'
 	| 'status'
@@ -162,7 +143,6 @@ export type DncCheck =
 	| 'owner'
 	| 'company_type'
 	| 'ad_protection'
-	| 'headcount'
 	| 'phone'
 	| 'time_of_day'
 	| 'max_dials'
@@ -312,11 +292,9 @@ export async function runDncGate(contact: GateContact, deps: DncGateDeps): Promi
 	const companyType = companyTypeReason(m)
 	if (companyType) return refuse('company_type', companyType)
 
-	// 4a. CVR advertising protection and headcount band (SMB pilot gates).
+	// 4a. CVR advertising protection (SMB pilot gate). Company size does not gate a dial.
 	const adProtection = adProtectionReason(m)
 	if (adProtection) return refuse('ad_protection', adProtection)
-	const headcount = headcountReason(m)
-	if (headcount) return refuse('headcount', headcount)
 
 	// 4b. Phone. Needs a +45 number it can normalise.
 	if (!normalizeDanishNumber(m.phone)) {
