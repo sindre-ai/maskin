@@ -215,8 +215,9 @@ describe('create_objects schema', () => {
 describe('list_objects schema', () => {
 	const schema = tools.list_objects.inputSchema
 
-	it('requires workspace_id', () => {
-		expect(() => schema.parse({})).toThrow()
+	it('does not require workspace_id', () => {
+		const result = schema.parse({})
+		expect(result.workspace_id).toBeUndefined()
 	})
 
 	// Limit is optional at the tool-schema layer so the server can pick the
