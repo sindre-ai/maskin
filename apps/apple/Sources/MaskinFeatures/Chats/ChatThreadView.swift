@@ -561,6 +561,7 @@ struct ChatThreadView: View {
 			onOpenThread: { message in
 				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
+			onSelectText: { selectingText = $0 },
 			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
@@ -1021,6 +1022,8 @@ struct ThreadTranscript: View {
 	var onJumpToMessage: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
+	/// Opens the message's text in the select-words sheet.
+	var onSelectText: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 	/// The call running in this thread: its card shows what you are saying as you say it.
@@ -1159,7 +1162,7 @@ struct ThreadTranscript: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
-			actions.onSelectText = { selectingText = message }
+			actions.onSelectText = { onSelectText(message) }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
