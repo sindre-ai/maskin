@@ -128,6 +128,7 @@ async function loadWorkingActorsByConversation(
 			actorId: sessions.actorId,
 			conversationId: sessions.conversationId,
 			interactive: sessions.interactive,
+			status: sessions.status,
 		})
 		.from(sessions)
 		.where(
@@ -140,7 +141,14 @@ async function loadWorkingActorsByConversation(
 	await Promise.all(
 		live.map(async (s) => {
 			if (!s.conversationId) return
-			if (s.interactive && !(await isInteractiveTurnOpenByLog(db, s.id, now))) return
+			// A session still booting has no logs yet but is on its way to answering; only a running
+			// chat session can be sitting idle between turns.
+			if (
+				s.interactive &&
+				s.status === 'running' &&
+				!(await isInteractiveTurnOpenByLog(db, s.id, now))
+			)
+				return
 			const actors = byConversation.get(s.conversationId) ?? []
 			if (!actors.includes(s.actorId)) actors.push(s.actorId)
 			byConversation.set(s.conversationId, actors)
