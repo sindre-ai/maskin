@@ -557,7 +557,7 @@ describe('runDialerTick', () => {
 })
 
 describe('call input', () => {
-	it('sends the six SMB call fields from the contact, email falling back to metadata.email', async () => {
+	it('sends the six SMB call fields from the contact, email read from metadata.email', async () => {
 		const c = contact(1, {
 			metadata: {
 				owner: 'sebk',
@@ -611,6 +611,28 @@ describe('callFieldsOf', () => {
 
 	it('never sends a variable name starting with telnyx_', () => {
 		expect(Object.keys(callFieldsOf(null)).filter((n) => n.startsWith('telnyx_'))).toEqual([])
+	})
+
+	describe('contact_email', () => {
+		it.each([
+			['only email is set', { email: 'new@firma.dk' }, 'new@firma.dk'],
+			['only contact_email is set', { contact_email: 'old@firma.dk' }, 'old@firma.dk'],
+			[
+				'both are set and differ',
+				{ email: 'new@firma.dk', contact_email: 'old@firma.dk' },
+				'new@firma.dk',
+			],
+			['email is an empty string', { email: '', contact_email: 'old@firma.dk' }, 'old@firma.dk'],
+			[
+				'email is only whitespace',
+				{ email: '  \n', contact_email: 'old@firma.dk' },
+				'old@firma.dk',
+			],
+			['email is empty and there is no contact_email', { email: '' }, ''],
+			['neither is set', {}, ''],
+		])('when %s', (_name, metadata, expected) => {
+			expect(callFieldsOf(metadata).contact_email).toBe(expected)
+		})
 	})
 
 	it('ignores values that are not text or a finite number', () => {
