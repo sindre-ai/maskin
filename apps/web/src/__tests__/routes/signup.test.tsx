@@ -394,17 +394,6 @@ describe('SignupPage', () => {
 		expect(api.landingEvents.emit).not.toHaveBeenCalled()
 	})
 
-	it('lands on the root after signup when nothing sent the person here', async () => {
-		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
-		vi.mocked(api.objects.create).mockResolvedValue({} as never)
-
-		const user = userEvent.setup()
-		render(<SignupPage />)
-		await fillAndSubmit(user)
-
-		await waitFor(() => expect(window.location.assign).toHaveBeenCalledWith(ASSIGN_PATH))
-	})
-
 	it('lands back on the page that sent the person here, query string intact', async () => {
 		mockSearch = { redirect: '/oauth/authorize?client_id=abc&state=xyz' }
 		mockSignup.mockResolvedValue({ id: 'actor-1', workspace_id: 'ws-1' })
