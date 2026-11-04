@@ -42,6 +42,7 @@ function buildConversation(
 		snippet: 'Drafting a summary',
 		snippet_actor_id: 'actor-1',
 		snippet_actor_name: 'Compass',
+		working_actor_ids: [],
 		participants: [],
 		...overrides,
 	}

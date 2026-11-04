@@ -29,6 +29,7 @@ function buildConversation(
 		snippet: 'The retry window is still open on three accounts.',
 		snippet_actor_id: null,
 		snippet_actor_name: null,
+		working_actor_ids: [],
 		participants: [
 			{
 				actorId: 'me',
@@ -177,5 +178,17 @@ describe('ConversationListRow', () => {
 	it('falls back to a placeholder when the conversation has no messages', () => {
 		renderRow(buildConversation({ snippet: null }))
 		expect(screen.getByText('No messages yet')).toBeInTheDocument()
+	})
+
+	it('shows the agent as working in place of the last message while its turn is open', () => {
+		renderRow(buildConversation({ working_actor_ids: ['agent-1'] }))
+		expect(screen.getByText('Billing Agent is working…')).toBeInTheDocument()
+		expect(screen.queryByText(/retry window/)).not.toBeInTheDocument()
+	})
+
+	it('goes back to the last message once the agent is no longer working', () => {
+		renderRow(buildConversation({ working_actor_ids: [] }))
+		expect(screen.queryByText(/is working/)).not.toBeInTheDocument()
+		expect(screen.getByText(/retry window/)).toBeInTheDocument()
 	})
 })
