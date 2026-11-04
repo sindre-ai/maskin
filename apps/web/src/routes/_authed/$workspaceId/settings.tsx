@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -36,16 +37,25 @@ const keychainNavItem = {
 	exact: false,
 }
 
+// Send permissions is listed only while its flag is on, like Keychain was.
+const sendPermissionsNavItem = {
+	label: 'Send permissions',
+	to: '/$workspaceId/settings/send-permissions' as const,
+	exact: false,
+}
+
 function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
+	const sendPermissionsEnabled = useFeatureFlag('send-permissions-screen')
 	// Keychain sits right under Integrations: the two are where access is managed.
 	const at = settingsNav.findIndex((item) => item.label === 'Integrations') + 1
 	const navItems = [
 		...settingsNav.slice(0, at),
 		keychainNavItem,
 		...settingsNav.slice(at),
+		...(sendPermissionsEnabled ? [sendPermissionsNavItem] : []),
 		...(workspace?.enterprise ? [keysNavItem] : []),
 	]
 

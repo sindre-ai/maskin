@@ -45,6 +45,14 @@ export const FLAGS = {
 	 * once the buttons are on for everyone.
 	 */
 	COMPUTER_CLIPBOARD: 'computer-clipboard',
+	/**
+	 * Gates the Send permissions screen under Settings, where a human admin or owner sets
+	 * Always allow, Ask first or Deny per agent and draft kind. Frontend only: read with
+	 * useFeatureFlag in the settings layout (the nav entry) and the route. The send gate and
+	 * the settings API are not flagged, they read the saved settings. Retire once the screen
+	 * is on for everyone.
+	 */
+	SEND_PERMISSIONS_SCREEN: 'send-permissions-screen',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
