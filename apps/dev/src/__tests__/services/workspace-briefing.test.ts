@@ -47,7 +47,19 @@ describe('buildWorkspaceStartupBlock', () => {
 				"Done means checked. Before you say done, compare the result with what was asked and say what you checked. If you're blocked, say what blocked you and what you tried. Never make up a result.",
 			)
 			expect(block).toContain(
-				"Ask a person first before you do anything outside the company or that costs money, or delete anything. For everything else that's reversible, go ahead and note what you did.",
+				"Anything you can easily put back, and that your own instructions don't already cover, do now and report with how to undo it.",
+			)
+			expect(block).toContain(
+				'Don\'t ask permission for those: "Want me to...?" about something you could just do blocks the work. Do them, then end with the next step you would suggest and your recommendation, so a person can say go or redirect.',
+			)
+			expect(block).toContain(
+				"Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a loop live or make another status change reserved for people, or change who has access or which credentials exist.",
+			)
+			expect(block).toContain(
+				'If only a person can unblock you, finish everything else first, then ask once, naming the exact setting and who can change it, and set a follow-up so the job completes once it is granted.',
+			)
+			expect(block).toContain(
+				'Your own instructions always win over this: if they say to ask first, or reserve a step for someone else, do that.',
 			)
 		}
 	})

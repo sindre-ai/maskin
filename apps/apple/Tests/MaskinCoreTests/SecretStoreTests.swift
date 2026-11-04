@@ -160,6 +160,18 @@ struct SecretStoreMigrationTests {
 		#expect(try store.read() == blob)
 	}
 
+	@Test("a read-only store (the widget) returns an old-group item without writing anything")
+	func readOnlyNeverMigrates() throws {
+		let kc = FakeKeychain(reachable: [shared, oldGroup])
+		kc.seed(group: oldGroup, data: blob)
+		let store = KeychainSecretStore(
+			service: "io.maskin.app", account: "session", accessGroup: shared, backend: kc,
+			readOnly: true)
+		#expect(try store.read() == blob)
+		#expect(kc.snapshot.map(\.group) == [oldGroup])
+		#expect(!kc.calls.contains(.add) && !kc.calls.contains(.update) && !kc.calls.contains(.delete))
+	}
+
 	@Test("the old item is deleted by its own group so the fresh copy survives")
 	func deletesOnlyTheOldCopy() throws {
 		// An ungrouped delete would match both groups: the migration must name the old one.

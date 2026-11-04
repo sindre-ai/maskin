@@ -16,6 +16,10 @@
 		"./mcp": {
 			"types": "./src/mcp.ts",
 			"default": "./dist/mcp.js"
+		},
+		"./kms": {
+			"types": "./src/kms.ts",
+			"default": "./dist/kms.js"
 		}
 	},
 	"scripts": {

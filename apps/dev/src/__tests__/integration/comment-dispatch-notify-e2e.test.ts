@@ -1,5 +1,6 @@
-import { events, workspaceMembers } from '@maskin/db/schema'
+import { events, notifications, workspaceMembers } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
@@ -131,6 +132,84 @@ describe('Comment dispatch over a real PG NOTIFY bridge (end-to-end transport)',
 			case: 'case_2_driver_fallback',
 			resolved_actor_id: driverAgent.id,
 		})
+	})
+
+	it('marks the notification an @mention of a person creates as a comment mention', async () => {
+		const human = getTestActorId()
+		const agent = await insertActor(db, {
+			type: 'agent',
+			name: 'Sales Rep',
+			email: 'mention-source@integration.test',
+			apiKey: 'ank_mention_source',
+		})
+		const ws = await insertWorkspace(db, human)
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+			.onConflictDoNothing()
+		const object = await insertObject(db, ws.id, human, { type: 'task', title: 'Draft the reply' })
+
+		await db.insert(events).values({
+			workspaceId: ws.id,
+			actorId: agent.id,
+			action: 'commented',
+			entityType: 'object',
+			entityId: object.id,
+			data: { content: 'FYI, drafted. No ask.', mentions: [human] },
+		})
+
+		await vi.waitFor(
+			async () => {
+				const rows = await db
+					.select()
+					.from(notifications)
+					.where(eq(notifications.objectId, object.id))
+				expect(rows).toHaveLength(1)
+				expect(rows[0]).toMatchObject({
+					type: 'needs_input',
+					targetActorId: human,
+					metadata: { source: 'comment_mention', from_agent: true },
+				})
+			},
+			{ timeout: 10_000, interval: 50 },
+		)
+	})
+
+	it('records that a person wrote the mention, so it can still push', async () => {
+		const human = getTestActorId()
+		const colleague = await insertActor(db, {
+			type: 'human',
+			name: 'Colleague',
+			email: 'mention-colleague@integration.test',
+			apiKey: 'ank_mention_colleague',
+		})
+		const ws = await insertWorkspace(db, human)
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: colleague.id, role: 'member' })
+			.onConflictDoNothing()
+		const object = await insertObject(db, ws.id, human, { type: 'task', title: 'Ask a person' })
+
+		await db.insert(events).values({
+			workspaceId: ws.id,
+			actorId: colleague.id,
+			action: 'commented',
+			entityType: 'object',
+			entityId: object.id,
+			data: { content: 'Can you look at this today?', mentions: [human] },
+		})
+
+		await vi.waitFor(
+			async () => {
+				const rows = await db
+					.select()
+					.from(notifications)
+					.where(eq(notifications.objectId, object.id))
+				expect(rows).toHaveLength(1)
+				expect(rows[0].metadata).toMatchObject({ source: 'comment_mention', from_agent: false })
+			},
+			{ timeout: 10_000, interval: 50 },
+		)
 	})
 
 	it('falls through to a case-3 Chief of Staff dispatch when the object has no driver', async () => {

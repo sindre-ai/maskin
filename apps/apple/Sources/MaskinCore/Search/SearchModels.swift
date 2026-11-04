@@ -23,15 +23,15 @@ public enum SearchGroup: String, Sendable, Equatable, Hashable, CaseIterable {
 	static let displayOrder: [SearchGroup] = [.team, .agents, .flows, .objects, .files]
 }
 
-/// The scope chips: everything, or one of Team, Objects, Flows, Agents. Objects narrow further by
-/// type through `SearchScope.objectTypes(in:)` (the sub-chips). Files appear under All only.
+/// The scope chips: everything, or one of Team, Objects, Flows, Agents, Files. Objects narrow further by
+/// type through `SearchScope.objectTypes(in:)` (the sub-chips).
 public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Identifiable {
-	case all, team, objects, flows, agents
+	case all, team, objects, flows, agents, files
 
 	public var id: String { rawValue }
 
 	/// The chips the search tab offers, in order.
-	public static let chips: [SearchScope] = [.all, .team, .objects, .flows, .agents]
+	public static let chips: [SearchScope] = [.all, .team, .objects, .flows, .agents, .files]
 
 	public var title: String {
 		switch self {
@@ -40,6 +40,7 @@ public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Id
 		case .objects: "Objects"
 		case .flows: "Flows"
 		case .agents: "Agents"
+		case .files: "Files"
 		}
 	}
 
@@ -50,6 +51,7 @@ public enum SearchScope: String, Sendable, Equatable, Hashable, CaseIterable, Id
 		case .team: result.group == .team
 		case .agents: result.group == .agents
 		case .flows: result.group == .flows
+		case .files: result.group == .files
 		case .objects:
 			result.group == .objects && (objectType == nil || result.detail == objectType)
 		}
@@ -80,6 +82,8 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 	public var updatedAt: Date?
 	/// Text the client-side filter matches against (chats and agents have no server search).
 	public var searchableText: String
+	/// Actor ids of the people and agents in a chat; empty for everything else. The @ filter reads it.
+	public var participantIds: [String]
 
 	public var id: String { "\(kind.rawValue):\(entityId)" }
 
@@ -99,7 +103,7 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 	public init(
 		kind: SearchKind, entityId: String, title: String, subtitle: String = "",
 		snippet: String = "", detail: String? = nil, updatedAt: Date? = nil,
-		searchableText: String? = nil
+		searchableText: String? = nil, participantIds: [String] = []
 	) {
 		self.kind = kind
 		self.entityId = entityId
@@ -109,6 +113,7 @@ public struct SearchResult: Identifiable, Sendable, Equatable, Hashable {
 		self.detail = detail
 		self.updatedAt = updatedAt
 		self.searchableText = searchableText ?? [title, subtitle, snippet].joined(separator: "\n")
+		self.participantIds = participantIds
 	}
 }
 
@@ -141,8 +146,11 @@ public protocol SearchRemote: Sendable {
 	func agents() async throws -> [SearchResult]
 	/// The workspace's flows (loop objects). No `q` parameter, so the store filters by name.
 	func flows() async throws -> [SearchResult]
+	/// Every person and agent in the workspace, for the @ menu.
+	func people() async throws -> [SearchPerson]
 }
 
 extension SearchRemote {
 	public func flows() async throws -> [SearchResult] { [] }
+	public func people() async throws -> [SearchPerson] { [] }
 }

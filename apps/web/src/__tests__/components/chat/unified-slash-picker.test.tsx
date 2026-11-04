@@ -236,7 +236,8 @@ describe('<UnifiedChatSlashPicker>', () => {
 		renderPicker({ query: 'alph' })
 		expect(await screen.findByText("Couldn't search — try again")).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
-		await waitFor(() => expect(trackErrorMock).toHaveBeenCalled())
+		// The event carries the error name only, never the message.
+		await waitFor(() => expect(trackErrorMock).toHaveBeenCalledWith({ errorClass: 'Error' }))
 	})
 
 	it('exposes role=listbox with role=option rows for keyboard navigation', async () => {

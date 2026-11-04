@@ -230,123 +230,14 @@ struct LoopPostsSection: View {
 	}
 }
 
-/// Objects moving through the loop, one chip per status, and what happens in the tapped one.
-struct LoopFlowSection: View {
-	let store: LoopDetailStore
-	var onOpenTrigger: (String) -> Void = { _ in }
-	@Environment(AppRuntime.self) private var runtime: AppRuntime?
-
-	var body: some View {
-		let phases = store.phases
-		if !phases.isEmpty {
-			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-				FlowSectionHeader("The flow, right now") {
-					Text("\(phases.reduce(0) { $0 + $1.count }) objects")
-						.maskinText(.mono).foregroundStyle(MaskinColor.ink4)
-				}
-				LazyVGrid(
-					columns: [GridItem(.adaptive(minimum: 120), spacing: MaskinSpace.s4, alignment: .leading)],
-					alignment: .leading, spacing: MaskinSpace.s4
-				) {
-					ForEach(phases) { chip($0) }
-				}
-				if let phase = store.selectedPhase { card(phase) }
-			}
-		}
-	}
-
-	private func chip(_ phase: LoopPhase) -> some View {
-		let selected = store.selectedPhase?.status == phase.status
-		return Button { store.selectedStatus = phase.status } label: {
-			HStack(spacing: MaskinSpace.s3) {
-				Text(MaskinStatus.label(for: phase.status)).maskinText(.subhead)
-				Text("\(phase.count)").maskinText(.mono)
-			}
-			.foregroundStyle(selected ? MaskinSurface.onInverse : MaskinColor.ink3)
-			.padding(.horizontal, MaskinSpace.s6)
-			.padding(.vertical, MaskinSpace.s4)
-			.frame(maxWidth: .infinity)
-			.background(selected ? MaskinSurface.inverse : MaskinSurface.card, in: Capsule())
-		}
-		.buttonStyle(.maskinPressed)
-		.accessibilityLabel("\(MaskinStatus.label(for: phase.status)), \(phase.count)")
-		.accessibilityAddTraits(selected ? .isSelected : [])
-	}
-
-	private func card(_ phase: LoopPhase) -> some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
-			ForEach(phase.steps) { step in
-				Button { onOpenTrigger(step.triggerID) } label: {
-					HStack(spacing: MaskinSpace.s4) {
-						if let agent = step.agentName {
-							ActorAvatar(name: agent, kind: .agent, size: MaskinSpace.s11, seed: step.agentID)
-						}
-						VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-							Text(step.agentName ?? step.displayName)
-								.maskinText(.subhead).foregroundStyle(MaskinColor.ink)
-							Text(step.firesSummary).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-						}
-						Spacer(minLength: 0)
-					}
-				}
-				.buttonStyle(.maskinPressed)
-				.accessibilityHint("Opens this step's trigger")
-			}
-			if phase.steps.isEmpty {
-				Text("No agent picks this up. It moves when someone changes it.")
-					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-			}
-			if phase.members.isEmpty {
-				Text("Nothing is sitting in this phase.")
-					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-			} else {
-				VStack(spacing: 0) {
-					ForEach(Array(phase.members.prefix(8).enumerated()), id: \.element.id) { index, member in
-						Button { runtime?.openObject(member.id) } label: {
-							HStack(spacing: MaskinSpace.s4) {
-								Text(member.title).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
-									.lineLimit(2)
-								Spacer(minLength: MaskinSpace.s3)
-								Image(systemName: "chevron.right")
-									.font(.caption).foregroundStyle(MaskinColor.ink5)
-							}
-							.padding(.vertical, MaskinSpace.s5)
-							.contentShape(Rectangle())
-						}
-						.buttonStyle(.maskinPressed)
-						if index < min(phase.members.count, 8) - 1 {
-							Divider().overlay(MaskinSurface.separator)
-						}
-					}
-					if phase.members.count > 8 {
-						Text("+\(phase.members.count - 8) more")
-							.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-							.frame(maxWidth: .infinity, alignment: .leading)
-							.padding(.top, MaskinSpace.s3)
-					}
-				}
-			}
-		}
-		.loopCard()
-	}
-}
-
-/// What the flow wants from you and what it is doing: decisions waiting and the objects in
-/// motion, from the flow's own posts and members. When it runs next is under the hood.
-struct LoopActionsSection: View {
+/// What the flow wants from you: the decisions waiting on its timeline.
+struct LoopNeedsYouSection: View {
 	let store: LoopDetailStore
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
-
-	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s10) {
-			needsYou
-			inMotion
-		}
-	}
 
 	private var decisions: [LoopPost] { store.posts.filter(\.isDecision) }
 
-	private var needsYou: some View {
+	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			FlowSectionHeader("Needs you")
 			if decisions.isEmpty {
@@ -385,57 +276,70 @@ struct LoopActionsSection: View {
 			}
 		}
 	}
+}
 
-	/// Members still on their way: everything but those in the workflow's last status.
-	private var movingMembers: [LoopMember] {
-		let done = store.overview.statusOrder.last
-		return store.overview.members.filter { $0.status != done }
+/// The objects still on their way through the flow, grouped by status in workflow order, each row
+/// naming the actor driving it. When the flow runs next is under the hood.
+struct LoopInMotionSection: View {
+	let store: LoopDetailStore
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+
+	private var groups: [LoopPhase] {
+		LoopPhases.inMotion(members: store.overview.members, statusOrder: store.overview.statusOrder)
 	}
 
-	private var inMotion: some View {
+	var body: some View {
+		let groups = groups
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			FlowSectionHeader("In motion") {
-				Text("\(movingMembers.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
+				Text("\(groups.reduce(0) { $0 + $1.count })").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
 			}
-			if movingMembers.isEmpty {
+			if groups.isEmpty {
 				Text("Nothing is in flight.")
 					.maskinText(.body).foregroundStyle(MaskinColor.ink4)
 					.loopNote()
 			} else {
-				VStack(spacing: 0) {
-					let shown = Array(movingMembers.prefix(8))
-					ForEach(Array(shown.enumerated()), id: \.element.id) { index, member in
-						Button { runtime?.openObject(member.id) } label: {
-							HStack(spacing: MaskinSpace.s6) {
-								RoundedRectangle(cornerRadius: MaskinRadius.tag, style: .continuous)
-									.fill(MaskinColor.ink5)
-									.frame(width: MaskinSpace.s3 + MaskinSpace.s1, height: MaskinSpace.s3 + MaskinSpace.s1)
-									.accessibilityHidden(true)
-								Text(member.title)
-									.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
-									.foregroundStyle(MaskinColor.ink)
-									.lineLimit(2)
-									.multilineTextAlignment(.leading)
-								Spacer(minLength: MaskinSpace.s3)
-								Text(MaskinStatus.label(for: member.status).uppercased())
-									.maskinText(.microLabel).foregroundStyle(MaskinColor.ink5)
+				ForEach(groups) { group in
+					VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+						MonoLabel("\(MaskinStatus.label(for: group.status)) · \(group.count)")
+						VStack(spacing: 0) {
+							let shown = Array(group.members.prefix(8))
+							ForEach(Array(shown.enumerated()), id: \.element.id) { index, member in
+								row(member)
+								if index < shown.count - 1 { Divider().overlay(MaskinSurface.separator) }
 							}
-							.padding(.vertical, MaskinSpace.s7)
-							.contentShape(Rectangle())
+							if group.count > 8 {
+								Text("+\(group.count - 8) more")
+									.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+									.frame(maxWidth: .infinity, alignment: .leading)
+									.padding(.vertical, MaskinSpace.s3)
+							}
 						}
-						.buttonStyle(.maskinPressed)
-						if index < shown.count - 1 { Divider().overlay(MaskinSurface.separator) }
-					}
-					if movingMembers.count > 8 {
-						Text("+\(movingMembers.count - 8) more")
-							.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-							.frame(maxWidth: .infinity, alignment: .leading)
-							.padding(.vertical, MaskinSpace.s3)
+						.padding(.horizontal, MaskinSpace.s8)
+						.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 					}
 				}
-				.padding(.horizontal, MaskinSpace.s8)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 			}
 		}
+	}
+
+	private func row(_ member: LoopMember) -> some View {
+		Button { runtime?.openObject(member.id) } label: {
+			HStack(spacing: MaskinSpace.s6) {
+				Text(member.title)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .subheadline))
+					.foregroundStyle(MaskinColor.ink)
+					.lineLimit(2)
+					.multilineTextAlignment(.leading)
+				Spacer(minLength: MaskinSpace.s3)
+				if let name = store.directory.name(member.driverID) {
+					Text(name).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				}
+				Image(systemName: "chevron.right").font(.caption).foregroundStyle(MaskinColor.ink5)
+			}
+			.padding(.vertical, MaskinSpace.s7)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
 	}
 }

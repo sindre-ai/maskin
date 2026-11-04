@@ -8,10 +8,13 @@ import {
 	detectSuspiciousFilterEntries,
 	trackTriggerConfigSuspicious,
 } from '../lib/analytics/trigger-matcher-events'
-import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import {
+	buildCreatedAtCursorConditions,
+	msCreatedAt,
+	useKeysetSeek,
+} from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import {
 	errorSchema,
 	idParamSchema,
@@ -20,18 +23,44 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
+		workspaceRole?: string
 		actorType: string
 	}
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+// The model route is stamped on the session at dispatch (from the target agent
+// and workspace settings), never read from the trigger. The config schemas
+// strip unknown keys, so without this check a caller who sends one of these
+// gets a 200 and the field silently vanishes. Read from the raw request body:
+// by the time the handler runs, `c.req.valid('json')` has already dropped them.
+const MODEL_ROUTE_CONFIG_KEYS = ['llm_route', 'llm_oauth_slot'] as const
+
+async function findModelRouteKeyInConfig(c: {
+	req: { json: () => Promise<unknown> }
+}): Promise<string | undefined> {
+	const raw = (await c.req.json()) as { config?: unknown } | null
+	const config = raw?.config
+	if (typeof config !== 'object' || config === null) return undefined
+	return MODEL_ROUTE_CONFIG_KEYS.find((key) => key in config)
+}
+
+function modelRouteConfigError(key: string) {
+	return createApiError(
+		'VALIDATION_ERROR',
+		`config.${key} is not a trigger setting: the model route is resolved at dispatch from the target agent and workspace settings`,
+	)
+}
 
 /**
  * Kick off the Slack trigger setup service after the DB commit — never inside
@@ -44,9 +73,6 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * has `metadata.slack_setup`. That is a Slack trigger whose last channel was
  * just removed, and the service needs to run to clear the outcomes the form
  * would otherwise keep showing.
- *
- * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
- * behaviour (no join, no confirmation, no metadata write).
  */
 /**
  * Write-time warning for filters whose values the matcher will never resolve
@@ -89,7 +115,6 @@ function kickOffSlackSetup(
 	},
 ): void {
 	if (row.type !== 'event') return
-	if (!isFlagEnabled(actorId, FLAGS.SLACK_SETUP_UX_V2)) return
 	const channelIds = extractSlackChannelIds(row.config as Record<string, unknown> | null)
 	const hasStaleSetup =
 		(row.metadata as Record<string, unknown> | null | undefined)?.slack_setup !== undefined
@@ -110,6 +135,7 @@ function kickOffSlackSetup(
 const createTriggerRoute = createRoute({
 	method: 'post',
 	path: '/',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Create a trigger',
 	request: {
@@ -142,8 +168,12 @@ app.openapi(createTriggerRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
 
 	const body = c.req.valid('json')
+
+	const modelRouteKey = await findModelRouteKeyInConfig(c)
+	if (modelRouteKey) return c.json(modelRouteConfigError(modelRouteKey), 400)
 
 	// Validate cron expression eagerly so users get immediate feedback
 	if (body.type === 'cron') {
@@ -153,6 +183,10 @@ app.openapi(createTriggerRoute, async (c) => {
 			return c.json(createApiError('VALIDATION_ERROR', 'Invalid cron expression'), 400)
 		}
 	}
+
+	// The trigger starts its target agent on every fire, so the agent has to be a
+	// member of this workspace.
+	await assertInWorkspace(db, workspaceId, { actors: [body.target_actor_id] })
 
 	const created = await db.transaction(async (tx) => {
 		const [row] = await tx
@@ -208,7 +242,17 @@ const listTriggersQuerySchema = z.object({
 	snapshot_at: z.string().datetime().optional(),
 	cursor_created_at: z.string().datetime().optional(),
 	cursor_id: z.string().uuid().optional(),
+	// Filters combine with AND and apply to the rows and to X-Total-Count alike.
+	target_actor_id: z.string().uuid().optional(),
+	enabled: z.enum(['true', 'false']).optional(),
+	// Case-insensitive substring of the trigger name.
+	q: z.string().trim().min(1).max(200).optional(),
 })
+
+/** Escape LIKE wildcards (percent, underscore) and the escape character itself. */
+function escapeLike(value: string): string {
+	return value.replace(/[%_\\]/g, '\\$&')
+}
 
 // GET /api/triggers
 const listTriggersRoute = createRoute({
@@ -243,8 +287,19 @@ app.openapi(listTriggersRoute, (async (c) => {
 	const query = c.req.valid('query')
 	const { limit, offset } = query
 
+	const filterConditions = [eq(triggers.workspaceId, workspaceId)]
+	if (query.target_actor_id)
+		filterConditions.push(eq(triggers.targetActorId, query.target_actor_id))
+	if (query.enabled) filterConditions.push(eq(triggers.enabled, query.enabled === 'true'))
+	if (query.q) {
+		filterConditions.push(sql`${triggers.name} ILIKE ${`%${escapeLike(query.q)}%`} ESCAPE '\\'`)
+	}
+
 	if (limit === undefined) {
-		const results = await db.select().from(triggers).where(eq(triggers.workspaceId, workspaceId))
+		const results = await db
+			.select()
+			.from(triggers)
+			.where(and(...filterConditions))
 		c.header('X-Total-Count', String(results.length))
 		return c.json(serializeArray(results) as z.infer<typeof triggerResponseSchema>[])
 	}
@@ -254,14 +309,12 @@ app.openapi(listTriggersRoute, (async (c) => {
 		{ createdAt: triggers.createdAt, id: triggers.id },
 		query,
 	)
-	const listWhere = cursorConditions.length
-		? and(eq(triggers.workspaceId, workspaceId), ...cursorConditions)
-		: eq(triggers.workspaceId, workspaceId)
+	const listWhere = and(...filterConditions, ...cursorConditions)
 
 	const orderBy = cursorOn
 		? query.order === 'asc'
-			? [asc(triggers.createdAt), asc(triggers.id)]
-			: [desc(triggers.createdAt), asc(triggers.id)]
+			? [asc(msCreatedAt(triggers.createdAt)), asc(triggers.id)]
+			: [desc(msCreatedAt(triggers.createdAt)), asc(triggers.id)]
 		: []
 
 	const skipOffset = useKeysetSeek(query)
@@ -274,13 +327,13 @@ app.openapi(listTriggersRoute, (async (c) => {
 	// advances.
 	const totalWhere = query.snapshot_at
 		? and(
-				eq(triggers.workspaceId, workspaceId),
+				...filterConditions,
 				...buildCreatedAtCursorConditions(
 					{ createdAt: triggers.createdAt, id: triggers.id },
 					{ snapshot_at: query.snapshot_at },
 				),
 			)
-		: eq(triggers.workspaceId, workspaceId)
+		: and(...filterConditions)
 
 	const [results, totalRow] = await Promise.all([
 		listQueryOrdered.limit(limit).offset(skipOffset ? 0 : (offset ?? 0)),
@@ -295,6 +348,7 @@ app.openapi(listTriggersRoute, (async (c) => {
 const updateTriggerRoute = createRoute({
 	method: 'patch',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Update a trigger',
 	request: {
@@ -327,9 +381,12 @@ app.openapi(updateTriggerRoute, (async (c) => {
 
 	// Verify trigger exists and actor is a workspace member
 	const [trigger] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
-	if (!trigger || !(await isWorkspaceMember(db, actorId, trigger.workspaceId))) {
+	if (!trigger || !(await isWorkspaceWriter(db, actorId, trigger.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
+
+	const modelRouteKey = await findModelRouteKeyInConfig(c)
+	if (modelRouteKey) return c.json(modelRouteConfigError(modelRouteKey), 400)
 
 	// Validate config against the effective post-update type — the type in the
 	// body if changing it, otherwise the stale DB value — so a config-only PATCH
@@ -355,6 +412,9 @@ app.openapi(updateTriggerRoute, (async (c) => {
 			}
 		}
 	}
+
+	// Checked against the trigger's own workspace, which is where it will fire.
+	await assertInWorkspace(db, trigger.workspaceId, { actors: [body.target_actor_id] })
 
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
@@ -416,6 +476,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 const deleteTriggerRoute = createRoute({
 	method: 'delete',
 	path: '/{id}',
+	'x-viewer-policy': 'writer',
 	tags: ['triggers'],
 	summary: 'Delete a trigger',
 	request: {
@@ -439,7 +500,7 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 
 	const [existing] = await db.select().from(triggers).where(eq(triggers.id, id)).limit(1)
-	if (!existing || !(await isWorkspaceMember(db, actorId, existing.workspaceId))) {
+	if (!existing || !(await isWorkspaceWriter(db, actorId, existing.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
 	}
 

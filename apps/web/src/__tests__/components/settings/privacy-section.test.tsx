@@ -7,7 +7,9 @@ import { TestWrapper } from '../../setup'
 const mockUpdateMutate = vi.fn()
 const mockWorkspace = { current: buildWorkspaceWithRole({ settings: {} }) }
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({
 		workspace: mockWorkspace.current,
 		workspaceId: mockWorkspace.current.id,
@@ -45,7 +47,7 @@ describe('Settings > General > Privacy & data', () => {
 		renderPage()
 
 		expect(screen.getByRole('heading', { name: 'PRIVACY & DATA' })).toBeInTheDocument()
-		expect(screen.getByText(/Usage events feed the Synthesizer/)).toBeInTheDocument()
+		expect(screen.getByText(/Helps the Maskin team see how Maskin is used/)).toBeInTheDocument()
 		expect(
 			screen.getByRole('switch', { name: 'Share product usage with Maskin' }),
 		).toBeInTheDocument()

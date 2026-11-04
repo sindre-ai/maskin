@@ -10,11 +10,11 @@ struct ShellTabTests {
 	}
 
 	@Test func titlesUseTeamAndFlows() {
-		#expect(ShellTab.allCases.map(\.title) == ["For you", "Team", "Flows", "Objects", "Search"])
+		#expect(ShellTab.allCases.map(\.title) == ["For you", "Chats", "Flows", "Items", "Search"])
 	}
 
 	@Test func barItemsPerTab() {
-		#expect(ShellTab.forYou.barItems == [.display, .live, .avatar])
+		#expect(ShellTab.forYou.barItems == [.live, .avatar])
 		#expect(ShellTab.chats.barItems == [.display, .new, .avatar])
 		#expect(ShellTab.loops.barItems == [.display, .avatar])
 		#expect(ShellTab.objects.barItems == [.display, .avatar])
@@ -44,18 +44,18 @@ struct ProfileMenuTests {
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: true, role: .owner).map(\.title)
 				== [
-					"Marketplace", "Artefacts", "Members", "Integrations", "Triggers",
+					"Marketplace", "Artefacts", "Members", "Integrations", "Keychain", "Triggers",
 					"Billing", "Keys & MCP",
 				])
 		#expect(
 			ProfileMenu.items(in: .you, hasWorkspace: true).map(\.title)
-				== ["Settings", "Notifications", "Autonomy"])
+				== ["Settings", "Autonomy"])
 	}
 
 	@Test func workspaceScopedRowsHideWithoutAWorkspace() {
 		#expect(
 			ProfileMenu.items(in: .workspace, hasWorkspace: false, role: .owner) == [.artefacts])
-		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings, .notifications])
+		#expect(ProfileMenu.items(in: .you, hasWorkspace: false) == [.settings])
 	}
 
 	@Test func keysAndMCPAreForEveryMember() {

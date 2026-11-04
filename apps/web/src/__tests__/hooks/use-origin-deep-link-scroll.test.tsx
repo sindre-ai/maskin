@@ -99,4 +99,21 @@ describe('useOriginDeepLinkScroll', () => {
 		// SSE live updates and pagination re-renders won't re-yank the view.
 		expect(node.scrollIntoView).toHaveBeenCalledTimes(1)
 	})
+
+	it('kind "comment" looks for data-comment-id, not data-message-id, and announces a comment', () => {
+		const message = mountMessage(4242)
+		const comment = document.createElement('div')
+		comment.setAttribute('data-comment-id', '4242')
+		document.body.appendChild(comment)
+
+		const { result } = renderHook(() =>
+			useOriginDeepLinkScroll({ messageId: 4242, dataTrigger: 'p', kind: 'comment' }),
+		)
+
+		expect(comment.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+		expect(comment.dataset.originPulse).toBe('true')
+		expect(comment.dataset.originSpawn).toBe('true')
+		expect(message.dataset.originPulse).toBeUndefined()
+		expect(result.current).toBe('Jumped to comment.')
+	})
 })

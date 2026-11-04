@@ -50,6 +50,10 @@ private struct AgentsContainer: View {
 	@State private var store: AgentsStore
 	@State private var selection: String?
 	@State private var search = ""
+	/// The Display choices (sort, group, filters, shown lines). The chips above the list write
+	/// the status and team filters; the Display sheet reads and writes all of it.
+	@State private var display = AgentsDisplay.default
+	@State private var showDisplay = false
 	@Namespace private var zoom
 	@Environment(\.isPushedInHostStack) private var pushed
 
@@ -62,14 +66,16 @@ private struct AgentsContainer: View {
 	}
 
 	var body: some View {
-		if pushed { pushedBody } else { splitBody }
+		Group { if pushed { pushedBody } else { splitBody } }
+			.sheet(isPresented: $showDisplay) { AgentsDisplaySheet(store: store, display: $display) }
 	}
 
 	/// Pushed onto the profile sheet's stack: the list, with an agent's detail pushed on top.
 	private var pushedBody: some View {
 		AgentListView(
-			store: store, selection: $selection, search: $search,
-			isLive: environment.events.connection != .failed, zoomNamespace: zoom
+			store: store, selection: $selection, search: $search, display: $display,
+			isLive: environment.events.connection != .failed, zoomNamespace: zoom,
+			onDisplay: displayAction
 		)
 		.shellToolbar(environment: environment, title: "Agents", actions: ShellActions())
 		.navigationDestination(item: $selection) { id in
@@ -80,14 +86,26 @@ private struct AgentsContainer: View {
 			.id(id)
 		}
 		.task { await store.start() }
+		.task { await loadTeams() }
 		.onDisappear { store.stop() }
+	}
+
+	private var displayAction: (() -> Void)? { { showDisplay = true } }
+
+	/// Teams are the flows that list an agent: a best-effort read, so a failure just leaves every
+	/// agent without a team (and the team chips hidden).
+	private func loadTeams() async {
+		guard let workspaceID = environment.workspaceId else { return }
+		let api = APILoopsSource(client: environment.client, workspaceID: workspaceID)
+		if let flows = try? await api.loops() { store.setFlows(flows) }
 	}
 
 	private var splitBody: some View {
 		NavigationSplitView {
 			AgentListView(
-				store: store, selection: $selection, search: $search,
-				isLive: environment.events.connection != .failed, zoomNamespace: zoom
+				store: store, selection: $selection, search: $search, display: $display,
+				isLive: environment.events.connection != .failed, zoomNamespace: zoom,
+				onDisplay: displayAction, showsChevron: false
 			)
 			.shellToolbar(environment: environment, title: "Agents", actions: ShellActions())
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
@@ -106,6 +124,7 @@ private struct AgentsContainer: View {
 			}
 		}
 		.task { await store.start() }
+		.task { await loadTeams() }
 		.onDisappear { store.stop() }
 	}
 }
@@ -116,6 +135,8 @@ private struct AgentDetailHost: View {
 	var onDeleted: () -> Void = {}
 	@State private var store: AgentDetailStore
 	@State private var flows: [LoopSummary] = []
+	@State private var drivenObjects: [WorkObject] = []
+	@State private var triggers: TriggersStore
 	private let loopsAPI: APILoopsSource?
 	private let agentID: String
 
@@ -124,6 +145,10 @@ private struct AgentDetailHost: View {
 		self.onDeleted = onDeleted
 		self.agentID = agentID
 		loopsAPI = environment.workspaceId.map { APILoopsSource(client: environment.client, workspaceID: $0) }
+		_triggers = State(
+			initialValue: TriggersStore(
+				api: APITriggersSource(client: environment.client, workspaceID: environment.workspaceId ?? ""),
+				events: environment.events, cache: environment.snapshotCache))
 		_store = State(
 			initialValue: AgentDetailStore(
 				agentID: agentID,
@@ -132,13 +157,22 @@ private struct AgentDetailHost: View {
 	}
 
 	var body: some View {
-		AgentDetailView(store: store, onDeleted: onDeleted, flows: flows)
+		AgentDetailView(store: store, onDeleted: onDeleted, flows: flows, triggers: triggers, objects: drivenObjects)
 			.task { await store.start() }
+			.task { await triggers.start() }
 			.task {
 				// Flows the agent works in: a best-effort read, so a failure just hides the card.
 				guard let all = try? await loopsAPI?.loops() else { return }
 				flows = all.filter { $0.agentIDs.contains(agentID) }
 			}
-			.onDisappear { store.stop() }
+			.task {
+				// The objects this agent drives: also best-effort, an empty tab on failure.
+				let query = ObjectsQuery(driver: agentID, limit: ServerLimits.maxPageSize, sort: .updated)
+				drivenObjects = (try? await ObjectsServices(environment: environment).remote.list(query)) ?? []
+			}
+			.onDisappear {
+				store.stop()
+				triggers.stop()
+			}
 	}
 }

@@ -2,6 +2,7 @@ import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,6 +13,7 @@ import {
 	TableHeader,
 	TableRow,
 } from '@/components/ui/table'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { GraphFileSummary, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -102,6 +104,7 @@ export function RelatedObjectsTable({
 }: RelatedObjectsTableProps) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
+	const canWrite = useCanWrite()
 	const [sorting, setSorting] = useState<SortingState>([])
 
 	const columns = useMemo<ColumnDef<ResolvedRow>[]>(() => {
@@ -205,26 +208,29 @@ export function RelatedObjectsTable({
 			id: 'actions',
 			header: '',
 			cell: ({ row }) => (
-				<Button
-					variant="ghost"
-					size="icon"
-					/* Always visible on touch; fades behind row hover on sm+. */
-					className="h-7 w-7 text-muted-foreground hover:text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-					onClick={(e) => {
-						e.stopPropagation()
-						onDeleteRelationship(row.original.rel.id)
-					}}
-					title="Remove link"
-					aria-label="Remove link"
-				>
-					<X className="h-3 w-3" />
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="ghost"
+						size="icon"
+						/* Always visible on touch; fades behind row hover on sm+. */
+						className="h-7 w-7 text-muted-foreground hover:text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+						disabled={!canWrite}
+						onClick={(e) => {
+							e.stopPropagation()
+							onDeleteRelationship(row.original.rel.id)
+						}}
+						title="Remove link"
+						aria-label="Remove link"
+					>
+						<X className="h-3 w-3" />
+					</Button>
+				</ViewerTooltip>
 			),
 			enableSorting: false,
 			size: 40,
 		})
 		return cols
-	}, [workspaceId, onDeleteRelationship, showWhen])
+	}, [workspaceId, onDeleteRelationship, showWhen, canWrite])
 
 	const table = useReactTable({
 		data: rows,
@@ -326,6 +332,7 @@ function RelatedRowCard({
 	onClick: () => void
 	onDelete: () => void
 }) {
+	const canWrite = useCanWrite()
 	if (isFileRow(resolved)) {
 		return (
 			// biome-ignore lint/a11y/useKeyWithClickEvents: card click supplements the inner link, which keyboard users reach via Tab
@@ -354,19 +361,22 @@ function RelatedRowCard({
 						</span>
 					</div>
 				</div>
-				<Button
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 shrink-0 text-muted-foreground hover:text-error"
-					onClick={(e) => {
-						e.stopPropagation()
-						onDelete()
-					}}
-					title="Remove link"
-					aria-label="Remove link"
-				>
-					<X className="h-3 w-3" />
-				</Button>
+				<ViewerTooltip>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7 shrink-0 text-muted-foreground hover:text-error"
+						disabled={!canWrite}
+						onClick={(e) => {
+							e.stopPropagation()
+							onDelete()
+						}}
+						title="Remove link"
+						aria-label="Remove link"
+					>
+						<X className="h-3 w-3" />
+					</Button>
+				</ViewerTooltip>
 			</li>
 		)
 	}
@@ -400,19 +410,22 @@ function RelatedRowCard({
 					<StatusBadge status={object.status} />
 				</div>
 			</div>
-			<Button
-				variant="ghost"
-				size="icon"
-				className="h-7 w-7 shrink-0 text-muted-foreground hover:text-error"
-				onClick={(e) => {
-					e.stopPropagation()
-					onDelete()
-				}}
-				title="Remove link"
-				aria-label="Remove link"
-			>
-				<X className="h-3 w-3" />
-			</Button>
+			<ViewerTooltip>
+				<Button
+					variant="ghost"
+					size="icon"
+					className="h-7 w-7 shrink-0 text-muted-foreground hover:text-error"
+					disabled={!canWrite}
+					onClick={(e) => {
+						e.stopPropagation()
+						onDelete()
+					}}
+					title="Remove link"
+					aria-label="Remove link"
+				>
+					<X className="h-3 w-3" />
+				</Button>
+			</ViewerTooltip>
 		</li>
 	)
 }

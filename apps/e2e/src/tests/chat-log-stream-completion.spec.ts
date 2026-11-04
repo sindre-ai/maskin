@@ -58,11 +58,13 @@ test.describe('Chats — SSE log stream session completion', () => {
 			// `done` frame below cannot land on a connection that is still
 			// coming up — see `warmUpStream`. A stream that missed the terminal
 			// line would never tear down, and the fast poll would keep running.
+			// The second name is only posted when the first cursor is slow, so the matcher below must not
+			// take "warmup_tool_b" for "warmup_tool" (a plain substring would match both: strict-mode error).
 			await warmUpStream(page, account, live.sessionId, [
 				'mcp__maskin__warmup_tool',
 				'mcp__maskin__warmup_tool_b',
 			])
-			await expect(activitySteps.getByText('Using mcp__maskin__warmup_tool')).toBeVisible({
+			await expect(activitySteps.getByText(/warmup tool(?! b)/i)).toBeVisible({
 				timeout: 10_000,
 			})
 

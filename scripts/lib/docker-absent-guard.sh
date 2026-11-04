@@ -28,6 +28,6 @@ maskin_docker_absent_guard() {
 		echo "MASKIN_REQUIRE_DOCKER=1 is set, so a missing Docker socket is fatal." >&2
 		return 1
 	fi
-	echo "Continuing without Docker: skipping the agent-base and browser-sidecar image warm-up." >&2
+	echo "Continuing without Docker: skipping the agent-base image warm-up." >&2
 	export MASKIN_DOCKER_UNAVAILABLE=1
 }

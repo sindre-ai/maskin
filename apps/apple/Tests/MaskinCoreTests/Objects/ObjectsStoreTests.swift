@@ -230,7 +230,7 @@ struct ObjectsStoreTests {
 		let task = await store.create(ObjectDraft(type: "task", title: "Elsewhere", status: "todo"))
 		#expect(task != nil)
 		#expect(!store.objects.contains { $0.title == "Elsewhere" })
-		let bet = await store.create(ObjectDraft(type: "bet", title: "Mine", status: "signal"))
+		let bet = await store.create(ObjectDraft(type: "bet", title: "Mine", status: "opportunity"))
 		#expect(store.objects.first?.id == bet?.id)
 	}
 
@@ -345,7 +345,18 @@ struct ObjectsStoreScopeTests {
 		await store.load()
 		#expect(store.inventory.count == ObjectsStore.inventoryLimit)
 		#expect(store.inventoryCapped)
-		#expect(store.typeSummaries.first?.countLabel == "100+")
+		#expect(store.typeSummaries.first { $0.id == "task" }?.countLabel == "100+")
+	}
+
+	@Test("a full inventory keeps every configured type on offer, even one older than the newest page")
+	func cappedInventoryKeepsConfiguredTypes() async {
+		let many = (0..<120).map {
+			WorkObject(id: "o\($0)", type: "task", title: "Task \($0)", status: "todo", updatedAt: Fixtures.date($0))
+		}
+		let (store, _) = makeStore(FakeObjectsRemote(objects: many))
+		await store.load()
+		#expect(store.inventoryCapped)
+		#expect(store.presentTypes == ["bet", "insight", "task"])
 	}
 
 	@Test("needs you comes from an open ask or the data's own signals, and the Needs you scope shows only those")
@@ -403,7 +414,7 @@ struct ObjectsStoreScopeTests {
 	func scopes() async {
 		let (store, remote) = makeStore()
 		await store.load()
-		#expect(store.title == "Objects")
+		#expect(store.title == "Items")
 		#expect(store.mixesTypes)
 		await store.setScope(.type("insight"))
 		#expect(store.title == "Insights")
@@ -572,7 +583,7 @@ struct ObjectTypeCatalogTests {
 
 	@Test("the scope titles read as the handoff says")
 	func titles() {
-		#expect(ObjectsScope.all.title(schema: .fallback) == "Objects")
+		#expect(ObjectsScope.all.title(schema: .fallback) == "Items")
 		#expect(ObjectsScope.needsYou.title(schema: .fallback) == "Needs you")
 		#expect(ObjectsScope.type("task").title(schema: .fallback) == "Tasks")
 		#expect(ObjectsScope.saved("x").title(schema: .fallback) { _ in "Doing now" } == "Doing now")
@@ -599,9 +610,9 @@ struct ObjectTypeCatalogTests {
 /// Polls on the main actor until `condition` holds (events cross an AsyncStream hop).
 @MainActor
 func waitUntil(timeout: Duration = .seconds(15), _ condition: () -> Bool) async throws {
-	let deadline = ContinuousClock.now + timeout
+	var budget = PollBudget(timeout)
 	while !condition() {
-		if ContinuousClock.now > deadline { throw TimeoutError() }
+		if !budget.spend() { throw TimeoutError() }
 		try await Task.sleep(for: .milliseconds(10))
 	}
 }

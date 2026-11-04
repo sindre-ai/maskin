@@ -1,0 +1,16 @@
+{
+	"_source": "documented, not recorded",
+	"object": "CompanyProfile",
+	"id": "1234567",
+	"name": "Analytical Engines Ltd",
+	"public_identifier": "analytical-engines",
+	"profile_url": "https://www.linkedin.com/company/analytical-engines",
+	"description": "Mechanical computation.",
+	"website": "https://analytical.example",
+	"followers_count": 4200,
+	"industry": ["Computer Software"],
+	"locations": [
+		{ "is_headquarter": true, "city": "London", "area": "England", "country_code": "GB" }
+	],
+	"insights": { "headcount": 87, "headcount_range": { "from": 51, "to": 200 } }
+}

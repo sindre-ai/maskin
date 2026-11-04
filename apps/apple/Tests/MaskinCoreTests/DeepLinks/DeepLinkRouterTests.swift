@@ -22,6 +22,17 @@ private final class Harness {
 @MainActor
 @Suite("DeepLinkRouter")
 struct DeepLinkRouterTests {
+	@Test("the share extension's open-the-app link is accepted and navigates nowhere")
+	func openAppLink() {
+		let h = Harness()
+		#expect(h.router.open(URL(string: "maskin://open")!))
+		#expect(h.router.pending == nil)
+		#expect(h.router.incoming == nil)
+		#expect(h.router.rejection == nil)
+		#expect(h.selected.isEmpty)
+		#expect(!DeepLinkRouter.isOpenApp(URL(string: "maskin://open/objects/o1")!))
+	}
+
 	@Test("a link into the current workspace is pending at once, with no switch")
 	func sameWorkspace() {
 		let h = Harness()

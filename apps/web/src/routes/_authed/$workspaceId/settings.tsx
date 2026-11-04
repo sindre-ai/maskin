@@ -22,10 +22,18 @@ const settingsNav = [
 
 // Keys is listed only for workspaces holding the `byollm_allowed` ops grant —
 // for everyone else the page has no content to show. It stays a real route
-// regardless, because onboarding and `session-errors.ts` both deep-link it.
+// regardless, because onboarding and the failed-session card both deep-link it.
 const keysNavItem = {
 	label: 'Keys',
 	to: '/$workspaceId/settings/keys' as const,
+	exact: false,
+}
+
+// Keychain is listed only while its flag is on. The Keychain routes read the flag
+// themselves, so a typed-in URL answers not found when it is off.
+const keychainNavItem = {
+	label: 'Keychain',
+	to: '/$workspaceId/settings/keychain' as const,
 	exact: false,
 }
 
@@ -33,7 +41,14 @@ function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
-	const navItems = workspace?.enterprise ? [...settingsNav, keysNavItem] : settingsNav
+	// Keychain sits right under Integrations: the two are where access is managed.
+	const at = settingsNav.findIndex((item) => item.label === 'Integrations') + 1
+	const navItems = [
+		...settingsNav.slice(0, at),
+		keychainNavItem,
+		...settingsNav.slice(at),
+		...(workspace?.enterprise ? [keysNavItem] : []),
+	]
 	const isItemActive = (item: (typeof navItems)[number]) =>
 		item.exact
 			? !!matchRoute({ to: item.to, params: { workspaceId } })

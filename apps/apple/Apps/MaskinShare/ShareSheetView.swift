@@ -25,8 +25,6 @@ struct ShareSheetView: View {
 	@State private var confirmingDiscard = false
 	@ScaledMetric(relativeTo: .title) private var heroIconSize: CGFloat = 56
 	@ScaledMetric(relativeTo: .title) private var blockedIconSize: CGFloat = 44
-	@ScaledMetric(relativeTo: .body) private var sendButtonSize: CGFloat = 44
-	@ScaledMetric(relativeTo: .body) private var sendGlyphSize: CGFloat = 17
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -76,19 +74,34 @@ struct ShareSheetView: View {
 
 	// MARK: Header
 
-	/// Just the way out: the sheet is a composer, not a form, so there is no title bar to read.
+	/// Cancel on the left, "Maskin" in the middle, Send on the right (text, as in the v3 design).
+	/// After sending, Done replaces Cancel and Send goes away.
 	private var header: some View {
 		HStack {
 			Button(isDone ? "Done" : "Cancel", action: headerAction)
 				.maskinText(.headline)
+				.fontWeight(.regular)
 				.foregroundStyle(MaskinColor.ink3)
-				.frame(minHeight: MaskinSpace.touchMin)
-			Spacer(minLength: MaskinSpace.s4)
-			MaskinLogoTile(size: MaskinSpace.s12)
-				.accessibilityHidden(true)
+				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+				.frame(maxWidth: .infinity, alignment: .leading)
+			Text("Maskin")
+				.maskinText(.headline)
+				.foregroundStyle(MaskinColor.ink)
+				.accessibilityAddTraits(.isHeader)
+			Group {
+				if showsForm { sendButton } else { Color.clear.frame(height: MaskinSpace.touchMin) }
+			}
+			.frame(maxWidth: .infinity, alignment: .trailing)
 		}
 		.padding(.horizontal, MaskinSpace.s10)
 		.padding(.top, MaskinSpace.s2)
+	}
+
+	private var showsForm: Bool {
+		switch model.phase {
+		case .ready, .posting, .failed: true
+		default: false
+		}
 	}
 
 	private func copyToPasteboard(_ text: String) {
@@ -152,129 +165,166 @@ struct ShareSheetView: View {
 		.padding(.bottom, MaskinSpace.s6)
 	}
 
-	/// One big rounded surface holding everything: what is shared, the note, and a toolbar row
-	/// with where it goes and the send button.
+	/// The sheet in the v3 layout: what is shared, the Send to / Type rows, the note and the chats
+	/// the person can send it to with one tap.
 	private var composer: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
 			SharePreviewCard(content: model.content)
 			if model.showsTitleField {
 				TextField("Title", text: $model.title, axis: .vertical)
 					.lineLimit(1...3)
 					.maskinText(.headline)
 					.foregroundStyle(MaskinColor.ink)
+					.padding(.horizontal, MaskinSpace.s4)
 					.accessibilityLabel("Title")
 					.disabled(isPosting)
 			}
-			TextField(model.isChat ? "Add a message" : "Add a note: what you want done with this", text: $model.note, axis: .vertical)
+			destinationRows
+			TextField(model.isChat ? "Add a message" : "Add a note for the agent", text: $model.note, axis: .vertical)
 				.lineLimit(3...8)
 				.focused($noteFocused)
 				.maskinText(.body)
 				.foregroundStyle(MaskinColor.ink)
+				.padding(MaskinSpace.s7)
 				.frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+				.background(MaskinSurface.cardInset2, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
 				.accessibilityLabel(model.isChat ? "Message" : "Note")
 				.disabled(isPosting)
-			toolbar
+			chatChips
 		}
-		.padding(MaskinSpace.s9)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+	}
+
+	/// "Send to" (a new item, or a chat) and "Type" (the object type; only for a new item), with a
+	/// "Workspace" row when the person has more than one. A row is a menu, so it has a chevron.
+	private var destinationRows: some View {
+		VStack(spacing: 0) {
+			sendToRow
+			if !model.isChat, model.typeOptions.count > 1 {
+				Divider().overlay(MaskinSurface.line)
+				typeRow
+			}
+			if model.workspaces.count > 1, let name = model.workspace?.name {
+				Divider().overlay(MaskinSurface.line)
+				workspaceRow(name)
+			}
+		}
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
 		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
+			RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
 				.strokeBorder(MaskinSurface.line, lineWidth: 1))
 	}
 
-	private var toolbar: some View {
+	private func row(_ name: String, value: String) -> some View {
 		HStack(spacing: MaskinSpace.s4) {
-			destinationMenu
-			workspaceMenu
+			Text(name).maskinText(.body).foregroundStyle(MaskinColor.ink4)
 			Spacer(minLength: MaskinSpace.s4)
-			sendButton
+			Text(value).maskinText(.body).fontWeight(.medium).foregroundStyle(MaskinColor.ink).lineLimit(1)
+			Image(systemName: "chevron.right").imageScale(.small).foregroundStyle(MaskinColor.ink4)
 		}
-	}
-
-	private func pill(_ title: String, systemImage: String) -> some View {
-		HStack(spacing: MaskinSpace.s2) {
-			Image(systemName: systemImage).imageScale(.small)
-			Text(title).lineLimit(1)
-			Image(systemName: "chevron.up.chevron.down").imageScale(.small).foregroundStyle(MaskinColor.ink4)
-		}
-		.maskinText(.subhead)
-		.fontWeight(.semibold)
-		.foregroundStyle(MaskinColor.ink2)
 		.padding(.horizontal, MaskinSpace.s7)
 		.frame(minHeight: MaskinSpace.touchMin)
-		.background(MaskinSurface.cardInset2, in: Capsule())
-		.contentShape(Capsule())
+		.contentShape(Rectangle())
+		.accessibilityElement(children: .combine)
 	}
 
-	private var destinationMenu: some View {
+	private var sendToRow: some View {
 		Menu {
-			Section("Save as") {
-				ForEach(model.typeOptions.filter { !isChat($0) }, id: \.self) { option in
-					Button(model.label(for: option)) { select(option) }
-				}
+			Button("New item") {
+				model.useNewItem()
+				MaskinHaptics.play(.selection)
 			}
 			if !model.conversations.isEmpty {
-				Section("Send to chat") {
+				Section("Chat") {
 					ForEach(model.conversations) { conversation in
 						Button(conversation.title) { select(.chat(id: conversation.id)) }
 					}
 				}
 			}
 		} label: {
-			pill(model.label(for: model.destination), systemImage: model.isChat ? "bubble.left" : "square.and.pencil")
+			row("Send to", value: model.isChat ? model.label(for: model.destination) : "New item")
 		}
 		.disabled(isPosting)
-		.accessibilityLabel("Destination: \(model.label(for: model.destination))")
+		.accessibilityLabel("Send to: \(model.isChat ? model.label(for: model.destination) : "New item")")
 	}
 
-	@ViewBuilder private var workspaceMenu: some View {
-		if model.workspaces.count > 1, let name = model.workspace?.name {
-			Menu {
-				ForEach(model.workspaces, id: \.id) { workspace in
-					Button {
-						Task { await model.selectWorkspace(workspace.id) }
-					} label: {
-						if workspace.id == model.activeWorkspaceId {
-							Label(workspace.name, systemImage: "checkmark")
-						} else {
-							Text(workspace.name)
-						}
+	private var typeRow: some View {
+		Menu {
+			ForEach(model.typeOptions, id: \.self) { option in
+				Button(model.label(for: option)) { select(option) }
+			}
+		} label: {
+			row("Type", value: model.label(for: model.destination))
+		}
+		.disabled(isPosting)
+		.accessibilityLabel("Type: \(model.label(for: model.destination))")
+	}
+
+	private func workspaceRow(_ name: String) -> some View {
+		Menu {
+			ForEach(model.workspaces, id: \.id) { workspace in
+				Button {
+					Task { await model.selectWorkspace(workspace.id) }
+				} label: {
+					if workspace.id == model.activeWorkspaceId {
+						Label(workspace.name, systemImage: "checkmark")
+					} else {
+						Text(workspace.name)
 					}
 				}
-			} label: {
-				pill(name, systemImage: "square.grid.2x2")
 			}
-			.disabled(isPosting)
-			.accessibilityLabel("Workspace: \(name)")
-		} else if let name = model.workspace?.name {
-			Text(name)
-				.maskinText(.subhead)
-				.foregroundStyle(MaskinColor.ink4)
-				.lineLimit(1)
+		} label: {
+			row("Workspace", value: name)
+		}
+		.disabled(isPosting)
+		.accessibilityLabel("Workspace: \(name)")
+	}
+
+	/// The first few chats as chips; tapping one sends to it, and the chosen one is filled.
+	@ViewBuilder private var chatChips: some View {
+		if !model.suggestedConversations.isEmpty {
+			HStack(spacing: MaskinSpace.s4) {
+				ForEach(model.suggestedConversations) { conversation in
+					let selected = model.destination == .chat(id: conversation.id)
+					Button {
+						if selected { model.useNewItem() } else { select(.chat(id: conversation.id)) }
+					} label: {
+						Text(conversation.title)
+							.maskinText(.subhead)
+							.fontWeight(.medium)
+							.lineLimit(1)
+							.foregroundStyle(selected ? MaskinSurface.onInverse : MaskinColor.ink2)
+							.padding(.horizontal, MaskinSpace.s7)
+							.frame(minHeight: MaskinSpace.touchMin)
+							.background(selected ? MaskinSurface.inverse : MaskinSurface.cardInset2, in: Capsule())
+					}
+					.buttonStyle(.maskinPressed)
+					.disabled(isPosting)
+					.accessibilityAddTraits(selected ? .isSelected : [])
+				}
+			}
 		}
 	}
 
-	/// The round send arrow. Disabled and spinner-bearing while a post is in flight; the failed
-	/// state keeps it enabled so it doubles as Try again.
+	/// The text Send in the header. Spinner while a post is in flight; after a failure it is Try
+	/// again.
 	private var sendButton: some View {
 		Button {
 			noteFocused = false
 			Task { await model.post() }
 		} label: {
-			ZStack {
+			Group {
 				if isPosting {
-					ProgressView().tint(MaskinSurface.onInverse)
+					ProgressView()
 				} else {
-					Image(systemName: failedRetry ? "arrow.clockwise" : "arrow.up")
-						.font(.system(size: sendGlyphSize, weight: .bold))
-						.foregroundStyle(MaskinSurface.onInverse)
+					Text(failedRetry ? "Try again" : "Send")
 				}
 			}
-			.frame(width: sendButtonSize, height: sendButtonSize)
-			.background(MaskinSurface.inverse, in: Circle())
+			.maskinText(.headline)
+			.foregroundStyle(MaskinColor.ink)
+			.frame(minHeight: MaskinSpace.touchMin)
 			.opacity(model.canPost || isPosting ? 1 : 0.4)
 		}
-		.buttonStyle(.maskinPressed(.shrink))
+		.buttonStyle(.maskinPressed)
 		.disabled(!model.canPost)
 		.accessibilityLabel(sendLabel)
 	}

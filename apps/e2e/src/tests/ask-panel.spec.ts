@@ -16,7 +16,7 @@ async function seedAsk(account: { api: TestAPI; workspaceId: string; actorId: st
 	const obj = await account.api.createObject(account.workspaceId, {
 		type: 'bet',
 		title: 'Ask Target Bet',
-		status: 'signal',
+		status: 'opportunity',
 	})
 	const agent = await account.api.createAgentActor('Asking Agent')
 	await account.api.addWorkspaceMember(account.workspaceId, agent.id, 'member')

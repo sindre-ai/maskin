@@ -1,6 +1,14 @@
-import type { FailureReasonCode, SessionResultFailureReason } from '@maskin/shared'
+import {
+	type FailureReasonCode,
+	type SessionResultFailureReason,
+	type StreamJsonResult,
+	parseResultLine,
+} from '@maskin/shared'
 
-import { parseCliResetBanner } from './subscription-limit-reset'
+import { parseCliResetBanner, parseRateLimitEventReset } from './subscription-limit-reset'
+
+/** What Anthropic's API (and the CLI that prints it) says when a key has no credit left. */
+export const CREDIT_BALANCE_LOW_BANNER = 'Credit balance is too low'
 
 const CLI_BANNERS: ReadonlyArray<{
 	match: string
@@ -38,7 +46,7 @@ const CLI_BANNERS: ReadonlyArray<{
 		humanMessage: 'Claude request rejected — rate limit',
 	},
 	{
-		match: 'Credit balance is too low',
+		match: CREDIT_BALANCE_LOW_BANNER,
 		reasonCode: 'credit_balance_low',
 		humanMessage: 'Claude credit balance is too low',
 	},
@@ -63,6 +71,16 @@ const CLI_BANNERS: ReadonlyArray<{
 			'Claude OAuth token was revoked — moving this workspace to the next connected subscription',
 	},
 ]
+
+/**
+ * True when `text` is the "credit balance is too low" error. The one place that
+ * answers it: the route picker's out-of-credit mark and its callers go through
+ * here, so the wording is matched in a single spot. Pass the text of a failed
+ * turn or the classified banner, not a whole stdout tail.
+ */
+export function isCreditBalanceLowText(text: string): boolean {
+	return text.includes(CREDIT_BALANCE_LOW_BANNER)
+}
 
 /**
  * Inspects the stdout tail from a failed session and returns a typed failure
@@ -95,15 +113,21 @@ export function classifyCreditExhaustion(
 	// tail we see, so the reset-at parity cells succeed even when the classifier
 	// hits a banner (source 3 in §17.2). Best-effort — null when the fragment
 	// doesn't match or falls outside the [now+60s, now+24h] clamp.
-	const bannerResetAt = parseCliResetBanner(tail)?.toISOString() ?? null
-	// §7.5: when the banner parsed, stamp source + confidence on the failure
-	// reason so the retry-scheduler can carry them onto the session_retry_scheduled
-	// audit event. The CLI banner is the ONLY parse source that reaches this
-	// classifier — Anthropic response headers land in the failover companion at
-	// claude-failover.ts and never see this code path — so the source is
-	// always 'cli-banner' + 'advisory' when the banner matched.
+	// The CLI's rate_limit_event carries the reset as an epoch, so it wins over the
+	// banner text, whose time zone we may not be able to read.
+	const eventResetAt = parseRateLimitEventReset(tail)?.toISOString() ?? null
+	const bannerResetAt = eventResetAt ?? parseCliResetBanner(tail)?.toISOString() ?? null
+	// §7.5: when a reset parsed, stamp source + confidence on the failure reason so
+	// the retry-scheduler can carry them onto the session_retry_scheduled audit
+	// event. Anthropic response headers land in the failover companion at
+	// claude-failover.ts and never see this code path, so the source is always the
+	// CLI's output: advisory for the banner, authoritative for the event's epoch.
 	const resetStamp: Pick<SessionResultFailureReason, 'reset_source' | 'reset_confidence'> =
-		bannerResetAt !== null ? { reset_source: 'cli-banner', reset_confidence: 'advisory' } : {}
+		eventResetAt !== null
+			? { reset_source: 'cli-banner', reset_confidence: 'authoritative' }
+			: bannerResetAt !== null
+				? { reset_source: 'cli-banner', reset_confidence: 'advisory' }
+				: {}
 
 	for (const banner of CLI_BANNERS) {
 		if (tail.includes(banner.match)) {
@@ -219,4 +243,135 @@ function classifyOpenRouterEnvelope(
 		}
 	}
 	return null
+}
+
+const MAX_LINES_SCANNED_FOR_RESULT = 200
+
+/**
+ * The last top-level stream-json `result` envelope in the tail, or null when
+ * the run never wrote one (cut off mid-work, or a runtime without stream-json).
+ */
+function findFinalResult(tail: string): StreamJsonResult | null {
+	const lines = tail.split('\n')
+	const stop = Math.max(0, lines.length - MAX_LINES_SCANNED_FOR_RESULT)
+	for (let i = lines.length - 1; i >= stop; i--) {
+		const result = parseResultLine(lines[i] ?? '')
+		if (result) return result
+	}
+	return null
+}
+
+/**
+ * The failure reason for a final result text that opens with a CLI banner (the
+ * way the CLI prints a real stop), or null. A banner further into the text does
+ * not count: that is something the agent read, not a stop.
+ */
+export function classifyBannerResult(text: string): SessionResultFailureReason | null {
+	const opening = text.trimStart()
+	return CLI_BANNERS.some((banner) => opening.startsWith(banner.match))
+		? classifyCreditExhaustion(opening, { includeAmbiguousSignals: false })
+		: null
+}
+
+/**
+ * Classifies a finished session's exit. Both completion paths (the local
+ * handleCompletion and the remote markRemoteSessionComplete) call this, so the
+ * two cannot drift apart.
+ *
+ * A run that exited 0 with a final `result` that is not an error finished its
+ * job. Limit text elsewhere in its output is something it read (the stalled-work
+ * watchdog quotes other sessions' limit messages), not a stop, so only the
+ * result text is consulted, and only when it opens with a CLI banner — which is
+ * how the CLI prints a real stop. A banner mid-text does not count. Every other
+ * exit (non-zero, an error result, or no result at all) is classified on the
+ * whole tail exactly as before.
+ */
+export function classifySessionExit(
+	tail: string,
+	exitCode: number,
+): SessionResultFailureReason | null {
+	if (exitCode === 0) {
+		const result = findFinalResult(tail)
+		if (result && !result.isError) return classifyBannerResult(result.text)
+	}
+	return (
+		(exitCode !== 0 ? classifyClaudeAuthFailure(tail) : null) ??
+		classifyCreditExhaustion(tail, { includeAmbiguousSignals: exitCode !== 0 })
+	)
+}
+
+/**
+ * What the Claude Code CLI writes as the final result when the model API
+ * answered 401 and the CLI could not renew its login ("Failed to authenticate:
+ * OAuth session expired and could not be refreshed"). It is not one of
+ * CLI_BANNERS on purpose: classifying it would feed the failover path, which
+ * must not move a healthy slot over a login that simply expired in a container.
+ */
+const CLI_AUTH_DEATH_PREFIX = 'Failed to authenticate'
+
+/** True when a session's final error text is the CLI giving up on a 401. */
+export function isClaudeAuthDeathText(text: string): boolean {
+	return text.trimStart().startsWith(CLI_AUTH_DEATH_PREFIX)
+}
+
+/**
+ * True when the tail's final stream-json result is an error that opens with the
+ * CLI's authentication failure. Only the final result is read, so the same
+ * words in a tool's output (an agent reading these logs) do not count.
+ */
+export function endsInClaudeAuthDeath(tail: string): boolean {
+	const result = findFinalResult(tail)
+	return result?.isError === true && isClaudeAuthDeathText(result.text)
+}
+
+const CLI_AUTH_FAILURES: ReadonlyArray<{
+	prefix: string
+	reasonCode: FailureReasonCode
+	humanMessage: string
+}> = [
+	{
+		prefix: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+		reasonCode: 'oauth_expired',
+		humanMessage:
+			'Claude login expired and could not be refreshed — reconnect your Claude subscription',
+	},
+	{
+		prefix: 'Invalid API key',
+		reasonCode: 'invalid_api_key',
+		humanMessage: 'Claude API key was rejected — reconnect your Claude subscription or API key',
+	},
+]
+
+/**
+ * Names the two final errors the CLI ends on when its credential is dead.
+ * Only the final error result is read, so the same words in a tool's output do
+ * not count. These codes are left out of the failover list in session-manager.ts
+ * and carry no reset time, so the failure is stored with a reason but never
+ * moves a slot and never schedules a retry.
+ */
+export function classifyClaudeAuthFailure(tail: string): SessionResultFailureReason | null {
+	const result = findFinalResult(tail)
+	if (result?.isError !== true) return null
+	return classifyClaudeAuthFailureText(result.text)
+}
+
+/**
+ * Same rule on a final error text that is already isolated, which is what the
+ * helper close-out has (it never sees a stdout tail). The caller must only pass
+ * the text of an error result.
+ */
+export function classifyClaudeAuthFailureText(
+	errorText: string,
+): SessionResultFailureReason | null {
+	const text = errorText.trimStart()
+	const failure = CLI_AUTH_FAILURES.find((f) => text.startsWith(f.prefix))
+	if (!failure) return null
+	return {
+		provider: 'anthropic',
+		reason_code: failure.reasonCode,
+		human_message: failure.humanMessage,
+		http_status: 401,
+		reset_at: null,
+		verbatim_output: text.slice(0, 300),
+	}
 }

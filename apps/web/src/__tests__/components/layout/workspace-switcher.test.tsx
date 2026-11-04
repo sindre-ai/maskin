@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildWorkspaceWithRole } from '../../factories'
 
 const mockNavigate = vi.fn()
@@ -56,8 +56,14 @@ vi.mock('@/hooks/use-workspaces', () => ({
 }))
 
 const trackOpened = vi.fn()
+const trackOpenAttempted = vi.fn()
+const trackDismissedImmediately = vi.fn()
 vi.mock('@/lib/analytics', () => ({
 	trackSidebarWorkspaceSwitcherOpened: (p: { workspaceId: string }) => trackOpened(p),
+	trackSidebarWorkspaceSwitcherOpenAttempted: (p: { workspaceId: string; pointerType: string }) =>
+		trackOpenAttempted(p),
+	trackSidebarWorkspaceSwitcherDismissedImmediately: (p: { workspaceId: string; openMs: number }) =>
+		trackDismissedImmediately(p),
 }))
 
 import { useWorkspaces } from '@/hooks/use-workspaces'
@@ -83,6 +89,8 @@ describe('WorkspaceSwitcher', () => {
 		mockNavigate.mockReset()
 		setOpenMobile.mockReset()
 		trackOpened.mockReset()
+		trackOpenAttempted.mockReset()
+		trackDismissedImmediately.mockReset()
 		toggleSidebar.mockReset()
 		sidebarState = 'expanded'
 	})
@@ -296,6 +304,62 @@ describe('WorkspaceSwitcher', () => {
 
 		expect(await screen.findByRole('menu')).toBeInTheDocument()
 		expect(toggleSidebar).not.toHaveBeenCalled()
+	})
+
+	it('emits sidebar.workspace_switcher.open_attempted on pointerdown of the trigger', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+
+		expect(trackOpenAttempted).toHaveBeenCalledTimes(1)
+		expect(trackOpenAttempted).toHaveBeenCalledWith({
+			workspaceId: 'ws-a',
+			pointerType: 'mouse',
+		})
+	})
+
+	describe('dismissed_immediately', () => {
+		let now = 0
+
+		beforeEach(() => {
+			vi.spyOn(performance, 'now').mockImplementation(() => now)
+		})
+
+		afterEach(() => {
+			vi.restoreAllMocks()
+		})
+
+		it('emits when the menu closes within 200ms of opening', async () => {
+			mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+			const { Wrapper } = makeWrapper()
+			const user = userEvent.setup()
+			render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+			now = 1000
+			await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+			now = 1050
+			await user.keyboard('{Escape}')
+
+			expect(trackDismissedImmediately).toHaveBeenCalledTimes(1)
+			expect(trackDismissedImmediately).toHaveBeenCalledWith({ workspaceId: 'ws-a', openMs: 50 })
+		})
+
+		it('stays silent when the menu was open for 200ms or longer', async () => {
+			mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+			const { Wrapper } = makeWrapper()
+			const user = userEvent.setup()
+			render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+			now = 1000
+			await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+			now = 1500
+			await user.keyboard('{Escape}')
+
+			expect(trackDismissedImmediately).not.toHaveBeenCalled()
+		})
 	})
 
 	function _typeCheck(): WorkspaceWithRole {

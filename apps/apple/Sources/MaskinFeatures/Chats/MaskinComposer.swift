@@ -30,12 +30,18 @@ public struct MaskinComposerConfig {
 	public var roster: MentionRoster? = nil
 	/// Told when the field gains or loses focus (For you hides its quick-question chips while typing).
 	public var onFocusChange: ((Bool) -> Void)? = nil
+	/// Outside chat the "+" has no attach menu: when set, tapping it calls this instead (a toast stub
+	/// today). Nil keeps the chat attach menu.
+	public var onPlus: (() -> Void)? = nil
+	/// Outside chat the mic does not dictate: when set, tapping it calls this instead (a toast stub).
+	public var onMic: (() -> Void)? = nil
 
 	public init(
 		variant: MaskinComposerVariant = .floating, placeholder: String, showsAttach: Bool = true,
 		showsMic: Bool = true, showsSend: Bool = true, goLive: (() -> Void)? = nil,
 		suggestions: @escaping (String) -> [ChatParticipant] = { _ in [] }, inConversation: Set<String> = [],
-		roster: MentionRoster? = nil, onFocusChange: ((Bool) -> Void)? = nil
+		roster: MentionRoster? = nil, onFocusChange: ((Bool) -> Void)? = nil,
+		onPlus: (() -> Void)? = nil, onMic: (() -> Void)? = nil
 	) {
 		self.variant = variant
 		self.placeholder = placeholder
@@ -47,6 +53,8 @@ public struct MaskinComposerConfig {
 		self.inConversation = inConversation
 		self.roster = roster
 		self.onFocusChange = onFocusChange
+		self.onPlus = onPlus
+		self.onMic = onMic
 	}
 }
 
@@ -95,6 +103,8 @@ struct MaskinComposer: View {
 
 	@FocusState private var focused: Bool
 	@State private var trayOpen = false
+	/// Where the bar's top edge sits on screen: the + menu may not be taller than the room above it.
+	@State private var barTop: CGFloat = .infinity
 	@State private var dropTargeted = false
 	@State private var showPhotos = false
 	@State private var showFiles = false
@@ -126,6 +136,9 @@ struct MaskinComposer: View {
 			hasContent: model.hasContent, busy: busy && onStop != nil, showsMic: config.showsMic && micAvailable,
 			showsSend: config.showsSend)
 	}
+
+	/// While Stop is showing the mic stays beside it, so dictation is never blocked by a busy agent.
+	var showsMicBesideStop: Bool { lastSlot == .stop && config.showsMic && micAvailable }
 
 	private var micAvailable: Bool {
 		#if os(iOS)
@@ -178,6 +191,7 @@ struct MaskinComposer: View {
 		// Spec 7 §1: bar padding 6, gap 8.
 		.padding(MaskinSpace.s3)
 		.background { surface }
+		.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).minY }) { barTop = $0 }
 		.overlay {
 			if isDropTargeted {
 				shape.strokeBorder(
@@ -189,29 +203,27 @@ struct MaskinComposer: View {
 		.animation(MaskinMotion.quick, value: isDropTargeted)
 	}
 
-	@ViewBuilder
+	/// The standard bar for every host: white, hairline border, soft shadow (`variant` no longer
+	/// changes how it looks).
 	private var surface: some View {
-		switch config.variant {
-		case .floating:
-			shape.fill(.clear)
-				.maskinGlass(in: shape)
-				.overlay(shape.strokeBorder(MaskinSurface.glassBorder, lineWidth: 0.5))
-				.shadow(color: MaskinColor.overlayDim.opacity(0.35), radius: MaskinSpace.s10, y: MaskinSpace.s7)
-		case .inline:
-			shape.fill(MaskinSurface.cardInset)
-				.overlay(shape.strokeBorder(MaskinSurface.line, lineWidth: 1))
-		}
+		shape.fill(MaskinSurface.card)
+			.overlay(shape.strokeBorder(MaskinSurface.line, lineWidth: 0.5))
+			.shadow(color: MaskinColor.overlayDim.opacity(0.12), radius: MaskinSpace.s7, y: MaskinSpace.s2)
 	}
 
 	private var row: some View {
 		HStack(alignment: .bottom, spacing: MaskinSpace.s4) {
+			// One field in one slot for both states. Moving it between branches makes SwiftUI build a
+			// new field, which loses focus: the keyboard dropped and the thread jumped when dictation began.
 			if isDictating {
-				ComposerDictationControls(onDiscard: discardDictation, onDone: finishDictation) {
-					field(placeholder: "Listening…")
-				}
+				ComposerDictationLeading(onDiscard: discardDictation)
+			} else if config.showsAttach {
+				attachButton
+			}
+			field(placeholder: isDictating ? "Listening…" : config.placeholder)
+			if isDictating {
+				ComposerDictationDone(action: finishDictation)
 			} else {
-				if config.showsAttach { attachButton }
-				field(placeholder: config.placeholder)
 				if let goLive = config.goLive, !model.hasContent {
 					ComposerCircleButton(
 						symbol: "waveform", fill: MaskinSurface.fill, foreground: MaskinColor.ink2,
@@ -246,14 +258,7 @@ struct MaskinComposer: View {
 		ZStack {
 			switch lastSlot {
 			case .mic:
-				ComposerCircleButton(
-					symbol: "mic", fill: MaskinSurface.fill, foreground: MaskinColor.ink3, label: "Dictate",
-					weight: .regular
-				) {
-					MaskinHaptics.play(.selection)
-					startDictation()
-				}
-				.transition(.opacity)
+				micButton
 			case .send:
 				ComposerCircleButton(
 					symbol: "arrow.up", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Send",
@@ -261,6 +266,8 @@ struct MaskinComposer: View {
 				) {
 					MaskinHaptics.play(.light)
 					onSend()
+					// Sent: drop the keyboard so the reply gets the whole window. Tapping the field brings it back.
+					focused = false
 				}
 				.disabled(!model.canSend)
 				.opacity(model.canSend ? 1 : 0.35)
@@ -270,25 +277,40 @@ struct MaskinComposer: View {
 				#endif
 				.transition(.opacity)
 			case .stop:
-				Button {
-					MaskinHaptics.play(.selection)
-					onStop?()
-				} label: {
-					RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
-						.fill(MaskinSurface.onInverse)
-						.frame(width: MaskinSpace.s7, height: MaskinSpace.s7)
-						.frame(width: Self.control, height: Self.control)
-						.background(MaskinSurface.inverse, in: Circle())
-						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-						.contentShape(Circle())
+				HStack(spacing: 0) {
+					// Stop must not take dictation away: the mic stays beside it while an agent works.
+					if showsMicBesideStop { micButton }
+					Button {
+						MaskinHaptics.play(.selection)
+						onStop?()
+					} label: {
+						RoundedRectangle(cornerRadius: MaskinRadius.tag2, style: .continuous)
+							.fill(MaskinSurface.onInverse)
+							.frame(width: MaskinSpace.s7, height: MaskinSpace.s7)
+							.frame(width: Self.control, height: Self.control)
+							.background(MaskinSurface.inverse, in: Circle())
+							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+							.contentShape(Circle())
+					}
+					.buttonStyle(.maskinPressed(.shrink))
+					.accessibilityLabel("Stop")
+					.transition(.opacity)
 				}
-				.buttonStyle(.maskinPressed(.shrink))
-				.accessibilityLabel("Stop")
-				.transition(.opacity)
 			case .none:
 				EmptyView()
 			}
 		}
+	}
+
+	private var micButton: some View {
+		ComposerCircleButton(
+			symbol: "mic", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Dictate",
+			weight: .regular
+		) {
+			MaskinHaptics.play(.selection)
+			if let onMic = config.onMic { onMic() } else { startDictation() }
+		}
+		.transition(.opacity)
 	}
 
 	// MARK: Attach
@@ -300,6 +322,13 @@ struct MaskinComposer: View {
 			rotation: isTrayOpen ? 45 : 0
 		) {
 			MaskinHaptics.play(.selection)
+			if let onPlus = config.onPlus {
+				onPlus()
+				return
+			}
+			// Opening the menu puts the keyboard away first: the menu is up to 7 rows tall and floats above
+			// the bar, so with the keyboard up it ran down behind it and lost its lower rows.
+			if !trayOpen { focused = false }
 			withAnimation(reduceMotion ? nil : MaskinMotion.standard) { trayOpen.toggle() }
 		}
 	}
@@ -316,10 +345,16 @@ struct MaskinComposer: View {
 		return actions
 	}
 
+	/// The room above the bar, less the status bar, navigation bar and the 8pt gap. Never under three
+	/// rows, so a short window scrolls the list instead of shrinking it to nothing.
+	private var attachMenuMaxHeight: CGFloat {
+		max(ComposerAttachMenu.contentHeight(rows: 3), barTop - 120)
+	}
+
 	@ViewBuilder
 	private var attachMenu: some View {
 		if isTrayOpen, !isDictating {
-			ComposerAttachMenu(actions: attachActions, onPick: pick)
+			ComposerAttachMenu(actions: attachActions, maxHeight: attachMenuMaxHeight, onPick: pick)
 				.alignmentGuide(.top) { $0[.bottom] + MaskinSpace.s4 }
 				.transition(.opacity.combined(with: .move(edge: .bottom)))
 		}
@@ -403,7 +438,10 @@ struct MaskinComposer: View {
 
 	#if os(iOS)
 	fileprivate func pasteImage() {
-		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else { return }
+		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
+			model.notice = "Couldn't read an image from the clipboard."
+			return
+		}
 		addFiles([.image(data)])
 	}
 
@@ -421,7 +459,7 @@ struct MaskinComposer: View {
 		dictationBase = model.text
 		trayOpen = false
 		Task {
-			await dictation.start(continuous: true) { model.text = DictationText.merge(base: dictationBase, transcript: $0) }
+			await dictation.start(continuous: true, backend: true) { model.text = DictationText.merge(base: dictationBase, transcript: $0) }
 			if case .unavailable(let message) = dictation.state {
 				voiceProblem = message
 				dictation.clearError()
@@ -436,6 +474,16 @@ struct MaskinComposer: View {
 
 	private func finishDictation() {
 		#if os(iOS)
+		// Through the server the last phrase is still being transcribed: keep the dictation bar up
+		// until its text is in, so the keyboard doesn't take over mid-word.
+		if dictation.usesBackend {
+			Task {
+				await dictation.finish()
+				dictating = false
+				focused = true
+			}
+			return
+		}
 		dictation.stop()
 		#endif
 		dictating = false

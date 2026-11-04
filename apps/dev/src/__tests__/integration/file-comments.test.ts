@@ -8,7 +8,7 @@ import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { resetRoundLimiterForTests } from '../../lib/file-comment-round-limiter'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
-import { jsonRequest } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 const { default: fileCommentsRoutes } = await import('../../routes/file-comments')
@@ -757,6 +757,80 @@ describe('File Comments Integration — overlapping sends', () => {
 		expect(((await retry.json()) as { rollupEventId: number }).rollupEventId).toBe(
 			firstBody.rollupEventId,
 		)
+	})
+})
+
+describe('File Comments Integration — text anchor', () => {
+	let actorId: string
+	let fileId: string
+	const anchor = { quote: 'the quoted passage', prefix: 'text before ', suffix: ' text after' }
+
+	beforeEach(async () => {
+		resetRoundLimiterForTests()
+		actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const f = await insertFile(ws.id, actorId)
+		fileId = f.id
+	})
+
+	function post(app: ReturnType<typeof createApp>, extra: Record<string, unknown>) {
+		return app.request(
+			jsonRequest('POST', `/api/files/${fileId}/comments`, {
+				body: 'a comment',
+				positionDoc: { x: 0.25, y: 0.5 },
+				...extra,
+			}),
+		)
+	}
+
+	it('lists, and resolves, comments both with and without a text anchor', async () => {
+		const app = createApp(actorId)
+		const pin = await post(app, {})
+		const text = await post(app, { textAnchor: anchor })
+		expect(pin.status).toBe(201)
+		expect(text.status).toBe(201)
+		const pinJson = (await pin.json()) as { id: string }
+		const textJson = (await text.json()) as { id: string }
+
+		const listRes = await app.request(jsonGet(`/api/files/${fileId}/comments`))
+		expect(listRes.status).toBe(200)
+		const list = (await listRes.json()) as Array<{ id: string; textAnchor: unknown }>
+		expect(list.find((c) => c.id === pinJson.id)?.textAnchor).toBeNull()
+		expect(list.find((c) => c.id === textJson.id)?.textAnchor).toEqual(anchor)
+
+		for (const id of [pinJson.id, textJson.id]) {
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/files/${fileId}/comments/${id}`, { resolved: true }),
+			)
+			expect(res.status).toBe(200)
+			expect(((await res.json()) as { resolvedAt: string | null }).resolvedAt).not.toBeNull()
+		}
+	})
+
+	it('stores the anchor in text_anchor and leaves the legacy selector alone', async () => {
+		const app = createApp(actorId)
+		const res = await post(app, { textAnchor: anchor })
+		const { id } = (await res.json()) as { id: string }
+
+		const [row] = await db.select().from(fileComments).where(eq(fileComments.id, id))
+		expect(row?.textAnchor).toEqual(anchor)
+		expect(row?.selector).toBeNull()
+	})
+
+	it('keeps position_doc required for a text comment', async () => {
+		const app = createApp(actorId)
+		const res = await app.request(
+			jsonRequest('POST', `/api/files/${fileId}/comments`, { body: 'x', textAnchor: anchor }),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('accepts a 500 character quote and refuses 501', async () => {
+		const app = createApp(actorId)
+		const ok = await post(app, { textAnchor: { ...anchor, quote: 'q'.repeat(500) } })
+		const tooLong = await post(app, { textAnchor: { ...anchor, quote: 'q'.repeat(501) } })
+		expect(ok.status).toBe(201)
+		expect(tooLong.status).toBe(400)
 	})
 })
 

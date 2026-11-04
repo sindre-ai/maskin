@@ -14,7 +14,7 @@ import { renderMcpApp } from '../shared/render'
 import type { SessionResponse } from '../shared/types'
 import { WebAppLink } from '../shared/web-app-link'
 
-const TERMINAL = new Set(['completed', 'failed', 'timeout'])
+const TERMINAL = new Set(['completed', 'failed', 'timeout', 'user_stopped'])
 const RUNNING = new Set(['running', 'starting', 'snapshotting'])
 
 type SessionLog = { id?: number; stream?: string; content?: string; createdAt?: string | null }

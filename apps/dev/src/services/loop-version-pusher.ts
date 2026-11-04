@@ -29,7 +29,7 @@ import {
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
-import { expandBrowserCapability } from '../lib/marketplace-loops/loop-snapshot'
+import { dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import {
 	buildActorInsert,
@@ -49,6 +49,7 @@ import {
 	captureLiveSessions,
 	stopCapturedSandboxes,
 } from './session-cleanup'
+import { createWorkspaceDesktopService, removeDesktopsForActors } from './workspace-desktop'
 
 // The install endpoint and this cron must build element rows identically, so
 // the insert builders + wiring helpers live in `loop-provisioning` and are
@@ -244,6 +245,8 @@ export class LoopVersionPusher {
 		// on as agents the loop no longer defines, holding agent-server capacity
 		// until the 2h timeout and streaming logs at a deleted session row.
 		const strandedSessions: CapturedLiveSession[] = []
+		// Agents this push deletes; their computers are removed once it commits.
+		const deletedActorIds: string[] = []
 		// Newly-inserted / removed trigger ids this tick — folded into the linked
 		// Loop object's `metadata.trigger_ids` after the transaction's per-item
 		// work finishes (see below).
@@ -562,6 +565,7 @@ export class LoopVersionPusher {
 
 			if (removedActorIds.length > 0) {
 				strandedSessions.push(...(await captureLiveSessions(tx, removedActorIds)))
+				deletedActorIds.push(...removedActorIds)
 
 				if (!createdBy) {
 					throw new Error(
@@ -734,6 +738,11 @@ export class LoopVersionPusher {
 		})
 
 		await stopCapturedSandboxes(this.db, strandedSessions)
+		await removeDesktopsForActors(
+			install.workspaceId,
+			deletedActorIds,
+			createWorkspaceDesktopService(this.db),
+		)
 
 		for (const skillId of removedSkillIds) {
 			try {
@@ -895,8 +904,8 @@ function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof act
 			(snapshot.llmConfig as Record<string, unknown>) ??
 			(snapshot.llm_config as Record<string, unknown>) ??
 			null,
-		// Same expansion as buildActorInsert — see its comment.
-		tools: (expandBrowserCapability(snapshot.tools) as Record<string, unknown>) ?? null,
+		// Same handling as buildActorInsert — see its comment.
+		tools: (dropLegacyBrowserFlag(snapshot.tools) as Record<string, unknown>) ?? null,
 	}
 }
 

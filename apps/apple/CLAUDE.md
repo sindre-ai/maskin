@@ -2,6 +2,8 @@
 
 One Swift package (`MaskinKit`) + thin app targets. Read `/Users/krumhausen/.claude/plans/let-s-build-an-ios-zippy-puffin.md` for the architecture and `.claude/rules/*` at the repo root for repo-wide rules.
 
+> **Web parity:** any user-visible change here must also be made in `apps/web` in the same PR (and vice versa). Native idiom may differ; capability, wording and behaviour may not. See `.claude/rules/web-ios-parity.md`.
+
 ## Layers (dependencies point down only)
 `Apps/*` → `MaskinFeatures` → `MaskinCore`, `MaskinUI` → `MaskinAPI`, `MaskinDesign`
 - `MaskinDesign` — tokens. `Generated/Tokens.swift` is GENERATED (`node scripts/gen-tokens.mjs`); never hand-edit. Hand-written iOS additions live beside it, not in it.
@@ -18,6 +20,8 @@ One Swift package (`MaskinKit`) + thin app targets. Read `/Users/krumhausen/.cla
 - Writes carry an `Idempotency-Key`. Mutations are optimistic with rollback on failure.
 - Provider/internal ids never render as labels (live-verification rule): show a resolved name.
 - Verify by running, not by reading: `swift test` must pass; UI work must be built for an iOS simulator.
+
+- **Must-keep features** live in `docs/must-keep-features.md`, each with a UI test in `Apps/MaskinUITests/MustKeepTests.swift`. Before opening a design PR run `scripts/run-must-keep.sh` and paste the result in the PR body. A design change must not make a row fail. Never delete or loosen one of those tests to get a change through: if a feature is removed or moved on purpose, change its row and test in the same PR and say so in the PR description. Buttons are found by accessibility label, so keep labels or update the row. A bug that reached a user adds a row. The tests prove a button exists and a screen opens on demo data, not that a call connects.
 
 ## Building without stepping on other agents (shared worktree!)
 Several agents work in this tree at once. ALWAYS use a private scratch path:

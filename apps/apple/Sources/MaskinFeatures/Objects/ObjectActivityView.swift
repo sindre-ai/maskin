@@ -9,28 +9,55 @@ import UIKit
 import AppKit
 #endif
 
-/// The Activity page: events grouped by local day, newest first. A long comment is a message
-/// (30pt avatar, name, time, card bubble clamped to six lines then "Show more"); anything shorter,
-/// and every system event, is one quiet line. Replies sit indented under their parent. Holding an
-/// event offers Reply, which hands the item to the composer.
+/// The Activity page: events grouped by local day, newest first, read like a group chat. Every
+/// comment is a message (avatar, name, time, card bubble, shown in full); system events are one
+/// quiet line. Replies form a thread: smaller bubbles on a rail under their parent, headed by a
+/// reply count. Holding an event offers Reply, which hands the item to the composer.
 struct ObjectActivityView: View {
 	let store: ObjectDetailStore
 	var onOpenObject: ((String) -> Void)?
 	var onReply: ((TimelineItem) -> Void)?
+	/// Which items to show; the whole timeline by default.
+	var include: (TimelineItem) -> Bool = { _ in true }
 	/// Pins "now" for snapshots; the live page uses the clock.
 	var now: Date = Date()
 
+	@State private var filter: ActivityFilter = .all
+	@State private var retrying = false
+
+	private var loadState: ActivityLoadState {
+		.of(
+			fetched: store.hasFetched, revalidateFailed: store.freshness.lastRevalidateFailed,
+			hasItems: !store.timeline.isEmpty, retrying: retrying)
+	}
+
 	var body: some View {
-		let days = ActivityGrouping.days(store.timeline, now: now)
+		let days = ActivityGrouping.days(filter.apply(to: store.timeline.filter(include)), now: now)
+		let dividers = filter == .all
+			? ActivityPhases.dividers(
+				newestFirst: days.flatMap { $0.entries.map(\.id) },
+				statuses: ActivityPhases.statuses(of: store.timeline))
+			: [:]
 		VStack(alignment: .leading, spacing: 0) {
+			ActivityFilterChips(selected: $filter)
+				.padding(.bottom, MaskinSpace.s3)
 			if days.isEmpty {
-				if store.hasFetched {
-					Text("No activity yet. Start the conversation below.")
+				switch loadState {
+				case .failed:
+					ActivityLoadFailed {
+						retrying = true
+						Task {
+							await store.refresh()
+							retrying = false
+						}
+					}
+				case .loading:
+					LoadingSkeleton(rows: 3)
+				case .ready:
+					Text(filter == .all ? "No activity yet. Start the conversation below." : "Nothing under \(filter.title) yet.")
 						.maskinText(.subhead)
 						.foregroundStyle(MaskinColor.ink4)
 						.padding(.top, MaskinSpace.s5)
-				} else {
-					LoadingSkeleton(rows: 2)
 				}
 			}
 			ForEach(days) { day in
@@ -44,6 +71,9 @@ struct ObjectActivityView: View {
 				ForEach(day.entries) { entry in
 					ActivityEntryView(store: store, entry: entry, onOpenObject: onOpenObject, onReply: onReply)
 						.id(entry.id)
+					if let status = dividers[entry.id] {
+						PhaseDivider(label: MaskinStatus.sentenceLabel(for: status))
+					}
 				}
 			}
 			if !days.isEmpty, onReply != nil {
@@ -54,6 +84,83 @@ struct ObjectActivityView: View {
 					.padding(.top, MaskinSpace.s9)
 			}
 		}
+		.accessibilityElement(children: .contain)
+	}
+}
+
+/// "—— REVIEW ——": where the object entered a status, between the entries before and after.
+struct PhaseDivider: View {
+	let label: String
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s5) {
+			rule
+			Text(label.uppercased())
+				.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold, relativeTo: .caption))
+				.tracking(MaskinSpace.s1)
+				.foregroundStyle(MaskinColor.ink5)
+			rule
+		}
+		.padding(.vertical, MaskinSpace.s5)
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel("\(label) phase")
+	}
+
+	private var rule: some View {
+		Rectangle().fill(MaskinSurface.separator).frame(height: MaskinSpace.s1 / 2)
+	}
+}
+
+/// All · Comments · Updates: a quiet pill row above the timeline; the chosen one is soft-filled.
+struct ActivityFilterChips: View {
+	@Binding var selected: ActivityFilter
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			ForEach(ActivityFilter.allCases) { option in
+				let active = option == selected
+				Button {
+					MaskinHaptics.play(.selection)
+					selected = option
+				} label: {
+					Text(option.title)
+						.maskinText(.subhead)
+						.fontWeight(active ? .bold : .semibold)
+						.foregroundStyle(active ? MaskinColor.ink : MaskinColor.ink4)
+						.padding(.horizontal, MaskinSpace.s7)
+						.frame(height: MaskinSpace.s14)
+						.background(active ? MaskinSurface.fill : Color.clear, in: Capsule())
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.maskinPressed(.shrink))
+				.accessibilityAddTraits(active ? .isSelected : [])
+			}
+			Spacer(minLength: 0)
+		}
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel("Filter activity")
+	}
+}
+
+/// "Activity did not load" with a way back, in place of the skeleton when the first fetch failed.
+struct ActivityLoadFailed: View {
+	let retry: () -> Void
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			Text("Activity did not load").maskinText(.body).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink)
+			Text("Your connection dropped. Nothing was lost.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			Button("Try again", action: retry)
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.sigInk)
+				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(MaskinSpace.s9)
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
 		.accessibilityElement(children: .contain)
 	}
 }
@@ -73,6 +180,9 @@ struct ActivityEntryView: View {
 				.contextMenu { menu(for: entry.item) }
 			if !entry.replies.isEmpty {
 				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+					Text(entry.replies.count == 1 ? "1 reply" : "\(entry.replies.count) replies")
+						.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .semibold, relativeTo: .caption))
+						.foregroundStyle(MaskinColor.ink4)
 					ForEach(entry.replies) { reply in
 						ReplyRow(
 							item: reply.item, name: store.authorName(for: reply.item), isAgent: store.isAgent(reply.item),
@@ -165,11 +275,10 @@ struct QuietEventRow: View {
 	}
 }
 
-/// A comment long enough to read as a message: avatar, name and time, then a card bubble. Six
-/// lines show, then "Show more". The same row also draws short items when asked directly
-/// (older call sites), so a `.activity` item renders as a quiet line.
+/// A comment as a chat message: avatar, name and time, then a card bubble with the full text. The
+/// same row also draws system items when asked directly (older call sites), so a `.activity` item
+/// renders as a quiet line.
 struct TimelineRow: View {
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let item: TimelineItem
 	let name: String
 	let isAgent: Bool
@@ -185,15 +294,7 @@ struct TimelineRow: View {
 	/// Clock time, only when the comment is from today.
 	var time: String?
 
-	@State private var expanded = false
-	@State private var fullHeight: CGFloat = 0
-
 	private static var avatar: CGFloat { MaskinSpace.s13 + MaskinSpace.s1 }
-	/// Six lines of 15pt text at the bubble's line height.
-	static let clampHeight: CGFloat = 136
-
-	private var clamps: Bool { fullHeight > Self.clampHeight + MaskinSpace.s4 }
-	private var isClamped: Bool { clamps && !expanded }
 
 	var body: some View {
 		switch item.kind {
@@ -236,38 +337,8 @@ struct TimelineRow: View {
 	}
 
 	private func bubble(_ text: String) -> some View {
-		VStack(alignment: .leading, spacing: 0) {
-			MarkdownContent(CommentMentions.linked(text, actors: mentionable), style: .description, hardBreaks: true)
-				.fixedSize(horizontal: false, vertical: true)
-				.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { fullHeight = $0 }
-				.frame(maxHeight: isClamped ? Self.clampHeight : nil, alignment: .top)
-				.clipped()
-				.mask(alignment: .top) {
-					if isClamped {
-						VStack(spacing: 0) {
-							Color.black
-							LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-								.frame(height: MaskinSpace.s14)
-						}
-					} else {
-						Color.black
-					}
-				}
-			if clamps {
-				Button {
-					MaskinHaptics.play(.selection)
-					withAnimation(reduceMotion ? nil : MaskinMotion.standard) { expanded.toggle() }
-				} label: {
-					Text(expanded ? "Show less" : "Show more")
-						.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
-						.foregroundStyle(MaskinColor.ink4)
-						.frame(minHeight: MaskinSpace.s14 + MaskinSpace.s2)
-						.contentShape(Rectangle())
-				}
-				.buttonStyle(.maskinPressed)
-				.padding(.bottom, -MaskinSpace.s4)
-			}
-		}
+		MarkdownContent(CommentMentions.linked(text, actors: mentionable), style: .description, hardBreaks: true)
+			.fixedSize(horizontal: false, vertical: true)
 		.padding(.horizontal, MaskinSpace.s8)
 		.padding(.vertical, MaskinSpace.s6)
 		.frame(maxWidth: .infinity, alignment: .leading)
@@ -308,6 +379,14 @@ struct ReplyRow: View {
 				switch item.kind {
 				case .comment(let text):
 					MarkdownContent(CommentMentions.linked(text, actors: mentionable), style: .description, hardBreaks: true)
+						.padding(.horizontal, MaskinSpace.s6)
+						.padding(.vertical, MaskinSpace.s4)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.background(
+							MaskinSurface.card,
+							in: UnevenRoundedRectangle(
+								topLeadingRadius: MaskinRadius.tag, bottomLeadingRadius: MaskinRadius.hero,
+								bottomTrailingRadius: MaskinRadius.hero, topTrailingRadius: MaskinRadius.hero, style: .continuous))
 				case .activity(let summary):
 					Text(summary)
 						.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))

@@ -14,7 +14,7 @@ struct DictationButton: View {
 	@Binding var listening: Bool
 	#if os(iOS)
 	@State private var dictation = Dictation()
-	@State private var base = ""
+	@State private var draft = DictationDraft(base: "")
 	#endif
 
 	#if os(iOS)
@@ -40,10 +40,10 @@ struct DictationButton: View {
 			if dictation.isListening {
 				dictation.stop()
 			} else {
-				base = text
+				draft = DictationDraft(base: text)
 				Task {
 					await dictation.start { transcript in
-						text = DictationText.merge(base: base, transcript: transcript)
+						text = draft.apply(transcript: transcript, field: text)
 					}
 				}
 			}

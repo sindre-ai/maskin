@@ -3,6 +3,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { LoopPlanCard, defaultLoopName } from '@/components/loops/loop-plan-card'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateObject } from '@/hooks/use-objects'
 import { trackLoopCreatedViaLanguage } from '@/lib/analytics'
@@ -65,6 +66,7 @@ interface ThreadItem {
 function LoopBuilderPage() {
 	useDocumentTitle('New loop')
 	const { workspaceId, workspace } = useWorkspace()
+	const canWrite = useCanWrite()
 	const createObject = useCreateObject(workspaceId)
 
 	// The workspace's own per-type status vocabulary — both the state chain the
@@ -117,7 +119,8 @@ function LoopBuilderPage() {
 	}, [])
 
 	const handleCreate = useCallback(async () => {
-		if (!plan || creating) return
+		// Drafting a sentence is local; only creating the loop is a write.
+		if (!plan || creating || !canWrite) return
 		const title = defaultLoopName(plan)
 		setCreating(true)
 		try {
@@ -148,7 +151,7 @@ function LoopBuilderPage() {
 		} finally {
 			setCreating(false)
 		}
-	}, [plan, creating, createObject, workspaceId, utterance])
+	}, [plan, creating, canWrite, createObject, workspaceId, utterance])
 
 	// A sentence Maskin can't draw: it named no source it listens to and no end
 	// it reports to, so there is nothing to wire between (mockup 2094–2106).

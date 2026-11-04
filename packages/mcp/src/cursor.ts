@@ -43,7 +43,13 @@ export interface CursorState {
 	o: CursorSortOrder
 	/** Last-seen keyset position. */
 	k: CursorKeyset
+	/** Offset of the next page, for tools whose API pages by offset (get_events,
+	 *  get_comments). Absent on every other tool's cursor; absent means 0. */
+	n?: number
 }
+
+/** Largest offset a cursor may carry. Anything above it decodes as invalid. */
+export const CURSOR_MAX_OFFSET = 100_000
 
 /** Encode cursor state as a URL-safe base64 string. */
 export function encodeCursor(state: Omit<CursorState, 'v'>): string {
@@ -75,11 +81,17 @@ export function decodeCursor(raw: string | undefined | null): CursorState | null
 	if (p.o !== 'asc' && p.o !== 'desc') return null
 	const k = p.k as Record<string, unknown> | undefined
 	if (!k || typeof k.sortValue !== 'string' || typeof k.id !== 'string') return null
+	if (p.n !== undefined) {
+		if (typeof p.n !== 'number' || !Number.isInteger(p.n) || p.n < 0 || p.n > CURSOR_MAX_OFFSET) {
+			return null
+		}
+	}
 	return {
 		v: CURSOR_VERSION,
 		s: p.s,
 		o: p.o,
 		k: { sortValue: k.sortValue, id: k.id },
+		...(p.n !== undefined ? { n: p.n } : {}),
 	}
 }
 

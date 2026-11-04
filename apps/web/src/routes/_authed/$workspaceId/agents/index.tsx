@@ -4,10 +4,12 @@ import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picke
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useWorkspaceSessions } from '@/hooks/use-sessions'
+import { useWorkspaceSessionStats, useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Users } from 'lucide-react'
@@ -23,17 +25,12 @@ function AgentsRoute() {
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
 	// Live status comes from the 100-newest list the sidebar uses (one request,
-	// coalesced refetches). The full-history walk only refines per-agent counts,
-	// so it must never gate or overwrite status.
-	const { data: recentSessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
-	const { data: allSessions } = useWorkspaceSessions(workspaceId, { paged: true })
+	// coalesced refetches). Counts and cost come from one grouped server query, so
+	// neither grows with the size of the session history.
+	const { data: sessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
+	const { data: stats } = useWorkspaceSessionStats(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
-
-	const sessions = useMemo(() => {
-		const byId = new Map((allSessions ?? []).map((s) => [s.id, s]))
-		for (const s of recentSessions ?? []) byId.set(s.id, s)
-		return Array.from(byId.values())
-	}, [allSessions, recentSessions])
+	const canWrite = useCanWrite()
 
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
@@ -76,10 +73,21 @@ function AgentsRoute() {
 					icon={<Users size={28} aria-hidden />}
 					title="Nobody on this team yet."
 					description="Agents own one outcome each and run on their own. Add the first one to get started."
-					action={<Button onClick={() => setCreatePickerOpen(true)}>Create an agent</Button>}
+					action={
+						<ViewerTooltip>
+							<Button disabled={!canWrite} onClick={() => setCreatePickerOpen(true)}>
+								Create an agent
+							</Button>
+						</ViewerTooltip>
+					}
 				/>
 			) : (
-				<AgentsIndexView workspaceId={workspaceId} agents={agents} sessions={sessions} />
+				<AgentsIndexView
+					workspaceId={workspaceId}
+					agents={agents}
+					sessions={sessions ?? []}
+					stats={stats}
+				/>
 			)}
 			<CreatePicker
 				open={createPickerOpen}

@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { idempotencyRecords, linkedinToolCalls } from '@maskin/db/schema'
+import { idempotencyRecords, linkedinActions, linkedinToolCalls } from '@maskin/db/schema'
 import { Cron } from 'croner'
 import { lt } from 'drizzle-orm'
 import { logger } from '../lib/logger'
@@ -22,6 +22,10 @@ import { logger } from '../lib/logger'
  * the caller's retry window. Both tables are purged in the same tick so
  * there's one cron-shaped log line per night, not two.
  *
+ * `linkedin_actions` is the permanent action log behind the LinkedIn caps and the outreach
+ * measurement. It keeps 180 days and is purged in the same tick, so the log has one
+ * retention job, not a second cron.
+ *
  * Mirrors the shape of WebhookDeliveriesCleaner (see
  * apps/dev/src/services/webhook-deliveries-cleaner.ts): a swallowed-error
  * tick that logs but never throws, guarded against overlapping runs.
@@ -33,6 +37,7 @@ import { logger } from '../lib/logger'
 const CRON_EXPRESSION = '17 3 * * *'
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const LINKEDIN_TOOL_CALLS_RETENTION_MS = 24 * 60 * 60 * 1000
+const LINKEDIN_ACTIONS_RETENTION_MS = 180 * 24 * 60 * 60 * 1000
 
 export class PurgeIdempotencyJob {
 	private job: Cron | null = null
@@ -43,6 +48,7 @@ export class PurgeIdempotencyJob {
 		private retentionMs: number = RETENTION_MS,
 		private cronExpression: string = CRON_EXPRESSION,
 		private linkedinToolCallsRetentionMs: number = LINKEDIN_TOOL_CALLS_RETENTION_MS,
+		private linkedinActionsRetentionMs: number = LINKEDIN_ACTIONS_RETENTION_MS,
 	) {}
 
 	start(): void {
@@ -93,6 +99,23 @@ export class PurgeIdempotencyJob {
 			}
 		} catch (err) {
 			logger.error('Purge linkedin_tool_calls tick failed', {
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+		try {
+			const actionsCutoff = new Date(Date.now() - this.linkedinActionsRetentionMs)
+			const deleted = await this.db
+				.delete(linkedinActions)
+				.where(lt(linkedinActions.createdAt, actionsCutoff))
+				.returning({ id: linkedinActions.id })
+			if (deleted.length > 0) {
+				logger.info('Purge linkedin_actions tick', {
+					deleted: deleted.length,
+					cutoff: actionsCutoff.toISOString(),
+				})
+			}
+		} catch (err) {
+			logger.error('Purge linkedin_actions tick failed', {
 				error: err instanceof Error ? err.message : String(err),
 			})
 		} finally {

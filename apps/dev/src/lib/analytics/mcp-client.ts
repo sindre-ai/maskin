@@ -7,6 +7,7 @@
 // can reach analytics through this function.
 
 export const MCP_CLIENTS = [
+	'maskin_probe',
 	'claude_code',
 	'cursor',
 	'vscode',
@@ -22,7 +23,12 @@ export type McpClient = (typeof MCP_CLIENTS)[number]
 // narrow: a bare /claude/ would also swallow Claude.ai's connector traffic,
 // which has to stay `other` until its User-Agent has been observed in real
 // data (see the tech spec's win-biasing risk).
+//
+// `maskin_probe` is our own production canary (User-Agent `maskin-probe/1`). It
+// is FIRST so no other pattern can claim it, even a User-Agent that also names
+// claude-cli: probe traffic must never read as a real client.
 const CLIENT_FAMILIES: ReadonlyArray<readonly [McpClient, RegExp]> = [
+	['maskin_probe', /maskin-probe/i],
 	['claude_code', /claude-cli|claude[ _-]code/i],
 	['cursor', /cursor/i],
 	['vscode', /vscode|visual studio code/i],

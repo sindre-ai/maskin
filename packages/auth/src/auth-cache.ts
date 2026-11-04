@@ -2,7 +2,7 @@ import type { OauthAccessTokenContext } from '@maskin/shared'
 
 /**
  * Short-lived, per-process cache for the two lookups `authMiddleware` runs on
- * every request: API key → actor, and (actor, workspace) → membership.
+ * every request: API key hash → actor, and (actor, workspace) → membership.
  *
  * Why: those two queries sit in front of every handler, and a page load fires a
  * dozen requests in parallel, so one tab alone made ~25 sequential round trips
@@ -18,6 +18,8 @@ import type { OauthAccessTokenContext } from '@maskin/shared'
  * is never shadowed by a stale "invalid" answer, and failed lookups are never
  * cached.
  */
+
+import { hashApiKey } from './key-hash'
 
 export const DEFAULT_AUTH_CACHE_TTL_MS = 10_000
 const MAX_ENTRIES = 5_000
@@ -126,9 +128,14 @@ export function resolveAuthCacheTtlMs(raw: string | undefined = process.env.AUTH
 	return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : DEFAULT_AUTH_CACHE_TTL_MS
 }
 
-/** Call after rotating or revoking an API key. */
+/** Call after rotating or revoking an API key you hold in plaintext. */
 export function evictApiKey(apiKey: string): void {
-	for (const caches of registry) caches.apiKeys.delete(apiKey)
+	evictApiKeyHash(hashApiKey(apiKey))
+}
+
+/** The cache is keyed on the key's hash, so no plaintext key sits in the process. */
+export function evictApiKeyHash(keyHash: string): void {
+	for (const caches of registry) caches.apiKeys.delete(keyHash)
 }
 
 /** Call after deleting an actor or changing which actor a key resolves to. */

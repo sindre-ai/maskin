@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 
 const SPAWN_PULSE_MS = 2200
 
+// What the id points at: a chat message (`?msg=` on the chat route) or an
+// object-page comment (`?comment=`). Same jump and highlight, different node.
+const TARGETS = {
+	message: { attribute: 'data-message-id', announcement: 'Jumped to message from origin.' },
+	comment: { attribute: 'data-comment-id', announcement: 'Jumped to comment.' },
+} as const
+
 /**
  * Reads a message id (from `?msg=<id>` on the chat detail route), waits for
  * that message's DOM node to appear, then:
@@ -11,6 +18,9 @@ const SPAWN_PULSE_MS = 2200
  *   (styled in `app.css`), and
  * - stamps `data-origin-pulse` for the 2.2s ease-out brand-tinted highlight,
  *   cleared after `SPAWN_PULSE_MS` so nothing loops.
+ *
+ * `kind` picks the DOM attribute to look for: `message` (default) matches
+ * `data-message-id`, `comment` matches `data-comment-id` on the object page.
  *
  * Returns an announcement string for the `<output>` (`role=status
  * aria-live=polite`) region above. Empty when there's nothing to jump to, so
@@ -24,9 +34,11 @@ const SPAWN_PULSE_MS = 2200
 export function useOriginDeepLinkScroll({
 	messageId,
 	dataTrigger,
+	kind = 'message',
 }: {
 	messageId: number | null
 	dataTrigger: unknown
+	kind?: keyof typeof TARGETS
 }): string {
 	const [announcement, setAnnouncement] = useState('')
 	// Guard against re-firing on unrelated re-renders (SSE, live updates,
@@ -43,7 +55,7 @@ export function useOriginDeepLinkScroll({
 		if (jumpedForRef.current === messageId) return
 		if (typeof document === 'undefined') return
 
-		const selector = `[data-message-id="${messageId}"]`
+		const selector = `[${TARGETS[kind].attribute}="${messageId}"]`
 		const node = document.querySelector<HTMLElement>(selector)
 		if (!node) return
 
@@ -59,15 +71,15 @@ export function useOriginDeepLinkScroll({
 		const sessionTitle = node.dataset.spawnSessionTitle
 		setAnnouncement(
 			sessionTitle && sessionTitle.length > 0
-				? `Jumped to message from origin. Session "${sessionTitle}".`
-				: 'Jumped to message from origin.',
+				? `${TARGETS[kind].announcement} Session "${sessionTitle}".`
+				: TARGETS[kind].announcement,
 		)
 
 		const timer = window.setTimeout(() => {
 			delete node.dataset.originPulse
 		}, SPAWN_PULSE_MS)
 		return () => window.clearTimeout(timer)
-	}, [messageId, dataTrigger])
+	}, [messageId, dataTrigger, kind])
 
 	return announcement
 }

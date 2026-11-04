@@ -17,3 +17,24 @@ export async function resolveGoogleEmail(accessToken: string): Promise<string> {
 	}
 	return data.email
 }
+
+/**
+ * Fetch the caller's Google People id via `people.get(me)`. `openid` alone
+ * grants this read. The id is the first entry of `metadata.sources[]` — a
+ * numeric string that is stable for the life of the Google account.
+ */
+export async function resolveGooglePeopleId(accessToken: string): Promise<string> {
+	const res = await fetch('https://people.googleapis.com/v1/people/me?personFields=metadata', {
+		headers: { Authorization: `Bearer ${accessToken}` },
+	})
+	if (!res.ok) {
+		const text = await res.text()
+		throw new Error(`Failed to resolve Google People id: HTTP ${res.status} ${text}`)
+	}
+	const data = (await res.json()) as { metadata?: { sources?: Array<{ id?: string }> } }
+	const peopleId = data.metadata?.sources?.[0]?.id
+	if (!peopleId) {
+		throw new Error('Google People response missing metadata.sources[0].id')
+	}
+	return peopleId
+}

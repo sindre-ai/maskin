@@ -9,9 +9,22 @@ reader is a widget and a notification, never a Live Activity.
 | **Agents working** (aggregate, one per device) | `MaskinAgentsAttributes` | the workspace's running sessions + the open thread, in the foreground | live, this document |
 | Flow cycle running | `MaskinCycleAttributes` | the flow list (`LoopsStore`), for flows the person follows | `CycleActivityController`, foreground only |
 | Live meeting | `MaskinMeetingAttributes` | the live call (`LiveMeetingScreen`) | `MeetingActivityController`; Mute and End act on the call |
+| Live call with an agent | `LiveCallActivityAttributes` | `LiveCallCenter` (the running call, polled once a second) | `CallActivityController`; Mute and End are `ToggleCallMuteIntent` / `EndCallIntent` (`Apps/LiveActivityShared/CallIntents.swift`) acting through `LiveCallControl`. Local only: no push. Card removed by the system or swiped away stays gone for the rest of the call; stale cards are ended at launch |
 
 **Needs real-device verification**: the simulator renders the UI but does not deliver Live
 Activity pushes, and ActivityKit token callbacks only fire on hardware.
+
+> **v3 change: the Agents activity is no longer automatic.** The app builds the coordinator with
+> `startsAutomatically: false`, so no "Agents working" card starts on its own (any left by an
+> earlier build is ended by `sweep()`), and `AgentsLiveActivity` is out of the extension bundle. It is
+> replaced by the opt-in **Following an agent** activity (`MaskinFollowAttributes`,
+> `FollowActivityController`, `Apps/MaskinLiveActivity/FollowLiveActivity.swift`,
+> `StopFollowingIntent`): Follow on an agent's working banner calls
+> `FollowActivityController.shared?.follow(_ agent: WorkingAgent)`. It shows the agent, the
+> conversation title, elapsed time and the latest step; it ends when the followed session leaves the
+> coordinator's merged working set (then offers Review for 15 minutes) or on Stop following. The
+> coordinator still folds the feed and the open thread and reports it through `onWorkingChanged`.
+> The section below describes the old aggregate card and the folding it still does.
 
 ## Agents working
 
@@ -209,3 +222,8 @@ activity.
 - The chat overlay for a thread that was closed mid-turn lingers up to 10 minutes if nothing
   reports the turn finished; the feed cannot help because chat sessions read `running` while idle.
 - No background updates on this server (see above).
+
+## Sweep and topic
+
+- **Sweep** (`AgentsActivitySweep`, `AgentsActivityCoordinator.sweep()`): runs after the workspace feed loads at launch, on foreground (`AgentsActivityRuntime.refresh`) and after a thread's sessions refresh. It ends cards from another workspace, cards left over when the loaded feed says nobody is working (a push-to-start whose end push never came), and duplicates. Until the feed has loaded it only touches other workspaces' cards.
+- **Topic**: `WorkingAgent.topic` is the conversation title (optional, 60 characters); the expanded card appends it to the "Started …" line.

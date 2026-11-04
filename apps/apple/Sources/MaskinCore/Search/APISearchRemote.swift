@@ -75,6 +75,24 @@ public struct APISearchRemote: SearchRemote {
 		}
 	}
 
+	public func people() async throws -> [SearchPerson] {
+		let workspace = await workspaceHeader()
+		do {
+			// Filter after paging: a page trimmed to humans or agents would look short and stop the walk.
+			let actors = try await ServerLimits.fetchAll(maxPages: 5) { limit, offset in
+				let output = try await client.get_sol_api_sol_actors(
+					.init(
+						query: .init(limit: limit, offset: offset),
+						headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
+				guard case .ok(let ok) = output else { throw SearchError("Search failed.") }
+				return try Self.convert(ok.body.json, as: [ActorHit].self)
+			}
+			return actors.compactMap(\.person)
+		} catch {
+			throw RemoteFailure.searchError(error)
+		}
+	}
+
 	public func flows() async throws -> [SearchResult] {
 		let workspace = await workspaceHeader()
 		do {
@@ -128,6 +146,7 @@ private struct FileHit: Decodable {
 
 private struct ConversationPageDTO: Decodable {
 	struct Participant: Decodable {
+		var actorId: String
 		var actorName: String
 	}
 	struct Row: Decodable {
@@ -141,7 +160,8 @@ private struct ConversationPageDTO: Decodable {
 			let people = participants.map(\.actorName).joined(separator: ", ")
 			return SearchResult(
 				kind: .chat, entityId: id, title: title.isEmpty ? "Untitled chat" : title,
-				subtitle: people, snippet: snippet ?? "", updatedAt: lastMessageAt.flatMap(ISODate.parse))
+				subtitle: people, snippet: snippet ?? "", updatedAt: lastMessageAt.flatMap(ISODate.parse),
+				participantIds: participants.map(\.actorId))
 		}
 	}
 	var conversations: [Row]
@@ -155,5 +175,11 @@ private struct ActorHit: Decodable {
 
 	var result: SearchResult {
 		SearchResult(kind: .agent, entityId: id, title: name, snippet: description ?? "")
+	}
+
+	/// Nil for anything that is neither a person nor an agent.
+	var person: SearchPerson? {
+		guard type == "human" || type == "agent" else { return nil }
+		return SearchPerson(id: id, name: name, isAgent: type == "agent")
 	}
 }

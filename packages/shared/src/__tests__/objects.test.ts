@@ -328,3 +328,17 @@ describe('loopTargetSchema', () => {
 		).toThrow()
 	})
 })
+
+describe('updateObjectSchema: loop targets', () => {
+	it('accepts metadata.targets as a list of rows and rejects a bad row', () => {
+		const row = { label: 'Funds engaged', source: 'manual', actual: 0, target: 4 }
+		expect(updateObjectSchema.safeParse({ metadata: { targets: [row] } }).success).toBe(true)
+		expect(
+			updateObjectSchema.safeParse({ metadata: { targets: [{ ...row, label: undefined }] } })
+				.success,
+		).toBe(false)
+		expect(
+			updateObjectSchema.safeParse({ metadata: { targets: [{ ...row, actual: '0' }] } }).success,
+		).toBe(false)
+	})
+})

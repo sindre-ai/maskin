@@ -24,6 +24,10 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
+vi.mock('@/components/layout/create-first-workspace', () => ({
+	CreateFirstWorkspace: () => <p>Create your first workspace</p>,
+}))
+
 import { Route as IndexRoute } from '@/routes/_authed/index'
 
 const IndexRedirect = (IndexRoute as unknown as { component: React.FC }).component
@@ -45,10 +49,11 @@ describe('_authed index redirect', () => {
 		expect(screen.getByTestId('skeleton')).toBeInTheDocument()
 	})
 
-	it('redirects to /signup when user has no workspaces', () => {
+	it('shows the create-first-workspace screen instead of redirecting when there are none', () => {
 		mockUseWorkspaces.mockReturnValue({ data: [], isLoading: false })
 		render(<IndexRedirect />)
-		expect(screen.getByTestId('navigate')).toHaveAttribute('data-to', '/signup')
+		expect(screen.queryByTestId('navigate')).not.toBeInTheDocument()
+		expect(screen.getByText('Create your first workspace')).toBeInTheDocument()
 	})
 
 	it('redirects directly to the workspace when exactly one exists', () => {

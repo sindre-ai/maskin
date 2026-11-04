@@ -54,7 +54,7 @@ public struct APILoopsSource: LoopsAPI {
 		return LoopOverview(
 			members: members, posts: LoopOverviewBuilder.posts(from: graph.events),
 			outputs: LoopOverviewBuilder.outcomes(from: produced, files: metadata),
-			statusOrder: order)
+			statusOrder: order, driverID: graph.object.driverId)
 	}
 
 	public func latestPost(loopID: String) async throws -> LoopPost? {
@@ -135,7 +135,7 @@ public struct APILoopsSource: LoopsAPI {
 	}
 
 	public func setStatus(loopID: String, status: LoopPill, idempotencyKey: String) async throws {
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_objects_sol__lcub_id_rcub_(
 				.init(
 					path: .init(id: loopID),
@@ -151,7 +151,7 @@ public struct APILoopsSource: LoopsAPI {
 	public func createLoop(name: String, content: String, idempotencyKey: String) async throws
 		-> String
 	{
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.post_sol_api_sol_objects(
 				.init(
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
@@ -169,7 +169,7 @@ public struct APILoopsSource: LoopsAPI {
 	public func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String)
 		async throws
 	{
-		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+		let output = try await IdempotencyKey.bind(idempotencyKey) {
 			try await client.patch_sol_api_sol_objects_sol__lcub_id_rcub_(
 				.init(path: .init(id: loopID), body: .json(.init(title: name, content: content))))
 		}
@@ -222,6 +222,7 @@ public struct APILoopsSource: LoopsAPI {
 		var createdAt: String?
 		var updatedAt: String?
 		var targets: [TargetWire]?
+		var tags: [String]?
 
 		var model: LoopSummary {
 			LoopSummary(
@@ -231,7 +232,7 @@ public struct APILoopsSource: LoopsAPI {
 				closedCount: closedCount, medianTimeToClose: medianTimeToCloseMs.map { $0 / 1000 },
 				agentIDs: agentIds, triggerIDs: triggerIds, waitingCount: waitingCount,
 				createdAt: AutomationDates.parse(createdAt), updatedAt: AutomationDates.parse(updatedAt),
-				targets: targets?.map(\.model))
+				targets: targets?.map(\.model), tags: tags)
 		}
 	}
 

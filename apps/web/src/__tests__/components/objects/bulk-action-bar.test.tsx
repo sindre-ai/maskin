@@ -121,12 +121,26 @@ describe('BulkActionBar', () => {
 	it('uses a horizontally scrollable mobile layout and hides selected copy below sm', () => {
 		renderBar()
 		const bar = screen.getByRole('region', { name: 'Bulk actions' })
-		expect(bar.className).toMatch(/overflow-x-auto/)
+		expect(bar.className).not.toMatch(/overflow-x-auto/)
+		expect(bar.querySelector('.overflow-x-auto')).not.toBeNull()
 		expect(bar.className).toMatch(/rounded-xl/)
 		expect(bar.className).toMatch(/bg-popover/)
 		expect(within(bar).getByText('selected').className).toMatch(/hidden/)
 		expect(within(bar).getByText('selected').className).toMatch(/sm:inline/)
 		expect(within(bar).getByLabelText('3 selected').className).toMatch(/shrink-0/)
+	})
+
+	it('keeps Archive, Delete and Clear selection outside the scrolling container', () => {
+		renderBar({ onArchive: vi.fn() })
+		const bar = screen.getByRole('region', { name: 'Bulk actions' })
+		const scroller = bar.querySelector('.overflow-x-auto')
+		expect(scroller).not.toBeNull()
+		for (const name of ['Archive selected', 'Delete selected', 'Clear selection']) {
+			const button = within(bar).getByRole('button', { name })
+			expect(scroller?.contains(button)).toBe(false)
+			expect(button.closest('.shrink-0')?.className).toMatch(/shrink-0/)
+		}
+		expect(scroller?.contains(within(bar).getByLabelText('Set status'))).toBe(true)
 	})
 
 	it('renders status and owner selects with provided options', () => {

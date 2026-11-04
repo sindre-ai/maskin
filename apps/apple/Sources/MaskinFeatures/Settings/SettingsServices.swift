@@ -1,11 +1,13 @@
 import MaskinCore
 import SwiftUI
 
-/// Settings keeps the account and the workspace's setup. Members, Integrations, Billing and
-/// Keys & MCP are reached from the profile sheet (`ProfileMenuItem`), not from here.
+/// Settings keeps the account and the workspace's setup pages (v19). The profile sheet still
+/// reaches the same pages through `ProfileMenuItem`.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, workspace, skills, objectTypes
+	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case members, integrations, files, autonomy, keys, triggers, billing
+	case deviceSignIn
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -47,10 +49,53 @@ struct SettingsServices {
 		return apiBaseURL
 	}
 
+	/// The web app's workspace settings page, where Privacy & data lives. Nil without a workspace.
+	var webSettingsURL: URL? {
+		guard let workspaceId else { return nil }
+		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
+	}
+
 	func webURL(_ path: String) -> URL? {
 		guard let workspaceId else { return nil }
 		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
 			.appendingPathComponent(path)
+	}
+
+	/// Plain-HTTP transport for the routes newer than the OpenAPI snapshot, scoped to this workspace.
+	var http: SettingsHTTP {
+		SettingsHTTP(
+			baseURL: environment.baseURL, clientSource: environment.clientSource,
+			credentials: environment.auth.credentialsProvider, workspaceID: workspaceId)
+	}
+
+	func deviceSignInStore() -> DeviceSignInStore {
+		DeviceSignInStore(api: APIDeviceSignInSource(http: http))
+	}
+
+	func invitationsStore() -> InvitationsStore {
+		InvitationsStore(
+			api: APIInvitationsSource(http: http), workspaceId: workspaceId ?? "", canManage: role.canManage)
+	}
+
+	func extensionsStore() -> ExtensionsStore {
+		ExtensionsStore(api: APIExtensionsSource(http: http), canManage: role == .owner)
+	}
+
+	func claudeAccountStore() -> ClaudeAccountStore {
+		ClaudeAccountStore(api: APIClaudeAccountSource(http: http))
+	}
+
+	/// Agents of this workspace, from the member list, for the Agent access page.
+	func integrationAccessStore(integrationId: String, agents: [IntegrationAccessStore.AgentRef])
+		-> IntegrationAccessStore
+	{
+		IntegrationAccessStore(
+			api: APISettingsIntegrationAccessSource(http: http), integrationId: integrationId, agents: agents,
+			canManage: role.canManage)
+	}
+
+	func addToolServerStore() -> AddToolServerStore {
+		AddToolServerStore(api: APIToolServersSource(http: http))
 	}
 
 	func profileStore() -> ProfileStore {
@@ -77,7 +122,21 @@ struct SettingsServices {
 	}
 
 	func integrationsStore() -> IntegrationsStore {
-		IntegrationsStore(api: source ?? NoSettingsSource(), currentRole: role)
+		#if os(iOS) || os(macOS)
+			let webAuth: (any WebAuthenticating)? = SystemWebAuthenticator()
+		#else
+			let webAuth: (any WebAuthenticating)? = nil  // connecting stays on the web
+		#endif
+		return IntegrationsStore(
+			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
+	}
+
+	func keychainStore() -> KeychainStore {
+		let workspaceID = workspaceId ?? ""
+		let source = APIKeychainSource(
+			client: environment.client, workspaceID: workspaceID, baseURL: environment.baseURL,
+			clientSource: environment.clientSource, credentials: environment.auth.credentialsProvider)
+		return KeychainStore(api: source, currentActorID: actorId, canManageWorkspace: role.canManage)
 	}
 
 	func apiKeyStore() -> APIKeyStore {
@@ -88,6 +147,28 @@ struct SettingsServices {
 			api: source ?? NoSettingsSource(), actorId: actorId,
 			adopt: { try auth.adoptRotatedKey($0) },
 			willRotate: { auth.beginKeyRotation() }, didFailRotation: { auth.cancelKeyRotation() })
+	}
+
+	var deletionSource: APIDeletionSource {
+		APIDeletionSource(
+			baseURL: environment.baseURL, clientSource: environment.clientSource,
+			credentials: environment.auth.credentialsProvider)
+	}
+
+	/// `didDelete` ends the session and wipes local state (the runtime's sign-out path).
+	func accountDeletionStore(didDelete: @escaping @MainActor () async -> Void) -> AccountDeletionStore {
+		AccountDeletionStore(api: deletionSource, didDelete: didDelete)
+	}
+
+	func workspaceDeletionStore(workspaceId: String) -> WorkspaceDeletionStore {
+		let workspaces = environment.workspaces
+		return WorkspaceDeletionStore(
+			api: deletionSource, workspaceId: workspaceId,
+			isLastWorkspace: workspaces.isLast(workspaceId),
+			didDelete: {
+				workspaces.removed(workspaceId)
+				await workspaces.refresh()
+			})
 	}
 
 	func billingStore() -> BillingStore { BillingStore(api: source ?? NoSettingsSource()) }
@@ -131,6 +212,15 @@ struct NoSettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integrations
 	func providers() async throws -> [IntegrationProvider] { throw failure }
 	func connected() async throws -> [ConnectedIntegration] { throw failure }
 	func disconnect(id: String, idempotencyKey: String) async throws { throw failure }
+	func startConnect(provider: String, idempotencyKey: String) async throws -> IntegrationConnectStart {
+		throw failure
+	}
+	func pendingInstallations(integrationId: String) async throws -> [GitHubInstallationChoice] {
+		throw failure
+	}
+	func selectInstallation(integrationId: String, installationId: String, idempotencyKey: String)
+		async throws
+	{ throw failure }
 	func regenerate(actorId: String) async throws -> SecretValue {
 		throw failure
 	}

@@ -1,3 +1,5 @@
+import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
+import { useCanWrite } from '@/hooks/use-can-write'
 import { useSlackConversations } from '@/hooks/use-integrations'
 import { useSlackAutoResume } from '@/hooks/use-slack-auto-resume'
 import type { TriggerResponse } from '@/lib/api'
@@ -60,6 +62,7 @@ export function SlackTriggerSetupStatus({
 	// the Pause/Play dropdown in $triggerId.tsx so the two Resume affordances
 	// stay in lockstep.
 	const autoResume = useSlackAutoResume(workspaceId)
+	const canWrite = useCanWrite()
 	// Resolve channel IDs to names via the same 5-min cache the picker uses,
 	// so we don't hit Slack again just to render a banner.
 	const { data: conversations } = useSlackConversations(integrationId, workspaceId)
@@ -107,25 +110,27 @@ export function SlackTriggerSetupStatus({
 				<AlertTriangle size={14} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
 				<div className="flex-1 space-y-2 text-[12px] leading-snug text-foreground">
 					<p>{slackMemberLeftCopy(autoPausedChannelName)}</p>
-					<button
-						type="button"
-						onClick={() => {
-							// Fire-and-forget — the hook internally uses `mutateAsync`
-							// and swallows nothing, but the banner shouldn't crash on
-							// a rejected promise (the mutation surfaces its own error
-							// state via query cache invalidation).
-							autoResume.resume(trigger).catch(() => {})
-						}}
-						disabled={autoResume.isPending}
-						className={cn(
-							'rounded-md border border-destructive/50 bg-destructive/10 px-2.5 py-1 text-[11.5px] font-semibold text-destructive',
-							'transition-colors hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/50',
-							'disabled:opacity-60 disabled:cursor-not-allowed',
-						)}
-						data-testid="slack-auto-pause-resume"
-					>
-						Resume trigger
-					</button>
+					<ViewerTooltip>
+						<button
+							type="button"
+							onClick={() => {
+								// Fire-and-forget — the hook internally uses `mutateAsync`
+								// and swallows nothing, but the banner shouldn't crash on
+								// a rejected promise (the mutation surfaces its own error
+								// state via query cache invalidation).
+								autoResume.resume(trigger).catch(() => {})
+							}}
+							disabled={autoResume.isPending || !canWrite}
+							className={cn(
+								'rounded-md border border-destructive/50 bg-destructive/10 px-2.5 py-1 text-[11.5px] font-semibold text-destructive',
+								'transition-colors hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/50',
+								'disabled:opacity-60 disabled:cursor-not-allowed',
+							)}
+							data-testid="slack-auto-pause-resume"
+						>
+							Resume trigger
+						</button>
+					</ViewerTooltip>
 				</div>
 			</div>
 		)

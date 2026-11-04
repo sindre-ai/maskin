@@ -26,10 +26,9 @@ public enum HoldReason {
 		return trimmed.isEmpty ? nil : trimmed
 	}
 
-	/// The grey note on a decided card: "Held \u{00B7} your reason", or just "Held" without one.
+	/// The grey note on a decided card: "Held \u{00B7} your reason: ...", or "none given".
 	public static func note(for reason: String?) -> String {
-		guard let reason = normalized(reason) else { return "Held" }
-		return "Held \u{00B7} \(reason)"
+		"Held \u{00B7} your reason: \(normalized(reason) ?? "none given")"
 	}
 
 	/// The sheet's subtitle: who waits rather than guessing.

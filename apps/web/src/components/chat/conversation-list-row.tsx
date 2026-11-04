@@ -3,17 +3,25 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
 
 interface ConversationListRowProps {
 	workspaceId: string
 	conversation: ConversationListItemResponse
+	/** Unread replies in this chat's threads (0 when none). Chat unread and thread unread are
+	 *  separate reads, so a chat can look read while a thread inside it is not. */
+	threadUnread?: number
 }
 
 /** How many participant plates the row draws before collapsing to a `+N`. */
 const MAX_ROW_AVATARS = 2
 
-export function ConversationListRow({ workspaceId, conversation }: ConversationListRowProps) {
+export function ConversationListRow({
+	workspaceId,
+	conversation,
+	threadUnread = 0,
+}: ConversationListRowProps) {
 	// Counterparts first, the viewer last (mockup 6106–6108) — a one-to-one
 	// thread should read as "the agent's row", but once several people are in
 	// it, leaving yourself out misrepresents who is in the room. A thread with
@@ -30,6 +38,23 @@ export function ConversationListRow({ workspaceId, conversation }: ConversationL
 	const visible = counterparts.slice(0, MAX_ROW_AVATARS)
 	const overflow = counterparts.length - visible.length
 	const isUnread = conversation.unread_count > 0
+	const workingActorIds = new Set(conversation.working_actor_ids)
+	const workingNames = conversation.participants
+		.filter((p) => workingActorIds.has(p.actorId))
+		.map((p) => p.actorName)
+	// An agent's own message is the best status there is — it says what it is doing — so the
+	// preview shows it as soon as one arrives. "Working" only covers the gap before that: the
+	// latest message is the person's and no agent has answered yet. A chat session stays live
+	// between turns, so the working flag alone must never outrank a message the agent sent.
+	const latestFromAgent = conversation.participants.some(
+		(p) => p.actorType === 'agent' && p.actorId === conversation.snippet_actor_id,
+	)
+	const workingLabel =
+		workingNames.length === 0 || latestFromAgent
+			? null
+			: workingNames.length === 1
+				? `${workingNames[0]} is working…`
+				: `${workingNames.length} agents are working…`
 	const snippetAuthor = conversation.snippet_actor_id
 		? conversation.snippet_actor_id === self?.id
 			? 'You'
@@ -115,15 +140,31 @@ export function ConversationListRow({ workspaceId, conversation }: ConversationL
 				<span className="mt-0.5 line-clamp-2 text-[11.5px] leading-[1.4] text-muted-foreground">
 					{/* "Forge: …" / "You: …" — a preview with no attribution reads as
 					    if the viewer wrote every line (mockup 296). */}
-					{conversation.snippet ? (
+					{workingLabel ? (
+						<span className="font-medium">{workingLabel}</span>
+					) : conversation.snippet ? (
 						<>
 							{snippetAuthor ? <span className="font-medium">{snippetAuthor}: </span> : null}
-							{conversation.snippet}
+							{plainPreview(conversation.snippet).map((part, index) =>
+								part.muted ? (
+									// biome-ignore lint/suspicious/noArrayIndexKey: parts are rebuilt from the text on every render and never reorder
+									<span key={index} className="opacity-80">
+										{part.text}
+									</span>
+								) : (
+									part.text
+								),
+							)}
 						</>
 					) : (
 						'No messages yet'
 					)}
 				</span>
+				{threadUnread > 0 ? (
+					<span className="mt-0.5 block text-[11px] font-medium text-brand">
+						{threadUnread} unread {threadUnread === 1 ? 'reply' : 'replies'} in threads
+					</span>
+				) : null}
 			</div>
 		</Link>
 	)

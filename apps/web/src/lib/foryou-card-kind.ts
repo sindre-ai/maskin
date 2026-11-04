@@ -68,6 +68,11 @@ export function recommendedAction(item: UnreadItem): CardAction | undefined {
 	return actions.find((action) => action.recommended)
 }
 
+/** Whether taking this option approves a send (the agent marked it destructive). */
+export function isSendingOption(item: UnreadItem, label: string): boolean {
+	return Boolean(decisionOf(item)?.options.some((o) => o.label === label && o.destructive))
+}
+
 /**
  * What the card leads with. Every For You item exists because an agent
  * @-mentioned the reader, so the headline is that ask — the decision's title
@@ -82,6 +87,9 @@ export function cardHeadline(item: UnreadItem): string {
 	const { headline } = mentionParts(item.latest_mention)
 	if (headline) return headline
 
+	// A curated item with no source comment still says what is needed from the person.
+	if (item.curated?.headline.trim()) return item.curated.headline.trim()
+
 	return item.object?.title?.trim() || 'Untitled'
 }
 
@@ -92,6 +100,7 @@ export function cardHeadline(item: UnreadItem): string {
  */
 export function cardBody(item: UnreadItem): string {
 	if (decisionOf(item)) return ''
+	if (!item.latest_mention) return item.curated?.rationale?.trim() ?? ''
 	return mentionParts(item.latest_mention).body
 }
 

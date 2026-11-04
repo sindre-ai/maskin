@@ -4,8 +4,7 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/analytics', () => ({
-	trackTriggerFired: vi.fn(),
-	trackAgentSessionCompleted: vi.fn(),
+	trackEvent: vi.fn(),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -14,7 +13,7 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-import { trackAgentSessionCompleted, trackTriggerFired } from '@/lib/analytics'
+import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
 
 function createMockQueryClient() {
@@ -132,6 +131,20 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('refreshes a draft card when it is approved or sent, whatever its object type', () => {
+		for (const action of ['approved', 'delivered']) {
+			const qc = createMockQueryClient()
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'content',
+				entity_id: entityId,
+				action,
+			} as never)
+			expect(qc.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: queryKeys.objects.detail(entityId),
+			})
+		}
+	})
+
 	it('invalidates relationships for relationship entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
@@ -192,6 +205,34 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('invalidates actors for an installed_loop event, since a version update renames its agents', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'installed_loop',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.actors.all(workspaceId),
+		})
+	})
+
+	it('refreshes the integration list, and with it every agent access view, for an integration event', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'integration',
+			entity_id: entityId,
+			action: 'updated',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.integrations.all(workspaceId),
+		})
+		// The per-agent access query lives under that same key, so one invalidation covers it.
+		expect(queryKeys.integrations.agentAccess(workspaceId, 'agent-1').slice(0, 2)).toEqual(
+			queryKeys.integrations.all(workspaceId),
+		)
+	})
+
 	it('invalidates workspaces for workspace entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
@@ -228,7 +269,7 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
-	it('emits trigger_fired analytics when a trigger entity carries the fire action', () => {
+	it('sends nothing to PostHog for trigger_fired (the browser copy was half of all events)', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
 			entity_type: 'trigger',
@@ -236,33 +277,15 @@ describe('invalidateFromSSE', () => {
 			action: 'trigger_fired',
 			event_id: 'evt-1',
 		} as never)
-		expect(trackTriggerFired).toHaveBeenCalledWith({
-			entity_id: 'trg-1',
-			entity_type: 'trigger',
-			flow_id: 'evt-1',
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: ['loops', workspaceId, 'activity'],
 		})
+		expect(trackEvent).not.toHaveBeenCalled()
 	})
 
-	it('does not emit trigger_fired for other trigger actions', () => {
+	it('sends nothing to PostHog and reads no session row on completed/failed/timeout', async () => {
 		const qc = createMockQueryClient()
-		invalidateFromSSE(qc as never, workspaceId, {
-			entity_type: 'trigger',
-			entity_id: 'trg-1',
-			action: 'updated',
-		} as never)
-		expect(trackTriggerFired).not.toHaveBeenCalled()
-	})
-
-	it('emits agent_session_completed on completed/failed/timeout actions with outcome', async () => {
-		const session = { triggerId: null, config: {} }
-		vi.mocked(api.sessions.get).mockResolvedValue(session as never)
-
-		const qc = createMockQueryClient()
-		for (const [action, outcome] of [
-			['session_completed', 'completed'],
-			['session_failed', 'failed'],
-			['session_timeout', 'timeout'],
-		] as const) {
+		for (const action of ['session_completed', 'session_failed', 'session_timeout']) {
 			invalidateFromSSE(qc as never, workspaceId, {
 				entity_type: 'session',
 				entity_id: 'sess-1',
@@ -270,90 +293,9 @@ describe('invalidateFromSSE', () => {
 				event_id: 'evt-2',
 			} as never)
 		}
-		await vi.waitFor(() => expect(trackAgentSessionCompleted).toHaveBeenCalledTimes(3))
-		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(1, {
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'completed',
-			flow_id: 'evt-2',
-			trigger_id: null,
-			trigger_type: null,
-		})
-		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(2, {
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'failed',
-			flow_id: 'evt-2',
-			trigger_id: null,
-			trigger_type: null,
-		})
-		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(3, {
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'timeout',
-			flow_id: 'evt-2',
-			trigger_id: null,
-			trigger_type: null,
-		})
-	})
-
-	it('forwards the session row trigger_id and config.trigger_type as G2 provenance', async () => {
-		vi.mocked(api.sessions.get).mockResolvedValue({
-			triggerId: 'trig-1',
-			config: { trigger_type: 'cron' },
-		} as never)
-
-		const qc = createMockQueryClient()
-		invalidateFromSSE(qc as never, workspaceId, {
-			entity_type: 'session',
-			entity_id: 'sess-9',
-			action: 'session_completed',
-			event_id: 'evt-9',
-		} as never)
-
-		await vi.waitFor(() => expect(trackAgentSessionCompleted).toHaveBeenCalledOnce())
-		expect(trackAgentSessionCompleted).toHaveBeenCalledWith({
-			entity_id: 'sess-9',
-			entity_type: 'session',
-			outcome: 'completed',
-			flow_id: 'evt-9',
-			trigger_id: 'trig-1',
-			trigger_type: 'cron',
-		})
-	})
-
-	it('still emits the completion without provenance when the session row cannot be read', async () => {
-		vi.mocked(api.sessions.get).mockRejectedValueOnce(new Error('404 not found'))
-
-		const qc = createMockQueryClient()
-		invalidateFromSSE(qc as never, workspaceId, {
-			entity_type: 'session',
-			entity_id: 'sess-gone',
-			action: 'session_completed',
-			event_id: 'evt-10',
-		} as never)
-
-		await vi.waitFor(() => expect(trackAgentSessionCompleted).toHaveBeenCalledOnce())
-		expect(trackAgentSessionCompleted).toHaveBeenCalledWith({
-			entity_id: 'sess-gone',
-			entity_type: 'session',
-			outcome: 'completed',
-			flow_id: 'evt-10',
-			trigger_id: null,
-			trigger_type: null,
-		})
-	})
-
-	it('does not emit agent_session_completed for routine session updates', async () => {
-		const qc = createMockQueryClient()
-		invalidateFromSSE(qc as never, workspaceId, {
-			entity_type: 'session',
-			entity_id: 'sess-1',
-			action: 'updated',
-		} as never)
 		await Promise.resolve()
 		expect(api.sessions.get).not.toHaveBeenCalled()
-		expect(trackAgentSessionCompleted).not.toHaveBeenCalled()
+		expect(trackEvent).not.toHaveBeenCalled()
 	})
 })
 
@@ -365,7 +307,7 @@ describe('invalidateFromSSE session batching', () => {
 		const qc = new QueryClient()
 		const keys = {
 			list: queryKeys.sessions.all(workspaceId),
-			paged: [...queryKeys.sessions.all(workspaceId), 'paged'],
+			stats: queryKeys.sessions.stats(workspaceId),
 			detail: queryKeys.sessions.detail('sess-1'),
 			logs: queryKeys.sessions.logs('sess-1'),
 			byActor: queryKeys.sessions.byActor(workspaceId, 'actor-1'),
@@ -421,22 +363,34 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.byConversation)).toBe(true)
 		// The coalesced lists and billing wait / are skipped.
 		expect(invalidated(keys.list)).toBe(false)
-		expect(invalidated(keys.paged)).toBe(false)
+		expect(invalidated(keys.stats)).toBe(false)
 		expect(invalidated(keys.billing)).toBe(false)
 	})
 
-	it('coalesces the paged full-history list on a longer window so a burst cannot restart its walk', () => {
+	it('leaves another session’s detail and logs alone', () => {
+		const { qc, keys, invalidated } = seededClient()
+		const other = queryKeys.sessions.detail('sess-2')
+		const otherLogs = queryKeys.sessions.logs('sess-2')
+		qc.setQueryData(other, {})
+		qc.setQueryData(otherLogs, [])
+		invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
+		expect(invalidated(keys.detail)).toBe(true)
+		expect(invalidated(other)).toBe(false)
+		expect(invalidated(otherLogs)).toBe(false)
+	})
+
+	it('coalesces the per-agent stats on a longer window so a burst cannot refetch them per event', () => {
 		const { qc, keys, invalidated } = seededClient()
 		for (let i = 0; i < 25; i++) {
 			invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
 		}
 		vi.advanceTimersByTime(5_000)
-		expect(invalidated(keys.paged)).toBe(false)
+		expect(invalidated(keys.stats)).toBe(false)
 		vi.advanceTimersByTime(25_000)
-		expect(invalidated(keys.paged)).toBe(true)
+		expect(invalidated(keys.stats)).toBe(true)
 	})
 
-	it.each(['session_credit_debited', 'session_budget_stopped'])(
+	it.each(['session_credit_debited', 'session_budget_stopped', 'session_stopped'])(
 		'%s still refetches billing usage',
 		(action) => {
 			const { qc, keys, invalidated } = seededClient()
@@ -450,7 +404,6 @@ describe('invalidateFromSSE session batching', () => {
 	it.each(['session_completed', 'session_failed', 'session_timeout'])(
 		'terminal %s refetches billing usage',
 		(action) => {
-			vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
 			const { qc, keys, invalidated } = seededClient()
 			invalidateFromSSE(qc, workspaceId, sessionEvent(action))
 			expect(invalidated(keys.billing)).toBe(false)
@@ -469,7 +422,6 @@ describe('invalidateFromSSE session batching', () => {
 	)
 
 	it('a burst of billing events gives one billing refetch per window', () => {
-		vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
 		const qc = createMockQueryClient()
 		const billingCalls = () =>
 			qc.invalidateQueries.mock.calls.filter(
@@ -509,7 +461,6 @@ describe('invalidateFromSSE session batching', () => {
 		}
 
 		it('does not restart a billing fetch that is already in flight', async () => {
-			vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
 			const qc = new QueryClient()
 			const requests = mountSlow(qc, queryKeys.billing.usage(workspaceId), 20_000)
 			// Let the first load finish: only a query that already has data is
@@ -528,7 +479,6 @@ describe('invalidateFromSSE session batching', () => {
 		})
 
 		it('turns 100 replayed session events into one billing refetch', async () => {
-			vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
 			const qc = new QueryClient()
 			const billing = mountSlow(qc, queryKeys.billing.usage(workspaceId), 300)
 			const list = mountSlow(qc, queryKeys.sessions.all(workspaceId), 300)

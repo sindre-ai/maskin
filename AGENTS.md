@@ -64,6 +64,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `pnpm lint` — lint with Biome (`biome check .`)
 - `pnpm lint:fix` — auto-fix lint issues
 - `pnpm format` — format with Biome
+- A pre-commit hook (`.githooks/pre-commit`, installed by `pnpm install`) runs the Biome auto-fix on staged files; skip it with `git commit --no-verify` or `SKIP_BIOME_HOOK=1`
 - `docker-compose up postgres -d` — start PostgreSQL only (not needed if using `pnpm dev`)
 - `docker-compose up` — start PostgreSQL + all services
 - `pnpm db:generate` — generate Drizzle migration from schema changes

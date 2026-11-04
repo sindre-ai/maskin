@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
+import type { StorageProvider } from '@maskin/storage'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import {
@@ -15,8 +16,9 @@ import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
 import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import { createLinkedInMcpServer } from '../lib/integrations/providers/linkedin-unipile/mcp-server'
+import { toolGateFor } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
-import { isWorkspaceMember } from '../lib/workspace-auth'
+import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 /**
  * Streamable-HTTP MCP endpoint for the LinkedIn (LinkedIn-backed) provider.
@@ -87,6 +89,9 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		/** Set by the global X-Maskin-Session-Id middleware in app-factory.ts. */
+		maskinSessionId?: string
+		storageProvider: StorageProvider
 	}
 }
 
@@ -210,7 +215,7 @@ app.post('/:instanceSlug', async (c) => {
 		)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
@@ -225,7 +230,24 @@ app.post('/:instanceSlug', async (c) => {
 	const routeError =
 		scoped.length === 0 ? routeErrorForUnmatchedSlug(requestedSlug, identities) : null
 
-	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, scoped)
+	const gate = await toolGateFor(db, {
+		workspaceId,
+		actorId,
+		integrationId: scoped[0]?.integrationId ?? null,
+		provider: PROVIDER,
+		providerLabel: 'LinkedIn',
+	})
+	const mcpServer = createLinkedInMcpServer(
+		{
+			db,
+			actorId,
+			workspaceId,
+			storage: c.get('storageProvider'),
+			sessionId: c.get('maskinSessionId'),
+		},
+		scoped,
+		gate,
+	)
 	if (routeError) serveRouteError(mcpServer, routeError)
 
 	const transport = new StreamableHTTPServerTransport({
@@ -298,7 +320,7 @@ app.post('/', async (c) => {
 		)
 	}
 
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+	if (!(await isWorkspaceWriter(db, actorId, workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 

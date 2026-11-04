@@ -11,6 +11,9 @@ struct ObjectHeaderView: View {
 	let object: WorkObject
 	/// False renders the chips as plain faces (snapshots: `Menu` does not draw offscreen).
 	var interactiveChips = true
+	/// "Message" on the working card: takes the reader to the conversation. Hidden when `nil`.
+	var onMessage: (() -> Void)?
+	var sessionActions = ObjectSessionActions.none
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
@@ -38,18 +41,15 @@ struct ObjectHeaderView: View {
 			ObjectHeaderChips(store: store, object: object, interactive: interactiveChips)
 				.padding(.top, MaskinSpace.s8)
 
-			if let activity = object.activeActivity, !activity.isEmpty {
-				HStack(spacing: MaskinSpace.s3) {
-					DetailWorkingBars()
-					Text(activity).lineLimit(1)
-				}
-				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
-				.foregroundStyle(MaskinColor.sigInk)
-				.padding(.horizontal, MaskinSpace.s7)
-				.frame(minHeight: MaskinSpace.s13)
-				.background(MaskinColor.sigTint, in: Capsule())
-				.padding(.top, MaskinSpace.s5)
-				.accessibilityLabel("Working: \(activity)")
+			if object.hasActiveSession {
+				workingCard(activity: object.activeActivity, session: object.lastSession?.isLive == true ? object.lastSession : nil)
+					.padding(.top, MaskinSpace.s7)
+			} else if ObjectSessionCopy.showsFailed(object.lastSession, hasActiveSession: object.hasActiveSession),
+				let session = object.lastSession
+			{
+				FailedSessionBanner(
+					agentName: store.directory.name(for: session.agentID), session: session, actions: sessionActions
+				).padding(.top, MaskinSpace.s7)
 			}
 
 			if let updated = object.updatedAt {
@@ -62,6 +62,43 @@ struct ObjectHeaderView: View {
 				.padding(.top, MaskinSpace.s7)
 			}
 		}
+	}
+
+	/// "Forge is working" with what it is doing, and a way to message it.
+	private func workingCard(activity: String?, session: ObjectSession?) -> some View {
+		// The session's own agent, which may differ from the item's driver; unknown stays unnamed.
+		let name = session.flatMap { store.directory.name(for: $0.agentID) }
+		let title = ObjectSessionCopy.workingTitle(agentName: name)
+		return HStack(spacing: MaskinSpace.s6) {
+			DetailWorkingBars()
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				Text(title)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
+					.foregroundStyle(MaskinColor.ink)
+				Text(activity.flatMap { $0.isEmpty ? nil : $0 } ?? "Session running").lineLimit(1)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+					.foregroundStyle(MaskinColor.ink4)
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			Group {
+				if let session, let onWatch = sessionActions.onWatch {
+					Button("Watch") { onWatch(session) }.foregroundStyle(MaskinColor.sigInk)
+				}
+				if let onMessage {
+					Button("Message", action: onMessage).foregroundStyle(MaskinColor.ink)
+				}
+				if let session, let onStop = sessionActions.onStop {
+					Button("Stop") { onStop(session) }.foregroundStyle(MaskinColor.ink)
+				}
+			}
+			.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
+			.frame(minHeight: MaskinSpace.touchMin)
+		}
+		.padding(.horizontal, MaskinSpace.s8)
+		.padding(.vertical, MaskinSpace.s3)
+		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl, style: .continuous))
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel(activity.map { "\(title): \($0)" } ?? title)
 	}
 
 	private var archivedBanner: some View {
@@ -171,8 +208,8 @@ struct ObjectHeaderChips: View {
 
 	private var driverChip: some View {
 		let driver = store.directory.actor(for: object.driverId)
-		return picker(driver.map { "Driver \($0.name). Change driver" } ?? "No driver. Choose a driver") {
-			HeaderChip(foreground: driver == nil ? MaskinColor.ink4 : MaskinColor.ink, label: driver?.name ?? "No driver") {
+		return picker(driver.map { "Owner \($0.name). Change owner" } ?? "No owner. Choose an owner") {
+			HeaderChip(foreground: driver == nil ? MaskinColor.ink4 : MaskinColor.ink, label: driver?.name ?? "No owner") {
 				if let driver {
 					ActorAvatar(name: driver.name, kind: driver.isAgent ? .agent : .human, size: MaskinSpace.s11, seed: driver.id)
 				} else {

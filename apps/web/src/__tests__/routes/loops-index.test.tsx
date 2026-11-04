@@ -70,16 +70,13 @@ vi.mock('@/hooks/use-billing', () => ({
 	useBillingUsage: () => mockUseBillingUsage(),
 }))
 
-const mockUseFeatureFlag = vi.fn()
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => mockUseFeatureFlag(id),
-}))
-
 vi.mock('@/components/settings/buy-credits-dialog', () => ({
 	BuyCreditsDialog: () => null,
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -97,6 +94,8 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		pill: 'supervised',
 		entryCondition: null,
 		closeCondition: null,
+		tags: [],
+		driverId: null,
 		inProgressCount: 6,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
@@ -190,9 +189,6 @@ beforeEach(() => {
 	mockUseConversations.mockReturnValue({
 		data: { pages: [{ conversations: [], has_more: false }] },
 	})
-	// Default posture: flag off + no billing data — the same production posture
-	// the bet branch reads until the umbrella flag is registered.
-	mockUseFeatureFlag.mockReturnValue(false)
 	mockUseBillingUsage.mockReturnValue({ data: undefined })
 })
 

@@ -1,4 +1,8 @@
-import { classifyTurnError } from '../../lib/turn-error-classifier'
+import {
+	classifyTurnError,
+	extractCloudflareRayId,
+	isProviderBlockPage,
+} from '../../lib/turn-error-classifier'
 
 describe('classifyTurnError', () => {
 	it('reads an Anthropic 500 as transient', () => {
@@ -30,6 +34,26 @@ describe('classifyTurnError', () => {
 		// Order matters: retrying an exhausted plan just burns the same failure
 		// twice and delays the message that explains it.
 		expect(classifyTurnError("You've hit your limit — api_error while retrying")).toBe('permanent')
+	})
+
+	it('reads a Cloudflare 403 block page as transient, not an auth failure', () => {
+		const text = 'Failed to authenticate. API Error: 403 Attention Required! | Cloudflare'
+		expect(isProviderBlockPage(text)).toBe(true)
+		expect(classifyTurnError(text)).toBe('transient')
+	})
+
+	it('does not read a real 401 or a plain 403 as a block page', () => {
+		const unauthorized =
+			'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error"}}'
+		expect(isProviderBlockPage(unauthorized)).toBe(false)
+		expect(classifyTurnError(unauthorized)).toBe('permanent')
+		expect(isProviderBlockPage('API Error: 403 {"error":{"message":"forbidden"}}')).toBe(false)
+	})
+
+	it('pulls the Ray ID out of block-page text when it is there', () => {
+		const page = '<p>Cloudflare Ray ID: <strong>8f3a1b2c4d5e6f70</strong></p>'
+		expect(extractCloudflareRayId(page)).toBe('8f3a1b2c4d5e6f70')
+		expect(extractCloudflareRayId('403 Attention Required! | Cloudflare')).toBeNull()
 	})
 
 	it('defaults to permanent for anything unrecognised', () => {

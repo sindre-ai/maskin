@@ -9,15 +9,20 @@ const mockUseIntegrations = vi.fn()
 const mockUseProviders = vi.fn()
 const mockConnect = vi.fn()
 const mockDisconnect = vi.fn()
+const mockNavigate = vi.fn()
 
 /** Search params the route sees. The page reads `?select_github=<id>` to decide
  *  whether to open the post-authorization org picker. */
 const mockSearch = vi.fn<() => Record<string, string | undefined>>(() => ({}))
 
+// The Tools section has its own tests (components/integrations/tools-section.test.tsx).
+vi.mock('@/components/integrations/tools-section', () => ({ ToolsSection: () => null }))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
+		useNavigate: () => mockNavigate,
 		createFileRoute: () => (options: Record<string, unknown>) => ({
 			...options,
 			useSearch: () => mockSearch(),
@@ -26,7 +31,9 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
-vi.mock('@/lib/workspace-context', () => ({
+vi.mock('@/lib/workspace-context', async (importOriginal) => ({
+	// Keep the real WorkspaceContext: useCanWrite reads it directly.
+	...(await importOriginal<typeof import('@/lib/workspace-context')>()),
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
@@ -67,6 +74,12 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Default: no selection pending, so the post-authorization picker stays shut.
 	useGithubPendingSelection: () => mockUseGithubPendingSelection(),
 	useSelectGithubInstallation: () => ({ mutate: mockSelectGithub, isPending: false }),
+	// The Resend connect dialog is always mounted (closed); it only has to render.
+	useResendDnsPrecheck: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+	// Agent access has its own tests; here it only has to render.
+	useSetAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useRemoveAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 /** LinkedIn installs are per-member, so the grouped row resolves who connected
@@ -294,10 +307,12 @@ describe('IntegrationsPage', () => {
 			}),
 		]
 
-		it('renders one header showing the count, with nested rows for each installation', () => {
+		it('renders one header showing the count, with nested rows for each installation', async () => {
+			const user = userEvent.setup()
 			mockUseIntegrations.mockReturnValue({ data: twoInstallations, isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
 
 			expect(screen.getByText('GitHub · 2')).toBeInTheDocument()
 			expect(screen.getByText('vaerksted-ai')).toBeInTheDocument()
@@ -306,14 +321,14 @@ describe('IntegrationsPage', () => {
 			expect(screen.getAllByRole('button', { name: 'Disconnect' })).toHaveLength(2)
 		})
 
-		it('defaults to expanded when more than one installation exists', () => {
+		it('starts collapsed even when more than one installation exists', () => {
 			mockUseIntegrations.mockReturnValue({ data: twoInstallations, isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
 
 			const header = screen.getByRole('button', { name: /GitHub · 2/ })
-			expect(header).toHaveAttribute('aria-expanded', 'true')
-			expect(screen.getByRole('button', { name: /Add another/ })).toBeInTheDocument()
+			expect(header).toHaveAttribute('aria-expanded', 'false')
+			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
 		})
 
 		it('defaults to collapsed when only one installation exists', () => {
@@ -338,12 +353,12 @@ describe('IntegrationsPage', () => {
 
 			const header = screen.getByRole('button', { name: /GitHub · 2/ })
 			await user.click(header)
-			expect(header).toHaveAttribute('aria-expanded', 'false')
-			expect(screen.queryByText('vaerksted-ai')).not.toBeInTheDocument()
-
-			await user.click(header)
 			expect(header).toHaveAttribute('aria-expanded', 'true')
 			expect(screen.getByText('vaerksted-ai')).toBeInTheDocument()
+
+			await user.click(header)
+			expect(header).toHaveAttribute('aria-expanded', 'false')
+			expect(screen.queryByText('vaerksted-ai')).not.toBeInTheDocument()
 		})
 
 		it('disconnects only the targeted installation when a nested Disconnect is clicked', async () => {
@@ -351,6 +366,7 @@ describe('IntegrationsPage', () => {
 			mockUseIntegrations.mockReturnValue({ data: twoInstallations, isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
 
 			const sindreRow = screen.getByText('sindre-ai').closest('div.flex') as HTMLElement
 			await user.click(within(sindreRow).getByRole('button', { name: 'Disconnect' }))
@@ -364,6 +380,7 @@ describe('IntegrationsPage', () => {
 			mockUseIntegrations.mockReturnValue({ data: twoInstallations, isLoading: false })
 			mockUseProviders.mockReturnValue({ data: [githubProvider], isLoading: false })
 			render(<IntegrationsPage />)
+			await user.click(screen.getByRole('button', { name: /GitHub · 2/ }))
 
 			await user.click(screen.getByRole('button', { name: /Add another/ }))
 			expect(mockConnect).toHaveBeenCalledWith({ provider: 'github' })
@@ -435,6 +452,80 @@ describe('IntegrationsPage', () => {
 
 			expect(screen.getByText('Available to connect')).toBeInTheDocument()
 			expect(screen.queryByText(/event types available/)).not.toBeInTheDocument()
+		})
+	})
+
+	describe('google drive provider card', () => {
+		const googleDriveProvider = {
+			name: 'google-drive',
+			displayName: 'Google Drive',
+			authType: 'oauth2',
+			events: [],
+			externalIdDisplay: 'email' as const,
+		}
+
+		it('shows the Drive card next to the other OAuth providers', () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [
+					googleDriveProvider,
+					{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' },
+				],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByText('Google Drive')).toBeInTheDocument()
+			expect(screen.getByText('Gmail')).toBeInTheDocument()
+			expect(screen.getAllByRole('button', { name: 'Connect' })).toHaveLength(2)
+		})
+
+		it('shows the New pill, description, meta line and a Details link on the Drive card', () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByLabelText('New')).toBeInTheDocument()
+			expect(
+				screen.getByText('File bytes, Docs, Sheets, search, folder watch, write, comments.'),
+			).toBeInTheDocument()
+			expect(screen.getByText('Free · Piggybacks on Google auth')).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+		})
+
+		it('keeps the Details link on a connected Drive card', () => {
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					buildIntegrationResponse({
+						id: 'gd-1',
+						provider: 'google-drive',
+						status: 'active',
+						externalId: 'kai@acme.test',
+					}),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [googleDriveProvider], isLoading: false })
+
+			render(<IntegrationsPage />)
+
+			expect(screen.getByRole('link', { name: 'Details' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
+		})
+
+		it('does not put Drive extras on other providers', () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ ...googleDriveProvider, name: 'gmail', displayName: 'Gmail' }],
+				isLoading: false,
+			})
+
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByLabelText('New')).not.toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Details' })).not.toBeInTheDocument()
 		})
 	})
 
@@ -561,6 +652,71 @@ describe('IntegrationsPage', () => {
 			render(<IntegrationsPage />)
 
 			expect(screen.queryByText('Choose a GitHub organization')).not.toBeInTheDocument()
+		})
+	})
+
+	// A failed connect redirects back with ?error=<code>. The page turns the code
+	// into one plain dismissible alert and removes the param from the URL.
+	describe('failed connect alert', () => {
+		const seed = (error: string) => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }],
+				isLoading: false,
+			})
+			mockSearch.mockReturnValue({ error })
+		}
+
+		it.each([
+			['token_exchange_failed', /didn't accept the sign-in/i],
+			['people_id_fetch_failed', /account details from Google/i],
+			['post_install_failed', /setting up the connection failed/i],
+		])('shows plain copy for %s', (code, copy) => {
+			seed(code)
+			render(<IntegrationsPage />)
+
+			const alert = screen.getByRole('alert')
+			expect(alert).toHaveTextContent(copy)
+			expect(alert).not.toHaveTextContent(code)
+		})
+
+		it('shows a generic line for an unknown code', () => {
+			seed('something_new')
+			render(<IntegrationsPage />)
+
+			const alert = screen.getByRole('alert')
+			expect(alert).toHaveTextContent("Connecting didn't work. Try again.")
+			expect(alert).not.toHaveTextContent('something_new')
+		})
+
+		it('removes the error param from the URL once the alert shows', () => {
+			seed('token_exchange_failed')
+			render(<IntegrationsPage />)
+
+			expect(mockNavigate).toHaveBeenCalledTimes(1)
+			const { search, replace } = mockNavigate.mock.calls[0][0]
+			expect(replace).toBe(true)
+			expect(search({ error: 'token_exchange_failed', return_to: '/x' })).toEqual({
+				error: undefined,
+				return_to: '/x',
+			})
+		})
+
+		it('hides the alert when dismissed', async () => {
+			seed('token_exchange_failed')
+			render(<IntegrationsPage />)
+
+			await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+		})
+
+		it('shows no alert when there is no error param', () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [], isLoading: false })
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 	})
 
@@ -722,7 +878,8 @@ describe('IntegrationsPage', () => {
 
 		it('labels each connected account by the member who connected it', async () => {
 			renderWith([linkedInFor('actor-1', 'acct-a'), linkedInFor('actor-2', 'acct-b')])
-			// Two installs default the group to expanded.
+			// The group starts collapsed; open it.
+			await userEvent.click(screen.getByRole('button', { name: /LinkedIn · 2/ }))
 			expect(await screen.findByText('Magnus')).toBeInTheDocument()
 			expect(screen.getByText('Colleague')).toBeInTheDocument()
 			expect(screen.getByText('2 connected accounts')).toBeInTheDocument()
@@ -730,6 +887,7 @@ describe('IntegrationsPage', () => {
 
 		it("marks the current member's own account so two rows are tellable apart", async () => {
 			renderWith([linkedInFor('actor-1', 'acct-a'), linkedInFor('actor-2', 'acct-b')])
+			await userEvent.click(screen.getByRole('button', { name: /LinkedIn · 2/ }))
 			expect(await screen.findByText('(you)')).toBeInTheDocument()
 		})
 
@@ -759,5 +917,26 @@ describe('IntegrationsPage', () => {
 			renderWith([linkedInFor('actor-1', 'acct-a')])
 			expect(await screen.findByText(/\$49/)).toBeInTheDocument()
 		})
+	})
+})
+
+describe('IntegrationsPage ordering', () => {
+	it('lists providers alphabetically by name', () => {
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [
+				{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+				{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
+				{ name: 'linear', displayName: 'Linear', authType: 'oauth2', events: [] },
+			],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+
+		const gh = screen.getByText('GitHub', { exact: false })
+		const li = screen.getByText('Linear', { exact: false })
+		const sl = screen.getByText('Slack', { exact: false })
+		expect(gh.compareDocumentPosition(li) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(li.compareDocumentPosition(sl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 })
