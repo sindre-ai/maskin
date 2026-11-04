@@ -278,3 +278,28 @@ describe('ListRow D2 · driver working ring', () => {
 		expect(screen.queryByText(/working/i)).toBeNull()
 	})
 })
+
+describe('ListRow narrow layout', () => {
+	it('shows the full type name on the plate and a named dot for phones', () => {
+		renderRow({ typeLabel: 'Knowledge' })
+		expect(screen.getByText('Knowledge').className).toContain('max-sm:hidden')
+		const dot = screen.getByRole('img', { name: 'Knowledge' })
+		expect(dot.className).toContain('sm:hidden')
+	})
+
+	it('lets the title run to two lines on phones and one line from sm', () => {
+		renderRow()
+		const title = screen.getByText('Ship the thing')
+		expect(title.className).toContain('max-sm:line-clamp-2')
+		expect(title.className).toContain('sm:truncate')
+	})
+
+	it('hides the driver avatar below sm', () => {
+		const driver = buildActorListItem({ id: 'agent-1', name: 'Scout', type: 'agent' })
+		const { container } = renderRow({
+			object: buildObjectResponse({ id: 'obj-1', type: 'bet', driver: driver.id }),
+			actors: [driver],
+		})
+		expect(container.querySelector('.hidden.sm\\:inline-flex')).not.toBeNull()
+	})
+})
