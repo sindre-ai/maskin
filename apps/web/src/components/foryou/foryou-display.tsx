@@ -3,6 +3,7 @@ import { LiveCapsule } from '@/components/agents/live-call-surface'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { typeLabel } from '@/lib/constants'
+import { FEED_KIND_LABEL, type FeedKind } from '@/lib/foryou-feed'
 import { useVoiceCallView } from '@/lib/voice-call-view'
 import { LayoutList, Rows3 } from 'lucide-react'
 import { useMemo } from 'react'
@@ -15,16 +16,27 @@ export interface ForYouTypeOption {
 	count: number
 }
 
-/** "Everything" plus one row per type that has unread cards. */
+/**
+ * "Everything" plus one row per kind of card that has unread cards: Decisions, Drafts,
+ * Updates, in that order (the prototype's filters). A key that is not a card kind falls
+ * back to the item-type name.
+ */
 export function forYouTypeOptions(
 	unreadCount: number,
 	typeCounts: Map<string, number>,
 ): ForYouTypeOption[] {
+	const kinds = Object.keys(FEED_KIND_LABEL)
+	const rank = (key: string) => (kinds.includes(key) ? kinds.indexOf(key) : kinds.length)
 	return [
 		{ value: undefined, label: 'Everything', count: unreadCount },
 		...Array.from(typeCounts.entries())
 			.filter(([, count]) => count > 0)
-			.map(([type, count]) => ({ value: type, label: `${typeLabel(type)}s`, count })),
+			.sort(([a], [b]) => rank(a) - rank(b))
+			.map(([key, count]) => ({
+				value: key,
+				label: FEED_KIND_LABEL[key as FeedKind] ?? `${typeLabel(key)}s`,
+				count,
+			})),
 	]
 }
 
@@ -75,7 +87,7 @@ export function ForYouDisplay({
 			filterSections={[
 				{
 					id: 'type',
-					label: 'Type',
+					label: 'Kind',
 					summary: activeLabel ?? 'Everything',
 					pinnable: false,
 					defaultExpanded: true,

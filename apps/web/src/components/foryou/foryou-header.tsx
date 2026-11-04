@@ -6,6 +6,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { cn } from '@/lib/cn'
 import { forYouTypeOptions } from './foryou-display'
 
 export type { FeedMode } from './foryou-display'
@@ -26,6 +27,8 @@ export interface ForYouBulkAction {
 	/** How many cards the action would touch. Omit for an action that is always
 	 *  available (the mockup prints no count for those either). */
 	count?: number
+	/** Draws the row in the danger colour with a rule above it (the prototype's Dismiss all). */
+	destructive?: boolean
 	onSelect: () => void
 }
 
@@ -112,7 +115,10 @@ export function ForYouBulkMenu({
 						key={action.id}
 						disabled={action.count === 0}
 						onSelect={action.onSelect}
-						className="text-xs font-semibold"
+						className={cn(
+							'text-xs font-semibold',
+							action.destructive && 'mt-1 border-t border-border text-error focus:text-error',
+						)}
 					>
 						<span className="min-w-0 flex-1">{action.label}</span>
 						{action.count !== undefined && action.count > 0 && (

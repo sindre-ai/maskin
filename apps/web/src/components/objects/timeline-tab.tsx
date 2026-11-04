@@ -682,7 +682,7 @@ export function TimelineTab({
 									workspaceId={workspaceId}
 									objectId={object.id}
 									isUnread={unreadEventIds.has(entry.event.id)}
-									variant="bubble"
+									variant="plain"
 									collapsibleReplies
 									focusEventId={focusCommentId}
 								/>

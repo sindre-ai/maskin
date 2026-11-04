@@ -407,16 +407,21 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
 
-		await expect(page.getByRole('button', { name: /^Tasks \(/ })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: /^Decisions \(/ })).toHaveCount(0)
 
 		await openViewMenu(page)
 		await page.getByRole('button', { name: /^Filter bar filter/ }).click()
 		await page.getByRole('button', { name: /Show under the header/ }).click()
 		await page.keyboard.press('Escape')
 
-		await expect(page.getByRole('button', { name: /^Tasks \(/ })).toBeVisible()
-		await page.getByRole('button', { name: /^Insights \(/ }).click()
-		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(1)
+		await expect(page.getByRole('button', { name: /^Decisions \(/ })).toBeVisible()
+		// Every card in this feed asks something (its comment holds a question mark), so
+		// they are all Decisions and there are no Drafts or Updates to filter to.
+		await expect(page.getByRole('button', { name: /^Updates \(/ })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: /^Drafts \(/ })).toHaveCount(0)
+		const all = await page.getByTestId('foryou-feed-card').count()
+		await page.getByRole('button', { name: /^Decisions \(/ }).click()
+		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(all)
 		await expect(page.getByText('Is the feed too long?').first()).toBeVisible()
 	})
 })

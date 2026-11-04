@@ -15,6 +15,14 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
+import {
+	ResponsiveDialog,
+	ResponsiveDialogContent,
+	ResponsiveDialogDescription,
+	ResponsiveDialogFooter,
+	ResponsiveDialogHeader,
+	ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { dismissBodyFor, useDismissForYou, useForYou } from '@/hooks/use-for-you'
 import { useMediaQuery } from '@/hooks/use-media-query'
@@ -46,6 +54,8 @@ import {
 	bucketRank,
 	dismissableItems,
 	feedItemKey,
+	feedKindFilter,
+	feedKindOf,
 	feedTailLabel,
 } from '@/lib/foryou-feed'
 import {
@@ -107,7 +117,8 @@ function ForYouFeed() {
 	const markRead = useMarkRead(workspaceId)
 	const dismiss = useDismissForYou(workspaceId)
 
-	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
+	const [filterValue, setTypeFilter] = useState<string | undefined>(undefined)
+	const typeFilter = feedKindFilter(filterValue)
 	const [filterPills, setFilterPills] = useState(false)
 	// Cards opened by hand in List view, threads answered in this sitting, and
 	// options taken in this sitting.
@@ -130,6 +141,9 @@ function ForYouFeed() {
 	const decidingRef = useRef<Set<string>>(new Set())
 	const draftCallsRef = useRef<Map<string, Promise<unknown>>>(new Map())
 	const [bulkConfirm, setBulkConfirm] = useState<UnreadItem[] | null>(null)
+	// The `···` menu's "Dismiss all" asks first (prototype: "Dismiss everything in For you?");
+	// the Alt+U shortcut stays direct, and the Undo toast follows either way.
+	const [dismissAllConfirm, setDismissAllConfirm] = useState(false)
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
 	// Cards hidden because the reader typed an answer, keyed to the
 	// `latest_event_id` they answered. Unlike `pendingKeys`, this hide ends on
@@ -213,16 +227,15 @@ function ForYouFeed() {
 	const typeCounts = useMemo(() => {
 		const counts = new Map<string, number>()
 		for (const item of unreadRegular) {
-			const type = item.object?.type
-			if (!type) continue
-			counts.set(type, (counts.get(type) ?? 0) + 1)
+			const kind = feedKindOf(item)
+			counts.set(kind, (counts.get(kind) ?? 0) + 1)
 		}
 		return counts
 	}, [unreadRegular])
 
 	const filteredRegular = useMemo(
 		() =>
-			typeFilter ? unreadRegular.filter((item) => item.object?.type === typeFilter) : unreadRegular,
+			typeFilter ? unreadRegular.filter((item) => feedKindOf(item) === typeFilter) : unreadRegular,
 		[unreadRegular, typeFilter],
 	)
 
@@ -319,7 +332,7 @@ function ForYouFeed() {
 		const handled = [...decided.values()]
 			.map((entry) => entry.item)
 			.filter((item) => !seen.has(feedItemKey(item)))
-			.filter((item) => !typeFilter || item.object?.type === typeFilter)
+			.filter((item) => !typeFilter || feedKindOf(item) === typeFilter)
 		return [...live, ...handled]
 			.map((item, index) => ({ item, index }))
 			.sort(
@@ -744,7 +757,8 @@ function ForYouFeed() {
 			id: 'all',
 			label: 'Dismiss all',
 			count: dismissable.length,
-			onSelect: () => dismissAll(dismissable, 'All caught up'),
+			destructive: true,
+			onSelect: () => setDismissAllConfirm(true),
 		},
 	]
 
@@ -760,9 +774,37 @@ function ForYouFeed() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [dismissAll, dismissable])
 
+	// One header for the loading skeleton and the loaded feed: the shell reads its gutter and
+	// actions from it, so a header that arrives late shifts the whole page sideways.
+	const pageHeader = (
+		<PageHeader
+			gutter="wide"
+			title={greeting}
+			// On a phone or tablet the Live and Display buttons take the nav row, so the greeting moves into the page.
+			hideTitle={isMobile}
+			scrollLocked
+			actions={
+				<>
+					<ForYouLive />
+					<ForYouDisplay
+						mode={mode}
+						onModeChange={handleModeChange}
+						typeFilter={typeFilter}
+						onTypeFilterChange={setTypeFilter}
+						unreadCount={unreadRegular.length}
+						typeCounts={typeCounts}
+						filterPills={filterPills}
+						onFilterPillsChange={setFilterPills}
+					/>
+				</>
+			}
+		/>
+	)
+
 	if (isLoading) {
 		return (
 			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-feed-root">
+				{pageHeader}
 				<CardSkeleton />
 				<CardSkeleton />
 				<CardSkeleton />
@@ -792,28 +834,7 @@ function ForYouFeed() {
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
-			<PageHeader
-				gutter="wide"
-				title={greeting}
-				// On a phone or tablet the Live and Display buttons take the nav row, so the greeting moves into the page.
-				hideTitle={isMobile}
-				scrollLocked
-				actions={
-					<>
-						<ForYouLive />
-						<ForYouDisplay
-							mode={mode}
-							onModeChange={handleModeChange}
-							typeFilter={typeFilter}
-							onTypeFilterChange={setTypeFilter}
-							unreadCount={unreadRegular.length}
-							typeCounts={typeCounts}
-							filterPills={filterPills}
-							onFilterPillsChange={setFilterPills}
-						/>
-					</>
-				}
-			/>
+			{pageHeader}
 
 			<ForYouHeader
 				unreadCount={unreadRegular.length}
@@ -837,6 +858,32 @@ function ForYouFeed() {
 					onConfirm={takeSuggested}
 					onCancel={() => setBulkConfirm(null)}
 				/>
+			)}
+
+			{dismissAllConfirm && (
+				<ResponsiveDialog open onOpenChange={(open) => !open && setDismissAllConfirm(false)}>
+					<ResponsiveDialogContent>
+						<ResponsiveDialogHeader>
+							<ResponsiveDialogTitle>Dismiss everything in For you?</ResponsiveDialogTitle>
+							<ResponsiveDialogDescription>
+								Every open card leaves the feed. You can undo from the toast that follows.
+							</ResponsiveDialogDescription>
+						</ResponsiveDialogHeader>
+						<ResponsiveDialogFooter>
+							<Button variant="outline" onClick={() => setDismissAllConfirm(false)}>
+								Cancel
+							</Button>
+							<Button
+								onClick={() => {
+									setDismissAllConfirm(false)
+									dismissAll(dismissable, 'All caught up')
+								}}
+							>
+								Dismiss all
+							</Button>
+						</ResponsiveDialogFooter>
+					</ResponsiveDialogContent>
+				</ResponsiveDialog>
 			)}
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">

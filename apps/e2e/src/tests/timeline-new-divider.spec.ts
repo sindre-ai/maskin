@@ -231,7 +231,7 @@ test.describe('Object timeline — NEW divider (D8)', () => {
 			await expect(page.getByText('Activity did not load')).toBeVisible({ timeout: 30000 })
 			await expect(page.getByText('Your connection dropped. Nothing was lost.')).toBeVisible()
 			await expect(page.getByRole('button', { name: /^All \(/ })).toBeVisible()
-			await expect(page.getByPlaceholder(/^Comment/)).toBeVisible()
+			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 
 			failing = false
 			await page.getByRole('button', { name: 'Try again' }).click()
