@@ -29,13 +29,13 @@ import {
 	api,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { DraftChangedError, approveDraftText } from '@/lib/draft-edits'
 import {
 	cardHeadline,
 	classifyCardKind,
 	isSendingOption,
 	recommendedAction,
 } from '@/lib/foryou-card-kind'
-import { DraftChangedError, getDraftEdit, saveDraftEdit } from '@/lib/foryou-draft-edits'
 import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -781,19 +781,11 @@ function draftCallKey(item: UnreadItem, draft: LatestMentionDecisionDraft): stri
 
 // Records the person's approval of the object behind a draft, bound to the text the card
 // showed. A text the person edited on the card is saved first and approved by the hash of the
-// saved text, in the same step; a draft that changed under them saves nothing and rejects.
+// saved text, in the same step (the step the chat card takes too: see `approveDraftText`).
 // A draft without a preview (plain text on the card) has nothing to approve and resolves
 // once saved; the reply to the agent is what carries the decision for those.
 async function approveDraft(draft: LatestMentionDecisionDraft | undefined): Promise<void> {
-	if (!draft?.object_id) return
-	const edited = getDraftEdit(draft.object_id)
-	if (edited !== undefined) {
-		const saved = await saveDraftEdit(draft, edited)
-		if (saved) await api.objects.approve(draft.object_id, saved.content_hash)
-		return
-	}
-	if (!draft.preview) return
-	await api.objects.approve(draft.object_id, draft.preview.content_hash)
+	if (draft) await approveDraftText(draft)
 }
 
 // Shared keydown guard for the `Alt+U` For You bulk-dismiss shortcut. Alt on

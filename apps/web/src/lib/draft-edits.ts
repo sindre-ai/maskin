@@ -1,10 +1,18 @@
-import { type LatestMentionDecisionDraft, api } from '@/lib/api'
+import { ApiError, type ChatCardRef, api } from '@/lib/api'
 import type { ObjectPreview } from '@maskin/shared'
 
-// A person's edit of a draft on a For You card, held until they take the sending option.
-// The card and the route that sends share it, keyed by the draft object, so a message in a
-// stack and the card's own bar both find what the person typed. Same module-scope shape as
-// `foryou-impressions`.
+// A person's edit of a draft's text, held until they approve it. The one place both cards
+// that edit a draft use, the For You card and the chat card: the box that holds the text
+// (`components/shared/draft-text-editor`), and the step that saves it and approves the saved
+// text (`approveDraftText`). Keyed by the draft object, so a message in a stack and the card's
+// own bar both find what the person typed. Same module-scope shape as `foryou-impressions`.
+
+/** What a card knows of a draft: the object, the text it showed, and the preview that text came from. */
+export interface DraftRef {
+	object_id?: string
+	body?: string
+	preview?: ObjectPreview | null
+}
 
 const edits = new Map<string, string>()
 // What the object says now, for a draft that changed while the person was editing it.
@@ -89,7 +97,7 @@ export function spliceDraftText(content: string, shown: string, edited: string):
  * nothing is saved or sent. Throws on any other failure, which also sends nothing.
  */
 export async function saveDraftEdit(
-	draft: LatestMentionDecisionDraft,
+	draft: DraftRef,
 	edited: string,
 ): Promise<ObjectPreview | null> {
 	const objectId = draft.object_id
@@ -119,4 +127,35 @@ export async function saveDraftEdit(
 	const preview = saved.preview ?? (await api.objects.get(objectId)).preview ?? null
 	clearDraftEdit(objectId)
 	return preview
+}
+
+/**
+ * The person's yes to a draft, bound to the text they read. A text they edited is saved
+ * first and approved by the hash of the saved text, in the same step; a draft that changed
+ * under them (found on the read before the save, or refused by the server as a stale hash)
+ * saves and approves nothing, puts the new text on the card and rejects. A draft with no
+ * preview has nothing to approve and resolves with null once saved. `chat` names the chat
+ * card the approval came from, so the server tells the agent behind it.
+ */
+export async function approveDraftText(
+	draft: DraftRef,
+	chat?: ChatCardRef,
+): Promise<{ approval_id: number; preview: ObjectPreview } | null> {
+	const objectId = draft.object_id
+	if (!objectId) return null
+	const edited = getDraftEdit(objectId)
+	const preview =
+		edited !== undefined ? await saveDraftEdit(draft, edited) : (draft.preview ?? null)
+	if (!preview) return null
+	try {
+		return await api.objects.approve(objectId, preview.content_hash, chat)
+	} catch (error) {
+		if (!(error instanceof ApiError) || error.status !== 409) throw error
+		// The draft moved between the save and the approval: show what it says now, send nothing.
+		const current = await api.objects.get(objectId)
+		edits.delete(objectId)
+		changed.set(objectId, current.preview?.body ?? current.content ?? '')
+		emit()
+		throw new DraftChangedError()
+	}
 }

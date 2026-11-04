@@ -118,9 +118,10 @@ A message you are allowed to send now stays as it is: send it and log it. No tas
    | \`linkedin_comment_reply\` | \`post_id\` and \`comment_id\` (both required): the comment answered; \`reply_to\`: its text | 3000 characters |
    | \`linkedin_post_edit\` | \`post_id\` (required): a post already published; the content is the new post text | 3000 characters |
    | \`slack_message\` | \`channel\` (required): the name, like \`#general\`, never the id | |
+   | \`manual_message\` | \`to\` and \`channel\` (both required): who it goes to and where you type it, like \`Facebook\` | |
 
    Never invent an address or a recipient. If you do not have one, leave \`kind\` off and say so in the comment.
-4. **Another channel** (a portal form, a text): no kind exists yet. Make the task with the message text as content and \`metadata.channel\`, so it can be found and reviewed.
+4. **Text you type or send by hand** (a Facebook message through the computer, a portal form, a text): use \`manual_message\` with \`to\` (required, a name or profile link) and \`channel\` (required, for example \`Facebook\`). It shows who, where and what, and the person's approval is bound to that text. Send exactly the approved text, nothing else.
 5. **Status**: ready for review is \`todo\`, plus the decision card below. For later is \`backlog\`, with \`metadata.follow_up_on\` (ISO date) and the reason in a comment.
 
 ## When the draft is a reply: show what they wrote

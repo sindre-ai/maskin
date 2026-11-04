@@ -1,19 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
-	api: { objects: { get: vi.fn(), update: vi.fn() } },
+	api: { objects: { get: vi.fn(), update: vi.fn(), approve: vi.fn() } },
+	ApiError: class ApiError extends Error {
+		constructor(
+			public status: number,
+			message: string,
+		) {
+			super(message)
+		}
+	},
 }))
 
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 import {
 	DraftChangedError,
+	approveDraftText,
 	clearDraftEdit,
 	getDraftChange,
 	getDraftEdit,
 	saveDraftEdit,
 	setDraftEdit,
 	spliceDraftText,
-} from '@/lib/foryou-draft-edits'
+} from '@/lib/draft-edits'
 
 const POST = [
 	'Account: sebk_personal',
@@ -146,5 +155,82 @@ describe('saveDraftEdit', () => {
 	it('refuses an empty text', async () => {
 		await expect(saveDraftEdit(draft, '   ')).rejects.toThrow('empty')
 		expect(api.objects.get).not.toHaveBeenCalled()
+	})
+})
+
+describe('approveDraftText', () => {
+	const draft = {
+		object_id: 'obj-1',
+		body: 'Hej Hans.',
+		preview: { content_hash: 'h1' } as never,
+	}
+
+	beforeEach(() => {
+		vi.mocked(api.objects.get).mockReset()
+		vi.mocked(api.objects.update).mockReset()
+		vi.mocked(api.objects.approve).mockReset()
+		clearDraftEdit('obj-1')
+	})
+
+	it('approves the hash the card showed when nothing was edited', async () => {
+		vi.mocked(api.objects.approve).mockResolvedValue({ approval_id: 1, preview: {} } as never)
+		await approveDraftText(draft, { conversation_id: 'c', agent_id: 'a' })
+		expect(api.objects.update).not.toHaveBeenCalled()
+		expect(api.objects.approve).toHaveBeenCalledWith('obj-1', 'h1', {
+			conversation_id: 'c',
+			agent_id: 'a',
+		})
+	})
+
+	it('saves an edit first and approves the hash of the saved text', async () => {
+		vi.mocked(api.objects.get).mockResolvedValue({
+			content: 'Hej Hans.',
+			preview: { body: 'Hej Hans.', content_hash: 'h1' },
+		} as never)
+		vi.mocked(api.objects.update).mockResolvedValue({
+			preview: { body: 'Hej Hans, ses vi?', content_hash: 'h2' },
+		} as never)
+		vi.mocked(api.objects.approve).mockResolvedValue({ approval_id: 1, preview: {} } as never)
+		setDraftEdit('obj-1', 'Hej Hans, ses vi?')
+
+		await approveDraftText(draft)
+
+		expect(api.objects.update).toHaveBeenCalledWith('obj-1', { content: 'Hej Hans, ses vi?' })
+		expect(api.objects.approve).toHaveBeenCalledWith('obj-1', 'h2', undefined)
+		expect(vi.mocked(api.objects.update).mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(api.objects.approve).mock.invocationCallOrder[0] ?? 0,
+		)
+	})
+
+	it('approves nothing when the draft changed before the save', async () => {
+		vi.mocked(api.objects.get).mockResolvedValue({
+			content: 'Hej Hans, i morgen?',
+			preview: { body: 'Hej Hans, i morgen?', content_hash: 'h-agent' },
+		} as never)
+		setDraftEdit('obj-1', 'Hej Hans, ses vi?')
+
+		await expect(approveDraftText(draft)).rejects.toBeInstanceOf(DraftChangedError)
+
+		expect(api.objects.update).not.toHaveBeenCalled()
+		expect(api.objects.approve).not.toHaveBeenCalled()
+		expect(getDraftChange('obj-1')).toBe('Hej Hans, i morgen?')
+	})
+
+	it('shows the new text and approves nothing when the server answers 409', async () => {
+		vi.mocked(api.objects.approve).mockRejectedValue(new ApiError(409, 'The draft changed'))
+		vi.mocked(api.objects.get).mockResolvedValue({
+			content: 'Hej Hans, i morgen?',
+			preview: { body: 'Hej Hans, i morgen?', content_hash: 'h-agent' },
+		} as never)
+
+		await expect(approveDraftText(draft)).rejects.toBeInstanceOf(DraftChangedError)
+
+		expect(getDraftChange('obj-1')).toBe('Hej Hans, i morgen?')
+	})
+
+	it('passes any other approval failure on unchanged', async () => {
+		vi.mocked(api.objects.approve).mockRejectedValue(new ApiError(403, 'Only a person can approve'))
+		await expect(approveDraftText(draft)).rejects.toBeInstanceOf(ApiError)
+		expect(getDraftChange('obj-1')).toBeUndefined()
 	})
 })

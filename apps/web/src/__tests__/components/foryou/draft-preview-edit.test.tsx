@@ -1,6 +1,6 @@
 import { DraftPreview } from '@/components/foryou/draft-preview'
 import type { LatestMentionDecisionDraft } from '@/lib/api'
-import { clearDraftEdit, getDraftEdit } from '@/lib/foryou-draft-edits'
+import { clearDraftEdit, getDraftEdit } from '@/lib/draft-edits'
 import { act, cleanup, render as rtlRender, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
