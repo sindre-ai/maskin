@@ -799,32 +799,47 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				body: {
 					messages: [
 						m(1, ME, 'Can you run the webinar follow-ups?', 300),
-						ask(2, 'I need a key for the email provider.', {
-							keychain_request: {
-								session_id: session,
-								kind: 'api_key',
-								suggested_name: 'Resend API key',
-								hint: 'Create one under API keys in Resend.',
+						ask(
+							2,
+							'I need a key for the email provider.',
+							{
+								keychain_request: {
+									session_id: session,
+									kind: 'api_key',
+									suggested_name: 'Resend API key',
+									hint: 'Create one under API keys in Resend.',
+								},
 							},
-						}, 200),
-						ask(3, 'I would like to use the Linear tool server.', {
-							mcp_server_request: {
-								session_id: session,
-								name: 'linear',
-								type: 'http',
-								url: 'https://mcp.linear.app/mcp',
-								hint: 'To file the follow-up tasks.',
+							200,
+						),
+						ask(
+							3,
+							'I would like to use the Linear tool server.',
+							{
+								mcp_server_request: {
+									session_id: session,
+									name: 'linear',
+									type: 'http',
+									url: 'https://mcp.linear.app/mcp',
+									hint: 'To file the follow-up tasks.',
+								},
 							},
-						}, 120),
-						ask(4, 'I need to read your Gmail to find the signups.', {
-							integration_access_request: {
-								session_id: session,
-								integration_id: uuid(950),
-								display_name: 'Gmail',
-								level: 'read',
-								reason: 'To find the webinar signups.',
+							120,
+						),
+						ask(
+							4,
+							'I need to read your Gmail to find the signups.',
+							{
+								integration_access_request: {
+									session_id: session,
+									integration_id: uuid(950),
+									display_name: 'Gmail',
+									level: 'read',
+									reason: 'To find the webinar signups.',
+								},
 							},
-						}, 60),
+							60,
+						),
 					],
 					has_more: false,
 				},
