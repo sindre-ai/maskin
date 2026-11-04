@@ -85,7 +85,7 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<div>
-			<Label className="text-[15px] font-semibold text-foreground">MCP Connection</Label>
+			<h2 className="pb-1.5 text-[13px] font-semibold text-muted-foreground">MCP</h2>
 			<p className="text-[13px] text-muted-foreground mb-3">
 				Connect Claude.ai, Claude Code, Claude Desktop, or any MCP-compatible client to this
 				workspace.

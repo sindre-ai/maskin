@@ -14,7 +14,7 @@ export function SettingsLinkRow({
 	return (
 		<div className="relative flex min-h-11 items-center justify-between gap-4 px-2 py-3.5 transition-colors hover:bg-secondary/60">
 			<div className="min-w-0">
-				<span className="block text-[15px] font-semibold">
+				<span className="block text-[15px] font-medium leading-tight">
 					<Link {...(link as LinkProps)} className="after:absolute after:inset-0">
 						{title}
 					</Link>

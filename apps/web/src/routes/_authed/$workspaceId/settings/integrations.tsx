@@ -163,7 +163,9 @@ function IntegrationsPage() {
 				/>
 			) : (
 				<section>
-					<h2 className="px-2 pb-1.5 text-xs font-semibold text-foreground">Connected tools</h2>
+					<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">
+						Connected tools
+					</h2>
 					<div className="border-t border-border-subtle">
 						{visibleProviders.map((provider) => (
 							<ProviderConnectRow
@@ -224,7 +226,7 @@ function ResendResumeSection({
 						className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3.5"
 					>
 						<div className="flex-1 min-w-0 basis-40">
-							<p className="text-[15px] font-semibold text-foreground truncate">
+							<p className="text-[15px] font-medium text-foreground truncate">
 								Resend — {prefill.receiveSubdomain}
 							</p>
 							<p className="text-[13px] text-muted-foreground truncate">

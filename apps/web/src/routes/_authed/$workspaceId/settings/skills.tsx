@@ -2,6 +2,7 @@ import {
 	DisplayPanel,
 	type DisplayPanelColumn,
 } from '@/components/objects/data-table/display-panel'
+import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -303,11 +304,12 @@ function SkillsPage() {
 	)
 
 	return (
-		<div>
-			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
-				<p className="text-sm text-muted-foreground min-w-0">
-					Shared skills available to agents in this workspace.
-				</p>
+		<div className="max-w-[760px]">
+			<SettingsPageTitle title="Skills" />
+			<div className="mb-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+				<h2 className="min-w-0 px-2 text-[13px] font-semibold text-muted-foreground">
+					Workspace skills
+				</h2>
 				{headerActions}
 			</div>
 
@@ -353,7 +355,7 @@ function SkillsPage() {
 					/>
 				</div>
 			) : (
-				<div className="space-y-2">
+				<div className="divide-y divide-border-subtle border-y border-border-subtle">
 					{list.map((skill) => (
 						<SkillRow
 							key={skill.id}
@@ -543,11 +545,11 @@ function SkillRow({
 	}
 
 	return (
-		<div className="rounded-xl border border-border bg-card transition-colors hover:border-border-strong">
+		<div className="transition-colors">
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete */}
 			<div
 				onClick={handleRowClick}
-				className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-accent rounded-xl"
+				className="flex cursor-pointer items-center gap-3 px-2 py-3 transition-colors hover:bg-secondary/60"
 			>
 				{skill.isFolder && (
 					<ChevronRight
@@ -570,7 +572,7 @@ function SkillRow({
 								<AlertTriangle size={14} />
 							</span>
 						)}
-						<p className="text-[15px] font-semibold text-foreground truncate">{skill.name}</p>
+						<p className="text-[15px] font-medium text-foreground truncate">{skill.name}</p>
 						{skill.isFolder && (
 							<span
 								className="shrink-0 inline-flex items-center gap-1 rounded-md bg-card px-1.5 py-0.5 text-xs text-muted-foreground"

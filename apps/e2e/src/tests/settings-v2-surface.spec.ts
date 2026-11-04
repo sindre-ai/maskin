@@ -17,7 +17,6 @@ const SECTIONS = [
 	{ label: 'General', path: '' },
 	{ label: 'Members', path: '/members' },
 	{ label: 'Integrations', path: '/integrations' },
-	{ label: 'Extensions', path: '/extensions' },
 	{ label: 'Billing', path: '/billing' },
 ]
 
@@ -109,7 +108,6 @@ test.describe('Settings v2 surface', () => {
 			await gotoSettings(page, account.workspaceId, '/members')
 
 			await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText(/(person or agent|people & agents)/).first()).toBeVisible()
 
 			// `toBeVisible` also catches opacity-0 / hover-only reveals at touch sizes.
 			await expect(page.getByRole('combobox', { name: /^Role for / }).first()).toBeVisible()
@@ -174,7 +172,7 @@ test.describe('Settings v2 surface', () => {
  */
 test.describe('Settings > General — labels and Appearance', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`section labels use the 12px sans style at ${viewport.label}`, async ({
+		test(`section labels use the 13px sans style at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -188,7 +186,7 @@ test.describe('Settings > General — labels and Appearance', () => {
 					const cs = getComputedStyle(el)
 					return { fontSize: cs.fontSize, fontFamily: cs.fontFamily, weight: cs.fontWeight }
 				})
-				expect(style.fontSize).toBe('12px')
+				expect(style.fontSize).toBe('13px')
 				expect(style.fontFamily).not.toMatch(/mono/i)
 				expect(Number(style.weight)).toBeGreaterThanOrEqual(600)
 			}

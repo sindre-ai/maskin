@@ -100,7 +100,7 @@ function SettingsSection({
 }) {
 	return (
 		<section className="mb-8">
-			<h2 className="px-2 pb-1.5 text-xs font-semibold text-foreground">{title}</h2>
+			<h2 className="px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">{title}</h2>
 			{intro ? (
 				<p className="mb-2 max-w-prose px-2 text-[13px] text-muted-foreground">{intro}</p>
 			) : null}
@@ -122,7 +122,7 @@ function SettingsRow({
 	return (
 		<div className="flex flex-col gap-3 px-2 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
 			<div className="min-w-0">
-				<span className="block text-[15px] font-semibold">{title}</span>
+				<span className="block text-[15px] font-medium leading-tight">{title}</span>
 				{description ? (
 					<span className="block text-[13px] text-muted-foreground">{description}</span>
 				) : null}
@@ -174,7 +174,7 @@ function DangerSection({ canDeleteWorkspace }: { canDeleteWorkspace: boolean }) 
 							type="button"
 							disabled={!canWrite}
 							onClick={() => setOpen(true)}
-							className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-semibold text-destructive disabled:opacity-50"
+							className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-medium leading-tight text-destructive disabled:opacity-50"
 						>
 							Delete workspace
 							<ChevronRight size={18} aria-hidden className="text-muted-foreground" />
@@ -191,7 +191,7 @@ function DangerSection({ canDeleteWorkspace }: { canDeleteWorkspace: boolean }) 
 			<button
 				type="button"
 				onClick={() => setAccountOpen(true)}
-				className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-semibold text-destructive"
+				className="flex w-full items-center justify-between px-2 py-3.5 text-left text-[15px] font-medium leading-tight text-destructive"
 			>
 				Delete account
 				<ChevronRight size={18} aria-hidden className="text-muted-foreground" />

@@ -2,7 +2,6 @@ import { McpConnectionSection } from '@/components/settings/mcp-connection'
 import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { getApiKey } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -21,10 +20,10 @@ function McpPage() {
 		<div className="max-w-[760px]">
 			<SettingsPageTitle title="Keys and MCP" />
 			<div className="space-y-6 px-2">
-				<McpConnectionSection workspaceId={workspaceId} />
+				<ApiKeySection />
 
-				<div className="border-t border-border pt-6">
-					<ApiKeySection />
+				<div className="border-t border-border-subtle pt-6">
+					<McpConnectionSection workspaceId={workspaceId} />
 				</div>
 			</div>
 		</div>
@@ -46,7 +45,7 @@ function ApiKeySection() {
 
 	return (
 		<div>
-			<Label className="mb-1 text-[15px] font-semibold text-foreground">API key</Label>
+			<h2 className="pb-1.5 text-[13px] font-semibold text-muted-foreground">API keys</h2>
 			<div className="flex items-center gap-2">
 				<code className="flex-1 rounded-xl border border-border bg-muted px-3 py-2 text-sm font-mono truncate select-all">
 					{apiKey}

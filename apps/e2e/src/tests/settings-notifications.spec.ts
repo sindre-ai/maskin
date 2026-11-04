@@ -18,7 +18,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			timeout: 15_000,
 		})
 		await expect(page.getByText('Choose what reaches you, and where.')).toBeVisible()
-		await expect(page.getByText('Ignores quiet hours.')).toBeVisible()
+		await expect(page.getByText('Ignores quiet hours.').first()).toBeVisible()
 		await expect(page.getByRole('switch', { name: 'Needs you', exact: true })).toBeDisabled()
 
 		const digests = page.getByRole('switch', { name: 'Digests', exact: true })

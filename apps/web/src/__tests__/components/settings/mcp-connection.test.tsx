@@ -7,9 +7,9 @@ vi.mock('@/lib/auth', () => ({
 }))
 
 describe('McpConnectionSection', () => {
-	it('renders MCP Connection label', () => {
+	it('renders MCP heading', () => {
 		render(<McpConnectionSection workspaceId="ws-1" />)
-		expect(screen.getByText('MCP Connection')).toBeInTheDocument()
+		expect(screen.getByText('MCP')).toBeInTheDocument()
 	})
 
 	it('renders tabs for all client types', () => {

@@ -37,7 +37,7 @@ function parseTimeInput(value: string): number | null {
 const DEFAULT_QUIET_START = 22 * 60
 const DEFAULT_QUIET_END = 7 * 60
 
-const SECTION_LABEL = 'px-2 pt-8 pb-1.5 text-xs font-semibold text-foreground'
+const SECTION_LABEL = 'px-2 pt-8 pb-1.5 text-[13px] font-semibold text-muted-foreground'
 // Cobalt when on (mockup), the locked state greyed rather than dimmed.
 const SWITCH_CLASS =
 	'shrink-0 data-[state=checked]:bg-brand data-[state=checked]:disabled:bg-muted-foreground/50'
@@ -61,7 +61,7 @@ function PreferenceRow({
 	return (
 		<div className="flex items-center justify-between gap-4 px-2 py-3.5">
 			<div className="min-w-0">
-				<span className="block text-[15px] font-semibold">{title}</span>
+				<span className="block text-[15px] font-medium leading-tight">{title}</span>
 				<span className="block text-[13px] text-muted-foreground">{description}</span>
 			</div>
 			<Switch
@@ -103,7 +103,7 @@ function NotificationsPage() {
 	return (
 		<div className="max-w-[760px]">
 			<SettingsPageTitle title="Notifications" subtitle="Choose what reaches you, and where." />
-			<div className="flex items-center justify-between px-2 pb-1.5 text-xs font-semibold text-foreground">
+			<div className="flex items-center justify-between px-2 pb-1.5 text-[13px] font-semibold text-muted-foreground">
 				<span>Notify me about</span>
 				<span>Push</span>
 			</div>
@@ -149,6 +149,9 @@ function NotificationsPage() {
 			</div>
 			<BrowserSection />
 			<WorkspaceMutes muted={prefs.muted_workspace_ids} onSave={save} />
+			<p className="px-2 pt-4.5 text-[13px] leading-normal text-muted-foreground">
+				Needs you ignores quiet hours. Muting a workspace never mutes its decisions.
+			</p>
 		</div>
 	)
 }
@@ -177,7 +180,7 @@ function QuietHoursRow({
 	return (
 		<div className="flex flex-wrap items-center justify-between gap-3 px-2 py-3.5">
 			<div className="min-w-0">
-				<span className="block text-[15px] font-semibold">Quiet hours</span>
+				<span className="block text-[15px] font-medium leading-tight">Quiet hours</span>
 				<span className="block text-[13px] text-muted-foreground">
 					Holds everything except Needs you.
 				</span>
@@ -232,7 +235,7 @@ function BrowserSection() {
 			<h2 className={SECTION_LABEL}>This browser</h2>
 			<div className="flex items-center justify-between gap-4 border-y border-border-subtle px-2 py-3.5">
 				<div className="min-w-0">
-					<span className="block text-[15px] font-semibold">Browser notifications</span>
+					<span className="block text-[15px] font-medium leading-tight">Browser notifications</span>
 					<span className="block text-[13px] text-muted-foreground">
 						So decisions reach you when they matter
 					</span>
