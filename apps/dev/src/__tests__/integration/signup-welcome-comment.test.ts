@@ -94,7 +94,7 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		workspaceId = ws.id
 	})
 
-	it('posts a Chief-of-Staff comment mentioning Researcher and the signed-up human, and spawns a Researcher session', async () => {
+	it("posts a Chief-of-Staff comment mentioning Researcher only, keeps it off the human's For You, and spawns a Researcher session", async () => {
 		const chief = await seedAgent(workspaceId, 'Chief of Staff')
 		const researcher = await seedAgent(workspaceId, 'Researcher')
 		const humanActorId = getTestActorId()
@@ -133,8 +133,9 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		// Researcher IS a real mention — that is what auto-subscribes it to the
 		// object and makes it count as a thread participant, so a later human
 		// reply reaches it. Only its generic CommentDispatcher session is
-		// suppressed, since signup-welcome wires a bespoke one below.
-		expect(data.mentions).toEqual([researcher.id, humanActorId])
+		// suppressed, since signup-welcome wires a bespoke one below. The human
+		// is not mentioned: their welcome is the Chief of Staff message on New Chat.
+		expect(data.mentions).toEqual([researcher.id])
 		expect(data.metadata.suppress_dispatch_actor_ids).toEqual([researcher.id])
 		expect(data.content).toContain('Ada Testowski')
 		expect(data.content).toContain('@Researcher')
@@ -161,7 +162,7 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		// mention must never trigger one.
 		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 
-		// The human mention is what makes this comment surface on their For You
+		// With no human mention the welcome must not surface on their For You
 		// page: GET /api/subscriptions/unread matches on events.data.mentions
 		// containing the viewer's actor id.
 		const unreadRes = await app.request(
@@ -172,8 +173,7 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 			items: Array<{ entity_id: string; mentioning_unread_count: number }>
 		}
 		const item = unread.items.find((i) => i.entity_id === created.id)
-		expect(item).toBeDefined()
-		expect(item?.mentioning_unread_count).toBeGreaterThan(0)
+		expect(item?.mentioning_unread_count ?? 0).toBe(0)
 
 		// Researcher's mention must also auto-subscribe it to the object, so it
 		// sees later activity on the onboarding thread — the whole point of

@@ -144,7 +144,9 @@ function SignupPage() {
 					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
 					.catch(() => console.error('[maskin] failed to emit signup_complete'))
 			}
-			window.location.assign('/')
+			// Land on New Chat, where the Chief of Staff welcome is shown. Without a
+			// workspace id there is nowhere to point, so fall back to the index.
+			window.location.assign(workspaceId ? `/${workspaceId}/chats/new?welcome=1` : '/')
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Signup failed')
 		} finally {

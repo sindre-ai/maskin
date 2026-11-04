@@ -23,7 +23,7 @@ export interface PostSignupWelcomeCommentInput {
 	workspaceId: string
 	knowledgeObjectId: string
 	metadata: unknown
-	/** The human who just signed up (the caller that created the knowledge object) — @-mentioned alongside Researcher so the comment surfaces on their For You page. */
+	/** The human who just signed up (the caller that created the knowledge object). Given to Researcher as the person to @-mention in its reply; not mentioned in the welcome comment itself. */
 	humanActorId: string
 }
 
@@ -51,8 +51,11 @@ async function resolveAgentIdByName(
  * Fires right after a `signup_capture` knowledge object is created (see the
  * `POST /api/objects` handler in `routes/objects.ts`). Deterministically —
  * not by handing it to an agent's judgment — posts a Chief-of-Staff-authored
- * welcome comment on the object that @mentions the new user, then spawns a
- * Researcher session with a bespoke onboarding prompt.
+ * welcome comment on the object, then spawns a Researcher session with a
+ * bespoke onboarding prompt. The new user is deliberately not @mentioned: the
+ * welcome they read is the Chief of Staff message on the New Chat screen they
+ * land on after signup, so this comment must not also appear as a card on For
+ * You. The user's first card there is Researcher's reply, which mentions them.
  *
  * The Researcher notification + session are wired directly here rather than
  * via the standard `CommentDispatcher` (`services/trigger-runner.ts`) mention
@@ -97,19 +100,17 @@ export async function postSignupWelcomeComment(
 		return
 	}
 
-	// @-mention both Researcher and the human who just signed up. The human
-	// mention is what makes this comment surface on their For You page — `GET
-	// /api/subscriptions/unread` matches on `events.data.mentions` containing
-	// the viewer's actor id, and postComment auto-subscribes every mentioned
-	// actor.
+	// @-mention Researcher only. Mentioning the human would surface this
+	// comment on their For You page (`GET /api/subscriptions/unread` matches on
+	// `events.data.mentions` containing the viewer's actor id), but the welcome
+	// is shown to them as a Chief of Staff message on New Chat instead.
 	//
 	// Researcher stays a real mention because the mention is load-bearing
 	// beyond dispatch: `lib/comments.ts` auto-subscribes it to the object, and
 	// `routes/events.ts` reads prior `data.mentions` to decide who counts as a
-	// thread participant — which is what makes a human reply in this thread
-	// reach Researcher, exactly as the comment body promises. What we suppress
-	// is only the generic dispatch, via `suppress_dispatch_actor_ids` below,
-	// since the bespoke onboarding session is wired directly here.
+	// thread participant. What we suppress is only the generic dispatch, via
+	// `suppress_dispatch_actor_ids` below, since the bespoke onboarding session
+	// is wired directly here.
 	const displayName = name || 'there'
 	const content = `Hi ${displayName} 👋 Welcome to Maskin — I'm Chief of Staff, I make sure the right agent picks up your work. @Researcher — please put together a first-pass brief on ${displayName}${organization ? ` and ${organization}` : ''} so the workspace has real context from day one. @${displayName} — if anything here looks off or you'd like to add more before Researcher gets started, just reply and I'll make sure it gets folded in.`
 
@@ -118,7 +119,7 @@ export async function postSignupWelcomeComment(
 		actorId: chiefOfStaffId,
 		entityId: knowledgeObjectId,
 		content,
-		mentions: [researcherId, humanActorId],
+		mentions: [researcherId],
 		metadata: { suppress_dispatch_actor_ids: [researcherId] },
 		attention: 3,
 	})
