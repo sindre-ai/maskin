@@ -15,6 +15,8 @@ interface SignupCaptureMetadata {
 	name?: string
 	organization?: string
 	role?: string
+	/** Set by the web sign-up, which shows the welcome on New Chat. Other clients leave it out. */
+	welcome_in_chat?: boolean
 }
 
 export interface PostSignupWelcomeCommentInput {
@@ -23,7 +25,7 @@ export interface PostSignupWelcomeCommentInput {
 	workspaceId: string
 	knowledgeObjectId: string
 	metadata: unknown
-	/** The human who just signed up (the caller that created the knowledge object). Given to Researcher as the person to @-mention in its reply; not mentioned in the welcome comment itself. */
+	/** The human who just signed up (the caller that created the knowledge object). Given to Researcher as the person to @-mention in its reply. */
 	humanActorId: string
 }
 
@@ -52,10 +54,12 @@ async function resolveAgentIdByName(
  * `POST /api/objects` handler in `routes/objects.ts`). Deterministically —
  * not by handing it to an agent's judgment — posts a Chief-of-Staff-authored
  * welcome comment on the object, then spawns a Researcher session with a
- * bespoke onboarding prompt. The new user is deliberately not @mentioned: the
- * welcome they read is the Chief of Staff message on the New Chat screen they
- * land on after signup, so this comment must not also appear as a card on For
- * You. The user's first card there is Researcher's reply, which mentions them.
+ * bespoke onboarding prompt. For web sign-ups (`metadata.welcome_in_chat`) the
+ * new user is deliberately not @mentioned: the welcome they read is the Chief of
+ * Staff message on the New Chat screen they land on, so this comment must not
+ * also appear as a card on For You. Their first card there is Researcher's
+ * reply, which mentions them. Other clients (iOS) have no such screen yet, so
+ * they are still mentioned and get the welcome as a For You card.
  *
  * The Researcher notification + session are wired directly here rather than
  * via the standard `CommentDispatcher` (`services/trigger-runner.ts`) mention
@@ -100,10 +104,10 @@ export async function postSignupWelcomeComment(
 		return
 	}
 
-	// @-mention Researcher only. Mentioning the human would surface this
-	// comment on their For You page (`GET /api/subscriptions/unread` matches on
-	// `events.data.mentions` containing the viewer's actor id), but the welcome
-	// is shown to them as a Chief of Staff message on New Chat instead.
+	// @-mention Researcher, and the human too unless the sign-up shows the
+	// welcome itself (web New Chat). The human mention is what makes this comment
+	// surface on their For You page: `GET /api/subscriptions/unread` matches on
+	// `events.data.mentions` containing the viewer's actor id.
 	//
 	// Researcher stays a real mention because the mention is load-bearing
 	// beyond dispatch: `lib/comments.ts` auto-subscribes it to the object, and
@@ -111,6 +115,7 @@ export async function postSignupWelcomeComment(
 	// thread participant. What we suppress is only the generic dispatch, via
 	// `suppress_dispatch_actor_ids` below, since the bespoke onboarding session
 	// is wired directly here.
+	const mentions = metadata.welcome_in_chat ? [researcherId] : [researcherId, humanActorId]
 	const displayName = name || 'there'
 	const content = `Hi ${displayName} 👋 Welcome to Maskin — I'm Chief of Staff, I make sure the right agent picks up your work. @Researcher — please put together a first-pass brief on ${displayName}${organization ? ` and ${organization}` : ''} so the workspace has real context from day one. @${displayName} — if anything here looks off or you'd like to add more before Researcher gets started, just reply and I'll make sure it gets folded in.`
 
@@ -119,7 +124,7 @@ export async function postSignupWelcomeComment(
 		actorId: chiefOfStaffId,
 		entityId: knowledgeObjectId,
 		content,
-		mentions: [researcherId],
+		mentions,
 		metadata: { suppress_dispatch_actor_ids: [researcherId] },
 		attention: 3,
 	})

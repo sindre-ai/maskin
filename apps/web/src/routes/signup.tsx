@@ -113,7 +113,12 @@ function SignupPage() {
 						organization: trimmedOrg,
 						role: trimmedRole,
 					})
-					await api.objects.create(workspaceId, payload)
+					// The welcome is shown on New Chat for web sign-ups, so the server
+					// should not also put it on For You. Other clients leave this out.
+					await api.objects.create(workspaceId, {
+						...payload,
+						metadata: { ...payload.metadata, welcome_in_chat: true },
+					})
 					console.info('[maskin] wrote signup capture knowledge', {
 						workspaceId,
 						actorId,

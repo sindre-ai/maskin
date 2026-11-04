@@ -204,6 +204,7 @@ describe('SignupPage', () => {
 		expect(meta.name).toBe('Test User')
 		expect(meta.organization).toBe('Test Co')
 		expect(meta.role).toBe('Founder')
+		expect(meta.welcome_in_chat).toBe(true)
 	})
 
 	it('lands on New Chat in the new workspace with the welcome flag', async () => {
