@@ -13,7 +13,7 @@ import { __setLinkedInClientForTests } from '../../lib/integrations/providers/li
 import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import { recordObjectApproval } from '../../lib/object-delivery'
 import { buildObjectPreview } from '../../lib/object-preview'
-import { insertObject, insertWorkspace } from '../factories'
+import { holdAllSends, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 /**
@@ -107,6 +107,9 @@ function stubClient() {
 async function connect() {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
+	// These tests are about the hold: a draft waits for a person. Posts and comments start on
+	// Always allow, so this workspace is set to Ask first (send-permission-gate.test.ts covers the rest).
+	await holdAllSends(db, ws.id)
 	const [integration] = await db
 		.insert(integrations)
 		.values({

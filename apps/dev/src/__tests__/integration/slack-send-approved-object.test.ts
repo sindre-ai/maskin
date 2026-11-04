@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSlackMcpServer } from '../../lib/integrations/providers/slack/mcp-server'
 import { DELIVERED_ACTION, recordObjectApproval } from '../../lib/object-delivery'
 import { buildObjectPreview } from '../../lib/object-preview'
-import { insertObject, insertWorkspace } from '../factories'
+import { holdAllSends, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 vi.mock('../../lib/analytics/posthog', () => ({
@@ -38,6 +38,9 @@ afterEach(() => {
 async function setup(overrides: Record<string, unknown> = {}) {
 	const actorId = getTestActorId()
 	const ws = await insertWorkspace(db, actorId)
+	// These tests are about the hold: a Slack draft waits for a person. Slack starts on
+	// Always allow, so this workspace is set to Ask first (send-permission-gate.test.ts covers the rest).
+	await holdAllSends(db, ws.id)
 	const object = await insertObject(db, ws.id, actorId, {
 		type: 'task',
 		content: 'Release 4.2 is out.',

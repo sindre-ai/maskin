@@ -1,9 +1,10 @@
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { findCurrentApproval, withDeliveryState } from '../../../object-delivery'
+import { withDeliveryState } from '../../../object-delivery'
 import { buildObjectPreview } from '../../../object-preview'
 import { type SendClosure, recordSendOutcome } from '../../../send-closure'
+import { authorizeSend } from '../../../send-permissions'
 
 /**
  * Slack posts that go out without a person's approval: channels on the workspace's allowlist,
@@ -75,7 +76,7 @@ export function isDirectPostChannel(channelId: string, configured?: readonly str
  */
 export async function loadApprovedSlackMessage(
 	db: Database,
-	params: { workspaceId: string; objectId: string },
+	params: { workspaceId: string; actorId: string; objectId: string },
 ) {
 	const [object] = await db
 		.select()
@@ -103,17 +104,21 @@ export async function loadApprovedSlackMessage(
 	if (state === 'sent') {
 		throw new SlackSendRefusal('This text has already been posted. Do not post it again.')
 	}
-	const approval = await findCurrentApproval(
-		db,
-		params.workspaceId,
-		object.id,
-		preview.content_hash,
-	)
-	if (!approval) {
+	const decision = await authorizeSend(db, {
+		workspaceId: params.workspaceId,
+		agentId: params.actorId,
+		object,
+		preview,
+	})
+	if (decision.outcome === 'denied') {
+		throw new SlackSendRefusal(`${decision.message} Nothing was posted.`)
+	}
+	if (decision.outcome === 'needs_approval') {
 		throw new SlackSendRefusal(
 			'No person has approved this text. Nothing was posted. Ask them to approve it from the card (an edit needs approving again), then call this again.',
 		)
 	}
+	const approval = decision.approval
 
 	const channel = preview.details.find((d) => d.label === 'Channel')?.value.trim()
 	if (!channel) {

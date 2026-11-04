@@ -1,8 +1,9 @@
 import { files, objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { findCurrentApproval, withDeliveryState } from '../../../object-delivery'
+import { withDeliveryState } from '../../../object-delivery'
 import { buildObjectPreview } from '../../../object-preview'
 import { type SendClosure, recordSendOutcome } from '../../../send-closure'
+import { authorizeSend } from '../../../send-permissions'
 import { loadApprovedAttachment } from './attachment'
 import { LinkedInIntegrationError } from './errors'
 import { assertInmailSendable, readCreditsAfter, startInmailChat } from './inmail-send'
@@ -113,18 +114,7 @@ export async function sendApprovedLinkedInObject(
 			'This text has already been sent. Do not send it again.',
 		)
 	}
-	const approval = await findCurrentApproval(
-		ctx.db,
-		ctx.workspaceId,
-		object.id,
-		preview.content_hash,
-	)
-	if (!approval) {
-		throw new LinkedInIntegrationError(
-			'INVALID_INPUT',
-			'No person has approved this text. Do not send. Ask them to approve it from the card (an edit needs approving again), then call this again.',
-		)
-	}
+	const approval = await releaseSend(ctx, object, preview)
 
 	const filed = (object.metadata ?? {}) as Record<string, unknown>
 	// An InMail always opens a new chat, so a conversation on the object or the call is ignored.
@@ -207,6 +197,33 @@ export async function sendApprovedLinkedInObject(
 	return { ...sent, object: { id: object.id, ...outcome } }
 }
 
+/**
+ * Releases the send of a draft or refuses it, by the caller's send setting and a person's
+ * approval of exactly this text (see lib/send-permissions.ts). The refusal says what to do.
+ */
+async function releaseSend(
+	ctx: LinkedInOperationContext,
+	object: { id: string; type: string },
+	preview: { kind: string; content_hash: string },
+) {
+	const decision = await authorizeSend(ctx.db, {
+		workspaceId: ctx.workspaceId,
+		agentId: ctx.actorId,
+		object,
+		preview,
+	})
+	if (decision.outcome === 'denied') {
+		throw new LinkedInIntegrationError('INVALID_INPUT', decision.message)
+	}
+	if (decision.outcome === 'needs_approval') {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'No person has approved this text. Do not send. Ask them to approve it from the card (an edit needs approving again), then call this again.',
+		)
+	}
+	return decision.approval
+}
+
 function optionalString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
@@ -247,18 +264,7 @@ async function loadApprovedDraft(
 			'This text has already been sent. Do not send it again.',
 		)
 	}
-	const approval = await findCurrentApproval(
-		ctx.db,
-		ctx.workspaceId,
-		object.id,
-		preview.content_hash,
-	)
-	if (!approval) {
-		throw new LinkedInIntegrationError(
-			'INVALID_INPUT',
-			'No person has approved this text. Do not send. Ask them to approve it from the card (an edit needs approving again), then call this again.',
-		)
-	}
+	const approval = await releaseSend(ctx, object, preview)
 	return { object, preview, approval, filed: (object.metadata ?? {}) as Record<string, unknown> }
 }
 

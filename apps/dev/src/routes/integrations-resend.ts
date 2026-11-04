@@ -27,10 +27,11 @@ import { readContextFor } from '../lib/integrations/read-context'
 import { getProvider } from '../lib/integrations/registry'
 import { accessDeniedMessage } from '../lib/integrations/tool-gate'
 import { logger } from '../lib/logger'
-import { DELIVERED_ACTION, findCurrentApproval } from '../lib/object-delivery'
+import { DELIVERED_ACTION } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
+import { authorizeSend } from '../lib/send-permissions'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
@@ -133,14 +134,16 @@ const readResendCredential = (db: Database, workspaceId: string, actorId: string
 	})
 
 /**
- * The email an object holds (`metadata.kind = 'email'`), and whether a person approved exactly
- * this text. The approval is the newest `approved` event a human wrote on the object, bound to
- * the content hash, so any edit to the recipients, subject or text withdraws it.
+ * The email an object holds (`metadata.kind = 'email'`), and whether the send is released: by a
+ * person's approval of exactly this text (the newest `approved` event a human wrote on the object,
+ * bound to the content hash, so any edit to the recipients, subject or text withdraws it), or by
+ * the caller's send setting (lib/send-permissions.ts), which can also refuse it outright.
  */
 async function loadObjectEmail(
 	db: Database,
 	storage: StorageProvider | undefined,
 	workspaceId: string,
+	actorId: string,
 	objectId: string,
 ) {
 	const [object] = await db
@@ -173,8 +176,15 @@ async function loadObjectEmail(
 	try {
 		const to = parseRecipients(raw('to'), 'to').map((r) => r.address)
 		const cc = raw('cc') ? parseRecipients(raw('cc'), 'cc').map((r) => r.address) : []
-		const approval = await findCurrentApproval(db, workspaceId, objectId, preview.content_hash)
-		// Files are read only once a person has approved: until then nothing is sent.
+		const decision = await authorizeSend(db, {
+			workspaceId,
+			agentId: actorId,
+			object: { id: object.id, type: object.type },
+			preview,
+		})
+		if (decision.outcome === 'denied') return { failure: fail(403, 'FORBIDDEN', decision.message) }
+		const approval = decision.outcome === 'allowed' ? decision.approval : null
+		// Files are read only once the send is released: until then nothing is sent.
 		const attachments = approval
 			? await loadEmailAttachments(
 					{ db, storage },
@@ -257,7 +267,7 @@ app.openapi(sendRoute, async (c) => {
 	}
 
 	// 3. Exactly what a person approved.
-	const loaded = await loadObjectEmail(db, c.get('storageProvider'), workspaceId, objectId)
+	const loaded = await loadObjectEmail(db, c.get('storageProvider'), workspaceId, actorId, objectId)
 	if (loaded.failure) return c.json(loaded.failure.body, loaded.failure.status)
 	if (!loaded.approvalEventId) {
 		const f = fail(
