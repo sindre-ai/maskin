@@ -5,6 +5,8 @@ import { z } from 'zod'
 // enforced twice: here at the apps/dev boundary, and again inside the VM by
 // desktopd, which is the last line of defence before anything reaches xdotool.
 
+// The picture agents see and the pixel space their coordinates use. The real screen
+// is larger (1600x900); desktopd scales the screenshot down and clicks up by 1.25.
 export const DESKTOP_SCREEN_WIDTH = 1280
 export const DESKTOP_SCREEN_HEIGHT = 720
 
