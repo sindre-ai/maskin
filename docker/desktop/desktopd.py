@@ -30,7 +30,11 @@ DISPLAY = os.environ.get("DISPLAY", ":99")
 PORT = int(os.environ.get("DESKTOPD_PORT", "6081"))
 NOVNC_PORT = int(os.environ.get("NOVNC_PORT", "6080"))
 PASSWORD = os.environ.get("VNC_PASSWORD", "")
+# The screen is NATIVE_*, but agents see and click in a WIDTH x HEIGHT picture of it
+# (same 16:9 shape, so a model never gets a bigger image per step than before).
+# Coordinates in /input are in that picture and are scaled up before xdotool.
 WIDTH, HEIGHT = 1280, 720
+NATIVE_WIDTH, NATIVE_HEIGHT = 1600, 900
 MAX_BODY = 64 * 1024
 MAX_OUTPUT = 20_000
 KEY_RE = re.compile(r"^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$")
@@ -57,6 +61,13 @@ def coord(body, key, limit):
     return v
 
 
+def point(body, kx, ky):
+    """An agent-picture (x, y) as the xdotool arguments for the same spot on the real screen."""
+    x, y = coord(body, kx, WIDTH), coord(body, ky, HEIGHT)
+    # Aim for the middle of the agent pixel, so the click lands inside it.
+    return [str(int((x + 0.5) * NATIVE_WIDTH / WIDTH)), str(int((y + 0.5) * NATIVE_HEIGHT / HEIGHT))]
+
+
 def run_input(body):
     action = body.get("action")
     with input_lock:
@@ -64,14 +75,14 @@ def run_input(body):
             btn = BUTTONS.get(body.get("button", "left"))
             if btn is None:
                 raise BadRequest("button must be left, middle or right")
-            xdo("mousemove", str(coord(body, "x", WIDTH)), str(coord(body, "y", HEIGHT)))
+            xdo("mousemove", *point(body, "x", "y"))
             xdo("click", "--repeat", "2" if body.get("double") is True else "1", btn)
         elif action == "move":
-            xdo("mousemove", str(coord(body, "x", WIDTH)), str(coord(body, "y", HEIGHT)))
+            xdo("mousemove", *point(body, "x", "y"))
         elif action == "drag":
-            xdo("mousemove", str(coord(body, "from_x", WIDTH)), str(coord(body, "from_y", HEIGHT)))
+            xdo("mousemove", *point(body, "from_x", "from_y"))
             xdo("mousedown", "1")
-            xdo("mousemove", str(coord(body, "to_x", WIDTH)), str(coord(body, "to_y", HEIGHT)))
+            xdo("mousemove", *point(body, "to_x", "to_y"))
             xdo("mouseup", "1")
         elif action == "scroll":
             if body.get("direction") not in ("up", "down"):
@@ -80,7 +91,7 @@ def run_input(body):
             if isinstance(amount, bool) or not isinstance(amount, int) or not 1 <= amount <= 20:
                 raise BadRequest("amount must be an integer in [1, 20]")
             if "x" in body and "y" in body:
-                xdo("mousemove", str(coord(body, "x", WIDTH)), str(coord(body, "y", HEIGHT)))
+                xdo("mousemove", *point(body, "x", "y"))
             xdo("click", "--repeat", str(amount), "4" if body["direction"] == "up" else "5")
         elif action == "type":
             text = body.get("text")
@@ -101,9 +112,11 @@ def run_input(body):
 
 def screenshot():
     path = "/tmp/desktopd-shot.jpg"
-    subprocess.run(["scrot", "-o", "-q", "60", path], env=ENV, check=True, timeout=15,
+    # `-t` also writes a scaled copy, <name>-thumb.jpg: the WIDTH x HEIGHT picture agents get.
+    subprocess.run(["scrot", "-o", "-q", "60", "-t", str(WIDTH * 100 // NATIVE_WIDTH), path],
+                   env=ENV, check=True, timeout=15,
                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    with open(path, "rb") as f:
+    with open("/tmp/desktopd-shot-thumb.jpg", "rb") as f:
         return f.read()
 
 

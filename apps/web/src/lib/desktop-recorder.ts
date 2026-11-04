@@ -107,9 +107,17 @@ export type DesktopRecorderOptions = {
 }
 
 function defaultCapture(canvas: HTMLCanvasElement): Promise<Blob | null> {
-	// toBlob snapshots the canvas when called, so the still shows the screen as it
-	// was at the event, even though encoding finishes later.
-	return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', FRAME_QUALITY))
+	// The real screen is bigger than the picture agents get. Stills are scaled to that
+	// picture so the x/y in the log are pixels in the still. drawImage and toBlob both
+	// snapshot the canvas when called, so the still shows the screen as it was at the
+	// event, even though encoding finishes later.
+	const still = document.createElement('canvas')
+	still.width = DESKTOP_SCREEN_WIDTH
+	still.height = DESKTOP_SCREEN_HEIGHT
+	const ctx = still.getContext('2d')
+	if (!ctx) return Promise.resolve(null)
+	ctx.drawImage(canvas, 0, 0, DESKTOP_SCREEN_WIDTH, DESKTOP_SCREEN_HEIGHT)
+	return new Promise((resolve) => still.toBlob(resolve, 'image/jpeg', FRAME_QUALITY))
 }
 
 export class DesktopRecorder {

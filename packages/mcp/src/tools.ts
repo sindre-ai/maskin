@@ -2674,13 +2674,13 @@ export const tools = {
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
 		}),
 	},
-	// Agent computer: every agent has its own long-lived Linux desktop (1280x720,
-	// Chromium + xterm) that it drives and humans can watch and take over from the
-	// Desktop page. An agent always gets ITS OWN; only a person calling these
+	// Agent computer: every agent has its own long-lived Linux desktop (a 1600x900
+	// screen that agents see as 1280x720, Chromium + xterm) that it drives and humans
+	// can watch and take over from the Desktop page. An agent always gets ITS OWN; only a person calling these
 	// tools has to say whose (agent_id). Behind the `workspace-desktop` flag.
 	desktop_screenshot: {
 		description:
-			'Take a screenshot of your computer (a 1280x720 Linux screen with Chromium and a terminal). Starts your computer if it is not running (a sleeping one wakes in a few seconds) — the first call can take up to a minute. Humans can watch this same screen live on the Desktop page and may take over, so call this again to see the current state before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image: (0,0) is the top-left.',
+			'Take a screenshot of your computer (you see it as a 1280x720 image of a Linux screen with Chromium and a terminal). Starts your computer if it is not running (a sleeping one wakes in a few seconds) — the first call can take up to a minute. Humans can watch this same screen live on the Desktop page and may take over, so call this again to see the current state before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image: (0,0) is the top-left.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
