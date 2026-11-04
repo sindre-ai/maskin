@@ -1,5 +1,6 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { Spinner } from '@/components/ui/spinner'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -12,6 +13,8 @@ interface ConversationListRowProps {
 	/** Unread replies in this chat's threads (0 when none). Chat unread and thread unread are
 	 *  separate reads, so a chat can look read while a thread inside it is not. */
 	threadUnread?: number
+	/** Agents with a live session answering in this chat; the preview shows them working. */
+	workingActorIds?: Set<string>
 }
 
 /** How many participant plates the row draws before collapsing to a `+N`. */
@@ -21,6 +24,7 @@ export function ConversationListRow({
 	workspaceId,
 	conversation,
 	threadUnread = 0,
+	workingActorIds,
 }: ConversationListRowProps) {
 	// Counterparts first, the viewer last (mockup 6106–6108) — a one-to-one
 	// thread should read as "the agent's row", but once several people are in
@@ -38,6 +42,15 @@ export function ConversationListRow({
 	const visible = counterparts.slice(0, MAX_ROW_AVATARS)
 	const overflow = counterparts.length - visible.length
 	const isUnread = conversation.unread_count > 0
+	const workingNames = conversation.participants
+		.filter((p) => workingActorIds?.has(p.actorId))
+		.map((p) => p.actorName)
+	const workingLabel =
+		workingNames.length === 0
+			? null
+			: workingNames.length === 1
+				? `${workingNames[0]} is working…`
+				: `${workingNames.length} agents are working…`
 	const snippetAuthor = conversation.snippet_actor_id
 		? conversation.snippet_actor_id === self?.id
 			? 'You'
@@ -123,7 +136,12 @@ export function ConversationListRow({
 				<span className="mt-0.5 line-clamp-2 text-[11.5px] leading-[1.4] text-muted-foreground">
 					{/* "Forge: …" / "You: …" — a preview with no attribution reads as
 					    if the viewer wrote every line (mockup 296). */}
-					{conversation.snippet ? (
+					{workingLabel ? (
+						<span className="inline-flex items-center gap-1.5 font-medium text-brand">
+							<Spinner />
+							{workingLabel}
+						</span>
+					) : conversation.snippet ? (
 						<>
 							{snippetAuthor ? <span className="font-medium">{snippetAuthor}: </span> : null}
 							{plainPreview(conversation.snippet).map((part, index) =>
