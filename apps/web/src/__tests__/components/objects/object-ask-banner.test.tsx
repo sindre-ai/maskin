@@ -19,4 +19,46 @@ describe('ObjectAskBanner', () => {
 		await user.click(screen.getByRole('button', { name: /answer it/i }))
 		expect(onAnswerClick).toHaveBeenCalledTimes(1)
 	})
+
+	describe('when the question is cut off', () => {
+		const scrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth')
+		const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+		beforeEach(() => {
+			Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+				configurable: true,
+				get: () => 500,
+			})
+			Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+				configurable: true,
+				get: () => 100,
+			})
+		})
+		afterEach(() => {
+			if (scrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidth)
+			if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth)
+		})
+
+		it('expands the full text in place and collapses it again', async () => {
+			const user = userEvent.setup()
+			render(<ObjectAskBanner question="A long welcome message" onAnswerClick={vi.fn()} />)
+
+			const text = screen.getByText(/A long welcome message/)
+			expect(text).toHaveClass('truncate')
+
+			await user.click(screen.getByRole('button', { name: 'Show all' }))
+			expect(text).not.toHaveClass('truncate')
+			expect(screen.getByRole('button', { name: 'Show less' })).toHaveAttribute(
+				'aria-expanded',
+				'true',
+			)
+
+			await user.click(screen.getByRole('button', { name: 'Show less' }))
+			expect(text).toHaveClass('truncate')
+		})
+	})
+
+	it('shows no Show all toggle when the question fits', () => {
+		render(<ObjectAskBanner question="Short?" onAnswerClick={vi.fn()} />)
+		expect(screen.queryByRole('button', { name: 'Show all' })).not.toBeInTheDocument()
+	})
 })
