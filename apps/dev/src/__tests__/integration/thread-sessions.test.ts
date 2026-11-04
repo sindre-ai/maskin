@@ -7,15 +7,14 @@ import {
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
-import { afterAll, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { vi } from 'vitest'
 import { deliverTurnToAgent, evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
-// One session per (chat, agent, thread), behind the chat-thread-sessions flag. Real Postgres and
+// One session per (chat, agent, thread). Real Postgres and
 // a real SessionManager; only the container launch is switched off (autoStart false), so a
 // session stays pending and counts as live. The old per-chat index is dropped for this file's
 // database, the way the bet's index-drop release leaves production.
@@ -31,35 +30,13 @@ function stubStorage(): StorageProvider {
 	}
 }
 
-describe('thread sessions behind the flag (Integration)', () => {
+describe('thread sessions (Integration)', () => {
 	let manager: SessionManager
 	let personId: string
 	let agentId: string
 	let workspaceId: string
 	let conversationId: string
 	let createSession: ReturnType<typeof vi.spyOn>
-
-	const savedEnv = {
-		testers: process.env.FF_TESTER_ACTOR_IDS,
-		features: process.env.FF_TESTER_FEATURES,
-	}
-
-	function setFlag(on: boolean) {
-		process.env.FF_TESTER_ACTOR_IDS = personId
-		process.env.FF_TESTER_FEATURES = on ? 'chat-thread-sessions' : ''
-		_resetFeatureFlagConfig()
-	}
-
-	afterAll(() => {
-		for (const [name, value] of [
-			['FF_TESTER_ACTOR_IDS', savedEnv.testers],
-			['FF_TESTER_FEATURES', savedEnv.features],
-		] as const) {
-			if (value === undefined) Reflect.deleteProperty(process.env, name)
-			else process.env[name] = value
-		}
-		_resetFeatureFlagConfig()
-	})
 
 	beforeEach(async () => {
 		personId = getTestActorId()
@@ -80,7 +57,6 @@ describe('thread sessions behind the flag (Integration)', () => {
 			.spyOn(manager, 'createSession')
 			.mockImplementation((ws, params) => original(ws, { ...params, autoStart: false }))
 		configureSessionLifecycle({ db, sessionManager: manager })
-		setFlag(true)
 	})
 
 	afterEach(async () => {
@@ -119,7 +95,7 @@ describe('thread sessions behind the flag (Integration)', () => {
 				null,
 		)
 
-	it('starts a session of its own for a thread message when the flag is on', async () => {
+	it('starts a session of its own for a thread message', async () => {
 		const { rootId, replyId } = await startThread('a')
 
 		await respond(replyId)
@@ -202,19 +178,7 @@ describe('thread sessions behind the flag (Integration)', () => {
 		expect(rows[0]?.status).not.toBe('queued')
 	})
 
-	it('runs the single-session path when the flag is off for the sender', async () => {
-		setFlag(false)
-		const { replyId } = await startThread('a')
-
-		await respond(replyId)
-
-		expect(spawnedThreads()).toEqual([null])
-		const rows = await liveSessions()
-		expect(rows).toHaveLength(1)
-		expect(rows[0]?.threadRootId).toBeNull()
-	})
-
-	it('reads the flag for the person who wrote the message, never the agent', async () => {
+	it('keeps a thread message written by an agent on the main session', async () => {
 		const { rootId, replyId } = await startThread('a')
 
 		await deliverTurnToAgent({
