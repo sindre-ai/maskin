@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { type DesktopServer, WorkspaceDesktopService } from '../../services/workspace-desktop'
+import {
+	type DesktopServer,
+	WorkspaceDesktopService,
+	removeDesktopsForActors,
+} from '../../services/workspace-desktop'
 
 const WS = '11111111-1111-4111-8111-111111111111'
 const AGENT = '44444444-4444-4444-8444-444444444444'
@@ -354,5 +358,36 @@ describe('WorkspaceDesktopService.control', () => {
 		for (const [, init] of calls) {
 			expect((init.headers as Record<string, string>).Authorization).toBe('Bearer secret-a')
 		}
+	})
+})
+
+describe('removeDesktopsForActors', () => {
+	it('removes the computer of every deleted agent in the workspace', async () => {
+		const remove = vi.fn().mockResolvedValue(true)
+
+		await removeDesktopsForActors(WS, [AGENT, OTHER_AGENT], { remove })
+
+		expect(remove).toHaveBeenCalledTimes(2)
+		expect(remove).toHaveBeenCalledWith(WS, AGENT)
+		expect(remove).toHaveBeenCalledWith(WS, OTHER_AGENT)
+	})
+
+	it('does nothing for an empty list', async () => {
+		const remove = vi.fn()
+		await removeDesktopsForActors(WS, [], { remove })
+		expect(remove).not.toHaveBeenCalled()
+	})
+
+	it('does not throw when one removal fails, and still removes the others', async () => {
+		const remove = vi.fn(async (_ws: string, agentId: string) => {
+			if (agentId === AGENT) throw new Error('could not tell where this agent’s computer is')
+			return true
+		})
+
+		await expect(removeDesktopsForActors(WS, [AGENT, OTHER_AGENT], { remove })).resolves.toBe(
+			undefined,
+		)
+
+		expect(remove).toHaveBeenCalledWith(WS, OTHER_AGENT)
 	})
 })

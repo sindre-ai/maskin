@@ -8,6 +8,12 @@ import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } 
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createMockAgentStorage, createSessionTestApp, createTestApp } from '../setup'
 
+const desktopRemove = vi.hoisted(() => vi.fn())
+vi.mock('../../services/workspace-desktop', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/workspace-desktop')>()),
+	createWorkspaceDesktopService: () => ({ remove: desktopRemove }),
+}))
+
 const { default: actorsRoutes } = await import('../../routes/actors')
 
 describe('Actors Routes', () => {
@@ -1130,6 +1136,44 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.deleted).toBe(true)
 			expect(agentStorage.deleteAllAgentFiles).toHaveBeenCalledWith(agentActor.id, wsId)
+		})
+
+		it("removes the deleted agent's computer on the agent server", async () => {
+			desktopRemove.mockReset().mockResolvedValue(true)
+			const agentActor = buildActor({ type: 'agent' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agentActor],
+				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
+				[],
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(desktopRemove).toHaveBeenCalledWith(wsId, agentActor.id)
+		})
+
+		it('still deletes the agent when its computer cannot be removed', async () => {
+			desktopRemove.mockReset().mockRejectedValue(new Error('agent-server down'))
+			const agentActor = buildActor({ type: 'agent' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agentActor],
+				[buildWorkspaceMember({ actorId: agentActor.id, workspaceId: wsId })],
+				[],
+			]
+
+			const res = await app.request(
+				jsonDelete(`/api/actors/${agentActor.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).deleted).toBe(true)
 		})
 
 		it('returns 500 and does not delete the agent when its storage files cannot be removed', async () => {
