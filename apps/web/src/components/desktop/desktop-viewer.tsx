@@ -105,7 +105,7 @@ export function DesktopViewer({
 	toolbarEnd?: React.ReactNode
 	/**
 	 * `inline`: toolbar above the picture. `preview`: just the picture, for a card that opens
-	 * the popup. `immersive`: the popup, controls float under the picture.
+	 * the popup. `immersive`: the popup, controls sit in a top row above the picture, next to `toolbarEnd`.
 	 */
 	variant?: 'inline' | 'preview' | 'immersive'
 	/** `preview` only: what clicking the live picture does (open the popup). */
@@ -251,14 +251,14 @@ export function DesktopViewer({
 			)
 		) : null
 
-	// The popup's floating pill: what you are doing on the left, the one switch on the right.
+	// The popup's switch, in its top row: what you are doing on the left, the one switch on the right.
 	const pill = (
 		<div
 			role="toolbar"
 			aria-label="Computer controls"
-			className="flex items-center gap-1 self-center rounded-full border bg-card p-1 shadow-md"
+			className="flex h-7 items-center gap-1 rounded-full border bg-card pl-1 [&_button]:h-7"
 		>
-			<span className="flex items-center gap-1.5 px-3 text-sm text-muted-foreground">
+			<span className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground">
 				{controlling ? <MousePointer2 size={15} /> : <Eye size={15} />}
 				{controlling ? "You're in control" : 'Watching'}
 			</span>
@@ -280,6 +280,13 @@ export function DesktopViewer({
 
 	return (
 		<div className="flex min-w-0 flex-col gap-2">
+			{variant === 'immersive' && (
+				// pr-5 leaves room for the dialog's own close button, which sits in this row.
+				<div className="flex h-7 items-center justify-end gap-2 pr-5">
+					{phase === 'connected' && (recording ? controls : pill)}
+					{toolbarEnd}
+				</div>
+			)}
 			{variant === 'inline' && (
 				<div
 					role="toolbar"
@@ -357,7 +364,6 @@ export function DesktopViewer({
 					/>
 				)}
 			</div>
-			{variant === 'immersive' && phase === 'connected' && (recording ? controls : pill)}
 			{/* <TeachDialog
 				open={teaching.dialogOpen}
 				onOpenChange={teaching.setDialogOpen}
