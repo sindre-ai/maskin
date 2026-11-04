@@ -161,6 +161,34 @@ describe('DesktopViewer', () => {
 		})
 	})
 
+	it('puts the popup switch in a top row above the picture, with the toolbarEnd', async () => {
+		const user = userEvent.setup()
+		const { container } = render(
+			<DesktopViewer
+				workspaceId={WS}
+				agentId={VIEWED}
+				variant="immersive"
+				toolbarEnd={<button type="button">Minimize</button>}
+			/>,
+			{ wrapper: createWorkspaceWrapper() },
+		)
+		await waitFor(() => expect(instances).toHaveLength(1))
+		const rfb = instances[0] as InstanceType<typeof FakeRfb>
+		act(() => rfb.emit('connect'))
+
+		const switchBar = await screen.findByRole('toolbar', { name: 'Computer controls' })
+		expect(within(switchBar).getByText('Watching')).toBeInTheDocument()
+		const minimize = screen.getByRole('button', { name: 'Minimize' })
+		expect(switchBar.parentElement).toBe(minimize.parentElement)
+		// Nothing sits under the picture: the picture is the last thing in the viewer.
+		const picture = container.querySelector('.aspect-video') as HTMLElement
+		expect(picture.nextElementSibling).toBeNull()
+
+		await user.click(screen.getByRole('button', { name: 'Take over' }))
+		expect(rfb.viewOnly).toBe(false)
+		expect(within(switchBar).getByText("You're in control")).toBeInTheDocument()
+	})
+
 	it('does not offer takeover before the stream is live', async () => {
 		renderViewer()
 		await waitFor(() => expect(instances).toHaveLength(1))
